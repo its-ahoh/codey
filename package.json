@@ -1,0 +1,36 @@
+{
+  "name": "coding-gateway",
+  "version": "1.0.0",
+  "description": "Gateway for routing coding agent requests across multiple chat platforms",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "tsc --watch"
+  },
+  "keywords": [
+    "coding",
+    "gateway",
+    "telegram",
+    "discord",
+    "imessage",
+    "claude",
+    "opencode",
+    "codex"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/node-telegram-bot-api": "^0.64.13",
+    "dotenv": "^16.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "discord.js": "^14.0.0",
+    "node-telegram-bot-api": "^0.64.0"
+  }
+}
