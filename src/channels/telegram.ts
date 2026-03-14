@@ -2,8 +2,65 @@ import TelegramBot from 'node-telegram-bot-api';
 import { BaseChannelHandler } from './base';
 import { UserMessage, GatewayResponse } from '../types';
 
-function escapeMarkdownV2(text: string): string {
-  return text.replace(/([_*`\[\]()#+\-={}.!])/g, '\\$1');
+/**
+ * Convert markdown to Telegram HTML.
+ * Handles code blocks, inline code, bold, italic, and escapes HTML entities.
+ */
+function markdownToTelegramHtml(text: string): string {
+  // Escape HTML entities first (but we'll restore them in formatted sections)
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const result: string[] = [];
+  const lines = text.split('\n');
+  let inCodeBlock = false;
+  let codeBlockLang = '';
+  let codeBlockContent: string[] = [];
+
+  for (const line of lines) {
+    // Code block toggle
+    const codeBlockMatch = line.match(/^```(\w*)$/);
+    if (codeBlockMatch) {
+      if (!inCodeBlock) {
+        inCodeBlock = true;
+        codeBlockLang = codeBlockMatch[1];
+        codeBlockContent = [];
+      } else {
+        // Close code block
+        const langAttr = codeBlockLang ? ` class="language-${codeBlockLang}"` : '';
+        result.push(`<pre><code${langAttr}>${escapeHtml(codeBlockContent.join('\n'))}</code></pre>`);
+        inCodeBlock = false;
+        codeBlockLang = '';
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeBlockContent.push(line);
+      continue;
+    }
+
+    // Process inline formatting
+    let processed = escapeHtml(line);
+
+    // Inline code (must be before bold/italic to avoid conflicts)
+    processed = processed.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Bold
+    processed = processed.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+
+    // Italic
+    processed = processed.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<i>$1</i>');
+
+    result.push(processed);
+  }
+
+  // Handle unclosed code block
+  if (inCodeBlock) {
+    result.push(`<pre><code>${escapeHtml(codeBlockContent.join('\n'))}</code></pre>`);
+  }
+
+  return result.join('\n');
 }
 
 export class TelegramHandler extends BaseChannelHandler {
@@ -78,13 +135,13 @@ export class TelegramHandler extends BaseChannelHandler {
     this.stopTyping(response.chatId);
 
     const options: TelegramBot.SendMessageOptions = {
-      parse_mode: 'MarkdownV2',
+      parse_mode: 'HTML',
     };
     if (response.replyTo) {
       options.reply_to_message_id = parseInt(response.replyTo);
     }
 
-    await this.bot.sendMessage(response.chatId, escapeMarkdownV2(response.text), options);
+    await this.bot.sendMessage(response.chatId, markdownToTelegramHtml(response.text), options);
   }
 
   private startTyping(chatId: string): void {
@@ -109,8 +166,8 @@ export class TelegramHandler extends BaseChannelHandler {
 
   async sendStartupMessage(text: string): Promise<void> {
     if (!this.bot || !this.notifyChatId) return;
-    await this.bot.sendMessage(this.notifyChatId, escapeMarkdownV2(text), {
-      parse_mode: 'MarkdownV2',
+    await this.bot.sendMessage(this.notifyChatId, markdownToTelegramHtml(text), {
+      parse_mode: 'HTML',
     });
   }
 }
