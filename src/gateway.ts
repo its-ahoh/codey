@@ -134,6 +134,37 @@ export class Codey {
     }, 60000); // Every minute
 
     this.logger.info(`Started on port ${this.config.port}`);
+
+    // Send startup notification to all active channels
+    await this.sendStartupNotification();
+  }
+
+  private async sendStartupNotification(): Promise<void> {
+    const channels = [...this.handlers.keys()].join(', ') || 'none';
+    const agents = this.getEnabledAgents().join(', ');
+    const defaultAgent = this.config.defaultAgent;
+    const workspace = this.workspaceManager.getCurrentWorkspace();
+    const workingDir = this.workingDir;
+
+    const text = [
+      `Codey is online`,
+      ``,
+      `Agent: ${defaultAgent}`,
+      `Active agents: ${agents}`,
+      `Channels: ${channels}`,
+      `Workspace: ${workspace}`,
+      `Working dir: ${workingDir}`,
+      `Port: ${this.config.port}`,
+    ].join('\n');
+
+    for (const [, handler] of this.handlers) {
+      try {
+        await handler.sendStartupMessage?.(text);
+      } catch (error) {
+        // Ignore errors on startup notification
+        this.logger.error(`Error sending startup notification to ${handler.name}: ${error}`);
+      }
+    }
   }
 
   async setWorkingDir(dir: string): Promise<void> {

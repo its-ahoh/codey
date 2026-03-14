@@ -8,7 +8,7 @@ export interface GatewayConfigJson {
     defaultAgent: string;
   };
   channels: {
-    telegram?: { enabled: boolean; botToken: string };
+    telegram?: { enabled: boolean; botToken: string; notifyChatId?: string };
     discord?: { enabled: boolean; botToken: string };
     imessage?: { enabled: boolean };
   };

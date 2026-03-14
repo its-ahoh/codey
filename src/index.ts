@@ -40,7 +40,10 @@ function startGateway(): void {
     defaultAgent: configManager.getDefaultAgent() as any,
     agents: config.agents as any,
     channels: {
-      telegram: config.channels.telegram?.enabled ? { botToken: config.channels.telegram.botToken } : undefined,
+      telegram: config.channels.telegram?.enabled ? { 
+        botToken: config.channels.telegram.botToken, 
+        notifyChatId: config.channels.telegram.notifyChatId 
+      } : undefined,
       discord: config.channels.discord?.enabled ? { botToken: config.channels.discord.botToken } : undefined,
       imessage: config.channels.imessage?.enabled ? { enabled: true } : undefined,
     },

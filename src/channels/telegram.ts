@@ -2,12 +2,19 @@ import TelegramBot from 'node-telegram-bot-api';
 import { BaseChannelHandler } from './base';
 import { UserMessage, GatewayResponse } from '../types';
 
+function escapeMarkdownV2(text: string): string {
+  return text.replace(/([_*`\[\]()#+\-={}.!])/g, '\\$1');
+}
+
 export class TelegramHandler extends BaseChannelHandler {
   name = 'telegram';
   private bot?: TelegramBot;
   private typingIntervals: Map<string, NodeJS.Timeout> = new Map();
 
-  async start(config: { botToken: string }): Promise<void> {
+  private notifyChatId?: string;
+
+  async start(config: { botToken: string; notifyChatId?: string }): Promise<void> {
+    this.notifyChatId = config.notifyChatId;
     this.bot = new TelegramBot(config.botToken, { polling: true });
 
     // Register bot commands menu
@@ -70,12 +77,14 @@ export class TelegramHandler extends BaseChannelHandler {
     // Stop typing indicator when sending a response
     this.stopTyping(response.chatId);
 
-    const options: TelegramBot.SendMessageOptions = {};
+    const options: TelegramBot.SendMessageOptions = {
+      parse_mode: 'MarkdownV2',
+    };
     if (response.replyTo) {
       options.reply_to_message_id = parseInt(response.replyTo);
     }
 
-    await this.bot.sendMessage(response.chatId, response.text, options);
+    await this.bot.sendMessage(response.chatId, escapeMarkdownV2(response.text), options);
   }
 
   private startTyping(chatId: string): void {
@@ -96,5 +105,12 @@ export class TelegramHandler extends BaseChannelHandler {
       clearInterval(interval);
       this.typingIntervals.delete(chatId);
     }
+  }
+
+  async sendStartupMessage(text: string): Promise<void> {
+    if (!this.bot || !this.notifyChatId) return;
+    await this.bot.sendMessage(this.notifyChatId, escapeMarkdownV2(text), {
+      parse_mode: 'MarkdownV2',
+    });
   }
 }
