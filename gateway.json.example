@@ -1,0 +1,57 @@
+{
+  "gateway": {
+    "port": 3000,
+    "defaultAgent": "claude-code"
+  },
+  "channels": {
+    "telegram": {
+      "enabled": false,
+      "botToken": "",
+      "notifyChatId": ""
+    },
+    "discord": {
+      "enabled": false,
+      "botToken": ""
+    },
+    "imessage": {
+      "enabled": false
+    }
+  },
+  "agents": {
+    "claude-code": {
+      "enabled": true,
+      "defaultModel": "claude-sonnet-4-20250514",
+      "models": [
+        { "provider": "anthropic", "model": "claude-sonnet-4-20250514" },
+        { "provider": "anthropic", "model": "claude-opus-4-20250514" },
+        { "provider": "anthropic", "model": "claude-3-5-sonnet-20241022" }
+      ]
+    },
+    "opencode": {
+      "enabled": true,
+      "defaultModel": "gpt-4.1",
+      "models": [
+        { "provider": "openai", "model": "gpt-4.1" },
+        { "provider": "openai", "model": "gpt-4o" },
+        { "provider": "openai", "model": "o4-mini" }
+      ]
+    },
+    "codex": {
+      "enabled": true,
+      "defaultModel": "gpt-5-codex",
+      "models": [
+        { "provider": "openai", "model": "gpt-5-codex" },
+        { "provider": "openai", "model": "gpt-4.1" }
+      ]
+    }
+  },
+  "apiKeys": {
+    "anthropic": "",
+    "openai": "",
+    "google": ""
+  },
+  "dev": {
+    "logLevel": "info",
+    "logFile": "gateway.log"
+  }
+}

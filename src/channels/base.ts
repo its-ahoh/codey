@@ -6,6 +6,7 @@ export interface ChannelHandler {
   stop(): Promise<void>;
   sendMessage(response: GatewayResponse): Promise<void>;
   onMessage(callback: (message: UserMessage) => Promise<void>): void;
+  streamText?(text: string): void;
 }
 
 // Base class for channel handlers

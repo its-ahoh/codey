@@ -1,13 +1,18 @@
 {
-  "name": "coding-gateway",
+  "name": "codey",
   "version": "1.0.0",
-  "description": "Gateway for routing coding agent requests across multiple chat platforms",
+  "description": "Codey — a gateway that routes prompts from chat platforms to coding agents",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "watch": "tsc --watch"
+    "watch": "tsc --watch",
+    "configure": "ts-node src/index.ts configure",
+    "status": "ts-node src/index.ts status",
+    "set-agent": "ts-node src/index.ts set-agent",
+    "set-model": "ts-node src/index.ts set-model",
+    "tui": "ts-node src/index.ts tui"
   },
   "keywords": [
     "coding",
@@ -25,12 +30,14 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/node-telegram-bot-api": "^0.64.13",
-    "dotenv": "^16.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.0"
   },
   "dependencies": {
     "discord.js": "^14.0.0",
+    "dotenv": "^16.0.0",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0",
     "node-telegram-bot-api": "^0.64.0"
   }
 }

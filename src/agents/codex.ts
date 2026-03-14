@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { AgentRequest, AgentResponse } from '../types';
 import { BaseAgentAdapter } from './base';
 
@@ -15,26 +15,39 @@ export class CodexAdapter extends BaseAgentAdapter {
         'false'
       ];
 
+      // Add model configuration if provided
+      if (request.model) {
+        args.push('--model', request.model.model);
+        
+        if (request.model.baseUrl) {
+          args.push('--api-base', request.model.baseUrl);
+        }
+      }
+
       if (request.context?.workingDir) {
         args.push('--dir', request.context.workingDir);
       }
 
-      const process = spawn('codex', args, {
+      const childProcess: ChildProcess = spawn('codex', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          OPENAI_API_KEY: request.model?.apiKey || process.env.OPENAI_API_KEY,
+        },
       });
 
       let stdout = '';
       let stderr = '';
 
-      process.stdout.on('data', (data) => {
+      childProcess.stdout?.on('data', (data: Buffer) => {
         stdout += data.toString();
       });
 
-      process.stderr.on('data', (data) => {
+      childProcess.stderr?.on('data', (data: Buffer) => {
         stderr += data.toString();
       });
 
-      process.on('close', (code) => {
+      childProcess.on('close', (code: number | null) => {
         if (code === 0) {
           resolve(this.createResponse(stdout.trim()));
         } else {
@@ -42,15 +55,16 @@ export class CodexAdapter extends BaseAgentAdapter {
         }
       });
 
-      process.on('error', (err) => {
+      childProcess.on('error', (err: Error) => {
         resolve(this.createResponse(err.message, false));
       });
 
-      // Timeout after 5 minutes
+      // Timeout (default 5 minutes)
+      const timeout = request.timeout || 300000;
       setTimeout(() => {
-        process.kill();
-        resolve(this.createResponse('Timeout after 5 minutes', false));
-      }, 300000);
+        childProcess.kill();
+        resolve(this.createResponse(`Timeout after ${Math.round(timeout / 60000)} minutes`, false));
+      }, timeout);
     });
   }
 }

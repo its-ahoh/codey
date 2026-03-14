@@ -27,6 +27,12 @@ export class AgentFactory {
     return this.agents.get(agent);
   }
 
+  resetSessions(): void {
+    for (const adapter of this.agents.values()) {
+      adapter.resetSession?.();
+    }
+  }
+
   async run(agent: CodingAgent, request: AgentRequest): Promise<AgentResponse> {
     const adapter = this.agents.get(agent);
     if (!adapter) {

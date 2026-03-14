@@ -1,101 +1,206 @@
-# Coding Gateway ⌘
+<p align="center">
+  <img src="assets/logo.png" alt="Codey Logo" width="300" />
+</p>
 
-A local gateway application that routes prompts from multiple chat platforms (Telegram, Discord, iMessage) to coding agents (Claude Code, OpenCode, Codex) and forwards responses back to users.
+# Codey 🚀
+
+[English](README.md) | [中文](README.zh-CN.md)
+
+A local gateway that routes prompts from chat platforms (Telegram, Discord, iMessage) to coding agents with support for multi-workspace and worker teams.
 
 ## Features
 
 - **Multi-channel support**: Telegram, Discord, iMessage
 - **Multiple coding agents**: Claude Code, OpenCode, Codex
-- **Agent selection**: Users can switch agents with `/agent <name>` command
-- **TypeScript**: Full type safety
-- **Easy configuration**: Environment variables
+- **Multi-workspace**: Each workspace has its own workers
+- **Worker teams**: Define workers with roles, personalities, and relationships
+- **Parallel execution**: Run multiple agents or workers simultaneously
+- **Conversation context**: Remembers previous messages within a session
+- **Health endpoints**: Built-in health check and metrics
 
-## Prerequisites
-
-- Node.js 18+
-- [Claude Code](https://claude.com/claude-code) installed (optional, for claude-code agent)
-- [OpenCode](https://github.com/antfu/opencode) installed (optional)
-- [OpenAI Codex](https://openai.com/codex) CLI installed (optional)
-
-### For Telegram
-- A Telegram Bot Token from [@BotFather](https://t.me/BotFather)
-
-### For Discord
-- A Discord Bot Token from [Discord Developer Portal](https://discord.com/developers/applications)
-
-### For iMessage
-- macOS (for AppleScript-based sending)
-
-## Installation
+## Quick Start
 
 ```bash
-# Clone the repository
-git clone <your-repo-url>
-cd coding-gateway
-
 # Install dependencies
 npm install
 
-# Copy environment template
-cp .env.example .env
+# Copy config template
+cp gateway.json.example gateway.json
+
+# Configure (optional)
+npm run configure
+
+# Start the gateway
+npm start
 ```
 
 ## Configuration
 
-Edit `.env` with your settings:
+Edit `gateway.json`:
 
-```env
-PORT=3000
-DEFAULT_AGENT=claude-code
-
-# Telegram
-TELEGRAM_BOT_TOKEN=your_telegram_token
-
-# Discord  
-DISCORD_BOT_TOKEN=your_discord_token
-
-# iMessage (macOS only)
-IMESSAGE_ENABLED=false
-
-# Claude Code (if needed)
-ANTHROPIC_API_KEY=your_api_key
+```json
+{
+  "gateway": {
+    "port": 3000,
+    "defaultAgent": "claude-code",
+    "defaultModel": "claude-sonnet-4-20250514"
+  },
+  "channels": {
+    "telegram": { "enabled": true, "botToken": "YOUR_TOKEN" },
+    "discord": { "enabled": false, "botToken": "" },
+    "imessage": { "enabled": false }
+  },
+  "agents": {
+    "claude-code": { "enabled": true, "defaultModel": "claude-sonnet-4-20250514" },
+    "opencode": { "enabled": true, "defaultModel": "gpt-4.1" },
+    "codex": { "enabled": true, "defaultModel": "gpt-5-codex" }
+  },
+  "apiKeys": {
+    "anthropic": "sk-...",
+    "openai": "sk-..."
+  },
+  "dev": {
+    "logLevel": "info"
+  }
+}
 ```
 
-## Usage
+## Workspace Structure
 
-```bash
-# Build the project
-npm run build
+```
+workspaces/
+├── default/
+│   ├── workspace.json       # Workspace config (workingDir + workers)
+│   ├── memory.md            # Project memory/notes
+│   └── workers/
+│       ├── architect.md
+│       └── executor.md
+├── project-a/
+│   ├── workspace.json
+│   ├── memory.md
+│   └── workers/
+│       └── ...
+└── project-b/
+    ├── workspace.json
+    ├── memory.md
+    └── workers/
+        └── ...
+```
 
-# Run the gateway
-npm start
+Each workspace ties to a project directory via `workspace.json`:
 
-# Or run in development mode
-npm run dev
+```json
+{
+  "workingDir": "/path/to/project",
+  "workers": {
+    "architect": {
+      "codingAgent": "claude-code",
+      "model": "claude-opus-4-6",
+      "tools": ["file-system", "git", "web-search"]
+    }
+  }
+}
+```
+
+Switching workspaces (`/workspace myproject`) automatically sets the agent's working directory.
+
+## Worker Configuration
+
+Each worker is defined in a markdown file:
+
+```markdown
+# Worker: Architect
+
+## Role
+Lead architect responsible for project planning...
+
+## Soul
+Strategic thinker, focused on scalability...
+
+## Coding Agent
+claude-code
+
+## Model
+claude-opus-4-20250514
+
+## Tools
+file-system, git, web-search
+
+## Relationship
+Leads the implementation workers
+
+## Instructions
+When prompted, analyze requirements and provide...
 ```
 
 ## Commands
 
-- `/agent claude-code` - Switch to Claude Code
-- `/agent opencode` - Switch to OpenCode  
-- `/agent codex` - Switch to Codex
-- Any other text is treated as a prompt for the coding agent
+### Workers
+| Command | Description |
+|---------|-------------|
+| `/workers` | List all workers in current workspace |
+| `/worker <name> <task>` | Run a specific worker |
+| `/team <task>` | Run workers in sequence |
 
-## Example
+### Workspaces
+| Command | Description |
+|---------|-------------|
+| `/workspaces` | List all workspaces |
+| `/workspace <name>` | Switch to a workspace |
 
+### Agents (legacy)
+| Command | Description |
+|---------|-------------|
+| `/parallel <prompt>` | Run all agents in parallel |
+| `/all <prompt>` | Run all agents in parallel |
+| `/agent <name>` | Switch default agent |
+
+### Settings
+| Command | Description |
+|---------|-------------|
+| `/help` | Show help message |
+| `/status` | Show gateway status |
+| `/clear` | Clear conversation history |
+| `/reset` | Start a new conversation |
+| `/model <name>` | Show/set model |
+
+## Examples
+
+```bash
+# Switch workspace
+/workspace myproject
+
+# List workers
+/workers
+
+# Run a worker
+/worker architect design a REST API
+
+# Run team task
+/team build a todo app
+
+# Run all agents in parallel
+/parallel create a hello world app
 ```
-User: /agent claude-code
-User: Create a simple hello world function in Python
 
-Gateway: Thinking...
-Gateway: Here's a simple Hello World function in Python:
+## Health Endpoints
 
-def hello_world():
-    print("Hello, World!")
-    return "Hello, World!"
+The gateway exposes health endpoints on `port + 1`:
 
-if __name__ == "__main__":
-    hello_world()
+- `GET /health` - Full status JSON
+- `GET /metrics` - Prometheus-style metrics
+- `GET /ready` - Readiness check
+
+## CLI Commands
+
+```bash
+npm run configure     # Interactive configuration
+npm run status       # Show config
+npm run set-agent claude-code
+npm run set-model gpt-4.1
+npm run set-telegram <token>
+npm run set-key anthropic sk-...
+npm run enable telegram
 ```
 
 ## Project Structure
@@ -103,18 +208,13 @@ if __name__ == "__main__":
 ```
 src/
 ├── agents/          # Coding agent adapters
-│   ├── base.ts
-│   ├── claude-code.ts
-│   ├── opencode.ts
-│   └── codex.ts
 ├── channels/        # Chat platform handlers
-│   ├── base.ts
-│   ├── telegram.ts
-│   ├── discord.ts
-│   └── imessage.ts
-├── types/          # TypeScript definitions
-│   └── index.ts
-├── gateway.ts      # Main gateway logic
+├── config.ts        # Configuration manager
+├── conversation.ts  # Conversation context
+├── gateway.ts       # Main gateway logic
+├── health.ts       # Health server
+├── logger.ts       # Logging utility
+├── workers.ts      # Worker manager
 └── index.ts        # Entry point
 ```
 

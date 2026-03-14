@@ -3,3 +3,12 @@ dist/
 .env
 *.log
 .DS_Store
+gateway.json
+workspaces/*
+!workspaces/.gitkeep
+
+*.env.local
+.claude/
+*.local.json
+
+docs/

@@ -1,7 +1,7 @@
 // Message from a user
 export interface UserMessage {
   id: string;
-  channel: 'telegram' | 'discord' | 'imessage';
+  channel: 'telegram' | 'discord' | 'imessage' | 'tui';
   userId: string;
   username: string;
   chatId: string;
@@ -12,7 +12,7 @@ export interface UserMessage {
 // Response to send back to user
 export interface GatewayResponse {
   chatId: string;
-  channel: 'telegram' | 'discord' | 'imessage';
+  channel: 'telegram' | 'discord' | 'imessage' | 'tui';
   text: string;
   replyTo?: string;
 }
@@ -20,9 +20,21 @@ export interface GatewayResponse {
 // Coding agent types
 export type CodingAgent = 'claude-code' | 'opencode' | 'codex';
 
+// Model configuration for agents
+export interface ModelConfig {
+  provider: string;
+  model: string;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
 export interface AgentRequest {
   prompt: string;
   agent: CodingAgent;
+  model?: ModelConfig;
+  timeout?: number;
+  interactive?: boolean;
+  onStream?: (text: string) => void;
   context?: {
     files?: string[];
     workingDir?: string;
@@ -33,6 +45,17 @@ export interface AgentResponse {
   success: boolean;
   output: string;
   error?: string;
+  tokens?: {
+    total: number;
+    input: number;
+    output: number;
+    reasoning?: number;
+    cache?: {
+      read: number;
+      write: number;
+    };
+  };
+  duration?: number; // in seconds
 }
 
 // Channel configuration
@@ -49,9 +72,21 @@ export interface ChannelConfig {
   };
 }
 
+// Per-agent model configuration
+export interface AgentModelConfig {
+  enabled?: boolean;
+  defaultModel?: string;
+  models?: ModelConfig[];
+}
+
 // Gateway configuration
 export interface GatewayConfig {
   port: number;
   channels: ChannelConfig;
   defaultAgent: CodingAgent;
+  agents?: {
+    'claude-code'?: AgentModelConfig;
+    'opencode'?: AgentModelConfig;
+    'codex'?: AgentModelConfig;
+  };
 }
