@@ -72,10 +72,21 @@ export class TelegramHandler extends BaseChannelHandler {
 
   async start(config: { botToken: string; notifyChatId?: string }): Promise<void> {
     this.notifyChatId = config.notifyChatId;
-    this.bot = new TelegramBot(config.botToken, { polling: true });
+    this.bot = new TelegramBot(config.botToken, {
+      polling: {
+        autoStart: true,
+        params: { timeout: 30 },
+      },
+    });
+
+    // Log transient polling errors at debug level (ECONNRESET, ETIMEDOUT, etc.)
+    this.bot.on('polling_error', (err: Error) => {
+      console.log(`[Telegram] Polling error: ${err.message}`);
+    });
 
     // Register bot commands menu
     this.bot.setMyCommands([
+      { command: 'start', description: 'Welcome & current config' },
       { command: 'help', description: 'Show help message' },
       { command: 'status', description: 'Show gateway status' },
       { command: 'workers', description: 'List workers in current workspace' },

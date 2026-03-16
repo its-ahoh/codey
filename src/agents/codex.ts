@@ -59,8 +59,8 @@ export class CodexAdapter extends BaseAgentAdapter {
         resolve(this.createResponse(err.message, false));
       });
 
-      // Timeout (default 5 minutes)
-      const timeout = request.timeout || 300000;
+      // Timeout (default 15 minutes)
+      const timeout = request.timeout || 900000;
       setTimeout(() => {
         childProcess.kill();
         resolve(this.createResponse(`Timeout after ${Math.round(timeout / 60000)} minutes`, false));

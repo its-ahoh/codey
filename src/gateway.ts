@@ -1,6 +1,6 @@
 import * as path from 'path';
 import { AgentRequest, AgentResponse, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig } from './types';
-import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler } from './channels';
+import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
 import { AgentFactory } from './agents';
 import { Logger } from './logger';
 import { ConversationManager } from './conversation';
@@ -14,10 +14,17 @@ interface ParsedCommand {
   prompt: string;
 }
 
+interface DirectoryResolveResult {
+  success: boolean;
+  directory?: string;
+  workspace?: string;
+  isWorkspaceName?: boolean;
+}
+
 export class Codey {
   private config: GatewayConfig;
   private agentFactory: AgentFactory;
-  private handlers: Map<string, any> = new Map();
+  private handlers: Map<string, ChannelHandler> = new Map();
   private processingMessages: Set<string> = new Set();
   private logger: Logger;
   private conversationManager: ConversationManager;
@@ -25,7 +32,7 @@ export class Codey {
   
   // Rate limiting: userId -> last request timestamp
   private userCooldowns: Map<string, number> = new Map();
-  private readonly COOLDOWN_MS = 3000; // 3 seconds
+  private readonly COOLDOWN_MS: number;
 
   // Response chunking
   private readonly MAX_MESSAGE_LENGTH = 2000;
@@ -37,6 +44,16 @@ export class Codey {
   private conversationId?: string;
   private tuiMode = false;
   private workingDir: string = process.cwd();
+
+  // Pre-compiled regex patterns for parseCommand
+  private static readonly REGEX_COMMAND = /^\/(\w+)(?:\s+(.*))?$/;
+  private static readonly REGEX_WORKER = /\/worker\s+(\w+)\s+(.+)/i;
+  private static readonly REGEX_TEAM = /\/team\s+(.+)/i;
+  private static readonly REGEX_AGENT_PROMPT = /\/agent\s+(claude-code|opencode|codex)\s+(.+)/i;
+  private static readonly REGEX_AGENT = /\/agent\s+(claude-code|opencode|codex)/i;
+  private static readonly REGEX_MODEL_PROMPT = /\/model\s+(\S+)(?:\s+(.+))?/i;
+  private static readonly REGEX_MODEL = /\/model\s+(\S+)/i;
+  private static readonly REGEX_HELP_COMMAND = /^\/(help|status|clear|reset|model|agents|config)\s*/i;
 
   private getEffectiveModel(agent?: CodingAgent): string {
     const effectiveAgent = agent || this.config.defaultAgent;
@@ -63,12 +80,15 @@ export class Codey {
     return { provider: 'anthropic', model: defaultModel };
   }
 
+  private conversationCleanupInterval?: NodeJS.Timeout;
+
   constructor(config: GatewayConfig, logger?: Logger, workspaceDir?: string) {
     this.config = config;
     this.agentFactory = new AgentFactory();
     this.logger = logger || Logger.getInstance();
     this.conversationManager = new ConversationManager();
     this.workspaceManager = new WorkspaceManager(workspaceDir || './workspaces');
+    this.COOLDOWN_MS = config.rateLimitMs || 3000; // Default 3 seconds
   }
 
   private async switchWorkspace(workspaceId: string): Promise<boolean> {
@@ -126,7 +146,7 @@ export class Codey {
     }
 
     // Start conversation cleanup interval
-    setInterval(() => {
+    this.conversationCleanupInterval = setInterval(() => {
       const cleaned = this.conversationManager.cleanup();
       if (cleaned > 0) {
         this.logger.debug(`Cleaned up ${cleaned} expired conversations`);
@@ -196,6 +216,10 @@ export class Codey {
 
   async stop(): Promise<void> {
     this.logger.info('Stopping...');
+    if (this.conversationCleanupInterval) {
+      clearInterval(this.conversationCleanupInterval);
+      this.conversationCleanupInterval = undefined;
+    }
     for (const handler of this.handlers.values()) {
       await handler.stop();
     }
@@ -226,17 +250,11 @@ export class Codey {
     }
 
     // Check rate limit
-    if (!this.checkRateLimit(message.userId)) {
-      await this.sendResponse({
-        chatId: message.chatId,
-        channel: message.channel,
-        text: '⏳ Please wait a moment before sending another request.',
-      });
+    if (!this.checkAndSetRateLimit(message.userId, message)) {
       return;
     }
 
     this.processingMessages.add(message.id);
-    this.userCooldowns.set(message.userId, Date.now());
     this.messagesProcessed++;
 
     try {
@@ -251,81 +269,8 @@ export class Codey {
         return;
       }
 
-      // Get or create conversation
-      const conversation = this.conversationManager.getOrCreate(
-        message.userId,
-        message.channel,
-        this.conversationId
-      );
-      this.conversationId = conversation.id;
-
-      // Build prompt with context
-      const prompt = this.conversationManager.buildPrompt(conversation.id, parsed.prompt);
-
-      // Skip empty prompts
-      if (!prompt.trim()) {
-        await this.sendResponse({
-          chatId: message.chatId,
-          channel: message.channel,
-          text: 'Please provide a prompt for the coding agent.',
-        });
-        return;
-      }
-
-      // Run the coding agent (with fallback on failure)
-      const agent = parsed.agent || this.config.defaultAgent;
-      const handler = this.handlers.get(message.channel);
-      const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
-      const streamed = { active: false };
-      const response = await this.runWithFallback(agent, {
-        prompt,
-        agent,
-        model: parsed.model || this.getDefaultModelConfig(agent),
-        timeout: this.tuiMode ? 1800000 : undefined, // 30 min for TUI
-        interactive: this.tuiMode,
-        onStream: onStream ? (text: string) => { streamed.active = true; onStream(text); } : undefined,
-        context: {
-          workingDir: this.workingDir,
-        },
-      });
-
-      // Save to conversation history
-      this.conversationManager.addMessage(conversation.id, 'user', parsed.prompt);
-      if (response.success) {
-        this.conversationManager.addMessage(conversation.id, 'assistant', response.output);
-      }
-
-      // Format token info and duration if available
-      const tokenInfo = response.tokens
-        ? `\n\n📊 Tokens: ${response.tokens.total.toLocaleString()} (in: ${response.tokens.input}, out: ${response.tokens.output})`
-        : '';
-      const durationInfo = response.duration
-        ? `\n⏱️ Time: ${response.duration}s`
-        : '';
-
-      this.logger.info(`[OUTPUT] ${message.channel}/${message.username}: ${response.success ? '(streamed)' : response.error}${response.tokens ? ` [${response.tokens.total} tokens]` : ''}${response.duration ? ` [${response.duration}s]` : ''}`);
-
-      // If we streamed the output, just finalize; otherwise send the full response
-      const replyText = response.success
-        ? response.output + tokenInfo + durationInfo
-        : `❌ Error: ${response.error}`;
-
-      if (streamed.active) {
-        // Already streamed raw text; send full text for final rendering
-        await this.sendResponse({
-          chatId: message.chatId,
-          channel: message.channel,
-          text: replyText,
-          replyTo: message.id,
-        });
-      } else {
-        await this.sendResponseWithChunking({
-          chatId: message.chatId,
-          channel: message.channel,
-          text: replyText,
-          replyTo: message.id,
-        });
-      }
+      // Process as prompt
+      await this.processPrompt(message, parsed);
 
     } catch (error) {
       this.errors++;
@@ -340,246 +285,403 @@ export class Codey {
     }
   }
 
+  private checkAndSetRateLimit(userId: string, message: UserMessage): boolean {
+    if (this.checkRateLimit(userId)) {
+      this.userCooldowns.set(userId, Date.now());
+      return true;
+    }
+    
+    this.sendResponse({
+      chatId: message.chatId,
+      channel: message.channel,
+      text: '⏳ Please wait a moment before sending another request.',
+    });
+    return false;
+  }
+
+  private async processPrompt(message: UserMessage, parsed: ParsedCommand): Promise<void> {
+    const { userId, chatId, channel, id: messageId } = message;
+
+    // Get or create conversation
+    const conversation = this.conversationManager.getOrCreate(
+      userId,
+      channel,
+      this.conversationId
+    );
+    this.conversationId = conversation.id;
+
+    // Build prompt with context
+    const prompt = this.conversationManager.buildPrompt(conversation.id, parsed.prompt);
+
+    // Skip empty prompts
+    if (!prompt.trim()) {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: 'Please provide a prompt for the coding agent.',
+      });
+      return;
+    }
+
+    // Run the coding agent (with fallback on failure)
+    const agent = parsed.agent || this.config.defaultAgent;
+    const handler = this.handlers.get(channel);
+    const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
+    const streamed = { active: false };
+    const response = await this.runWithFallback(agent, {
+      prompt,
+      agent,
+      model: parsed.model || this.getDefaultModelConfig(agent),
+      timeout: this.tuiMode ? 1800000 : undefined, // 30 min for TUI
+      interactive: this.tuiMode,
+      onStream: onStream ? (text: string) => { streamed.active = true; onStream(text); } : undefined,
+      context: {
+        workingDir: this.workingDir,
+      },
+    });
+
+    // Save to conversation history
+    this.conversationManager.addMessage(conversation.id, 'user', parsed.prompt);
+    if (response.success) {
+      this.conversationManager.addMessage(conversation.id, 'assistant', response.output);
+    }
+
+    this.logger.info(`[OUTPUT] ${channel}/${message.username}: ${response.success ? '(streamed)' : response.error}${response.tokens ? ` [${response.tokens.total} tokens]` : ''}${response.duration ? ` [${response.duration}s]` : ''}`);
+
+    // Format and send response
+    const replyText = this.formatAgentResponse(response);
+    
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: replyText,
+      replyTo: messageId,
+    });
+  }
+
+  private formatAgentResponse(response: AgentResponse): string {
+    if (!response.success) {
+      return `❌ Error: ${response.error}`;
+    }
+
+    const tokenInfo = response.tokens
+      ? `\n\n📊 Tokens: ${response.tokens.total.toLocaleString()} (in: ${response.tokens.input}, out: ${response.tokens.output})`
+      : '';
+    const durationInfo = response.duration
+      ? `\n⏱️ Time: ${response.duration}s`
+      : '';
+
+    return response.output + tokenInfo + durationInfo;
+  }
+
   private async handleCommand(message: UserMessage, parsed: ParsedCommand): Promise<void> {
     const { command, args } = parsed;
     const chatId = message.chatId;
     const channel = message.channel;
 
     switch (command) {
+      case 'start':
+        await this.cmdStart(chatId, channel);
+        break;
       case 'help':
-        await this.sendResponse({
-          chatId,
-          channel,
-          text: this.getHelpText(),
-        });
+        await this.cmdHelp(chatId, channel);
         break;
-
       case 'status':
-        const status = this.getHealthStatus();
-        await this.sendResponse({
-          chatId,
-          channel,
-          text: `📊 Gateway Status\n\n` +
-            `Uptime: ${this.formatUptime(status.uptime)}\n` +
-            `Messages: ${status.stats.messagesProcessed}\n` +
-            `Errors: ${status.stats.errors}\n` +
-            `Default Agent: ${this.config.defaultAgent}\n` +
-            `Default Model: ${this.getEffectiveModel()}`,
-        });
+        await this.cmdStatus(chatId, channel);
         break;
-
       case 'clear':
-        if (this.conversationId) {
-          this.conversationManager.clear(this.conversationId);
-        }
-        await this.sendResponse({
-          chatId,
-          channel,
-          text: '🗑️ Conversation history cleared.',
-        });
+        await this.cmdClear(chatId, channel);
         break;
-
       case 'reset':
-        this.resetSession();
-        await this.sendResponse({
-          chatId,
-          channel,
-          text: '🔄 Conversation reset. Starting fresh.',
-        });
+        await this.cmdReset(chatId, channel);
         break;
-
       case 'model':
-        if (args.length > 0) {
-          const model = args.join(' ');
-          await this.sendResponse({
-            chatId,
-            channel,
-            text: `Model override is set per-session. Your next prompt will use: ${model}\n\n` +
-              `To change default model permanently, use: /config set-model ${model}`,
-          });
-        } else {
-          await this.sendResponse({
-            chatId,
-            channel,
-            text: `Current default model: ${this.getEffectiveModel()}`,
-          });
-        }
+        await this.cmdModel(args, chatId, channel);
         break;
-
       case 'agent':
-        if (args.length > 0) {
-          const agentName = args[0].toLowerCase();
-          const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex'];
-          if (validAgents.includes(agentName as CodingAgent)) {
-            this.config.defaultAgent = agentName as CodingAgent;
-            this.resetSession();
-            const model = this.getEffectiveModel(agentName as CodingAgent);
-            await this.sendResponse({
-              chatId,
-              channel,
-              text: `✅ Switched to agent: **${agentName}**\nModel: ${model}`,
-            });
-          } else {
-            await this.sendResponse({
-              chatId,
-              channel,
-              text: `Unknown agent: ${agentName}\n\nAvailable: claude-code, opencode, codex`,
-            });
-          }
-        } else {
-          await this.sendResponse({
-            chatId,
-            channel,
-            text: `Current agent: **${this.config.defaultAgent}**\nModel: ${this.getEffectiveModel()}\n\nSwitch with: /agent <name>`,
-          });
-        }
+        await this.cmdAgent(args, chatId, channel);
         break;
-
       case 'agents':
-        const agentsList = this.getEnabledAgents().map(a => {
-          const model = this.getEffectiveModel(a);
-          const current = a === this.config.defaultAgent ? ' ← current' : '';
-          return `${a} (${model})${current}`;
-        }).join('\n');
-        await this.sendResponse({
-          chatId,
-          channel,
-          text: `Available agents:\n${agentsList}\n\nSwitch with: /agent <name>`,
-        });
+        await this.cmdAgents(chatId, channel);
         break;
-
       case 'parallel':
       case 'all':
-        // Run all agents in parallel
         await this.runParallelAgents(message, parsed.prompt);
         break;
-
       case 'config':
-        await this.sendResponse({
-          chatId,
-          channel,
-          text: `📋 Current Settings\n\n` +
-            `Agent: ${this.config.defaultAgent}\n` +
-            `Model: ${this.getEffectiveModel()}\n\n` +
-            `Configure via CLI: npm run configure`,
-        });
+        await this.cmdConfig(chatId, channel);
         break;
-
       case 'workers':
-        await this.sendResponse({
-          chatId,
-          channel,
-          text: `👥 Available Workers\n\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
-        });
+        await this.cmdWorkers(chatId, channel);
         break;
-
       case 'worker':
-        // Run a specific worker: /worker architect design a REST API
-        if (args.length > 0) {
-          const workerName = args[0];
-          const task = args.slice(1).join(' ');
-          await this.runWorker(message, workerName, task || parsed.prompt);
-        } else {
-          await this.sendResponse({
-            chatId,
-            channel,
-            text: `Usage: /worker <name> <task>\n\nAvailable workers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
-          });
-        }
+        await this.cmdWorker(args, message, parsed.prompt);
         break;
-
       case 'team':
-        // Run multiple workers in sequence based on relationships
         await this.runTeamTask(message, parsed.prompt);
         break;
-
       case 'workspace':
       case 'ws':
-        if (args.length > 0) {
-          const workspaceArg = args.join(' ');
-          const fs = require('fs');
-          const resolvedDir = path.resolve(workspaceArg);
-
-          // If it's a path (relative or absolute) to a directory, find or create workspace
-          if (fs.existsSync(resolvedDir) && fs.statSync(resolvedDir).isDirectory()) {
-            const ws = await this.workspaceManager.findOrCreateByDir(resolvedDir);
-            this.workingDir = resolvedDir;
-            await this.sendResponse({
-              chatId,
-              channel,
-              text: `✅ Switched to workspace: **${ws}**\nDir: ${resolvedDir}\n\nWorkers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
-            });
-          } else {
-            // Try as workspace name
-            const success = await this.switchWorkspace(workspaceArg);
-            if (success) {
-              this.workingDir = this.workspaceManager.getWorkingDir();
-              await this.sendResponse({
-                chatId,
-                channel,
-                text: `✅ Switched to workspace: **${workspaceArg}**\nDir: ${this.workingDir}\n\nWorkers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
-              });
-            } else {
-              const list = this.workspaceManager.listWorkspaces().join(', ');
-              await this.sendResponse({
-                chatId,
-                channel,
-                text: `Workspace "${workspaceArg}" not found.\n\nAvailable workspaces: ${list}`,
-              });
-            }
-          }
-        } else {
-          await this.sendResponse({
-            chatId,
-            channel,
-            text: `📁 Current workspace: **${this.workspaceManager.getCurrentWorkspace()}**\nDir: ${this.workingDir}\n\nWorkers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
-          });
-        }
+        await this.cmdWorkspace(args, chatId, channel);
         break;
-
       case 'workspaces':
       case 'wss':
-        const workspacesList = this.workspaceManager.listWorkspaces().join(', ');
+        await this.cmdWorkspaces(chatId, channel);
+        break;
+      case 'cwd':
+      case 'dir':
+        await this.cmdCwd(args, chatId, channel);
+        break;
+      default:
+        return;
+    }
+  }
+
+  private async cmdStart(chatId: string, channel: string): Promise<void> {
+    const agents = this.getEnabledAgents().join(', ');
+    const workspace = this.workspaceManager.getCurrentWorkspace();
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: [
+        `Welcome to Codey!`,
+        ``,
+        `Codey routes your prompts to coding agents that can read, write, and refactor code in your projects.`,
+        ``,
+        `**Current Config**`,
+        `Agent: ${this.config.defaultAgent}`,
+        `Model: ${this.getEffectiveModel()}`,
+        `Agents: ${agents}`,
+        `Workspace: ${workspace}`,
+        `Working dir: ${this.workingDir}`,
+        ``,
+        `**What I can do**`,
+        `- Send any message to get coding help from the active agent`,
+        `- /worker <name> <task> — run a specific worker`,
+        `- /team <task> — run workers in sequence`,
+        `- /parallel <prompt> — run all agents in parallel`,
+        `- /agent <name> — switch agent (${agents})`,
+        `- /workspace <name> — switch workspace`,
+        `- /model <name> — change model`,
+        `- /status — view gateway status`,
+        `- /help — full command list`,
+      ].join('\n'),
+    });
+  }
+
+  private async cmdHelp(chatId: string, channel: string): Promise<void> {
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: this.getHelpText(),
+    });
+  }
+
+  private async cmdStatus(chatId: string, channel: string): Promise<void> {
+    const status = this.getHealthStatus();
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `📊 Gateway Status\n\n` +
+        `Uptime: ${this.formatUptime(status.uptime)}\n` +
+        `Messages: ${status.stats.messagesProcessed}\n` +
+        `Errors: ${status.stats.errors}\n` +
+        `Default Agent: ${this.config.defaultAgent}\n` +
+        `Default Model: ${this.getEffectiveModel()}`,
+    });
+  }
+
+  private async cmdClear(chatId: string, channel: string): Promise<void> {
+    if (this.conversationId) {
+      this.conversationManager.clear(this.conversationId);
+    }
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: '🗑️ Conversation history cleared.',
+    });
+  }
+
+  private async cmdReset(chatId: string, channel: string): Promise<void> {
+    this.resetSession();
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: '🔄 Conversation reset. Starting fresh.',
+    });
+  }
+
+  private async cmdModel(args: string[], chatId: string, channel: string): Promise<void> {
+    if (args.length > 0) {
+      const model = args.join(' ');
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `Model override is set per-session. Your next prompt will use: ${model}\n\n` +
+          `To change default model permanently, use: /config set-model ${model}`,
+      });
+    } else {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `Current default model: ${this.getEffectiveModel()}`,
+      });
+    }
+  }
+
+  private async cmdAgent(args: string[], chatId: string, channel: string): Promise<void> {
+    if (args.length > 0) {
+      const agentName = args[0].toLowerCase();
+      const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex'];
+      if (validAgents.includes(agentName as CodingAgent)) {
+        this.config.defaultAgent = agentName as CodingAgent;
+        this.resetSession();
+        const model = this.getEffectiveModel(agentName as CodingAgent);
         await this.sendResponse({
           chatId,
           channel,
-          text: `📁 Available workspaces:\n\n${workspacesList}\n\nSwitch with: /workspace <name>`,
+          text: `✅ Switched to agent: **${agentName}**\nModel: ${model}`,
         });
-        break;
+      } else {
+        await this.sendResponse({
+          chatId,
+          channel,
+          text: `Unknown agent: ${agentName}\n\nAvailable: claude-code, opencode, codex`,
+        });
+      }
+    } else {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `Current agent: **${this.config.defaultAgent}**\nModel: ${this.getEffectiveModel()}\n\nSwitch with: /agent <name>`,
+      });
+    }
+  }
 
-      case 'cwd':
-      case 'dir':
-        if (args.length > 0) {
-          const targetDir = args.join(' ');
-          const fs = require('fs');
-          const resolvedDir = path.resolve(targetDir);
-          if (fs.existsSync(resolvedDir) && fs.statSync(resolvedDir).isDirectory()) {
-            const ws = await this.workspaceManager.findOrCreateByDir(resolvedDir);
-            this.workingDir = resolvedDir;
-            await this.sendResponse({
-              chatId,
-              channel,
-              text: `📂 Working directory set to: ${resolvedDir}\n📁 Workspace: **${ws}**`,
-            });
-          } else {
-            await this.sendResponse({
-              chatId,
-              channel,
-              text: `Directory not found: ${resolvedDir}`,
-            });
-          }
-        } else {
+  private async cmdAgents(chatId: string, channel: string): Promise<void> {
+    const agentsList = this.getEnabledAgents().map(a => {
+      const model = this.getEffectiveModel(a);
+      const current = a === this.config.defaultAgent ? ' ← current' : '';
+      return `${a} (${model})${current}`;
+    }).join('\n');
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `Available agents:\n${agentsList}\n\nSwitch with: /agent <name>`,
+    });
+  }
+
+  private async cmdConfig(chatId: string, channel: string): Promise<void> {
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `📋 Current Settings\n\n` +
+        `Agent: ${this.config.defaultAgent}\n` +
+        `Model: ${this.getEffectiveModel()}\n\n` +
+        `Configure via CLI: npm run configure`,
+    });
+  }
+
+  private async cmdWorkers(chatId: string, channel: string): Promise<void> {
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `👥 Available Workers\n\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
+    });
+  }
+
+  private async cmdWorker(args: string[], message: UserMessage, prompt: string): Promise<void> {
+    const { chatId, channel } = message;
+    if (args.length > 0) {
+      const workerName = args[0];
+      const task = args.slice(1).join(' ');
+      await this.runWorker(message, workerName, task || prompt);
+    } else {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `Usage: /worker <name> <task>\n\nAvailable workers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
+      });
+    }
+  }
+
+  private async cmdWorkspace(args: string[], chatId: string, channel: string): Promise<void> {
+    if (args.length > 0) {
+      const workspaceArg = args.join(' ');
+      const result = await this.resolveDirectory(workspaceArg);
+      
+      if (result.success && result.workspace) {
+        await this.sendResponse({
+          chatId,
+          channel,
+          text: `✅ Switched to workspace: **${result.workspace}**\nDir: ${result.directory}\n\nWorkers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
+        });
+      } else if (result.isWorkspaceName) {
+        const success = await this.switchWorkspace(workspaceArg);
+        if (success) {
+          this.workingDir = this.workspaceManager.getWorkingDir();
           await this.sendResponse({
             chatId,
             channel,
-            text: `📂 Working directory: ${this.workingDir}`,
+            text: `✅ Switched to workspace: **${workspaceArg}**\nDir: ${this.workingDir}\n\nWorkers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
+          });
+        } else {
+          const list = this.workspaceManager.listWorkspaces().join(', ');
+          await this.sendResponse({
+            chatId,
+            channel,
+            text: `Workspace "${workspaceArg}" not found.\n\nAvailable workspaces: ${list}`,
           });
         }
-        break;
+      } else {
+        const list = this.workspaceManager.listWorkspaces().join(', ');
+        await this.sendResponse({
+          chatId,
+          channel,
+          text: `Directory or workspace "${workspaceArg}" not found.\n\nAvailable workspaces: ${list}`,
+        });
+      }
+    } else {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `📁 Current workspace: **${this.workspaceManager.getCurrentWorkspace()}**\nDir: ${this.workingDir}\n\nWorkers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
+      });
+    }
+  }
 
-      default:
-        // Not a command, process as prompt
-        return;
+  private async cmdWorkspaces(chatId: string, channel: string): Promise<void> {
+    const workspacesList = this.workspaceManager.listWorkspaces().join(', ');
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `📁 Available workspaces:\n\n${workspacesList}\n\nSwitch with: /workspace <name>`,
+    });
+  }
+
+  private async cmdCwd(args: string[], chatId: string, channel: string): Promise<void> {
+    if (args.length > 0) {
+      const targetDir = args.join(' ');
+      const result = await this.resolveDirectory(targetDir);
+      if (result.success) {
+        await this.sendResponse({
+          chatId,
+          channel,
+          text: `📂 Working directory set to: ${result.directory}\n📁 Workspace: **${result.workspace}**`,
+        });
+      } else {
+        await this.sendResponse({
+          chatId,
+          channel,
+          text: `Directory not found: ${result.directory}`,
+        });
+      }
+    } else {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `📂 Working directory: ${this.workingDir}`,
+      });
     }
   }
 
@@ -669,7 +771,7 @@ Example: /model gpt-4.1 write a Python script`;
       }
     }
 
-    await this.sendResponseWithChunking({
+    await this.sendResponse({
       chatId,
       channel,
       text: responseText,
@@ -740,7 +842,7 @@ Example: /model gpt-4.1 write a Python script`;
       ? `✅ **${worker.name}** completed:\n\n${response.output}${tokenInfo}${durationInfo}`
       : `❌ **${worker.name}** failed: ${response.error}`;
 
-    await this.sendResponseWithChunking({
+    await this.sendResponse({
       chatId,
       channel,
       text: replyText,
@@ -817,7 +919,7 @@ Example: /model gpt-4.1 write a Python script`;
       }
     }
 
-    await this.sendResponseWithChunking({
+    await this.sendResponse({
       chatId,
       channel,
       text: `📊 Team Results\n\n${results.join('\n\n')}`,
@@ -970,14 +1072,36 @@ Example: /model gpt-4.1 write a Python script`;
     return undefined;
   }
 
+  private async resolveDirectory(dirPath: string): Promise<DirectoryResolveResult> {
+    const fs = require('fs');
+    const resolvedDir = path.resolve(dirPath);
+
+    if (fs.existsSync(resolvedDir) && fs.statSync(resolvedDir).isDirectory()) {
+      const workspace = await this.workspaceManager.findOrCreateByDir(resolvedDir);
+      this.workingDir = resolvedDir;
+      return { success: true, directory: resolvedDir, workspace };
+    }
+
+    // Check if it's a workspace name
+    const workspaces = this.workspaceManager.listWorkspaces();
+    const isWorkspaceName = workspaces.some(ws => ws.toLowerCase() === dirPath.toLowerCase());
+
+    return { success: false, isWorkspaceName };
+  }
+
   private async sendResponse(response: GatewayResponse): Promise<void> {
     const handler = this.handlers.get(response.channel);
-    if (handler) {
-      try {
+    if (!handler) return;
+
+    try {
+      // Auto-chunking for long messages
+      if (response.text.length > this.MAX_MESSAGE_LENGTH) {
+        await this.sendResponseWithChunking(response);
+      } else {
         await handler.sendMessage(response);
-      } catch (error) {
-        this.logger.error(`Error sending response: ${error}`);
       }
+    } catch (error) {
+      this.logger.error(`Error sending response: ${error}`);
     }
   }
 

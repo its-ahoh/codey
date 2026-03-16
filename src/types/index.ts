@@ -90,4 +90,5 @@ export interface GatewayConfig {
     'opencode'?: AgentModelConfig;
     'codex'?: AgentModelConfig;
   };
+  rateLimitMs?: number; // Rate limit in ms (default: 3000)
 }

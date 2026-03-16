@@ -169,8 +169,8 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
         safeResolve(this.createResponse(err.message, false, undefined, duration));
       });
 
-      // Timeout (default 5 minutes)
-      const timeout = request.timeout || 300000;
+      // Timeout (default 15 minutes)
+      const timeout = request.timeout || 900000;
       setTimeout(() => {
         if (!resolved) {
           childProcess.kill();
