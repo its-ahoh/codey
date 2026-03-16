@@ -1,7 +1,10 @@
+// Channel type
+export type ChannelType = 'telegram' | 'discord' | 'imessage' | 'tui';
+
 // Message from a user
 export interface UserMessage {
   id: string;
-  channel: 'telegram' | 'discord' | 'imessage' | 'tui';
+  channel: ChannelType;
   userId: string;
   username: string;
   chatId: string;
@@ -12,7 +15,7 @@ export interface UserMessage {
 // Response to send back to user
 export interface GatewayResponse {
   chatId: string;
-  channel: 'telegram' | 'discord' | 'imessage' | 'tui';
+  channel: ChannelType;
   text: string;
   replyTo?: string;
 }

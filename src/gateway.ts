@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { AgentRequest, AgentResponse, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig } from './types';
+import { AgentRequest, AgentResponse, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType } from './types';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
 import { AgentFactory } from './agents';
 import { Logger } from './logger';
@@ -437,7 +437,7 @@ export class Codey {
     }
   }
 
-  private async cmdStart(chatId: string, channel: string): Promise<void> {
+  private async cmdStart(chatId: string, channel: ChannelType): Promise<void> {
     const agents = this.getEnabledAgents().join(', ');
     const workspace = this.workspaceManager.getCurrentWorkspace();
     await this.sendResponse({
@@ -469,7 +469,7 @@ export class Codey {
     });
   }
 
-  private async cmdHelp(chatId: string, channel: string): Promise<void> {
+  private async cmdHelp(chatId: string, channel: ChannelType): Promise<void> {
     await this.sendResponse({
       chatId,
       channel,
@@ -477,7 +477,7 @@ export class Codey {
     });
   }
 
-  private async cmdStatus(chatId: string, channel: string): Promise<void> {
+  private async cmdStatus(chatId: string, channel: ChannelType): Promise<void> {
     const status = this.getHealthStatus();
     await this.sendResponse({
       chatId,
@@ -491,7 +491,7 @@ export class Codey {
     });
   }
 
-  private async cmdClear(chatId: string, channel: string): Promise<void> {
+  private async cmdClear(chatId: string, channel: ChannelType): Promise<void> {
     if (this.conversationId) {
       this.conversationManager.clear(this.conversationId);
     }
@@ -502,7 +502,7 @@ export class Codey {
     });
   }
 
-  private async cmdReset(chatId: string, channel: string): Promise<void> {
+  private async cmdReset(chatId: string, channel: ChannelType): Promise<void> {
     this.resetSession();
     await this.sendResponse({
       chatId,
@@ -511,7 +511,7 @@ export class Codey {
     });
   }
 
-  private async cmdModel(args: string[], chatId: string, channel: string): Promise<void> {
+  private async cmdModel(args: string[], chatId: string, channel: ChannelType): Promise<void> {
     if (args.length > 0) {
       const model = args.join(' ');
       await this.sendResponse({
@@ -529,7 +529,7 @@ export class Codey {
     }
   }
 
-  private async cmdAgent(args: string[], chatId: string, channel: string): Promise<void> {
+  private async cmdAgent(args: string[], chatId: string, channel: ChannelType): Promise<void> {
     if (args.length > 0) {
       const agentName = args[0].toLowerCase();
       const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex'];
@@ -558,7 +558,7 @@ export class Codey {
     }
   }
 
-  private async cmdAgents(chatId: string, channel: string): Promise<void> {
+  private async cmdAgents(chatId: string, channel: ChannelType): Promise<void> {
     const agentsList = this.getEnabledAgents().map(a => {
       const model = this.getEffectiveModel(a);
       const current = a === this.config.defaultAgent ? ' ← current' : '';
@@ -571,7 +571,7 @@ export class Codey {
     });
   }
 
-  private async cmdConfig(chatId: string, channel: string): Promise<void> {
+  private async cmdConfig(chatId: string, channel: ChannelType): Promise<void> {
     await this.sendResponse({
       chatId,
       channel,
@@ -582,7 +582,7 @@ export class Codey {
     });
   }
 
-  private async cmdWorkers(chatId: string, channel: string): Promise<void> {
+  private async cmdWorkers(chatId: string, channel: ChannelType): Promise<void> {
     await this.sendResponse({
       chatId,
       channel,
@@ -605,7 +605,7 @@ export class Codey {
     }
   }
 
-  private async cmdWorkspace(args: string[], chatId: string, channel: string): Promise<void> {
+  private async cmdWorkspace(args: string[], chatId: string, channel: ChannelType): Promise<void> {
     if (args.length > 0) {
       const workspaceArg = args.join(' ');
       const result = await this.resolveDirectory(workspaceArg);
@@ -650,7 +650,7 @@ export class Codey {
     }
   }
 
-  private async cmdWorkspaces(chatId: string, channel: string): Promise<void> {
+  private async cmdWorkspaces(chatId: string, channel: ChannelType): Promise<void> {
     const workspacesList = this.workspaceManager.listWorkspaces().join(', ');
     await this.sendResponse({
       chatId,
@@ -659,7 +659,7 @@ export class Codey {
     });
   }
 
-  private async cmdCwd(args: string[], chatId: string, channel: string): Promise<void> {
+  private async cmdCwd(args: string[], chatId: string, channel: ChannelType): Promise<void> {
     if (args.length > 0) {
       const targetDir = args.join(' ');
       const result = await this.resolveDirectory(targetDir);
