@@ -1,97 +1,55 @@
-// Channel type
-export type ChannelType = 'telegram' | 'discord' | 'imessage' | 'tui';
-
-// Message from a user
-export interface UserMessage {
-  id: string;
-  channel: ChannelType;
-  userId: string;
-  username: string;
-  chatId: string;
-  text: string;
-  timestamp: number;
-}
-
-// Response to send back to user
-export interface GatewayResponse {
-  chatId: string;
-  channel: ChannelType;
-  text: string;
-  replyTo?: string;
-}
-
-// Coding agent types
-export type CodingAgent = 'claude-code' | 'opencode' | 'codex';
-
-// Model configuration for agents
-export interface ModelConfig {
-  provider: string;
-  model: string;
-  apiKey?: string;
-  baseUrl?: string;
-}
-
-export interface AgentRequest {
-  prompt: string;
-  agent: CodingAgent;
-  model?: ModelConfig;
-  timeout?: number;
-  interactive?: boolean;
-  onStream?: (text: string) => void;
-  context?: {
-    files?: string[];
-    workingDir?: string;
-  };
-}
-
-export interface AgentResponse {
-  success: boolean;
-  output: string;
-  error?: string;
-  tokens?: {
-    total: number;
-    input: number;
-    output: number;
-    reasoning?: number;
-    cache?: {
-      read: number;
-      write: number;
-    };
-  };
-  duration?: number; // in seconds
-}
-
-// Channel configuration
-export interface ChannelConfig {
-  telegram?: {
-    botToken: string;
-    notifyChatId?: string;
-  };
-  discord?: {
-    botToken: string;
-    guildId?: string;
-  };
-  imessage?: {
-    enabled: boolean;
-  };
-}
-
-// Per-agent model configuration
-export interface AgentModelConfig {
-  enabled?: boolean;
-  defaultModel?: string;
-  models?: ModelConfig[];
-}
-
-// Gateway configuration
 export interface GatewayConfig {
-  port: number;
-  channels: ChannelConfig;
-  defaultAgent: CodingAgent;
-  agents?: {
-    'claude-code'?: AgentModelConfig;
-    'opencode'?: AgentModelConfig;
-    'codex'?: AgentModelConfig;
+  gateway: {
+    port: number;
+    defaultAgent: string;
   };
-  rateLimitMs?: number; // Rate limit in ms (default: 3000)
+  channels: {
+    telegram?: { enabled: boolean; botToken: string; notifyChatId?: string };
+    discord?: { enabled: boolean; botToken: string };
+    imessage?: { enabled: boolean };
+  };
+  agents: {
+    'claude-code'?: AgentConfig;
+    'opencode'?: AgentConfig;
+    'codex'?: AgentConfig;
+  };
+  apiKeys: {
+    anthropic?: string;
+    openai?: string;
+    google?: string;
+  };
+  dev: {
+    logLevel: 'debug' | 'info' | 'warn' | 'error';
+  };
+}
+
+export interface AgentConfig {
+  enabled: boolean;
+  defaultModel: string;
+  models: { provider: string; model: string }[];
+}
+
+export interface GatewayStatus {
+  status: 'healthy' | 'degraded' | 'stopped';
+  uptime: number;
+  messagesProcessed: number;
+  errors: number;
+  channels: {
+    telegram: boolean;
+    discord: boolean;
+    imessage: boolean;
+  };
+}
+
+export interface Workspace {
+  name: string;
+  path: string;
+  isActive: boolean;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
 }
