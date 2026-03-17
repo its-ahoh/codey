@@ -12,6 +12,7 @@
     "react-native": "0.79.0"
   },
   "devDependencies": {
+    "@react-native-community/cli": "latest",
     "@types/react": "^19.0.0",
     "typescript": "^5.0.0"
   }
