@@ -1,0 +1,18 @@
+{
+  "name": "codey-mac",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "react-native start",
+    "macos": "react-native run-macos",
+    "build": "react-native build-macos"
+  },
+  "dependencies": {
+    "react": "19.0.0",
+    "react-native": "0.79.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "typescript": "^5.0.0"
+  }
+}
