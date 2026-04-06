@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
-import { AgentRequest, AgentResponse, ModelConfig } from '../types';
+import { AgentRequest, AgentResponse, AgentStateEntry } from '../types';
 import { BaseAgentAdapter } from './base';
 import { Logger } from '../logger';
 
@@ -10,10 +10,33 @@ interface StreamEvent {
   // result event
   result?: string;
   is_error?: boolean;
+  total_cost_usd?: number;
+  duration_ms?: number;
+  duration_api_ms?: number;
+  num_turns?: number;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
   // assistant event
   message?: {
-    content: Array<{ type: string; text?: string }>;
+    content: Array<{
+      type: string;
+      text?: string;
+      name?: string;       // tool_use block: tool name
+      id?: string;         // tool_use block: call id
+      input?: Record<string, unknown>; // tool_use block: input
+    }>;
   };
+  // tool_result event
+  content?: Array<{
+    type: string;
+    text?: string;
+    content?: string;
+  }>;
+  tool_use_id?: string;
 }
 
 export class ClaudeCodeAdapter extends BaseAgentAdapter {
@@ -86,11 +109,18 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         childProcess.stdin?.end();
       }
 
+      const startTime = Date.now();
       let resolved = false;
       let result = '';
       let streamedText = '';
       let buffer = '';
       let stderr = '';
+      let tokens: AgentResponse['tokens'];
+      let durationSec: number | undefined;
+      const statusUpdates: string[] = [];
+      const states: AgentStateEntry[] = [];
+      // Track pending tool_use calls by id so we can pair them with tool_result
+      const pendingTools = new Map<string, { name: string; input?: Record<string, unknown> }>();
 
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
@@ -109,14 +139,63 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
             if (block.type === 'text' && block.text) {
               streamedText += block.text;
               request.onStream?.(block.text);
+            } else if (block.type === 'tool_use' && block.name) {
+              // Tool invocation — record it
+              const toolName = block.name;
+              if (block.id) {
+                pendingTools.set(block.id, { name: toolName, input: block.input });
+              }
+              statusUpdates.push(`${toolName}: running`);
+              states.push({
+                source: toolName,
+                status: 'running',
+                input: block.input,
+              });
             }
           }
+        } else if (event.type === 'tool_result' || (event.type === 'user' && event.tool_use_id)) {
+          // Tool result — match to pending call
+          const toolId = event.tool_use_id;
+          const pending = toolId ? pendingTools.get(toolId) : undefined;
+          const toolName = pending?.name || 'tool';
+          const resultText = event.content
+            ?.map(c => c.text || c.content || '')
+            .filter(Boolean)
+            .join('\n');
+
+          statusUpdates.push(`${toolName}: done`);
+          states.push({
+            source: toolName,
+            status: 'done',
+            input: pending?.input,
+            output: resultText ? resultText.substring(0, 1000) : undefined,
+          });
+
+          if (toolId) pendingTools.delete(toolId);
         } else if (event.type === 'result') {
           if (event.session_id) {
             this.sessionId = event.session_id;
           }
           if (event.result) {
             result = event.result;
+          }
+          if (event.usage) {
+            const input = event.usage.input_tokens;
+            const output = event.usage.output_tokens;
+            tokens = {
+              total: input + output,
+              input,
+              output,
+              cache: (event.usage.cache_read_input_tokens || event.usage.cache_creation_input_tokens)
+                ? {
+                    read: event.usage.cache_read_input_tokens || 0,
+                    write: event.usage.cache_creation_input_tokens || 0,
+                  }
+                : undefined,
+            };
+          }
+          if (event.duration_ms != null) {
+            durationSec = Math.round(event.duration_ms / 1000);
           }
         }
       };
@@ -154,21 +233,24 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
 
         // Use result from result event, fall back to accumulated streamed text
         const output = result || streamedText;
+        // Fall back to wall-clock duration if the result event didn't include one
+        const finalDuration = durationSec ?? Math.round((Date.now() - startTime) / 1000);
 
         if (code === 0 && output) {
-          safeResolve(this.createResponse(output));
+          safeResolve(this.createResponse(output, true, tokens, finalDuration, statusUpdates, states));
         } else {
           // Clear session on failure to avoid "session already in use" errors
           this.sessionId = undefined;
           const error = stderr || (code !== 0 ? `Claude Code exited with code ${code}` : 'Claude Code returned empty response');
           this.logger.debug(`[claude-code] Error: ${error}`);
-          safeResolve(this.createResponse(error, false));
+          safeResolve(this.createResponse(error, false, undefined, finalDuration, statusUpdates, states));
         }
       });
 
       childProcess.on('error', (err: Error) => {
+        const duration = Math.round((Date.now() - startTime) / 1000);
         this.logger.debug(`[claude-code] Spawn error: ${err.message}`);
-        safeResolve(this.createResponse(err.message, false));
+        safeResolve(this.createResponse(err.message, false, undefined, duration));
       });
 
       // Safety timeout so we don't hang forever if the CLI never responds.
@@ -177,7 +259,8 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       setTimeout(() => {
         if (!resolved) {
           childProcess.kill();
-          safeResolve(this.createResponse(`Timeout after ${Math.round(timeout / 60000)} minutes`, false));
+          const duration = Math.round((Date.now() - startTime) / 1000);
+          safeResolve(this.createResponse(`Timeout after ${Math.round(timeout / 60000)} minutes`, false, undefined, duration));
         }
       }, timeout);
     });
