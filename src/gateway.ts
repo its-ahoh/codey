@@ -97,14 +97,6 @@ export class Codey {
     this.logger.info(`[Config] Applied: agent=${config.defaultAgent}, model=${this.getEffectiveModel()}`);
   }
 
-  getWorkspaceList(): string[] {
-    return this.workspaceManager.listWorkspaces();
-  }
-
-  async switchWorkspaceByName(name: string): Promise<boolean> {
-    return this.switchWorkspace(name);
-  }
-
   private async switchWorkspace(workspaceId: string): Promise<boolean> {
     const success = await this.workspaceManager.switchWorkspace(workspaceId);
     if (success) {
@@ -375,27 +367,8 @@ export class Codey {
 
   private formatAgentResponse(response: AgentResponse): string {
     if (!response.success) {
-      const statusInfo = response.statusUpdates?.length
-        ? `\n\n📡 Status Updates:\n${response.statusUpdates.map((s) => `- ${s}`).join('\n')}`
-        : '';
-      const stateInfo = response.states?.length
-        ? `\n\n🧭 States:\n${response.states.slice(0, 5).map((state) => {
-          const status = state.status ? `status=${state.status}` : 'status=unknown';
-          return `- ${state.source}: ${status}`;
-        }).join('\n')}`
-        : '';
-      return `❌ Error: ${response.error}${statusInfo}${stateInfo}`;
+      return `❌ Error: ${response.error}`;
     }
-
-    const statusInfo = response.statusUpdates?.length
-      ? `\n\n📡 Status Updates:\n${response.statusUpdates.map((s) => `- ${s}`).join('\n')}`
-      : '';
-    const stateInfo = response.states?.length
-      ? `\n\n🧭 States:\n${response.states.slice(0, 5).map((state) => {
-        const status = state.status ? `status=${state.status}` : 'status=unknown';
-        return `- ${state.source}: ${status}`;
-      }).join('\n')}`
-      : '';
 
     const tokenInfo = response.tokens
       ? `\n\n📊 Tokens: ${response.tokens.total.toLocaleString()} (in: ${response.tokens.input}, out: ${response.tokens.output})`
@@ -404,7 +377,7 @@ export class Codey {
       ? `\n⏱️ Time: ${response.duration}s`
       : '';
 
-    return response.output + statusInfo + stateInfo + tokenInfo + durationInfo;
+    return response.output + tokenInfo + durationInfo;
   }
 
   private async handleCommand(message: UserMessage, parsed: ParsedCommand): Promise<void> {
