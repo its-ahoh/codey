@@ -44,6 +44,13 @@ export interface AgentRequest {
   };
 }
 
+export interface AgentStateEntry {
+  source: string;
+  status?: string;
+  input?: Record<string, unknown>;
+  output?: unknown;
+}
+
 export interface AgentResponse {
   success: boolean;
   output: string;
@@ -59,6 +66,8 @@ export interface AgentResponse {
     };
   };
   duration?: number; // in seconds
+  statusUpdates?: string[];
+  states?: AgentStateEntry[];
 }
 
 // Channel configuration
