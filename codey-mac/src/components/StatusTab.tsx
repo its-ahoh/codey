@@ -1,89 +1,160 @@
-import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
-import { GatewayStatus } from '../types';
+import React from 'react'
+import { GatewayStatus } from '../types'
 
 interface StatusTabProps {
-  status: GatewayStatus;
-  logs: string[];
-  isRunning: boolean;
-  onToggle: () => void;
+  status: GatewayStatus
+  logs: string[]
+  isRunning: boolean
+  onToggle: () => void
 }
 
 const formatUptime = (seconds: number): string => {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  return `${h}h ${m}m ${s}s`;
-};
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  return `${h}h ${m}m ${s}s`
+}
 
 export const StatusTab: React.FC<StatusTabProps> = ({ status, logs, isRunning, onToggle }) => {
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Gateway Status</Text>
-        <TouchableOpacity
-          style={[styles.toggleButton, isRunning ? styles.stopButton : styles.startButton]}
-          onPress={onToggle}
+    <div style={styles.container}>
+      <div style={styles.header}>
+        <span style={styles.title}>Gateway Status</span>
+        <button
+          style={{
+            ...styles.toggleButton,
+            ...(isRunning ? styles.stopButton : styles.startButton)
+          }}
+          onClick={onToggle}
         >
-          <Text style={styles.toggleText}>{isRunning ? 'Stop' : 'Start'}</Text>
-        </TouchableOpacity>
-      </View>
+          {isRunning ? 'Stop' : 'Start'}
+        </button>
+      </div>
 
-      <View style={styles.statsGrid}>
-        <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Status</Text>
-          <Text style={[styles.statValue, isRunning ? styles.running : styles.stopped]}>
+      <div style={styles.statsGrid}>
+        <div style={styles.statItem}>
+          <div style={styles.statLabel}>Status</div>
+          <div style={{
+            ...styles.statValue,
+            ...(isRunning ? styles.running : styles.stopped)
+          }}>
             {isRunning ? 'Running' : 'Stopped'}
-          </Text>
-        </View>
-        <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Uptime</Text>
-          <Text style={styles.statValue}>{isRunning ? formatUptime(status.uptime) : '-'}</Text>
-        </View>
-        <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Messages</Text>
-          <Text style={styles.statValue}>{status.messagesProcessed}</Text>
-        </View>
-        <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Errors</Text>
-          <Text style={styles.statValue}>{status.errors}</Text>
-        </View>
-      </View>
+          </div>
+        </div>
+        <div style={styles.statItem}>
+          <div style={styles.statLabel}>Uptime</div>
+          <div style={styles.statValue}>{isRunning ? formatUptime(status.uptime) : '-'}</div>
+        </div>
+        <div style={styles.statItem}>
+          <div style={styles.statLabel}>Messages</div>
+          <div style={styles.statValue}>{status.messagesProcessed}</div>
+        </div>
+        <div style={styles.statItem}>
+          <div style={styles.statLabel}>Errors</div>
+          <div style={styles.statValue}>{status.errors}</div>
+        </div>
+      </div>
 
-      <Text style={styles.sectionTitle}>Channels</Text>
-      <View style={styles.channels}>
-        <Text style={styles.channel}>Telegram: {status.channels.telegram ? '✓' : '✗'}</Text>
-        <Text style={styles.channel}>Discord: {status.channels.discord ? '✓' : '✗'}</Text>
-        <Text style={styles.channel}>iMessage: {status.channels.imessage ? '✓' : '✗'}</Text>
-      </View>
+      <div style={styles.sectionTitle}>Channels</div>
+      <div style={styles.channels}>
+        <span style={styles.channel}>Telegram: {status.channels.telegram ? '✓' : '✗'}</span>
+        <span style={styles.channel}>Discord: {status.channels.discord ? '✓' : '✗'}</span>
+        <span style={styles.channel}>iMessage: {status.channels.imessage ? '✓' : '✗'}</span>
+      </div>
 
-      <Text style={styles.sectionTitle}>Logs</Text>
-      <ScrollView style={styles.logs}>
+      <div style={styles.sectionTitle}>Logs</div>
+      <div style={styles.logs}>
         {logs.map((log, index) => (
-          <Text key={index} style={styles.logLine}>{log}</Text>
+          <div key={index} style={styles.logLine}>{log}</div>
         ))}
-      </ScrollView>
-    </View>
-  );
-};
+      </div>
+    </div>
+  )
+}
 
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  title: { fontSize: 20, fontWeight: '600', color: '#fff' },
-  toggleButton: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
-  startButton: { backgroundColor: '#4CAF50' },
-  stopButton: { backgroundColor: '#f44336' },
-  toggleText: { color: '#fff', fontWeight: '600' },
-  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 20 },
-  statItem: { width: '50%', paddingVertical: 8 },
-  statLabel: { color: '#888', fontSize: 12 },
-  statValue: { color: '#fff', fontSize: 18, fontWeight: '600' },
-  running: { color: '#4CAF50' },
-  stopped: { color: '#9E9E9E' },
-  sectionTitle: { color: '#888', fontSize: 14, marginBottom: 8, marginTop: 12 },
-  channels: { flexDirection: 'row', gap: 16 },
-  channel: { color: '#ccc' },
-  logs: { flex: 1, backgroundColor: '#1a1a1a', borderRadius: 8, padding: 12 },
-  logLine: { color: '#888', fontSize: 11, fontFamily: 'monospace' },
-});
+const styles: Record<string, React.CSSProperties> = {
+  container: {
+    flex: 1,
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100%',
+    boxSizing: 'border-box',
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '20px',
+  },
+  title: {
+    fontSize: '20px',
+    fontWeight: '600',
+    color: '#fff',
+  },
+  toggleButton: {
+    padding: '10px 20px',
+    borderRadius: '8px',
+    border: 'none',
+    cursor: 'pointer',
+    fontWeight: '600',
+    color: '#fff',
+  },
+  startButton: {
+    backgroundColor: '#4CAF50',
+  },
+  stopButton: {
+    backgroundColor: '#f44336',
+  },
+  statsGrid: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    marginBottom: '20px',
+  },
+  statItem: {
+    width: '50%',
+    padding: '8px 0',
+    boxSizing: 'border-box',
+  },
+  statLabel: {
+    color: '#888',
+    fontSize: '12px',
+  },
+  statValue: {
+    color: '#fff',
+    fontSize: '18px',
+    fontWeight: '600',
+  },
+  running: {
+    color: '#4CAF50',
+  },
+  stopped: {
+    color: '#9E9E9E',
+  },
+  sectionTitle: {
+    color: '#888',
+    fontSize: '14px',
+    marginBottom: '8px',
+    marginTop: '12px',
+  },
+  channels: {
+    display: 'flex',
+    gap: '16px',
+  },
+  channel: {
+    color: '#ccc',
+  },
+  logs: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+    borderRadius: '8px',
+    padding: '12px',
+    overflowY: 'auto',
+    fontFamily: 'monospace',
+    fontSize: '11px',
+    color: '#888',
+  },
+  logLine: {
+    marginBottom: '4px',
+  },
+}

@@ -4,7 +4,7 @@ import { Logger } from './logger';
 import { handleCommand } from './cli';
 import { GatewayConfig } from './types';
 import { Codey } from './gateway';
-import { HealthServer, HealthStatusType } from './health';
+import { ApiServer, HealthStatusType } from './health';
 
 dotenv.config();
 
@@ -69,22 +69,44 @@ function startGateway(): void {
 
     const gateway = new Codey(gatewayConfig, logger, './workspaces');
 
-    // Start health server on port + 1
-    const healthPort = configManager.getPort() + 1;
-    const healthServer = new HealthServer(healthPort, (): any => gateway.getHealthStatus());
-    await healthServer.start();
+    // Start API server on the gateway port
+    const apiServer = new ApiServer(configManager.getPort(), (): any => gateway.getHealthStatus(), configManager);
+    apiServer.setMessageHandler(async (prompt: string) => {
+      return gateway.processPromptHttp(prompt);
+    });
+    apiServer.setWorkspaceHandlers(
+      () => gateway.getWorkspaceList(),
+      (name: string) => gateway.switchWorkspaceByName(name),
+    );
+    await apiServer.start();
+
+    // Apply config changes to the running gateway at runtime
+    configManager.on('change', (updated) => {
+      const newConfig: GatewayConfig = {
+        port: updated.gateway.port,
+        defaultAgent: updated.gateway.defaultAgent as any,
+        agents: updated.agents as any,
+        channels: gatewayConfig.channels, // channels require restart
+      };
+      // Update API keys
+      if (updated.apiKeys.anthropic) process.env.ANTHROPIC_API_KEY = updated.apiKeys.anthropic;
+      if (updated.apiKeys.openai) process.env.OPENAI_API_KEY = updated.apiKeys.openai;
+      if (updated.apiKeys.google) process.env.GOOGLE_API_KEY = updated.apiKeys.google;
+
+      gateway.applyConfig(newConfig);
+    });
 
     // Handle shutdown
     process.on('SIGINT', async () => {
       logger.info('Shutting down...');
-      await healthServer.stop();
+      await apiServer.stop();
       await gateway.stop();
       process.exit(0);
     });
 
     process.on('SIGTERM', async () => {
       logger.info('Shutting down...');
-      await healthServer.stop();
+      await apiServer.stop();
       await gateway.stop();
       process.exit(0);
     });

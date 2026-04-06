@@ -1,4 +1,4 @@
-import { GatewayConfig, GatewayStatus, ChatMessage } from '../types';
+import { GatewayConfig, GatewayStatus } from '../types';
 
 const DEFAULT_PORT = 3000;
 

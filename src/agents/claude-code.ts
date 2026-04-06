@@ -59,9 +59,23 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         env.ANTHROPIC_API_KEY = request.model.apiKey;
       }
 
-      this.logger.debug(`[claude-code] Spawning: claude ${args.slice(0, -1).join(' ')} "<prompt>"`);
+      // Ensure common bin paths are available (Electron apps may have minimal PATH)
+      const homedir = process.env.HOME || '';
+      const extraPaths = [
+        `${homedir}/.local/bin`,
+        '/usr/local/bin',
+        '/opt/homebrew/bin',
+      ].filter(Boolean);
+      const currentPath = env.PATH || '';
+      for (const p of extraPaths) {
+        if (!currentPath.includes(p)) {
+          env.PATH = `${p}:${env.PATH}`;
+        }
+      }
 
-      const childProcess: ChildProcess = spawn('claude', args, {
+      const claudeBin = process.env.CLAUDE_BIN || 'claude';
+      this.logger.debug(`[claude-code] Spawning: ${claudeBin} ${args.slice(0, -1).join(' ')} "<prompt>"`);
+      const childProcess: ChildProcess = spawn(claudeBin, args, {
         stdio: [request.interactive ? 'inherit' : 'pipe', 'pipe', request.interactive ? 'inherit' : 'pipe'],
         cwd: request.context?.workingDir || undefined,
         env,

@@ -1,83 +1,115 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
-import { Workspace } from '../types';
-import { apiService } from '../services/api';
+import React, { useState, useEffect } from 'react'
+import { apiService } from '../services/api'
 
 interface WorkspacesTabProps {
-  isGatewayRunning: boolean;
+  isGatewayRunning: boolean
 }
 
 export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }) => {
-  const [workspaces, setWorkspaces] = useState<string[]>([]);
-  const [currentWorkspace, setCurrentWorkspace] = useState<string>('');
-  const [loading, setLoading] = useState(false);
+  const [workspaces, setWorkspaces] = useState<string[]>([])
+  const [currentWorkspace, setCurrentWorkspace] = useState<string>('')
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (isGatewayRunning) {
-      loadWorkspaces();
+      loadWorkspaces()
     }
-  }, [isGatewayRunning]);
+  }, [isGatewayRunning])
 
   const loadWorkspaces = async () => {
     try {
-      const ws = await apiService.getWorkspaces();
-      setWorkspaces(ws);
+      const ws = await apiService.getWorkspaces()
+      setWorkspaces(ws)
     } catch (error) {
-      console.error('Failed to load workspaces:', error);
+      console.error('Failed to load workspaces:', error)
     }
-  };
+  }
 
   const switchWorkspace = async (name: string) => {
-    setLoading(true);
+    setLoading(true)
     try {
-      await apiService.switchWorkspace(name);
-      setCurrentWorkspace(name);
+      await apiService.switchWorkspace(name)
+      setCurrentWorkspace(name)
     } catch (error) {
-      console.error('Failed to switch workspace:', error);
+      console.error('Failed to switch workspace:', error)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   if (!isGatewayRunning) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.offline}>Start the gateway to manage workspaces</Text>
-      </View>
-    );
+      <div style={styles.container}>
+        <div style={styles.offline}>Start the gateway to manage workspaces</div>
+      </div>
+    )
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.section}>Workspaces</Text>
+    <div style={styles.container}>
+      <div style={styles.section}>Workspaces</div>
       {workspaces.length === 0 ? (
-        <Text style={styles.empty}>No workspaces found</Text>
+        <div style={styles.empty}>No workspaces found</div>
       ) : (
-        <ScrollView>
+        <div>
           {workspaces.map(ws => (
-            <TouchableOpacity
+            <div
               key={ws}
-              style={[styles.workspaceItem, currentWorkspace === ws && styles.activeWorkspace]}
-              onPress={() => switchWorkspace(ws)}
-              disabled={loading}
+              style={{
+                ...styles.workspaceItem,
+                ...(currentWorkspace === ws ? styles.activeWorkspace : {})
+              }}
+              onClick={() => !loading && switchWorkspace(ws)}
             >
-              <Text style={styles.workspaceName}>{ws}</Text>
-              {currentWorkspace === ws && <Text style={styles.activeBadge}>Active</Text>}
-            </TouchableOpacity>
+              <span style={styles.workspaceName}>{ws}</span>
+              {currentWorkspace === ws && <span style={styles.activeBadge}>Active</span>}
+            </div>
           ))}
-        </ScrollView>
+        </div>
       )}
-    </View>
-  );
-};
+    </div>
+  )
+}
 
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
-  offline: { color: '#888', textAlign: 'center', marginTop: 40 },
-  section: { color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 16 },
-  empty: { color: '#888' },
-  workspaceItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#2a2a2a', borderRadius: 8, marginBottom: 8 },
-  activeWorkspace: { borderColor: '#007AFF', borderWidth: 1 },
-  workspaceName: { color: '#fff', fontSize: 14 },
-  activeBadge: { color: '#007AFF', fontSize: 12 },
-});
+const styles: Record<string, React.CSSProperties> = {
+  container: {
+    flex: 1,
+    padding: '16px',
+  },
+  offline: {
+    color: '#888',
+    textAlign: 'center',
+    marginTop: '40px',
+  },
+  section: {
+    color: '#fff',
+    fontSize: '16px',
+    fontWeight: '600',
+    marginBottom: '16px',
+  },
+  empty: {
+    color: '#888',
+  },
+  workspaceItem: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '16px',
+    backgroundColor: '#2a2a2a',
+    borderRadius: '8px',
+    marginBottom: '8px',
+    cursor: 'pointer',
+    border: '2px solid transparent',
+  },
+  activeWorkspace: {
+    borderColor: '#007AFF',
+  },
+  workspaceName: {
+    color: '#fff',
+    fontSize: '14px',
+  },
+  activeBadge: {
+    color: '#007AFF',
+    fontSize: '12px',
+  },
+}

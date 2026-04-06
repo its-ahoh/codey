@@ -38,6 +38,7 @@
     "dotenv": "^16.0.0",
     "marked": "^15.0.12",
     "marked-terminal": "^7.3.0",
-    "node-telegram-bot-api": "^0.64.0"
+    "node-telegram-bot-api": "^0.64.0",
+    "undici": "^5.28.0"
   }
 }
