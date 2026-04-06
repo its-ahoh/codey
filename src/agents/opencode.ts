@@ -58,6 +58,8 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       let resolved = false;
       let allData = '';
       let stderr = '';
+      const statusUpdates: string[] = [];
+      const states: NonNullable<AgentResponse['states']> = [];
 
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
@@ -84,6 +86,19 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
             // Stream text events immediately
             if (event.type === 'text' && event.part?.text) {
               request.onStream?.(event.part.text);
+            }
+
+            if (event.type === 'tool_use' && event.part?.state) {
+              const toolName = event.part.tool || 'tool_use';
+              if (event.part.state.status) {
+                statusUpdates.push(`${toolName}: ${event.part.state.status}`);
+              }
+              states.push({
+                source: toolName,
+                status: event.part.state.status,
+                input: event.part.state.input,
+                output: event.part.state.output,
+              });
             }
           } catch {
             // Not JSON, skip
@@ -155,11 +170,11 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
 
         const output = textParts.join('');
         if (output) {
-          safeResolve(this.createResponse(output, true, tokens, duration));
+          safeResolve(this.createResponse(output, true, tokens, duration, statusUpdates, states));
         } else {
           const error = stderr.trim() || `OpenCode exited with code ${code}`;
           this.logger.debug(`[opencode] Error: ${error}`);
-          safeResolve(this.createResponse(error, false, undefined, duration));
+          safeResolve(this.createResponse(error, false, undefined, duration, statusUpdates, states));
         }
       });
 

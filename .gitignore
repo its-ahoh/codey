@@ -12,3 +12,7 @@ workspaces/*
 *.local.json
 
 docs/
+
+# Codey Mac build artifacts
+codey-mac/dist-electron/
+codey-mac/release/

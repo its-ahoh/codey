@@ -91,6 +91,20 @@ export class Codey {
     this.COOLDOWN_MS = config.rateLimitMs || 3000; // Default 3 seconds
   }
 
+  /** Apply runtime config changes (e.g. from the API). */
+  applyConfig(config: GatewayConfig): void {
+    this.config = config;
+    this.logger.info(`[Config] Applied: agent=${config.defaultAgent}, model=${this.getEffectiveModel()}`);
+  }
+
+  getWorkspaceList(): string[] {
+    return this.workspaceManager.listWorkspaces();
+  }
+
+  async switchWorkspaceByName(name: string): Promise<boolean> {
+    return this.switchWorkspace(name);
+  }
+
   private async switchWorkspace(workspaceId: string): Promise<boolean> {
     const success = await this.workspaceManager.switchWorkspace(workspaceId);
     if (success) {
@@ -364,14 +378,32 @@ export class Codey {
       return `❌ Error: ${response.error}`;
     }
 
+    // Summarise tool activity if any states were captured
+    let toolSummary = '';
+    if (response.states && response.states.length > 0) {
+      // Deduplicate: count how many times each tool was used
+      const toolCounts = new Map<string, number>();
+      for (const s of response.states) {
+        if (s.status === 'done') {
+          toolCounts.set(s.source, (toolCounts.get(s.source) || 0) + 1);
+        }
+      }
+      if (toolCounts.size > 0) {
+        const parts = Array.from(toolCounts.entries()).map(
+          ([name, count]) => count > 1 ? `${name} x${count}` : name
+        );
+        toolSummary = `\n🔧 Tools: ${parts.join(', ')}`;
+      }
+    }
+
     const tokenInfo = response.tokens
-      ? `\n\n📊 Tokens: ${response.tokens.total.toLocaleString()} (in: ${response.tokens.input}, out: ${response.tokens.output})`
+      ? `\n\n📊 Tokens: ${response.tokens.total.toLocaleString()} (in: ${response.tokens.input.toLocaleString()}, out: ${response.tokens.output.toLocaleString()}${response.tokens.cache ? `, cache read: ${response.tokens.cache.read.toLocaleString()}` : ''})`
       : '';
     const durationInfo = response.duration
       ? `\n⏱️ Time: ${response.duration}s`
       : '';
 
-    return response.output + tokenInfo + durationInfo;
+    return response.output + tokenInfo + durationInfo + toolSummary;
   }
 
   private async handleCommand(message: UserMessage, parsed: ParsedCommand): Promise<void> {
@@ -1148,5 +1180,32 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     return chunks;
+  }
+
+  // Handle prompt via HTTP API
+  async processPromptHttp(prompt: string): Promise<string> {
+    const message: UserMessage = {
+      id: `http-${Date.now()}`,
+      userId: 'http-user',
+      username: 'HTTP',
+      chatId: 'http',
+      channel: 'http' as any,
+      text: prompt,
+      timestamp: Date.now(),
+    };
+
+    // Create a mock response handler
+    let responseText = '';
+    const originalSendResponse = this.sendResponse.bind(this);
+    this.sendResponse = async (response: GatewayResponse) => {
+      responseText = response.text;
+    };
+
+    try {
+      await this.handleMessage(message);
+      return responseText;
+    } finally {
+      this.sendResponse = originalSendResponse;
+    }
   }
 }

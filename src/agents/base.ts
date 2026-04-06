@@ -12,11 +12,20 @@ export abstract class BaseAgentAdapter implements CodingAgentAdapter {
 
   abstract run(request: AgentRequest): Promise<AgentResponse>;
 
-  protected createResponse(output: string, success: boolean = true, tokens?: AgentResponse['tokens'], duration?: number): AgentResponse {
+  protected createResponse(
+    output: string,
+    success: boolean = true,
+    tokens?: AgentResponse['tokens'],
+    duration?: number,
+    statusUpdates?: string[],
+    states?: AgentResponse['states']
+  ): AgentResponse {
     return {
       success,
       output,
       error: success ? undefined : output,
+      statusUpdates,
+      states,
       tokens,
       duration,
     };

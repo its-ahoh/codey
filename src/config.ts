@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { EventEmitter } from 'events';
 
 // Configuration types
 export interface GatewayConfigJson {
@@ -34,11 +35,12 @@ export interface AgentConfig {
   models: { provider: string; model: string }[];
 }
 
-export class ConfigManager {
+export class ConfigManager extends EventEmitter {
   private config: GatewayConfigJson;
   private configPath: string;
 
   constructor(configPath?: string) {
+    super();
     this.configPath = configPath || path.join(process.cwd(), 'gateway.json');
     this.config = this.loadConfig();
   }
@@ -102,9 +104,30 @@ export class ConfigManager {
     try {
       fs.writeFileSync(this.configPath, JSON.stringify(this.config, null, 2));
       console.log('[Config] Saved to', this.configPath);
+      this.emit('change', this.config);
     } catch (error) {
       console.error('[Config] Error saving config:', error);
     }
+  }
+
+  /** Bulk update from external source (e.g. API). Merges, saves, and emits change. */
+  update(partial: Partial<GatewayConfigJson>): void {
+    if (partial.gateway) {
+      Object.assign(this.config.gateway, partial.gateway);
+    }
+    if (partial.channels) {
+      Object.assign(this.config.channels, partial.channels);
+    }
+    if (partial.agents) {
+      Object.assign(this.config.agents, partial.agents);
+    }
+    if (partial.apiKeys) {
+      Object.assign(this.config.apiKeys, partial.apiKeys);
+    }
+    if (partial.dev) {
+      Object.assign(this.config.dev, partial.dev);
+    }
+    this.save();
   }
 
   get(): GatewayConfigJson {
