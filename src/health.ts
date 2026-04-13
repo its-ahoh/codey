@@ -1,5 +1,6 @@
 import * as http from 'http';
 import { ConfigManager } from './config';
+import { StatusUpdate } from './types';
 
 export type HealthStatusType = 'healthy' | 'degraded' | 'down';
 
@@ -19,7 +20,8 @@ export interface HealthStatus {
   };
 }
 
-type MessageHandler = (prompt: string) => Promise<string>;
+type SSECallback = (event: string, data: string) => void;
+type MessageHandler = (prompt: string, sse?: SSECallback) => Promise<string>;
 type WorkspaceListHandler = () => string[];
 type WorkspaceSwitchHandler = (name: string) => Promise<boolean>;
 
@@ -81,12 +83,30 @@ export class ApiServer {
         req.on('end', async () => {
           try {
             const { prompt } = JSON.parse(body);
-            const response = await this.handleMessage!(prompt);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ response }));
+
+            // Use SSE to stream status updates and the final response
+            res.writeHead(200, {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              'Connection': 'keep-alive',
+            });
+
+            const sse: SSECallback = (event, data) => {
+              res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+            };
+
+            const response = await this.handleMessage!(prompt, sse);
+            sse('done', response);
+            res.end();
           } catch (error) {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: String(error) }));
+            // If headers already sent, send error as SSE event
+            if (res.headersSent) {
+              res.write(`event: error\ndata: ${JSON.stringify(String(error))}\n\n`);
+              res.end();
+            } else {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: String(error) }));
+            }
           }
         });
         return;

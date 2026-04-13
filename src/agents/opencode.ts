@@ -36,10 +36,9 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
     return new Promise((resolve) => {
       const args = ['run', '--format', 'json'];
 
-      // Add model configuration if provided (format: provider/model)
-      if (request.model) {
-        const modelStr = `${request.model.provider}/${request.model.model}`;
-        args.push('--model', modelStr);
+      // Add model configuration if provided
+      if (request.model?.model) {
+        args.push('--model', request.model.model);
       }
 
       args.push(request.prompt);

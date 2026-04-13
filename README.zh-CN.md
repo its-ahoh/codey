@@ -51,14 +51,18 @@ npm start
     "imessage": { "enabled": false }
   },
   "agents": {
-    "claude-code": { "enabled": true, "defaultModel": "claude-sonnet-4-20250514" },
-    "opencode": { "enabled": true, "defaultModel": "gpt-4.1" },
-    "codex": { "enabled": true, "defaultModel": "gpt-5-codex" }
+    "claude-code": { "enabled": true, "provider": "anthropic", "defaultModel": "claude-sonnet-4-20250514" },
+    "opencode": { "enabled": true, "provider": "openai", "defaultModel": "gpt-4.1" },
+    "codex": { "enabled": true, "provider": "openai", "defaultModel": "gpt-5-codex" }
   },
-  "apiKeys": {
-    "anthropic": "sk-...",
-    "openai": "sk-..."
-  },
+  "profiles": [
+    {
+      "name": "default",
+      "anthropic": { "apiKey": "sk-..." },
+      "openai": { "apiKey": "sk-..." }
+    }
+  ],
+  "activeProfile": "default",
   "dev": {
     "logLevel": "info"
   }
@@ -199,7 +203,7 @@ npm run status       # 显示配置
 npm run set-agent claude-code
 npm run set-model gpt-4.1
 npm run set-telegram <token>
-npm run set-key anthropic sk-...
+npm run set-profile anthropic https://api.anthropic.com sk-...
 npm run enable telegram
 ```
 

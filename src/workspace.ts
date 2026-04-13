@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { WorkerManager, WorkerJsonConfig } from './workers';
+import { MemoryStore } from './memory';
 
 export interface WorkspaceJson {
   workingDir: string;
@@ -12,10 +13,12 @@ export class WorkspaceManager {
   private currentWorkspace: string = 'default';
   private config: WorkspaceJson | null = null;
   private workerManager: WorkerManager;
+  private memoryStore: MemoryStore;
 
   constructor(workspacesDir: string = './workspaces') {
     this.workspacesDir = workspacesDir;
     this.workerManager = new WorkerManager(this.getWorkspacePath());
+    this.memoryStore = new MemoryStore(this.getWorkspacePath());
   }
 
   private getWorkspacePath(): string {
@@ -64,6 +67,10 @@ export class WorkspaceManager {
     // Load workers
     this.workerManager = new WorkerManager(this.getWorkspacePath());
     await this.workerManager.loadWorkers();
+
+    // Load memory store
+    this.memoryStore = new MemoryStore(this.getWorkspacePath());
+    await this.memoryStore.load();
   }
 
   private migrateFromWorkersJson(legacyPath: string, newPath: string): void {
@@ -145,6 +152,10 @@ export class WorkspaceManager {
 
   getWorkerManager(): WorkerManager {
     return this.workerManager;
+  }
+
+  getMemoryStore(): MemoryStore {
+    return this.memoryStore;
   }
 
   getMemory(): string {

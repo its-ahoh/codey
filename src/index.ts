@@ -40,39 +40,29 @@ function startGateway(): void {
     defaultAgent: configManager.getDefaultAgent() as any,
     agents: config.agents as any,
     channels: {
-      telegram: config.channels.telegram?.enabled ? { 
-        botToken: config.channels.telegram.botToken, 
-        notifyChatId: config.channels.telegram.notifyChatId 
+      telegram: config.channels.telegram?.enabled ? {
+        botToken: config.channels.telegram.botToken,
+        notifyChatId: config.channels.telegram.notifyChatId
       } : undefined,
       discord: config.channels.discord?.enabled ? { botToken: config.channels.discord.botToken } : undefined,
       imessage: config.channels.imessage?.enabled ? { enabled: true } : undefined,
     },
   };
 
-  // Pass API keys via environment
-  if (config.apiKeys.anthropic) {
-    process.env.ANTHROPIC_API_KEY = config.apiKeys.anthropic;
-  }
-  if (config.apiKeys.openai) {
-    process.env.OPENAI_API_KEY = config.apiKeys.openai;
-  }
-  if (config.apiKeys.google) {
-    process.env.GOOGLE_API_KEY = config.apiKeys.google;
-  }
-
   async function main() {
     logger.banner('🚀 Codey');
     logger.info(`Starting on port ${configManager.getPort()}`);
     logger.info(`Default agent: ${configManager.getDefaultAgent()}`);
     logger.info(`Default model: ${configManager.getDefaultModel()}`);
+    logger.info(`Active profile: ${configManager.getActiveProfile()}`);
     logger.info(`Log level: ${configManager.getLogLevel()}`);
 
-    const gateway = new Codey(gatewayConfig, logger, './workspaces');
+    const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager);
 
     // Start API server on the gateway port
     const apiServer = new ApiServer(configManager.getPort(), (): any => gateway.getHealthStatus(), configManager);
-    apiServer.setMessageHandler(async (prompt: string) => {
-      return gateway.processPromptHttp(prompt);
+    apiServer.setMessageHandler(async (prompt, sse) => {
+      return gateway.processPromptHttp(prompt, sse);
     });
     apiServer.setWorkspaceHandlers(
       () => gateway.getWorkspaceList(),
@@ -88,11 +78,7 @@ function startGateway(): void {
         agents: updated.agents as any,
         channels: gatewayConfig.channels, // channels require restart
       };
-      // Update API keys
-      if (updated.apiKeys.anthropic) process.env.ANTHROPIC_API_KEY = updated.apiKeys.anthropic;
-      if (updated.apiKeys.openai) process.env.OPENAI_API_KEY = updated.apiKeys.openai;
-      if (updated.apiKeys.google) process.env.GOOGLE_API_KEY = updated.apiKeys.google;
-
+      // Profile credentials are read dynamically via configManager — no env var update needed
       gateway.applyConfig(newConfig);
     });
 
@@ -128,17 +114,7 @@ async function startTui(): Promise<void> {
     channels: {},
   };
 
-  if (config.apiKeys.anthropic) {
-    process.env.ANTHROPIC_API_KEY = config.apiKeys.anthropic;
-  }
-  if (config.apiKeys.openai) {
-    process.env.OPENAI_API_KEY = config.apiKeys.openai;
-  }
-  if (config.apiKeys.google) {
-    process.env.GOOGLE_API_KEY = config.apiKeys.google;
-  }
-
-  const gateway = new Codey(gatewayConfig, logger, './workspaces');
+  const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager);
 
   // Set working directory from CLI arg: npm run tui -- /path/to/project
   const tuiDir = args[1];

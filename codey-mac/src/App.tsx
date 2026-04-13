@@ -12,7 +12,6 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('chat')
   const { isRunning, status, logs, toggle } = useGateway()
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
     const api = window.electronAPI
@@ -36,7 +35,7 @@ const App: React.FC = () => {
   const renderTab = () => {
     switch (activeTab) {
       case 'chat':
-        return <ChatTab isGatewayRunning={isRunning} messages={messages} setMessages={setMessages} isLoading={isLoading} setIsLoading={setIsLoading} />
+        return <ChatTab isGatewayRunning={isRunning} messages={messages} setMessages={setMessages} />
       case 'status':
         return <StatusTab status={status} logs={logs} isRunning={isRunning} onToggle={toggle} />
       case 'settings':

@@ -14,25 +14,43 @@ export interface GatewayConfigJson {
     imessage?: { enabled: boolean };
   };
   agents: {
-    'claude-code'?: AgentConfig;
-    'opencode'?: AgentConfig;
-    'codex'?: AgentConfig;
+    'claude-code'?: {
+      enabled?: boolean;
+      provider?: 'anthropic' | 'openai' | 'google';
+      defaultModel?: string;
+      models?: string[];
+    };
+    'opencode'?: {
+      enabled?: boolean;
+      provider?: 'anthropic' | 'openai' | 'google';
+      defaultModel?: string;
+      models?: string[];
+    };
+    'codex'?: {
+      enabled?: boolean;
+      provider?: 'anthropic' | 'openai' | 'google';
+      defaultModel?: string;
+      models?: string[];
+    };
   };
-  apiKeys: {
-    anthropic?: string;
-    openai?: string;
-    google?: string;
-  };
+  profiles?: Profile[];
+  activeProfile?: string;
   dev: {
     logLevel: 'debug' | 'info' | 'warn' | 'error';
     logFile?: string;
   };
 }
 
-export interface AgentConfig {
-  enabled: boolean;
-  defaultModel: string;
-  models: { provider: string; model: string }[];
+export interface ProviderCredentials {
+  apiKey: string;
+  baseUrl?: string;
+}
+
+export interface Profile {
+  name: string;
+  anthropic?: ProviderCredentials;
+  openai?: ProviderCredentials;
+  google?: { apiKey: string; baseUrl?: string };
 }
 
 export class ConfigManager extends EventEmitter {
@@ -71,29 +89,31 @@ export class ConfigManager extends EventEmitter {
       agents: {
         'claude-code': {
           enabled: true,
+          provider: 'anthropic',
           defaultModel: 'claude-sonnet-4-20250514',
           models: [
-            { provider: 'anthropic', model: 'claude-sonnet-4-20250514' },
-            { provider: 'anthropic', model: 'claude-opus-4-20250514' },
+            'claude-sonnet-4-20250514',
+            'claude-opus-4-20250514',
           ],
         },
         'opencode': {
           enabled: true,
+          provider: 'openai',
           defaultModel: 'gpt-4.1',
           models: [
-            { provider: 'openai', model: 'gpt-4.1' },
-            { provider: 'openai', model: 'gpt-4o' },
+            'gpt-4.1',
+            'gpt-4o',
           ],
         },
         'codex': {
           enabled: true,
+          provider: 'openai',
           defaultModel: 'gpt-5-codex',
           models: [
-            { provider: 'openai', model: 'gpt-5-codex' },
+            'gpt-5-codex',
           ],
         },
       },
-      apiKeys: {},
       dev: {
         logLevel: 'info',
       },
@@ -121,11 +141,14 @@ export class ConfigManager extends EventEmitter {
     if (partial.agents) {
       Object.assign(this.config.agents, partial.agents);
     }
-    if (partial.apiKeys) {
-      Object.assign(this.config.apiKeys, partial.apiKeys);
-    }
     if (partial.dev) {
       Object.assign(this.config.dev, partial.dev);
+    }
+    if (partial.profiles !== undefined) {
+      this.config.profiles = partial.profiles;
+    }
+    if (partial.activeProfile !== undefined) {
+      this.config.activeProfile = partial.activeProfile;
     }
     this.save();
   }
@@ -144,9 +167,13 @@ export class ConfigManager extends EventEmitter {
   }
 
   getDefaultModel(): string {
+    return this.getActiveProfileModel() || 'claude-sonnet-4-6';
+  }
+
+  private getActiveProfileModel(): string | undefined {
     const agent = this.config.gateway.defaultAgent;
     const agentConfig = this.config.agents[agent as keyof typeof this.config.agents];
-    return agentConfig?.defaultModel || 'claude-sonnet-4-6';
+    return agentConfig?.defaultModel;
   }
 
   setDefaultAgent(agent: string): void {
@@ -210,14 +237,51 @@ export class ConfigManager extends EventEmitter {
     this.save();
   }
 
-  // API Keys
-  getApiKey(provider: 'anthropic' | 'openai' | 'google'): string | undefined {
-    return this.config.apiKeys[provider];
+  // Profiles
+  getActiveProfileObj(): Profile | undefined {
+    if (!this.config.activeProfile || !this.config.profiles) return undefined;
+    return this.config.profiles.find(p => p.name === this.config.activeProfile);
   }
 
-  setApiKey(provider: 'anthropic' | 'openai' | 'google', key: string): void {
-    this.config.apiKeys[provider] = key;
+  getActiveProfile(): string {
+    return this.config.activeProfile || 'default';
+  }
+
+  setActiveProfile(name: string): boolean {
+    if (!this.config.profiles?.find(p => p.name === name)) return false;
+    this.config.activeProfile = name;
     this.save();
+    return true;
+  }
+
+  getProfiles(): Profile[] {
+    return this.config.profiles || [];
+  }
+
+  addProfile(profile: Profile): void {
+    if (!this.config.profiles) this.config.profiles = [];
+    const existing = this.config.profiles.findIndex(p => p.name === profile.name);
+    if (existing >= 0) {
+      this.config.profiles[existing] = profile;
+    } else {
+      this.config.profiles.push(profile);
+    }
+    if (!this.config.activeProfile) {
+      this.config.activeProfile = profile.name;
+    }
+    this.save();
+  }
+
+  removeProfile(name: string): boolean {
+    if (!this.config.profiles) return false;
+    const idx = this.config.profiles.findIndex(p => p.name === name);
+    if (idx < 0) return false;
+    this.config.profiles.splice(idx, 1);
+    if (this.config.activeProfile === name) {
+      this.config.activeProfile = this.config.profiles[0]?.name || undefined;
+    }
+    this.save();
+    return true;
   }
 
   // Agent config
@@ -255,10 +319,32 @@ export class ConfigManager extends EventEmitter {
     console.log(`  Telegram: ${this.config.channels.telegram?.enabled ? '✅' : '❌'}`);
     console.log(`  Discord: ${this.config.channels.discord?.enabled ? '✅' : '❌'}`);
     console.log(`  iMessage: ${this.config.channels.imessage?.enabled ? '✅' : '❌'}`);
-    console.log(`\nAPI Keys:`);
-    console.log(`  Anthropic: ${this.config.apiKeys.anthropic ? '✅ set' : '❌'}`);
-    console.log(`  OpenAI: ${this.config.apiKeys.openai ? '✅ set' : '❌'}`);
-    console.log(`  Google: ${this.config.apiKeys.google ? '✅ set' : '❌'}`);
+    const profile = this.getActiveProfileObj();
+    console.log(`\nAPI Keys (from active profile: ${this.config.activeProfile || 'default'}):`);
+    if (profile?.anthropic) {
+      console.log(`  Anthropic: ✅ [${profile.name}] ${profile.anthropic.baseUrl || 'api.anthropic.com'}`);
+    } else {
+      console.log(`  Anthropic: ❌`);
+    }
+    if (profile?.openai) {
+      console.log(`  OpenAI: ✅ [${profile.name}] ${profile.openai.baseUrl || 'api.openai.com'}`);
+    } else {
+      console.log(`  OpenAI: ❌`);
+    }
+    if (profile?.google) {
+      console.log(`  Google: ✅ [${profile.name}]`);
+    } else {
+      console.log(`  Google: ❌`);
+    }
+    if (this.config.profiles && this.config.profiles.length > 0) {
+      console.log(`\nProfiles (${this.config.activeProfile || 'default'} active):`);
+      for (const p of this.config.profiles) {
+        const mark = p.name === this.config.activeProfile ? '👉' : '  ';
+        const anthropic = p.anthropic ? ` anthropic ✅` : '';
+        const openai = p.openai ? ` openai ✅` : '';
+        console.log(`  ${mark} ${p.name}${anthropic}${openai}`);
+      }
+    }
     console.log(`\nDev:`);
     console.log(`  Log Level: ${this.config.dev.logLevel}`);
     console.log('─'.repeat(40) + '\n');

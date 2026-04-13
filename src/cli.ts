@@ -60,7 +60,7 @@ export class CLI {
         await this.configureDiscord();
         break;
       case '6':
-        await this.setApiKeys();
+        await this.setProfile();
         break;
       case '7':
         await this.setLogLevel();
@@ -99,12 +99,12 @@ export class CLI {
     const agentConfig = this.config.getAgentConfig(agent);
 
     this.logger.info(`\nAvailable models for ${agent}:`);
-    agentConfig?.models.forEach((m, i) => {
-      this.logger.info(`${i + 1}. ${m.model} (${m.provider})`);
+    agentConfig?.models?.forEach((m, i) => {
+      this.logger.info(`${i + 1}. ${m}`);
     });
 
     const choice = await this.prompt('\nSelect model: ');
-    const model = agentConfig?.models[parseInt(choice) - 1]?.model;
+    const model = agentConfig?.models?.[parseInt(choice) - 1];
 
     if (model) {
       this.config.setDefaultModel(model);
@@ -138,26 +138,31 @@ export class CLI {
     }
   }
 
-  private async setApiKeys(): Promise<void> {
-    this.logger.info('\n1. Anthropic API Key');
-    this.logger.info('2. OpenAI API Key');
-    this.logger.info('3. Google API Key');
+  private async setProfile(): Promise<void> {
 
-    const choice = await this.prompt('\nSelect provider: ');
-    const providers: Record<string, 'anthropic' | 'openai' | 'google'> = {
-      '1': 'anthropic',
-      '2': 'openai',
-      '3': 'google',
-    };
-
-    const provider = providers[choice];
-    if (provider) {
-      const key = await this.prompt('Enter API key: ');
-      if (key.trim()) {
-        this.config.setApiKey(provider, key.trim());
-        this.logger.info(`✅ ${provider} API key set`);
-      }
+    const profiles = this.config.getProfiles();
+    if (profiles.length === 0) {
+      this.logger.error('No profiles found');
+      return;
     }
+    this.logger.info('\nAvailable profiles:');
+    profiles.forEach((p, i) => {
+      this.logger.info(`${i + 1}. ${p.name}`);
+    });
+    const choice = await this.prompt(`\nSelect profile (1-${profiles.length}): `);
+    const trimmed = choice.trim();
+    if (!trimmed) {
+      this.logger.error('Invalid profile selection');
+      return;
+    }
+    const byIndex = profiles[parseInt(trimmed, 10) - 1];
+    const profile = byIndex || profiles.find((p) => p.name === trimmed);
+    if (!profile) {
+      this.logger.error(`❌ Profile "${trimmed}" not found`);
+      return;
+    }
+    this.config.setActiveProfile(profile.name);
+    this.logger.info(`✅ Switched to ${profile.name} profile`);
   }
 
   private async setLogLevel(): Promise<void> {
@@ -266,13 +271,14 @@ export async function handleCommand(args: string[], config: ConfigManager, logge
       }
       break;
 
-    case 'set-key':
+    case 'set-profile':
       if (args[1] && args[2]) {
-        const provider = args[1] as 'anthropic' | 'openai' | 'google';
-        config.setApiKey(provider, args[2]);
-        logger.info(`${provider} API key set`);
+        const profile = config.getActiveProfileObj() || { name: config.getActiveProfile() };
+        (profile as any)[args[1]] = { baseUrl: args[2], apiKey: args[3] };
+        config.addProfile(profile);
+        logger.info(`${args[1]} profile set to ${args[2]} and ${args[3]}`);
       } else {
-        logger.error('Usage: set-key <anthropic|openai|google> <api-key>');
+        logger.error('Usage: set-profile <profile-name> <base-url> <api-key>');
       }
       break;
 
@@ -326,7 +332,7 @@ function showHelp(): void {
 ║  set-model <name>           Set default model               ║
 ║  set-telegram <token>      Set Telegram bot token          ║
 ║  set-discord <token>       Set Discord bot token           ║
-║  set-key <provider> <key>  Set API key                      ║
+║  set-profile <profile-name> <base-url> <api-key>  Set profile credentials          ║
 ║  set-loglevel <level>      Set log level                   ║
 ║  enable <channel>          Enable a channel                 ║
 ║  disable <channel>         Disable a channel               ║
