@@ -10,11 +10,20 @@ export interface GatewayStatus {
   };
 }
 
+export interface ToolCallEntry {
+  id: string;
+  type: 'tool_start' | 'tool_end' | 'info';
+  tool?: string;
+  message: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  toolCalls?: ToolCallEntry[];
+  isComplete?: boolean;
 }
 
 export interface GatewayConfig {
