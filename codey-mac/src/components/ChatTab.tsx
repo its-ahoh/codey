@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { ChatMessage } from '../types'
+import { ChatMessage, ToolCallEntry } from '../types'
 import { apiService } from '../services/api'
 
 interface ChatTabProps {
@@ -12,6 +12,7 @@ interface ChatTabProps {
 
 export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, setMessages, isLoading, setIsLoading }) => {
   const [input, setInput] = useState('')
+  const [statusText, setStatusText] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -23,40 +24,89 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
   }, [messages])
 
   const sendMessage = async () => {
-    if (!input.trim() || !isGatewayRunning) return
+    if (!input.trim() || !isGatewayRunning) return;
 
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
       content: input,
       timestamp: Date.now(),
-    }
+    };
 
-    setMessages(prev => [...prev, userMessage])
-    setInput('')
-    setIsLoading(true)
+    const assistantMessage: ChatMessage = {
+      id: (Date.now() + 1).toString(),
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      toolCalls: [],
+      isComplete: false,
+    };
+
+    setMessages(prev => [...prev, userMessage, assistantMessage]);
+    setInput('');
 
     try {
-      const response = await apiService.sendMessage(input)
-      const assistantMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: response,
-        timestamp: Date.now(),
-      }
-      setMessages(prev => [...prev, assistantMessage])
+      const response = await apiService.sendMessage(
+        input,
+        (update) => {
+          // update: { type, tool?, message }
+          setMessages(prev => {
+            const last = prev[prev.length - 1];
+            if (last?.role !== 'assistant') return prev;
+            const entry: ToolCallEntry = {
+              id: `tool-${Date.now()}-${Math.random()}`,
+              type: update.type as 'tool_start' | 'tool_end' | 'info',
+              tool: update.tool,
+              message: update.message,
+            };
+            return [
+              ...prev.slice(0, -1),
+              { ...last, toolCalls: [...(last.toolCalls || []), entry] },
+            ];
+          });
+        },
+        (text) => {
+          // Append streamed text to the last assistant message
+          setMessages(prev => {
+            const last = prev[prev.length - 1];
+            if (last?.role !== 'assistant') return prev;
+            return [
+              ...prev.slice(0, -1),
+              { ...last, content: last.content + text },
+            ];
+          });
+        },
+      );
+
+      // Mark complete
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.role !== 'assistant') return prev;
+        return [
+          ...prev.slice(0, -1),
+          { ...last, isComplete: true, content: response },
+        ];
+      });
     } catch (error) {
-      const errorMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: `Error: ${error}`,
-        timestamp: Date.now(),
-      }
-      setMessages(prev => [...prev, errorMessage])
-    } finally {
-      setIsLoading(false)
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.role !== 'assistant') return prev;
+        return [
+          ...prev.slice(0, -1),
+          {
+            ...last,
+            isComplete: true,
+            content: `Error: ${error}`,
+            toolCalls: [...(last.toolCalls || []), {
+              id: `error-${Date.now()}`,
+              type: 'info',
+              message: `Error: ${error}`,
+            }],
+          },
+        ];
+      });
     }
-  }
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -71,11 +121,39 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
         {messages.map(msg => (
           <div key={msg.id} style={msg.role === 'user' ? styles.userMsg : styles.assistantMsg}>
             <div style={msg.role === 'user' ? styles.userText : styles.assistantText}>
-              {msg.content}
+              {msg.toolCalls && msg.toolCalls.length > 0 && (
+                <div style={styles.toolCallsContainer}>
+                  {msg.toolCalls.map(tc => (
+                    <div
+                      key={tc.id}
+                      style={{
+                        ...styles.toolCall,
+                        ...(tc.type === 'tool_end' ? styles.toolCallEnd : {}),
+                        ...(tc.type === 'info' ? styles.toolCallInfo : {}),
+                      }}
+                    >
+                      {tc.type === 'tool_start' && '🔧 '}
+                      {tc.type === 'tool_end' && '✓ '}
+                      <code>{tc.message}</code>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div>{msg.content}</div>
             </div>
           </div>
         ))}
-        {isLoading && <div style={styles.loading}>Thinking...</div>}
+        {isLoading && !messages[messages.length - 1]?.isComplete && (
+          <div style={styles.loading}>
+            {(() => {
+              const last = messages[messages.length - 1]
+              const toolCalls = last?.toolCalls
+              return toolCalls?.length
+                ? toolCalls[toolCalls.length - 1]?.message
+                : 'Thinking...'
+            })()}
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
       <div style={styles.inputContainer}>
@@ -174,5 +252,26 @@ const styles: Record<string, React.CSSProperties> = {
   sendButtonDisabled: {
     backgroundColor: '#444',
     cursor: 'not-allowed',
+  },
+  toolCallsContainer: {
+    marginBottom: '8px',
+    paddingLeft: '8px',
+    borderLeft: '2px solid #555',
+  },
+  toolCall: {
+    fontSize: '12px',
+    color: '#aaa',
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    marginBottom: '4px',
+    padding: '4px 8px',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: '4px',
+  },
+  toolCallEnd: {
+    color: '#6c6',
+  },
+  toolCallInfo: {
+    color: '#888',
+    fontStyle: 'italic',
   },
 }
