@@ -10,6 +10,7 @@ interface ChatTabProps {
 
 export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, setMessages }) => {
   const [input, setInput] = useState('')
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -57,6 +58,8 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
               type: update.type as 'tool_start' | 'tool_end' | 'info',
               tool: update.tool,
               message: update.message,
+              input: update.input,
+              output: update.output,
             };
             return [
               ...prev.slice(0, idx),
@@ -127,20 +130,63 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
               {msg.toolCalls && msg.toolCalls.length > 0 && (
                 <>
                   <div style={styles.toolCallsContainer}>
-                    {msg.toolCalls.map(tc => (
-                      <div
-                        key={tc.id}
-                        style={{
-                          ...styles.toolCall,
-                          ...(tc.type === 'tool_end' ? styles.toolCallEnd : {}),
-                          ...(tc.type === 'info' ? styles.toolCallInfo : {}),
-                        }}
-                      >
-                        {tc.type === 'tool_start' && '▶ '}
-                        {tc.type === 'tool_end' && '✓ '}
-                        {tc.message}
-                      </div>
-                    ))}
+                    {msg.toolCalls.map(tc => {
+                      const isExpanded = expandedIds.has(tc.id)
+                      const hasDetail = tc.type === 'tool_start' && tc.input
+                      const toggleExpand = () => {
+                        setExpandedIds(prev => {
+                          const next = new Set(prev)
+                          if (next.has(tc.id)) {
+                            next.delete(tc.id)
+                          } else {
+                            next.add(tc.id)
+                          }
+                          return next
+                        })
+                      }
+                      return (
+                        <div key={tc.id}>
+                          <div
+                            style={{
+                              ...styles.toolCallRow,
+                              ...(tc.type === 'tool_end' ? styles.toolCallEnd : {}),
+                              ...(tc.type === 'info' ? styles.toolCallInfo : {}),
+                              cursor: hasDetail ? 'pointer' : 'default',
+                            }}
+                            onClick={hasDetail ? toggleExpand : undefined}
+                          >
+                            {tc.type === 'tool_start' && '▶ '}
+                            {tc.type === 'tool_end' && '✓ '}
+                            {tc.type === 'info' && '• '}
+                            {hasDetail && (
+                              <span style={{
+                                ...styles.chevron,
+                                transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                              }}>▶</span>
+                            )}
+                            <span style={{ marginLeft: '2px' }}>{tc.message}</span>
+                          </div>
+                          {hasDetail && isExpanded && (
+                            <div style={styles.toolDetail}>
+                              {tc.input && (
+                                <>
+                                  <div style={styles.detailLabel}>Input:</div>
+                                  <pre style={styles.detailPre}>
+                                    {JSON.stringify(tc.input, null, 2)}
+                                  </pre>
+                                </>
+                              )}
+                              {tc.output && (
+                                <>
+                                  <div style={styles.detailLabel}>Output:</div>
+                                  <pre style={styles.detailPre}>{tc.output}</pre>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                   <div style={styles.toolCallSep} />
                 </>
@@ -265,13 +311,16 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '10px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '4px',
+    gap: '2px',
   },
-  toolCall: {
+  toolCallRow: {
+    display: 'flex',
+    alignItems: 'flex-start',
     fontSize: '12px',
     color: '#6ab0f3',
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    padding: '3px 0',
+    padding: '2px 0',
+    userSelect: 'text',
   },
   toolCallEnd: {
     color: '#5c5',
@@ -283,5 +332,36 @@ const styles: Record<string, React.CSSProperties> = {
   toolCallSep: {
     borderTop: '1px solid #333',
     marginBottom: '4px',
+  },
+  chevron: {
+    display: 'inline-block',
+    fontSize: '10px',
+    marginRight: '4px',
+    transition: 'transform 0.15s ease',
+    color: '#555',
+  },
+  toolDetail: {
+    marginLeft: '20px',
+    marginTop: '4px',
+    marginBottom: '6px',
+    padding: '8px',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: '6px',
+    border: '1px solid #333',
+  },
+  detailLabel: {
+    fontSize: '11px',
+    color: '#666',
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    marginBottom: '4px',
+    textTransform: 'uppercase',
+  },
+  detailPre: {
+    margin: 0,
+    fontSize: '11px',
+    color: '#ccc',
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
   },
 }

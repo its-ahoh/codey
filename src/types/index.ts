@@ -38,10 +38,19 @@ export interface AgentRequest {
   timeout?: number;
   interactive?: boolean;
   onStream?: (text: string) => void;
+  onStatus?: (update: StatusUpdate) => void;
   context?: {
     files?: string[];
     workingDir?: string;
   };
+}
+
+export interface StatusUpdate {
+  type: 'tool_start' | 'tool_end' | 'info';
+  tool?: string;
+  message: string;
+  input?: Record<string, unknown>;
+  output?: string;
 }
 
 export interface AgentStateEntry {
@@ -88,8 +97,31 @@ export interface ChannelConfig {
 // Per-agent model configuration
 export interface AgentModelConfig {
   enabled?: boolean;
+  provider?: 'anthropic' | 'openai' | 'google';
   defaultModel?: string;
-  models?: ModelConfig[];
+  models?: string[];  // model names only, provider determined by agent.provider
+}
+
+// Planner configuration
+export interface PlannerSettings {
+  enabled?: boolean;
+  model?: string;
+  maxTokens?: number;
+  minPromptLength?: number;
+}
+
+// Context configuration
+export interface ContextSettings {
+  maxTokenBudget?: number;
+  maxTurns?: number;
+  ttlMinutes?: number;
+}
+
+// Memory configuration
+export interface MemorySettings {
+  enabled?: boolean;
+  autoExtract?: boolean;
+  maxAutoMemories?: number;
 }
 
 // Gateway configuration
@@ -103,4 +135,7 @@ export interface GatewayConfig {
     'codex'?: AgentModelConfig;
   };
   rateLimitMs?: number; // Rate limit in ms (default: 3000)
+  planner?: PlannerSettings;
+  context?: ContextSettings;
+  memory?: MemorySettings;
 }

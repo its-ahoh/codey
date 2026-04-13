@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
-import { AgentRequest, AgentResponse, AgentStateEntry } from '../types';
+import { AgentRequest, AgentResponse, AgentStateEntry, StatusUpdate } from '../types';
 import { BaseAgentAdapter } from './base';
 import { Logger } from '../logger';
 
@@ -57,19 +57,11 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       }
 
       // Note: session resumption is not used with -p mode.
-      // Conversation context is managed by the gateway's ConversationManager.
+      // Conversation context is managed by the gateway's ContextManager.
 
       // Add model configuration if provided
       if (request.model) {
         args.push('--model', request.model.model);
-
-        // Add provider-specific settings
-        if (request.model.provider === 'anthropic' && request.model.apiKey) {
-          args.push('--api-key', request.model.apiKey);
-        }
-        if (request.model.baseUrl) {
-          args.push('--base-url', request.model.baseUrl);
-        }
       }
 
       // -p with prompt must be last (matches tested CLI format)
@@ -78,8 +70,12 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // Clean env: remove CLAUDECODE to avoid nested session detection
       const env = { ...process.env };
       delete env.CLAUDECODE;
+      // Set credentials via env vars
       if (request.model?.apiKey) {
-        env.ANTHROPIC_API_KEY = request.model.apiKey;
+        env.ANTHROPIC_AUTH_TOKEN = request.model.apiKey;
+      }
+      if (request.model?.baseUrl) {
+        env.ANTHROPIC_BASE_URL = request.model.baseUrl;
       }
 
       // Ensure common bin paths are available (Electron apps may have minimal PATH)
@@ -145,10 +141,22 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
               if (block.id) {
                 pendingTools.set(block.id, { name: toolName, input: block.input });
               }
+              const inputSummary = block.input
+                ? Object.entries(block.input).map(([k, v]) => {
+                    const val = typeof v === 'string' ? v : JSON.stringify(v);
+                    return `${k}: ${val && val.length > 80 ? val.substring(0, 80) + '...' : val}`;
+                  }).join(', ')
+                : '';
               statusUpdates.push(`${toolName}: running`);
               states.push({
                 source: toolName,
                 status: 'running',
+                input: block.input,
+              });
+              request.onStatus?.({
+                type: 'tool_start',
+                tool: toolName,
+                message: inputSummary ? `${toolName}(${inputSummary})` : toolName,
                 input: block.input,
               });
             }
@@ -169,6 +177,12 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
             status: 'done',
             input: pending?.input,
             output: resultText ? resultText.substring(0, 1000) : undefined,
+          });
+          request.onStatus?.({
+            type: 'tool_end',
+            tool: toolName,
+            message: `${toolName}: done`,
+            output: resultText,
           });
 
           if (toolId) pendingTools.delete(toolId);

@@ -15,6 +15,8 @@ export interface ToolCallEntry {
   type: 'tool_start' | 'tool_end' | 'info';
   tool?: string;
   message: string;
+  input?: Record<string, unknown>;
+  output?: string;
 }
 
 export interface ChatMessage {
