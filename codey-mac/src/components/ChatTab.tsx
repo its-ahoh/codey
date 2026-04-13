@@ -12,6 +12,7 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
   const [input, setInput] = useState('')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [agentStatus, setAgentStatus] = useState<'idle' | 'thinking' | 'working' | 'writing'>('idle')
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -44,12 +45,14 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
 
     setMessages(prev => [...prev, userMessage, assistantMessage]);
     setInput('');
+    setAgentStatus('thinking');
 
     try {
       const response = await apiService.sendMessage(
         input,
         (update) => {
           // update: { type, tool?, message }
+          if (update.type === 'tool_start') setAgentStatus('working')
           setMessages(prev => {
             const idx = prev.findIndex(m => m.id === assistantMessageId);
             if (idx === -1) return prev;
@@ -70,6 +73,7 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
         },
         (text) => {
           // Append streamed text to the assistant message
+          setAgentStatus('writing')
           setMessages(prev => {
             const idx = prev.findIndex(m => m.id === assistantMessageId);
             if (idx === -1) return prev;
@@ -83,6 +87,7 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
       );
 
       // Mark complete
+      setAgentStatus('idle')
       setMessages(prev => {
         const idx = prev.findIndex(m => m.id === assistantMessageId);
         if (idx === -1) return prev;
@@ -93,6 +98,7 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
         ];
       });
     } catch (error) {
+      setAgentStatus('idle')
       setMessages(prev => {
         const idx = prev.findIndex(m => m.id === assistantMessageId);
         if (idx === -1) return prev;
@@ -123,6 +129,22 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
 
   return (
     <div style={styles.container}>
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.8); }
+        }
+      `}</style>
+      {agentStatus !== 'idle' && (
+        <div style={styles.statusBar}>
+          <span style={styles.statusDot} />
+          <span style={styles.statusText}>
+            {agentStatus === 'thinking' && 'Thinking...'}
+            {agentStatus === 'working' && 'Working...'}
+            {agentStatus === 'writing' && 'Writing...'}
+          </span>
+        </div>
+      )}
       <div style={styles.messages}>
         {messages.map(msg => (
           <div key={msg.id} style={msg.role === 'user' ? styles.userMsg : styles.assistantMsg}>
@@ -195,17 +217,6 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
             </div>
           </div>
         ))}
-        {!messages[messages.length - 1]?.isComplete && messages[messages.length - 1]?.role === 'assistant' && (
-          <div style={styles.loading}>
-            ▶ {(() => {
-              const last = messages[messages.length - 1]
-              const toolCalls = last?.toolCalls
-              return toolCalls?.length
-                ? toolCalls[toolCalls.length - 1]?.message
-                : 'Thinking...'
-            })()}
-          </div>
-        )}
         <div ref={messagesEndRef} />
       </div>
       <div style={styles.inputContainer}>
@@ -238,6 +249,27 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     height: '100%',
   },
+  statusBar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 16px',
+    backgroundColor: '#2a2a2a',
+    borderBottom: '1px solid #333',
+    fontSize: '13px',
+    color: '#888',
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+  },
+  statusDot: {
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+    backgroundColor: '#007AFF',
+    animation: 'pulse 1.2s ease-in-out infinite',
+  },
+  statusText: {
+    color: '#aaa',
+  },
   messages: {
     flex: 1,
     padding: '16px',
@@ -268,12 +300,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '12px',
     maxWidth: '70%',
     whiteSpace: 'pre-wrap',
-  },
-  loading: {
-    color: '#888',
-    fontSize: '12px',
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    padding: '4px 0',
   },
   inputContainer: {
     display: 'flex',
