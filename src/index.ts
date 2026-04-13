@@ -61,8 +61,8 @@ function startGateway(): void {
 
     // Start API server on the gateway port
     const apiServer = new ApiServer(configManager.getPort(), (): any => gateway.getHealthStatus(), configManager);
-    apiServer.setMessageHandler(async (prompt, sse) => {
-      return gateway.processPromptHttp(prompt, sse);
+    apiServer.setMessageHandler(async (prompt, sse, conversationId) => {
+      return gateway.processPromptHttp(prompt, sse, conversationId);
     });
     apiServer.setWorkspaceHandlers(
       () => gateway.getWorkspaceList(),

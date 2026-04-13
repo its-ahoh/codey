@@ -1616,18 +1616,25 @@ Example: /model gpt-4.1 write a Python script`;
   async processPromptHttp(
     prompt: string,
     sse?: (event: string, data: string) => void,
-  ): Promise<string> {
+    conversationId?: string,
+  ): Promise<{ response: string; conversationId: string }> {
     // Handle /profile commands directly without going through the agent
     const profileMatch = prompt.match(/^\/profile(?:\s+(\S+))?(?:\s+(.*))?$/i);
     if (profileMatch) {
-      return this.handleHttpProfileCommand(profileMatch);
+      return { response: await this.handleHttpProfileCommand(profileMatch), conversationId: conversationId || '' };
     }
 
     const agent = this.config.defaultAgent;
     const model = this.getDefaultModelConfig(agent);
 
-    // Use a default context window for HTTP API (no per-user identity)
-    const ctxWindow = this.contextManager.getOrCreate('http', 'api');
+    // Use existing context window if provided, otherwise create a new one
+    const ctxWindow = this.contextManager.getOrCreate('http', 'api', conversationId);
+    const ctxId = ctxWindow.id;
+
+    // Emit conversation ID back to client on first message of a new conversation
+    if (!conversationId && sse) {
+      sse('conversationId', ctxId);
+    }
 
     // Build memory context
     const memoryStore = this.workspaceManager.getMemoryStore();
@@ -1679,7 +1686,7 @@ Example: /model gpt-4.1 write a Python script`;
         memoryStore.extractFromInteraction({ userPrompt: prompt, agentOutput: summary.substring(0, 2000) });
       }
       sse?.('done', TaskPlanner.formatPlanSummary(result.plan));
-      return summary;
+      return { response: summary, conversationId: ctxId };
     }
 
     // ── Single-step execution ─────────────────────────────────
@@ -1709,6 +1716,6 @@ Example: /model gpt-4.1 write a Python script`;
       });
     }
 
-    return this.formatAgentResponse(response);
+    return { response: this.formatAgentResponse(response), conversationId: ctxId };
   }
 }

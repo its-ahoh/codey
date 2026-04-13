@@ -107,10 +107,11 @@ export class ContextManager {
         // Expired — archive and create new
         this.archive(existing);
         this.windows.delete(existingId);
+        // Fall through to create new window
       }
     }
 
-    const id = `${userId}-${channel}-${Date.now()}`;
+    const id = `http-api-${Date.now()}`;
     const window: ContextWindow = {
       id,
       userId,

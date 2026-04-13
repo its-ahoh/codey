@@ -11,6 +11,7 @@ interface ChatTabProps {
 export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, setMessages }) => {
   const [input, setInput] = useState('')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [conversationId, setConversationId] = useState<string | undefined>()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [agentStatus, setAgentStatus] = useState<'idle' | 'thinking' | 'working' | 'writing'>('idle')
 
@@ -48,7 +49,7 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
     setAgentStatus('thinking');
 
     try {
-      const response = await apiService.sendMessage(
+      const { response, conversationId: newConversationId } = await apiService.sendMessage(
         input,
         (update) => {
           // update: { type, tool?, message }
@@ -84,7 +85,11 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
             ];
           });
         },
+        conversationId,
       );
+
+      // Save conversation ID for next message
+      if (newConversationId) setConversationId(newConversationId);
 
       // Mark complete
       setAgentStatus('idle')

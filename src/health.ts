@@ -21,7 +21,7 @@ export interface HealthStatus {
 }
 
 type SSECallback = (event: string, data: string) => void;
-type MessageHandler = (prompt: string, sse?: SSECallback) => Promise<string>;
+type MessageHandler = (prompt: string, sse?: SSECallback, conversationId?: string) => Promise<{ response: string; conversationId: string }>;
 type WorkspaceListHandler = () => string[];
 type WorkspaceSwitchHandler = (name: string) => Promise<boolean>;
 
@@ -82,7 +82,7 @@ export class ApiServer {
         req.on('data', chunk => body += chunk);
         req.on('end', async () => {
           try {
-            const { prompt } = JSON.parse(body);
+            const { prompt, conversationId } = JSON.parse(body);
 
             // Use SSE to stream status updates and the final response
             res.writeHead(200, {
@@ -95,7 +95,7 @@ export class ApiServer {
               res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
             };
 
-            const response = await this.handleMessage!(prompt, sse);
+            const { response } = await this.handleMessage!(prompt, sse, conversationId);
             sse('done', response);
             res.end();
           } catch (error) {

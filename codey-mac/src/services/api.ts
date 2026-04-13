@@ -38,11 +38,12 @@ class ApiService {
     prompt: string,
     onStatus?: (update: { type: string; tool?: string; message: string; input?: Record<string, unknown>; output?: string }) => void,
     onStream?: (text: string) => void,
-  ): Promise<string> {
+    conversationId?: string,
+  ): Promise<{ response: string; conversationId?: string }> {
     const response = await fetch(`${this.baseUrl}/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, conversationId }),
     });
 
     if (!response.ok) {
@@ -57,6 +58,7 @@ class ApiService {
 
     const decoder = new TextDecoder();
     let finalResponse = '';
+    let returnedConversationId: string | undefined;
     let eventType = '';
     let dataBuffer = '';
 
@@ -122,6 +124,9 @@ class ApiService {
           case 'stream':
             onStream?.(parsed);
             break;
+          case 'conversationId':
+            returnedConversationId = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+            break;
           case 'done':
             finalResponse = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
             break;
@@ -134,7 +139,7 @@ class ApiService {
       }
     }
 
-    return finalResponse;
+    return { response: finalResponse, conversationId: returnedConversationId };
   }
 
   async getConfig(): Promise<GatewayConfig> {
