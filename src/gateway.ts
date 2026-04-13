@@ -104,7 +104,12 @@ export class Codey {
       maxTokenBudget: config.context?.maxTokenBudget ?? 12000,
       maxTurns: config.context?.maxTurns ?? 30,
       ttlMs: (config.context?.ttlMinutes ?? 60) * 60 * 1000,
+      persistDir: './workspaces',
     });
+    const restored = this.contextManager.load();
+    if (restored > 0) {
+      this.logger.info(`Restored ${restored} archived conversation(s) from disk`);
+    }
     const plannerApiKey = this.configManager?.getActiveProfileObj()?.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY;
     this.planner = new TaskPlanner({
       enabled: config.planner?.enabled !== false,
@@ -260,6 +265,7 @@ export class Codey {
       clearInterval(this.conversationCleanupInterval);
       this.conversationCleanupInterval = undefined;
     }
+    this.contextManager.shutdown();
     for (const handler of this.handlers.values()) {
       await handler.stop();
     }
@@ -344,7 +350,7 @@ export class Codey {
 
     // Get or create structured context window (per-user, per-channel)
     const conversationKey = `${userId}-${channel}`;
-    const ctxWindow = this.contextManager.getOrCreate(
+    const ctxWindow = await this.contextManager.getOrCreate(
       userId,
       channel,
       this.contextIds.get(conversationKey)
@@ -398,10 +404,10 @@ export class Codey {
     });
 
     // Save to structured context
-    this.contextManager.addUserTurn(ctxWindow.id, parsed.prompt);
+    await this.contextManager.addUserTurn(ctxWindow.id, parsed.prompt);
     const meta = ContextManager.extractMeta(response, agent);
     if (response.success) {
-      this.contextManager.addAssistantTurn(ctxWindow.id, response.output, meta);
+      await this.contextManager.addAssistantTurn(ctxWindow.id, response.output, meta);
     }
 
     // Auto-extract memories from the interaction
@@ -458,7 +464,7 @@ export class Codey {
     });
 
     // Record user turn in context
-    this.contextManager.addUserTurn(ctxWindowId, parsed.prompt);
+    await this.contextManager.addUserTurn(ctxWindowId, parsed.prompt);
 
     // Build the agent runner function
     const runAgent = async (stepPrompt: string): Promise<AgentResponse> => {
@@ -499,7 +505,7 @@ export class Codey {
           states: [], // Individual step states are not available here
           duration: step.duration,
         }, agent);
-        this.contextManager.addAssistantTurn(
+        await this.contextManager.addAssistantTurn(
           ctxWindowId,
           `[Step ${step.id}: ${step.title}] ${step.output.substring(0, 500)}`,
           meta,
@@ -698,7 +704,7 @@ export class Codey {
     const conversationKey = `${userId}-${channel}`;
     const contextId = this.contextIds.get(conversationKey);
     if (contextId) {
-      this.contextManager.clear(contextId);
+      await this.contextManager.clear(contextId);
       this.contextIds.delete(conversationKey);
     }
     await this.sendResponse({
@@ -1628,7 +1634,7 @@ Example: /model gpt-4.1 write a Python script`;
     const model = this.getDefaultModelConfig(agent);
 
     // Use existing context window if provided, otherwise create a new one
-    const ctxWindow = this.contextManager.getOrCreate('http', 'api', conversationId);
+    const ctxWindow = await this.contextManager.getOrCreate('http', 'api', conversationId);
     const ctxId = ctxWindow.id;
 
     // Emit conversation ID back to client on first message of a new conversation
@@ -1655,7 +1661,7 @@ Example: /model gpt-4.1 write a Python script`;
       const planSummary = TaskPlanner.formatPlanSummary(plan);
       sse?.('plan', planSummary);
 
-      this.contextManager.addUserTurn(ctxWindow.id, prompt);
+      await this.contextManager.addUserTurn(ctxWindow.id, prompt);
 
       const runAgent = async (stepPrompt: string): Promise<AgentResponse> => {
         const stepMemory = memoryStore.buildContext(stepPrompt);
@@ -1676,7 +1682,7 @@ Example: /model gpt-4.1 write a Python script`;
           message: TaskPlanner.formatStepProgress(step, stepIndex, totalSteps),
         }));
         if (step.status === 'done' && step.output) {
-          this.contextManager.addAssistantTurn(ctxWindow.id, `[Step ${step.id}: ${step.title}] ${step.output.substring(0, 500)}`);
+          await this.contextManager.addAssistantTurn(ctxWindow.id, `[Step ${step.id}: ${step.title}] ${step.output.substring(0, 500)}`);
         }
       };
 
@@ -1700,10 +1706,10 @@ Example: /model gpt-4.1 write a Python script`;
     });
 
     // Store turn in context
-    this.contextManager.addUserTurn(ctxWindow.id, prompt);
+    await this.contextManager.addUserTurn(ctxWindow.id, prompt);
     const meta = ContextManager.extractMeta(response, agent);
     if (response.success) {
-      this.contextManager.addAssistantTurn(ctxWindow.id, response.output, meta);
+      await this.contextManager.addAssistantTurn(ctxWindow.id, response.output, meta);
     }
 
     // Auto-extract memories

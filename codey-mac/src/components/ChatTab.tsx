@@ -12,6 +12,7 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
   const [input, setInput] = useState('')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [conversationId, setConversationId] = useState<string | undefined>()
+  const [isSending, setIsSending] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [agentStatus, setAgentStatus] = useState<'idle' | 'thinking' | 'working' | 'writing'>('idle')
 
@@ -24,7 +25,7 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
   }, [messages])
 
   const sendMessage = async () => {
-    if (!input.trim() || !isGatewayRunning) return;
+    if (!input.trim() || !isGatewayRunning || isSending) return;
 
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
@@ -47,12 +48,12 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
     setMessages(prev => [...prev, userMessage, assistantMessage]);
     setInput('');
     setAgentStatus('thinking');
+    setIsSending(true);
 
     try {
-      const { response, conversationId: newConversationId } = await apiService.sendMessage(
+      const result = await apiService.sendMessage(
         input,
         (update) => {
-          // update: { type, tool?, message }
           if (update.type === 'tool_start') setAgentStatus('working')
           setMessages(prev => {
             const idx = prev.findIndex(m => m.id === assistantMessageId);
@@ -73,7 +74,6 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
           });
         },
         (text) => {
-          // Append streamed text to the assistant message
           setAgentStatus('writing')
           setMessages(prev => {
             const idx = prev.findIndex(m => m.id === assistantMessageId);
@@ -88,8 +88,8 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
         conversationId,
       );
 
-      // Save conversation ID for next message
-      if (newConversationId) setConversationId(newConversationId);
+      // Primary source: conversationId from HTTP response body (reliable)
+      if (result.conversationId) setConversationId(result.conversationId);
 
       // Mark complete
       setAgentStatus('idle')
@@ -98,7 +98,7 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
         if (idx === -1) return prev;
         return [
           ...prev.slice(0, idx),
-          { ...prev[idx], isComplete: true, content: response },
+          { ...prev[idx], isComplete: true, content: result.response },
           ...prev.slice(idx + 1),
         ];
       });
@@ -122,6 +122,8 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
           ...prev.slice(idx + 1),
         ];
       });
+    } finally {
+      setIsSending(false)
     }
   };
 
@@ -229,17 +231,17 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
           style={styles.input}
           value={input}
           onChange={e => setInput(e.target.value)}
-          placeholder={isGatewayRunning ? 'Type a message...' : 'Start gateway first'}
-          disabled={!isGatewayRunning}
+          placeholder={isGatewayRunning && !isSending ? 'Type a message...' : isSending ? 'Sending...' : 'Start gateway first'}
+          disabled={!isGatewayRunning || isSending}
           onKeyDown={handleKeyDown}
         />
         <button
           style={{
             ...styles.sendButton,
-            ...(!isGatewayRunning ? styles.sendButtonDisabled : {})
+            ...(!isGatewayRunning || isSending ? styles.sendButtonDisabled : {})
           }}
           onClick={sendMessage}
-          disabled={!isGatewayRunning}
+          disabled={!isGatewayRunning || isSending}
         >
           Send
         </button>

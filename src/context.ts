@@ -89,84 +89,114 @@ export class ContextManager {
   private windows: Map<string, ContextWindow> = new Map();
   private config: ContextConfig;
   private turnCounter = 0;
+  /** Per-window locks to serialize concurrent mutations */
+  private locks: Map<string, Promise<void>> = new Map();
 
   constructor(config?: Partial<ContextConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
-  // ── CRUD ───────────────────────────────────────────────────────
+  /**
+   * Serialize access to a given window. Concurrent calls with the same
+   * windowId are queued; calls with different IDs proceed in parallel.
+   */
+  private async withLock<T>(windowId: string, fn: () => T): Promise<T> {
+    // Wait for the previous lock to release
+    const prev = this.locks.get(windowId) || Promise.resolve();
+    let release: () => void;
+    const lock = new Promise<void>(resolve => { release = resolve; });
+    this.locks.set(windowId, lock);
 
-  getOrCreate(userId: string, channel: string, existingId?: string): ContextWindow {
-    if (existingId) {
-      const existing = this.windows.get(existingId);
-      if (existing && existing.userId === userId && existing.channel === channel) {
-        if (Date.now() - existing.lastActive <= this.config.ttlMs) {
-          existing.lastActive = Date.now();
-          return existing;
-        }
-        // Expired — archive and create new
-        this.archive(existing);
-        this.windows.delete(existingId);
-        // Fall through to create new window
-      }
+    try {
+      await prev;
+      return fn();
+    } finally {
+      this.locks.delete(windowId);
+      release!();
     }
-
-    const id = `http-api-${Date.now()}`;
-    const window: ContextWindow = {
-      id,
-      userId,
-      channel,
-      turns: [],
-      lastActive: Date.now(),
-      totalTokens: 0,
-    };
-    this.windows.set(id, window);
-    return window;
   }
 
-  clear(id: string): void {
-    const window = this.windows.get(id);
-    if (window) this.archive(window);
-    this.windows.delete(id);
+  // ── CRUD ───────────────────────────────────────────────────────
+
+  async getOrCreate(userId: string, channel: string, existingId?: string): Promise<ContextWindow> {
+    return this.withLock(existingId || 'new', () => {
+      if (existingId) {
+        const existing = this.windows.get(existingId);
+        if (existing && existing.userId === userId && existing.channel === channel) {
+          if (Date.now() - existing.lastActive <= this.config.ttlMs) {
+            existing.lastActive = Date.now();
+            return existing;
+          }
+          // Expired — archive and create new
+          this.archive(existing);
+          this.windows.delete(existingId);
+          // Fall through to create new window
+        }
+      }
+
+      const id = `http-api-${Date.now()}`;
+      const window: ContextWindow = {
+        id,
+        userId,
+        channel,
+        turns: [],
+        lastActive: Date.now(),
+        totalTokens: 0,
+      };
+      this.windows.set(id, window);
+      return window;
+    });
+  }
+
+  async clear(id: string): Promise<void> {
+    return this.withLock(id, () => {
+      const window = this.windows.get(id);
+      if (window) this.archive(window);
+      this.windows.delete(id);
+    });
   }
 
   // ── Add turns ──────────────────────────────────────────────────
 
-  addUserTurn(windowId: string, text: string): void {
-    const window = this.windows.get(windowId);
-    if (!window) return;
+  async addUserTurn(windowId: string, text: string): Promise<void> {
+    return this.withLock(windowId, () => {
+      const window = this.windows.get(windowId);
+      if (!window) return;
 
-    const tokenEstimate = estimateTokens(text);
-    window.turns.push({
-      id: `turn-${++this.turnCounter}`,
-      role: 'user',
-      timestamp: Date.now(),
-      text,
-      tokenEstimate,
+      const tokenEstimate = estimateTokens(text);
+      window.turns.push({
+        id: `turn-${++this.turnCounter}`,
+        role: 'user',
+        timestamp: Date.now(),
+        text,
+        tokenEstimate,
+      });
+      window.totalTokens += tokenEstimate;
+      window.lastActive = Date.now();
+
+      this.compact(window);
     });
-    window.totalTokens += tokenEstimate;
-    window.lastActive = Date.now();
-
-    this.compact(window);
   }
 
-  addAssistantTurn(windowId: string, text: string, meta?: TurnMeta): void {
-    const window = this.windows.get(windowId);
-    if (!window) return;
+  async addAssistantTurn(windowId: string, text: string, meta?: TurnMeta): Promise<void> {
+    return this.withLock(windowId, () => {
+      const window = this.windows.get(windowId);
+      if (!window) return;
 
-    const tokenEstimate = estimateTokens(text);
-    window.turns.push({
-      id: `turn-${++this.turnCounter}`,
-      role: 'assistant',
-      timestamp: Date.now(),
-      text,
-      meta,
-      tokenEstimate,
+      const tokenEstimate = estimateTokens(text);
+      window.turns.push({
+        id: `turn-${++this.turnCounter}`,
+        role: 'assistant',
+        timestamp: Date.now(),
+        text,
+        meta,
+        tokenEstimate,
+      });
+      window.totalTokens += tokenEstimate;
+      window.lastActive = Date.now();
+
+      this.compact(window);
     });
-    window.totalTokens += tokenEstimate;
-    window.lastActive = Date.now();
-
-    this.compact(window);
   }
 
   // ── Build the prompt context string ────────────────────────────
@@ -334,6 +364,67 @@ export class ContextManager {
     } catch {
       // Silently fail — archiving is best-effort
     }
+  }
+
+  /**
+   * Load archived context windows from disk. Called on gateway startup
+   * to restore conversations that survived a previous process exit.
+   */
+  load(): number {
+    if (!this.config.persistDir) return 0;
+
+    const archiveDir = path.join(this.config.persistDir, 'context-archive');
+    if (!fs.existsSync(archiveDir)) return 0;
+
+    let loaded = 0;
+    try {
+      const files = fs.readdirSync(archiveDir).filter(f => f.endsWith('.json'));
+      for (const file of files) {
+        try {
+          const raw = fs.readFileSync(path.join(archiveDir, file), 'utf-8');
+          const data = JSON.parse(raw) as {
+            id: string;
+            userId: string;
+            channel: string;
+            turns: ContextTurn[];
+            archivedAt: number;
+          };
+
+          // Skip if archived too long ago (TTL expired while offline)
+          if (Date.now() - data.archivedAt > this.config.ttlMs) {
+            fs.unlinkSync(path.join(archiveDir, file));
+            continue;
+          }
+
+          const window: ContextWindow = {
+            id: data.id,
+            userId: data.userId,
+            channel: data.channel,
+            turns: data.turns || [],
+            lastActive: data.archivedAt,
+            totalTokens: (data.turns || []).reduce((sum, t) => sum + (t.tokenEstimate || 0), 0),
+          };
+          this.windows.set(window.id, window);
+          fs.unlinkSync(path.join(archiveDir, file));
+          loaded++;
+        } catch {
+          // Skip corrupt files
+        }
+      }
+    } catch {
+      // Skip if archive dir unreadable
+    }
+    return loaded;
+  }
+
+  /**
+   * Archive all active windows and clear them. Called on gateway shutdown.
+   */
+  shutdown(): void {
+    for (const window of this.windows.values()) {
+      this.archive(window);
+    }
+    this.windows.clear();
   }
 
   // ── Cleanup ────────────────────────────────────────────────────
