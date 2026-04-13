@@ -1,9 +1,12 @@
 import * as path from 'path';
 import { AgentRequest, AgentResponse, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType } from './types';
+import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
 import { AgentFactory } from './agents';
 import { Logger } from './logger';
-import { ConversationManager } from './conversation';
+import { ContextManager, ContextWindow } from './context';
+import { MemoryStore } from './memory';
+import { TaskPlanner, TaskPlan, PlanStep } from './planner';
 import { WorkspaceManager } from './workspace';
 
 interface ParsedCommand {
@@ -27,9 +30,11 @@ export class Codey {
   private handlers: Map<string, ChannelHandler> = new Map();
   private processingMessages: Set<string> = new Set();
   private logger: Logger;
-  private conversationManager: ConversationManager;
+  private contextManager: ContextManager;
+  private planner: TaskPlanner;
   private workspaceManager: WorkspaceManager;
-  
+  private configManager?: ConfigManager;
+
   // Rate limiting: userId -> last request timestamp
   private userCooldowns: Map<string, number> = new Map();
   private readonly COOLDOWN_MS: number;
@@ -41,7 +46,7 @@ export class Codey {
   private messagesProcessed = 0;
   private errors = 0;
   private startTime = Date.now();
-  private conversationId?: string;
+  private contextIds: Map<string, string> = new Map(); // key: "userId-channel" -> contextWindowId
   private tuiMode = false;
   private workingDir: string = process.cwd();
 
@@ -53,7 +58,7 @@ export class Codey {
   private static readonly REGEX_AGENT = /\/agent\s+(claude-code|opencode|codex)/i;
   private static readonly REGEX_MODEL_PROMPT = /\/model\s+(\S+)(?:\s+(.+))?/i;
   private static readonly REGEX_MODEL = /\/model\s+(\S+)/i;
-  private static readonly REGEX_HELP_COMMAND = /^\/(help|status|clear|reset|model|agents|config)\s*/i;
+  private static readonly REGEX_HELP_COMMAND = /^\/(help|status|clear|reset|model|agents|config|profile)\s*/i;
 
   private getEffectiveModel(agent?: CodingAgent): string {
     const effectiveAgent = agent || this.config.defaultAgent;
@@ -63,30 +68,51 @@ export class Codey {
   private getDefaultModelConfig(agent: CodingAgent): ModelConfig | undefined {
     const agentConfig = this.config.agents?.[agent];
     if (!agentConfig?.defaultModel) return undefined;
-    const defaultModel = agentConfig.defaultModel;
 
-    // Match by model name or provider/model format
-    const found = agentConfig.models?.find(m =>
-      m.model === defaultModel || `${m.provider}/${m.model}` === defaultModel
-    );
-    if (found) return found;
+    const provider = agentConfig.provider || 'anthropic';
+    const profile = this.configManager?.getActiveProfileObj();
+    const creds = provider === 'anthropic' ? profile?.anthropic
+      : provider === 'openai' ? profile?.openai
+      : provider === 'google' ? profile?.google
+      : undefined;
 
-    // Parse provider/model format
-    if (defaultModel.includes('/')) {
-      const [provider, model] = defaultModel.split('/', 2);
-      return { provider: provider as any, model };
+    // Parse provider/model format (e.g., "anthropic/claude-sonnet-4-20250514")
+    let modelName = agentConfig.defaultModel;
+    let resolvedProvider = provider;
+    if (modelName.includes('/')) {
+      const [p, m] = modelName.split('/', 2);
+      resolvedProvider = p as typeof provider;
+      modelName = m;
     }
 
-    return { provider: 'anthropic', model: defaultModel };
+    return {
+      provider: resolvedProvider,
+      model: modelName,
+      apiKey: creds?.apiKey,
+      baseUrl: creds?.baseUrl,
+    };
   }
 
   private conversationCleanupInterval?: NodeJS.Timeout;
 
-  constructor(config: GatewayConfig, logger?: Logger, workspaceDir?: string) {
+  constructor(config: GatewayConfig, logger?: Logger, workspaceDir?: string, configManager?: ConfigManager) {
     this.config = config;
+    this.configManager = configManager;
     this.agentFactory = new AgentFactory();
     this.logger = logger || Logger.getInstance();
-    this.conversationManager = new ConversationManager();
+    this.contextManager = new ContextManager({
+      maxTokenBudget: config.context?.maxTokenBudget ?? 12000,
+      maxTurns: config.context?.maxTurns ?? 30,
+      ttlMs: (config.context?.ttlMinutes ?? 60) * 60 * 1000,
+    });
+    const plannerApiKey = this.configManager?.getActiveProfileObj()?.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY;
+    this.planner = new TaskPlanner({
+      enabled: config.planner?.enabled !== false,
+      plannerModel: config.planner?.model || 'claude-sonnet-4-20250514',
+      maxPlanTokens: config.planner?.maxTokens || 1500,
+      minPromptLength: config.planner?.minPromptLength || 80,
+      apiKey: plannerApiKey,
+    });
     this.workspaceManager = new WorkspaceManager(workspaceDir || './workspaces');
     this.COOLDOWN_MS = config.rateLimitMs || 3000; // Default 3 seconds
   }
@@ -118,7 +144,7 @@ export class Codey {
   }
 
   private resetSession(): void {
-    this.conversationId = undefined;
+    this.contextIds.clear();
     this.agentFactory.resetSessions();
   }
 
@@ -159,11 +185,11 @@ export class Codey {
       this.logger.info('iMessage handler started');
     }
 
-    // Start conversation cleanup interval
+    // Start context cleanup interval
     this.conversationCleanupInterval = setInterval(() => {
-      const cleaned = this.conversationManager.cleanup();
-      if (cleaned > 0) {
-        this.logger.debug(`Cleaned up ${cleaned} expired conversations`);
+      const ctxCleaned = this.contextManager.cleanup();
+      if (ctxCleaned > 0) {
+        this.logger.debug(`Cleaned up ${ctxCleaned} expired context windows`);
       }
     }, 60000); // Every minute
 
@@ -316,16 +342,23 @@ export class Codey {
   private async processPrompt(message: UserMessage, parsed: ParsedCommand): Promise<void> {
     const { userId, chatId, channel, id: messageId } = message;
 
-    // Get or create conversation
-    const conversation = this.conversationManager.getOrCreate(
+    // Get or create structured context window (per-user, per-channel)
+    const conversationKey = `${userId}-${channel}`;
+    const ctxWindow = this.contextManager.getOrCreate(
       userId,
       channel,
-      this.conversationId
+      this.contextIds.get(conversationKey)
     );
-    this.conversationId = conversation.id;
+    this.contextIds.set(conversationKey, ctxWindow.id);
 
-    // Build prompt with context
-    const prompt = this.conversationManager.buildPrompt(conversation.id, parsed.prompt);
+    // Build memory context from workspace memory store
+    const memoryStore = this.workspaceManager.getMemoryStore();
+    const memoryContext = (this.config.memory?.enabled !== false)
+      ? memoryStore.buildContext(parsed.prompt)
+      : undefined;
+
+    // Build prompt with structured context + memory
+    const prompt = this.contextManager.buildPrompt(ctxWindow.id, parsed.prompt, memoryContext);
 
     // Skip empty prompts
     if (!prompt.trim()) {
@@ -337,8 +370,18 @@ export class Codey {
       return;
     }
 
-    // Run the coding agent (with fallback on failure)
     const agent = parsed.agent || this.config.defaultAgent;
+
+    // ── Task planning ─────────────────────────────────────────
+    const plan = await this.planner.plan(parsed.prompt, memoryContext);
+
+    if (plan && plan.needsPlanning && plan.steps.length > 0) {
+      // Execute as a planned multi-step task
+      await this.executePlannedTask(message, parsed, plan, ctxWindow.id, agent);
+      return;
+    }
+
+    // ── Single-step execution (default path) ──────────────────
     const handler = this.handlers.get(channel);
     const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
     const streamed = { active: false };
@@ -354,21 +397,136 @@ export class Codey {
       },
     });
 
-    // Save to conversation history
-    this.conversationManager.addMessage(conversation.id, 'user', parsed.prompt);
+    // Save to structured context
+    this.contextManager.addUserTurn(ctxWindow.id, parsed.prompt);
+    const meta = ContextManager.extractMeta(response, agent);
     if (response.success) {
-      this.conversationManager.addMessage(conversation.id, 'assistant', response.output);
+      this.contextManager.addAssistantTurn(ctxWindow.id, response.output, meta);
+    }
+
+    // Auto-extract memories from the interaction
+    if (this.config.memory?.autoExtract !== false && response.success) {
+      memoryStore.extractFromInteraction({
+        userPrompt: parsed.prompt,
+        agentOutput: response.output,
+        toolCalls: meta.toolCalls?.map(tc => ({
+          tool: tc.tool,
+          input: tc.input,
+          output: tc.output,
+          status: tc.status,
+        })),
+        filesChanged: meta.filesChanged?.map(fc => ({
+          path: fc.path,
+          action: fc.action,
+        })),
+      });
     }
 
     this.logger.info(`[OUTPUT] ${channel}/${message.username}: ${response.success ? '(streamed)' : response.error}${response.tokens ? ` [${response.tokens.total} tokens]` : ''}${response.duration ? ` [${response.duration}s]` : ''}`);
 
     // Format and send response
     const replyText = this.formatAgentResponse(response);
-    
+
     await this.sendResponse({
       chatId,
       channel,
       text: replyText,
+      replyTo: messageId,
+    });
+  }
+
+  /**
+   * Execute a task that the planner has decomposed into multiple steps.
+   * Reports progress to the user after each step completes.
+   */
+  private async executePlannedTask(
+    message: UserMessage,
+    parsed: ParsedCommand,
+    plan: TaskPlan,
+    ctxWindowId: string,
+    agent: CodingAgent,
+  ): Promise<void> {
+    const { chatId, channel, id: messageId } = message;
+    const handler = this.handlers.get(channel);
+    const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
+
+    // Notify user of the plan
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `\ud83d\udcdd **Task Plan**\n${TaskPlanner.formatPlanSummary(plan)}`,
+    });
+
+    // Record user turn in context
+    this.contextManager.addUserTurn(ctxWindowId, parsed.prompt);
+
+    // Build the agent runner function
+    const runAgent = async (stepPrompt: string): Promise<AgentResponse> => {
+      // Get current memory context for each step
+      const memoryStore = this.workspaceManager.getMemoryStore();
+      const memoryContext = (this.config.memory?.enabled !== false)
+        ? memoryStore.buildContext(stepPrompt)
+        : undefined;
+
+      // Build context-aware prompt for this step
+      const fullPrompt = this.contextManager.buildPrompt(ctxWindowId, stepPrompt, memoryContext);
+
+      return this.runWithFallback(agent, {
+        prompt: fullPrompt,
+        agent,
+        model: parsed.model || this.getDefaultModelConfig(agent),
+        timeout: this.tuiMode ? 1800000 : undefined,
+        interactive: this.tuiMode,
+        onStream,
+        context: {
+          workingDir: this.workingDir,
+        },
+      });
+    };
+
+    // Progress callback
+    const onProgress = async (step: PlanStep, stepIndex: number, totalSteps: number): Promise<void> => {
+      const progressText = TaskPlanner.formatStepProgress(step, stepIndex, totalSteps);
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: progressText,
+      });
+
+      // Record completed steps in context
+      if (step.status === 'done' && step.output) {
+        const meta = ContextManager.extractMeta({
+          states: [], // Individual step states are not available here
+          duration: step.duration,
+        }, agent);
+        this.contextManager.addAssistantTurn(
+          ctxWindowId,
+          `[Step ${step.id}: ${step.title}] ${step.output.substring(0, 500)}`,
+          meta,
+        );
+      }
+    };
+
+    // Execute the plan
+    const result = await this.planner.executePlan(plan, runAgent, onProgress);
+
+    const summaryOutput = result.outputs.join('\n\n---\n\n');
+
+    // Auto-extract memories
+    const memoryStore = this.workspaceManager.getMemoryStore();
+    if (this.config.memory?.autoExtract !== false && result.success) {
+      memoryStore.extractFromInteraction({
+        userPrompt: parsed.prompt,
+        agentOutput: summaryOutput.substring(0, 2000),
+      });
+    }
+
+    // Send final summary
+    const finalSummary = TaskPlanner.formatPlanSummary(result.plan);
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `\ud83c\udfc1 **Task Complete**\n${finalSummary}`,
       replyTo: messageId,
     });
   }
@@ -422,7 +580,7 @@ export class Codey {
         await this.cmdStatus(chatId, channel);
         break;
       case 'clear':
-        await this.cmdClear(chatId, channel);
+        await this.cmdClear(message.userId, chatId, channel);
         break;
       case 'reset':
         await this.cmdReset(chatId, channel);
@@ -442,6 +600,9 @@ export class Codey {
         break;
       case 'config':
         await this.cmdConfig(chatId, channel);
+        break;
+      case 'profile':
+        await this.cmdProfile(args, chatId, channel);
         break;
       case 'workers':
         await this.cmdWorkers(chatId, channel);
@@ -463,6 +624,16 @@ export class Codey {
       case 'cwd':
       case 'dir':
         await this.cmdCwd(args, chatId, channel);
+        break;
+      case 'memory':
+      case 'mem':
+        await this.cmdMemory(args, message);
+        break;
+      case 'plan':
+        await this.cmdPlan(args, chatId, channel);
+        break;
+      case 'remember':
+        await this.cmdRemember(args, message);
         break;
       default:
         return;
@@ -523,9 +694,12 @@ export class Codey {
     });
   }
 
-  private async cmdClear(chatId: string, channel: ChannelType): Promise<void> {
-    if (this.conversationId) {
-      this.conversationManager.clear(this.conversationId);
+  private async cmdClear(userId: string, chatId: string, channel: ChannelType): Promise<void> {
+    const conversationKey = `${userId}-${channel}`;
+    const contextId = this.contextIds.get(conversationKey);
+    if (contextId) {
+      this.contextManager.clear(contextId);
+      this.contextIds.delete(conversationKey);
     }
     await this.sendResponse({
       chatId,
@@ -612,6 +786,86 @@ export class Codey {
         `Model: ${this.getEffectiveModel()}\n\n` +
         `Configure via CLI: npm run configure`,
     });
+  }
+
+  private async cmdProfile(args: string[], chatId: string, channel: ChannelType): Promise<void> {
+    if (!this.configManager) {
+      await this.sendResponse({ chatId, channel, text: '❌ Profile management not available.' });
+      return;
+    }
+
+    // Parse key-value style args: --anthropic <key> [--anthropic-url <url>] [--openai <key>] [--openai-url <url>]
+    const kv: Record<string, string> = {};
+    for (let i = 0; i < args.length; i++) {
+      if (args[i].startsWith('--')) {
+        kv[args[i]] = args[i + 1] || '';
+        i++;
+      }
+    }
+
+    const subCmd = args[0];
+
+    if (!subCmd || subCmd === 'list') {
+      const profiles = this.configManager.getProfiles();
+      const active = this.configManager.getActiveProfile();
+      if (profiles.length === 0) {
+        await this.sendResponse({ chatId, channel, text: '📌 No profiles.\n\nUsage:\n  /profile add <name> --anthropic <key> [--anthropic-url <url>] [--openai <key>] [--openai-url <url>]\n  /profile del <name>\n  /profile <name>' });
+        return;
+      }
+      const lines = profiles.map(p => {
+        const mark = p.name === active ? '👉' : '  ';
+        const a = p.anthropic ? `anthropic ✅${p.anthropic.baseUrl ? ` (${p.anthropic.baseUrl})` : ''}` : '';
+        const o = p.openai ? `openai ✅${p.openai.baseUrl ? ` (${p.openai.baseUrl})` : ''}` : '';
+        const creds = [a, o].filter(Boolean).join(', ');
+        return `${mark} **${p.name}**${creds ? ` — ${creds}` : ''}`;
+      }).join('\n');
+      await this.sendResponse({ chatId, channel, text: `📌 Active: **${active}**\n\n${lines}\n\nSwitch: /profile <name>` });
+      return;
+    }
+
+    if (subCmd === 'add' || subCmd === 'set') {
+      if (!kv['--anthropic'] && !kv['--openai']) {
+        await this.sendResponse({ chatId, channel, text: 'Usage: /profile add <name> --anthropic <key> [--anthropic-url <url>] [--openai <key>] [--openai-url <url>]' });
+        return;
+      }
+      const name = args.find(a => !a.startsWith('--'));
+      if (!name) {
+        await this.sendResponse({ chatId, channel, text: 'Usage: /profile add <name> ...' });
+        return;
+      }
+      const profile: any = { name };
+      if (kv['--anthropic']) {
+        profile.anthropic = { apiKey: kv['--anthropic'], baseUrl: kv['--anthropic-url'] || undefined };
+      }
+      if (kv['--openai']) {
+        profile.openai = { apiKey: kv['--openai'], baseUrl: kv['--openai-url'] || undefined };
+      }
+      this.configManager.addProfile(profile);
+      await this.sendResponse({ chatId, channel, text: `✅ Profile **${name}** saved.\n  anthropic: ${kv['--anthropic'] ? '✅' : '❌'}\n  openai: ${kv['--openai'] ? '✅' : '❌'}` });
+      return;
+    }
+
+    if (subCmd === 'del' || subCmd === 'remove') {
+      if (!args[1]) {
+        await this.sendResponse({ chatId, channel, text: 'Usage: /profile del <name>' });
+        return;
+      }
+      const ok = this.configManager.removeProfile(args[1]);
+      await this.sendResponse({ chatId, channel, text: ok ? `✅ Profile **${args[1]}** removed.` : `❌ Profile not found.` });
+      return;
+    }
+
+    // Assume profile name to switch to
+    const ok = this.configManager.setActiveProfile(subCmd);
+    if (ok) {
+      const profile = this.configManager.getActiveProfileObj();
+      const anth = profile?.anthropic?.apiKey;
+      const openai = profile?.openai?.apiKey;
+      await this.sendResponse({ chatId, channel, text: `✅ Switched to **${subCmd}**.\n  anthropic: ${anth ? '✅' : '❌'}\n  openai: ${openai ? '✅' : '❌'}` });
+    } else {
+      const names = this.configManager.getProfiles().map(p => p.name).join(', ');
+      await this.sendResponse({ chatId, channel, text: `❌ **${subCmd}** not found. ${names ? `Available: ${names}` : ''}` });
+    }
   }
 
   private async cmdWorkers(chatId: string, channel: ChannelType): Promise<void> {
@@ -717,20 +971,130 @@ export class Codey {
     }
   }
 
-  private getHelpText(): string {
-    return `🤖 Codey Commands
+  private async cmdMemory(args: string[], message: UserMessage): Promise<void> {
+    const { chatId, channel } = message;
+    const memoryStore = this.workspaceManager.getMemoryStore();
 
-👥 Workers
+    if (args.length === 0 || args[0] === 'list') {
+      const memories = memoryStore.getRecent(10);
+      if (memories.length === 0) {
+        await this.sendResponse({ chatId, channel, text: 'No memories stored for this workspace.' });
+        return;
+      }
+      const lines = memories.map(m =>
+        `- [${m.type}] **${m.label}**: ${m.content.substring(0, 100)}${m.content.length > 100 ? '...' : ''}`
+      );
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `\ud83e\udde0 Workspace Memories (${memories.length})\n\n${lines.join('\n')}`,
+      });
+    } else if (args[0] === 'search' && args.length > 1) {
+      const query = args.slice(1).join(' ');
+      const results = memoryStore.search(query);
+      if (results.length === 0) {
+        await this.sendResponse({ chatId, channel, text: `No memories matching "${query}".` });
+        return;
+      }
+      const lines = results.map(m => `- [${m.type}] **${m.label}**: ${m.content.substring(0, 100)}`);
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `\ud83d\udd0d Memory search: "${query}"\n\n${lines.join('\n')}`,
+      });
+    } else if (args[0] === 'clear') {
+      const all = memoryStore.getAll();
+      for (const m of all) memoryStore.remove(m.id);
+      await this.sendResponse({ chatId, channel, text: '\ud83d\uddd1\ufe0f All workspace memories cleared.' });
+    } else {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: 'Usage:\n/memory - List recent memories\n/memory search <query> - Search memories\n/memory clear - Clear all memories\n/remember <text> - Add a memory',
+      });
+    }
+  }
+
+  private async cmdRemember(args: string[], message: UserMessage): Promise<void> {
+    const { chatId, channel } = message;
+    if (args.length === 0) {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: 'Usage: /remember <something to remember>\n\nExample: /remember This project uses PostgreSQL 15 with pgvector',
+      });
+      return;
+    }
+
+    const content = args.join(' ');
+    const memoryStore = this.workspaceManager.getMemoryStore();
+    const entry = memoryStore.add({
+      type: 'fact',
+      content,
+      label: content.substring(0, 60),
+      tags: ['user'],
+      source: 'user',
+    });
+
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `\ud83e\udde0 Remembered: ${entry.content}`,
+    });
+  }
+
+  private async cmdPlan(args: string[], chatId: string, channel: ChannelType): Promise<void> {
+    if (args.length === 0) {
+      const enabled = this.config.planner?.enabled !== false;
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `\ud83d\udcdd Task Planner: ${enabled ? 'enabled' : 'disabled'}\n\n` +
+          `The planner automatically decomposes complex tasks into steps.\n` +
+          `Use /plan on to enable, /plan off to disable.`,
+      });
+      return;
+    }
+
+    if (args[0] === 'on') {
+      this.planner.updateConfig({ enabled: true });
+      await this.sendResponse({ chatId, channel, text: '\u2705 Task planner enabled.' });
+    } else if (args[0] === 'off') {
+      this.planner.updateConfig({ enabled: false });
+      await this.sendResponse({ chatId, channel, text: '\u274c Task planner disabled.' });
+    } else {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: 'Usage: /plan [on|off]',
+      });
+    }
+  }
+
+  private getHelpText(): string {
+    return `\ud83e\udd16 Codey Commands
+
+\ud83d\udc65 Workers
 /workers - List all workers
 /worker <name> <task> - Run a specific worker
 /team <task> - Run workers in sequence
 
-🤖 Agents (legacy)
+\ud83e\udd16 Agents (legacy)
 /parallel <prompt> - Run all agents in parallel
 /all <prompt> - Run all agents in parallel
 /agent <name> - Switch agent
 
-⚙️ Settings
+\ud83e\udde0 Memory
+/memory - List recent memories
+/memory search <query> - Search memories
+/memory clear - Clear all memories
+/remember <text> - Save a memory
+
+\ud83d\udcdd Planning
+/plan - Show planner status
+/plan on/off - Enable/disable task decomposition
+
+\u2699\ufe0f Settings
 /help - Show this message
 /status - Show gateway status
 /cwd [path] - Show/set working directory
@@ -741,7 +1105,7 @@ export class Codey {
 
 Example: /worker architect design a REST API
 Example: /team build a todo app
-Example: /parallel create a hello world app
+Example: /remember This project uses Redis for caching
 Example: /model gpt-4.1 write a Python script`;
   }
 
@@ -846,10 +1210,7 @@ Example: /model gpt-4.1 write a Python script`;
     const prompt = this.workspaceManager.getWorkerManager().buildWorkerPrompt(workerName, task);
 
     // Run with worker's coding agent and model
-    const modelConfig: ModelConfig = {
-      provider: codingAgent === 'claude-code' ? 'anthropic' : 'openai',
-      model: model,
-    };
+    const modelConfig = this.getModelConfig(codingAgent, model);
 
     const handler = this.handlers.get(channel);
     const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
@@ -924,10 +1285,7 @@ Example: /model gpt-4.1 write a Python script`;
       });
 
       const prompt = this.workspaceManager.getWorkerManager().buildWorkerPrompt(worker.name, currentTask);
-      const modelConfig: ModelConfig = {
-        provider: codingAgent === 'claude-code' ? 'anthropic' : 'openai',
-        model: model,
-      };
+      const modelConfig = this.getModelConfig(codingAgent, model);
 
       const handler = this.handlers.get(channel);
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
@@ -1084,13 +1442,15 @@ Example: /model gpt-4.1 write a Python script`;
 
   private getModelConfig(agent: CodingAgent, modelName: string): ModelConfig | undefined {
     const agentConfig = this.config.agents?.[agent];
-    if (agentConfig?.models) {
-      const found = agentConfig.models.find(m => m.model.toLowerCase() === modelName.toLowerCase());
-      if (found) return found;
+    const provider = agentConfig?.provider || 'anthropic';
+
+    // Check if model is in the agent's model list
+    if (agentConfig?.models?.some(m => m.toLowerCase() === modelName.toLowerCase())) {
+      return { provider, model: modelName };
     }
 
     const modelLower = modelName.toLowerCase();
-    
+
     if (modelLower.startsWith('claude-') || modelLower.startsWith('claude/')) {
       return { provider: 'anthropic', model: modelName };
     }
@@ -1182,30 +1542,173 @@ Example: /model gpt-4.1 write a Python script`;
     return chunks;
   }
 
-  // Handle prompt via HTTP API
-  async processPromptHttp(prompt: string): Promise<string> {
-    const message: UserMessage = {
-      id: `http-${Date.now()}`,
-      userId: 'http-user',
-      username: 'HTTP',
-      chatId: 'http',
-      channel: 'http' as any,
-      text: prompt,
-      timestamp: Date.now(),
-    };
-
-    // Create a mock response handler
-    let responseText = '';
-    const originalSendResponse = this.sendResponse.bind(this);
-    this.sendResponse = async (response: GatewayResponse) => {
-      responseText = response.text;
-    };
-
-    try {
-      await this.handleMessage(message);
-      return responseText;
-    } finally {
-      this.sendResponse = originalSendResponse;
+  // Handle /profile commands from HTTP API
+  private async handleHttpProfileCommand(match: RegExpMatchArray): Promise<string> {
+    if (!this.configManager) {
+      return '❌ Profile management not available.';
     }
+
+    const subCmd = match[1] || '';
+    const rest = match[2] || '';
+    const args = rest ? rest.trim().split(/\s+/) : [];
+
+    // Parse --key value style args
+    const kv: Record<string, string> = {};
+    for (let i = 0; i < args.length; i++) {
+      if (args[i].startsWith('--')) {
+        kv[args[i]] = args[i + 1] || '';
+        i++;
+      }
+    }
+
+    if (!subCmd || subCmd === 'list') {
+      const profiles = this.configManager.getProfiles();
+      const active = this.configManager.getActiveProfile();
+      if (profiles.length === 0) {
+        return '📌 No profiles.\n\nUsage: /profile add <name> --anthropic <key> [--anthropic-url <url>] [--openai <key>] [--openai-url <url>]';
+      }
+      const lines = profiles.map(p => {
+        const mark = p.name === active ? '👉' : '  ';
+        const a = p.anthropic ? `anthropic ✅${p.anthropic.baseUrl ? ` (${p.anthropic.baseUrl})` : ''}` : '';
+        const o = p.openai ? `openai ✅${p.openai.baseUrl ? ` (${p.openai.baseUrl})` : ''}` : '';
+        const creds = [a, o].filter(Boolean).join(', ');
+        return `${mark} **${p.name}**${creds ? ` — ${creds}` : ''}`;
+      }).join('\n');
+      return `📌 Active: **${active}**\n\n${lines}\n\nSwitch: /profile <name>`;
+    }
+
+    if (subCmd === 'add' || subCmd === 'set') {
+      if (!kv['--anthropic'] && !kv['--openai']) {
+        return 'Usage: /profile add <name> --anthropic <key> [--anthropic-url <url>] [--openai <key>] [--openai-url <url>]';
+      }
+      const name = args.find(a => !a.startsWith('--'));
+      if (!name) return 'Usage: /profile add <name> ...';
+      const profile: any = { name };
+      if (kv['--anthropic']) {
+        profile.anthropic = { apiKey: kv['--anthropic'], baseUrl: kv['--anthropic-url'] || undefined };
+      }
+      if (kv['--openai']) {
+        profile.openai = { apiKey: kv['--openai'], baseUrl: kv['--openai-url'] || undefined };
+      }
+      this.configManager.addProfile(profile);
+      return `✅ Profile **${name}** saved.\n  anthropic: ${kv['--anthropic'] ? '✅' : '❌'}\n  openai: ${kv['--openai'] ? '✅' : '❌'}`;
+    }
+
+    if (subCmd === 'del' || subCmd === 'remove') {
+      if (!args[0]) return 'Usage: /profile del <name>';
+      const ok = this.configManager.removeProfile(args[0]);
+      return ok ? `✅ Profile **${args[0]}** removed.` : `❌ Profile not found.`;
+    }
+
+    // Assume profile name to switch to
+    const ok = this.configManager.setActiveProfile(subCmd);
+    if (ok) {
+      const profile = this.configManager.getActiveProfileObj();
+      const anth = profile?.anthropic?.apiKey;
+      const openai = profile?.openai?.apiKey;
+      return `✅ Switched to **${subCmd}**.\n  anthropic: ${anth ? '✅' : '❌'}\n  openai: ${openai ? '✅' : '❌'}`;
+    }
+    const names = this.configManager.getProfiles().map(p => p.name).join(', ');
+    return `❌ **${subCmd}** not found. ${names ? `Available: ${names}` : ''}`;
+  }
+
+  // Handle prompt via HTTP API
+  async processPromptHttp(
+    prompt: string,
+    sse?: (event: string, data: string) => void,
+  ): Promise<string> {
+    // Handle /profile commands directly without going through the agent
+    const profileMatch = prompt.match(/^\/profile(?:\s+(\S+))?(?:\s+(.*))?$/i);
+    if (profileMatch) {
+      return this.handleHttpProfileCommand(profileMatch);
+    }
+
+    const agent = this.config.defaultAgent;
+    const model = this.getDefaultModelConfig(agent);
+
+    // Use a default context window for HTTP API (no per-user identity)
+    const ctxWindow = this.contextManager.getOrCreate('http', 'api');
+
+    // Build memory context
+    const memoryStore = this.workspaceManager.getMemoryStore();
+    const memoryContext = (this.config.memory?.enabled !== false)
+      ? memoryStore.buildContext(prompt)
+      : undefined;
+
+    // Build prompt with structured context + memory
+    const fullPrompt = this.contextManager.buildPrompt(ctxWindow.id, prompt, memoryContext);
+
+    const onStream = sse ? (text: string) => sse('stream', text) : undefined;
+    const onStatus = sse ? (update: any) => sse('status', update) : undefined;
+
+    // ── Task planning ─────────────────────────────────────────
+    const plan = await this.planner.plan(prompt, memoryContext);
+
+    if (plan && plan.needsPlanning && plan.steps.length > 0) {
+      const planSummary = TaskPlanner.formatPlanSummary(plan);
+      sse?.('plan', planSummary);
+
+      this.contextManager.addUserTurn(ctxWindow.id, prompt);
+
+      const runAgent = async (stepPrompt: string): Promise<AgentResponse> => {
+        const stepMemory = memoryStore.buildContext(stepPrompt);
+        const stepFullPrompt = this.contextManager.buildPrompt(ctxWindow.id, stepPrompt, stepMemory);
+        return this.runWithFallback(agent, {
+          prompt: stepFullPrompt,
+          agent,
+          model,
+          context: { workingDir: this.workingDir },
+          onStream,
+          onStatus,
+        });
+      };
+
+      const onProgress = async (step: PlanStep, stepIndex: number, totalSteps: number): Promise<void> => {
+        sse?.('status', JSON.stringify({
+          type: step.status === 'running' ? 'info' : 'info',
+          message: TaskPlanner.formatStepProgress(step, stepIndex, totalSteps),
+        }));
+        if (step.status === 'done' && step.output) {
+          this.contextManager.addAssistantTurn(ctxWindow.id, `[Step ${step.id}: ${step.title}] ${step.output.substring(0, 500)}`);
+        }
+      };
+
+      const result = await this.planner.executePlan(plan, runAgent, onProgress);
+      const summary = result.outputs.join('\n\n---\n\n');
+      if (result.success) {
+        memoryStore.extractFromInteraction({ userPrompt: prompt, agentOutput: summary.substring(0, 2000) });
+      }
+      sse?.('done', TaskPlanner.formatPlanSummary(result.plan));
+      return summary;
+    }
+
+    // ── Single-step execution ─────────────────────────────────
+    const response = await this.runWithFallback(agent, {
+      prompt: fullPrompt,
+      agent,
+      model,
+      context: { workingDir: this.workingDir },
+      onStream,
+      onStatus,
+    });
+
+    // Store turn in context
+    this.contextManager.addUserTurn(ctxWindow.id, prompt);
+    const meta = ContextManager.extractMeta(response, agent);
+    if (response.success) {
+      this.contextManager.addAssistantTurn(ctxWindow.id, response.output, meta);
+    }
+
+    // Auto-extract memories
+    if (this.config.memory?.autoExtract !== false && response.success) {
+      memoryStore.extractFromInteraction({
+        userPrompt: prompt,
+        agentOutput: response.output,
+        toolCalls: meta.toolCalls?.map(tc => ({ tool: tc.tool, input: tc.input, output: tc.output, status: tc.status })),
+        filesChanged: meta.filesChanged?.map(fc => ({ path: fc.path, action: fc.action })),
+      });
+    }
+
+    return this.formatAgentResponse(response);
   }
 }
