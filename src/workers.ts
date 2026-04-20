@@ -1,212 +1,155 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-export interface WorkerConfig {
-  name: string;
+export interface WorkerPersonality {
   role: string;
   soul: string;
-  relationship: string;
   instructions: string;
 }
 
-export interface WorkerJsonConfig {
+export interface WorkerConfig {
   codingAgent: 'claude-code' | 'opencode' | 'codex';
   model: string;
   tools: string[];
 }
 
-export interface WorkersJson {
-  workers: Record<string, WorkerJsonConfig>;
-}
-
-export interface WorkerManifest {
-  workers: Map<string, WorkerConfig>;
-  workerConfigs: Map<string, WorkerJsonConfig>;
-  relationships: Map<string, string[]>;
+export interface Worker {
+  name: string;
+  personality: WorkerPersonality;
+  config: WorkerConfig;
 }
 
 export class WorkerManager {
-  private manifest: WorkerManifest;
   private workersDir: string;
-  private configPath: string;
+  private workers: Map<string, Worker> = new Map();
 
-  constructor(workersDir: string = './workspaces/default') {
-    this.workersDir = path.join(workersDir, 'workers');
-    this.configPath = path.join(workersDir, 'workspace.json');
-    this.manifest = { 
-      workers: new Map(), 
-      workerConfigs: new Map(),
-      relationships: new Map() 
-    };
-  }
-
-  setWorkspace(workspaceId: string): void {
-    this.workersDir = `./workspaces/${workspaceId}/workers`;
-    this.configPath = `./workspaces/${workspaceId}/workspace.json`;
-    this.manifest = { 
-      workers: new Map(), 
-      workerConfigs: new Map(),
-      relationships: new Map() 
-    };
+  constructor(workersDir: string = './workers') {
+    this.workersDir = workersDir;
   }
 
   async loadWorkers(): Promise<void> {
-    // Load JSON config first
-    if (fs.existsSync(this.configPath)) {
-      const configData = fs.readFileSync(this.configPath, 'utf-8');
-      const workersJson: WorkersJson = JSON.parse(configData);
-      
-      for (const [name, config] of Object.entries(workersJson.workers)) {
-        this.manifest.workerConfigs.set(name.toLowerCase(), config);
-      }
-      console.log(`[Workers] Loaded ${Object.keys(workersJson.workers).length} worker configs`);
-    }
+    this.workers.clear();
 
-    // Load markdown files for personality
     if (!fs.existsSync(this.workersDir)) {
-      console.log(`[Workers] Workers directory not found: ${this.workersDir}`);
+      console.log(`[Workers] Library not found at ${this.workersDir} — no workers loaded`);
       return;
     }
 
-    const files = fs.readdirSync(this.workersDir).filter(f => f.endsWith('.md'));
-    
-    for (const file of files) {
-      const workerName = file.replace('.md', '');
-      const content = fs.readFileSync(path.join(this.workersDir, file), 'utf-8');
-      const config = this.parseWorkerMarkdown(workerName, content);
-      
-      this.manifest.workers.set(workerName.toLowerCase(), config);
-      
-      if (config.relationship) {
-        const related = this.parseRelationships(config.relationship);
-        this.manifest.relationships.set(workerName.toLowerCase(), related);
-      }
+    const entries = fs.readdirSync(this.workersDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const name = entry.name;
+      const worker = this.loadWorker(name);
+      if (worker) this.workers.set(name.toLowerCase(), worker);
     }
 
-    console.log(`[Workers] Loaded ${this.manifest.workers.size} workers from ${this.workersDir}`);
+    console.log(`[Workers] Loaded ${this.workers.size} workers from ${this.workersDir}`);
   }
 
-  private parseWorkerMarkdown(name: string, content: string): WorkerConfig {
-    const config: WorkerConfig = {
-      name,
-      role: '',
-      soul: '',
-      relationship: '',
-      instructions: '',
-    };
+  private loadWorker(name: string): Worker | null {
+    const dir = path.join(this.workersDir, name);
+    const mdPath = path.join(dir, 'personality.md');
+    const cfgPath = path.join(dir, 'config.json');
 
+    if (!fs.existsSync(mdPath)) {
+      console.error(`[Workers] Skipping ${name}: personality.md missing`);
+      return null;
+    }
+    if (!fs.existsSync(cfgPath)) {
+      console.error(`[Workers] Skipping ${name}: config.json missing (required)`);
+      return null;
+    }
+
+    let config: WorkerConfig;
+    try {
+      config = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+    } catch (err) {
+      console.error(`[Workers] Skipping ${name}: config.json invalid JSON (${err})`);
+      return null;
+    }
+
+    if (!config.codingAgent || !config.model) {
+      console.error(`[Workers] Skipping ${name}: config.json missing codingAgent or model`);
+      return null;
+    }
+    if (!Array.isArray(config.tools)) config.tools = [];
+
+    const personality = this.parsePersonality(fs.readFileSync(mdPath, 'utf-8'));
+    return { name, personality, config };
+  }
+
+  private parsePersonality(content: string): WorkerPersonality {
+    const personality: WorkerPersonality = { role: '', soul: '', instructions: '' };
     const lines = content.split('\n');
     let currentSection = '';
-    let sectionContent: string[] = [];
+    let buffer: string[] = [];
+
+    const flush = () => {
+      const trimmed = buffer.join('\n').trim();
+      if (!trimmed) return;
+      if (currentSection === 'role') personality.role = trimmed;
+      else if (currentSection === 'soul') personality.soul = trimmed;
+      else if (currentSection === 'instructions') personality.instructions = trimmed;
+    };
 
     for (const line of lines) {
       if (line.startsWith('## ')) {
-        this.saveSection(config, currentSection, sectionContent.join('\n'));
-        currentSection = line.replace('## ', '').toLowerCase();
-        sectionContent = [];
+        flush();
+        currentSection = line.replace(/^##\s+/, '').toLowerCase();
+        buffer = [];
       } else if (line.startsWith('# ')) {
-        config.name = line.replace('# Worker: ', '').trim();
+        // title line, ignored
       } else {
-        sectionContent.push(line);
+        buffer.push(line);
       }
     }
-
-    this.saveSection(config, currentSection, sectionContent.join('\n'));
-    return config;
+    flush();
+    return personality;
   }
 
-  private saveSection(config: WorkerConfig, section: string, content: string): void {
-    const trimmed = content.trim();
-    if (!trimmed) return;
-
-    switch (section) {
-      case 'role':
-        config.role = trimmed;
-        break;
-      case 'soul':
-        config.soul = trimmed;
-        break;
-      case 'relationship':
-        config.relationship = trimmed;
-        break;
-      case 'instructions':
-        config.instructions = trimmed;
-        break;
-    }
+  getWorker(name: string): Worker | undefined {
+    return this.workers.get(name.toLowerCase());
   }
 
-  private parseRelationships(relationship: string): string[] {
-    const matches = relationship.match(/(?:leads|receives|reviews|interacts with)\s+(\w+)/gi);
-    if (!matches) return [];
-    
-    return matches.map(m => {
-      const name = m.split(/\s+/).pop()?.toLowerCase() || '';
-      return name;
-    }).filter(Boolean);
+  hasWorker(name: string): boolean {
+    return this.workers.has(name.toLowerCase());
   }
 
-  getWorker(name: string): WorkerConfig | undefined {
-    return this.manifest.workers.get(name.toLowerCase());
-  }
-
-  getWorkerConfig(name: string): WorkerJsonConfig | undefined {
-    return this.manifest.workerConfigs.get(name.toLowerCase());
-  }
-
-  getAllWorkers(): WorkerConfig[] {
-    return Array.from(this.manifest.workers.values());
+  getAllWorkers(): Worker[] {
+    return Array.from(this.workers.values());
   }
 
   getWorkerNames(): string[] {
-    return Array.from(this.manifest.workers.keys());
+    return Array.from(this.workers.keys());
   }
 
-  getRelatedWorkers(name: string): string[] {
-    return this.manifest.relationships.get(name.toLowerCase()) || [];
+  getWorkerCodingAgent(name: string): string {
+    return this.getWorker(name)?.config.codingAgent || 'claude-code';
   }
 
-  buildWorkerPrompt(workerName: string, task: string): string {
-    const worker = this.getWorker(workerName.toLowerCase());
-    if (!worker) {
-      return task;
-    }
+  getWorkerModel(name: string): string {
+    return this.getWorker(name)?.config.model || '';
+  }
 
-    const parts = [
+  buildWorkerPrompt(name: string, task: string): string {
+    const worker = this.getWorker(name);
+    if (!worker) return task;
+    return [
       `# Worker: ${worker.name}`,
       `## Role`,
-      worker.role,
+      worker.personality.role,
       `## Personality`,
-      worker.soul,
+      worker.personality.soul,
       `## Instructions`,
-      worker.instructions,
+      worker.personality.instructions,
       `## Task`,
       task,
-    ];
-
-    return parts.join('\n\n');
-  }
-
-  getWorkerCodingAgent(workerName: string): string {
-    const config = this.getWorkerConfig(workerName.toLowerCase());
-    return config?.codingAgent || 'claude-code';
-  }
-
-  getWorkerModel(workerName: string): string {
-    const config = this.getWorkerConfig(workerName.toLowerCase());
-    return config?.model || 'claude-sonnet-4-20250514';
+    ].join('\n\n');
   }
 
   listWorkers(): string {
-    const workers = this.getAllWorkers();
-    if (workers.length === 0) {
-      return 'No workers configured. Add markdown files to the workspace workers/ folder.';
-    }
-
-    return workers.map(w => {
-      const config = this.getWorkerConfig(w.name);
-      const agent = config?.codingAgent || 'claude-code';
-      const model = config?.model || 'unknown';
-      return `• **${w.name}** - ${w.role} (${agent}/${model})`;
-    }).join('\n');
+    const all = this.getAllWorkers();
+    if (all.length === 0) return 'No workers configured. Create folders under ./workers/<name>/ with personality.md and config.json.';
+    return all.map(w => `• **${w.name}** — ${w.personality.role || '(no role)'} (${w.config.codingAgent}/${w.config.model})`).join('\n');
   }
 }
