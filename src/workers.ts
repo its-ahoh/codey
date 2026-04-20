@@ -19,6 +19,8 @@ export interface Worker {
   config: WorkerConfig;
 }
 
+const VALID_CODING_AGENTS: readonly WorkerConfig['codingAgent'][] = ['claude-code', 'opencode', 'codex'];
+
 export class WorkerManager {
   private workersDir: string;
   private workers: Map<string, Worker> = new Map();
@@ -72,9 +74,19 @@ export class WorkerManager {
       console.error(`[Workers] Skipping ${name}: config.json missing codingAgent or model`);
       return null;
     }
+    if (!VALID_CODING_AGENTS.includes(config.codingAgent)) {
+      console.error(`[Workers] Skipping ${name}: codingAgent "${config.codingAgent}" is not one of ${VALID_CODING_AGENTS.join(', ')}`);
+      return null;
+    }
     if (!Array.isArray(config.tools)) config.tools = [];
 
-    const personality = this.parsePersonality(fs.readFileSync(mdPath, 'utf-8'));
+    let personality: WorkerPersonality;
+    try {
+      personality = this.parsePersonality(fs.readFileSync(mdPath, 'utf-8'));
+    } catch (err) {
+      console.error(`[Workers] Skipping ${name}: failed to read personality.md (${err})`);
+      return null;
+    }
     return { name, personality, config };
   }
 
@@ -123,7 +135,7 @@ export class WorkerManager {
     return Array.from(this.workers.keys());
   }
 
-  getWorkerCodingAgent(name: string): string {
+  getWorkerCodingAgent(name: string): WorkerConfig['codingAgent'] {
     return this.getWorker(name)?.config.codingAgent || 'claude-code';
   }
 
