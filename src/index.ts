@@ -5,6 +5,7 @@ import { handleCommand } from './cli';
 import { GatewayConfig } from './types';
 import { Codey } from './gateway';
 import { ApiServer, HealthStatusType } from './health';
+import { assertNoLegacyLayout } from './startup-guard';
 
 dotenv.config();
 
@@ -50,6 +51,7 @@ function startGateway(): void {
   };
 
   async function main() {
+    assertNoLegacyLayout('./workspaces');
     logger.banner('🚀 Codey');
     logger.info(`Starting on port ${configManager.getPort()}`);
     logger.info(`Default agent: ${configManager.getDefaultAgent()}`);
@@ -107,6 +109,7 @@ function startGateway(): void {
 }
 
 async function startTui(): Promise<void> {
+  assertNoLegacyLayout('./workspaces');
   const gatewayConfig: GatewayConfig = {
     port: configManager.getPort(),
     defaultAgent: configManager.getDefaultAgent() as any,
