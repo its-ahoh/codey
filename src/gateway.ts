@@ -54,7 +54,7 @@ export class Codey {
   // Pre-compiled regex patterns for parseCommand
   private static readonly REGEX_COMMAND = /^\/(\w+)(?:\s+(.*))?$/;
   private static readonly REGEX_WORKER = /\/worker\s+(\w+)\s+(.+)/i;
-  private static readonly REGEX_TEAM = /\/team\s+(.+)/i;
+  private static readonly REGEX_TEAM = /\/team\s+(\w+)\s+(.+)/i;
   private static readonly REGEX_AGENT_PROMPT = /\/agent\s+(claude-code|opencode|codex)\s+(.+)/i;
   private static readonly REGEX_AGENT = /\/agent\s+(claude-code|opencode|codex)/i;
   private static readonly REGEX_MODEL_PROMPT = /\/model\s+(\S+)(?:\s+(.+))?/i;
@@ -619,7 +619,10 @@ export class Codey {
         await this.cmdWorker(args, message, parsed.prompt);
         break;
       case 'team':
-        await this.runTeamTask(message, parsed.prompt);
+        await this.runTeamTask(message, args[0] || '', args.slice(1).join(' ') || parsed.prompt);
+        break;
+      case 'teams':
+        await this.cmdTeams(chatId, channel);
         break;
       case 'workspace':
       case 'ws':
@@ -669,7 +672,8 @@ export class Codey {
         `**What I can do**`,
         `- Send any message to get coding help from the active agent`,
         `- /worker <name> <task> — run a specific worker`,
-        `- /team <task> — run workers in sequence`,
+        `- /teams — list teams for this workspace`,
+        `- /team <name> <task> — run a named team in sequence`,
         `- /parallel <prompt> — run all agents in parallel`,
         `- /agent <name> — switch agent (${agents})`,
         `- /workspace <name> — switch workspace`,
@@ -884,6 +888,14 @@ export class Codey {
     });
   }
 
+  private async cmdTeams(chatId: string, channel: ChannelType): Promise<void> {
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `👥 Teams on workspace **${this.workspaceManager.getCurrentWorkspace()}**\n\n${this.workspaceManager.listTeams()}`,
+    });
+  }
+
   private async cmdWorker(args: string[], message: UserMessage, prompt: string): Promise<void> {
     const { chatId, channel } = message;
     if (args.length > 0) {
@@ -1083,9 +1095,10 @@ export class Codey {
     return `\ud83e\udd16 Codey Commands
 
 \ud83d\udc65 Workers
-/workers - List all workers
+/workers - List all workers in the global library
 /worker <name> <task> - Run a specific worker
-/team <task> - Run workers in sequence
+/teams - List teams declared on this workspace
+/team <name> <task> - Run a named team in sequence
 
 \ud83e\udd16 Agents (legacy)
 /parallel <prompt> - Run all agents in parallel
@@ -1112,7 +1125,7 @@ export class Codey {
 /config - Show current config
 
 Example: /worker architect design a REST API
-Example: /team build a todo app
+Example: /team review audit this PR
 Example: /remember This project uses Redis for caching
 Example: /model gpt-4.1 write a Python script`;
   }
@@ -1211,7 +1224,7 @@ Example: /model gpt-4.1 write a Python script`;
     await this.sendResponse({
       chatId,
       channel,
-      text: `👷 Running worker: **${worker.name}** (${worker.role})\n\nAgent: ${codingAgent}\nModel: ${model}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
+      text: `👷 Running worker: **${worker.name}** (${worker.personality.role})\n\nAgent: ${codingAgent}\nModel: ${model}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
 
     // Build prompt with worker context
@@ -1250,41 +1263,50 @@ Example: /model gpt-4.1 write a Python script`;
     });
   }
 
-  private async runTeamTask(message: UserMessage, task: string): Promise<void> {
+  private async runTeamTask(message: UserMessage, teamName: string, task: string): Promise<void> {
     const { chatId, channel } = message;
 
-    if (!task.trim()) {
+    if (!teamName || !task.trim()) {
+      const teamList = this.workspaceManager.listTeams();
       await this.sendResponse({
         chatId,
         channel,
-        text: `Usage: /team <task>\n\nThis runs workers in sequence based on their relationships.`,
+        text: `Usage: /team <name> <task>\n\nTeams on this workspace:\n${teamList}`,
       });
       return;
     }
 
-    const workers = this.workspaceManager.getWorkerManager().getAllWorkers();
-    if (workers.length === 0) {
+    const members = this.workspaceManager.getTeam(teamName);
+    if (!members) {
+      const teamList = this.workspaceManager.listTeams();
       await this.sendResponse({
         chatId,
         channel,
-        text: 'No workers configured. Add markdown files to the workspace workers/ folder.',
+        text: `Team "${teamName}" not found on workspace "${this.workspaceManager.getCurrentWorkspace()}".\n\nAvailable teams:\n${teamList}`,
       });
       return;
     }
+
+    const workerManager = this.workspaceManager.getWorkerManager();
 
     await this.sendResponse({
       chatId,
       channel,
-      text: `👥 Running team task: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
+      text: `👥 Running team **${teamName}** (${members.join(' → ')})\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
 
-    // Run each worker in sequence
     let currentTask = task;
-    let results: string[] = [];
+    const results: string[] = [];
 
-    for (const worker of workers) {
-      const codingAgent = this.workspaceManager.getWorkerManager().getWorkerCodingAgent(worker.name) as CodingAgent;
-      const model = this.workspaceManager.getWorkerManager().getWorkerModel(worker.name);
+    for (const memberName of members) {
+      const worker = workerManager.getWorker(memberName);
+      if (!worker) {
+        results.push(`**${memberName}**: ❌ not found in global library`);
+        break;
+      }
+
+      const codingAgent = workerManager.getWorkerCodingAgent(memberName) as CodingAgent;
+      const model = workerManager.getWorkerModel(memberName);
 
       await this.sendResponse({
         chatId,
@@ -1292,9 +1314,8 @@ Example: /model gpt-4.1 write a Python script`;
         text: `🔄 Worker **${worker.name}** is working...`,
       });
 
-      const prompt = this.workspaceManager.getWorkerManager().buildWorkerPrompt(worker.name, currentTask);
+      const prompt = workerManager.buildWorkerPrompt(memberName, currentTask);
       const modelConfig = this.getModelConfig(codingAgent, model);
-
       const handler = this.handlers.get(channel);
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
 
@@ -1309,7 +1330,6 @@ Example: /model gpt-4.1 write a Python script`;
 
       if (response.success) {
         results.push(`**${worker.name}**: ${response.output.substring(0, 500)}`);
-        // Pass output to next worker as context
         currentTask = `Previous worker output:\n${response.output}\n\nYour task: ${task}`;
       } else {
         results.push(`**${worker.name}**: ❌ Failed - ${response.error}`);
@@ -1320,7 +1340,7 @@ Example: /model gpt-4.1 write a Python script`;
     await this.sendResponse({
       chatId,
       channel,
-      text: `📊 Team Results\n\n${results.join('\n\n')}`,
+      text: `📊 Team **${teamName}** results\n\n${results.join('\n\n')}`,
     });
   }
 
@@ -1353,14 +1373,14 @@ Example: /model gpt-4.1 write a Python script`;
       }
       
       // Check for team command
-      const teamMatch = text.match(/\/team\s+(.+)/i);
+      const teamMatch = text.match(/\/team\s+(\w+)\s+(.+)/i);
       if (teamMatch) {
-        return { 
-          command: 'team', 
-          args: [], 
-          agent: this.config.defaultAgent as CodingAgent, 
-          model: undefined, 
-          prompt: teamMatch[1] 
+        return {
+          command: 'team',
+          args: [teamMatch[1]],
+          agent: this.config.defaultAgent as CodingAgent,
+          model: undefined,
+          prompt: teamMatch[2]
         };
       }
 
