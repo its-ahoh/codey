@@ -12,7 +12,8 @@
     "status": "ts-node src/index.ts status",
     "set-agent": "ts-node src/index.ts set-agent",
     "set-model": "ts-node src/index.ts set-model",
-    "tui": "ts-node src/index.ts tui"
+    "tui": "ts-node src/index.ts tui",
+    "verify-workers": "npm run build && ts-node scripts/verify-workers.ts"
   },
   "keywords": [
     "coding",
