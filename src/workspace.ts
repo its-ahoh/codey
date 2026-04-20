@@ -1,11 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { WorkerManager, WorkerJsonConfig } from './workers';
+import { WorkerManager } from './workers';
 import { MemoryStore } from './memory';
 
 export interface WorkspaceJson {
   workingDir: string;
-  workers: Record<string, WorkerJsonConfig>;
+  teams?: Record<string, string[]>;
 }
 
 export class WorkspaceManager {
@@ -14,10 +14,11 @@ export class WorkspaceManager {
   private config: WorkspaceJson | null = null;
   private workerManager: WorkerManager;
   private memoryStore: MemoryStore;
+  private teams: Map<string, string[]> = new Map();
 
-  constructor(workspacesDir: string = './workspaces') {
+  constructor(workerManager: WorkerManager, workspacesDir: string = './workspaces') {
     this.workspacesDir = workspacesDir;
-    this.workerManager = new WorkerManager(this.getWorkspacePath());
+    this.workerManager = workerManager;
     this.memoryStore = new MemoryStore(this.getWorkspacePath());
   }
 
@@ -37,65 +38,51 @@ export class WorkspaceManager {
     const configPath = this.getConfigPath();
     const workspacePath = this.getWorkspacePath();
 
-    // Migrate workers.json -> workspace.json if needed
-    const legacyPath = path.join(workspacePath, 'workers.json');
-    if (!fs.existsSync(configPath) && fs.existsSync(legacyPath)) {
-      this.migrateFromWorkersJson(legacyPath, configPath);
-    }
-
     if (fs.existsSync(configPath)) {
       const data = fs.readFileSync(configPath, 'utf-8');
       this.config = JSON.parse(data);
       console.log(`[Workspace] Loaded workspace: ${this.currentWorkspace}`);
     } else {
-      this.config = { workingDir: process.cwd(), workers: {} };
+      this.config = { workingDir: process.cwd() };
       console.log(`[Workspace] No config found for ${this.currentWorkspace}, using defaults`);
     }
 
-    // Ensure memory.md exists
-    const memoryPath = this.getMemoryPath();
-    if (!fs.existsSync(memoryPath)) {
-      fs.writeFileSync(memoryPath, `# ${this.currentWorkspace} — Project Memory\n`);
+    // Parse + validate teams against the global worker library.
+    this.teams.clear();
+    const rawTeams = this.config?.teams || {};
+    for (const [teamName, members] of Object.entries(rawTeams)) {
+      if (!Array.isArray(members)) {
+        console.error(`[Workspace] Team "${teamName}" is not an array — skipping`);
+        continue;
+      }
+      const unknown = members.filter(m => !this.workerManager.hasWorker(m));
+      if (unknown.length > 0) {
+        console.error(`[Workspace] Team "${teamName}" references unknown workers: ${unknown.join(', ')} — skipping`);
+        continue;
+      }
+      this.teams.set(teamName.toLowerCase(), members);
     }
 
-    // Ensure logs/ directory exists
+    if (!fs.existsSync(this.getMemoryPath())) {
+      fs.writeFileSync(this.getMemoryPath(), `# ${this.currentWorkspace} — Project Memory\n`);
+    }
+
     const logsDir = this.getLogsDir();
-    if (!fs.existsSync(logsDir)) {
-      fs.mkdirSync(logsDir, { recursive: true });
-    }
+    if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
 
-    // Load workers
-    this.workerManager = new WorkerManager(this.getWorkspacePath());
-    await this.workerManager.loadWorkers();
-
-    // Load memory store
-    this.memoryStore = new MemoryStore(this.getWorkspacePath());
+    this.memoryStore = new MemoryStore(workspacePath);
     await this.memoryStore.load();
-  }
-
-  private migrateFromWorkersJson(legacyPath: string, newPath: string): void {
-    const data = fs.readFileSync(legacyPath, 'utf-8');
-    const legacy = JSON.parse(data);
-    const migrated: WorkspaceJson = {
-      workingDir: process.cwd(),
-      workers: legacy.workers || {},
-    };
-    fs.writeFileSync(newPath, JSON.stringify(migrated, null, 2));
-    console.log(`[Workspace] Migrated workers.json -> workspace.json`);
   }
 
   async switchWorkspace(workspaceId: string): Promise<boolean> {
     const workspacePath = path.join(this.workspacesDir, workspaceId);
-    if (!fs.existsSync(workspacePath)) {
-      return false;
-    }
+    if (!fs.existsSync(workspacePath)) return false;
     this.currentWorkspace = workspaceId;
     await this.load();
     return true;
   }
 
   async findOrCreateByDir(dir: string): Promise<string> {
-    // Check if any existing workspace already points to this directory
     const workspaces = this.listWorkspaces();
     for (const ws of workspaces) {
       const configPath = path.join(this.workspacesDir, ws, 'workspace.json');
@@ -108,10 +95,8 @@ export class WorkspaceManager {
       }
     }
 
-    // No match — create a new workspace from the directory basename
     let name = path.basename(dir).toLowerCase().replace(/[^a-z0-9-_]/g, '-');
     if (workspaces.includes(name)) {
-      // Avoid collision by appending a suffix
       let i = 2;
       while (workspaces.includes(`${name}-${i}`)) i++;
       name = `${name}-${i}`;
@@ -119,9 +104,8 @@ export class WorkspaceManager {
 
     const workspacePath = path.join(this.workspacesDir, name);
     fs.mkdirSync(workspacePath, { recursive: true });
-    fs.mkdirSync(path.join(workspacePath, 'workers'), { recursive: true });
 
-    const config: WorkspaceJson = { workingDir: dir, workers: {} };
+    const config: WorkspaceJson = { workingDir: dir };
     fs.writeFileSync(path.join(workspacePath, 'workspace.json'), JSON.stringify(config, null, 2));
     fs.writeFileSync(path.join(workspacePath, 'memory.md'), `# ${name} — Project Memory\n`);
 
@@ -130,40 +114,18 @@ export class WorkspaceManager {
     return name;
   }
 
-  getLogsDir(): string {
-    return path.join(this.getWorkspacePath(), 'logs');
-  }
+  getLogsDir(): string { return path.join(this.getWorkspacePath(), 'logs'); }
+  getLogPath(): string { return path.join(this.getLogsDir(), 'app.log'); }
+  getErrorLogPath(): string { return path.join(this.getLogsDir(), 'error.log'); }
 
-  getLogPath(): string {
-    return path.join(this.getLogsDir(), 'app.log');
-  }
-
-  getErrorLogPath(): string {
-    return path.join(this.getLogsDir(), 'error.log');
-  }
-
-  getWorkingDir(): string {
-    return this.config?.workingDir || process.cwd();
-  }
-
-  getCurrentWorkspace(): string {
-    return this.currentWorkspace;
-  }
-
-  getWorkerManager(): WorkerManager {
-    return this.workerManager;
-  }
-
-  getMemoryStore(): MemoryStore {
-    return this.memoryStore;
-  }
+  getWorkingDir(): string { return this.config?.workingDir || process.cwd(); }
+  getCurrentWorkspace(): string { return this.currentWorkspace; }
+  getWorkerManager(): WorkerManager { return this.workerManager; }
+  getMemoryStore(): MemoryStore { return this.memoryStore; }
 
   getMemory(): string {
     const memoryPath = this.getMemoryPath();
-    if (fs.existsSync(memoryPath)) {
-      return fs.readFileSync(memoryPath, 'utf-8');
-    }
-    return '';
+    return fs.existsSync(memoryPath) ? fs.readFileSync(memoryPath, 'utf-8') : '';
   }
 
   listWorkspaces(): string[] {
@@ -171,5 +133,20 @@ export class WorkspaceManager {
     return fs.readdirSync(this.workspacesDir).filter(d =>
       fs.statSync(path.join(this.workspacesDir, d)).isDirectory()
     );
+  }
+
+  getTeam(name: string): string[] | undefined {
+    return this.teams.get(name.toLowerCase());
+  }
+
+  getTeamNames(): string[] {
+    return Array.from(this.teams.keys());
+  }
+
+  listTeams(): string {
+    if (this.teams.size === 0) return 'No teams declared for this workspace.';
+    return Array.from(this.teams.entries())
+      .map(([name, members]) => `• **${name}** → ${members.join(' → ')}`)
+      .join('\n');
   }
 }

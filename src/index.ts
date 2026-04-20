@@ -52,6 +52,9 @@ function startGateway(): void {
 
   async function main() {
     assertNoLegacyLayout('./workspaces');
+    const { WorkerManager } = await import('./workers');
+    const workerManager = new WorkerManager('./workers');
+    await workerManager.loadWorkers();
     logger.banner('🚀 Codey');
     logger.info(`Starting on port ${configManager.getPort()}`);
     logger.info(`Default agent: ${configManager.getDefaultAgent()}`);
@@ -59,7 +62,7 @@ function startGateway(): void {
     logger.info(`Active profile: ${configManager.getActiveProfile()}`);
     logger.info(`Log level: ${configManager.getLogLevel()}`);
 
-    const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager);
+    const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager, workerManager);
 
     // Start API server on the gateway port
     const apiServer = new ApiServer(configManager.getPort(), (): any => gateway.getHealthStatus(), configManager);
@@ -110,6 +113,9 @@ function startGateway(): void {
 
 async function startTui(): Promise<void> {
   assertNoLegacyLayout('./workspaces');
+  const { WorkerManager } = await import('./workers');
+  const workerManager = new WorkerManager('./workers');
+  await workerManager.loadWorkers();
   const gatewayConfig: GatewayConfig = {
     port: configManager.getPort(),
     defaultAgent: configManager.getDefaultAgent() as any,
@@ -117,7 +123,7 @@ async function startTui(): Promise<void> {
     channels: {},
   };
 
-  const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager);
+  const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager, workerManager);
 
   // Set working directory from CLI arg: npm run tui -- /path/to/project
   const tuiDir = args[1];

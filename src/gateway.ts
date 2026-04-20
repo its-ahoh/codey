@@ -8,6 +8,7 @@ import { ContextManager, ContextWindow } from './context';
 import { MemoryStore } from './memory';
 import { TaskPlanner, TaskPlan, PlanStep } from './planner';
 import { WorkspaceManager } from './workspace';
+import { WorkerManager } from './workers';
 
 interface ParsedCommand {
   command: string;
@@ -95,7 +96,7 @@ export class Codey {
 
   private conversationCleanupInterval?: NodeJS.Timeout;
 
-  constructor(config: GatewayConfig, logger?: Logger, workspaceDir?: string, configManager?: ConfigManager) {
+  constructor(config: GatewayConfig, logger?: Logger, workspaceDir?: string, configManager?: ConfigManager, workerManager?: WorkerManager) {
     this.config = config;
     this.configManager = configManager;
     this.agentFactory = new AgentFactory();
@@ -118,7 +119,8 @@ export class Codey {
       minPromptLength: config.planner?.minPromptLength || 80,
       apiKey: plannerApiKey,
     });
-    this.workspaceManager = new WorkspaceManager(workspaceDir || './workspaces');
+    const wm = workerManager || new WorkerManager('./workers');
+    this.workspaceManager = new WorkspaceManager(wm, workspaceDir || './workspaces');
     this.COOLDOWN_MS = config.rateLimitMs || 3000; // Default 3 seconds
   }
 
