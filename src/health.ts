@@ -1,7 +1,7 @@
 import * as http from 'http';
 import { ConfigManager } from './config';
 import { StatusUpdate } from './types';
-import { WorkerRouteDeps, handleListWorkers, handleGetTeams, matchWorkerPath, matchWorkspaceTeamsPath } from './worker-routes';
+import { WorkerRouteDeps, handleListWorkers, handleGetTeams, matchWorkerPath, matchWorkspaceTeamsPath, handlePutWorker, handleDeleteWorker } from './worker-routes';
 
 export type HealthStatusType = 'healthy' | 'degraded' | 'down';
 
@@ -59,7 +59,7 @@ export class ApiServer {
     this.server = http.createServer(async (req, res) => {
       // CORS headers
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
       if (req.method === 'OPTIONS') {
@@ -206,6 +206,15 @@ export class ApiServer {
         if (!this.workerRoutes) { res.writeHead(500); res.end(JSON.stringify({ error: 'Worker routes not configured' })); return; }
         handleListWorkers(this.workerRoutes, res);
         return;
+      }
+
+      if (url && (req.method === 'PUT' || req.method === 'DELETE')) {
+        const workerName = matchWorkerPath(url);
+        if (workerName) {
+          if (!this.workerRoutes) { res.writeHead(500); res.end(JSON.stringify({ error: 'Worker routes not configured' })); return; }
+          if (req.method === 'PUT') { await handlePutWorker(this.workerRoutes, workerName, req, res); return; }
+          if (req.method === 'DELETE') { await handleDeleteWorker(this.workerRoutes, workerName, res); return; }
+        }
       }
 
       if (url && req.method === 'GET') {

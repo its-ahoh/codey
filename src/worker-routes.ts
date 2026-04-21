@@ -66,4 +66,128 @@ export function matchWorkspaceTeamsPath(url: string): string | null {
   return m ? m[1] : null;
 }
 
+interface PutWorkerBody {
+  personality?: { role?: string; soul?: string; instructions?: string };
+  config?: { codingAgent?: string; model?: string; tools?: unknown };
+}
+
+const VALID_AGENTS = ['claude-code', 'opencode', 'codex'] as const;
+type ValidAgent = typeof VALID_AGENTS[number];
+
+function assemblePersonalityMd(name: string, role: string, soul: string, instructions: string): string {
+  return [
+    `# Worker: ${name}`,
+    '',
+    '## Role',
+    role.trim(),
+    '',
+    '## Soul',
+    soul.trim(),
+    '',
+    '## Instructions',
+    instructions.trim(),
+    '',
+  ].join('\n');
+}
+
+export async function handlePutWorker(
+  deps: WorkerRouteDeps,
+  workerName: string,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  workersDir: string = './workers',
+): Promise<void> {
+  const existing = deps.workerManager.getWorker(workerName);
+  if (!existing) { sendJson(res, 404, { error: `Worker "${workerName}" not found` }); return; }
+
+  const raw = await readBody(req);
+  let body: PutWorkerBody;
+  try { body = JSON.parse(raw); } catch { sendJson(res, 400, { error: 'Invalid JSON body' }); return; }
+
+  const role = body.personality?.role ?? existing.personality.role;
+  const soul = body.personality?.soul ?? existing.personality.soul;
+  const instructions = body.personality?.instructions ?? existing.personality.instructions;
+
+  const codingAgent = body.config?.codingAgent ?? existing.config.codingAgent;
+  const model = body.config?.model ?? existing.config.model;
+  const tools = Array.isArray(body.config?.tools) ? body.config!.tools as string[] : existing.config.tools;
+
+  if (!VALID_AGENTS.includes(codingAgent as ValidAgent)) {
+    sendJson(res, 400, { error: `codingAgent must be one of ${VALID_AGENTS.join(', ')}` });
+    return;
+  }
+  if (!model || typeof model !== 'string') {
+    sendJson(res, 400, { error: 'model must be a non-empty string' });
+    return;
+  }
+
+  const dir = path.join(workersDir, existing.name);
+  try {
+    fs.writeFileSync(path.join(dir, 'personality.md'), assemblePersonalityMd(existing.name, role, soul, instructions));
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ codingAgent, model, tools }, null, 2) + '\n');
+  } catch (err) {
+    sendJson(res, 500, { error: `Failed to write worker files: ${err}` });
+    return;
+  }
+
+  await deps.workerManager.loadWorkers();
+  sendJson(res, 200, { worker: serializeWorker(deps.workerManager.getWorker(workerName)) });
+}
+
+export async function handleDeleteWorker(
+  deps: WorkerRouteDeps,
+  workerName: string,
+  res: http.ServerResponse,
+  workersDir: string = './workers',
+): Promise<void> {
+  const existing = deps.workerManager.getWorker(workerName);
+  if (!existing) { sendJson(res, 404, { error: `Worker "${workerName}" not found` }); return; }
+
+  const dir = path.join(workersDir, existing.name);
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch (err) {
+    sendJson(res, 500, { error: `Failed to remove worker folder: ${err}` });
+    return;
+  }
+
+  const cascadeErrors: string[] = [];
+  if (fs.existsSync(deps.workspacesDir)) {
+    for (const entry of fs.readdirSync(deps.workspacesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const cfgPath = path.join(deps.workspacesDir, entry.name, 'workspace.json');
+      if (!fs.existsSync(cfgPath)) continue;
+      try {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+        if (!cfg.teams) continue;
+        let changed = false;
+        for (const [teamName, members] of Object.entries(cfg.teams as Record<string, string[]>)) {
+          const filtered = members.filter(m => m.toLowerCase() !== workerName.toLowerCase());
+          if (filtered.length !== members.length) {
+            changed = true;
+            if (filtered.length === 0) delete cfg.teams[teamName];
+            else cfg.teams[teamName] = filtered;
+          }
+        }
+        if (changed) {
+          if (Object.keys(cfg.teams).length === 0) delete cfg.teams;
+          fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n');
+        }
+      } catch (err) {
+        cascadeErrors.push(`${cfgPath}: ${err}`);
+      }
+    }
+  }
+
+  await deps.workerManager.loadWorkers();
+  const current = deps.workspaceManager.getCurrentWorkspace();
+  await deps.workspaceManager.switchWorkspace(current).catch(() => { /* best-effort */ });
+
+  if (cascadeErrors.length > 0) {
+    sendJson(res, 200, { ok: true, cascadeWarnings: cascadeErrors });
+  } else {
+    sendJson(res, 200, { ok: true });
+  }
+}
+
 export { sendJson, readBody };
