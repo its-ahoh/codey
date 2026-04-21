@@ -1,7 +1,7 @@
 import * as http from 'http';
 import { ConfigManager } from './config';
 import { StatusUpdate } from './types';
-import { WorkerRouteDeps, handleListWorkers, handleGetTeams, matchWorkerPath, matchWorkspaceTeamsPath, handlePutWorker, handleDeleteWorker } from './worker-routes';
+import { WorkerRouteDeps, GenerateRouteDeps, handleListWorkers, handleGetTeams, matchWorkerPath, matchWorkspaceTeamsPath, handlePutWorker, handleDeleteWorker, handleGenerateWorker } from './worker-routes';
 
 export type HealthStatusType = 'healthy' | 'degraded' | 'down';
 
@@ -34,7 +34,7 @@ export class ApiServer {
   private listWorkspaces?: WorkspaceListHandler;
   private switchWorkspace?: WorkspaceSwitchHandler;
   private configManager: ConfigManager;
-  private workerRoutes?: WorkerRouteDeps;
+  private workerRoutes?: GenerateRouteDeps;
 
   constructor(port: number, getStatus: () => HealthStatus, configManager: ConfigManager) {
     this.port = port;
@@ -51,7 +51,7 @@ export class ApiServer {
     this.switchWorkspace = switchFn;
   }
 
-  setWorkerRoutes(deps: WorkerRouteDeps): void {
+  setWorkerRoutes(deps: GenerateRouteDeps): void {
     this.workerRoutes = deps;
   }
 
@@ -205,6 +205,12 @@ export class ApiServer {
       if (url === '/workers' && req.method === 'GET') {
         if (!this.workerRoutes) { res.writeHead(500); res.end(JSON.stringify({ error: 'Worker routes not configured' })); return; }
         handleListWorkers(this.workerRoutes, res);
+        return;
+      }
+
+      if (url === '/workers/generate' && req.method === 'POST') {
+        if (!this.workerRoutes) { res.writeHead(500); res.end(JSON.stringify({ error: 'Worker routes not configured' })); return; }
+        await handleGenerateWorker(this.workerRoutes, req, res);
         return;
       }
 

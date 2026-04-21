@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 import { ConfigManager } from './config';
 import { Logger } from './logger';
 import { handleCommand } from './cli';
-import { GatewayConfig } from './types';
+import { GatewayConfig, CodingAgent, ModelConfig } from './types/index';
 import { Codey } from './gateway';
 import { ApiServer, HealthStatusType } from './health';
 import { assertNoLegacyLayout } from './startup-guard';
@@ -77,6 +77,11 @@ function startGateway(): void {
       workerManager,
       workspaceManager: gateway.getWorkspaceManager(),
       workspacesDir: './workspaces',
+      workersDir: './workers',
+      agentFactory: gateway.getAgentFactory(),
+      getActiveAgent: () => (gatewayConfig.defaultAgent as CodingAgent),
+      getActiveModel: () => gateway.getEffectiveModelConfig(),
+      getWorkingDir: () => gateway.getWorkingDir(),
     });
     await apiServer.start();
 

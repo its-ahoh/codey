@@ -3,6 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { WorkerManager } from './workers';
 import { WorkspaceManager } from './workspace';
+import { AgentFactory } from './agents';
+import { CodingAgent, ModelConfig } from './types/index';
+import { generateWorker } from './worker-generator';
 
 export interface WorkerRouteDeps {
   workerManager: WorkerManager;
@@ -191,3 +194,36 @@ export async function handleDeleteWorker(
 }
 
 export { sendJson, readBody };
+
+export interface GenerateRouteDeps extends WorkerRouteDeps {
+  agentFactory: AgentFactory;
+  getActiveAgent: () => CodingAgent;
+  getActiveModel: () => ModelConfig;
+  getWorkingDir: () => string;
+  workersDir: string;
+}
+
+export async function handleGenerateWorker(
+  deps: GenerateRouteDeps,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  const raw = await readBody(req);
+  let body: { prompt?: string };
+  try { body = JSON.parse(raw); } catch { sendJson(res, 400, { error: 'Invalid JSON body' }); return; }
+  if (!body.prompt || typeof body.prompt !== 'string') { sendJson(res, 400, { error: 'prompt is required' }); return; }
+
+  const result = await generateWorker({
+    agentFactory: deps.agentFactory,
+    workerManager: deps.workerManager,
+    workersDir: deps.workersDir,
+    activeAgent: deps.getActiveAgent(),
+    activeModel: deps.getActiveModel(),
+    workingDir: deps.getWorkingDir(),
+  }, body.prompt);
+
+  if (result.ok) { sendJson(res, 200, { worker: serializeWorker(deps.workerManager.getWorker(result.worker.name)) }); return; }
+  const errBody: Record<string, unknown> = { error: result.error };
+  if ('raw' in result && result.raw) errBody.raw = result.raw;
+  sendJson(res, result.status, errBody);
+}

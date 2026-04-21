@@ -136,6 +136,18 @@ export class Codey {
 
   getWorkspaceManager(): WorkspaceManager { return this.workspaceManager; }
 
+  getAgentFactory(): AgentFactory { return this.agentFactory; }
+
+  getWorkingDir(): string { return this.workingDir; }
+
+  getEffectiveModelConfig(): ModelConfig {
+    const agent = this.config.defaultAgent;
+    return this.getDefaultModelConfig(agent) || {
+      provider: 'anthropic',
+      model: this.getEffectiveModel(agent),
+    };
+  }
+
   async switchWorkspaceByName(name: string): Promise<boolean> {
     return this.switchWorkspace(name);
   }
