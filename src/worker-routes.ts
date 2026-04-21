@@ -193,6 +193,44 @@ export async function handleDeleteWorker(
   }
 }
 
+export async function handlePutTeams(
+  deps: WorkerRouteDeps,
+  workspaceName: string,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  const wsPath = path.join(deps.workspacesDir, workspaceName, 'workspace.json');
+  if (!fs.existsSync(wsPath)) { sendJson(res, 404, { error: `Workspace "${workspaceName}" not found` }); return; }
+
+  const raw = await readBody(req);
+  let body: { teams?: Record<string, string[]> };
+  try { body = JSON.parse(raw); } catch { sendJson(res, 400, { error: 'Invalid JSON body' }); return; }
+
+  const teams = body.teams || {};
+  const unknown: string[] = [];
+  for (const members of Object.values(teams)) {
+    if (!Array.isArray(members)) { sendJson(res, 400, { error: 'Each team must be an array of worker names' }); return; }
+    for (const m of members) if (!deps.workerManager.hasWorker(m)) unknown.push(m);
+  }
+  if (unknown.length > 0) { sendJson(res, 400, { error: 'Team references unknown workers', unknown }); return; }
+
+  try {
+    const cfg = JSON.parse(fs.readFileSync(wsPath, 'utf-8'));
+    if (Object.keys(teams).length === 0) delete cfg.teams;
+    else cfg.teams = teams;
+    fs.writeFileSync(wsPath, JSON.stringify(cfg, null, 2) + '\n');
+  } catch (err) {
+    sendJson(res, 500, { error: `Failed to update workspace.json: ${err}` });
+    return;
+  }
+
+  if (deps.workspaceManager.getCurrentWorkspace() === workspaceName) {
+    await deps.workspaceManager.switchWorkspace(workspaceName).catch(() => { /* best-effort */ });
+  }
+
+  sendJson(res, 200, { teams });
+}
+
 export { sendJson, readBody };
 
 export interface GenerateRouteDeps extends WorkerRouteDeps {

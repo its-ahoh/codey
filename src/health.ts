@@ -1,7 +1,7 @@
 import * as http from 'http';
 import { ConfigManager } from './config';
 import { StatusUpdate } from './types';
-import { WorkerRouteDeps, GenerateRouteDeps, handleListWorkers, handleGetTeams, matchWorkerPath, matchWorkspaceTeamsPath, handlePutWorker, handleDeleteWorker, handleGenerateWorker } from './worker-routes';
+import { WorkerRouteDeps, GenerateRouteDeps, handleListWorkers, handleGetTeams, handlePutTeams, matchWorkerPath, matchWorkspaceTeamsPath, handlePutWorker, handleDeleteWorker, handleGenerateWorker } from './worker-routes';
 
 export type HealthStatusType = 'healthy' | 'degraded' | 'down';
 
@@ -228,6 +228,15 @@ export class ApiServer {
         if (teamsName) {
           if (!this.workerRoutes) { res.writeHead(500); res.end(JSON.stringify({ error: 'Worker routes not configured' })); return; }
           handleGetTeams(this.workerRoutes, teamsName, res);
+          return;
+        }
+      }
+
+      if (url && req.method === 'PUT') {
+        const teamsName = matchWorkspaceTeamsPath(url);
+        if (teamsName) {
+          if (!this.workerRoutes) { res.writeHead(500); res.end(JSON.stringify({ error: 'Worker routes not configured' })); return; }
+          await handlePutTeams(this.workerRoutes, teamsName, req, res);
           return;
         }
       }
