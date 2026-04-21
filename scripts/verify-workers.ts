@@ -15,6 +15,50 @@ function expect(condition: boolean, label: string) {
   if (!condition) process.exitCode = 1;
 }
 
+async function startServerForTest(): Promise<{ port: number; stop: () => Promise<void> }> {
+  const port = 3100 + Math.floor(Math.random() * 500);
+  const { ApiServer } = await import(path.join(repoRoot, 'dist/health.js'));
+  const { ConfigManager } = await import(path.join(repoRoot, 'dist/config.js'));
+  const { WorkerManager: WM } = await import(path.join(repoRoot, 'dist/workers.js'));
+  const { WorkspaceManager: WSM } = await import(path.join(repoRoot, 'dist/workspace.js'));
+
+  const cm = new ConfigManager();
+  const wm = new WM('./workers');
+  await wm.loadWorkers();
+  const wsm = new WSM(wm, './workspaces');
+  await wsm.switchWorkspace('default');
+
+  const server = new ApiServer(port, () => ({
+    status: 'healthy', uptime: 0, timestamp: new Date().toISOString(),
+    channels: { telegram: false, discord: false, imessage: false },
+    stats: { messagesProcessed: 0, activeConversations: 0, errors: 0 },
+  }), cm);
+  server.setWorkerRoutes({
+    workerManager: wm,
+    workspaceManager: wsm,
+    workspacesDir: './workspaces',
+    workersDir: './workers',
+    agentFactory: null as any,
+    getActiveAgent: () => 'claude-code' as any,
+    getActiveModel: () => ({ provider: 'anthropic', model: 'test' } as any),
+    getWorkingDir: () => process.cwd(),
+  });
+  await server.start();
+  return { port, stop: () => server.stop() };
+}
+
+async function httpJson(port: number, method: string, pathUrl: string, body?: unknown): Promise<{ status: number; json: any }> {
+  const res = await fetch(`http://localhost:${port}${pathUrl}`, {
+    method,
+    headers: body ? { 'content-type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let json: any;
+  try { json = JSON.parse(text); } catch { json = { _raw: text }; }
+  return { status: res.status, json };
+}
+
 async function run() {
   section('1. Global library loads');
   const { WorkerManager } = await import(path.join(repoRoot, 'dist/workers.js'));
@@ -91,6 +135,36 @@ async function run() {
   const review = wsm.getTeam('review');
   expect(Array.isArray(review) && review!.length === 2, 'default workspace has review team with 2 members');
   expect(wsm.getTeam('nosuch') === undefined, 'nonexistent team returns undefined');
+
+  section('8. API: GET /workers and /workspaces/:name/teams');
+  const srv = await startServerForTest();
+  try {
+    const list = await httpJson(srv.port, 'GET', '/workers');
+    expect(list.status === 200 && Array.isArray(list.json.workers), 'GET /workers returns worker array');
+    expect(list.json.workers.some((w: any) => w.name === 'architect'), 'architect present in listing');
+
+    const teams = await httpJson(srv.port, 'GET', '/workspaces/default/teams');
+    expect(teams.status === 200 && teams.json.teams?.review?.length === 2, 'default team "review" has 2 members');
+
+    section('9. API: PUT /workers/:name edits soul');
+    const put = await httpJson(srv.port, 'PUT', '/workers/architect', { personality: { soul: 'Verifier-edited soul.' } });
+    expect(put.status === 200 && put.json.worker.personality.soul.includes('Verifier-edited'), 'PUT updated the soul');
+
+    // Restore soul so the test is idempotent (PUT-based restore)
+    await httpJson(srv.port, 'PUT', '/workers/architect', { personality: { soul: 'Methodical, opinionated, allergic to premature abstraction. Always asks "what\'s the simplest thing that could possibly work?" before proposing a design.' } });
+
+    section('10. API: PUT /workspaces/:name/teams with unknown worker');
+    const bad = await httpJson(srv.port, 'PUT', '/workspaces/default/teams', { teams: { bad: ['nosuch'] } });
+    expect(bad.status === 400 && Array.isArray(bad.json.unknown) && bad.json.unknown.includes('nosuch'), 'unknown worker rejected');
+
+    section('11. API: PUT /workspaces/:name/teams accepts valid teams');
+    const okTeams = await httpJson(srv.port, 'PUT', '/workspaces/default/teams', { teams: { review: ['architect', 'executor'] } });
+    expect(okTeams.status === 200 && okTeams.json.teams.review.length === 2, 'valid teams accepted');
+  } finally {
+    // Belt-and-suspenders: git checkout guarantees on-disk files are clean after edits
+    try { execSync('git checkout workers/architect/personality.md workers/architect/config.json workspaces/default/workspace.json', { cwd: repoRoot, stdio: 'pipe' }); } catch {}
+    await srv.stop();
+  }
 }
 
 run().catch(err => {
