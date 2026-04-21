@@ -1,5 +1,11 @@
 import { GatewayConfig, GatewayStatus } from '../types';
 
+export interface WorkerDto {
+  name: string;
+  personality: { role: string; soul: string; instructions: string };
+  config: { codingAgent: 'claude-code' | 'opencode' | 'codex'; model: string; tools: string[] };
+}
+
 const DEFAULT_PORT = 3000;
 
 class ApiService {
@@ -181,6 +187,72 @@ class ApiService {
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
+    }
+  }
+
+  async listWorkers(): Promise<WorkerDto[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/workers`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.workers || [];
+    } catch {
+      return [];
+    }
+  }
+
+  async updateWorker(name: string, body: Partial<WorkerDto>): Promise<WorkerDto> {
+    const res = await fetch(`${this.baseUrl}/workers/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ personality: body.personality, config: body.config }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data.worker;
+  }
+
+  async deleteWorker(name: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/workers/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+  }
+
+  async generateWorker(prompt: string): Promise<WorkerDto> {
+    const res = await fetch(`${this.baseUrl}/workers/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data.worker;
+  }
+
+  async getTeams(workspace: string): Promise<Record<string, string[]>> {
+    try {
+      const res = await fetch(`${this.baseUrl}/workspaces/${encodeURIComponent(workspace)}/teams`);
+      if (!res.ok) return {};
+      const data = await res.json();
+      return data.teams || {};
+    } catch {
+      return {};
+    }
+  }
+
+  async setTeams(workspace: string, teams: Record<string, string[]>): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/workspaces/${encodeURIComponent(workspace)}/teams`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ teams }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const err: any = new Error(data.error || `HTTP ${res.status}`);
+      if (data.unknown) err.unknown = data.unknown;
+      throw err;
     }
   }
 }
