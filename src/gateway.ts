@@ -134,6 +134,8 @@ export class Codey {
     return this.workspaceManager.listWorkspaces();
   }
 
+  getWorkspaceManager(): WorkspaceManager { return this.workspaceManager; }
+
   async switchWorkspaceByName(name: string): Promise<boolean> {
     return this.switchWorkspace(name);
   }

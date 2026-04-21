@@ -1,6 +1,7 @@
 import * as http from 'http';
 import { ConfigManager } from './config';
 import { StatusUpdate } from './types';
+import { WorkerRouteDeps, handleListWorkers, handleGetTeams, matchWorkerPath, matchWorkspaceTeamsPath } from './worker-routes';
 
 export type HealthStatusType = 'healthy' | 'degraded' | 'down';
 
@@ -33,6 +34,7 @@ export class ApiServer {
   private listWorkspaces?: WorkspaceListHandler;
   private switchWorkspace?: WorkspaceSwitchHandler;
   private configManager: ConfigManager;
+  private workerRoutes?: WorkerRouteDeps;
 
   constructor(port: number, getStatus: () => HealthStatus, configManager: ConfigManager) {
     this.port = port;
@@ -47,6 +49,10 @@ export class ApiServer {
   setWorkspaceHandlers(list: WorkspaceListHandler, switchFn: WorkspaceSwitchHandler): void {
     this.listWorkspaces = list;
     this.switchWorkspace = switchFn;
+  }
+
+  setWorkerRoutes(deps: WorkerRouteDeps): void {
+    this.workerRoutes = deps;
   }
 
   async start(): Promise<void> {
@@ -194,6 +200,21 @@ export class ApiServer {
           }
         });
         return;
+      }
+
+      if (url === '/workers' && req.method === 'GET') {
+        if (!this.workerRoutes) { res.writeHead(500); res.end(JSON.stringify({ error: 'Worker routes not configured' })); return; }
+        handleListWorkers(this.workerRoutes, res);
+        return;
+      }
+
+      if (url && req.method === 'GET') {
+        const teamsName = matchWorkspaceTeamsPath(url);
+        if (teamsName) {
+          if (!this.workerRoutes) { res.writeHead(500); res.end(JSON.stringify({ error: 'Worker routes not configured' })); return; }
+          handleGetTeams(this.workerRoutes, teamsName, res);
+          return;
+        }
       }
 
       res.writeHead(404);

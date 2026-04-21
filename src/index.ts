@@ -73,6 +73,11 @@ function startGateway(): void {
       () => gateway.getWorkspaceList(),
       (name: string) => gateway.switchWorkspaceByName(name),
     );
+    apiServer.setWorkerRoutes({
+      workerManager,
+      workspaceManager: gateway.getWorkspaceManager(),
+      workspacesDir: './workspaces',
+    });
     await apiServer.start();
 
     // Apply config changes to the running gateway at runtime
