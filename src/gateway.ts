@@ -47,7 +47,6 @@ export class Codey {
   private messagesProcessed = 0;
   private errors = 0;
   private startTime = Date.now();
-  private contextIds: Map<string, string> = new Map(); // key: "userId-channel" -> contextWindowId
   private tuiMode = false;
   private workingDir: string = process.cwd();
 
@@ -165,7 +164,6 @@ export class Codey {
   }
 
   private resetSession(): void {
-    this.contextIds.clear();
     this.agentFactory.resetSessions();
   }
 
@@ -364,14 +362,9 @@ export class Codey {
   private async processPrompt(message: UserMessage, parsed: ParsedCommand): Promise<void> {
     const { userId, chatId, channel, id: messageId } = message;
 
-    // Get or create structured context window (per-user, per-channel)
-    const conversationKey = `${userId}-${channel}`;
-    const ctxWindow = await this.contextManager.getOrCreate(
-      userId,
-      channel,
-      this.contextIds.get(conversationKey)
-    );
-    this.contextIds.set(conversationKey, ctxWindow.id);
+    // Get or create structured context window keyed by conversationId
+    const conversationId = message.conversationId ?? `${message.channel}-${message.chatId}`;
+    const ctxWindow = await this.contextManager.getOrCreate(conversationId);
 
     // Build memory context from workspace memory store
     const memoryStore = this.workspaceManager.getMemoryStore();
@@ -721,12 +714,8 @@ export class Codey {
   }
 
   private async cmdClear(userId: string, chatId: string, channel: ChannelType): Promise<void> {
-    const conversationKey = `${userId}-${channel}`;
-    const contextId = this.contextIds.get(conversationKey);
-    if (contextId) {
-      await this.contextManager.clear(contextId);
-      this.contextIds.delete(conversationKey);
-    }
+    const conversationId = `${channel}-${chatId}`;
+    await this.contextManager.clear(conversationId);
     await this.sendResponse({
       chatId,
       channel,
@@ -1670,7 +1659,7 @@ Example: /model gpt-4.1 write a Python script`;
     const model = this.getDefaultModelConfig(agent);
 
     // Use existing context window if provided, otherwise create a new one
-    const ctxWindow = await this.contextManager.getOrCreate('http', 'api', conversationId);
+    const ctxWindow = await this.contextManager.getOrCreate(conversationId ?? 'api-default');
     const ctxId = ctxWindow.id;
 
     // Emit conversation ID back to client on first message of a new conversation

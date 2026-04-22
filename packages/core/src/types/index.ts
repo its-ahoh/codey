@@ -10,6 +10,7 @@ export interface UserMessage {
   chatId: string;
   text: string;
   timestamp: number;
+  conversationId?: string;
 }
 
 // Response to send back to user

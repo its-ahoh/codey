@@ -49,8 +49,6 @@ export interface FileChangeRecord {
 
 export interface ContextWindow {
   id: string;
-  userId: string;
-  channel: string;
   turns: ContextTurn[];
   lastActive: number;
   /** Running estimate of total tokens in the window */
@@ -118,34 +116,36 @@ export class ContextManager {
 
   // ── CRUD ───────────────────────────────────────────────────────
 
-  async getOrCreate(userId: string, channel: string, existingId?: string): Promise<ContextWindow> {
-    return this.withLock(existingId || 'new', () => {
-      if (existingId) {
-        const existing = this.windows.get(existingId);
-        if (existing && existing.userId === userId && existing.channel === channel) {
-          if (Date.now() - existing.lastActive <= this.config.ttlMs) {
-            existing.lastActive = Date.now();
-            return existing;
-          }
-          // Expired — archive and create new
-          this.archive(existing);
-          this.windows.delete(existingId);
-          // Fall through to create new window
+  async getOrCreate(conversationId: string): Promise<ContextWindow> {
+    return this.withLock(conversationId, () => {
+      const existing = this.windows.get(conversationId);
+      if (existing) {
+        if (Date.now() - existing.lastActive <= this.config.ttlMs) {
+          existing.lastActive = Date.now();
+          return existing;
         }
+        // Expired — archive and create new
+        this.archive(existing);
+        this.windows.delete(conversationId);
       }
 
-      const id = `http-api-${Date.now()}`;
       const window: ContextWindow = {
-        id,
-        userId,
-        channel,
+        id: conversationId,
         turns: [],
         lastActive: Date.now(),
         totalTokens: 0,
       };
-      this.windows.set(id, window);
+      this.windows.set(conversationId, window);
       return window;
     });
+  }
+
+  getWindow(conversationId: string): ContextWindow | undefined {
+    return this.windows.get(conversationId);
+  }
+
+  listConversationIds(): string[] {
+    return Array.from(this.windows.keys());
   }
 
   async clear(id: string): Promise<void> {
@@ -160,8 +160,11 @@ export class ContextManager {
 
   async addUserTurn(windowId: string, text: string): Promise<void> {
     return this.withLock(windowId, () => {
-      const window = this.windows.get(windowId);
-      if (!window) return;
+      let window = this.windows.get(windowId);
+      if (!window) {
+        window = { id: windowId, turns: [], lastActive: Date.now(), totalTokens: 0 };
+        this.windows.set(windowId, window);
+      }
 
       const tokenEstimate = estimateTokens(text);
       window.turns.push({
@@ -355,8 +358,6 @@ export class ContextManager {
       const filename = `${window.id}.json`;
       const data = {
         id: window.id,
-        userId: window.userId,
-        channel: window.channel,
         turns: window.turns,
         archivedAt: Date.now(),
       };
@@ -384,8 +385,6 @@ export class ContextManager {
           const raw = fs.readFileSync(path.join(archiveDir, file), 'utf-8');
           const data = JSON.parse(raw) as {
             id: string;
-            userId: string;
-            channel: string;
             turns: ContextTurn[];
             archivedAt: number;
           };
@@ -398,8 +397,6 @@ export class ContextManager {
 
           const window: ContextWindow = {
             id: data.id,
-            userId: data.userId,
-            channel: data.channel,
             turns: data.turns || [],
             lastActive: data.archivedAt,
             totalTokens: (data.turns || []).reduce((sum, t) => sum + (t.tokenEstimate || 0), 0),
