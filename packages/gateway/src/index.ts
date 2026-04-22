@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 import { ConfigManager } from './config';
 import { Logger } from './logger';
 import { handleCommand } from './cli';
-import { GatewayConfig, CodingAgent, ModelConfig } from '@codey/core';
+import { GatewayConfig } from '@codey/core';
 import { Codey } from './gateway';
 import { ApiServer, HealthStatusType } from './health';
 import { assertNoLegacyLayout } from './startup-guard';
@@ -66,23 +66,6 @@ function startGateway(): void {
 
     // Start API server on the gateway port
     const apiServer = new ApiServer(configManager.getPort(), (): any => gateway.getHealthStatus(), configManager);
-    apiServer.setMessageHandler(async (prompt, sse, conversationId) => {
-      return gateway.processPromptHttp(prompt, sse, conversationId);
-    });
-    apiServer.setWorkspaceHandlers(
-      () => gateway.getWorkspaceList(),
-      (name: string) => gateway.switchWorkspaceByName(name),
-    );
-    apiServer.setWorkerRoutes({
-      workerManager,
-      workspaceManager: gateway.getWorkspaceManager(),
-      workspacesDir: './workspaces',
-      workersDir: './workers',
-      agentFactory: gateway.getAgentFactory(),
-      getActiveAgent: () => (gatewayConfig.defaultAgent as CodingAgent),
-      getActiveModel: () => gateway.getEffectiveModelConfig(),
-      getWorkingDir: () => gateway.getWorkingDir(),
-    });
     await apiServer.start();
 
     // Apply config changes to the running gateway at runtime
