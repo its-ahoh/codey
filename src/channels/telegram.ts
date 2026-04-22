@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { BaseChannelHandler } from './base';
-import { UserMessage, GatewayResponse } from '../types';
+import { UserMessage, GatewayResponse } from '@codey/core';
 
 /**
  * Convert markdown to Telegram HTML.

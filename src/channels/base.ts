@@ -1,4 +1,4 @@
-import { UserMessage, GatewayResponse } from '../types';
+import { UserMessage, GatewayResponse } from '@codey/core';
 
 export interface ChannelHandler {
   name: string;

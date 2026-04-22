@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
-import { AgentRequest, AgentResponse } from '../types';
+import { AgentRequest, AgentResponse } from '@codey/core';
 import { BaseAgentAdapter } from './base';
 import { Logger } from '../logger';
 

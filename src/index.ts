@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 import { ConfigManager } from './config';
 import { Logger } from './logger';
 import { handleCommand } from './cli';
-import { GatewayConfig, CodingAgent, ModelConfig } from './types/index';
+import { GatewayConfig, CodingAgent, ModelConfig } from '@codey/core';
 import { Codey } from './gateway';
 import { ApiServer, HealthStatusType } from './health';
 import { assertNoLegacyLayout } from './startup-guard';

@@ -4,7 +4,7 @@ import * as path from 'path';
 import { WorkerManager } from './workers';
 import { WorkspaceManager } from './workspace';
 import { AgentFactory } from './agents';
-import { CodingAgent, ModelConfig } from './types/index';
+import { CodingAgent, ModelConfig } from '@codey/core';
 import { generateWorker } from './worker-generator';
 
 export interface WorkerRouteDeps {

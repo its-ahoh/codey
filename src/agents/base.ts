@@ -1,4 +1,4 @@
-import { AgentRequest, AgentResponse, CodingAgent } from '../types';
+import { AgentRequest, AgentResponse, CodingAgent } from '@codey/core';
 
 export interface CodingAgentAdapter {
   name: string;

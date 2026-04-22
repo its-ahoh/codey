@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import { exec } from 'child_process';
 import { BaseChannelHandler } from './base';
-import { UserMessage, GatewayResponse } from '../types';
+import { UserMessage, GatewayResponse } from '@codey/core';
 
 // iMessage handler using macOS AppleScript
 // Note: Requires Mac OS and iMessage enabled

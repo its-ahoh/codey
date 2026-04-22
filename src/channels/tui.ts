@@ -2,7 +2,7 @@ import * as readline from 'readline';
 import { marked } from 'marked';
 import { markedTerminal } from 'marked-terminal';
 import { BaseChannelHandler } from './base';
-import { GatewayResponse, UserMessage } from '../types';
+import { GatewayResponse, UserMessage } from '@codey/core';
 
 marked.use(markedTerminal() as any);
 

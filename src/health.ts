@@ -1,6 +1,6 @@
 import * as http from 'http';
 import { ConfigManager } from './config';
-import { StatusUpdate } from './types';
+import { StatusUpdate } from '@codey/core';
 import { WorkerRouteDeps, GenerateRouteDeps, handleListWorkers, handleGetTeams, handlePutTeams, matchWorkerPath, matchWorkspaceTeamsPath, handlePutWorker, handleDeleteWorker, handleGenerateWorker } from './worker-routes';
 
 export type HealthStatusType = 'healthy' | 'degraded' | 'down';
