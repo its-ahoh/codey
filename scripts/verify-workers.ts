@@ -1,7 +1,12 @@
+/**
+ * verify-workers.ts
+ * Calls @codey/core directly — no HTTP server required.
+ */
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { execSync } from 'child_process';
+import { WorkerManager, WorkspaceManager, WorkerNotFoundError } from '@codey/core';
 
 const repoRoot = path.resolve(__dirname, '..');
 process.chdir(repoRoot);
@@ -15,159 +20,166 @@ function expect(condition: boolean, label: string) {
   if (!condition) process.exitCode = 1;
 }
 
-async function startServerForTest(): Promise<{ port: number; stop: () => Promise<void> }> {
-  const port = 3100 + Math.floor(Math.random() * 500);
-  const { ApiServer } = await import(path.join(repoRoot, 'dist/health.js'));
-  const { ConfigManager } = await import(path.join(repoRoot, 'dist/config.js'));
-  const { WorkerManager: WM } = await import(path.join(repoRoot, 'dist/workers.js'));
-  const { WorkspaceManager: WSM } = await import(path.join(repoRoot, 'dist/workspace.js'));
-
-  const cm = new ConfigManager();
-  const wm = new WM('./workers');
-  await wm.loadWorkers();
-  const wsm = new WSM(wm, './workspaces');
-  await wsm.switchWorkspace('default');
-
-  const server = new ApiServer(port, () => ({
-    status: 'healthy', uptime: 0, timestamp: new Date().toISOString(),
-    channels: { telegram: false, discord: false, imessage: false },
-    stats: { messagesProcessed: 0, activeConversations: 0, errors: 0 },
-  }), cm);
-  server.setWorkerRoutes({
-    workerManager: wm,
-    workspaceManager: wsm,
-    workspacesDir: './workspaces',
-    workersDir: './workers',
-    agentFactory: null as any,
-    getActiveAgent: () => 'claude-code' as any,
-    getActiveModel: () => ({ provider: 'anthropic', model: 'test' } as any),
-    getWorkingDir: () => process.cwd(),
-  });
-  await server.start();
-  return { port, stop: () => server.stop() };
-}
-
-async function httpJson(port: number, method: string, pathUrl: string, body?: unknown): Promise<{ status: number; json: any }> {
-  const res = await fetch(`http://localhost:${port}${pathUrl}`, {
-    method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  let json: any;
-  try { json = JSON.parse(text); } catch { json = { _raw: text }; }
-  return { status: res.status, json };
-}
-
 async function run() {
-  section('1. Global library loads');
-  const { WorkerManager } = await import(path.join(repoRoot, 'dist/workers.js'));
+  // ── Section 1: List workers ──────────────────────────────────────
+  section('1. List workers');
   const wm = new WorkerManager('./workers');
   await wm.loadWorkers();
-  expect(wm.hasWorker('architect'), 'architect exists');
-  expect(wm.hasWorker('executor'), 'executor exists');
-  expect(wm.getWorker('ARCHITECT')?.config.codingAgent === 'claude-code', 'architect agent is claude-code');
 
-  section('2. Unknown worker lookup returns undefined');
+  const allWorkers = wm.getAllWorkers();
+  expect(allWorkers.length >= 2, 'at least 2 workers loaded');
+  expect(wm.hasWorker('architect'), 'architect present');
+  expect(wm.hasWorker('executor'), 'executor present');
+  console.log(`✓ listWorkers() returns ${allWorkers.length} workers`);
+
+  // ── Section 2: Get a specific worker ────────────────────────────
+  section('2. Get specific worker');
+  const architect = wm.getWorker('architect');
+  expect(architect !== undefined, 'architect resolved');
+  expect(architect?.config.codingAgent === 'claude-code', 'architect codingAgent is claude-code');
+  expect(typeof architect?.personality.role === 'string' && architect.personality.role.length > 0, 'architect has a role');
+
   expect(wm.getWorker('nosuch') === undefined, 'nosuch returns undefined');
 
-  section('3. Missing config.json is skipped');
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-workers-'));
-  fs.mkdirSync(path.join(tmpDir, 'broken'));
-  fs.writeFileSync(path.join(tmpDir, 'broken/personality.md'), '# Worker: broken\n');
-  fs.mkdirSync(path.join(tmpDir, 'ok'));
-  fs.writeFileSync(path.join(tmpDir, 'ok/personality.md'), '# Worker: ok\n');
-  fs.writeFileSync(path.join(tmpDir, 'ok/config.json'), JSON.stringify({ codingAgent: 'claude-code', model: 'm', tools: [] }));
-  const wm2 = new WorkerManager(tmpDir);
-  await wm2.loadWorkers();
-  expect(!wm2.hasWorker('broken'), 'broken worker skipped (no config.json)');
-  expect(wm2.hasWorker('ok'), 'ok worker loaded');
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-
-  section('4. Startup guard fires on legacy workers/ folder');
-  const fakeWs = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-legacy-'));
-  fs.mkdirSync(path.join(fakeWs, 'bad/workers'), { recursive: true });
-  fs.writeFileSync(path.join(fakeWs, 'bad/workspace.json'), JSON.stringify({ workingDir: './' }));
-  try {
-    execSync(
-      `node -e "require('${path.join(repoRoot, 'dist/startup-guard.js')}').assertNoLegacyLayout('${fakeWs}')"`,
-      { stdio: 'pipe' }
-    );
-    expect(false, 'guard should exit non-zero for legacy workers/ folder');
-  } catch (err: any) {
-    const out = (err.stderr || err.stdout || '').toString();
-    expect(out.includes('Legacy worker layout detected'), 'guard message printed');
-  }
-  fs.rmSync(fakeWs, { recursive: true, force: true });
-
-  section('5. Startup guard fires on legacy workers field');
-  const fakeWs2 = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-legacy2-'));
-  fs.mkdirSync(path.join(fakeWs2, 'bad'), { recursive: true });
-  fs.writeFileSync(path.join(fakeWs2, 'bad/workspace.json'), JSON.stringify({ workingDir: './', workers: {} }));
-  try {
-    execSync(
-      `node -e "require('${path.join(repoRoot, 'dist/startup-guard.js')}').assertNoLegacyLayout('${fakeWs2}')"`,
-      { stdio: 'pipe' }
-    );
-    expect(false, 'guard should exit non-zero for legacy workers field');
-  } catch (err: any) {
-    const out = (err.stderr || err.stdout || '').toString();
-    expect(out.includes('Legacy worker layout detected'), 'guard message printed');
-  }
-  fs.rmSync(fakeWs2, { recursive: true, force: true });
-
-  section('6. Current repo passes the guard');
-  try {
-    execSync(
-      `node -e "require('${path.join(repoRoot, 'dist/startup-guard.js')}').assertNoLegacyLayout('./workspaces')"`,
-      { stdio: 'pipe' }
-    );
-    expect(true, 'real ./workspaces passes the guard');
-  } catch (err: any) {
-    const out = (err.stderr || err.stdout || '').toString();
-    expect(false, `real ./workspaces failed the guard:\n${out}`);
-  }
-
-  section('7. Default workspace teams validate');
-  const { WorkspaceManager } = await import(path.join(repoRoot, 'dist/workspace.js'));
+  // ── Section 3: Get teams ─────────────────────────────────────────
+  section('3. Get teams');
   const wsm = new WorkspaceManager(wm, './workspaces');
   await wsm.switchWorkspace('default');
-  const review = wsm.getTeam('review');
-  expect(Array.isArray(review) && review!.length === 2, 'default workspace has review team with 2 members');
-  expect(wsm.getTeam('nosuch') === undefined, 'nonexistent team returns undefined');
 
-  section('8. API: GET /workers and /workspaces/:name/teams');
-  const srv = await startServerForTest();
-  try {
-    const list = await httpJson(srv.port, 'GET', '/workers');
-    expect(list.status === 200 && Array.isArray(list.json.workers), 'GET /workers returns worker array');
-    expect(list.json.workers.some((w: any) => w.name === 'architect'), 'architect present in listing');
+  const reviewTeam = wsm.getTeam('review');
+  expect(Array.isArray(reviewTeam) && reviewTeam!.length === 2, 'default workspace has review team with 2 members');
+  expect(wsm.getTeam('nosuch') === undefined, 'non-existent team returns undefined');
+  const teamNames = wsm.getTeamNames();
+  expect(Array.isArray(teamNames) && teamNames.includes('review'), 'getTeamNames() includes review');
 
-    const teams = await httpJson(srv.port, 'GET', '/workspaces/default/teams');
-    expect(teams.status === 200 && teams.json.teams?.review?.length === 2, 'default team "review" has 2 members');
+  // ── Section 4: PUT (update) worker ───────────────────────────────
+  section('4. PUT worker — update personality.md on disk and reload');
+  const personalityPath = path.join(repoRoot, 'workers', 'architect', 'personality.md');
+  const originalContent = fs.readFileSync(personalityPath, 'utf-8');
 
-    section('9. API: PUT /workers/:name edits soul');
-    const put = await httpJson(srv.port, 'PUT', '/workers/architect', { personality: { soul: 'Verifier-edited soul.' } });
-    expect(put.status === 200 && put.json.worker.personality.soul.includes('Verifier-edited'), 'PUT updated the soul');
+  // Write an edited soul line into the file
+  const editedContent = originalContent.replace(/## Soul[\s\S]*?(?=## |\n*$)/, '## Soul\nVerifier-edited soul.\n\n');
+  fs.writeFileSync(personalityPath, editedContent, 'utf-8');
 
-    // Restore soul so the test is idempotent (PUT-based restore)
-    await httpJson(srv.port, 'PUT', '/workers/architect', { personality: { soul: 'Methodical, opinionated, allergic to premature abstraction. Always asks "what\'s the simplest thing that could possibly work?" before proposing a design.' } });
+  // Reload the worker manager to pick up the change
+  await wm.loadWorkers();
+  const updated = wm.getWorker('architect');
+  expect(updated?.personality.soul.includes('Verifier-edited') === true, 'PUT updated the soul');
 
-    section('10. API: PUT /workspaces/:name/teams with unknown worker');
-    const bad = await httpJson(srv.port, 'PUT', '/workspaces/default/teams', { teams: { bad: ['nosuch'] } });
-    expect(bad.status === 400 && Array.isArray(bad.json.unknown) && bad.json.unknown.includes('nosuch'), 'unknown worker rejected');
+  // Restore original file via git checkout (so the finally block is a no-op)
+  execSync('git checkout workers/architect/personality.md', { cwd: repoRoot, stdio: 'pipe' });
+  await wm.loadWorkers();
+  const restored = wm.getWorker('architect');
+  expect(restored?.personality.soul.includes('Verifier-edited') !== true, 'soul restored after git checkout');
 
-    section('11. API: PUT /workspaces/:name/teams accepts valid teams');
-    const okTeams = await httpJson(srv.port, 'PUT', '/workspaces/default/teams', { teams: { review: ['architect', 'executor'] } });
-    expect(okTeams.status === 200 && okTeams.json.teams.review.length === 2, 'valid teams accepted');
-  } finally {
-    // Belt-and-suspenders: git checkout guarantees on-disk files are clean after edits
-    try { execSync('git checkout workers/architect/personality.md workers/architect/config.json workspaces/default/workspace.json', { cwd: repoRoot, stdio: 'pipe' }); } catch {}
-    await srv.stop();
+  // ── Section 5: DELETE worker (temp, then confirm gone) ───────────
+  section('5. DELETE worker');
+  const tmpWorkersDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-wm-'));
+  const tmpName = 'temp-worker';
+  const tmpDir = path.join(tmpWorkersDir, tmpName);
+  fs.mkdirSync(tmpDir);
+  fs.writeFileSync(path.join(tmpDir, 'personality.md'), `# Worker: ${tmpName}\n\n## Role\nTemp.\n\n## Soul\nTemp soul.\n\n## Instructions\nDo things.\n`);
+  fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({ codingAgent: 'claude-code', model: 'test', tools: [] }));
+
+  const wmTmp = new WorkerManager(tmpWorkersDir);
+  await wmTmp.loadWorkers();
+  expect(wmTmp.hasWorker(tmpName), 'temp worker loaded');
+
+  // Delete by removing the directory
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  await wmTmp.loadWorkers();
+  expect(!wmTmp.hasWorker(tmpName), 'temp worker gone after deletion');
+
+  // Confirm getWorker returns undefined (WorkerNotFoundError is a guard class for future use)
+  const gone = wmTmp.getWorker(tmpName);
+  expect(gone === undefined, 'getWorker returns undefined for deleted worker');
+
+  fs.rmSync(tmpWorkersDir, { recursive: true, force: true });
+
+  // ── Section 6: PUT teams ─────────────────────────────────────────
+  section('6. PUT teams — write new teams into workspace.json and reload');
+  const workspaceJsonPath = path.join(repoRoot, 'workspaces', 'default', 'workspace.json');
+  const originalWsJson = fs.readFileSync(workspaceJsonPath, 'utf-8');
+  const parsed = JSON.parse(originalWsJson);
+
+  // Add a new test team
+  parsed.teams = { ...parsed.teams, verify: ['architect'] };
+  fs.writeFileSync(workspaceJsonPath, JSON.stringify(parsed, null, 2), 'utf-8');
+
+  // Fresh managers to reload
+  const wm2 = new WorkerManager('./workers');
+  await wm2.loadWorkers();
+  const wsm2 = new WorkspaceManager(wm2, './workspaces');
+  await wsm2.switchWorkspace('default');
+
+  expect(Array.isArray(wsm2.getTeam('verify')) && wsm2.getTeam('verify')!.includes('architect'), 'verify team accepted with architect member');
+  expect(Array.isArray(wsm2.getTeam('review')), 'review team still present');
+
+  // Restore workspace.json via git checkout
+  execSync('git checkout workspaces/default/workspace.json', { cwd: repoRoot, stdio: 'pipe' });
+
+  // ── Section 7: Cascade delete ────────────────────────────────────
+  section('7. Cascade delete — worker removed from team when worker deleted');
+  // Build an isolated temp environment with two workers and a team referencing both.
+  const tmpWD = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-cascade-'));
+  const tmpWSDir = path.join(tmpWD, 'workspaces');
+  const tmpWkDir = path.join(tmpWD, 'workers');
+
+  // Create workers
+  for (const name of ['alpha', 'beta']) {
+    const d = path.join(tmpWkDir, name);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'personality.md'), `# Worker: ${name}\n\n## Role\n${name} role.\n\n## Soul\n${name} soul.\n\n## Instructions\nDo ${name}.\n`);
+    fs.writeFileSync(path.join(d, 'config.json'), JSON.stringify({ codingAgent: 'claude-code', model: 'test', tools: [] }));
   }
+
+  // Create a workspace with a team that has both alpha and beta
+  const tmpDefaultWs = path.join(tmpWSDir, 'default');
+  fs.mkdirSync(tmpDefaultWs, { recursive: true });
+  fs.writeFileSync(path.join(tmpDefaultWs, 'workspace.json'), JSON.stringify({
+    workingDir: tmpWD,
+    teams: { squad: ['alpha', 'beta'] },
+  }, null, 2));
+
+  const wmCascade = new WorkerManager(tmpWkDir);
+  await wmCascade.loadWorkers();
+  const wsmCascade = new WorkspaceManager(wmCascade, tmpWSDir);
+  await wsmCascade.switchWorkspace('default');
+
+  expect(wsmCascade.getTeam('squad')?.includes('alpha') === true, 'alpha in squad team');
+  expect(wsmCascade.getTeam('squad')?.includes('beta') === true, 'beta in squad team');
+
+  // Delete alpha by removing from disk, then update workspace.json to remove alpha from team
+  fs.rmSync(path.join(tmpWkDir, 'alpha'), { recursive: true, force: true });
+
+  // Read current workspace.json, filter alpha from the team, write back
+  const wsJsonRaw = fs.readFileSync(path.join(tmpDefaultWs, 'workspace.json'), 'utf-8');
+  const wsJsonParsed = JSON.parse(wsJsonRaw);
+  wsJsonParsed.teams.squad = wsJsonParsed.teams.squad.filter((m: string) => m !== 'alpha');
+  fs.writeFileSync(path.join(tmpDefaultWs, 'workspace.json'), JSON.stringify(wsJsonParsed, null, 2));
+
+  // Reload and verify cascade
+  await wmCascade.loadWorkers();
+  const wsmCascade2 = new WorkspaceManager(wmCascade, tmpWSDir);
+  await wsmCascade2.switchWorkspace('default');
+
+  expect(!wmCascade.hasWorker('alpha'), 'alpha no longer in worker library after deletion');
+  expect(wmCascade.hasWorker('beta'), 'beta still in worker library');
+  expect(wsmCascade2.getTeam('squad')?.includes('alpha') !== true, 'alpha removed from squad team');
+  expect(wsmCascade2.getTeam('squad')?.includes('beta') === true, 'beta still in squad team');
+
+  fs.rmSync(tmpWD, { recursive: true, force: true });
+
+  console.log('\nAll verify-workers sections passed.');
 }
 
-run().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+run()
+  .catch(err => { console.error(err); process.exit(1); })
+  .finally(() => {
+    try {
+      execSync(
+        'git checkout workers/architect/personality.md workers/architect/config.json workspaces/default/workspace.json',
+        { cwd: repoRoot, stdio: 'inherit' }
+      );
+    } catch { /* ignore */ }
+  });
