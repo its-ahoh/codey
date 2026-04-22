@@ -8,7 +8,7 @@
     "codey-mac"
   ],
   "scripts": {
-    "build": "npm run build -w @codey/core && npm run build:legacy && npm run build -w @codey/gateway",
+    "build": "npm run build -ws --if-present",
     "build:core": "npm run build -w @codey/core",
     "build:gateway": "npm run build -w @codey/gateway",
     "dev": "npm run dev -w @codey/gateway",
@@ -19,8 +19,7 @@
     "set-model": "npm run set-model -w @codey/gateway",
     "tui": "npm run tui -w @codey/gateway",
     "verify-workers": "npm run build && ts-node scripts/verify-workers.ts",
-    "verify-gateway": "npm run build && ts-node scripts/verify-gateway.ts",
-    "build:legacy": "tsc -p tsconfig.json"
+    "verify-gateway": "npm run build && ts-node scripts/verify-gateway.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
