@@ -149,4 +149,23 @@ export class WorkspaceManager {
       .map(([name, members]) => `• **${name}** → ${members.join(' → ')}`)
       .join('\n');
   }
+
+  async setTeams(teams: Record<string, string[]>): Promise<void> {
+    this.teams.clear();
+    for (const [name, members] of Object.entries(teams)) {
+      this.teams.set(name, members);
+    }
+    const configPath = this.getConfigPath();
+    const existing = JSON.parse(await fs.promises.readFile(configPath, 'utf-8'));
+    existing.teams = teams;
+    await fs.promises.writeFile(configPath, JSON.stringify(existing, null, 2), 'utf-8');
+  }
+
+  getTeams(): Record<string, string[]> {
+    const result: Record<string, string[]> = {};
+    for (const [name, members] of this.teams.entries()) {
+      result[name] = members;
+    }
+    return result;
+  }
 }

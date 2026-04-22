@@ -164,4 +164,19 @@ export class WorkerManager {
     if (all.length === 0) return 'No workers configured. Create folders under ./workers/<name>/ with personality.md and config.json.';
     return all.map(w => `• **${w.name}** — ${w.personality.role || '(no role)'} (${w.config.codingAgent}/${w.config.model})`).join('\n');
   }
+
+  async saveWorker(name: string, personality: WorkerPersonality, config: WorkerConfig): Promise<void> {
+    const dir = path.join(this.workersDir, name);
+    await fs.promises.mkdir(dir, { recursive: true });
+    const personalityContent = `# Worker: ${name}\n\n## Role\n${personality.role}\n\n## Soul\n${personality.soul}\n\n## Instructions\n${personality.instructions}\n`;
+    await fs.promises.writeFile(path.join(dir, 'personality.md'), personalityContent, 'utf-8');
+    await fs.promises.writeFile(path.join(dir, 'config.json'), JSON.stringify(config, null, 2), 'utf-8');
+    await this.loadWorkers();
+  }
+
+  async deleteWorker(name: string): Promise<void> {
+    const dir = path.join(this.workersDir, name);
+    await fs.promises.rm(dir, { recursive: true, force: true });
+    this.workers.delete(name.toLowerCase());
+  }
 }

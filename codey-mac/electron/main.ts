@@ -269,10 +269,86 @@ function bootInProcessCore() {
   }
 }
 
-app.whenReady().then(() => {
+type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
+
+async function wrap<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
+  try { return { ok: true, data: await fn() } }
+  catch (e: any) { return { ok: false, error: e?.message ?? String(e) } }
+}
+
+app.whenReady().then(async () => {
   createWindow()
   createTray()
   bootInProcessCore()
+
+  // ── Workers IPC ──────────────────────────────────────────────────
+  ipcMain.handle('workers:list', async () =>
+    wrap(async () => workerManager?.getAllWorkers() ?? [])
+  )
+
+  ipcMain.handle('workers:get', async (_e, name: string) =>
+    wrap(async () => {
+      const w = workerManager?.getWorker(name)
+      if (!w) throw new Error(`Worker not found: ${name}`)
+      return w
+    })
+  )
+
+  ipcMain.handle('workers:save', async (_e, name: string, personality: any, config: any) =>
+    wrap(async () => {
+      await workerManager?.saveWorker(name, personality, config)
+    })
+  )
+
+  ipcMain.handle('workers:delete', async (_e, name: string) =>
+    wrap(async () => {
+      await workerManager?.deleteWorker(name)
+      // cascade: remove from all teams
+      if (workspaceManager) {
+        const teams = workspaceManager.getTeams()
+        let changed = false
+        for (const team of Object.keys(teams)) {
+          const filtered = teams[team].filter((m: string) => m !== name)
+          if (filtered.length !== teams[team].length) { teams[team] = filtered; changed = true }
+        }
+        if (changed) await workspaceManager.setTeams(teams)
+      }
+    })
+  )
+
+  // ── Workspaces IPC ────────────────────────────────────────────────
+  ipcMain.handle('workspaces:list', async () =>
+    wrap(async () => workspaceManager?.listWorkspaces() ?? [])
+  )
+
+  ipcMain.handle('workspaces:current', async () =>
+    wrap(async () => workspaceManager?.getCurrentWorkspace() ?? '')
+  )
+
+  ipcMain.handle('workspaces:switch', async (_e, name: string) =>
+    wrap(async () => {
+      await workspaceManager?.switchWorkspace(name)
+    })
+  )
+
+  // ── Teams IPC ─────────────────────────────────────────────────────
+  ipcMain.handle('teams:get', async () =>
+    wrap(async () => workspaceManager?.getTeams() ?? {})
+  )
+
+  ipcMain.handle('teams:set', async (_e, teams: Record<string, string[]>) =>
+    wrap(async () => {
+      await workspaceManager?.setTeams(teams)
+    })
+  )
+
+  // ── Conversations IPC ─────────────────────────────────────────────
+  ipcMain.handle('conversations:list', async () =>
+    wrap(async () => {
+      const cm = (inProcessGateway as any)?.contextManager
+      return cm?.listConversationIds?.() ?? []
+    })
+  )
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
