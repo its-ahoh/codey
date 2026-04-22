@@ -1,45 +1,29 @@
 {
-  "name": "codey",
+  "name": "codey-monorepo",
+  "private": true,
   "version": "1.0.0",
   "description": "Codey — a gateway that routes prompts from chat platforms to coding agents",
-  "main": "dist/index.js",
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
-    "watch": "tsc --watch",
-    "configure": "ts-node src/index.ts configure",
-    "status": "ts-node src/index.ts status",
-    "set-agent": "ts-node src/index.ts set-agent",
-    "set-model": "ts-node src/index.ts set-model",
-    "tui": "ts-node src/index.ts tui",
-    "verify-workers": "npm run build && ts-node scripts/verify-workers.ts"
-  },
-  "keywords": [
-    "coding",
-    "gateway",
-    "telegram",
-    "discord",
-    "imessage",
-    "claude",
-    "opencode",
-    "codex"
+  "workspaces": [
+    "packages/*",
+    "codey-mac"
   ],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
+  "scripts": {
+    "build": "npm run build -ws --if-present",
+    "build:core": "npm run build -w @codey/core",
+    "build:gateway": "npm run build -w @codey/gateway",
+    "dev": "npm run dev -w @codey/gateway",
+    "start": "npm run start -w @codey/gateway",
+    "configure": "npm run configure -w @codey/gateway",
+    "status": "npm run status -w @codey/gateway",
+    "set-agent": "npm run set-agent -w @codey/gateway",
+    "set-model": "npm run set-model -w @codey/gateway",
+    "tui": "npm run tui -w @codey/gateway",
+    "verify-workers": "npm run build && ts-node scripts/verify-workers.ts",
+    "verify-gateway": "npm run build && ts-node scripts/verify-gateway.ts"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/node-telegram-bot-api": "^0.64.13",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.0"
-  },
-  "dependencies": {
-    "discord.js": "^14.0.0",
-    "dotenv": "^16.0.0",
-    "marked": "^15.0.12",
-    "marked-terminal": "^7.3.0",
-    "node-telegram-bot-api": "^0.64.0",
-    "undici": "^5.28.0"
   }
 }
