@@ -6,7 +6,7 @@ import { AgentFactory } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from './context';
 import { MemoryStore } from '@codey/core';
-import { TaskPlanner, TaskPlan, PlanStep } from './planner';
+import { TaskPlanner, TaskPlan, PlanStep } from '@codey/core';
 import { WorkspaceManager } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 

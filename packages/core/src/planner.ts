@@ -9,9 +9,8 @@
  * This is agent-agnostic — the planner decides WHAT to do; the agent adapter
  * decides HOW to do it.
  */
-import { AgentResponse, CodingAgent, ModelConfig, StatusUpdate } from '@codey/core';
-import { Logger } from './logger';
-import { formatBytes } from '@codey/core';
+import { AgentResponse, CodingAgent, ModelConfig, StatusUpdate } from './types';
+import { formatBytes } from './utils/format';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -88,11 +87,9 @@ If needs_planning is false, return empty steps array.`;
 
 export class TaskPlanner {
   private config: PlannerConfig;
-  private logger: Logger;
 
   constructor(config?: Partial<PlannerConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.logger = Logger.getInstance();
   }
 
   updateConfig(config: Partial<PlannerConfig>): void {
@@ -113,7 +110,7 @@ export class TaskPlanner {
     // Need an API key to call the planner LLM
     const apiKey = this.config.apiKey || process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      this.logger.debug('[planner] No API key available, skipping planning');
+      console.debug('[planner] No API key available, skipping planning');
       return null;
     }
 
@@ -121,7 +118,7 @@ export class TaskPlanner {
       const plan = await this.callPlannerLLM(prompt, contextSummary, apiKey);
       return plan;
     } catch (error) {
-      this.logger.error(`[planner] Planning failed: ${error}`);
+      console.error(`[planner] Planning failed: ${error}`);
       return null; // Graceful degradation — just run the task directly
     }
   }
@@ -240,7 +237,7 @@ export class TaskPlanner {
       ],
     });
 
-    this.logger.debug(`[planner] Calling ${this.config.plannerModel} for task analysis`);
+    console.debug(`[planner] Calling ${this.config.plannerModel} for task analysis`);
 
     const response = await request('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -283,7 +280,7 @@ export class TaskPlanner {
     };
 
     if (!parsed.needs_planning || !parsed.steps || parsed.steps.length === 0) {
-      this.logger.debug(`[planner] Task does not need planning: ${parsed.analysis}`);
+      console.debug(`[planner] Task does not need planning: ${parsed.analysis}`);
       return {
         originalPrompt: prompt,
         analysis: parsed.analysis,
@@ -302,7 +299,7 @@ export class TaskPlanner {
       status: 'pending' as const,
     }));
 
-    this.logger.info(`[planner] Created plan with ${steps.length} steps: ${parsed.analysis}`);
+    console.info(`[planner] Created plan with ${steps.length} steps: ${parsed.analysis}`);
 
     return {
       originalPrompt: prompt,
