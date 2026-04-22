@@ -43,14 +43,7 @@ const App: React.FC = () => {
 
   const setTab = (t: TabType) => { setActiveTab(t); localStorage.setItem('codey-tab', t) }
 
-  useEffect(() => {
-    const api = window.electronAPI
-    if (!api?.onGatewayToggle) return
-    return api.onGatewayToggle((action: string) => {
-      if (action === 'start' && !isRunning) toggle()
-      else if (action === 'stop' && isRunning) toggle()
-    })
-  }, [isRunning, toggle])
+  // Gateway is always in-process; no toggle IPC needed
 
   const renderTab = () => {
     switch (activeTab) {

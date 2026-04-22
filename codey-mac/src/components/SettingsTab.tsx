@@ -11,15 +11,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const [editedConfig, setEditedConfig] = useState<GatewayConfig | null>(null)
   const [port, setPort] = useState('3000')
   const [saving, setSaving] = useState(false)
-  const [gatewayPath, setGatewayPath] = useState('')
-
-  useEffect(() => {
-    // Load gateway path from Electron settings
-    const api = window.electronAPI
-    if (api?.getGatewayPath) {
-      api.getGatewayPath().then(setGatewayPath)
-    }
-  }, [])
 
   useEffect(() => {
     if (isGatewayRunning) {
@@ -64,29 +55,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
     setEditedConfig(updated)
   }
 
-  const saveGatewayPath = async () => {
-    const api = window.electronAPI
-    if (api?.setGatewayPath && gatewayPath) {
-      await api.setGatewayPath(gatewayPath)
-    }
-  }
-
   if (!isGatewayRunning) {
     return (
       <div style={styles.container}>
-        <div style={styles.section}>Gateway Path</div>
-        <div style={styles.field}>
-          <span style={styles.label}>Install Path</span>
-          <input
-            style={styles.input}
-            type="text"
-            value={gatewayPath}
-            onChange={e => setGatewayPath(e.target.value)}
-            onBlur={saveGatewayPath}
-            placeholder="e.g. ~/.codey"
-          />
-        </div>
-        <div style={styles.offline}>Start the gateway to edit other settings</div>
+        <div style={styles.offline}>Gateway not available</div>
       </div>
     )
   }
