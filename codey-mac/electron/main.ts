@@ -3,12 +3,19 @@ import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { execSync, spawn, ChildProcess } from 'child_process'
 import { homedir } from 'os'
+import { WorkerManager, WorkspaceManager } from '@codey/core'
+import { Codey } from '@codey/gateway/dist/gateway'
+import { ConfigManager } from '@codey/gateway/dist/config'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 let gatewayProcess: ChildProcess | null = null
 let isGatewayRunning = false
+let inProcessGateway: Codey | null = null
+let workerManager: WorkerManager | null = null
+let workspaceManager: WorkspaceManager | null = null
+let coreConfigManager: ConfigManager | null = null
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
@@ -249,9 +256,23 @@ function createTray() {
   })
 }
 
+function bootInProcessCore() {
+  const cwd = process.cwd()
+  try {
+    coreConfigManager = new ConfigManager()
+    workerManager = new WorkerManager(join(cwd, 'workers'))
+    workspaceManager = new WorkspaceManager(workerManager, join(cwd, 'workspaces'))
+    inProcessGateway = new Codey(coreConfigManager.get() as any, undefined, join(cwd, 'workspaces'), coreConfigManager, workerManager)
+    sendToRenderer('gateway-log', '[core] In-process core booted successfully.')
+  } catch (err: any) {
+    sendToRenderer('gateway-log', `[core] Boot failed: ${err?.message ?? err}`)
+  }
+}
+
 app.whenReady().then(() => {
   createWindow()
   createTray()
+  bootInProcessCore()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
