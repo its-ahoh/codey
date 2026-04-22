@@ -4,7 +4,7 @@ import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
 import { AgentFactory } from '@codey/core';
 import { Logger } from './logger';
-import { ContextManager, ContextWindow } from './context';
+import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
 import { TaskPlanner, TaskPlan, PlanStep } from '@codey/core';
 import { WorkspaceManager } from '@codey/core';
