@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { AgentRequest, AgentResponse, AgentStateEntry, StatusUpdate } from '../types';
 import { BaseAgentAdapter } from './base';
+import { AgentSpawnError } from '../errors';
 
 interface StreamEvent {
   type: string;
@@ -268,7 +269,8 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       childProcess.on('error', (err: Error) => {
         const duration = Math.round((Date.now() - startTime) / 1000);
         this.debug(`[claude-code] Spawn error: ${err.message}`);
-        safeResolve(this.createResponse(err.message, false, undefined, duration));
+        const spawnError = new AgentSpawnError(this.name, err.message);
+        safeResolve(this.createResponse(spawnError.message, false, undefined, duration));
       });
 
       // Safety timeout so we don't hang forever if the CLI never responds.

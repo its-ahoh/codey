@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { AgentRequest, AgentResponse } from '../types';
 import { BaseAgentAdapter } from './base';
+import { AgentSpawnError } from '../errors';
 
 interface OpenCodeEvent {
   type: string;
@@ -184,7 +185,8 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       childProcess.on('error', (err: Error) => {
         const duration = Math.round((Date.now() - startTime) / 1000);
         this.debug(`[opencode] Spawn error: ${err.message}`);
-        safeResolve(this.createResponse(err.message, false, undefined, duration));
+        const spawnError = new AgentSpawnError(this.name, err.message);
+        safeResolve(this.createResponse(spawnError.message, false, undefined, duration));
       });
 
       // Timeout (default 15 minutes)

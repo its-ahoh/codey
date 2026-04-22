@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { AgentRequest, AgentResponse } from '../types';
 import { BaseAgentAdapter } from './base';
+import { AgentSpawnError } from '../errors';
 
 export class CodexAdapter extends BaseAgentAdapter {
   name = 'codex';
@@ -56,7 +57,8 @@ export class CodexAdapter extends BaseAgentAdapter {
       });
 
       childProcess.on('error', (err: Error) => {
-        resolve(this.createResponse(err.message, false));
+        const spawnError = new AgentSpawnError(this.name, err.message);
+        resolve(this.createResponse(spawnError.message, false));
       });
 
       // Timeout (default 15 minutes)
