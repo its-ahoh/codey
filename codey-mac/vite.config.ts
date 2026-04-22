@@ -17,7 +17,7 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['electron']
+              external: ['electron', '@codey/core', '@codey/gateway']
             }
           }
         }
