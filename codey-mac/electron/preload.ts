@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('codey', {
     save: (name: string, personality: any, config: any) =>
       ipcRenderer.invoke('workers:save', name, personality, config),
     delete: (name: string) => ipcRenderer.invoke('workers:delete', name),
+    generate: (prompt: string) => ipcRenderer.invoke('workers:generate', prompt),
   },
   workspaces: {
     list: () => ipcRenderer.invoke('workspaces:list'),
@@ -28,5 +29,9 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.on('chat:token', listener)
       return () => ipcRenderer.removeListener('chat:token', listener)
     },
+  },
+  config: {
+    get: () => ipcRenderer.invoke('config:get'),
+    set: (updates: any) => ipcRenderer.invoke('config:set', updates),
   },
 })
