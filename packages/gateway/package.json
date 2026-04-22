@@ -1,0 +1,33 @@
+{
+  "name": "@codey/gateway",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "codey": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "tsc --watch",
+    "configure": "ts-node src/index.ts configure",
+    "status": "ts-node src/index.ts status",
+    "set-agent": "ts-node src/index.ts set-agent",
+    "set-model": "ts-node src/index.ts set-model",
+    "tui": "ts-node src/index.ts tui"
+  },
+  "dependencies": {
+    "@codey/core": "*",
+    "discord.js": "^14.0.0",
+    "dotenv": "^16.0.0",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0",
+    "node-telegram-bot-api": "^0.64.0",
+    "undici": "^5.28.0"
+  },
+  "devDependencies": {
+    "@types/node-telegram-bot-api": "^0.64.13",
+    "typescript": "^5.9.0"
+  }
+}
