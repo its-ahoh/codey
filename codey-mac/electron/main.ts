@@ -180,6 +180,41 @@ app.whenReady().then(async () => {
     })
   )
 
+  // ── Workers generate IPC ──────────────────────────────────────────
+  ipcMain.handle('workers:generate', async (_e, prompt: string) =>
+    wrap(async () => {
+      const { generateWorker, AgentFactory } = await import('@codey/core')
+      const factory = new AgentFactory()
+      const cwd = process.cwd()
+      const cfg = coreConfigManager?.get() as any
+      const result = await generateWorker(
+        {
+          agentFactory: factory,
+          workerManager: workerManager!,
+          workersDir: join(cwd, 'workers'),
+          activeAgent: cfg?.gateway?.defaultAgent ?? 'claude-code',
+          activeModel: { provider: 'anthropic', model: cfg?.agents?.['claude-code']?.defaultModel ?? 'claude-sonnet-4-5' },
+          workingDir: cwd,
+        },
+        prompt,
+      )
+      if (!result.ok) throw new Error(result.error)
+      return result.worker
+    })
+  )
+
+  // ── Config IPC ────────────────────────────────────────────────────
+  ipcMain.handle('config:get', async () =>
+    wrap(async () => coreConfigManager?.get() ?? {})
+  )
+
+  ipcMain.handle('config:set', async (_e, updates: any) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.update(updates)
+    })
+  )
+
   // ── Conversations IPC ─────────────────────────────────────────────
   ipcMain.handle('conversations:list', async () =>
     wrap(async () => {
