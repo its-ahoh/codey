@@ -1,7 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
-import { AgentRequest, AgentResponse } from '@codey/core';
+import { AgentRequest, AgentResponse } from '../types';
 import { BaseAgentAdapter } from './base';
-import { Logger } from '../logger';
 
 interface OpenCodeEvent {
   type: string;
@@ -30,7 +29,12 @@ interface OpenCodeEvent {
 
 export class OpenCodeAdapter extends BaseAgentAdapter {
   name = 'opencode';
-  private logger = Logger.getInstance();
+  private debug: (msg: string) => void;
+
+  constructor(debug?: (msg: string) => void) {
+    super();
+    this.debug = debug ?? (() => {});
+  }
 
   async run(request: AgentRequest): Promise<AgentResponse> {
     return new Promise((resolve) => {
@@ -43,7 +47,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
 
       args.push(request.prompt);
 
-      this.logger.debug(`[opencode] Spawning: opencode ${args.slice(0, -1).join(' ')} "<prompt>"`);
+      this.debug(`[opencode] Spawning: opencode ${args.slice(0, -1).join(' ')} "<prompt>"`);
 
       const childProcess: ChildProcess = spawn('opencode', args, {
         stdio: ['ignore', 'pipe', 'pipe'], // ignore stdin, pipe stdout, pipe stderr
@@ -162,7 +166,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
           }
         }
 
-        this.logger.debug(`[opencode] Parsed ${textParts.length} text parts from ${jsonLines.length} JSON lines, tokens: ${tokens?.total || 'none'}`);
+        this.debug(`[opencode] Parsed ${textParts.length} text parts from ${jsonLines.length} JSON lines, tokens: ${tokens?.total || 'none'}`);
 
         // Calculate duration
         const duration = Math.round((Date.now() - startTime) / 1000);
@@ -172,14 +176,14 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
           safeResolve(this.createResponse(output, true, tokens, duration, statusUpdates, states));
         } else {
           const error = stderr.trim() || `OpenCode exited with code ${code}`;
-          this.logger.debug(`[opencode] Error: ${error}`);
+          this.debug(`[opencode] Error: ${error}`);
           safeResolve(this.createResponse(error, false, undefined, duration, statusUpdates, states));
         }
       });
 
       childProcess.on('error', (err: Error) => {
         const duration = Math.round((Date.now() - startTime) / 1000);
-        this.logger.debug(`[opencode] Spawn error: ${err.message}`);
+        this.debug(`[opencode] Spawn error: ${err.message}`);
         safeResolve(this.createResponse(err.message, false, undefined, duration));
       });
 

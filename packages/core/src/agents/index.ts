@@ -1,4 +1,4 @@
-import { CodingAgent, AgentRequest, AgentResponse } from '@codey/core';
+import { CodingAgent, AgentRequest, AgentResponse } from '../types';
 import { CodingAgentAdapter } from './base';
 import { ClaudeCodeAdapter } from './claude-code';
 import { OpenCodeAdapter } from './opencode';

@@ -1,11 +1,11 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
-import { WorkerManager } from './workers';
-import { WorkspaceManager } from './workspace';
-import { AgentFactory } from './agents';
+import { WorkerManager } from '@codey/core';
+import { WorkspaceManager } from '@codey/core';
+import { AgentFactory } from '@codey/core';
 import { CodingAgent, ModelConfig } from '@codey/core';
-import { generateWorker } from './worker-generator';
+import { generateWorker } from '@codey/core';
 
 export interface WorkerRouteDeps {
   workerManager: WorkerManager;

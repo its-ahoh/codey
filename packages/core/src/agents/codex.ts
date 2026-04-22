@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
-import { AgentRequest, AgentResponse } from '@codey/core';
+import { AgentRequest, AgentResponse } from '../types';
 import { BaseAgentAdapter } from './base';
 
 export class CodexAdapter extends BaseAgentAdapter {

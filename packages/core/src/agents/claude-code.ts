@@ -1,7 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
-import { AgentRequest, AgentResponse, AgentStateEntry, StatusUpdate } from '@codey/core';
+import { AgentRequest, AgentResponse, AgentStateEntry, StatusUpdate } from '../types';
 import { BaseAgentAdapter } from './base';
-import { Logger } from '../logger';
 
 interface StreamEvent {
   type: string;
@@ -42,7 +41,12 @@ interface StreamEvent {
 export class ClaudeCodeAdapter extends BaseAgentAdapter {
   name = 'claude-code';
   private sessionId?: string;
-  private logger = Logger.getInstance();
+  private debug: (msg: string) => void;
+
+  constructor(debug?: (msg: string) => void) {
+    super();
+    this.debug = debug ?? (() => {});
+  }
 
   async run(request: AgentRequest): Promise<AgentResponse> {
     return new Promise((resolve) => {
@@ -93,7 +97,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       }
 
       const claudeBin = process.env.CLAUDE_BIN || 'claude';
-      this.logger.debug(`[claude-code] Spawning: ${claudeBin} ${args.slice(0, -1).join(' ')} "<prompt>"`);
+      this.debug(`[claude-code] Spawning: ${claudeBin} ${args.slice(0, -1).join(' ')} "<prompt>"`);
       const childProcess: ChildProcess = spawn(claudeBin, args, {
         stdio: [request.interactive ? 'inherit' : 'pipe', 'pipe', request.interactive ? 'inherit' : 'pipe'],
         cwd: request.context?.workingDir || undefined,
@@ -126,7 +130,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       };
 
       const processEvent = (event: StreamEvent) => {
-        this.logger.debug(`[claude-code] Event: ${event.type} ${event.subtype || ''}`);
+        this.debug(`[claude-code] Event: ${event.type} ${event.subtype || ''}`);
 
         if (event.type === 'system' && event.session_id) {
           this.sessionId = event.session_id;
@@ -234,7 +238,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       });
 
       childProcess.on('close', (code: number | null) => {
-        this.logger.debug(`[claude-code] Process exited with code ${code}`);
+        this.debug(`[claude-code] Process exited with code ${code}`);
 
         // Process any remaining buffer
         if (buffer.trim()) {
@@ -256,14 +260,14 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           // Clear session on failure to avoid "session already in use" errors
           this.sessionId = undefined;
           const error = stderr || (code !== 0 ? `Claude Code exited with code ${code}` : 'Claude Code returned empty response');
-          this.logger.debug(`[claude-code] Error: ${error}`);
+          this.debug(`[claude-code] Error: ${error}`);
           safeResolve(this.createResponse(error, false, undefined, finalDuration, statusUpdates, states));
         }
       });
 
       childProcess.on('error', (err: Error) => {
         const duration = Math.round((Date.now() - startTime) / 1000);
-        this.logger.debug(`[claude-code] Spawn error: ${err.message}`);
+        this.debug(`[claude-code] Spawn error: ${err.message}`);
         safeResolve(this.createResponse(err.message, false, undefined, duration));
       });
 

@@ -52,7 +52,7 @@ function startGateway(): void {
 
   async function main() {
     assertNoLegacyLayout('./workspaces');
-    const { WorkerManager } = await import('./workers');
+    const { WorkerManager } = await import('@codey/core');
     const workerManager = new WorkerManager('./workers');
     await workerManager.loadWorkers();
     logger.banner('🚀 Codey');
@@ -123,7 +123,7 @@ function startGateway(): void {
 
 async function startTui(): Promise<void> {
   assertNoLegacyLayout('./workspaces');
-  const { WorkerManager } = await import('./workers');
+  const { WorkerManager } = await import('@codey/core');
   const workerManager = new WorkerManager('./workers');
   await workerManager.loadWorkers();
   const gatewayConfig: GatewayConfig = {

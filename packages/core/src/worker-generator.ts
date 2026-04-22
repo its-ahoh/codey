@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { AgentFactory } from './agents';
-import { CodingAgent, ModelConfig } from '@codey/core';
+import { CodingAgent, ModelConfig } from './types';
 import { WorkerManager } from './workers';
 
 export interface GenerateDeps {

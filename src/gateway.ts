@@ -2,13 +2,13 @@ import * as path from 'path';
 import { AgentRequest, AgentResponse, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType } from '@codey/core';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
-import { AgentFactory } from './agents';
+import { AgentFactory } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from './context';
-import { MemoryStore } from './memory';
+import { MemoryStore } from '@codey/core';
 import { TaskPlanner, TaskPlan, PlanStep } from './planner';
-import { WorkspaceManager } from './workspace';
-import { WorkerManager } from './workers';
+import { WorkspaceManager } from '@codey/core';
+import { WorkerManager } from '@codey/core';
 
 interface ParsedCommand {
   command: string;
