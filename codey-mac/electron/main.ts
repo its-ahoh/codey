@@ -267,14 +267,20 @@ app.whenReady().then(async () => {
       const { generateWorker, AgentFactory } = await import('@codey/core')
       const factory = new AgentFactory()
       const root = resolveDataRoot()
-      const cfg = coreConfigManager?.get() as any
+      const activeAgent = (inProcessGateway as any)?.config?.defaultAgent ?? 'claude-code'
+      // Reuse the gateway's credential-aware resolver so apiKey+baseUrl
+      // from the active profile flow through. Without this, MiniMax
+      // (or any custom-endpoint routing) never receives its auth and
+      // the spawned CLI exits 1 hitting the default endpoint.
+      const activeModel = (inProcessGateway as any)?.getDefaultModelConfig?.(activeAgent)
+        ?? { provider: 'anthropic', model: 'claude-sonnet-4-5' }
       const result = await generateWorker(
         {
           agentFactory: factory,
           workerManager: workerManager!,
           workersDir: join(root, 'workers'),
-          activeAgent: cfg?.gateway?.defaultAgent ?? 'claude-code',
-          activeModel: { provider: 'anthropic', model: cfg?.agents?.['claude-code']?.defaultModel ?? 'claude-sonnet-4-5' },
+          activeAgent,
+          activeModel,
           workingDir: root,
         },
         prompt,

@@ -37,6 +37,19 @@ async function main() {
   }
   const codey = new Codey(runtime, undefined as any, join(root, 'workspaces'), cm, wm)
   console.log('[diag] Codey constructed ok, defaultAgent on config:', (codey as any).config?.defaultAgent)
+
+  // Verify profile-based credential resolution
+  const profile = cm.getActiveProfileObj()
+  console.log('[diag] active profile:', cm.getActiveProfile())
+  console.log('[diag] profile.anthropic:', profile?.anthropic ? { baseUrl: profile.anthropic.baseUrl, apiKeyPrefix: profile.anthropic.apiKey?.slice(0, 10) + '…' } : undefined)
+
+  const modelCfg = (codey as any).getDefaultModelConfig?.('claude-code')
+  console.log('[diag] resolved ModelConfig for claude-code:', modelCfg ? {
+    provider: modelCfg.provider,
+    model: modelCfg.model,
+    baseUrl: modelCfg.baseUrl,
+    apiKeyPrefix: modelCfg.apiKey?.slice(0, 10) + '…',
+  } : undefined)
 }
 
 main().catch(err => {
