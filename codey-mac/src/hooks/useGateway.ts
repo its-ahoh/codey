@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export interface GatewayStatus {
   status: 'healthy' | 'degraded' | 'stopped' | 'starting'
@@ -9,7 +9,14 @@ export interface GatewayStatus {
 }
 
 export const useGateway = () => {
-  const [logs] = useState<string[]>(['Gateway running in-process'])
+  const [logs, setLogs] = useState<string[]>(['Gateway running in-process'])
+
+  useEffect(() => {
+    const off = window.codey.onLog(msg => {
+      setLogs(prev => [...prev.slice(-99), msg])
+    })
+    return off
+  }, [])
 
   return {
     isRunning: true,

@@ -45,4 +45,9 @@ contextBridge.exposeInMainWorld('codey', {
     set: (updates: any) => ipcRenderer.invoke('config:set', updates),
   },
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+  onLog: (handler: (msg: string) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, msg: string) => handler(msg)
+    ipcRenderer.on('gateway-log', listener)
+    return () => ipcRenderer.removeListener('gateway-log', listener)
+  },
 })

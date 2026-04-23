@@ -33,6 +33,7 @@ declare global {
         set: (updates: any) => Promise<IpcResult<void>>
       }
       openExternal: (url: string) => Promise<void>
+      onLog: (handler: (msg: string) => void) => () => void
     }
   }
 }
