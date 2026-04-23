@@ -59,15 +59,30 @@ export const apiService = {
   // Chat — gateway is in-process; streaming comes via chat:token IPC events
   sendMessage: async (
     text: string,
-    _onStatus?: (update: { type: string; tool?: string; message: string; input?: Record<string, unknown>; output?: string }) => void,
-    _onStream?: (token: string) => void,
+    onStatus?: (update: { type: string; tool?: string; message: string; input?: Record<string, unknown>; output?: string }) => void,
+    onStream?: (token: string) => void,
     conversationId?: string,
   ): Promise<{ response: string; conversationId?: string }> => {
-    await unwrap(await window.codey.chat.send({
-      conversationId: conversationId ?? 'default',
-      text,
-    }))
-    return { response: '', conversationId }
+    const convId = conversationId ?? 'default'
+    const offToken = onStream
+      ? window.codey.chat.onToken(msg => {
+          if (msg.conversationId === convId) onStream(msg.token)
+        })
+      : () => {}
+    const offStatus = onStatus
+      ? window.codey.chat.onStatus(msg => {
+          if (msg.conversationId === convId) {
+            try { onStatus(JSON.parse(msg.update)) } catch { /* non-JSON status */ }
+          }
+        })
+      : () => {}
+    try {
+      const result = await unwrap(await window.codey.chat.send({ conversationId: convId, text }))
+      return { response: result.response, conversationId: result.conversationId }
+    } finally {
+      offToken()
+      offStatus()
+    }
   },
 
   // Config

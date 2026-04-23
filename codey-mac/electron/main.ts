@@ -104,14 +104,17 @@ function resolveDataRoot(): string {
   return app.getPath('userData')
 }
 
-function bootInProcessCore() {
+async function bootInProcessCore() {
   const root = resolveDataRoot()
   try {
     coreConfigManager = new ConfigManager(join(root, 'gateway.json'))
     workerManager = new WorkerManager(join(root, 'workers'))
+    await workerManager.loadWorkers()
     workspaceManager = new WorkspaceManager(workerManager, join(root, 'workspaces'))
+    // Load default workspace so teams + workingDir are populated
+    await workspaceManager.switchWorkspace(workspaceManager.getCurrentWorkspace())
     inProcessGateway = new Codey(coreConfigManager.get() as any, undefined, join(root, 'workspaces'), coreConfigManager, workerManager)
-    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root})`)
+    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length})`)
   } catch (err: any) {
     sendToRenderer('gateway-log', `[core] Boot failed: ${err?.message ?? err}`)
   }
@@ -127,7 +130,7 @@ async function wrap<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
 app.whenReady().then(async () => {
   createWindow()
   createTray()
-  bootInProcessCore()
+  await bootInProcessCore()
 
   // ── Workers IPC ──────────────────────────────────────────────────
   ipcMain.handle('workers:list', async () =>
@@ -241,15 +244,20 @@ app.whenReady().then(async () => {
   }) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
-      // Gateway processes the message. Agent spawn will likely fail in dev
-      // (no real agent configured). User turn is still recorded in context.
-      try {
-        await inProcessGateway.processPromptHttp(
-          payload.text,
-          undefined, // no SSE callback
-          payload.conversationId
-        )
-      } catch { /* agent spawn failure expected in dev */ }
+      const convId = payload.conversationId
+      const sse = (event: string, data: string) => {
+        if (event === 'stream' || event === 'plan') {
+          sendToRenderer('chat:token', { conversationId: convId, token: data })
+        } else if (event === 'status') {
+          sendToRenderer('chat:status', { conversationId: convId, update: data })
+        }
+      }
+      const result = await inProcessGateway.processPromptHttp(payload.text, sse, convId)
+      // Always deliver the final response — some agent paths skip streaming
+      if (result?.response) {
+        sendToRenderer('chat:done', { conversationId: convId, response: result.response })
+      }
+      return result
     })
   )
 
