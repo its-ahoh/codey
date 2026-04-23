@@ -37,7 +37,7 @@ const App: React.FC = () => {
     const stored = localStorage.getItem('codey-tab') as TabType | null
     return stored && navItems.some(n => n.key === stored) ? stored : 'chat'
   })
-  const { isRunning, status, logs, toggle } = useGateway()
+  const { isRunning, status, logs } = useGateway()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [currentWorkspace, setCurrentWorkspace] = useState<string>('')
 
@@ -48,7 +48,7 @@ const App: React.FC = () => {
   const renderTab = () => {
     switch (activeTab) {
       case 'chat':       return <ChatTab isGatewayRunning={isRunning} messages={messages} setMessages={setMessages} />
-      case 'status':     return <StatusTab status={status} logs={logs} isRunning={isRunning} onToggle={toggle} />
+      case 'status':     return <StatusTab status={status} logs={logs} isRunning={isRunning} />
       case 'workspaces': return <WorkspacesTab isGatewayRunning={isRunning} onWorkspaceChange={setCurrentWorkspace} />
       case 'workers':    return <WorkersTab />
       case 'settings':   return <SettingsTab isGatewayRunning={isRunning} />
@@ -68,18 +68,18 @@ const App: React.FC = () => {
             )}
           </div>
         </div>
-        <button
-          onClick={toggle}
+        <div
           style={{
             ...styles.statusPill,
-            borderColor: isRunning ? C.red + '55' : C.green + '55',
-            background: isRunning ? '#FF453A11' : '#32D74B11',
-            color: isRunning ? C.red : C.green,
+            borderColor: C.green + '55',
+            background: '#32D74B11',
+            color: C.green,
+            cursor: 'default',
           }}
         >
-          <div style={{ width: 6, height: 6, borderRadius: '50%', background: isRunning ? C.red : C.green }} />
-          {isRunning ? 'Running' : 'Stopped'}
-        </button>
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green }} />
+          Running
+        </div>
       </div>
       {/* Body */}
       <div style={styles.body}>

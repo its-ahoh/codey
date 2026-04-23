@@ -6,7 +6,6 @@ interface StatusTabProps {
   status: GatewayStatus
   logs: string[]
   isRunning: boolean
-  onToggle: () => void
 }
 
 const formatUptime = (seconds: number): string => {
@@ -19,7 +18,7 @@ const formatUptime = (seconds: number): string => {
   return `${s}s`
 }
 
-export const StatusTab: React.FC<StatusTabProps> = ({ status, logs, isRunning, onToggle }) => {
+export const StatusTab: React.FC<StatusTabProps> = ({ status, logs, isRunning }) => {
   const stats = [
     { label: 'Uptime',   value: isRunning ? formatUptime(status.uptime) : '—' },
     { label: 'Messages', value: isRunning ? String(status.messagesProcessed ?? 0) : '—' },
@@ -51,22 +50,7 @@ export const StatusTab: React.FC<StatusTabProps> = ({ status, logs, isRunning, o
             {isRunning ? 'Gateway Running' : 'Gateway Stopped'}
           </span>
         </div>
-        <button
-          onClick={onToggle}
-          style={{
-            padding: '8px 18px',
-            borderRadius: 8,
-            border: 'none',
-            cursor: 'pointer',
-            fontWeight: 600,
-            fontSize: 13,
-            background: isRunning ? '#FF453A22' : '#32D74B22',
-            color: isRunning ? C.red : C.green,
-            transition: 'all 0.15s',
-          }}
-        >
-          {isRunning ? 'Stop' : 'Start'}
-        </button>
+        <span style={{ color: C.fg3, fontSize: 11 }}>In-process · Cmd+Q to quit</span>
       </div>
 
       <div style={styles.statsGrid}>
