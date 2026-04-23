@@ -96,14 +96,22 @@ function createTray() {
   })
 }
 
+function resolveDataRoot(): string {
+  // In dev (unpacked), use the monorepo root so the app picks up existing
+  // gateway.json, workers/, and workspaces/ from the repo.
+  // In production, fall back to Electron's per-user data directory.
+  if (isDev) return join(__dirname, '..', '..')
+  return app.getPath('userData')
+}
+
 function bootInProcessCore() {
-  const cwd = process.cwd()
+  const root = resolveDataRoot()
   try {
-    coreConfigManager = new ConfigManager()
-    workerManager = new WorkerManager(join(cwd, 'workers'))
-    workspaceManager = new WorkspaceManager(workerManager, join(cwd, 'workspaces'))
-    inProcessGateway = new Codey(coreConfigManager.get() as any, undefined, join(cwd, 'workspaces'), coreConfigManager, workerManager)
-    sendToRenderer('gateway-log', '[core] In-process core booted successfully.')
+    coreConfigManager = new ConfigManager(join(root, 'gateway.json'))
+    workerManager = new WorkerManager(join(root, 'workers'))
+    workspaceManager = new WorkspaceManager(workerManager, join(root, 'workspaces'))
+    inProcessGateway = new Codey(coreConfigManager.get() as any, undefined, join(root, 'workspaces'), coreConfigManager, workerManager)
+    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root})`)
   } catch (err: any) {
     sendToRenderer('gateway-log', `[core] Boot failed: ${err?.message ?? err}`)
   }
@@ -187,16 +195,16 @@ app.whenReady().then(async () => {
     wrap(async () => {
       const { generateWorker, AgentFactory } = await import('@codey/core')
       const factory = new AgentFactory()
-      const cwd = process.cwd()
+      const root = resolveDataRoot()
       const cfg = coreConfigManager?.get() as any
       const result = await generateWorker(
         {
           agentFactory: factory,
           workerManager: workerManager!,
-          workersDir: join(cwd, 'workers'),
+          workersDir: join(root, 'workers'),
           activeAgent: cfg?.gateway?.defaultAgent ?? 'claude-code',
           activeModel: { provider: 'anthropic', model: cfg?.agents?.['claude-code']?.defaultModel ?? 'claude-sonnet-4-5' },
-          workingDir: cwd,
+          workingDir: root,
         },
         prompt,
       )
