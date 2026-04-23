@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell } from 'electron'
 import { join } from 'path'
 import { WorkerManager, WorkspaceManager } from '@codey/core'
 import { Codey } from '@codey/gateway/dist/gateway'
@@ -16,12 +16,14 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 820,
+    height: 580,
     minWidth: 600,
     minHeight: 400,
     show: false,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#141414',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -266,4 +268,10 @@ app.on('before-quit', () => {
 ipcMain.handle('show-window', () => {
   mainWindow?.show()
   mainWindow?.focus()
+})
+
+ipcMain.handle('open-external', (_event, url: string) => {
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+    shell.openExternal(url)
+  }
 })

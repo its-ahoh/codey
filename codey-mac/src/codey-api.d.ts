@@ -30,6 +30,7 @@ declare global {
         get: () => Promise<IpcResult<any>>
         set: (updates: any) => Promise<IpcResult<void>>
       }
+      openExternal: (url: string) => Promise<void>
     }
   }
 }

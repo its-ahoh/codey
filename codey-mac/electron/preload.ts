@@ -34,4 +34,5 @@ contextBridge.exposeInMainWorld('codey', {
     get: () => ipcRenderer.invoke('config:get'),
     set: (updates: any) => ipcRenderer.invoke('config:set', updates),
   },
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
 })
