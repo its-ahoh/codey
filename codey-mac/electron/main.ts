@@ -97,11 +97,20 @@ function createTray() {
 }
 
 function resolveDataRoot(): string {
-  // In dev (unpacked), use the monorepo root so the app picks up existing
+  // Dev (unpacked): use the monorepo root so the app picks up existing
   // gateway.json, workers/, and workspaces/ from the repo.
-  // In production, fall back to Electron's per-user data directory.
+  // Packaged: use ~/.codey/ so a real gateway.json / workers / workspaces
+  // directory can be edited in place.
   if (isDev) return join(__dirname, '..', '..')
-  return app.getPath('userData')
+  const home = app.getPath('home')
+  const root = join(home, '.codey')
+  try {
+    const fs = require('fs')
+    if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true })
+    if (!fs.existsSync(join(root, 'workers'))) fs.mkdirSync(join(root, 'workers'), { recursive: true })
+    if (!fs.existsSync(join(root, 'workspaces'))) fs.mkdirSync(join(root, 'workspaces'), { recursive: true })
+  } catch { /* best-effort */ }
+  return root
 }
 
 function buildRuntimeConfig(json: any): any {
