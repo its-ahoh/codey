@@ -104,6 +104,29 @@ function resolveDataRoot(): string {
   return app.getPath('userData')
 }
 
+function buildRuntimeConfig(json: any): any {
+  // Flatten the on-disk GatewayConfigJson into the runtime GatewayConfig
+  // the Codey class expects (defaultAgent at top level, channels pruned
+  // to enabled-only).
+  return {
+    port: json?.gateway?.port,
+    defaultAgent: json?.gateway?.defaultAgent,
+    agents: json?.agents,
+    channels: {
+      telegram: json?.channels?.telegram?.enabled
+        ? { botToken: json.channels.telegram.botToken, notifyChatId: json.channels.telegram.notifyChatId }
+        : undefined,
+      discord: json?.channels?.discord?.enabled
+        ? { botToken: json.channels.discord.botToken }
+        : undefined,
+      imessage: json?.channels?.imessage?.enabled ? { enabled: true } : undefined,
+    },
+    planner: json?.planner,
+    context: json?.context,
+    memory: json?.memory,
+  }
+}
+
 async function bootInProcessCore() {
   const root = resolveDataRoot()
   try {
@@ -111,10 +134,14 @@ async function bootInProcessCore() {
     workerManager = new WorkerManager(join(root, 'workers'))
     await workerManager.loadWorkers()
     workspaceManager = new WorkspaceManager(workerManager, join(root, 'workspaces'))
-    // Load default workspace so teams + workingDir are populated
     await workspaceManager.switchWorkspace(workspaceManager.getCurrentWorkspace())
-    inProcessGateway = new Codey(coreConfigManager.get() as any, undefined, join(root, 'workspaces'), coreConfigManager, workerManager)
-    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length})`)
+    const runtimeCfg = buildRuntimeConfig(coreConfigManager.get())
+    inProcessGateway = new Codey(runtimeCfg, undefined, join(root, 'workspaces'), coreConfigManager, workerManager)
+    // Apply config changes to the running gateway when the renderer edits them
+    coreConfigManager.on('change', (updated: any) => {
+      inProcessGateway?.applyConfig(buildRuntimeConfig(updated))
+    })
+    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length}, agent: ${runtimeCfg.defaultAgent})`)
   } catch (err: any) {
     sendToRenderer('gateway-log', `[core] Boot failed: ${err?.message ?? err}`)
   }
