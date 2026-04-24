@@ -40,6 +40,8 @@ function startGateway(): void {
     port: configManager.getPort(),
     defaultAgent: configManager.getDefaultAgent() as any,
     agents: config.agents as any,
+    models: config.models,
+    fallback: config.fallback,
     channels: {
       telegram: config.channels.telegram?.enabled ? {
         botToken: config.channels.telegram.botToken,
@@ -59,7 +61,8 @@ function startGateway(): void {
     logger.info(`Starting on port ${configManager.getPort()}`);
     logger.info(`Default agent: ${configManager.getDefaultAgent()}`);
     logger.info(`Default model: ${configManager.getDefaultModel()}`);
-    logger.info(`Active profile: ${configManager.getActiveProfile()}`);
+    logger.info(`Models in catalog: ${configManager.listModels().length}`);
+    logger.info(`Fallback: ${configManager.getFallback().enabled ? 'on' : 'off'} (${configManager.getFallback().order.join(' → ')})`);
     logger.info(`Log level: ${configManager.getLogLevel()}`);
 
     const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager, workerManager);
@@ -74,9 +77,10 @@ function startGateway(): void {
         port: updated.gateway.port,
         defaultAgent: updated.gateway.defaultAgent as any,
         agents: updated.agents as any,
+        models: updated.models,
+        fallback: updated.fallback,
         channels: gatewayConfig.channels, // channels require restart
       };
-      // Profile credentials are read dynamically via configManager — no env var update needed
       gateway.applyConfig(newConfig);
     });
 
@@ -113,6 +117,8 @@ async function startTui(): Promise<void> {
     port: configManager.getPort(),
     defaultAgent: configManager.getDefaultAgent() as any,
     agents: config.agents as any,
+    models: config.models,
+    fallback: config.fallback,
     channels: {},
   };
 

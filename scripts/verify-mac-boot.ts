@@ -17,7 +17,8 @@ async function main() {
   const cm = new ConfigManager(join(root, 'gateway.json'))
   const json = cm.get()
   console.log('[diag] loaded config defaultAgent:', json?.gateway?.defaultAgent)
-  console.log('[diag] claude-code models:', JSON.stringify(json?.agents?.['claude-code']?.models, null, 2))
+  console.log('[diag] model catalog:', JSON.stringify(cm.listModels().map(m => ({ name: m.name, apiType: m.apiType, model: m.model, baseUrl: m.baseUrl, hasKey: !!m.apiKey })), null, 2))
+  console.log('[diag] fallback:', cm.getFallback())
 
   const wm = new WorkerManager(join(root, 'workers'))
   await wm.loadWorkers()
@@ -38,15 +39,11 @@ async function main() {
   const codey = new Codey(runtime, undefined as any, join(root, 'workspaces'), cm, wm)
   console.log('[diag] Codey constructed ok, defaultAgent on config:', (codey as any).config?.defaultAgent)
 
-  // Verify profile-based credential resolution
-  const profile = cm.getActiveProfileObj()
-  console.log('[diag] active profile:', cm.getActiveProfile())
-  console.log('[diag] profile.anthropic:', profile?.anthropic ? { baseUrl: profile.anthropic.baseUrl, apiKeyPrefix: profile.anthropic.apiKey?.slice(0, 10) + '…' } : undefined)
-
   const modelCfg = (codey as any).getDefaultModelConfig?.('claude-code')
   console.log('[diag] resolved ModelConfig for claude-code:', modelCfg ? {
     provider: modelCfg.provider,
     model: modelCfg.model,
+    apiType: modelCfg.apiType,
     baseUrl: modelCfg.baseUrl,
     apiKeyPrefix: modelCfg.apiKey?.slice(0, 10) + '…',
   } : undefined)

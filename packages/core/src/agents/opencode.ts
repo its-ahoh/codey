@@ -50,12 +50,14 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
 
       this.debug(`[opencode] Spawning: opencode ${args.slice(0, -1).join(' ')} "<prompt>"`);
 
+      const { applyModelEnv } = require('./env') as typeof import('./env');
+      // OpenCode is provider-agnostic; default to openai if apiType unset.
+      const env = applyModelEnv({ ...process.env }, request.model, 'openai');
       const childProcess: ChildProcess = spawn('opencode', args, {
-        stdio: ['ignore', 'pipe', 'pipe'], // ignore stdin, pipe stdout, pipe stderr
+        stdio: ['ignore', 'pipe', 'pipe'],
         cwd: request.context?.workingDir || undefined,
-        env: {
-          ...process.env,
-        }});
+        env,
+      });
 
       // Track start time for duration calculation
       const startTime = Date.now();

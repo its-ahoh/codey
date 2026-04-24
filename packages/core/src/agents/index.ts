@@ -8,6 +8,7 @@ export { CodingAgentAdapter } from './base';
 export { ClaudeCodeAdapter } from './claude-code';
 export { OpenCodeAdapter } from './opencode';
 export { CodexAdapter } from './codex';
+export { applyModelEnv } from './env';
 
 // Agent factory
 export class AgentFactory {

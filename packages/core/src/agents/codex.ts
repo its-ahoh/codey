@@ -29,12 +29,11 @@ export class CodexAdapter extends BaseAgentAdapter {
         args.push('--dir', request.context.workingDir);
       }
 
+      const { applyModelEnv } = require('./env') as typeof import('./env');
+      const env = applyModelEnv({ ...process.env }, request.model, 'openai');
       const childProcess: ChildProcess = spawn('codex', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          OPENAI_API_KEY: request.model?.apiKey || process.env.OPENAI_API_KEY,
-        },
+        env,
       });
 
       let stdout = '';

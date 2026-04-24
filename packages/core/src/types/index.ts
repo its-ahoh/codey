@@ -25,11 +25,35 @@ export interface GatewayResponse {
 export type CodingAgent = 'claude-code' | 'opencode' | 'codex';
 
 // Model configuration for agents
+export type ApiType = 'anthropic' | 'openai';
+
 export interface ModelConfig {
   provider: string;
   model: string;
   apiKey?: string;
   baseUrl?: string;
+  /**
+   * Which environment-variable style the spawned CLI expects.
+   * anthropic → ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN
+   * openai   → OPENAI_BASE_URL   + OPENAI_API_KEY
+   * Inferred from the referenced ModelEntry in gateway.json.
+   */
+  apiType?: ApiType;
+}
+
+/** A globally named, reusable model definition the user manages in Settings. */
+export interface ModelEntry {
+  name: string;           // stable id referenced by agent.defaultModel
+  apiType: ApiType;
+  model: string;          // the string passed to the CLI as --model
+  baseUrl?: string;       // optional endpoint override
+  apiKey?: string;        // credential for this model
+  provider?: string;      // optional human label (anthropic, minimax, openai, …)
+}
+
+export interface FallbackConfig {
+  enabled: boolean;
+  order: CodingAgent[];
 }
 
 export interface AgentRequest {
@@ -135,6 +159,10 @@ export interface GatewayConfig {
     'opencode'?: AgentModelConfig;
     'codex'?: AgentModelConfig;
   };
+  /** Global model catalog — mirrors GatewayConfigJson.models. */
+  models?: ModelEntry[];
+  /** Fallback config — mirrors GatewayConfigJson.fallback. */
+  fallback?: FallbackConfig;
   rateLimitMs?: number; // Rate limit in ms (default: 3000)
   planner?: PlannerSettings;
   context?: ContextSettings;

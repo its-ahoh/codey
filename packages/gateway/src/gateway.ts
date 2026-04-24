@@ -58,38 +58,37 @@ export class Codey {
   private static readonly REGEX_AGENT = /\/agent\s+(claude-code|opencode|codex)/i;
   private static readonly REGEX_MODEL_PROMPT = /\/model\s+(\S+)(?:\s+(.+))?/i;
   private static readonly REGEX_MODEL = /\/model\s+(\S+)/i;
-  private static readonly REGEX_HELP_COMMAND = /^\/(help|status|clear|reset|model|agents|config|profile)\s*/i;
+  private static readonly REGEX_HELP_COMMAND = /^\/(help|status|clear|reset|model|agents|config)\s*/i;
 
   private getEffectiveModel(agent?: CodingAgent): string {
     const effectiveAgent = agent || this.config.defaultAgent;
-    return this.config.agents?.[effectiveAgent]?.defaultModel || 'unknown';
+    const modelName = this.config.agents?.[effectiveAgent]?.defaultModel;
+    if (!modelName) return 'unknown';
+    const entry = this.configManager?.getModel(modelName);
+    return entry?.model || modelName;
   }
 
-  private getDefaultModelConfig(agent: CodingAgent): ModelConfig | undefined {
+  /**
+   * Resolve the ModelConfig the agent adapter should use. The agent's
+   * defaultModel names a ModelEntry in the global catalog; we copy its
+   * apiType, baseUrl, and apiKey through so the adapter can set the
+   * right env vars when spawning the CLI.
+   */
+  getDefaultModelConfig(agent: CodingAgent): ModelConfig | undefined {
     const agentConfig = this.config.agents?.[agent];
-    if (!agentConfig?.defaultModel) return undefined;
-
-    const provider = agentConfig.provider || 'anthropic';
-    const profile = this.configManager?.getActiveProfileObj();
-    const creds = provider === 'anthropic' ? profile?.anthropic
-      : provider === 'openai' ? profile?.openai
-      : provider === 'google' ? profile?.google
-      : undefined;
-
-    // Parse provider/model format (e.g., "anthropic/claude-sonnet-4-20250514")
-    let modelName = agentConfig.defaultModel;
-    let resolvedProvider = provider;
-    if (modelName.includes('/')) {
-      const [p, m] = modelName.split('/', 2);
-      resolvedProvider = p as typeof provider;
-      modelName = m;
+    const modelName = agentConfig?.defaultModel;
+    if (!modelName) return undefined;
+    const entry = this.configManager?.getModel(modelName);
+    if (!entry) {
+      // Bare model id — still callable, but no credentials attached.
+      return { provider: 'unknown', model: modelName };
     }
-
     return {
-      provider: resolvedProvider,
-      model: modelName,
-      apiKey: creds?.apiKey,
-      baseUrl: creds?.baseUrl,
+      provider: entry.provider ?? (entry.apiType === 'anthropic' ? 'anthropic' : 'openai'),
+      model: entry.model,
+      apiKey: entry.apiKey,
+      baseUrl: entry.baseUrl,
+      apiType: entry.apiType,
     };
   }
 
@@ -110,7 +109,10 @@ export class Codey {
     if (restored > 0) {
       this.logger.info(`Restored ${restored} archived conversation(s) from disk`);
     }
-    const plannerApiKey = this.configManager?.getActiveProfileObj()?.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY;
+    // Planner uses its own Anthropic key: prefer an anthropic-apiType model
+    // in the catalog that has an apiKey set, else fall back to env.
+    const anthropicEntry = this.configManager?.listModels().find(m => m.apiType === 'anthropic' && !!m.apiKey);
+    const plannerApiKey = anthropicEntry?.apiKey || process.env.ANTHROPIC_API_KEY;
     this.planner = new TaskPlanner({
       enabled: config.planner?.enabled !== false,
       plannerModel: config.planner?.model || 'claude-sonnet-4-20250514',
@@ -616,9 +618,6 @@ export class Codey {
       case 'config':
         await this.cmdConfig(chatId, channel);
         break;
-      case 'profile':
-        await this.cmdProfile(args, chatId, channel);
-        break;
       case 'workers':
         await this.cmdWorkers(chatId, channel);
         break;
@@ -803,85 +802,6 @@ export class Codey {
     });
   }
 
-  private async cmdProfile(args: string[], chatId: string, channel: ChannelType): Promise<void> {
-    if (!this.configManager) {
-      await this.sendResponse({ chatId, channel, text: '❌ Profile management not available.' });
-      return;
-    }
-
-    // Parse key-value style args: --anthropic <key> [--anthropic-url <url>] [--openai <key>] [--openai-url <url>]
-    const kv: Record<string, string> = {};
-    for (let i = 0; i < args.length; i++) {
-      if (args[i].startsWith('--')) {
-        kv[args[i]] = args[i + 1] || '';
-        i++;
-      }
-    }
-
-    const subCmd = args[0];
-
-    if (!subCmd || subCmd === 'list') {
-      const profiles = this.configManager.getProfiles();
-      const active = this.configManager.getActiveProfile();
-      if (profiles.length === 0) {
-        await this.sendResponse({ chatId, channel, text: '📌 No profiles.\n\nUsage:\n  /profile add <name> --anthropic <key> [--anthropic-url <url>] [--openai <key>] [--openai-url <url>]\n  /profile del <name>\n  /profile <name>' });
-        return;
-      }
-      const lines = profiles.map(p => {
-        const mark = p.name === active ? '👉' : '  ';
-        const a = p.anthropic ? `anthropic ✅${p.anthropic.baseUrl ? ` (${p.anthropic.baseUrl})` : ''}` : '';
-        const o = p.openai ? `openai ✅${p.openai.baseUrl ? ` (${p.openai.baseUrl})` : ''}` : '';
-        const creds = [a, o].filter(Boolean).join(', ');
-        return `${mark} **${p.name}**${creds ? ` — ${creds}` : ''}`;
-      }).join('\n');
-      await this.sendResponse({ chatId, channel, text: `📌 Active: **${active}**\n\n${lines}\n\nSwitch: /profile <name>` });
-      return;
-    }
-
-    if (subCmd === 'add' || subCmd === 'set') {
-      if (!kv['--anthropic'] && !kv['--openai']) {
-        await this.sendResponse({ chatId, channel, text: 'Usage: /profile add <name> --anthropic <key> [--anthropic-url <url>] [--openai <key>] [--openai-url <url>]' });
-        return;
-      }
-      const name = args.find(a => !a.startsWith('--'));
-      if (!name) {
-        await this.sendResponse({ chatId, channel, text: 'Usage: /profile add <name> ...' });
-        return;
-      }
-      const profile: any = { name };
-      if (kv['--anthropic']) {
-        profile.anthropic = { apiKey: kv['--anthropic'], baseUrl: kv['--anthropic-url'] || undefined };
-      }
-      if (kv['--openai']) {
-        profile.openai = { apiKey: kv['--openai'], baseUrl: kv['--openai-url'] || undefined };
-      }
-      this.configManager.addProfile(profile);
-      await this.sendResponse({ chatId, channel, text: `✅ Profile **${name}** saved.\n  anthropic: ${kv['--anthropic'] ? '✅' : '❌'}\n  openai: ${kv['--openai'] ? '✅' : '❌'}` });
-      return;
-    }
-
-    if (subCmd === 'del' || subCmd === 'remove') {
-      if (!args[1]) {
-        await this.sendResponse({ chatId, channel, text: 'Usage: /profile del <name>' });
-        return;
-      }
-      const ok = this.configManager.removeProfile(args[1]);
-      await this.sendResponse({ chatId, channel, text: ok ? `✅ Profile **${args[1]}** removed.` : `❌ Profile not found.` });
-      return;
-    }
-
-    // Assume profile name to switch to
-    const ok = this.configManager.setActiveProfile(subCmd);
-    if (ok) {
-      const profile = this.configManager.getActiveProfileObj();
-      const anth = profile?.anthropic?.apiKey;
-      const openai = profile?.openai?.apiKey;
-      await this.sendResponse({ chatId, channel, text: `✅ Switched to **${subCmd}**.\n  anthropic: ${anth ? '✅' : '❌'}\n  openai: ${openai ? '✅' : '❌'}` });
-    } else {
-      const names = this.configManager.getProfiles().map(p => p.name).join(', ');
-      await this.sendResponse({ chatId, channel, text: `❌ **${subCmd}** not found. ${names ? `Available: ${names}` : ''}` });
-    }
-  }
 
   private async cmdWorkers(chatId: string, channel: ChannelType): Promise<void> {
     await this.sendResponse({
@@ -1445,9 +1365,15 @@ Example: /model gpt-4.1 write a Python script`;
 
     this.logger.error(`Agent ${agent} failed: ${response.error || response.output}`);
 
-    // Try remaining enabled agents in order, using each agent's own default model
-    const fallbacks = this.getEnabledAgents().filter(a => a !== agent);
-    for (const fallbackAgent of fallbacks) {
+    // Fallback is opt-in. When disabled, surface the original failure.
+    const fb = this.config.fallback;
+    if (fb && fb.enabled === false) return response;
+
+    // Prefer the user-configured order; else fall back to all enabled agents.
+    const ordered = (fb?.order && fb.order.length > 0 ? fb.order : this.getEnabledAgents())
+      .filter(a => a !== agent)
+      .filter(a => this.config.agents?.[a]?.enabled !== false);
+    for (const fallbackAgent of ordered) {
       this.logger.warn(`Agent ${agent} failed, trying ${fallbackAgent}...`);
       const fallbackResponse = await this.agentFactory.run(fallbackAgent, {
         ...request,
@@ -1573,88 +1499,12 @@ Example: /model gpt-4.1 write a Python script`;
     return chunks;
   }
 
-  // Handle /profile commands from HTTP API
-  private async handleHttpProfileCommand(match: RegExpMatchArray): Promise<string> {
-    if (!this.configManager) {
-      return '❌ Profile management not available.';
-    }
-
-    const subCmd = match[1] || '';
-    const rest = match[2] || '';
-    const args = rest ? rest.trim().split(/\s+/) : [];
-
-    // Parse --key value style args
-    const kv: Record<string, string> = {};
-    for (let i = 0; i < args.length; i++) {
-      if (args[i].startsWith('--')) {
-        kv[args[i]] = args[i + 1] || '';
-        i++;
-      }
-    }
-
-    if (!subCmd || subCmd === 'list') {
-      const profiles = this.configManager.getProfiles();
-      const active = this.configManager.getActiveProfile();
-      if (profiles.length === 0) {
-        return '📌 No profiles.\n\nUsage: /profile add <name> --anthropic <key> [--anthropic-url <url>] [--openai <key>] [--openai-url <url>]';
-      }
-      const lines = profiles.map(p => {
-        const mark = p.name === active ? '👉' : '  ';
-        const a = p.anthropic ? `anthropic ✅${p.anthropic.baseUrl ? ` (${p.anthropic.baseUrl})` : ''}` : '';
-        const o = p.openai ? `openai ✅${p.openai.baseUrl ? ` (${p.openai.baseUrl})` : ''}` : '';
-        const creds = [a, o].filter(Boolean).join(', ');
-        return `${mark} **${p.name}**${creds ? ` — ${creds}` : ''}`;
-      }).join('\n');
-      return `📌 Active: **${active}**\n\n${lines}\n\nSwitch: /profile <name>`;
-    }
-
-    if (subCmd === 'add' || subCmd === 'set') {
-      if (!kv['--anthropic'] && !kv['--openai']) {
-        return 'Usage: /profile add <name> --anthropic <key> [--anthropic-url <url>] [--openai <key>] [--openai-url <url>]';
-      }
-      const name = args.find(a => !a.startsWith('--'));
-      if (!name) return 'Usage: /profile add <name> ...';
-      const profile: any = { name };
-      if (kv['--anthropic']) {
-        profile.anthropic = { apiKey: kv['--anthropic'], baseUrl: kv['--anthropic-url'] || undefined };
-      }
-      if (kv['--openai']) {
-        profile.openai = { apiKey: kv['--openai'], baseUrl: kv['--openai-url'] || undefined };
-      }
-      this.configManager.addProfile(profile);
-      return `✅ Profile **${name}** saved.\n  anthropic: ${kv['--anthropic'] ? '✅' : '❌'}\n  openai: ${kv['--openai'] ? '✅' : '❌'}`;
-    }
-
-    if (subCmd === 'del' || subCmd === 'remove') {
-      if (!args[0]) return 'Usage: /profile del <name>';
-      const ok = this.configManager.removeProfile(args[0]);
-      return ok ? `✅ Profile **${args[0]}** removed.` : `❌ Profile not found.`;
-    }
-
-    // Assume profile name to switch to
-    const ok = this.configManager.setActiveProfile(subCmd);
-    if (ok) {
-      const profile = this.configManager.getActiveProfileObj();
-      const anth = profile?.anthropic?.apiKey;
-      const openai = profile?.openai?.apiKey;
-      return `✅ Switched to **${subCmd}**.\n  anthropic: ${anth ? '✅' : '❌'}\n  openai: ${openai ? '✅' : '❌'}`;
-    }
-    const names = this.configManager.getProfiles().map(p => p.name).join(', ');
-    return `❌ **${subCmd}** not found. ${names ? `Available: ${names}` : ''}`;
-  }
-
   // Handle prompt via HTTP API
   async processPromptHttp(
     prompt: string,
     sse?: (event: string, data: string) => void,
     conversationId?: string,
   ): Promise<{ response: string; conversationId: string }> {
-    // Handle /profile commands directly without going through the agent
-    const profileMatch = prompt.match(/^\/profile(?:\s+(\S+))?(?:\s+(.*))?$/i);
-    if (profileMatch) {
-      return { response: await this.handleHttpProfileCommand(profileMatch), conversationId: conversationId || '' };
-    }
-
     const agent = this.config.defaultAgent;
     const model = this.getDefaultModelConfig(agent);
 

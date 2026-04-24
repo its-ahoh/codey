@@ -75,13 +75,9 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // Clean env: remove CLAUDECODE to avoid nested session detection
       const env = { ...process.env };
       delete env.CLAUDECODE;
-      // Set credentials via env vars
-      if (request.model?.apiKey) {
-        env.ANTHROPIC_AUTH_TOKEN = request.model.apiKey;
-      }
-      if (request.model?.baseUrl) {
-        env.ANTHROPIC_BASE_URL = request.model.baseUrl;
-      }
+      // Route credentials by apiType (defaults to anthropic for claude-code)
+      const { applyModelEnv } = require('./env') as typeof import('./env');
+      applyModelEnv(env, request.model, 'anthropic');
 
       // Ensure common bin paths are available (Electron apps may have minimal PATH)
       const homedir = process.env.HOME || '';

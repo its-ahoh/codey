@@ -36,10 +36,10 @@ export class CLI {
     this.logger.info('3. Set default model');
     this.logger.info('4. Configure Telegram');
     this.logger.info('5. Configure Discord');
-    this.logger.info('6. Set API keys');
-    this.logger.info('7. Set log level');
-    this.logger.info('8. Enable/disable channel');
+    this.logger.info('6. Set log level');
+    this.logger.info('7. Enable/disable channel');
     this.logger.info('0. Exit\n');
+    this.logger.info('(Models + API keys are managed via the Mac app Settings tab)\n');
 
     const choice = await this.prompt('Enter option: ');
 
@@ -60,12 +60,9 @@ export class CLI {
         await this.configureDiscord();
         break;
       case '6':
-        await this.setProfile();
-        break;
-      case '7':
         await this.setLogLevel();
         break;
-      case '8':
+      case '7':
         await this.toggleChannel();
         break;
       case '0':
@@ -96,19 +93,22 @@ export class CLI {
 
   private async setModel(): Promise<void> {
     const agent = this.config.getDefaultAgent();
-    const agentConfig = this.config.getAgentConfig(agent);
+    const models = this.config.listModels();
 
-    this.logger.info(`\nAvailable models for ${agent}:`);
-    agentConfig?.models?.forEach((m, i) => {
-      this.logger.info(`${i + 1}. ${m}`);
+    if (models.length === 0) {
+      this.logger.error('No models defined. Add one via the Mac app Settings or edit gateway.json.');
+      return;
+    }
+    this.logger.info('\nAvailable models:');
+    models.forEach((m, i) => {
+      this.logger.info(`${i + 1}. ${m.name} [${m.apiType}] → ${m.model}`);
     });
 
     const choice = await this.prompt('\nSelect model: ');
-    const model = agentConfig?.models?.[parseInt(choice) - 1];
-
-    if (model) {
-      this.config.setDefaultModel(model);
-      this.logger.info(`✅ Default model set to: ${model}`);
+    const picked = models[parseInt(choice) - 1];
+    if (picked) {
+      this.config.setAgentModel(agent, picked.name);
+      this.logger.info(`✅ ${agent} default model set to: ${picked.name}`);
     } else {
       this.logger.error('Invalid selection');
     }
@@ -136,33 +136,6 @@ export class CLI {
       }
       this.logger.info('✅ Discord configured');
     }
-  }
-
-  private async setProfile(): Promise<void> {
-
-    const profiles = this.config.getProfiles();
-    if (profiles.length === 0) {
-      this.logger.error('No profiles found');
-      return;
-    }
-    this.logger.info('\nAvailable profiles:');
-    profiles.forEach((p, i) => {
-      this.logger.info(`${i + 1}. ${p.name}`);
-    });
-    const choice = await this.prompt(`\nSelect profile (1-${profiles.length}): `);
-    const trimmed = choice.trim();
-    if (!trimmed) {
-      this.logger.error('Invalid profile selection');
-      return;
-    }
-    const byIndex = profiles[parseInt(trimmed, 10) - 1];
-    const profile = byIndex || profiles.find((p) => p.name === trimmed);
-    if (!profile) {
-      this.logger.error(`❌ Profile "${trimmed}" not found`);
-      return;
-    }
-    this.config.setActiveProfile(profile.name);
-    this.logger.info(`✅ Switched to ${profile.name} profile`);
   }
 
   private async setLogLevel(): Promise<void> {
@@ -244,8 +217,9 @@ export async function handleCommand(args: string[], config: ConfigManager, logge
 
     case 'set-model':
       if (args[1]) {
-        config.setDefaultModel(args[1]);
-        logger.info(`Default model set to: ${args[1]}`);
+        const agent = config.getDefaultAgent();
+        config.setAgentModel(agent, args[1]);
+        logger.info(`${agent} default model set to: ${args[1]}`);
       } else {
         logger.error('Usage: set-model <model-name>');
       }
@@ -268,17 +242,6 @@ export async function handleCommand(args: string[], config: ConfigManager, logge
         logger.info('Discord configured and enabled');
       } else {
         logger.error('Usage: set-discord <bot-token>');
-      }
-      break;
-
-    case 'set-profile':
-      if (args[1] && args[2]) {
-        const profile = config.getActiveProfileObj() || { name: config.getActiveProfile() };
-        (profile as any)[args[1]] = { baseUrl: args[2], apiKey: args[3] };
-        config.addProfile(profile);
-        logger.info(`${args[1]} profile set to ${args[2]} and ${args[3]}`);
-      } else {
-        logger.error('Usage: set-profile <profile-name> <base-url> <api-key>');
       }
       break;
 
@@ -332,7 +295,6 @@ function showHelp(): void {
 ║  set-model <name>           Set default model               ║
 ║  set-telegram <token>      Set Telegram bot token          ║
 ║  set-discord <token>       Set Discord bot token           ║
-║  set-profile <profile-name> <base-url> <api-key>  Set profile credentials          ║
 ║  set-loglevel <level>      Set log level                   ║
 ║  enable <channel>          Enable a channel                 ║
 ║  disable <channel>         Disable a channel               ║
