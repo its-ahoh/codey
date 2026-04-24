@@ -82,7 +82,20 @@ export class ConfigManager extends EventEmitter {
       if (fs.existsSync(this.configPath)) {
         const data = fs.readFileSync(this.configPath, 'utf-8');
         const parsed = JSON.parse(data) as LegacyConfig;
-        return migrate(parsed);
+        const isLegacy = !Array.isArray(parsed.models) || !parsed.fallback;
+        const migrated = migrate(parsed);
+        if (isLegacy) {
+          // Persist the new shape immediately so the on-disk file
+          // matches what the app sees. Safe because migrate() preserves
+          // all user data (keys, baseUrls, models) from the legacy form.
+          try {
+            fs.writeFileSync(this.configPath, JSON.stringify(migrated, null, 2));
+            console.log('[Config] Migrated legacy config to new schema:', this.configPath);
+          } catch (err) {
+            console.error('[Config] Migration save failed (non-fatal):', err);
+          }
+        }
+        return migrated;
       }
     } catch (error) {
       console.error('[Config] Error loading config:', error);
