@@ -71,20 +71,24 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on,
 const ModelRow: React.FC<{
   entry: ModelEntry
   isNew?: boolean
-  onSave: (e: ModelEntry) => Promise<void>
+  onSave: (draft: ModelEntry, previousName: string) => Promise<void>
   onDelete?: (name: string) => Promise<void>
   onCancel?: () => void
 }> = ({ entry, isNew, onSave, onDelete, onCancel }) => {
   const [editing, setEditing] = useState(!!isNew)
   const [draft, setDraft] = useState<ModelEntry>(entry)
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => { setDraft(entry) }, [entry])
 
   const save = async () => {
     if (!draft.name.trim() || !draft.model.trim()) return
     setBusy(true)
-    try { await onSave(draft); setEditing(false) } finally { setBusy(false) }
+    setErr(null)
+    try { await onSave(draft, entry.name); setEditing(false) }
+    catch (e: any) { setErr(e?.message ?? String(e)) }
+    finally { setBusy(false) }
   }
 
   if (!editing) {
@@ -118,7 +122,7 @@ const ModelRow: React.FC<{
       <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: 8, alignItems: 'center' }}>
         <label style={{ color: C.fg3, fontSize: 12 }}>Name</label>
         <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}
-          placeholder="e.g. minimax-m2.7" style={{ ...inputStyle, width: '100%' }} disabled={!isNew}/>
+          placeholder="e.g. minimax-m2.7" style={{ ...inputStyle, width: '100%' }}/>
         <label style={{ color: C.fg3, fontSize: 12 }}>API Type</label>
         <select value={draft.apiType} onChange={e => setDraft({ ...draft, apiType: e.target.value as ApiType })}
           style={{ ...selectStyle, width: '100%' }}>
@@ -135,8 +139,9 @@ const ModelRow: React.FC<{
         <input type="password" value={draft.apiKey ?? ''} onChange={e => setDraft({ ...draft, apiKey: e.target.value || undefined })}
           placeholder="(optional) credentials" style={{ ...inputStyle, width: '100%' }}/>
       </div>
+      {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
-        <button onClick={() => { setEditing(false); setDraft(entry); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
+        <button onClick={() => { setEditing(false); setDraft(entry); setErr(null); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
         <button onClick={save} style={pillButton('primary')} disabled={busy || !draft.name.trim() || !draft.model.trim()}>
           {busy ? 'Saving…' : 'Save'}
         </button>
@@ -210,7 +215,12 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
     )
   }
 
-  const saveModel = async (entry: ModelEntry) => {
+  const saveModel = async (entry: ModelEntry, previousName: string) => {
+    // Rename first so agent references update atomically, then upsert
+    // the rest of the entry's fields.
+    if (previousName && previousName !== entry.name) {
+      await unwrap(await window.codey.models.rename(previousName, entry.name))
+    }
     await unwrap(await window.codey.models.save(entry))
     await reload()
     setCreating(false)

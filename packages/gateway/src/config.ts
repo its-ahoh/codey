@@ -107,6 +107,27 @@ export class ConfigManager extends EventEmitter {
     this.save();
   }
 
+  /**
+   * Rename a model and rewrite any agent slot that referenced the old
+   * name. The entry's content (apiType, baseUrl, apiKey, etc.) is
+   * preserved as-is; only the `name` key changes.
+   */
+  renameModel(oldName: string, newName: string): boolean {
+    if (!newName.trim() || oldName === newName) return false;
+    if (this.config.models.some(m => m.name === newName)) {
+      throw new Error(`A model named "${newName}" already exists`);
+    }
+    const idx = this.config.models.findIndex(m => m.name === oldName);
+    if (idx < 0) return false;
+    this.config.models[idx] = { ...this.config.models[idx], name: newName };
+    for (const agent of Object.keys(this.config.agents) as (keyof typeof this.config.agents)[]) {
+      const slot = this.config.agents[agent];
+      if (slot && slot.defaultModel === oldName) slot.defaultModel = newName;
+    }
+    this.save();
+    return true;
+  }
+
   deleteModel(name: string): boolean {
     const before = this.config.models.length;
     this.config.models = this.config.models.filter(m => m.name !== name);

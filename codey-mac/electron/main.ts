@@ -325,6 +325,13 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('models:rename', async (_e, oldName: string, newName: string) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.renameModel(oldName, newName)
+    })
+  )
+
   // ── Fallback IPC ──────────────────────────────────────────────────
   ipcMain.handle('fallback:get', async () =>
     wrap(async () => coreConfigManager?.getFallback() ?? { enabled: true, order: [] })

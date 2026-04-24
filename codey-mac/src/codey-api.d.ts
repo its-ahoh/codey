@@ -45,6 +45,7 @@ declare global {
         list: () => Promise<IpcResult<ModelEntry[]>>
         save: (entry: ModelEntry) => Promise<IpcResult<void>>
         delete: (name: string) => Promise<IpcResult<void>>
+        rename: (oldName: string, newName: string) => Promise<IpcResult<void>>
       }
       fallback: {
         get: () => Promise<IpcResult<{ enabled: boolean; order: string[] }>>

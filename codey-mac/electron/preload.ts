@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('codey', {
     list: () => ipcRenderer.invoke('models:list'),
     save: (entry: any) => ipcRenderer.invoke('models:save', entry),
     delete: (name: string) => ipcRenderer.invoke('models:delete', name),
+    rename: (oldName: string, newName: string) => ipcRenderer.invoke('models:rename', oldName, newName),
   },
   fallback: {
     get: () => ipcRenderer.invoke('fallback:get'),
