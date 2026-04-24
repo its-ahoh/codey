@@ -1,11 +1,8 @@
 # Scratchpad
-Task: Include status updates and state in agent output
+Task: CLI `setProfile` — numbered profile list
 
-[X] Review response pipeline in `src/types/index.ts`, `src/agents/opencode.ts`, `src/gateway.ts`
-[X] Extend agent response type for status updates and state snapshots
-[X] Parse OpenCode stream status/state events into structured fields
-[X] Render status/state sections in gateway output formatter
-[X] Verify by running TypeScript build
+[X] List profiles as numbered options (match `setModel` / `setAgent` style)
+[X] `npm run build`
 
 # Lessons
 - Keep `channel` typed as `UserMessage['channel']` / `GatewayResponse['channel']` end-to-end; avoid widening to plain `string` in helper methods that call `sendResponse`.
