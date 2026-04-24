@@ -1,5 +1,14 @@
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
+export interface ModelEntry {
+  name: string
+  apiType: 'anthropic' | 'openai'
+  model: string
+  baseUrl?: string
+  apiKey?: string
+  provider?: string
+}
+
 declare global {
   interface Window {
     codey: {
@@ -31,6 +40,19 @@ declare global {
       config: {
         get: () => Promise<IpcResult<any>>
         set: (updates: any) => Promise<IpcResult<void>>
+      }
+      models: {
+        list: () => Promise<IpcResult<ModelEntry[]>>
+        save: (entry: ModelEntry) => Promise<IpcResult<void>>
+        delete: (name: string) => Promise<IpcResult<void>>
+      }
+      fallback: {
+        get: () => Promise<IpcResult<{ enabled: boolean; order: string[] }>>
+        set: (fb: { enabled: boolean; order: string[] }) => Promise<IpcResult<void>>
+      }
+      agents: {
+        get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string }>>>
+        set: (updates: Record<string, { enabled?: boolean; defaultModel?: string }>) => Promise<IpcResult<void>>
       }
       openExternal: (url: string) => Promise<void>
       onLog: (handler: (msg: string) => void) => () => void

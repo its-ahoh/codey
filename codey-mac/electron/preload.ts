@@ -44,6 +44,19 @@ contextBridge.exposeInMainWorld('codey', {
     get: () => ipcRenderer.invoke('config:get'),
     set: (updates: any) => ipcRenderer.invoke('config:set', updates),
   },
+  models: {
+    list: () => ipcRenderer.invoke('models:list'),
+    save: (entry: any) => ipcRenderer.invoke('models:save', entry),
+    delete: (name: string) => ipcRenderer.invoke('models:delete', name),
+  },
+  fallback: {
+    get: () => ipcRenderer.invoke('fallback:get'),
+    set: (fb: any) => ipcRenderer.invoke('fallback:set', fb),
+  },
+  agents: {
+    get: () => ipcRenderer.invoke('agents:get'),
+    set: (updates: any) => ipcRenderer.invoke('agents:set', updates),
+  },
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onLog: (handler: (msg: string) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, msg: string) => handler(msg)

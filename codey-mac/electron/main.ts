@@ -302,6 +302,56 @@ app.whenReady().then(async () => {
     })
   )
 
+  // ── Models IPC ────────────────────────────────────────────────────
+  ipcMain.handle('models:list', async () =>
+    wrap(async () => coreConfigManager?.listModels() ?? [])
+  )
+
+  ipcMain.handle('models:save', async (_e, entry: any) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      if (!entry?.name) throw new Error('Model name is required')
+      if (entry.apiType !== 'anthropic' && entry.apiType !== 'openai') {
+        throw new Error('Model apiType must be "anthropic" or "openai"')
+      }
+      coreConfigManager.saveModel(entry)
+    })
+  )
+
+  ipcMain.handle('models:delete', async (_e, name: string) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.deleteModel(name)
+    })
+  )
+
+  // ── Fallback IPC ──────────────────────────────────────────────────
+  ipcMain.handle('fallback:get', async () =>
+    wrap(async () => coreConfigManager?.getFallback() ?? { enabled: true, order: [] })
+  )
+
+  ipcMain.handle('fallback:set', async (_e, fb: any) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.setFallback({ enabled: !!fb?.enabled, order: Array.isArray(fb?.order) ? fb.order : [] })
+    })
+  )
+
+  // ── Agents IPC ────────────────────────────────────────────────────
+  ipcMain.handle('agents:get', async () =>
+    wrap(async () => {
+      const cfg = coreConfigManager?.get()
+      return cfg?.agents ?? {}
+    })
+  )
+
+  ipcMain.handle('agents:set', async (_e, updates: any) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.update({ agents: updates })
+    })
+  )
+
   // ── Conversations IPC ─────────────────────────────────────────────
   ipcMain.handle('conversations:list', async () =>
     wrap(async () => {
