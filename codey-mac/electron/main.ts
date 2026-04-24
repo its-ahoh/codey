@@ -1,73 +1,29 @@
-import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell } from 'electron'
 import { join } from 'path'
-import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { execSync, spawn, ChildProcess } from 'child_process'
-import { homedir } from 'os'
+import { WorkerManager, WorkspaceManager } from '@codey/core'
+import { Codey } from '@codey/gateway/dist/gateway'
+import { ConfigManager } from '@codey/gateway/dist/config'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
-let gatewayProcess: ChildProcess | null = null
-let isGatewayRunning = false
+let inProcessGateway: Codey | null = null
+let workerManager: WorkerManager | null = null
+let workspaceManager: WorkspaceManager | null = null
+let coreConfigManager: ConfigManager | null = null
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
-function getGatewayPath(): string {
-  // 1. Check persisted settings first (user-configured path)
-  const settingsPath = join(app.getPath('userData'), 'settings.json')
-  try {
-    if (existsSync(settingsPath)) {
-      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
-      if (settings.gatewayPath && existsSync(join(settings.gatewayPath, 'dist', 'index.js'))) {
-        return settings.gatewayPath
-      }
-    }
-  } catch { /* ignore */ }
-
-  // 2. In dev, use the parent of the codey-mac directory
-  if (isDev) {
-    const devPath = join(__dirname, '..', '..')
-    if (existsSync(join(devPath, 'dist', 'index.js'))) {
-      return devPath
-    }
-  }
-
-  // 3. Check common install locations
-  const candidates = [
-    join(homedir(), '.codey'),
-    join(homedir(), 'codey'),
-    join(homedir(), 'Documents', 'projects', 'codey'),
-  ]
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, 'dist', 'index.js'))) {
-      return candidate
-    }
-  }
-
-  // 4. Return empty string to signal "not found"
-  return ''
-}
-
-function setGatewayPath(gatewayPath: string): void {
-  const settingsPath = join(app.getPath('userData'), 'settings.json')
-  let settings: Record<string, any> = {}
-  try {
-    if (existsSync(settingsPath)) {
-      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
-    }
-  } catch { /* ignore */ }
-  settings.gatewayPath = gatewayPath
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
-}
-
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 820,
+    height: 580,
     minWidth: 600,
     minHeight: 400,
     show: false,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#141414',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -101,101 +57,6 @@ function sendToRenderer(channel: string, ...args: any[]) {
   mainWindow?.webContents.send(channel, ...args)
 }
 
-function startGateway() {
-  if (gatewayProcess) return
-
-  sendToRenderer('gateway-log', 'Starting gateway...')
-
-  // Set up environment with paths needed by the gateway and its child processes.
-  // Electron apps inherit a minimal PATH, so resolve the user's full login shell PATH.
-  const env = { ...process.env }
-  try {
-    const shell = env.SHELL || '/bin/zsh'
-    const loginPath = execSync(`${shell} -ilc 'echo $PATH'`, { encoding: 'utf-8', timeout: 5000 }).trim()
-    if (loginPath) {
-      env.PATH = loginPath
-    }
-  } catch {
-    // Fallback: add common bin directories
-    const home = homedir()
-    const extraPaths = [
-      join(home, '.local', 'bin'),
-      join(home, '.nvm', 'versions', 'node', 'current', 'bin'),
-      '/opt/homebrew/bin',
-      '/usr/local/bin',
-    ]
-    env.PATH = extraPaths.join(':') + ':' + (env.PATH || '')
-  }
-
-  // Run the built gateway
-  const gatewayPath = getGatewayPath()
-  if (!gatewayPath) {
-    sendToRenderer('gateway-log', 'ERROR: Gateway not found. Set the gateway path in Settings.')
-    sendToRenderer('gateway-status', { running: false })
-    return
-  }
-
-  const entryPoint = join(gatewayPath, 'dist', 'index.js')
-  if (!existsSync(entryPoint)) {
-    sendToRenderer('gateway-log', `ERROR: Gateway entry point not found at ${entryPoint}. Run "npm run build" in the gateway directory, or update the gateway path in Settings.`)
-    sendToRenderer('gateway-status', { running: false })
-    return
-  }
-
-  sendToRenderer('gateway-log', `Using gateway at: ${gatewayPath}`)
-
-  gatewayProcess = spawn('node', ['dist/index.js'], {
-    cwd: gatewayPath,
-    env: env,
-    shell: true
-  })
-
-  gatewayProcess.stdout?.on('data', (data: Buffer) => {
-    const lines = data.toString().split('\n').filter(Boolean)
-    lines.forEach(line => {
-      sendToRenderer('gateway-log', line)
-    })
-  })
-
-  gatewayProcess.stderr?.on('data', (data: Buffer) => {
-    const lines = data.toString().split('\n').filter(Boolean)
-    lines.forEach(line => {
-      sendToRenderer('gateway-log', `ERROR: ${line}`)
-    })
-  })
-
-  gatewayProcess.on('error', (error) => {
-    sendToRenderer('gateway-log', `Process error: ${error.message}`)
-    isGatewayRunning = false
-    gatewayProcess = null
-    sendToRenderer('gateway-status', { running: false })
-  })
-
-  gatewayProcess.on('exit', (code) => {
-    sendToRenderer('gateway-log', `Process exited with code ${code}`)
-    isGatewayRunning = false
-    gatewayProcess = null
-    sendToRenderer('gateway-status', { running: false })
-  })
-
-  isGatewayRunning = true
-  sendToRenderer('gateway-status', { running: true })
-  sendToRenderer('gateway-log', 'Gateway process spawned')
-}
-
-function stopGateway() {
-  if (!gatewayProcess) return
-
-  // Remove the exit handler so we don't double-report
-  gatewayProcess.removeAllListeners('exit')
-  gatewayProcess.kill('SIGTERM')
-  gatewayProcess = null
-  isGatewayRunning = false
-
-  sendToRenderer('gateway-status', { running: false })
-  sendToRenderer('gateway-log', 'Gateway stopped')
-}
-
 function createTray() {
   // Create a simple 16x16 icon programmatically (green square)
   const size = 16
@@ -218,23 +79,9 @@ function createTray() {
       }
     },
     {
-      label: 'Start Gateway',
-      click: () => {
-        if (!isGatewayRunning) startGateway()
-      }
-    },
-    {
-      label: 'Stop Gateway',
-      click: () => {
-        if (isGatewayRunning) stopGateway()
-      }
-    },
-    { type: 'separator' },
-    {
       label: 'Quit',
       click: () => {
         isQuitting = true
-        if (gatewayProcess) stopGateway()
         app.quit()
       }
     }
@@ -249,9 +96,306 @@ function createTray() {
   })
 }
 
-app.whenReady().then(() => {
+function resolveDataRoot(): string {
+  // Dev (unpacked): use the monorepo root so the app picks up existing
+  // gateway.json, workers/, and workspaces/ from the repo.
+  // Packaged: use ~/.codey/ so a real gateway.json / workers / workspaces
+  // directory can be edited in place.
+  if (isDev) return join(__dirname, '..', '..')
+  const home = app.getPath('home')
+  const root = join(home, '.codey')
+  try {
+    const fs = require('fs')
+    if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true })
+    if (!fs.existsSync(join(root, 'workers'))) fs.mkdirSync(join(root, 'workers'), { recursive: true })
+    if (!fs.existsSync(join(root, 'workspaces'))) fs.mkdirSync(join(root, 'workspaces'), { recursive: true })
+  } catch { /* best-effort */ }
+  return root
+}
+
+function buildRuntimeConfig(json: any): any {
+  // Flatten the on-disk GatewayConfigJson into the runtime GatewayConfig
+  // the Codey class expects (defaultAgent at top level, channels pruned
+  // to enabled-only).
+  return {
+    port: json?.gateway?.port,
+    defaultAgent: json?.gateway?.defaultAgent,
+    agents: json?.agents,
+    channels: {
+      telegram: json?.channels?.telegram?.enabled
+        ? { botToken: json.channels.telegram.botToken, notifyChatId: json.channels.telegram.notifyChatId }
+        : undefined,
+      discord: json?.channels?.discord?.enabled
+        ? { botToken: json.channels.discord.botToken }
+        : undefined,
+      imessage: json?.channels?.imessage?.enabled ? { enabled: true } : undefined,
+    },
+    planner: json?.planner,
+    context: json?.context,
+    memory: json?.memory,
+  }
+}
+
+async function bootInProcessCore() {
+  const root = resolveDataRoot()
+  try {
+    coreConfigManager = new ConfigManager(join(root, 'gateway.json'))
+    workerManager = new WorkerManager(join(root, 'workers'))
+    await workerManager.loadWorkers()
+    workspaceManager = new WorkspaceManager(workerManager, join(root, 'workspaces'))
+    await workspaceManager.switchWorkspace(workspaceManager.getCurrentWorkspace())
+    const runtimeCfg = buildRuntimeConfig(coreConfigManager.get())
+    inProcessGateway = new Codey(runtimeCfg, undefined, join(root, 'workspaces'), coreConfigManager, workerManager)
+    // Apply config changes to the running gateway when the renderer edits them
+    coreConfigManager.on('change', (updated: any) => {
+      inProcessGateway?.applyConfig(buildRuntimeConfig(updated))
+    })
+    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length}, agent: ${runtimeCfg.defaultAgent})`)
+  } catch (err: any) {
+    sendToRenderer('gateway-log', `[core] Boot failed: ${err?.message ?? err}`)
+  }
+}
+
+type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
+
+async function wrap<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
+  try { return { ok: true, data: await fn() } }
+  catch (e: any) { return { ok: false, error: e?.message ?? String(e) } }
+}
+
+function createAppMenu() {
+  // Minimal Mac menu so Cmd+Q, Cmd+W, Cmd+R, Cmd+Option+I etc. work.
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { label: 'Quit Codey', accelerator: 'Cmd+Q', click: () => { isQuitting = true; app.quit() } },
+      ],
+    },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    { role: 'windowMenu' },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+app.whenReady().then(async () => {
+  createAppMenu()
   createWindow()
   createTray()
+  await bootInProcessCore()
+
+  // ── Workers IPC ──────────────────────────────────────────────────
+  ipcMain.handle('workers:list', async () =>
+    wrap(async () => workerManager?.getAllWorkers() ?? [])
+  )
+
+  ipcMain.handle('workers:get', async (_e, name: string) =>
+    wrap(async () => {
+      const w = workerManager?.getWorker(name)
+      if (!w) throw new Error(`Worker not found: ${name}`)
+      return w
+    })
+  )
+
+  ipcMain.handle('workers:save', async (_e, name: string, personality: any, config: any) =>
+    wrap(async () => {
+      await workerManager?.saveWorker(name, personality, config)
+    })
+  )
+
+  ipcMain.handle('workers:delete', async (_e, name: string) =>
+    wrap(async () => {
+      await workerManager?.deleteWorker(name)
+      // cascade: remove from all teams
+      if (workspaceManager) {
+        const teams = workspaceManager.getTeams()
+        let changed = false
+        for (const team of Object.keys(teams)) {
+          const filtered = teams[team].filter((m: string) => m !== name)
+          if (filtered.length !== teams[team].length) { teams[team] = filtered; changed = true }
+        }
+        if (changed) await workspaceManager.setTeams(teams)
+      }
+    })
+  )
+
+  // ── Workspaces IPC ────────────────────────────────────────────────
+  ipcMain.handle('workspaces:list', async () =>
+    wrap(async () => workspaceManager?.listWorkspaces() ?? [])
+  )
+
+  ipcMain.handle('workspaces:current', async () =>
+    wrap(async () => workspaceManager?.getCurrentWorkspace() ?? '')
+  )
+
+  ipcMain.handle('workspaces:switch', async (_e, name: string) =>
+    wrap(async () => {
+      await workspaceManager?.switchWorkspace(name)
+    })
+  )
+
+  // ── Teams IPC ─────────────────────────────────────────────────────
+  ipcMain.handle('teams:get', async () =>
+    wrap(async () => workspaceManager?.getTeams() ?? {})
+  )
+
+  ipcMain.handle('teams:set', async (_e, teams: Record<string, string[]>) =>
+    wrap(async () => {
+      await workspaceManager?.setTeams(teams)
+    })
+  )
+
+  // ── Workers generate IPC ──────────────────────────────────────────
+  ipcMain.handle('workers:generate', async (_e, prompt: string) =>
+    wrap(async () => {
+      const { generateWorker, AgentFactory } = await import('@codey/core')
+      const factory = new AgentFactory()
+      const root = resolveDataRoot()
+      const activeAgent = (inProcessGateway as any)?.config?.defaultAgent ?? 'claude-code'
+      // Reuse the gateway's credential-aware resolver so apiKey+baseUrl
+      // from the active profile flow through. Without this, MiniMax
+      // (or any custom-endpoint routing) never receives its auth and
+      // the spawned CLI exits 1 hitting the default endpoint.
+      const activeModel = (inProcessGateway as any)?.getDefaultModelConfig?.(activeAgent)
+        ?? { provider: 'anthropic', model: 'claude-sonnet-4-5' }
+      const result = await generateWorker(
+        {
+          agentFactory: factory,
+          workerManager: workerManager!,
+          workersDir: join(root, 'workers'),
+          activeAgent,
+          activeModel,
+          workingDir: root,
+        },
+        prompt,
+      )
+      if (!result.ok) throw new Error(result.error)
+      return result.worker
+    })
+  )
+
+  // ── Config IPC ────────────────────────────────────────────────────
+  ipcMain.handle('config:get', async () =>
+    wrap(async () => coreConfigManager?.get() ?? {})
+  )
+
+  ipcMain.handle('config:set', async (_e, updates: any) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.update(updates)
+    })
+  )
+
+  // ── Models IPC ────────────────────────────────────────────────────
+  ipcMain.handle('models:list', async () =>
+    wrap(async () => coreConfigManager?.listModels() ?? [])
+  )
+
+  ipcMain.handle('models:save', async (_e, entry: any) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      if (!entry?.model) throw new Error('Model id is required')
+      if (entry.apiType !== 'anthropic' && entry.apiType !== 'openai') {
+        throw new Error('Model apiType must be "anthropic" or "openai"')
+      }
+      coreConfigManager.saveModel(entry)
+    })
+  )
+
+  ipcMain.handle('models:delete', async (_e, name: string) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.deleteModel(name)
+    })
+  )
+
+  ipcMain.handle('models:rename', async (_e, oldName: string, newName: string) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.renameModel(oldName, newName)
+    })
+  )
+
+  // ── Fallback IPC ──────────────────────────────────────────────────
+  ipcMain.handle('fallback:get', async () =>
+    wrap(async () => coreConfigManager?.getFallback() ?? { enabled: true, order: [] })
+  )
+
+  ipcMain.handle('fallback:set', async (_e, fb: any) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.setFallback({ enabled: !!fb?.enabled, order: Array.isArray(fb?.order) ? fb.order : [] })
+    })
+  )
+
+  // ── Agents IPC ────────────────────────────────────────────────────
+  ipcMain.handle('agents:get', async () =>
+    wrap(async () => {
+      const cfg = coreConfigManager?.get()
+      return cfg?.agents ?? {}
+    })
+  )
+
+  ipcMain.handle('agents:set', async (_e, updates: any) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.update({ agents: updates })
+    })
+  )
+
+  // ── Conversations IPC ─────────────────────────────────────────────
+  ipcMain.handle('conversations:list', async () =>
+    wrap(async () => {
+      const cm = (inProcessGateway as any)?.contextManager
+      return cm?.listConversationIds?.() ?? []
+    })
+  )
+
+  // ── Chat IPC ──────────────────────────────────────────────────────
+  ipcMain.handle('chat:send', async (_e, payload: {
+    conversationId: string
+    text: string
+    sender?: string
+  }) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      const convId = payload.conversationId
+      const sse = (event: string, data: string) => {
+        if (event === 'stream' || event === 'plan') {
+          sendToRenderer('chat:token', { conversationId: convId, token: data })
+        } else if (event === 'status') {
+          sendToRenderer('chat:status', { conversationId: convId, update: data })
+        }
+      }
+      const result = await inProcessGateway.processPromptHttp(payload.text, sse, convId)
+      // Always deliver the final response — some agent paths skip streaming
+      if (result?.response) {
+        sendToRenderer('chat:done', {
+          conversationId: convId,
+          response: result.response,
+          tokens: result.tokens,
+          durationSec: result.durationSec,
+        })
+      }
+      return result
+    })
+  )
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -270,33 +414,16 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
-  if (gatewayProcess) {
-    stopGateway()
-  }
 })
 
 // IPC handlers
-ipcMain.handle('get-app-path', () => {
-  return app.getAppPath()
-})
-
 ipcMain.handle('show-window', () => {
   mainWindow?.show()
   mainWindow?.focus()
 })
 
-ipcMain.handle('start-gateway', () => {
-  startGateway()
-})
-
-ipcMain.handle('stop-gateway', () => {
-  stopGateway()
-})
-
-ipcMain.handle('get-gateway-path', () => {
-  return getGatewayPath()
-})
-
-ipcMain.handle('set-gateway-path', (_event, gatewayPath: string) => {
-  setGatewayPath(gatewayPath)
+ipcMain.handle('open-external', (_event, url: string) => {
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+    shell.openExternal(url)
+  }
 })
