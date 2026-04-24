@@ -45,13 +45,17 @@ const App: React.FC = () => {
 
   // Gateway is always in-process; no toggle IPC needed
 
-  const renderTab = () => {
+  // Chat stays mounted across tab switches so an in-flight request
+  // (isSending, agentStatus, IPC subscriptions, scroll position) survives
+  // when the user visits another tab and comes back. The other tabs are
+  // cheap and display-only; they remount on each activation.
+  const renderNonChatTab = () => {
     switch (activeTab) {
-      case 'chat':       return <ChatTab isGatewayRunning={isRunning} messages={messages} setMessages={setMessages} />
       case 'status':     return <StatusTab status={status} logs={logs} isRunning={isRunning} />
       case 'workspaces': return <WorkspacesTab isGatewayRunning={isRunning} onWorkspaceChange={setCurrentWorkspace} />
       case 'workers':    return <WorkersTab />
       case 'settings':   return <SettingsTab isGatewayRunning={isRunning} />
+      default:           return null
     }
   }
 
@@ -105,7 +109,16 @@ const App: React.FC = () => {
             )
           })}
         </div>
-        <div style={styles.content}>{renderTab()}</div>
+        <div style={styles.content}>
+          {/* Chat is always mounted; visibility toggles. Other tabs remount. */}
+          <div style={{
+            display: activeTab === 'chat' ? 'flex' : 'none',
+            flex: 1, minHeight: 0, flexDirection: 'column', overflow: 'hidden',
+          }}>
+            <ChatTab isGatewayRunning={isRunning} messages={messages} setMessages={setMessages} />
+          </div>
+          {activeTab !== 'chat' && renderNonChatTab()}
+        </div>
       </div>
       <style>{`
         html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }
