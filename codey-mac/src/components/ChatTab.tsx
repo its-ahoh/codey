@@ -19,6 +19,12 @@ const SendIcon: React.FC<{ color: string }> = ({ color }) => (
 const fmtTime = (ts: number) =>
   new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 
+const formatTokens = (n: number): string => {
+  if (n < 1000) return String(n)
+  if (n < 10_000) return `${(n / 1000).toFixed(1)}k`
+  return `${Math.round(n / 1000)}k`
+}
+
 const TypingDots: React.FC = () => {
   const [n, setN] = useState(0)
   useEffect(() => { const t = setInterval(() => setN(v => (v + 1) % 4), 400); return () => clearInterval(t) }, [])
@@ -115,7 +121,13 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
         if (idx === -1) return prev
         return [
           ...prev.slice(0, idx),
-          { ...prev[idx], isComplete: true, content: result.response },
+          {
+            ...prev[idx],
+            isComplete: true,
+            content: result.response,
+            tokens: result.tokens,
+            durationSec: result.durationSec,
+          },
           ...prev.slice(idx + 1),
         ]
       })
@@ -263,7 +275,16 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
                   <Markdown variant={isUser ? 'user' : 'assistant'}>{msg.content}</Markdown>
                 )}
               </div>
-              <div style={styles.tsLabel}>{fmtTime(msg.timestamp)}</div>
+              <div style={styles.tsLabel}>
+                <span>{fmtTime(msg.timestamp)}</span>
+                {(msg.tokens != null || msg.durationSec != null) && (
+                  <span style={styles.tsMeta}>
+                    {msg.tokens != null && `${formatTokens(msg.tokens)} tok`}
+                    {msg.tokens != null && msg.durationSec != null && ' · '}
+                    {msg.durationSec != null && `${msg.durationSec}s`}
+                  </span>
+                )}
+              </div>
             </div>
           )
         })}
@@ -345,7 +366,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     marginBottom: 12,
   },
-  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, paddingLeft: 4, paddingRight: 4 },
+  tsLabel: {
+    color: C.fg3, fontSize: 10, marginTop: 4,
+    paddingLeft: 4, paddingRight: 4,
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    gap: 8,
+  },
+  tsMeta: { color: C.fg3, opacity: 0.55, fontVariantNumeric: 'tabular-nums' },
   inputContainer: {
     padding: '12px 14px',
     borderTop: `1px solid ${C.border}`,

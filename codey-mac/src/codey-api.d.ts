@@ -31,9 +31,9 @@ declare global {
         list: () => Promise<IpcResult<string[]>>
       }
       chat: {
-        send: (payload: { conversationId: string; text: string; sender?: string }) => Promise<IpcResult<{ response: string; conversationId: string }>>
+        send: (payload: { conversationId: string; text: string; sender?: string }) => Promise<IpcResult<{ response: string; conversationId: string; tokens?: number; durationSec?: number }>>
         onToken: (handler: (msg: { conversationId: string; token: string }) => void) => () => void
-        onDone: (handler: (msg: { conversationId: string; response: string }) => void) => () => void
+        onDone: (handler: (msg: { conversationId: string; response: string; tokens?: number; durationSec?: number }) => void) => () => void
         onStatus: (handler: (msg: { conversationId: string; update: string }) => void) => () => void
       }
       config: {

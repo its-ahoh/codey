@@ -1504,7 +1504,7 @@ Example: /model gpt-4.1 write a Python script`;
     prompt: string,
     sse?: (event: string, data: string) => void,
     conversationId?: string,
-  ): Promise<{ response: string; conversationId: string }> {
+  ): Promise<{ response: string; conversationId: string; tokens?: number; durationSec?: number }> {
     const agent = this.config.defaultAgent;
     const model = this.getDefaultModelConfig(agent);
 
@@ -1597,6 +1597,11 @@ Example: /model gpt-4.1 write a Python script`;
       });
     }
 
-    return { response: this.formatAgentResponse(response), conversationId: ctxId };
+    return {
+      response: this.formatAgentResponse(response),
+      conversationId: ctxId,
+      tokens: response.tokens?.total,
+      durationSec: response.duration,
+    };
   }
 }

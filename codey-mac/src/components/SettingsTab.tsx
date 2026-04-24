@@ -102,7 +102,7 @@ const ModelRow: React.FC<{
             {entry.model} <span style={{ color: C.fg3, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>[{entry.apiType}]</span>
           </div>
           <div style={{ color: C.fg3, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {entry.baseUrl || '(default endpoint)'}{entry.apiKey ? ' · 🔑' : ''}
+            {entry.baseUrl || '(default url)'}{entry.apiKey ? ' · 🔑' : ''}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -276,7 +276,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
               style={{ ...selectStyle, width: 220 }}
               disabled={agents[a]?.enabled === false || models.length === 0}
             >
-              <option value="">(no model)</option>
+              <option value="">(default)</option>
               {models.map(m => (
                 <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
               ))}

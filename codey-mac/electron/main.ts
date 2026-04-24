@@ -386,7 +386,12 @@ app.whenReady().then(async () => {
       const result = await inProcessGateway.processPromptHttp(payload.text, sse, convId)
       // Always deliver the final response — some agent paths skip streaming
       if (result?.response) {
-        sendToRenderer('chat:done', { conversationId: convId, response: result.response })
+        sendToRenderer('chat:done', {
+          conversationId: convId,
+          response: result.response,
+          tokens: result.tokens,
+          durationSec: result.durationSec,
+        })
       }
       return result
     })

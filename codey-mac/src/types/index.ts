@@ -26,6 +26,10 @@ export interface ChatMessage {
   timestamp: number;
   toolCalls?: ToolCallEntry[];
   isComplete?: boolean;
+  /** Total tokens for the agent response (set when the turn completes). */
+  tokens?: number;
+  /** Wall-clock seconds the agent took to produce the response. */
+  durationSec?: number;
 }
 
 export interface GatewayConfig {

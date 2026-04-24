@@ -62,7 +62,7 @@ export const apiService = {
     onStatus?: (update: { type: string; tool?: string; message: string; input?: Record<string, unknown>; output?: string }) => void,
     onStream?: (token: string) => void,
     conversationId?: string,
-  ): Promise<{ response: string; conversationId?: string }> => {
+  ): Promise<{ response: string; conversationId?: string; tokens?: number; durationSec?: number }> => {
     const convId = conversationId ?? 'default'
     const offToken = onStream
       ? window.codey.chat.onToken(msg => {
@@ -78,7 +78,12 @@ export const apiService = {
       : () => {}
     try {
       const result = await unwrap(await window.codey.chat.send({ conversationId: convId, text }))
-      return { response: result.response, conversationId: result.conversationId }
+      return {
+        response: result.response,
+        conversationId: result.conversationId,
+        tokens: result.tokens,
+        durationSec: result.durationSec,
+      }
     } finally {
       offToken()
       offStatus()
