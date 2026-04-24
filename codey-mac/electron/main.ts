@@ -310,7 +310,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('models:save', async (_e, entry: any) =>
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
-      if (!entry?.name) throw new Error('Model name is required')
+      if (!entry?.model) throw new Error('Model id is required')
       if (entry.apiType !== 'anthropic' && entry.apiType !== 'openai') {
         throw new Error('Model apiType must be "anthropic" or "openai"')
       }

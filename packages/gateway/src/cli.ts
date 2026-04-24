@@ -101,14 +101,14 @@ export class CLI {
     }
     this.logger.info('\nAvailable models:');
     models.forEach((m, i) => {
-      this.logger.info(`${i + 1}. ${m.name} [${m.apiType}] → ${m.model}`);
+      this.logger.info(`${i + 1}. ${m.model} [${m.apiType}]`);
     });
 
     const choice = await this.prompt('\nSelect model: ');
     const picked = models[parseInt(choice) - 1];
     if (picked) {
-      this.config.setAgentModel(agent, picked.name);
-      this.logger.info(`✅ ${agent} default model set to: ${picked.name}`);
+      this.config.setAgentModel(agent, picked.model);
+      this.logger.info(`✅ ${agent} default model set to: ${picked.model}`);
     } else {
       this.logger.error('Invalid selection');
     }

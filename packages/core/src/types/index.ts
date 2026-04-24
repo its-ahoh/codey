@@ -41,11 +41,14 @@ export interface ModelConfig {
   apiType?: ApiType;
 }
 
-/** A globally named, reusable model definition the user manages in Settings. */
+/**
+ * A reusable model definition the user manages in Settings.
+ * The `model` field is both the identifier agent.defaultModel points
+ * at and the string passed to the CLI as --model.
+ */
 export interface ModelEntry {
-  name: string;           // stable id referenced by agent.defaultModel
   apiType: ApiType;
-  model: string;          // the string passed to the CLI as --model
+  model: string;
   baseUrl?: string;       // optional endpoint override
   apiKey?: string;        // credential for this model
   provider?: string;      // optional human label (anthropic, minimax, openai, …)

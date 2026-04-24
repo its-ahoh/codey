@@ -8,7 +8,6 @@ interface SettingsTabProps {
 
 type ApiType = 'anthropic' | 'openai'
 interface ModelEntry {
-  name: string
   apiType: ApiType
   model: string
   baseUrl?: string
@@ -71,8 +70,8 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on,
 const ModelRow: React.FC<{
   entry: ModelEntry
   isNew?: boolean
-  onSave: (draft: ModelEntry, previousName: string) => Promise<void>
-  onDelete?: (name: string) => Promise<void>
+  onSave: (draft: ModelEntry, previousId: string) => Promise<void>
+  onDelete?: (modelId: string) => Promise<void>
   onCancel?: () => void
 }> = ({ entry, isNew, onSave, onDelete, onCancel }) => {
   const [editing, setEditing] = useState(!!isNew)
@@ -83,10 +82,10 @@ const ModelRow: React.FC<{
   useEffect(() => { setDraft(entry) }, [entry])
 
   const save = async () => {
-    if (!draft.name.trim() || !draft.model.trim()) return
+    if (!draft.model.trim()) return
     setBusy(true)
     setErr(null)
-    try { await onSave(draft, entry.name); setEditing(false) }
+    try { await onSave(draft, entry.model); setEditing(false) }
     catch (e: any) { setErr(e?.message ?? String(e)) }
     finally { setBusy(false) }
   }
@@ -100,15 +99,15 @@ const ModelRow: React.FC<{
       }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>
-            {entry.name} <span style={{ color: C.fg3, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>[{entry.apiType}]</span>
+            {entry.model} <span style={{ color: C.fg3, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>[{entry.apiType}]</span>
           </div>
           <div style={{ color: C.fg3, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {entry.model}{entry.baseUrl ? ` · ${entry.baseUrl}` : ''}{entry.apiKey ? ' · 🔑' : ''}
+            {entry.baseUrl || '(default endpoint)'}{entry.apiKey ? ' · 🔑' : ''}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button onClick={() => setEditing(true)} style={pillButton('ghost')}>Edit</button>
-          {onDelete && <button onClick={() => onDelete(entry.name)} style={pillButton('danger')}>Delete</button>}
+          {onDelete && <button onClick={() => onDelete(entry.model)} style={pillButton('danger')}>Delete</button>}
         </div>
       </div>
     )
@@ -120,18 +119,15 @@ const ModelRow: React.FC<{
       background: C.surface2, marginBottom: 8,
     }}>
       <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: 8, alignItems: 'center' }}>
-        <label style={{ color: C.fg3, fontSize: 12 }}>Name</label>
-        <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}
-          placeholder="e.g. minimax-m2.7" style={{ ...inputStyle, width: '100%' }}/>
+        <label style={{ color: C.fg3, fontSize: 12 }}>Model ID</label>
+        <input value={draft.model} onChange={e => setDraft({ ...draft, model: e.target.value })}
+          placeholder="e.g. claude-sonnet-4-5" style={{ ...inputStyle, width: '100%' }}/>
         <label style={{ color: C.fg3, fontSize: 12 }}>API Type</label>
         <select value={draft.apiType} onChange={e => setDraft({ ...draft, apiType: e.target.value as ApiType })}
           style={{ ...selectStyle, width: '100%' }}>
           <option value="anthropic">anthropic (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN)</option>
           <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
         </select>
-        <label style={{ color: C.fg3, fontSize: 12 }}>Model ID</label>
-        <input value={draft.model} onChange={e => setDraft({ ...draft, model: e.target.value })}
-          placeholder="e.g. claude-sonnet-4-5" style={{ ...inputStyle, width: '100%' }}/>
         <label style={{ color: C.fg3, fontSize: 12 }}>Base URL</label>
         <input value={draft.baseUrl ?? ''} onChange={e => setDraft({ ...draft, baseUrl: e.target.value || undefined })}
           placeholder="(optional) override endpoint" style={{ ...inputStyle, width: '100%' }}/>
@@ -142,7 +138,7 @@ const ModelRow: React.FC<{
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
         <button onClick={() => { setEditing(false); setDraft(entry); setErr(null); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
-        <button onClick={save} style={pillButton('primary')} disabled={busy || !draft.name.trim() || !draft.model.trim()}>
+        <button onClick={save} style={pillButton('primary')} disabled={busy || !draft.model.trim()}>
           {busy ? 'Saving…' : 'Save'}
         </button>
       </div>
@@ -215,19 +211,19 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
     )
   }
 
-  const saveModel = async (entry: ModelEntry, previousName: string) => {
+  const saveModel = async (entry: ModelEntry, previousId: string) => {
     // Rename first so agent references update atomically, then upsert
     // the rest of the entry's fields.
-    if (previousName && previousName !== entry.name) {
-      await unwrap(await window.codey.models.rename(previousName, entry.name))
+    if (previousId && previousId !== entry.model) {
+      await unwrap(await window.codey.models.rename(previousId, entry.model))
     }
     await unwrap(await window.codey.models.save(entry))
     await reload()
     setCreating(false)
   }
-  const deleteModel = async (name: string) => {
-    if (!confirm(`Delete model "${name}"?`)) return
-    await unwrap(await window.codey.models.delete(name))
+  const deleteModel = async (modelId: string) => {
+    if (!confirm(`Delete model "${modelId}"?`)) return
+    await unwrap(await window.codey.models.delete(modelId))
     await reload()
   }
 
@@ -258,7 +254,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       }/>
       {creating && (
         <ModelRow
-          entry={{ name: '', apiType: 'anthropic', model: '', baseUrl: '', apiKey: '' }}
+          entry={{ apiType: 'anthropic', model: '', baseUrl: '', apiKey: '' }}
           isNew
           onSave={saveModel}
           onCancel={() => setCreating(false)}
@@ -267,7 +263,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       {models.length === 0 && !creating && (
         <div style={{ color: C.fg3, fontSize: 12, padding: '16px 0' }}>No models yet. Click + Add to create one.</div>
       )}
-      {models.map(m => <ModelRow key={m.name} entry={m} onSave={saveModel} onDelete={deleteModel}/>)}
+      {models.map(m => <ModelRow key={m.model} entry={m} onSave={saveModel} onDelete={deleteModel}/>)}
 
       <Section title="Agents"/>
       {AGENT_NAMES.map(a => (
@@ -282,7 +278,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
             >
               <option value="">(no model)</option>
               {models.map(m => (
-                <option key={m.name} value={m.name}>{m.name} → {m.model}</option>
+                <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
               ))}
             </select>
             <Toggle on={agents[a]?.enabled !== false} onChange={v => updateAgent(a, { enabled: v })}/>

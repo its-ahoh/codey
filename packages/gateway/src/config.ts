@@ -94,47 +94,48 @@ export class ConfigManager extends EventEmitter {
   }
 
   // ── Model catalog ──────────────────────────────────────────────────
+  // Models are keyed by the `model` field — the same string passed to
+  // the CLI as --model. agent.defaultModel references a model by id.
+
   listModels(): ModelEntry[] { return this.config.models ?? []; }
 
-  getModel(name: string): ModelEntry | undefined {
-    return this.config.models?.find(m => m.name === name);
+  getModel(modelId: string): ModelEntry | undefined {
+    return this.config.models?.find(m => m.model === modelId);
   }
 
   saveModel(entry: ModelEntry): void {
-    const idx = this.config.models.findIndex(m => m.name === entry.name);
+    const idx = this.config.models.findIndex(m => m.model === entry.model);
     if (idx >= 0) this.config.models[idx] = entry;
     else this.config.models.push(entry);
     this.save();
   }
 
   /**
-   * Rename a model and rewrite any agent slot that referenced the old
-   * name. The entry's content (apiType, baseUrl, apiKey, etc.) is
-   * preserved as-is; only the `name` key changes.
+   * Change a model entry's identifier and rewrite every agent slot that
+   * pointed at it. Content (apiType, baseUrl, apiKey) is preserved.
    */
-  renameModel(oldName: string, newName: string): boolean {
-    if (!newName.trim() || oldName === newName) return false;
-    if (this.config.models.some(m => m.name === newName)) {
-      throw new Error(`A model named "${newName}" already exists`);
+  renameModel(oldId: string, newId: string): boolean {
+    if (!newId.trim() || oldId === newId) return false;
+    if (this.config.models.some(m => m.model === newId)) {
+      throw new Error(`A model with id "${newId}" already exists`);
     }
-    const idx = this.config.models.findIndex(m => m.name === oldName);
+    const idx = this.config.models.findIndex(m => m.model === oldId);
     if (idx < 0) return false;
-    this.config.models[idx] = { ...this.config.models[idx], name: newName };
+    this.config.models[idx] = { ...this.config.models[idx], model: newId };
     for (const agent of Object.keys(this.config.agents) as (keyof typeof this.config.agents)[]) {
       const slot = this.config.agents[agent];
-      if (slot && slot.defaultModel === oldName) slot.defaultModel = newName;
+      if (slot && slot.defaultModel === oldId) slot.defaultModel = newId;
     }
     this.save();
     return true;
   }
 
-  deleteModel(name: string): boolean {
+  deleteModel(modelId: string): boolean {
     const before = this.config.models.length;
-    this.config.models = this.config.models.filter(m => m.name !== name);
-    // If any agent referenced the deleted model, clear it
+    this.config.models = this.config.models.filter(m => m.model !== modelId);
     for (const agent of Object.keys(this.config.agents) as (keyof typeof this.config.agents)[]) {
       const slot = this.config.agents[agent];
-      if (slot && slot.defaultModel === name) slot.defaultModel = undefined;
+      if (slot && slot.defaultModel === modelId) slot.defaultModel = undefined;
     }
     if (this.config.models.length !== before) {
       this.save();
@@ -155,10 +156,10 @@ export class ConfigManager extends EventEmitter {
     return this.getAgentModel(agent)?.model ?? '';
   }
 
-  setAgentModel(agent: string, modelName: string): void {
+  setAgentModel(agent: string, modelId: string): void {
     const slot = this.config.agents[agent as keyof typeof this.config.agents];
     if (slot) {
-      slot.defaultModel = modelName;
+      slot.defaultModel = modelId;
       this.save();
     }
   }
@@ -236,7 +237,7 @@ export class ConfigManager extends EventEmitter {
     for (const m of this.config.models) {
       const keyHint = m.apiKey ? ' 🔑' : '';
       const urlHint = m.baseUrl ? ` @ ${m.baseUrl}` : '';
-      console.log(`  • ${m.name} [${m.apiType}] → ${m.model}${urlHint}${keyHint}`);
+      console.log(`  • ${m.model} [${m.apiType}]${urlHint}${keyHint}`);
     }
     console.log(`\nAgents:`);
     for (const a of ['claude-code', 'opencode', 'codex'] as const) {
@@ -261,15 +262,15 @@ function getDefaultConfig(): GatewayConfigJson {
       imessage: { enabled: false },
     },
     agents: {
-      'claude-code': { enabled: true, defaultModel: 'sonnet-4-5' },
+      'claude-code': { enabled: true, defaultModel: 'claude-sonnet-4-5' },
       'opencode':    { enabled: true, defaultModel: 'gpt-5' },
       'codex':       { enabled: true, defaultModel: 'gpt-5' },
     },
     models: [
-      { name: 'sonnet-4-5', apiType: 'anthropic', model: 'claude-sonnet-4-5', provider: 'anthropic' },
-      { name: 'opus-4-1',   apiType: 'anthropic', model: 'claude-opus-4-1',   provider: 'anthropic' },
-      { name: 'haiku-4-5',  apiType: 'anthropic', model: 'claude-haiku-4-5',  provider: 'anthropic' },
-      { name: 'gpt-5',      apiType: 'openai',    model: 'gpt-5',             provider: 'openai' },
+      { apiType: 'anthropic', model: 'claude-sonnet-4-5', provider: 'anthropic' },
+      { apiType: 'anthropic', model: 'claude-opus-4-1',   provider: 'anthropic' },
+      { apiType: 'anthropic', model: 'claude-haiku-4-5',  provider: 'anthropic' },
+      { apiType: 'openai',    model: 'gpt-5',             provider: 'openai' },
     ],
     fallback: { enabled: true, order: ['claude-code', 'opencode', 'codex'] },
     dev: { logLevel: 'info' },
@@ -277,13 +278,31 @@ function getDefaultConfig(): GatewayConfigJson {
 }
 
 /** Fill in any missing top-level fields with defaults so downstream code can assume shape. */
-function normalize(raw: Partial<GatewayConfigJson>): GatewayConfigJson {
+function normalize(raw: Partial<GatewayConfigJson> & { models?: any[] }): GatewayConfigJson {
   const defaults = getDefaultConfig();
+  // Strip any legacy `name` fields left over from the earlier schema so
+  // they don't get round-tripped to disk on the next save().
+  const models = Array.isArray(raw.models)
+    ? raw.models.map(({ name: _ignored, ...rest }: any) => rest as ModelEntry)
+    : defaults.models;
+  // Also coerce agents[].defaultModel from any legacy `name` references
+  // onto the canonical model id (best-effort: match by name → model id).
+  const rawAgents = { ...(raw.agents ?? {}) } as GatewayConfigJson['agents'];
+  const nameToModel = new Map<string, string>();
+  if (Array.isArray(raw.models)) {
+    for (const m of raw.models as any[]) if (m?.name && m?.model) nameToModel.set(m.name, m.model);
+  }
+  for (const a of Object.keys(rawAgents) as (keyof typeof rawAgents)[]) {
+    const slot = rawAgents[a];
+    if (slot?.defaultModel && nameToModel.has(slot.defaultModel)) {
+      slot.defaultModel = nameToModel.get(slot.defaultModel)!;
+    }
+  }
   return {
     gateway: { ...defaults.gateway, ...(raw.gateway ?? {}) },
     channels: raw.channels ?? defaults.channels,
-    agents: { ...defaults.agents, ...(raw.agents ?? {}) },
-    models: Array.isArray(raw.models) ? raw.models : defaults.models,
+    agents: { ...defaults.agents, ...rawAgents },
+    models,
     fallback: raw.fallback ?? defaults.fallback,
     dev: raw.dev ?? defaults.dev,
   };
