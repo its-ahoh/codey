@@ -1,5 +1,8 @@
 // IPC proxy — all calls go through window.codey.* (Electron preload)
 
+import type { Chat, ChatSelection } from '../types'
+import type { ChatStreamEvent } from '../../../packages/gateway/src/chat-runner'
+
 function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
   if (result.ok) return result.data
   throw new Error(result.error)
@@ -105,4 +108,24 @@ export const apiService = {
     errors: 0,
     channels: { telegram: false, discord: false, imessage: false },
   }),
+
+  chats: {
+    list: async (workspaceName?: string): Promise<Chat[]> =>
+      unwrap(await window.codey.chats.list(workspaceName)),
+    get: async (id: string): Promise<Chat> =>
+      unwrap(await window.codey.chats.get(id)),
+    create: async (input: { workspaceName: string; selection?: ChatSelection; title?: string }): Promise<Chat> =>
+      unwrap(await window.codey.chats.create(input)),
+    rename: async (id: string, title: string): Promise<Chat> =>
+      unwrap(await window.codey.chats.rename(id, title)),
+    delete: async (id: string): Promise<void> => {
+      unwrap(await window.codey.chats.delete(id))
+    },
+    updateSelection: async (id: string, selection: ChatSelection): Promise<Chat> =>
+      unwrap(await window.codey.chats.updateSelection(id, selection)),
+    send: async (chatId: string, text: string): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> =>
+      unwrap(await window.codey.chats.send({ chatId, text })),
+    onEvent: (handler: (ev: ChatStreamEvent) => void): (() => void) =>
+      window.codey.chats.onEvent(handler),
+  },
 }
