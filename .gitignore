@@ -15,3 +15,5 @@ workspaces/*
 # Codey Mac build artifacts
 codey-mac/dist-electron/
 codey-mac/release/
+# git worktrees
+.worktrees/
