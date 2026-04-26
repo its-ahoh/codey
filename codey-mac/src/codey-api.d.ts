@@ -1,3 +1,6 @@
+import type { Chat, ChatSelection } from '../../packages/core/src/types/chat'
+import type { ChatStreamEvent } from '../../packages/gateway/src/chat-runner'
+
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
 export interface ModelEntry {
@@ -53,6 +56,16 @@ declare global {
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string }>>>
         set: (updates: Record<string, { enabled?: boolean; defaultModel?: string }>) => Promise<IpcResult<void>>
+      }
+      chats: {
+        list: (workspaceName?: string) => Promise<IpcResult<Chat[]>>
+        get: (id: string) => Promise<IpcResult<Chat>>
+        create: (input: { workspaceName: string; selection?: ChatSelection; title?: string }) => Promise<IpcResult<Chat>>
+        rename: (id: string, title: string) => Promise<IpcResult<Chat>>
+        delete: (id: string) => Promise<IpcResult<null>>
+        updateSelection: (id: string, selection: ChatSelection) => Promise<IpcResult<Chat>>
+        send: (payload: { chatId: string; text: string }) => Promise<IpcResult<{ response: string; chatId: string; tokens?: number; durationSec?: number }>>
+        onEvent: (handler: (ev: ChatStreamEvent) => void) => () => void
       }
       openExternal: (url: string) => Promise<void>
       onLog: (handler: (msg: string) => void) => () => void
