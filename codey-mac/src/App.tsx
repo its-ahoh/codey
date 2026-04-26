@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { ChatTab } from './components/ChatTab'
 import { ChatListPanel } from './components/ChatListPanel'
 import { SettingsOverlay } from './components/SettingsOverlay'
@@ -8,10 +8,31 @@ import { C } from './theme'
 
 const Shell: React.FC = () => {
   const { isRunning } = useGateway()
-  const { state } = useChats()
+  const { state, createChat, selectChat } = useChats()
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   const activeChat = state.selectedChatId ? state.chats[state.selectedChatId] : null
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const isMeta = e.metaKey || e.ctrlKey
+      if (!isMeta) return
+      if (e.key === 'n') {
+        e.preventDefault()
+        const ws = localStorage.getItem('codey.lastWorkspace')
+        if (ws) createChat(ws)
+      } else if (e.key === ',') {
+        e.preventDefault()
+        setSettingsOpen(true)
+      } else if (/^[1-9]$/.test(e.key)) {
+        const idx = parseInt(e.key, 10) - 1
+        const id = state.order[idx]
+        if (id) { e.preventDefault(); selectChat(id) }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [state.order, createChat, selectChat])
 
   return (
     <div style={styles.root}>
