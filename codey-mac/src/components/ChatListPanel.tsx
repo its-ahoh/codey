@@ -67,10 +67,12 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
                 const active = chat.id === activeChatId
                 const flight = state.inFlight[chat.id]
                 const isRenaming = renamingId === chat.id
+                const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
                 return (
                   <div
                     key={chat.id}
-                    style={{ ...styles.item, background: active ? C.accentDim : 'transparent' }}
+                    title={orphaned ? 'Workspace deleted' : undefined}
+                    style={{ ...styles.item, background: active ? C.accentDim : 'transparent', opacity: orphaned ? 0.5 : 1 }}
                     onClick={() => !isRenaming && selectChat(chat.id)}
                     onDoubleClick={(e) => {
                       e.stopPropagation()

@@ -15,10 +15,12 @@ interface State {
   selectedChatId: string | null
   inFlight: Record<string, InFlight>
   collapsedWorkspaces: Record<string, true>
+  workspaces: string[]
 }
 
 type Action =
   | { type: 'loaded'; chats: Chat[] }
+  | { type: 'setWorkspaces'; workspaces: string[] }
   | { type: 'upsert'; chat: Chat }
   | { type: 'remove'; chatId: string }
   | { type: 'select'; chatId: string | null }
@@ -42,6 +44,8 @@ function reducer(state: State, action: Action): State {
       for (const c of sorted) chats[c.id] = c
       return { ...state, chats, order: sorted.map(c => c.id) }
     }
+    case 'setWorkspaces':
+      return { ...state, workspaces: action.workspaces }
     case 'upsert': {
       const chats = { ...state.chats, [action.chat.id]: action.chat }
       const order = state.order.includes(action.chat.id) ? state.order : [action.chat.id, ...state.order]
@@ -189,14 +193,19 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     collapsedWorkspaces: (() => {
       try { return JSON.parse(localStorage.getItem(LS_COLLAPSED) ?? '{}') } catch { return {} }
     })(),
+    workspaces: [],
   })
 
   const pendingAssistantId = useRef<Record<string, string>>({})
 
   useEffect(() => {
     ;(async () => {
-      const chats = await apiService.chats.list()
+      const [chats, workspaces] = await Promise.all([
+        apiService.chats.list(),
+        apiService.getWorkspaces(),
+      ])
       dispatch({ type: 'loaded', chats })
+      dispatch({ type: 'setWorkspaces', workspaces })
       const stored = localStorage.getItem(LS_ACTIVE)
       if (stored && chats.some(c => c.id === stored)) {
         dispatch({ type: 'select', chatId: stored })

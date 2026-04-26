@@ -79,7 +79,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   }
 
   const isSending = !!flight
-  const canSend = isGatewayRunning && !isSending && !!input.trim()
+  const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
+  const canSend = isGatewayRunning && !isSending && !!input.trim() && !orphaned
   const statusLabel = flight?.queuedPosition
     ? `Queued (#${flight.queuedPosition})`
     : flight?.agentStatus === 'thinking' ? 'Thinking…'
@@ -199,6 +200,11 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         <div ref={messagesEndRef} />
       </div>
 
+      {orphaned && (
+        <div style={styles.orphanBanner}>
+          Workspace "{chat.workspaceName}" no longer exists. Sending is disabled.
+        </div>
+      )}
       <div style={styles.inputContainer}>
         <textarea
           ref={taRef}
@@ -268,4 +274,5 @@ const styles: Record<string, React.CSSProperties> = {
   toolDetail: { marginLeft: 20, marginTop: 4, marginBottom: 6, padding: 8, background: 'rgba(0,0,0,0.3)', borderRadius: 6, border: `1px solid ${C.border}` },
   detailLabel: { fontSize: 11, color: '#666', fontFamily: 'Menlo, Monaco, "Courier New", monospace', marginBottom: 4, textTransform: 'uppercase' },
   detailPre: { margin: 0, fontSize: 11, color: '#ccc', fontFamily: 'Menlo, Monaco, "Courier New", monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+  orphanBanner: { padding: '8px 12px', background: '#ff950033', color: '#ffb84d', fontSize: 12, borderTop: `1px solid ${C.border}` },
 }
