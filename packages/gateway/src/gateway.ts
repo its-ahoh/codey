@@ -9,6 +9,7 @@ import { MemoryStore } from '@codey/core';
 import { TaskPlanner, TaskPlan, PlanStep } from '@codey/core';
 import { WorkspaceManager } from '@codey/core';
 import { WorkerManager } from '@codey/core';
+import { ChatManager } from './chats';
 
 interface ParsedCommand {
   command: string;
@@ -34,6 +35,7 @@ export class Codey {
   private contextManager: ContextManager;
   private planner: TaskPlanner;
   private workspaceManager: WorkspaceManager;
+  private chatManager: ChatManager;
   private configManager?: ConfigManager;
 
   // Rate limiting: userId -> last request timestamp
@@ -122,6 +124,7 @@ export class Codey {
     });
     const wm = workerManager || new WorkerManager('./workers');
     this.workspaceManager = new WorkspaceManager(wm, workspaceDir || './workspaces');
+    this.chatManager = new ChatManager(this.workspaceManager.getWorkspacesRoot());
     this.COOLDOWN_MS = config.rateLimitMs || 3000; // Default 3 seconds
   }
 
@@ -136,6 +139,7 @@ export class Codey {
   }
 
   getWorkspaceManager(): WorkspaceManager { return this.workspaceManager; }
+  getChatManager(): ChatManager { return this.chatManager; }
 
   getAgentFactory(): AgentFactory { return this.agentFactory; }
 
