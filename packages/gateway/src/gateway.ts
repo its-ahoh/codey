@@ -1274,6 +1274,42 @@ Example: /model gpt-4.1 write a Python script`;
     });
   }
 
+  private async runTeamForChat(
+    teamName: string,
+    prompt: string,
+    workingDir: string,
+    sink: ChatStreamSink,
+    chatId: string,
+  ): Promise<{ response: string; tokens?: number }> {
+    const members = this.workspaceManager.getTeam(teamName);
+    if (!members || members.length === 0) {
+      throw new Error(`Team not found or empty: ${teamName}`);
+    }
+    const workerManager = this.workspaceManager.getWorkerManager();
+    let carry = prompt;
+    const parts: string[] = [];
+    for (let i = 0; i < members.length; i++) {
+      const memberName = members[i];
+      sink({ type: 'info', chatId, message: `Step ${i + 1}/${members.length}: ${memberName}` });
+      const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
+      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? this.config.defaultAgent) as CodingAgent;
+      const workerModel = workerManager.getWorkerModel(memberName);
+      const modelConfig = this.getModelConfig(codingAgent, workerModel);
+      const response = await this.runWithFallback(codingAgent, {
+        prompt: stepPrompt,
+        agent: codingAgent,
+        model: modelConfig,
+        context: { workingDir },
+        onStream: (text: string) => sink({ type: 'stream', chatId, token: text }),
+        onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
+      });
+      const output = response?.success ? this.formatAgentResponse(response) : '';
+      parts.push(`### ${memberName}\n\n${output}`);
+      carry = output;
+    }
+    return { response: parts.join('\n\n---\n\n') };
+  }
+
   private formatUptime(seconds: number): string {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -1687,19 +1723,34 @@ Example: /model gpt-4.1 write a Python script`;
     };
 
     try {
-      const response = await this.runWithFallback(agent, {
-        prompt,
-        agent,
-        model,
-        context: { workingDir },
-        onStream,
-        onStatus,
-      });
+      let output = '';
+      let tokens: number | undefined;
+      if (chat.selection.type === 'team') {
+        // Resolve the team name from the workspace manager. Today's schema stores team
+        // configs in workspace.json keyed by name. A chat with selection.type === 'team'
+        // means "use the currently active team" — use the first configured team.
+        // Extension point: when ChatSelection gains { type: 'team'; name: string },
+        // read (chat.selection as any).name here instead of falling back to first.
+        const teamNames = this.workspaceManager.getTeamNames();
+        if (teamNames.length === 0) throw new Error('No teams configured');
+        const teamName = teamNames[0];
+        const r = await this.runTeamForChat(teamName, prompt, workingDir, sink, chatId);
+        output = r.response;
+        tokens = r.tokens;
+      } else {
+        const response = await this.runWithFallback(agent, {
+          prompt,
+          agent,
+          model,
+          context: { workingDir },
+          onStream,
+          onStatus,
+        });
+        output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
+        tokens = (response as any)?.tokens;
+      }
 
       const durationSec = Math.round((Date.now() - started) / 1000);
-      const output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
-      const tokens = (response as any)?.tokens;
-
       const assistantMessage: ChatMessage = {
         id: randomUUID(),
         role: 'assistant',
