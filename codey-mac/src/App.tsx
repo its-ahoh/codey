@@ -8,7 +8,7 @@ import { C } from './theme'
 
 const Shell: React.FC = () => {
   const { isRunning } = useGateway()
-  const { state, createChat, selectChat } = useChats()
+  const { state, createChat, selectChat, refreshWorkspaces } = useChats()
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   const activeChat = state.selectedChatId ? state.chats[state.selectedChatId] : null
@@ -19,7 +19,7 @@ const Shell: React.FC = () => {
       if (!isMeta) return
       if (e.key === 'n') {
         e.preventDefault()
-        const ws = localStorage.getItem('codey.lastWorkspace')
+        const ws = localStorage.getItem('codey.lastWorkspace') ?? state.workspaces[0]
         if (ws) createChat(ws)
       } else if (e.key === ',') {
         e.preventDefault()
@@ -32,7 +32,7 @@ const Shell: React.FC = () => {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.order, createChat, selectChat])
+  }, [state.order, state.workspaces, createChat, selectChat])
 
   return (
     <div style={styles.root}>
@@ -79,7 +79,7 @@ const Shell: React.FC = () => {
             </div>
           )}
         </div>
-        {settingsOpen && <SettingsOverlay onClose={() => setSettingsOpen(false)} />}
+        {settingsOpen && <SettingsOverlay onClose={() => { setSettingsOpen(false); refreshWorkspaces() }} />}
       </div>
       <style>{`
         html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }

@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 import { AgentRequest, AgentResponse, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChatMessage, ToolCallEntry } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
@@ -1276,12 +1277,12 @@ Example: /model gpt-4.1 write a Python script`;
 
   private async runTeamForChat(
     teamName: string,
+    members: string[],
     prompt: string,
     workingDir: string,
     sink: ChatStreamSink,
     chatId: string,
   ): Promise<{ response: string; tokens?: number }> {
-    const members = this.workspaceManager.getTeam(teamName);
     if (!members || members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
     }
@@ -1657,12 +1658,39 @@ Example: /model gpt-4.1 write a Python script`;
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
 
     // Queue if at capacity
-    if (this.chatSemaphore.queueLength >= 0 && (this.chatSemaphore as any).running >= (this.chatSemaphore as any).max) {
+    if ((this.chatSemaphore as any).running >= (this.chatSemaphore as any).max) {
       sink({ type: 'queued', chatId, position: this.chatSemaphore.queueLength + 1 });
     }
     await this.chatSemaphore.acquire();
 
     const started = Date.now();
+
+    // Resolve workspace → workingDir by reading workspace.json from disk.
+    // Also pull team config so team-mode chats use the chat's workspace, not
+    // whichever workspace WorkspaceManager has loaded as the active one.
+    const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
+    const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
+    let workingDir = this.workingDir;
+    let chatWorkspaceTeams: Record<string, string[]> = {};
+    if (fs.existsSync(wsConfigPath)) {
+      try {
+        const wsConfig = JSON.parse(fs.readFileSync(wsConfigPath, 'utf-8'));
+        if (wsConfig.workingDir) workingDir = wsConfig.workingDir;
+        if (wsConfig.teams && typeof wsConfig.teams === 'object') chatWorkspaceTeams = wsConfig.teams;
+      } catch { /* use default */ }
+    } else {
+      this.chatSemaphore.release();
+      const msg = `Workspace not found: ${chat.workspaceName}`;
+      sink({ type: 'error', chatId, message: msg });
+      throw new Error(msg);
+    }
+
+    // Build the prompt from the existing chat history + the new user turn,
+    // BEFORE persisting the user message. Persisting first would cause
+    // buildChatPrompt to see the new turn in the tail AND get it appended
+    // again as `User: ${userText}`, doubling the user message in the prompt.
+    const prompt = assistantPrefixForSelection(chat) + buildChatPrompt(chat, userText);
+
     const userMessage: ChatMessage = {
       id: randomUUID(),
       role: 'user',
@@ -1672,26 +1700,8 @@ Example: /model gpt-4.1 write a Python script`;
     };
     this.chatManager.appendMessage(chatId, userMessage);
 
-    // Resolve workspace → workingDir by reading workspace.json from disk
-    const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
-    const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
-    let workingDir = this.workingDir;
-    if (require('fs').existsSync(wsConfigPath)) {
-      try {
-        const wsConfig = JSON.parse(require('fs').readFileSync(wsConfigPath, 'utf-8'));
-        if (wsConfig.workingDir) workingDir = wsConfig.workingDir;
-      } catch { /* use default */ }
-    } else {
-      this.chatSemaphore.release();
-      const msg = `Workspace not found: ${chat.workspaceName}`;
-      sink({ type: 'error', chatId, message: msg });
-      throw new Error(msg);
-    }
-
     const agent = this.config.defaultAgent;
     const model = this.getDefaultModelConfig(agent);
-
-    const prompt = assistantPrefixForSelection(chat) + buildChatPrompt(chat, userText);
 
     const toolCalls: ToolCallEntry[] = [];
     let streamedText = '';
@@ -1726,15 +1736,17 @@ Example: /model gpt-4.1 write a Python script`;
       let output = '';
       let tokens: number | undefined;
       if (chat.selection.type === 'team') {
-        // Resolve the team name from the workspace manager. Today's schema stores team
-        // configs in workspace.json keyed by name. A chat with selection.type === 'team'
-        // means "use the currently active team" — use the first configured team.
-        // Extension point: when ChatSelection gains { type: 'team'; name: string },
-        // read (chat.selection as any).name here instead of falling back to first.
-        const teamNames = this.workspaceManager.getTeamNames();
-        if (teamNames.length === 0) throw new Error('No teams configured');
+        // Resolve the team from the chat's workspace.json (read above), not from
+        // the active workspace, so a chat in workspace B uses B's team config
+        // even if WorkspaceManager has loaded A. Worker prompt bodies still come
+        // from WorkerManager's loaded workers/ dir (a known limitation when the
+        // active workspace differs from the chat's).
+        const teamNames = Object.keys(chatWorkspaceTeams);
+        if (teamNames.length === 0) throw new Error(`No teams configured in workspace "${chat.workspaceName}"`);
         const teamName = teamNames[0];
-        const r = await this.runTeamForChat(teamName, prompt, workingDir, sink, chatId);
+        const members = chatWorkspaceTeams[teamName];
+        if (!members || members.length === 0) throw new Error(`Team "${teamName}" is empty`);
+        const r = await this.runTeamForChat(teamName, members, prompt, workingDir, sink, chatId);
         output = r.response;
         tokens = r.tokens;
       } else {

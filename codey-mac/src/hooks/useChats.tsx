@@ -177,6 +177,7 @@ interface ChatsContextValue {
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
   sendMessage: (chatId: string, text: string) => Promise<void>
   toggleWorkspace: (workspaceName: string) => void
+  refreshWorkspaces: () => Promise<void>
 }
 
 const ChatsContext = createContext<ChatsContextValue | null>(null)
@@ -325,6 +326,10 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     },
     toggleWorkspace(workspaceName) { dispatch({ type: 'toggleWorkspace', workspaceName }) },
+    async refreshWorkspaces() {
+      const workspaces = await apiService.getWorkspaces()
+      dispatch({ type: 'setWorkspaces', workspaces })
+    },
   }), [state])
 
   return <ChatsContext.Provider value={value}>{children}</ChatsContext.Provider>
