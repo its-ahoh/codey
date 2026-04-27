@@ -118,6 +118,13 @@ export interface AgentResponse {
   duration?: number; // in seconds
   statusUpdates?: string[];
   states?: AgentStateEntry[];
+  /**
+   * Session id captured from the CLI on this run when the CLI generates
+   * its own id (codex `thread_id`, opencode `sessionID`). Adapters that
+   * accept a pre-allocated `newSessionId` (claude-code) leave this unset —
+   * the gateway already knows the id it sent.
+   */
+  sessionId?: string;
 }
 
 // Channel configuration

@@ -5,6 +5,7 @@ import { AgentSpawnError } from '../errors';
 
 interface OpenCodeEvent {
   type: string;
+  sessionID?: string;
   part?: {
     type: string;
     text?: string;
@@ -41,6 +42,13 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
     return new Promise((resolve) => {
       const args = ['run', '--format', 'json'];
 
+      // Resume an existing session when the gateway has a warm anchor for
+      // this conversation. OpenCode generates the session id itself on
+      // bootstrap; we capture it from the first event below.
+      if (request.resumeSessionId) {
+        args.push('-s', request.resumeSessionId);
+      }
+
       // Add model configuration if provided
       if (request.model?.model) {
         args.push('--model', request.model.model);
@@ -66,6 +74,10 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       let stderr = '';
       const statusUpdates: string[] = [];
       const states: NonNullable<AgentResponse['states']> = [];
+      // Captured from the top-level `sessionID` field present on every event
+      // (e.g. `step_start`, `text`, `step_finish`). The first event we see
+      // tells us which session OpenCode opened so the gateway can resume it.
+      let capturedSessionId: string | undefined;
 
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
@@ -88,6 +100,10 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
           if (!line.trim()) continue;
           try {
             const event: OpenCodeEvent = JSON.parse(line);
+
+            if (!capturedSessionId && event.sessionID) {
+              capturedSessionId = event.sessionID;
+            }
 
             // Stream text events immediately
             if (event.type === 'text' && event.part?.text) {
@@ -176,11 +192,15 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
 
         const output = textParts.join('');
         if (output) {
-          safeResolve(this.createResponse(output, true, tokens, duration, statusUpdates, states));
+          const resp = this.createResponse(output, true, tokens, duration, statusUpdates, states);
+          resp.sessionId = capturedSessionId;
+          safeResolve(resp);
         } else {
           const error = stderr.trim() || `OpenCode exited with code ${code}`;
           this.debug(`[opencode] Error: ${error}`);
-          safeResolve(this.createResponse(error, false, undefined, duration, statusUpdates, states));
+          const resp = this.createResponse(error, false, undefined, duration, statusUpdates, states);
+          resp.sessionId = capturedSessionId;
+          safeResolve(resp);
         }
       });
 
