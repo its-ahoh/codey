@@ -30,6 +30,22 @@ async function run() {
   assert.ok(ids.includes('conv-b'), 'conv-b should be listed');
 
   console.log('✓ context keyed by conversationId');
+
+  // Session anchors are scoped per-window and survive setSessionAnchor /
+  // clearSessionAnchor / clearAllSessionAnchors as expected.
+  await cm.setSessionAnchor('conv-a', { agent: 'claude-code', sessionId: 'sid-a' });
+  await cm.setSessionAnchor('conv-b', { agent: 'claude-code', sessionId: 'sid-b' });
+  assert.strictEqual(cm.getWindow('conv-a')!.sessionAnchor?.sessionId, 'sid-a');
+  assert.strictEqual(cm.getWindow('conv-b')!.sessionAnchor?.sessionId, 'sid-b');
+
+  await cm.clearSessionAnchor('conv-a');
+  assert.strictEqual(cm.getWindow('conv-a')!.sessionAnchor, undefined);
+  assert.strictEqual(cm.getWindow('conv-b')!.sessionAnchor?.sessionId, 'sid-b');
+
+  cm.clearAllSessionAnchors();
+  assert.strictEqual(cm.getWindow('conv-b')!.sessionAnchor, undefined);
+
+  console.log('✓ session anchors set/clear/clearAll');
 }
 
 run().catch((err) => { console.error(err); process.exit(1); });

@@ -47,12 +47,25 @@ export interface FileChangeRecord {
 
 // ── Context Window ─────────────────────────────────────────────────
 
+/**
+ * Tracks which agent CLI session is currently warm for this conversation.
+ * When the gateway runs the same agent again it can `--resume <sessionId>`
+ * and skip re-sending conversation history. Cleared on agent switch, on
+ * `/clear`/`/reset`, or when a resume attempt fails.
+ */
+export interface SessionAnchor {
+  agent: string;
+  sessionId: string;
+}
+
 export interface ContextWindow {
   id: string;
   turns: ContextTurn[];
   lastActive: number;
   /** Running estimate of total tokens in the window */
   totalTokens: number;
+  /** Warm CLI session, if any. */
+  sessionAnchor?: SessionAnchor;
 }
 
 // ── Configuration ──────────────────────────────────────────────────
@@ -154,6 +167,36 @@ export class ContextManager {
       if (window) this.archive(window);
       this.windows.delete(id);
     });
+  }
+
+  // ── Session anchors ────────────────────────────────────────────
+
+  async setSessionAnchor(windowId: string, anchor: SessionAnchor): Promise<void> {
+    return this.withLock(windowId, () => {
+      const window = this.windows.get(windowId);
+      if (!window) return;
+      window.sessionAnchor = anchor;
+      window.lastActive = Date.now();
+    });
+  }
+
+  async clearSessionAnchor(windowId: string): Promise<void> {
+    return this.withLock(windowId, () => {
+      const window = this.windows.get(windowId);
+      if (!window) return;
+      window.sessionAnchor = undefined;
+    });
+  }
+
+  /**
+   * Drop session anchors from every window. Called on global resets
+   * (workspace switch, `/reset`, default-agent change) so the next turn
+   * bootstraps a fresh CLI session with full history.
+   */
+  clearAllSessionAnchors(): void {
+    for (const window of this.windows.values()) {
+      window.sessionAnchor = undefined;
+    }
   }
 
   // ── Add turns ──────────────────────────────────────────────────
