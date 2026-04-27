@@ -75,6 +75,9 @@ contextBridge.exposeInMainWorld('codey', {
       return () => ipcRenderer.removeListener('chats:event', listener)
     },
   },
+  gateway: {
+    status: () => ipcRenderer.invoke('gateway:status'),
+  },
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onLog: (handler: (msg: string) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, msg: string) => handler(msg)
