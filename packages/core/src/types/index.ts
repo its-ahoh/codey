@@ -171,3 +171,5 @@ export interface GatewayConfig {
   context?: ContextSettings;
   memory?: MemorySettings;
 }
+
+export * from './chat';

@@ -397,6 +397,64 @@ app.whenReady().then(async () => {
     })
   )
 
+  // ── Chats IPC (multi-chat) ────────────────────────────────────────
+  ipcMain.handle('chats:list', async (_e, workspaceName?: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.getChatManager().list(workspaceName)
+    })
+  )
+
+  ipcMain.handle('chats:get', async (_e, id: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      const c = inProcessGateway.getChatManager().get(id)
+      if (!c) throw new Error(`Chat not found: ${id}`)
+      return c
+    })
+  )
+
+  ipcMain.handle('chats:create', async (_e, input: { workspaceName: string; selection?: any; title?: string }) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.getChatManager().create(input)
+    })
+  )
+
+  ipcMain.handle('chats:rename', async (_e, id: string, title: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.getChatManager().rename(id, title)
+    })
+  )
+
+  ipcMain.handle('chats:delete', async (_e, id: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      inProcessGateway.getChatManager().delete(id)
+      return null
+    })
+  )
+
+  ipcMain.handle('chats:updateSelection', async (_e, id: string, selection: any) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.getChatManager().updateSelection(id, selection)
+    })
+  )
+
+  ipcMain.handle('chats:send', async (_e, payload: { chatId: string; text: string }) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      const sink = (ev: any) => {
+        // Mirror each event to the renderer as a single `chats:event` channel
+        // so the frontend can route by chatId without sniffing event names.
+        sendToRenderer('chats:event', ev)
+      }
+      return inProcessGateway.sendToChat(payload.chatId, payload.text, sink)
+    })
+  )
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
