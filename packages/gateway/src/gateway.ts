@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChatMessage, ToolCallEntry } from '@codey/core';
+import { AgentRequest, AgentResponse, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -133,9 +133,53 @@ export class Codey {
   }
 
   /** Apply runtime config changes (e.g. from the API). */
-  applyConfig(config: GatewayConfig): void {
+  async applyConfig(config: GatewayConfig): Promise<void> {
+    const prevChannels = this.config.channels;
     this.config = config;
     this.logger.info(`[Config] Applied: agent=${config.defaultAgent}, model=${this.getEffectiveModel()}`);
+    await this.reconcileChannels(prevChannels, config.channels);
+  }
+
+  /**
+   * Start, stop, or restart channel handlers to match the desired config.
+   * A channel is restarted when its config payload changes (e.g. token edit).
+   */
+  private async reconcileChannels(prev: ChannelConfig, next: ChannelConfig): Promise<void> {
+    await this.reconcileChannel('telegram', prev.telegram, next.telegram, () => new TelegramHandler());
+    await this.reconcileChannel('discord',  prev.discord,  next.discord,  () => new DiscordHandler());
+    const prevIm = prev.imessage?.enabled ? prev.imessage : undefined;
+    const nextIm = next.imessage?.enabled ? next.imessage : undefined;
+    await this.reconcileChannel('imessage', prevIm, nextIm, () => new IMessageHandler());
+  }
+
+  private async reconcileChannel(
+    name: 'telegram' | 'discord' | 'imessage',
+    prev: any | undefined,
+    next: any | undefined,
+    factory: () => ChannelHandler,
+  ): Promise<void> {
+    const same = JSON.stringify(prev ?? null) === JSON.stringify(next ?? null);
+    if (same && (next ? this.handlers.has(name) : !this.handlers.has(name))) return;
+
+    const existing = this.handlers.get(name);
+    if (existing) {
+      try { await existing.stop(); }
+      catch (e) { this.logger.error(`Failed to stop ${name} handler: ${e}`); }
+      this.handlers.delete(name);
+      this.logger.info(`${name} handler stopped`);
+    }
+
+    if (next) {
+      try {
+        const handler = factory();
+        handler.onMessage(this.handleMessage.bind(this));
+        await handler.start(next);
+        this.handlers.set(name, handler);
+        this.logger.info(`${name} handler started`);
+      } catch (e) {
+        this.logger.error(`Failed to start ${name} handler: ${e}`);
+      }
+    }
   }
 
   getWorkspaceList(): string[] {
@@ -187,32 +231,8 @@ export class Codey {
     this.logger.setLogFile(this.workspaceManager.getLogPath());
     this.logger.setErrorLogFile(this.workspaceManager.getErrorLogPath());
 
-    // Start Telegram
-    if (this.config.channels.telegram) {
-      const handler = new TelegramHandler();
-      handler.onMessage(this.handleMessage.bind(this));
-      await handler.start(this.config.channels.telegram);
-      this.handlers.set('telegram', handler);
-      this.logger.info('Telegram handler started');
-    }
-
-    // Start Discord
-    if (this.config.channels.discord) {
-      const handler = new DiscordHandler();
-      handler.onMessage(this.handleMessage.bind(this));
-      await handler.start(this.config.channels.discord);
-      this.handlers.set('discord', handler);
-      this.logger.info('Discord handler started');
-    }
-
-    // Start iMessage
-    if (this.config.channels.imessage?.enabled) {
-      const handler = new IMessageHandler();
-      handler.onMessage(this.handleMessage.bind(this));
-      await handler.start(this.config.channels.imessage);
-      this.handlers.set('imessage', handler);
-      this.logger.info('iMessage handler started');
-    }
+    // Start configured channels (telegram/discord/imessage)
+    await this.reconcileChannels({}, this.config.channels);
 
     // Start context cleanup interval
     this.conversationCleanupInterval = setInterval(() => {
@@ -579,14 +599,7 @@ export class Codey {
       }
     }
 
-    const tokenInfo = response.tokens
-      ? `\n\n📊 Tokens: ${response.tokens.total.toLocaleString()} (in: ${response.tokens.input.toLocaleString()}, out: ${response.tokens.output.toLocaleString()}${response.tokens.cache ? `, cache read: ${response.tokens.cache.read.toLocaleString()}` : ''})`
-      : '';
-    const durationInfo = response.duration
-      ? `\n⏱️ Time: ${response.duration}s`
-      : '';
-
-    return response.output + tokenInfo + durationInfo + toolSummary;
+    return response.output + toolSummary;
   }
 
   private async handleCommand(message: UserMessage, parsed: ParsedCommand): Promise<void> {
@@ -1176,15 +1189,8 @@ Example: /model gpt-4.1 write a Python script`;
       context: { workingDir: this.workingDir },
     });
 
-    const tokenInfo = response.tokens
-      ? `\n\n📊 Tokens: ${response.tokens.total.toLocaleString()} (in: ${response.tokens.input}, out: ${response.tokens.output})`
-      : '';
-    const durationInfo = response.duration
-      ? `\n⏱️ Time: ${response.duration}s`
-      : '';
-
     const replyText = response.success
-      ? `✅ **${worker.name}** completed:\n\n${response.output}${tokenInfo}${durationInfo}`
+      ? `✅ **${worker.name}** completed:\n\n${response.output}`
       : `❌ **${worker.name}** failed: ${response.error}`;
 
     await this.sendResponse({
@@ -1759,7 +1765,7 @@ Example: /model gpt-4.1 write a Python script`;
           onStatus,
         });
         output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
-        tokens = (response as any)?.tokens;
+        tokens = (response as any)?.tokens?.total;
       }
 
       const durationSec = Math.round((Date.now() - started) / 1000);

@@ -67,6 +67,14 @@ declare global {
         send: (payload: { chatId: string; text: string }) => Promise<IpcResult<{ response: string; chatId: string; tokens?: number; durationSec?: number }>>
         onEvent: (handler: (ev: ChatStreamEvent) => void) => () => void
       }
+      gateway: {
+        status: () => Promise<IpcResult<{
+          status: 'healthy' | 'degraded'
+          uptime: number
+          channels: { telegram: boolean; discord: boolean; imessage: boolean }
+          stats: { messagesProcessed: number; activeConversations: number; errors: number }
+        } | null>>
+      }
       openExternal: (url: string) => Promise<void>
       onLog: (handler: (msg: string) => void) => () => void
     }
