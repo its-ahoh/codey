@@ -1,251 +1,110 @@
 import React, { useState } from 'react'
 import { ChatTab } from './components/ChatTab'
 import { ChatListPanel } from './components/ChatListPanel'
-import { StatusTab } from './components/StatusTab'
-import { SettingsTab } from './components/SettingsTab'
-import { WorkspacesTab } from './components/WorkspacesTab'
-import WorkersTab from './components/WorkersTab'
+import { SettingsOverlay } from './components/SettingsOverlay'
 import { useGateway } from './hooks/useGateway'
 import { ChatsProvider, useChats } from './hooks/useChats'
 import { C } from './theme'
 
-type TabType = 'chat' | 'status' | 'workspaces' | 'workers' | 'settings'
-
-const Icon: React.FC<{ d: string | string[]; size?: number; color?: string }> = ({ d, size = 17, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-    {Array.isArray(d) ? d.map((p, i) => <path key={i} d={p} />) : <path d={d} />}
-  </svg>
+const App: React.FC = () => (
+  <ChatsProvider>
+    <Shell />
+  </ChatsProvider>
 )
 
-const icons = {
-  chat:       'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
-  status:     ['M22 12h-4l-3 9L9 3l-3 9H2'],
-  workspaces: ['M3 6l9-3 9 3v12l-9 3-9-3V6z', 'M12 3v18'],
-  workers:    ['M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2', 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm8-7v6m3-3h-6'],
-  settings:   'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 0v3m0-12v3m-7.8 4.2 2.1-2.1M19.8 7.8l-2.1 2.1M3 12H6m12 0h3M4.2 7.8l2.1 2.1m11.3 4.3-2.1-2.1',
-}
-
-const navItems: { key: TabType; label: string; icon: keyof typeof icons }[] = [
-  { key: 'chat',       label: 'Chat',       icon: 'chat' },
-  { key: 'workers',    label: 'Workers',    icon: 'workers' },
-  { key: 'workspaces', label: 'Workspaces', icon: 'workspaces' },
-  { key: 'status',     label: 'Status',     icon: 'status' },
-  { key: 'settings',   label: 'Settings',   icon: 'settings' },
-]
-
-const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<TabType>(() => {
-    const stored = localStorage.getItem('codey-tab') as TabType | null
-    return stored && navItems.some(n => n.key === stored) ? stored : 'chat'
-  })
-  const { isRunning, status, logs } = useGateway()
-  const [currentWorkspace, setCurrentWorkspace] = useState<string>('')
-
-  const setTab = (t: TabType) => { setActiveTab(t); localStorage.setItem('codey-tab', t) }
-
-  const renderNonChatTab = () => {
-    switch (activeTab) {
-      case 'status':     return <StatusTab status={status} logs={logs} isRunning={isRunning} />
-      case 'workspaces': return <WorkspacesTab isGatewayRunning={isRunning} onWorkspaceChange={setCurrentWorkspace} />
-      case 'workers':    return <WorkersTab />
-      case 'settings':   return <SettingsTab isGatewayRunning={isRunning} />
-      default:           return null
-    }
-  }
-
-  return (
-    <ChatsProvider>
-      <div style={styles.root}>
-        {/* Title bar */}
-        <div style={styles.titleBar}>
-          <div style={styles.titleBarDragArea}>
-            <div style={{ width: 76 }} />
-            <div style={styles.titleCenter}>
-              <span style={styles.appName}>Codey</span>
-              {isRunning && currentWorkspace && (
-                <span style={styles.workspaceLabel}>· {currentWorkspace}</span>
-              )}
-            </div>
-          </div>
-          <div
-            style={{
-              ...styles.statusPill,
-              borderColor: C.green + '55',
-              background: '#32D74B11',
-              color: C.green,
-              cursor: 'default',
-            }}
-          >
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green }} />
-            Running
-          </div>
-        </div>
-        {/* Body */}
-        <div style={styles.body}>
-          <div style={styles.sidebar}>
-            <div style={styles.logoMark}>
-              <span style={styles.logoText}>C</span>
-            </div>
-            <div style={styles.sidebarDivider} />
-            {navItems.map(item => {
-              const active = activeTab === item.key
-              return (
-                <button
-                  key={item.key}
-                  onClick={() => setTab(item.key)}
-                  title={item.label}
-                  style={{
-                    ...styles.navBtn,
-                    background: active ? C.accentDim : 'transparent',
-                  }}
-                >
-                  <Icon d={icons[item.icon]} size={17} color={active ? C.accent : C.fg3} />
-                </button>
-              )
-            })}
-          </div>
-          <div style={styles.content}>
-            {activeTab === 'chat' ? (
-              <ChatView isGatewayRunning={isRunning} />
-            ) : (
-              renderNonChatTab()
-            )}
-          </div>
-        </div>
-        <style>{`
-          html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }
-          body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; color: ${C.fg}; }
-          * { box-sizing: border-box; }
-          ::-webkit-scrollbar { width: 5px; height: 5px; }
-          ::-webkit-scrollbar-track { background: transparent; }
-          ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
-          textarea, input, select, button { font-family: inherit; }
-          input, select, textarea { color: ${C.fg}; }
-          @keyframes codey-pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.4; transform: scale(0.8); }
-          }
-        `}</style>
-      </div>
-    </ChatsProvider>
-  )
-}
-
-// ChatView composes the left panel (chat list) + right panel (messages)
-const ChatView: React.FC<{ isGatewayRunning: boolean }> = ({ isGatewayRunning }) => {
+const Shell: React.FC = () => {
+  const { isRunning } = useGateway()
   const { state } = useChats()
   const [settingsOpen, setSettingsOpen] = useState(false)
 
+  const activeChat = state.selectedChatId ? state.chats[state.selectedChatId] : null
+
   return (
-    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-      <ChatListPanel
-        onOpenSettings={() => setSettingsOpen(true)}
-        activeChatId={state.selectedChatId}
-      />
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        {state.selectedChatId ? (
-          <ChatTab isGatewayRunning={isGatewayRunning} chatId={state.selectedChatId} />
-        ) : (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.fg3 }}>
-            Select a chat or create a new one
+    <div style={styles.root}>
+      <div style={styles.titleBar}>
+        <div style={styles.titleBarDragArea}>
+          <div style={{ width: 76 }} />
+          <div style={styles.titleCenter}>
+            <span style={styles.appName}>Codey</span>
+            {activeChat && <span style={styles.workspaceLabel}>· {activeChat.workspaceName}</span>}
           </div>
-        )}
+        </div>
+        <div style={{
+          ...styles.statusPill,
+          borderColor: C.green + '55',
+          background: '#32D74B11',
+          color: C.green,
+        }}>
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green }} />
+          Running
+        </div>
       </div>
+      <div style={styles.body}>
+        <ChatListPanel
+          onOpenSettings={() => setSettingsOpen(true)}
+          activeChatId={state.selectedChatId}
+        />
+        <div style={styles.content}>
+          {Object.values(state.chats).map(chat => (
+            <div
+              key={chat.id}
+              style={{
+                display: state.selectedChatId === chat.id ? 'flex' : 'none',
+                flex: 1, minHeight: 0, flexDirection: 'column', overflow: 'hidden',
+              }}
+            >
+              <ChatTab chatId={chat.id} isGatewayRunning={isRunning} />
+            </div>
+          ))}
+          {!activeChat && (
+            <div style={styles.emptyMain}>
+              {state.order.length === 0
+                ? 'No chats yet. Click "New Chat" on the left to start.'
+                : 'Select a chat on the left.'}
+            </div>
+          )}
+        </div>
+        {settingsOpen && <SettingsOverlay onClose={() => setSettingsOpen(false)} />}
+      </div>
+      <style>{`
+        html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; color: ${C.fg}; }
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
+        textarea, input, select, button { font-family: inherit; }
+        input, select, textarea { color: ${C.fg}; }
+        @keyframes codey-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.8); }
+        }
+      `}</style>
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  root: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100vh',
-    background: C.bg,
-    color: C.fg,
-  },
+  root: { display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, color: C.fg },
   titleBar: {
-    height: 44,
-    background: C.surface,
-    borderBottom: `1px solid ${C.border}`,
-    display: 'flex',
-    alignItems: 'center',
-    padding: '0 14px 0 0',
-    flexShrink: 0,
+    height: 44, background: C.surface, borderBottom: `1px solid ${C.border}`,
+    display: 'flex', alignItems: 'center', padding: '0 14px 0 0', flexShrink: 0,
     // @ts-ignore Electron
     WebkitAppRegion: 'drag',
   },
-  titleBarDragArea: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    height: '100%',
-  },
-  titleCenter: {
-    flex: 1,
-    textAlign: 'center',
-    paddingRight: 76,
-  },
+  titleBarDragArea: { flex: 1, display: 'flex', alignItems: 'center', height: '100%' },
+  titleCenter: { flex: 1, textAlign: 'center', paddingRight: 76 },
   appName: { color: C.fg2, fontSize: 13, fontWeight: 500 },
   workspaceLabel: { color: C.fg3, fontSize: 11, marginLeft: 6 },
   statusPill: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 5,
-    padding: '4px 10px',
-    borderRadius: 6,
-    border: '1px solid',
-    fontSize: 11,
-    fontWeight: 600,
-    cursor: 'pointer',
+    display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',
+    borderRadius: 6, border: '1px solid', fontSize: 11, fontWeight: 600,
     // @ts-ignore Electron
     WebkitAppRegion: 'no-drag',
   },
-  body: {
-    flex: 1,
-    display: 'flex',
-    overflow: 'hidden',
-  },
-  sidebar: {
-    width: 60,
-    background: C.surface,
-    borderRight: `1px solid ${C.border}`,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    paddingTop: 14,
-    gap: 4,
-    flexShrink: 0,
-    userSelect: 'none',
-  },
-  logoMark: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    background: 'linear-gradient(135deg, #0A84FF, #0060cc)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  logoText: { color: '#fff', fontWeight: 800, fontSize: 14, letterSpacing: -1 },
-  sidebarDivider: { width: 32, height: 1, background: C.border, marginBottom: 8 },
-  navBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    border: 'none',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    transition: 'all 0.15s',
-  },
-  content: {
-    flex: 1,
-    overflow: 'hidden',
-    display: 'flex',
-    flexDirection: 'column',
-  },
+  body: { flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' },
+  content: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
+  emptyMain: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.fg3 },
 }
 
 export default App
