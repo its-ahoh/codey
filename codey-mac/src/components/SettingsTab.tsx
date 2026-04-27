@@ -146,7 +146,11 @@ const ModelRow: React.FC<{
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
-  useEffect(() => { setDraft(entry) }, [entry])
+  // Only sync from props when we're not actively editing — otherwise a parent
+  // re-render (e.g. status poll) that re-creates the `entry` object literal
+  // would wipe in-flight keystrokes. Key on `entry.model` so identity churn
+  // alone doesn't trigger a reset.
+  useEffect(() => { if (!editing) setDraft(entry) }, [entry.model, editing])
 
   const save = async () => {
     if (!draft.model.trim()) return
@@ -386,7 +390,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       {models.length === 0 && !creating && (
         <div style={{ color: C.fg3, fontSize: 12, padding: '16px 0' }}>No models yet. Click + Add to create one.</div>
       )}
-      {models.map(m => <ModelRow key={m.model} entry={m} onSave={saveModel} onDelete={deleteModel}/>)}
+      {[...models]
+        .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
+        .map(m => <ModelRow key={m.model} entry={m} onSave={saveModel} onDelete={deleteModel}/>)}
 
       <Section title="Agents"/>
       {AGENT_NAMES.map(a => (
@@ -400,9 +406,11 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
               disabled={agents[a]?.enabled === false || models.length === 0}
             >
               <option value="">(default)</option>
-              {models.map(m => (
-                <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
-              ))}
+              {[...models]
+                .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
+                .map(m => (
+                  <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
+                ))}
             </select>
             <Toggle on={agents[a]?.enabled !== false} onChange={v => updateAgent(a, { enabled: v })}/>
           </div>
