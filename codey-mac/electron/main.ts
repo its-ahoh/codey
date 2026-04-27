@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog } from 'electron'
 import { join } from 'path'
 import { WorkerManager, WorkspaceManager } from '@codey/core'
 import { Codey } from '@codey/gateway/dist/gateway'
@@ -143,7 +143,24 @@ async function bootInProcessCore() {
     workerManager = new WorkerManager(join(root, 'workers'))
     await workerManager.loadWorkers()
     workspaceManager = new WorkspaceManager(workerManager, join(root, 'workspaces'))
-    await workspaceManager.switchWorkspace(workspaceManager.getCurrentWorkspace())
+    let existing = workspaceManager.listWorkspaces()
+    if (existing.length === 0) {
+      // Cold start (or user deleted every workspace): seed a "default"
+      // workspace pointing at the user's home directory so chats can be
+      // created without first picking a folder.
+      const fsMod = await import('fs')
+      const defaultDir = join(root, 'workspaces', 'default')
+      fsMod.mkdirSync(defaultDir, { recursive: true })
+      fsMod.writeFileSync(
+        join(defaultDir, 'workspace.json'),
+        JSON.stringify({ workingDir: app.getPath('home'), teams: {} }, null, 2)
+      )
+      fsMod.writeFileSync(join(defaultDir, 'memory.md'), '# default — Project Memory\n')
+      existing = workspaceManager.listWorkspaces()
+    }
+    if (existing.length > 0) {
+      await workspaceManager.switchWorkspace(existing[0])
+    }
     const runtimeCfg = buildRuntimeConfig(coreConfigManager.get())
     inProcessGateway = new Codey(runtimeCfg, undefined, join(root, 'workspaces'), coreConfigManager, workerManager)
     // Apply config changes to the running gateway when the renderer edits them.
@@ -262,6 +279,83 @@ app.whenReady().then(async () => {
   ipcMain.handle('workspaces:switch', async (_e, name: string) =>
     wrap(async () => {
       await workspaceManager?.switchWorkspace(name)
+    })
+  )
+
+  ipcMain.handle('workspaces:memory:get', async (_e, name: string) =>
+    wrap(async () => {
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const root = workspaceManager.getWorkspacesRoot()
+      const memPath = pathMod.join(root, name, 'memory.md')
+      if (!fsMod.existsSync(memPath)) return ''
+      return fsMod.readFileSync(memPath, 'utf-8')
+    })
+  )
+
+  ipcMain.handle('workspaces:memory:set', async (_e, name: string, content: string) =>
+    wrap(async () => {
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      if (typeof content !== 'string') throw new Error('Content must be a string')
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const root = workspaceManager.getWorkspacesRoot()
+      const wsDir = pathMod.join(root, name)
+      if (!fsMod.existsSync(wsDir) || !fsMod.statSync(wsDir).isDirectory()) {
+        throw new Error(`Workspace "${name}" does not exist`)
+      }
+      const memPath = pathMod.join(wsDir, 'memory.md')
+      await fsMod.promises.writeFile(memPath, content, 'utf-8')
+    })
+  )
+
+  ipcMain.handle('workspaces:info', async (_e, name: string) =>
+    wrap(async () => {
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const root = workspaceManager.getWorkspacesRoot()
+      const configPath = pathMod.join(root, name, 'workspace.json')
+      if (!fsMod.existsSync(configPath)) {
+        return { workingDir: '', teams: {} as Record<string, string[]> }
+      }
+      const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
+      return {
+        workingDir: data.workingDir || '',
+        teams: (data.teams || {}) as Record<string, string[]>,
+      }
+    })
+  )
+
+  ipcMain.handle('workspaces:create', async (_e, dir: string) =>
+    wrap(async () => {
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      if (!dir || typeof dir !== 'string') throw new Error('A directory is required')
+      const fsMod = await import('fs')
+      if (!fsMod.existsSync(dir) || !fsMod.statSync(dir).isDirectory()) {
+        throw new Error(`Not a directory: ${dir}`)
+      }
+      return workspaceManager.findOrCreateByDir(dir)
+    })
+  )
+
+  ipcMain.handle('workspaces:delete', async (_e, name: string) =>
+    wrap(async () => {
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      await workspaceManager.deleteWorkspace(name)
+      inProcessGateway?.getChatManager().cascadeDeleteWorkspace(name)
+    })
+  )
+
+  ipcMain.handle('dialog:pickDirectory', async () =>
+    wrap(async () => {
+      const result = await dialog.showOpenDialog(mainWindow ?? undefined as any, {
+        title: 'Select project folder',
+        properties: ['openDirectory', 'createDirectory'],
+      })
+      if (result.canceled || result.filePaths.length === 0) return null
+      return result.filePaths[0]
     })
   )
 
