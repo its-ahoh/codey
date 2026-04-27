@@ -71,6 +71,19 @@ export interface AgentRequest {
     files?: string[];
     workingDir?: string;
   };
+  /**
+   * Resume an existing CLI session by id. When set, the gateway has decided
+   * conversation history lives in the CLI session, so `prompt` should carry
+   * only the current user turn. Mutually exclusive with `newSessionId`.
+   */
+  resumeSessionId?: string;
+  /**
+   * Pre-allocated UUID for a fresh CLI session. The adapter passes this to
+   * the CLI's session-id flag so the gateway can resume on later turns
+   * without waiting for the CLI to emit one. Mutually exclusive with
+   * `resumeSessionId`.
+   */
+  newSessionId?: string;
 }
 
 export interface StatusUpdate {
