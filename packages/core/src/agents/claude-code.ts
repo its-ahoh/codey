@@ -61,8 +61,15 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         args.push('--dangerously-skip-permissions');
       }
 
-      // Note: session resumption is not used with -p mode.
-      // Conversation context is managed by the gateway's ContextManager.
+      // The gateway decides whether to resume a warm session or bootstrap
+      // a fresh one with full history. `--resume` continues an existing
+      // session; `--session-id` pins a pre-allocated UUID so the gateway
+      // can resume the same id on later turns without parsing it back out.
+      if (request.resumeSessionId) {
+        args.push('--resume', request.resumeSessionId);
+      } else if (request.newSessionId) {
+        args.push('--session-id', request.newSessionId);
+      }
 
       // Add model configuration if provided
       if (request.model) {
