@@ -1,13 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { ChatMessage, ToolCallEntry } from '../types'
-import { apiService, WorkerDto } from '../services/api'
+import { ChatMessage } from '../types'
+import { apiService } from '../services/api'
 import { C } from '../theme'
 import { Markdown } from './Markdown'
+import { useChats } from '../hooks/useChats'
 
 interface ChatTabProps {
   isGatewayRunning: boolean
-  messages: ChatMessage[]
-  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
+  chatId: string
 }
 
 const SendIcon: React.FC<{ color: string }> = ({ color }) => (
@@ -31,139 +31,44 @@ const TypingDots: React.FC = () => {
   return <span style={{ letterSpacing: 2 }}>{'●'.repeat(n + 1).padEnd(3, '○')}</span>
 }
 
-export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, setMessages }) => {
+export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, chatId }) => {
+  const { state, sendMessage } = useChats()
   const [input, setInput] = useState('')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
-  const [conversationId, setConversationId] = useState<string | undefined>()
-  const [isSending, setIsSending] = useState(false)
-  const [agentStatus, setAgentStatus] = useState<'idle' | 'thinking' | 'working' | 'writing'>('idle')
   const [worker, setWorker] = useState('')
-  const [workers, setWorkers] = useState<WorkerDto[]>([])
+  const [workers, setWorkers] = useState<{ name: string }[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
+  const chat = state.chats[chatId]
+  const messages = chat?.messages ?? []
+  const inFlight = state.inFlight[chatId]
+  const agentStatus = inFlight?.agentStatus ?? 'idle'
+
   useEffect(() => {
-    apiService.listWorkers().then(setWorkers)
+    apiService.listWorkers().then(ws => setWorkers(ws))
   }, [])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, agentStatus])
 
-  const sendMessage = async () => {
-    if (!input.trim() || !isGatewayRunning || isSending) return
-
-    const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: input,
-      timestamp: Date.now(),
-    }
-    const assistantMessageId = (Date.now() + 1).toString()
-    const assistantMessage: ChatMessage = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-      toolCalls: [],
-      isComplete: false,
-    }
-
-    setMessages(prev => [...prev, userMessage, assistantMessage])
+  const handleSend = async () => {
+    if (!input.trim() || !isGatewayRunning || inFlight) return
+    const text = input.trim()
     setInput('')
     if (taRef.current) taRef.current.style.height = 'auto'
-    setAgentStatus('thinking')
-    setIsSending(true)
-
-    try {
-      const result = await apiService.sendMessage(
-        input,
-        (update) => {
-          if (update.type === 'tool_start') setAgentStatus('working')
-          setMessages(prev => {
-            const idx = prev.findIndex(m => m.id === assistantMessageId)
-            if (idx === -1) return prev
-            const entry: ToolCallEntry = {
-              id: `tool-${Date.now()}-${Math.random()}`,
-              type: update.type as 'tool_start' | 'tool_end' | 'info',
-              tool: update.tool,
-              message: update.message,
-              input: update.input,
-              output: update.output,
-            }
-            return [
-              ...prev.slice(0, idx),
-              { ...prev[idx], toolCalls: [...(prev[idx].toolCalls || []), entry] },
-              ...prev.slice(idx + 1),
-            ]
-          })
-        },
-        (text) => {
-          setAgentStatus('writing')
-          setMessages(prev => {
-            const idx = prev.findIndex(m => m.id === assistantMessageId)
-            if (idx === -1) return prev
-            return [
-              ...prev.slice(0, idx),
-              { ...prev[idx], content: prev[idx].content + text },
-              ...prev.slice(idx + 1),
-            ]
-          })
-        },
-        conversationId,
-      )
-
-      if (result.conversationId) setConversationId(result.conversationId)
-
-      setAgentStatus('idle')
-      setMessages(prev => {
-        const idx = prev.findIndex(m => m.id === assistantMessageId)
-        if (idx === -1) return prev
-        return [
-          ...prev.slice(0, idx),
-          {
-            ...prev[idx],
-            isComplete: true,
-            content: result.response,
-            tokens: result.tokens,
-            durationSec: result.durationSec,
-          },
-          ...prev.slice(idx + 1),
-        ]
-      })
-    } catch (error) {
-      setAgentStatus('idle')
-      setMessages(prev => {
-        const idx = prev.findIndex(m => m.id === assistantMessageId)
-        if (idx === -1) return prev
-        return [
-          ...prev.slice(0, idx),
-          {
-            ...prev[idx],
-            isComplete: true,
-            content: `Error: ${error}`,
-            toolCalls: [...(prev[idx].toolCalls || []), {
-              id: `error-${Date.now()}`,
-              type: 'info',
-              message: `Error: ${error}`,
-            }],
-          },
-          ...prev.slice(idx + 1),
-        ]
-      })
-    } finally {
-      setIsSending(false)
-    }
+    await sendMessage(chatId, text)
   }
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      sendMessage()
+      handleSend()
     }
   }
 
-  const canSend = isGatewayRunning && !isSending && !!input.trim()
+  const canSend = isGatewayRunning && !inFlight && !!input.trim()
 
   return (
     <div style={styles.container}>
@@ -315,15 +220,15 @@ export const ChatTab: React.FC<ChatTabProps> = ({ isGatewayRunning, messages, se
           }}
           placeholder={
             isGatewayRunning
-              ? (isSending ? 'Sending…' : 'Message Codey… (↵ to send)')
+              ? (inFlight ? 'Sending…' : 'Message Codey… (↵ to send)')
               : 'Start gateway to chat'
           }
-          disabled={!isGatewayRunning || isSending}
+          disabled={!isGatewayRunning || !!inFlight}
           rows={1}
           style={styles.input}
         />
         <button
-          onClick={sendMessage}
+          onClick={handleSend}
           disabled={!canSend}
           style={{
             ...styles.sendButton,

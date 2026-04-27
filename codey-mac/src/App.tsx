@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { ChatTab } from './components/ChatTab'
+import { ChatListPanel } from './components/ChatListPanel'
 import { StatusTab } from './components/StatusTab'
 import { SettingsTab } from './components/SettingsTab'
 import { WorkspacesTab } from './components/WorkspacesTab'
 import WorkersTab from './components/WorkersTab'
 import { useGateway } from './hooks/useGateway'
-import { ChatMessage } from './types'
+import { ChatsProvider, useChats } from './hooks/useChats'
 import { C } from './theme'
 
 type TabType = 'chat' | 'status' | 'workspaces' | 'workers' | 'settings'
@@ -38,17 +39,10 @@ const App: React.FC = () => {
     return stored && navItems.some(n => n.key === stored) ? stored : 'chat'
   })
   const { isRunning, status, logs } = useGateway()
-  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [currentWorkspace, setCurrentWorkspace] = useState<string>('')
 
   const setTab = (t: TabType) => { setActiveTab(t); localStorage.setItem('codey-tab', t) }
 
-  // Gateway is always in-process; no toggle IPC needed
-
-  // Chat stays mounted across tab switches so an in-flight request
-  // (isSending, agentStatus, IPC subscriptions, scroll position) survives
-  // when the user visits another tab and comes back. The other tabs are
-  // cheap and display-only; they remount on each activation.
   const renderNonChatTab = () => {
     switch (activeTab) {
       case 'status':     return <StatusTab status={status} logs={logs} isRunning={isRunning} />
@@ -60,80 +54,103 @@ const App: React.FC = () => {
   }
 
   return (
-    <div style={styles.root}>
-      {/* Title bar — traffic lights are rendered by macOS over this area via hiddenInset */}
-      <div style={styles.titleBar}>
-        <div style={styles.titleBarDragArea}>
-          <div style={{ width: 76 }} /> {/* space for macOS traffic lights */}
-          <div style={styles.titleCenter}>
-            <span style={styles.appName}>Codey</span>
-            {isRunning && currentWorkspace && (
-              <span style={styles.workspaceLabel}>· {currentWorkspace}</span>
+    <ChatsProvider>
+      <div style={styles.root}>
+        {/* Title bar */}
+        <div style={styles.titleBar}>
+          <div style={styles.titleBarDragArea}>
+            <div style={{ width: 76 }} />
+            <div style={styles.titleCenter}>
+              <span style={styles.appName}>Codey</span>
+              {isRunning && currentWorkspace && (
+                <span style={styles.workspaceLabel}>· {currentWorkspace}</span>
+              )}
+            </div>
+          </div>
+          <div
+            style={{
+              ...styles.statusPill,
+              borderColor: C.green + '55',
+              background: '#32D74B11',
+              color: C.green,
+              cursor: 'default',
+            }}
+          >
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green }} />
+            Running
+          </div>
+        </div>
+        {/* Body */}
+        <div style={styles.body}>
+          <div style={styles.sidebar}>
+            <div style={styles.logoMark}>
+              <span style={styles.logoText}>C</span>
+            </div>
+            <div style={styles.sidebarDivider} />
+            {navItems.map(item => {
+              const active = activeTab === item.key
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => setTab(item.key)}
+                  title={item.label}
+                  style={{
+                    ...styles.navBtn,
+                    background: active ? C.accentDim : 'transparent',
+                  }}
+                >
+                  <Icon d={icons[item.icon]} size={17} color={active ? C.accent : C.fg3} />
+                </button>
+              )
+            })}
+          </div>
+          <div style={styles.content}>
+            {activeTab === 'chat' ? (
+              <ChatView isGatewayRunning={isRunning} />
+            ) : (
+              renderNonChatTab()
             )}
           </div>
         </div>
-        <div
-          style={{
-            ...styles.statusPill,
-            borderColor: C.green + '55',
-            background: '#32D74B11',
-            color: C.green,
-            cursor: 'default',
-          }}
-        >
-          <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green }} />
-          Running
-        </div>
+        <style>{`
+          html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; color: ${C.fg}; }
+          * { box-sizing: border-box; }
+          ::-webkit-scrollbar { width: 5px; height: 5px; }
+          ::-webkit-scrollbar-track { background: transparent; }
+          ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
+          textarea, input, select, button { font-family: inherit; }
+          input, select, textarea { color: ${C.fg}; }
+          @keyframes codey-pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.8); }
+          }
+        `}</style>
       </div>
-      {/* Body */}
-      <div style={styles.body}>
-        <div style={styles.sidebar}>
-          <div style={styles.logoMark}>
-            <span style={styles.logoText}>C</span>
+    </ChatsProvider>
+  )
+}
+
+// ChatView composes the left panel (chat list) + right panel (messages)
+const ChatView: React.FC<{ isGatewayRunning: boolean }> = ({ isGatewayRunning }) => {
+  const { state } = useChats()
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  return (
+    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <ChatListPanel
+        onOpenSettings={() => setSettingsOpen(true)}
+        activeChatId={state.selectedChatId}
+      />
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {state.selectedChatId ? (
+          <ChatTab isGatewayRunning={isGatewayRunning} chatId={state.selectedChatId} />
+        ) : (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.fg3 }}>
+            Select a chat or create a new one
           </div>
-          <div style={styles.sidebarDivider} />
-          {navItems.map(item => {
-            const active = activeTab === item.key
-            return (
-              <button
-                key={item.key}
-                onClick={() => setTab(item.key)}
-                title={item.label}
-                style={{
-                  ...styles.navBtn,
-                  background: active ? C.accentDim : 'transparent',
-                }}
-              >
-                <Icon d={icons[item.icon]} size={17} color={active ? C.accent : C.fg3} />
-              </button>
-            )
-          })}
-        </div>
-        <div style={styles.content}>
-          {/* Chat is always mounted; visibility toggles. Other tabs remount. */}
-          <div style={{
-            display: activeTab === 'chat' ? 'flex' : 'none',
-            flex: 1, minHeight: 0, flexDirection: 'column', overflow: 'hidden',
-          }}>
-            <ChatTab isGatewayRunning={isRunning} messages={messages} setMessages={setMessages} />
-          </div>
-          {activeTab !== 'chat' && renderNonChatTab()}
-        </div>
+        )}
       </div>
-      <style>{`
-        html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; color: ${C.fg}; }
-        * { box-sizing: border-box; }
-        ::-webkit-scrollbar { width: 5px; height: 5px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
-        textarea, input, select, button { font-family: inherit; }
-        input, select, textarea { color: ${C.fg}; }
-        @keyframes codey-pulse {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.4; transform: scale(0.8); }
-        }
-      `}</style>
     </div>
   )
 }
