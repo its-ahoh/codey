@@ -58,23 +58,6 @@ contextBridge.exposeInMainWorld('codey', {
     get: () => ipcRenderer.invoke('agents:get'),
     set: (updates: any) => ipcRenderer.invoke('agents:set', updates),
   },
-  chats: {
-    list: (workspaceName?: string) => ipcRenderer.invoke('chats:list', workspaceName),
-    get: (id: string) => ipcRenderer.invoke('chats:get', id),
-    create: (input: { workspaceName: string; selection?: any; title?: string }) =>
-      ipcRenderer.invoke('chats:create', input),
-    rename: (id: string, title: string) => ipcRenderer.invoke('chats:rename', id, title),
-    delete: (id: string) => ipcRenderer.invoke('chats:delete', id),
-    updateSelection: (id: string, selection: any) =>
-      ipcRenderer.invoke('chats:updateSelection', id, selection),
-    send: (payload: { chatId: string; text: string }) =>
-      ipcRenderer.invoke('chats:send', payload),
-    onEvent: (handler: (ev: any) => void) => {
-      const listener = (_e: Electron.IpcRendererEvent, ev: any) => handler(ev)
-      ipcRenderer.on('chats:event', listener)
-      return () => ipcRenderer.removeListener('chats:event', listener)
-    },
-  },
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onLog: (handler: (msg: string) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, msg: string) => handler(msg)

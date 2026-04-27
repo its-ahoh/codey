@@ -1,5 +1,3 @@
-export type { ChatMessage, ToolCallEntry, Chat, ChatSelection } from '@codey/core';
-
 export interface GatewayStatus {
   status: string;
   uptime: number;
@@ -10,6 +8,28 @@ export interface GatewayStatus {
     discord: boolean;
     imessage: boolean;
   };
+}
+
+export interface ToolCallEntry {
+  id: string;
+  type: 'tool_start' | 'tool_end' | 'info';
+  tool?: string;
+  message: string;
+  input?: Record<string, unknown>;
+  output?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  toolCalls?: ToolCallEntry[];
+  isComplete?: boolean;
+  /** Total tokens for the agent response (set when the turn completes). */
+  tokens?: number;
+  /** Wall-clock seconds the agent took to produce the response. */
+  durationSec?: number;
 }
 
 export interface GatewayConfig {

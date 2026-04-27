@@ -1,7 +1,5 @@
 import * as path from 'path';
-import * as fs from 'fs';
-import { AgentRequest, AgentResponse, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChatMessage, ToolCallEntry } from '@codey/core';
-import { randomUUID } from 'crypto';
+import { AgentRequest, AgentResponse, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType } from '@codey/core';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
 import { AgentFactory } from '@codey/core';
@@ -11,8 +9,6 @@ import { MemoryStore } from '@codey/core';
 import { TaskPlanner, TaskPlan, PlanStep } from '@codey/core';
 import { WorkspaceManager } from '@codey/core';
 import { WorkerManager } from '@codey/core';
-import { ChatManager } from './chats';
-import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
 
 interface ParsedCommand {
   command: string;
@@ -38,9 +34,7 @@ export class Codey {
   private contextManager: ContextManager;
   private planner: TaskPlanner;
   private workspaceManager: WorkspaceManager;
-  private chatManager: ChatManager;
   private configManager?: ConfigManager;
-  private chatSemaphore = new RunSemaphore();
 
   // Rate limiting: userId -> last request timestamp
   private userCooldowns: Map<string, number> = new Map();
@@ -128,7 +122,6 @@ export class Codey {
     });
     const wm = workerManager || new WorkerManager('./workers');
     this.workspaceManager = new WorkspaceManager(wm, workspaceDir || './workspaces');
-    this.chatManager = new ChatManager(this.workspaceManager.getWorkspacesRoot());
     this.COOLDOWN_MS = config.rateLimitMs || 3000; // Default 3 seconds
   }
 
@@ -143,7 +136,6 @@ export class Codey {
   }
 
   getWorkspaceManager(): WorkspaceManager { return this.workspaceManager; }
-  getChatManager(): ChatManager { return this.chatManager; }
 
   getAgentFactory(): AgentFactory { return this.agentFactory; }
 
@@ -1275,42 +1267,6 @@ Example: /model gpt-4.1 write a Python script`;
     });
   }
 
-  private async runTeamForChat(
-    teamName: string,
-    members: string[],
-    prompt: string,
-    workingDir: string,
-    sink: ChatStreamSink,
-    chatId: string,
-  ): Promise<{ response: string; tokens?: number }> {
-    if (!members || members.length === 0) {
-      throw new Error(`Team not found or empty: ${teamName}`);
-    }
-    const workerManager = this.workspaceManager.getWorkerManager();
-    let carry = prompt;
-    const parts: string[] = [];
-    for (let i = 0; i < members.length; i++) {
-      const memberName = members[i];
-      sink({ type: 'info', chatId, message: `Step ${i + 1}/${members.length}: ${memberName}` });
-      const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
-      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? this.config.defaultAgent) as CodingAgent;
-      const workerModel = workerManager.getWorkerModel(memberName);
-      const modelConfig = this.getModelConfig(codingAgent, workerModel);
-      const response = await this.runWithFallback(codingAgent, {
-        prompt: stepPrompt,
-        agent: codingAgent,
-        model: modelConfig,
-        context: { workingDir },
-        onStream: (text: string) => sink({ type: 'stream', chatId, token: text }),
-        onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
-      });
-      const output = response?.success ? this.formatAgentResponse(response) : '';
-      parts.push(`### ${memberName}\n\n${output}`);
-      carry = output;
-    }
-    return { response: parts.join('\n\n---\n\n') };
-  }
-
   private formatUptime(seconds: number): string {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -1647,151 +1603,5 @@ Example: /model gpt-4.1 write a Python script`;
       tokens: response.tokens?.total,
       durationSec: response.duration,
     };
-  }
-
-  async sendToChat(
-    chatId: string,
-    userText: string,
-    sink: ChatStreamSink,
-  ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
-    const chat = this.chatManager.get(chatId);
-    if (!chat) throw new Error(`Chat not found: ${chatId}`);
-
-    // Queue if at capacity
-    if ((this.chatSemaphore as any).running >= (this.chatSemaphore as any).max) {
-      sink({ type: 'queued', chatId, position: this.chatSemaphore.queueLength + 1 });
-    }
-    await this.chatSemaphore.acquire();
-
-    const started = Date.now();
-
-    // Resolve workspace → workingDir by reading workspace.json from disk.
-    // Also pull team config so team-mode chats use the chat's workspace, not
-    // whichever workspace WorkspaceManager has loaded as the active one.
-    const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
-    const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
-    let workingDir = this.workingDir;
-    let chatWorkspaceTeams: Record<string, string[]> = {};
-    if (fs.existsSync(wsConfigPath)) {
-      try {
-        const wsConfig = JSON.parse(fs.readFileSync(wsConfigPath, 'utf-8'));
-        if (wsConfig.workingDir) workingDir = wsConfig.workingDir;
-        if (wsConfig.teams && typeof wsConfig.teams === 'object') chatWorkspaceTeams = wsConfig.teams;
-      } catch { /* use default */ }
-    } else {
-      this.chatSemaphore.release();
-      const msg = `Workspace not found: ${chat.workspaceName}`;
-      sink({ type: 'error', chatId, message: msg });
-      throw new Error(msg);
-    }
-
-    // Build the prompt from the existing chat history + the new user turn,
-    // BEFORE persisting the user message. Persisting first would cause
-    // buildChatPrompt to see the new turn in the tail AND get it appended
-    // again as `User: ${userText}`, doubling the user message in the prompt.
-    const prompt = assistantPrefixForSelection(chat) + buildChatPrompt(chat, userText);
-
-    const userMessage: ChatMessage = {
-      id: randomUUID(),
-      role: 'user',
-      content: userText,
-      timestamp: started,
-      isComplete: true,
-    };
-    this.chatManager.appendMessage(chatId, userMessage);
-
-    const agent = this.config.defaultAgent;
-    const model = this.getDefaultModelConfig(agent);
-
-    const toolCalls: ToolCallEntry[] = [];
-    let streamedText = '';
-
-    const onStream = (text: string) => {
-      streamedText += text;
-      sink({ type: 'stream', chatId, token: text });
-    };
-    const onStatus = (update: any) => {
-      try {
-        const parsed = typeof update === 'string' ? JSON.parse(update) : update;
-        const entry: ToolCallEntry = {
-          id: randomUUID(),
-          type: parsed.type ?? 'info',
-          tool: parsed.tool,
-          message: parsed.message ?? '',
-          input: parsed.input,
-          output: parsed.output,
-        };
-        toolCalls.push(entry);
-        if (entry.type === 'tool_start') {
-          sink({ type: 'tool_start', chatId, tool: entry.tool, message: entry.message, input: entry.input });
-        } else if (entry.type === 'tool_end') {
-          sink({ type: 'tool_end', chatId, tool: entry.tool, message: entry.message, output: entry.output });
-        } else {
-          sink({ type: 'info', chatId, message: entry.message });
-        }
-      } catch { /* non-JSON status */ }
-    };
-
-    try {
-      let output = '';
-      let tokens: number | undefined;
-      if (chat.selection.type === 'team') {
-        // Resolve the team from the chat's workspace.json (read above), not from
-        // the active workspace, so a chat in workspace B uses B's team config
-        // even if WorkspaceManager has loaded A. Worker prompt bodies still come
-        // from WorkerManager's loaded workers/ dir (a known limitation when the
-        // active workspace differs from the chat's).
-        const teamNames = Object.keys(chatWorkspaceTeams);
-        if (teamNames.length === 0) throw new Error(`No teams configured in workspace "${chat.workspaceName}"`);
-        const teamName = teamNames[0];
-        const members = chatWorkspaceTeams[teamName];
-        if (!members || members.length === 0) throw new Error(`Team "${teamName}" is empty`);
-        const r = await this.runTeamForChat(teamName, members, prompt, workingDir, sink, chatId);
-        output = r.response;
-        tokens = r.tokens;
-      } else {
-        const response = await this.runWithFallback(agent, {
-          prompt,
-          agent,
-          model,
-          context: { workingDir },
-          onStream,
-          onStatus,
-        });
-        output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
-        tokens = (response as any)?.tokens;
-      }
-
-      const durationSec = Math.round((Date.now() - started) / 1000);
-      const assistantMessage: ChatMessage = {
-        id: randomUUID(),
-        role: 'assistant',
-        content: output,
-        timestamp: Date.now(),
-        toolCalls,
-        isComplete: true,
-        tokens,
-        durationSec,
-      };
-      this.chatManager.appendMessage(chatId, assistantMessage);
-
-      sink({ type: 'done', chatId, response: output, tokens, durationSec });
-      return { response: output, chatId, tokens, durationSec };
-    } catch (err) {
-      const message = `Error: ${(err as Error).message}`;
-      const assistantMessage: ChatMessage = {
-        id: randomUUID(),
-        role: 'assistant',
-        content: message,
-        timestamp: Date.now(),
-        toolCalls,
-        isComplete: true,
-      };
-      this.chatManager.appendMessage(chatId, assistantMessage);
-      sink({ type: 'error', chatId, message });
-      throw err;
-    } finally {
-      this.chatSemaphore.release();
-    }
   }
 }

@@ -120,7 +120,6 @@ export class WorkspaceManager {
 
   getWorkingDir(): string { return this.config?.workingDir || process.cwd(); }
   getCurrentWorkspace(): string { return this.currentWorkspace; }
-  getWorkspacesRoot(): string { return this.workspacesDir; }
   getWorkerManager(): WorkerManager { return this.workerManager; }
   getMemoryStore(): MemoryStore { return this.memoryStore; }
 

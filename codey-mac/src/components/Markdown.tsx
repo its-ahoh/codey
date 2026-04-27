@@ -126,7 +126,7 @@ export const Markdown: React.FC<MarkdownProps> = ({ children, variant = 'assista
             }
             const lang = /language-(\w+)/.exec(className || '')?.[1]
             return (
-              <div
+              <pre
                 style={{
                   background: codeBlockBg,
                   border: `1px solid ${codeBlockBorder}`,
@@ -157,7 +157,7 @@ export const Markdown: React.FC<MarkdownProps> = ({ children, variant = 'assista
                   </div>
                 )}
                 <code style={{ fontFamily: MONO }}>{content}</code>
-              </div>
+              </pre>
             )
           },
         }}
