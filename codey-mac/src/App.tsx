@@ -1,23 +1,38 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { ChatTab } from './components/ChatTab'
 import { ChatListPanel } from './components/ChatListPanel'
 import { SettingsOverlay } from './components/SettingsOverlay'
-import { useGateway } from './hooks/useGateway'
 import { ChatsProvider, useChats } from './hooks/useChats'
+import { useGateway } from './hooks/useGateway'
 import { C } from './theme'
-
-const App: React.FC = () => (
-  <ChatsProvider>
-    <Shell />
-  </ChatsProvider>
-)
 
 const Shell: React.FC = () => {
   const { isRunning } = useGateway()
-  const { state } = useChats()
+  const { state, createChat, selectChat, refreshWorkspaces } = useChats()
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   const activeChat = state.selectedChatId ? state.chats[state.selectedChatId] : null
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const isMeta = e.metaKey || e.ctrlKey
+      if (!isMeta) return
+      if (e.key === 'n') {
+        e.preventDefault()
+        const ws = localStorage.getItem('codey.lastWorkspace') ?? state.workspaces[0]
+        if (ws) createChat(ws)
+      } else if (e.key === ',') {
+        e.preventDefault()
+        setSettingsOpen(true)
+      } else if (/^[1-9]$/.test(e.key)) {
+        const idx = parseInt(e.key, 10) - 1
+        const id = state.order[idx]
+        if (id) { e.preventDefault(); selectChat(id) }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [state.order, state.workspaces, createChat, selectChat])
 
   return (
     <div style={styles.root}>
@@ -64,7 +79,7 @@ const Shell: React.FC = () => {
             </div>
           )}
         </div>
-        {settingsOpen && <SettingsOverlay onClose={() => setSettingsOpen(false)} />}
+        {settingsOpen && <SettingsOverlay onClose={() => { setSettingsOpen(false); refreshWorkspaces() }} />}
       </div>
       <style>{`
         html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }
@@ -83,6 +98,12 @@ const Shell: React.FC = () => {
     </div>
   )
 }
+
+const App: React.FC = () => (
+  <ChatsProvider>
+    <Shell />
+  </ChatsProvider>
+)
 
 const styles: Record<string, React.CSSProperties> = {
   root: { display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, color: C.fg },

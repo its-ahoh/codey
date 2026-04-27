@@ -447,6 +447,8 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       const sink = (ev: any) => {
+        // Mirror each event to the renderer as a single `chats:event` channel
+        // so the frontend can route by chatId without sniffing event names.
         sendToRenderer('chats:event', ev)
       }
       return inProcessGateway.sendToChat(payload.chatId, payload.text, sink)
