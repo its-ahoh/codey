@@ -223,14 +223,15 @@ export class Codey {
   }
 
   /**
-   * Decide how to call the agent for this turn. Returns the prompt to send
-   * plus session flags. Resume mode: same agent already has a warm session
-   * for this conversation → skip history, attach `--resume`. Bootstrap mode:
-   * cold start (or agent changed) → build full-history prompt, pin a fresh
-   * UUID via `--session-id` so we can resume next turn.
+   * Decide how to call the agent for this turn. Resume mode: the same agent
+   * already has a warm CLI session for this conversation → send only the
+   * current prompt, attach the agent's resume flag. Bootstrap mode: cold
+   * start, agent change, or no warm anchor → build a full-history prompt.
    *
-   * Currently only `claude-code` participates in resume; codex/opencode
-   * always bootstrap until their adapters support session ids.
+   * claude-code lets us pre-allocate a UUID and pin it via `--session-id`,
+   * so we know the id before the run. codex and opencode generate the id
+   * themselves; the adapters surface it via `response.sessionId` and the
+   * gateway records it in `commitSessionAnchor` post-run.
    */
   private prepareAgentTurn(
     ctxWindow: ContextWindow,
@@ -238,40 +239,54 @@ export class Codey {
     rawPrompt: string,
     memoryContext: string | undefined,
   ): { prompt: string; resumeSessionId?: string; newSessionId?: string } {
-    if (agent === 'claude-code') {
-      const anchor = ctxWindow.sessionAnchor;
-      if (anchor && anchor.agent === 'claude-code') {
-        return { prompt: rawPrompt, resumeSessionId: anchor.sessionId };
-      }
-      return {
-        prompt: this.contextManager.buildPrompt(ctxWindow.id, rawPrompt, memoryContext),
-        newSessionId: randomUUID(),
-      };
+    const anchor = ctxWindow.sessionAnchor;
+    if (anchor && anchor.agent === agent) {
+      return { prompt: rawPrompt, resumeSessionId: anchor.sessionId };
     }
-    return {
+    const bootstrap: { prompt: string; newSessionId?: string } = {
       prompt: this.contextManager.buildPrompt(ctxWindow.id, rawPrompt, memoryContext),
     };
+    if (agent === 'claude-code') {
+      // claude-code accepts a pre-allocated UUID via `--session-id`.
+      bootstrap.newSessionId = randomUUID();
+    }
+    return bootstrap;
   }
 
   /**
    * After a turn completes, persist or invalidate the session anchor.
-   * Successful claude-code bootstrap → store the new id. Successful run
-   * by a different agent → invalidate any stale claude anchor so a later
-   * claude turn rebootstraps with the cross-agent history.
+   *
+   * - claude-code success → store the pre-allocated `newSessionId`.
+   * - codex / opencode success → store the id the CLI emitted on the run
+   *   (returned via `response.sessionId`).
+   * - Resume run that succeeded → leave the existing anchor alone.
+   * - Run by a different agent than the current anchor → drop the anchor so
+   *   the next turn for the previous agent re-bootstraps with the
+   *   cross-agent history.
    */
   private async commitSessionAnchor(
     ctxWindow: ContextWindow,
     agent: CodingAgent,
+    response: AgentResponse,
     newSessionId: string | undefined,
-    success: boolean,
+    resumed: boolean,
   ): Promise<void> {
-    if (!success) return;
-    if (agent === 'claude-code' && newSessionId) {
+    if (!response.success) return;
+
+    if (resumed) {
+      // Anchor already correct — nothing to do.
+      return;
+    }
+
+    const anchorId = newSessionId ?? response.sessionId;
+    if (anchorId) {
       await this.contextManager.setSessionAnchor(ctxWindow.id, {
-        agent: 'claude-code',
-        sessionId: newSessionId,
+        agent,
+        sessionId: anchorId,
       });
-    } else if (agent !== 'claude-code' && ctxWindow.sessionAnchor) {
+    } else if (ctxWindow.sessionAnchor && ctxWindow.sessionAnchor.agent !== agent) {
+      // Different agent ran successfully but didn't surface a session id —
+      // invalidate the stale anchor so a later turn re-bootstraps.
       await this.contextManager.clearSessionAnchor(ctxWindow.id);
     }
   }
@@ -496,18 +511,20 @@ export class Codey {
       newSessionId: p.newSessionId,
     });
 
+    const initialResume = prep.resumeSessionId;
     let response = await this.runWithFallback(agent, buildRequest(prep));
 
     // Resume failed (CLI may have GC'd the session) — drop the anchor and
     // retry once with a full-history bootstrap so we recover transparently.
     if (!response.success && prep.resumeSessionId) {
-      this.logger.warn(`[claude-code] Resume of ${prep.resumeSessionId} failed; retrying with bootstrap`);
+      this.logger.warn(`[${agent}] Resume of ${prep.resumeSessionId} failed; retrying with bootstrap`);
       await this.contextManager.clearSessionAnchor(ctxWindow.id);
       prep = this.prepareAgentTurn(ctxWindow, agent, parsed.prompt, memoryContext);
       response = await this.runWithFallback(agent, buildRequest(prep));
     }
 
-    await this.commitSessionAnchor(ctxWindow, agent, prep.newSessionId, response.success);
+    const resumed = !!initialResume && !!prep.resumeSessionId;
+    await this.commitSessionAnchor(ctxWindow, agent, response, prep.newSessionId, resumed);
 
     // Save to structured context
     await this.contextManager.addUserTurn(ctxWindow.id, parsed.prompt);
@@ -1697,16 +1714,18 @@ Example: /model gpt-4.1 write a Python script`;
       newSessionId: p.newSessionId,
     });
 
+    const initialResume = prep.resumeSessionId;
     let response = await this.runWithFallback(agent, buildHttpRequest(prep));
 
     if (!response.success && prep.resumeSessionId) {
-      this.logger.warn(`[claude-code] Resume of ${prep.resumeSessionId} failed; retrying with bootstrap`);
+      this.logger.warn(`[${agent}] Resume of ${prep.resumeSessionId} failed; retrying with bootstrap`);
       await this.contextManager.clearSessionAnchor(ctxWindow.id);
       prep = this.prepareAgentTurn(ctxWindow, agent, prompt, memoryContext);
       response = await this.runWithFallback(agent, buildHttpRequest(prep));
     }
 
-    await this.commitSessionAnchor(ctxWindow, agent, prep.newSessionId, response.success);
+    const resumed = !!initialResume && !!prep.resumeSessionId;
+    await this.commitSessionAnchor(ctxWindow, agent, response, prep.newSessionId, resumed);
 
     // Store turn in context
     await this.contextManager.addUserTurn(ctxWindow.id, prompt);
