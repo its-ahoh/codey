@@ -19,7 +19,8 @@ const SendIcon: React.FC<{ color: string }> = ({ color }) => (
 const fmtTime = (ts: number) =>
   new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 
-const formatTokens = (n: number): string => {
+const formatTokens = (n: number): string | null => {
+  if (!Number.isFinite(n) || n < 0) return null
   if (n < 1000) return String(n)
   if (n < 10_000) return `${(n / 1000).toFixed(1)}k`
   return `${Math.round(n / 1000)}k`
@@ -180,13 +181,18 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
               </div>
               <div style={styles.tsLabel}>
                 <span>{fmtTime(msg.timestamp)}</span>
-                {(msg.tokens != null || msg.durationSec != null) && (
-                  <span style={styles.tsMeta}>
-                    {msg.tokens != null && `${formatTokens(msg.tokens)} tok`}
-                    {msg.tokens != null && msg.durationSec != null && ' · '}
-                    {msg.durationSec != null && `${msg.durationSec}s`}
-                  </span>
-                )}
+                {(() => {
+                  const tokStr = msg.tokens != null ? formatTokens(msg.tokens) : null
+                  const durStr = msg.durationSec != null && Number.isFinite(msg.durationSec) ? `${msg.durationSec}s` : null
+                  if (!tokStr && !durStr) return null
+                  return (
+                    <span style={styles.tsMeta}>
+                      {tokStr && `${tokStr} tok`}
+                      {tokStr && durStr && ' · '}
+                      {durStr}
+                    </span>
+                  )
+                })()}
               </div>
             </div>
           )

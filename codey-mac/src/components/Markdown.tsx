@@ -105,26 +105,10 @@ export const Markdown: React.FC<MarkdownProps> = ({ children, variant = 'assista
               {children}
             </td>
           ),
-          code: ({ inline, className, children, ...props }: any) => {
-            const content = String(children ?? '').replace(/\n$/, '')
-            if (inline) {
-              return (
-                <code
-                  {...props}
-                  style={{
-                    background: inlineCodeBg,
-                    color: inlineCodeFg,
-                    padding: '1px 6px',
-                    borderRadius: 4,
-                    fontSize: 12,
-                    fontFamily: MONO,
-                  }}
-                >
-                  {content}
-                </code>
-              )
-            }
-            const lang = /language-(\w+)/.exec(className || '')?.[1]
+          pre: ({ children }: any) => {
+            const child: any = React.Children.toArray(children)[0]
+            const className: string = child?.props?.className ?? ''
+            const lang = /language-(\w+)/.exec(className)?.[1]
             return (
               <div
                 style={{
@@ -156,8 +140,29 @@ export const Markdown: React.FC<MarkdownProps> = ({ children, variant = 'assista
                     {lang}
                   </div>
                 )}
-                <code style={{ fontFamily: MONO }}>{content}</code>
+                {children}
               </div>
+            )
+          },
+          code: ({ className, children, ...props }: any) => {
+            const isBlock = /language-/.test(className || '')
+            if (isBlock) {
+              return <code className={className} style={{ fontFamily: MONO }}>{children}</code>
+            }
+            return (
+              <code
+                {...props}
+                style={{
+                  background: inlineCodeBg,
+                  color: inlineCodeFg,
+                  padding: '1px 6px',
+                  borderRadius: 4,
+                  fontSize: 12,
+                  fontFamily: MONO,
+                }}
+              >
+                {children}
+              </code>
             )
           },
         }}

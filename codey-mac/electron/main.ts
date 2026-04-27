@@ -146,11 +146,21 @@ async function bootInProcessCore() {
     await workspaceManager.switchWorkspace(workspaceManager.getCurrentWorkspace())
     const runtimeCfg = buildRuntimeConfig(coreConfigManager.get())
     inProcessGateway = new Codey(runtimeCfg, undefined, join(root, 'workspaces'), coreConfigManager, workerManager)
-    // Apply config changes to the running gateway when the renderer edits them
+    // Apply config changes to the running gateway when the renderer edits them.
+    // applyConfig is async so a missing await would swallow channel-start errors.
     coreConfigManager.on('change', (updated: any) => {
-      inProcessGateway?.applyConfig(buildRuntimeConfig(updated))
+      inProcessGateway?.applyConfig(buildRuntimeConfig(updated)).catch((err: any) => {
+        sendToRenderer('gateway-log', `[core] applyConfig failed: ${err?.message ?? err}`)
+      })
     })
     sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length}, agent: ${runtimeCfg.defaultAgent})`)
+    // Boot the gateway in the background so configured channels (telegram,
+    // discord, imessage) connect. Done after returning so IPC handler
+    // registration in app.whenReady() isn't blocked by network I/O
+    // (e.g. Telegram setMyCommands hanging).
+    void inProcessGateway.start().catch((err: any) => {
+      sendToRenderer('gateway-log', `[core] gateway.start failed: ${err?.message ?? err}`)
+    })
   } catch (err: any) {
     sendToRenderer('gateway-log', `[core] Boot failed: ${err?.message ?? err}`)
   }
@@ -199,6 +209,11 @@ app.whenReady().then(async () => {
   createWindow()
   createTray()
   await bootInProcessCore()
+
+  // ── Gateway status IPC ────────────────────────────────────────────
+  ipcMain.handle('gateway:status', async () =>
+    wrap(async () => inProcessGateway?.getHealthStatus() ?? null)
+  )
 
   // ── Workers IPC ──────────────────────────────────────────────────
   ipcMain.handle('workers:list', async () =>

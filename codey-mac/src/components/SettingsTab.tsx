@@ -16,6 +16,11 @@ interface ModelEntry {
 }
 interface AgentSlot { enabled?: boolean; defaultModel?: string }
 interface FallbackCfg { enabled: boolean; order: string[] }
+interface ChannelsCfg {
+  telegram?: { enabled: boolean; botToken: string; notifyChatId?: string }
+  discord?:  { enabled: boolean; botToken: string }
+  imessage?: { enabled: boolean }
+}
 
 const AGENT_NAMES = ['claude-code', 'opencode', 'codex'] as const
 
@@ -64,6 +69,68 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on,
     }}/>
   </div>
 )
+
+// ── Channel editor row ──────────────────────────────────────────────
+
+interface ChannelField {
+  label: string
+  value: string
+  secret?: boolean
+  onChange: (next: string) => void
+}
+
+const ChannelEditor: React.FC<{
+  label: string
+  enabled: boolean
+  onToggle: (enabled: boolean) => Promise<void> | void
+  fields: ChannelField[]
+  note?: string
+}> = ({ label, enabled, onToggle, fields, note }) => {
+  const [open, setOpen] = useState(false)
+  // Local buffers so typing isn't blocked by per-keystroke IPC writes.
+  // Commit on blur instead.
+  const [drafts, setDrafts] = useState<string[]>(fields.map(f => f.value))
+  useEffect(() => { setDrafts(fields.map(f => f.value)) }, [fields.map(f => f.value).join('|')])
+
+  return (
+    <div style={{
+      background: C.surface2, border: `1px solid ${C.border}`,
+      borderRadius: 8, marginBottom: 8, overflow: 'hidden',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '10px 14px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ color: C.fg, fontSize: 13 }}>{label}</span>
+          {(fields.length > 0 || note) && (
+            <button onClick={() => setOpen(o => !o)} style={{ ...pillButton('ghost'), padding: '2px 8px', fontSize: 11 }}>
+              {open ? 'Hide' : 'Configure'}
+            </button>
+          )}
+        </div>
+        <Toggle on={enabled} onChange={v => { void onToggle(v) }}/>
+      </div>
+      {open && (
+        <div style={{ padding: '0 14px 12px', borderTop: `1px solid ${C.border}` }}>
+          {note && <div style={{ color: C.fg3, fontSize: 11, padding: '10px 0' }}>{note}</div>}
+          {fields.map((f, i) => (
+            <div key={f.label} style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 8, alignItems: 'center', marginTop: 10 }}>
+              <label style={{ color: C.fg3, fontSize: 12 }}>{f.label}</label>
+              <input
+                type={f.secret ? 'password' : 'text'}
+                value={drafts[i] ?? ''}
+                onChange={e => setDrafts(d => { const n = d.slice(); n[i] = e.target.value; return n })}
+                onBlur={() => { if (drafts[i] !== f.value) f.onChange(drafts[i] ?? '') }}
+                style={{ ...inputStyle, width: '100%' }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Model row (view + edit) ─────────────────────────────────────────
 
@@ -186,18 +253,21 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const [models, setModels] = useState<ModelEntry[]>([])
   const [agents, setAgents] = useState<Record<string, AgentSlot>>({})
   const [fallback, setFallback] = useState<FallbackCfg>({ enabled: true, order: [] })
+  const [channels, setChannels] = useState<ChannelsCfg>({})
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     setError(null)
     try {
-      const [m, a, f] = await Promise.all([
+      const [m, a, f, cfg] = await Promise.all([
         unwrap(await window.codey.models.list()),
         unwrap(await window.codey.agents.get()),
         unwrap(await window.codey.fallback.get()),
+        unwrap(await window.codey.config.get()),
       ])
       setModels(m); setAgents(a as any); setFallback(f as FallbackCfg)
+      setChannels((cfg as any)?.channels ?? {})
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
@@ -238,6 +308,30 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
     await unwrap(await window.codey.fallback.set(fb))
   }
 
+  // ConfigManager.update() does Object.assign on channels, so we must send
+  // the full per-channel object (e.g. { telegram: { enabled, botToken, ... } })
+  // rather than a partial — otherwise omitted fields would be wiped.
+  const persistChannels = async (next: ChannelsCfg, patchKey: keyof ChannelsCfg) => {
+    setChannels(next)
+    const patch: any = { [patchKey]: next[patchKey] }
+    await unwrap(await window.codey.config.set({ channels: patch }))
+  }
+  const setTelegram = (patch: Partial<NonNullable<ChannelsCfg['telegram']>>) => {
+    const cur = channels.telegram ?? { enabled: false, botToken: '' }
+    const next = { ...channels, telegram: { ...cur, ...patch } }
+    return persistChannels(next, 'telegram')
+  }
+  const setDiscord = (patch: Partial<NonNullable<ChannelsCfg['discord']>>) => {
+    const cur = channels.discord ?? { enabled: false, botToken: '' }
+    const next = { ...channels, discord: { ...cur, ...patch } }
+    return persistChannels(next, 'discord')
+  }
+  const setIMessage = (patch: Partial<NonNullable<ChannelsCfg['imessage']>>) => {
+    const cur = channels.imessage ?? { enabled: false }
+    const next = { ...channels, imessage: { ...cur, ...patch } }
+    return persistChannels(next, 'imessage')
+  }
+
   const enabledAgents = AGENT_NAMES.filter(a => agents[a]?.enabled !== false)
   // Ensure fallback.order is coherent with enabled agents
   const liveOrder = fallback.order.length
@@ -248,6 +342,35 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   return (
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
       {error && <div style={{ background: '#FF453A22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
+
+      <Section title="Channels"/>
+      <ChannelEditor
+        label="Telegram"
+        enabled={!!channels.telegram?.enabled}
+        onToggle={enabled => setTelegram({ enabled })}
+        fields={[
+          { label: 'Bot Token', value: channels.telegram?.botToken ?? '', secret: true,
+            onChange: v => setTelegram({ botToken: v }) },
+          { label: 'Notify Chat ID', value: channels.telegram?.notifyChatId ?? '',
+            onChange: v => setTelegram({ notifyChatId: v || undefined }) },
+        ]}
+      />
+      <ChannelEditor
+        label="Discord"
+        enabled={!!channels.discord?.enabled}
+        onToggle={enabled => setDiscord({ enabled })}
+        fields={[
+          { label: 'Bot Token', value: channels.discord?.botToken ?? '', secret: true,
+            onChange: v => setDiscord({ botToken: v }) },
+        ]}
+      />
+      <ChannelEditor
+        label="iMessage"
+        enabled={!!channels.imessage?.enabled}
+        onToggle={enabled => setIMessage({ enabled })}
+        fields={[]}
+        note="Requires macOS Messages.app and Full Disk Access for the Codey app."
+      />
 
       <Section title="Models" right={
         <button onClick={() => setCreating(true)} style={pillButton('primary')} disabled={creating}>+ Add</button>
