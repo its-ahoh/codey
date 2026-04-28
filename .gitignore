@@ -20,3 +20,6 @@ codey-mac/release/
 
 # Intermediate iconset (icon.icns is committed)
 codey-mac/build/icon.iconset/
+
+# Private local docs (plans/specs)
+docs/
