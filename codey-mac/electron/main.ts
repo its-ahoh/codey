@@ -58,16 +58,11 @@ function sendToRenderer(channel: string, ...args: any[]) {
 }
 
 function createTray() {
-  // Create a simple 16x16 icon programmatically (green square)
-  const size = 16
-  const iconBuffer = Buffer.alloc(size * size * 4) // RGBA
-  for (let i = 0; i < size * size; i++) {
-    iconBuffer[i * 4] = 76     // R (green)
-    iconBuffer[i * 4 + 1] = 175 // G
-    iconBuffer[i * 4 + 2] = 80  // B
-    iconBuffer[i * 4 + 3] = 255 // A
-  }
-  const icon = nativeImage.createFromBuffer(iconBuffer, { width: size, height: size })
+  const trayIconPath = app.isPackaged
+    ? join(process.resourcesPath, 'trayIconTemplate.png')
+    : join(__dirname, '..', 'build', 'trayIconTemplate.png')
+  const icon = nativeImage.createFromPath(trayIconPath)
+  icon.setTemplateImage(true)
   tray = new Tray(icon)
 
   const contextMenu = Menu.buildFromTemplate([
