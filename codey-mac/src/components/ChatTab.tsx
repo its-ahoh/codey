@@ -4,6 +4,7 @@ import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { Markdown } from './Markdown'
+import { formatHeadline, hasDetail as toolHasDetail, ToolDetail, normalizeTool } from './toolFormat'
 
 interface Props {
   chatId: string
@@ -135,48 +136,76 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 boxShadow: isUser ? 'none' : '0 1px 3px rgba(0,0,0,0.3)',
                 border: isUser ? 'none' : `1px solid ${C.border2}`,
               }}>
-                {msg.toolCalls && msg.toolCalls.length > 0 && (
-                  <>
-                    <div style={styles.toolCallsContainer}>
-                      {msg.toolCalls.map(tc => {
-                        const isExpanded = expandedIds.has(tc.id)
-                        const hasDetail = tc.type === 'tool_start' && !!tc.input
-                        const toggle = () => setExpandedIds(prev => {
-                          const next = new Set(prev)
-                          next.has(tc.id) ? next.delete(tc.id) : next.add(tc.id)
-                          return next
-                        })
-                        return (
-                          <div key={tc.id}>
-                            <div
-                              style={{
-                                ...styles.toolCallRow,
-                                ...(tc.type === 'tool_end' ? styles.toolCallEnd : {}),
-                                ...(tc.type === 'info' ? styles.toolCallInfo : {}),
-                                cursor: hasDetail ? 'pointer' : 'default',
-                              }}
-                              onClick={hasDetail ? toggle : undefined}
-                            >
-                              {tc.type === 'tool_end' && '✓ '}
-                              {tc.type === 'info' && '• '}
-                              {hasDetail && (
-                                <span style={{ ...styles.chevron, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
-                              )}
-                              <span style={{ marginLeft: 2 }}>{tc.message}</span>
-                            </div>
-                            {hasDetail && isExpanded && (
-                              <div style={styles.toolDetail}>
-                                {tc.input && (<><div style={styles.detailLabel}>Input:</div><pre style={styles.detailPre}>{JSON.stringify(tc.input, null, 2)}</pre></>)}
-                                {tc.output && (<><div style={styles.detailLabel}>Output:</div><pre style={styles.detailPre}>{tc.output}</pre></>)}
+                {msg.toolCalls && msg.toolCalls.length > 0 && (() => {
+                  type Row =
+                    | { kind: 'call'; id: string; tool?: string; input?: Record<string, unknown>; output?: string; done: boolean }
+                    | { kind: 'info'; id: string; message: string }
+                  const rows: Row[] = []
+                  const pendingByTool = new Map<string, number>()
+                  for (const tc of msg.toolCalls) {
+                    if (tc.type === 'info') { rows.push({ kind: 'info', id: tc.id, message: tc.message }); continue }
+                    const key = normalizeTool(tc.tool)
+                    if (tc.type === 'tool_start') {
+                      const idx = rows.push({ kind: 'call', id: tc.id, tool: tc.tool, input: tc.input, done: false }) - 1
+                      pendingByTool.set(key, idx)
+                    } else {
+                      const idx = pendingByTool.get(key)
+                      if (idx != null) {
+                        const row = rows[idx] as Extract<Row, { kind: 'call' }>
+                        row.done = true
+                        if (tc.output) row.output = tc.output
+                        pendingByTool.delete(key)
+                      } else {
+                        rows.push({ kind: 'call', id: tc.id, tool: tc.tool, output: tc.output, done: true })
+                      }
+                    }
+                  }
+                  return (
+                    <>
+                      <div style={styles.toolCallsContainer}>
+                        {rows.map(row => {
+                          if (row.kind === 'info') {
+                            return (
+                              <div key={row.id} style={{ ...styles.toolCallRow, ...styles.toolCallInfo }}>
+                                <span>• {row.message}</span>
                               </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                    {msg.content && <div style={styles.toolCallSep} />}
-                  </>
-                )}
+                            )
+                          }
+                          const isExpanded = expandedIds.has(row.id)
+                          const detail = toolHasDetail(row.tool, row.input, row.output)
+                          const toggle = () => setExpandedIds(prev => {
+                            const next = new Set(prev)
+                            next.has(row.id) ? next.delete(row.id) : next.add(row.id)
+                            return next
+                          })
+                          const headline = formatHeadline(row.tool, row.input)
+                          const marker = row.done ? '✓' : '⋯'
+                          const markerColor = row.done ? '#5c5' : '#6ab0f3'
+                          return (
+                            <div key={row.id}>
+                              <div
+                                style={{ ...styles.toolCallRow, cursor: detail ? 'pointer' : 'default' }}
+                                onClick={detail ? toggle : undefined}
+                              >
+                                <span style={{ width: 14, color: markerColor, flexShrink: 0 }}>{marker}</span>
+                                {detail && (
+                                  <span style={{ ...styles.chevron, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+                                )}
+                                <span style={{ marginLeft: 2, color: row.done ? '#9bbcd9' : '#6ab0f3' }}>{headline}</span>
+                              </div>
+                              {detail && isExpanded && (
+                                <div style={styles.toolDetail}>
+                                  <ToolDetail rawTool={row.tool} input={row.input} output={row.output} />
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {msg.content && <div style={styles.toolCallSep} />}
+                    </>
+                  )
+                })()}
                 {msg.content && <Markdown variant={isUser ? 'user' : 'assistant'}>{msg.content}</Markdown>}
               </div>
               <div style={styles.tsLabel}>
@@ -273,12 +302,9 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#6ab0f3', fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     padding: '2px 0', userSelect: 'text',
   },
-  toolCallEnd: { color: '#5c5' },
   toolCallInfo: { color: '#888', fontStyle: 'italic' },
   toolCallSep: { borderTop: `1px solid ${C.border2}`, marginBottom: 6, marginTop: 4 },
-  chevron: { display: 'inline-block', fontSize: 10, marginRight: 4, transition: 'transform 0.15s ease', color: '#555' },
+  chevron: { display: 'inline-block', fontSize: 13, marginRight: 4, transition: 'transform 0.15s ease', color: '#555' },
   toolDetail: { marginLeft: 20, marginTop: 4, marginBottom: 6, padding: 8, background: 'rgba(0,0,0,0.3)', borderRadius: 6, border: `1px solid ${C.border}` },
-  detailLabel: { fontSize: 11, color: '#666', fontFamily: 'Menlo, Monaco, "Courier New", monospace', marginBottom: 4, textTransform: 'uppercase' },
-  detailPre: { margin: 0, fontSize: 11, color: '#ccc', fontFamily: 'Menlo, Monaco, "Courier New", monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
   orphanBanner: { padding: '8px 12px', background: '#ff950033', color: '#ffb84d', fontSize: 12, borderTop: `1px solid ${C.border}` },
 }
