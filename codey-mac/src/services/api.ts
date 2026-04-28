@@ -61,6 +61,24 @@ export const apiService = {
   switchWorkspace: async (name: string): Promise<void> =>
     unwrap(await window.codey.workspaces.switch(name)),
 
+  getWorkspaceInfo: async (name: string): Promise<{ workingDir: string; teams: Record<string, string[]> }> =>
+    unwrap(await window.codey.workspaces.info(name)),
+
+  getWorkspaceMemory: async (name: string): Promise<string> =>
+    unwrap(await window.codey.workspaces.getMemory(name)),
+
+  setWorkspaceMemory: async (name: string, content: string): Promise<void> =>
+    unwrap(await window.codey.workspaces.setMemory(name, content)),
+
+  createWorkspaceFromDir: async (dir: string): Promise<string> =>
+    unwrap(await window.codey.workspaces.create(dir)),
+
+  deleteWorkspace: async (name: string): Promise<void> =>
+    unwrap(await window.codey.workspaces.delete(name)),
+
+  pickDirectory: async (): Promise<string | null> =>
+    unwrap(await window.codey.dialog.pickDirectory()),
+
   // Teams
   getTeams: async (_workspace?: string): Promise<Record<string, string[]>> =>
     unwrap(await window.codey.teams.get()),

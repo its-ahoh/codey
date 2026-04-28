@@ -10,7 +10,7 @@ export interface WorkspaceJson {
 
 export class WorkspaceManager {
   private workspacesDir: string;
-  private currentWorkspace: string = 'default';
+  private currentWorkspace: string = '';
   private config: WorkspaceJson | null = null;
   private workerManager: WorkerManager;
   private memoryStore: MemoryStore;
@@ -35,6 +35,12 @@ export class WorkspaceManager {
   }
 
   async load(): Promise<void> {
+    if (!this.currentWorkspace) {
+      // No workspace selected yet — don't materialize files at the workspaces
+      // root, or "memory"/"logs" will appear as phantom workspaces on the next
+      // listWorkspaces() call.
+      return;
+    }
     const configPath = this.getConfigPath();
     const workspacePath = this.getWorkspacePath();
 
@@ -75,8 +81,9 @@ export class WorkspaceManager {
   }
 
   async switchWorkspace(workspaceId: string): Promise<boolean> {
+    if (!workspaceId || !workspaceId.trim()) return false;
     const workspacePath = path.join(this.workspacesDir, workspaceId);
-    if (!fs.existsSync(workspacePath)) return false;
+    if (!fs.existsSync(workspacePath) || !fs.statSync(workspacePath).isDirectory()) return false;
     this.currentWorkspace = workspaceId;
     await this.load();
     return true;
@@ -129,11 +136,44 @@ export class WorkspaceManager {
     return fs.existsSync(memoryPath) ? fs.readFileSync(memoryPath, 'utf-8') : '';
   }
 
+  async deleteWorkspace(name: string): Promise<void> {
+    if (name === 'default') {
+      throw new Error('The "default" workspace is protected and cannot be deleted.');
+    }
+    const target = path.join(this.workspacesDir, name);
+    if (!fs.existsSync(target)) {
+      throw new Error(`Workspace "${name}" does not exist`);
+    }
+    const resolved = path.resolve(target);
+    const root = path.resolve(this.workspacesDir);
+    if (!resolved.startsWith(root + path.sep)) {
+      throw new Error(`Refusing to delete workspace outside of workspaces root`);
+    }
+    const wasActive = name === this.currentWorkspace;
+    await fs.promises.rm(resolved, { recursive: true, force: true });
+    console.log(`[Workspace] Deleted workspace: ${name}`);
+
+    if (wasActive) {
+      this.currentWorkspace = '';
+      this.config = null;
+      this.teams.clear();
+      const remaining = this.listWorkspaces();
+      if (remaining.length > 0) {
+        await this.switchWorkspace(remaining[0]);
+      }
+    }
+  }
+
   listWorkspaces(): string[] {
-    if (!fs.existsSync(this.workspacesDir)) return ['default'];
-    return fs.readdirSync(this.workspacesDir).filter(d =>
-      fs.statSync(path.join(this.workspacesDir, d)).isDirectory()
-    );
+    if (!fs.existsSync(this.workspacesDir)) return [];
+    return fs.readdirSync(this.workspacesDir).filter(d => {
+      const dir = path.join(this.workspacesDir, d);
+      if (!fs.statSync(dir).isDirectory()) return false;
+      // Only directories with a workspace.json count as workspaces; this
+      // filters out stray dirs (logs/, memory/) that may have leaked into
+      // the workspaces root.
+      return fs.existsSync(path.join(dir, 'workspace.json'));
+    });
   }
 
   getTeam(name: string): string[] | undefined {
