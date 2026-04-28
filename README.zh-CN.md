@@ -6,13 +6,23 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-一个本地网关，将聊天平台（Telegram、Discord、iMessage）的提示路由到编码代理，支持多工作区和工作者团队。
+一个本地网关，将聊天平台（Telegram、Discord、iMessage）的提示路由到编码代理，支持多工作区和工作者团队。附带原生 macOS 菜单栏应用，可在本地管理对话、工作区与代理。
+
+## 下载
+
+从 [Releases 页面](https://github.com/its-ahoh/codey/releases/latest) 获取最新的 macOS 应用：
+
+- Apple Silicon：`Codey-<version>-arm64.dmg`
+- Intel：`Codey-<version>.dmg`
+
+当前发布版本未签名 — 首次启动时请右键点击应用 → **打开** → 确认以绕过 Gatekeeper。
 
 ## 功能特性
 
+- **macOS 菜单栏应用**：多对话标签、工作区切换器、内嵌设置面板
 - **多渠道支持**：Telegram、Discord、iMessage
-- **多种编码代理**：Claude Code、OpenCode、Codex
-- **多工作区**：每个工作区拥有独立的工作者
+- **多种编码代理**：Claude Code、OpenCode、Codex（支持会话恢复)
+- **多工作区**：每个工作区拥有独立的工作目录、记忆与工作者
 - **工作者团队**：定义具有角色、个性和关系的工作者
 - **并行执行**：同时运行多个代理或工作者
 - **对话上下文**：在会话中记忆之前的消息
@@ -20,9 +30,14 @@
 
 ## 快速开始
 
+这是一个 monorepo，包含三个工作区：`@codey/core`、`@codey/gateway` 和 `codey-mac`。
+
 ```bash
-# 安装依赖
+# 安装依赖（所有工作区）
 npm install
+
+# 构建全部
+npm run build
 
 # 复制配置模板
 cp gateway.json.example gateway.json
@@ -32,6 +47,13 @@ npm run configure
 
 # 启动网关
 npm start
+```
+
+在开发模式下运行 macOS 应用：
+
+```bash
+npm run dev -w codey-mac        # 带热更新的开发模式
+npm run build:mac -w codey-mac  # 在 codey-mac/release/ 生成 DMG
 ```
 
 ## 配置
@@ -198,30 +220,38 @@ file-system, git, web-search
 ## CLI 命令
 
 ```bash
-npm run configure     # 交互式配置
-npm run status       # 显示配置
-npm run set-agent claude-code
-npm run set-model gpt-4.1
-npm run set-telegram <token>
-npm run set-profile anthropic https://api.anthropic.com sk-...
-npm run enable telegram
+npm run configure              # 交互式配置
+npm run status                 # 显示配置
+npm run set-agent claude-code  # 设置默认编码代理
+npm run set-model              # 设置默认模型
+npm run tui                    # 启动终端 UI
+npm run build                  # 构建所有工作区
 ```
+
+其他配置（渠道、Profile、API Key）请直接编辑 `gateway.json` 或在 macOS 应用的设置面板中调整。
 
 ## 项目结构
 
 ```
-src/
-├── agents/          # 编码代理适配器
-├── channels/        # 聊天平台处理器
-├── config.ts        # 配置管理器
-├── conversation.ts  # 对话上下文
-├── gateway.ts       # 主网关逻辑
-├── health.ts       # 健康检查服务
-├── logger.ts       # 日志工具
-├── workers.ts      # 工作者管理器
-└── index.ts        # 入口文件
+packages/
+├── core/                # 共享类型、工作区与工作者管理器
+│   └── src/
+└── gateway/             # 网关服务、渠道、代理
+    └── src/
+        ├── agents/      # 编码代理适配器（claude-code、opencode、codex）
+        ├── channels/    # 聊天平台处理器（telegram、discord、imessage）
+        ├── config.ts
+        ├── conversation.ts
+        ├── gateway.ts
+        ├── health.ts
+        ├── logger.ts
+        └── index.ts
+codey-mac/               # macOS 菜单栏应用（Electron + React）
+├── electron/            # 主进程与 preload
+└── src/                 # 渲染进程（React UI）
+workspaces/              # 各工作区的配置、记忆与工作者
 ```
 
 ## 许可证
 
-ISC
+[MIT](LICENSE)
