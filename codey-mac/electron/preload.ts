@@ -23,8 +23,9 @@ contextBridge.exposeInMainWorld('codey', {
     pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),
   },
   teams: {
-    get: () => ipcRenderer.invoke('teams:get'),
-    set: (teams: Record<string, string[]>) => ipcRenderer.invoke('teams:set', teams),
+    get: (name?: string) => ipcRenderer.invoke('teams:get', name),
+    set: (name: string, teams: Record<string, string[]>) =>
+      ipcRenderer.invoke('teams:set', name, teams),
   },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
@@ -87,6 +88,7 @@ contextBridge.exposeInMainWorld('codey', {
     status: () => ipcRenderer.invoke('gateway:status'),
   },
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+  openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
   onLog: (handler: (msg: string) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, msg: string) => handler(msg)
     ipcRenderer.on('gateway-log', listener)

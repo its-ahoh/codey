@@ -13,8 +13,21 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
   const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace } = useChats()
   const [, setWorkspaces] = useState<string[]>([])
   const [lastWorkspace, setLastWorkspace] = useState<string>('')
+  const [gatewayWorkspace, setGatewayWorkspace] = useState<string>('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    const refresh = () => {
+      apiService.getCurrentWorkspace()
+        .then(w => { if (!cancelled) setGatewayWorkspace(w) })
+        .catch(() => {})
+    }
+    refresh()
+    const id = setInterval(refresh, 5000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [])
 
   useEffect(() => {
     apiService.getWorkspaces().then(w => {
@@ -30,9 +43,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
     if (lastWorkspace) localStorage.setItem('codey.lastWorkspace', lastWorkspace)
   }, [lastWorkspace])
 
-  const handleNewChat = async () => {
-    if (!lastWorkspace) return
-    const chat = await createChat(lastWorkspace)
+  const handleNewChat = async (workspaceName?: string) => {
+    const target = workspaceName || lastWorkspace
+    if (!target) return
+    const chat = await createChat(target)
     setLastWorkspace(chat.workspaceName)
   }
 
@@ -47,8 +61,13 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
   return (
     <div style={styles.root}>
       <div style={styles.header}>
-        <button style={styles.newBtn} onClick={handleNewChat} disabled={!lastWorkspace}>
-          + New Chat
+        <button
+          style={styles.newBtn}
+          onClick={() => handleNewChat()}
+          disabled={!lastWorkspace}
+          title={lastWorkspace ? `Create a new chat in "${lastWorkspace}"` : 'No workspace available'}
+        >
+          {lastWorkspace ? `+ New Chat in ${lastWorkspace}` : '+ New Chat'}
         </button>
       </div>
       <div style={styles.scroll}>
@@ -61,7 +80,15 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
             <div key={ws}>
               <div style={styles.groupHeader} onClick={() => toggleWorkspace(ws)}>
                 <span style={{ ...styles.chevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>▸</span>
-                <span>{ws}</span>
+                <span style={styles.groupName}>{ws}</span>
+                {ws === gatewayWorkspace && (
+                  <span style={styles.gatewayBadge} title="Gateway default workspace — receives messages from chat platforms"/>
+                )}
+                <button
+                  style={styles.groupAddBtn}
+                  onClick={(e) => { e.stopPropagation(); handleNewChat(ws) }}
+                  title={`New chat in "${ws}"`}
+                >+</button>
               </div>
               {!collapsed && groups[ws].map(chat => {
                 const active = chat.id === activeChatId
@@ -124,6 +151,19 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
         })}
       </div>
       <div style={styles.footer}>
+        <button
+          style={styles.settingsBtn}
+          onClick={async () => {
+            const ws = activeChatId && state.chats[activeChatId]?.workspaceName
+            if (!ws) return
+            try {
+              const info = await apiService.getWorkspaceInfo(ws)
+              if (info.workingDir) await window.codey.openPath(info.workingDir)
+            } catch {}
+          }}
+          disabled={!activeChatId || !state.chats[activeChatId!]?.workspaceName}
+          title="Open this chat's workspace folder in Finder"
+        >+ Open Workspace</button>
         <button style={styles.settingsBtn} onClick={onOpenSettings}>⚙ Settings</button>
       </div>
       <style>{`
@@ -163,6 +203,16 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '6px 8px', color: C.fg3, fontSize: 12, fontWeight: 600,
     textTransform: 'uppercase', cursor: 'pointer', userSelect: 'none',
   },
+  groupName: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  groupAddBtn: {
+    background: 'transparent', border: 'none', color: C.fg3,
+    cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px',
+  },
+  gatewayBadge: {
+    width: 8, height: 8, borderRadius: '50%',
+    background: C.green, boxShadow: `0 0 6px ${C.green}`,
+    flexShrink: 0,  
+  },
   chevron: { display: 'inline-block', fontSize: 12, lineHeight: 1, transition: 'transform 0.15s ease' },
   item: {
     display: 'flex', alignItems: 'center', gap: 6,
@@ -183,6 +233,6 @@ const styles: Record<string, React.CSSProperties> = {
   settingsBtn: {
     width: '100%', padding: '8px 10px', border: 'none',
     background: 'transparent', color: C.fg2, cursor: 'pointer',
-    textAlign: 'left', borderRadius: 6, fontSize: 15,
+    textAlign: 'left', borderRadius: 6, fontSize: 13,
   },
 }

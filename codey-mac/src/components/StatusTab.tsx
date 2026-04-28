@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { GatewayStatus } from '../types'
+import { apiService } from '../services/api'
 import { C } from '../theme'
 
 interface StatusTabProps {
@@ -19,6 +20,31 @@ const formatUptime = (seconds: number): string => {
 }
 
 export const StatusTab: React.FC<StatusTabProps> = ({ status, logs, isRunning }) => {
+  const [workspaces, setWorkspaces] = useState<string[]>([])
+  const [current, setCurrent] = useState<string>('')
+  const [switching, setSwitching] = useState(false)
+
+  useEffect(() => {
+    Promise.all([
+      apiService.getWorkspaces().catch(() => [] as string[]),
+      apiService.getCurrentWorkspace().catch(() => ''),
+    ]).then(([ws, cur]) => {
+      setWorkspaces(ws)
+      setCurrent(cur)
+    })
+  }, [])
+
+  const handleSwitch = async (name: string) => {
+    if (!name || name === current || switching) return
+    setSwitching(true)
+    try {
+      await apiService.switchWorkspace(name)
+      setCurrent(name)
+    } finally {
+      setSwitching(false)
+    }
+  }
+
   const stats = [
     { label: 'Uptime',   value: isRunning ? formatUptime(status.uptime) : '—' },
     { label: 'Messages', value: isRunning ? String(status.messagesProcessed ?? 0) : '—' },
@@ -60,6 +86,27 @@ export const StatusTab: React.FC<StatusTabProps> = ({ status, logs, isRunning })
             <div style={styles.statValue}>{s.value}</div>
           </div>
         ))}
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <div style={styles.sectionHead}>Default Workspace</div>
+        <div style={styles.listItem}>
+          <span style={{ color: C.fg3, fontSize: 12 }}>
+            Used for messages from chat platforms (Telegram, Discord, iMessage)
+          </span>
+          <select
+            value={current}
+            onChange={e => handleSwitch(e.target.value)}
+            disabled={switching || workspaces.length === 0}
+            style={styles.select}
+          >
+            {workspaces.length === 0 && <option value="">No workspaces</option>}
+            {!current && workspaces.length > 0 && <option value="">— Select —</option>}
+            {workspaces.map(ws => (
+              <option key={ws} value={ws}>{ws}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div style={{ marginBottom: 20 }}>
@@ -126,6 +173,16 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${C.border}`,
     borderRadius: 8,
     padding: '10px 14px',
+  },
+  select: {
+    background: C.surface3,
+    color: C.fg,
+    border: `1px solid ${C.border2}`,
+    borderRadius: 6,
+    padding: '4px 8px',
+    fontSize: 12,
+    cursor: 'pointer',
+    outline: 'none',
   },
   logsBox: {
     background: '#0d0d0d',

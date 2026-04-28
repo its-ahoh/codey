@@ -61,7 +61,7 @@ export const apiService = {
   switchWorkspace: async (name: string): Promise<void> =>
     unwrap(await window.codey.workspaces.switch(name)),
 
-  getWorkspaceInfo: async (name: string): Promise<{ workingDir: string; teams: Record<string, string[]> }> =>
+  getWorkspaceInfo: async (name: string): Promise<{ workingDir: string }> =>
     unwrap(await window.codey.workspaces.info(name)),
 
   getWorkspaceMemory: async (name: string): Promise<string> =>
@@ -80,11 +80,11 @@ export const apiService = {
     unwrap(await window.codey.dialog.pickDirectory()),
 
   // Teams
-  getTeams: async (_workspace?: string): Promise<Record<string, string[]>> =>
-    unwrap(await window.codey.teams.get()),
+  getTeams: async (workspace?: string): Promise<Record<string, string[]>> =>
+    unwrap(await window.codey.teams.get(workspace)),
 
-  setTeams: async (_workspace: string, teams: Record<string, string[]>): Promise<void> =>
-    unwrap(await window.codey.teams.set(teams)),
+  setTeams: async (workspace: string, teams: Record<string, string[]>): Promise<void> =>
+    unwrap(await window.codey.teams.set(workspace, teams)),
 
   // Chat — gateway is in-process; streaming comes via chat:token IPC events
   sendMessage: async (

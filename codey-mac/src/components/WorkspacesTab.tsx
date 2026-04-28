@@ -5,7 +5,6 @@ import TeamsSection from './TeamsSection'
 
 interface WorkspacesTabProps {
   isGatewayRunning: boolean
-  onWorkspaceChange?: (name: string) => void
 }
 
 const FolderIcon: React.FC<{ color: string }> = ({ color }) => (
@@ -44,12 +43,10 @@ const ChevronIcon: React.FC<{ color: string; open: boolean }> = ({ color, open }
 
 interface WorkspaceInfo {
   workingDir: string
-  teams: Record<string, string[]>
 }
 
-export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning, onWorkspaceChange }) => {
+export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }) => {
   const [workspaces, setWorkspaces] = useState<string[]>([])
-  const [currentWorkspace, setCurrentWorkspace] = useState<string>('')
   const [busyName, setBusyName] = useState<string>('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string>('')
@@ -58,12 +55,8 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning, 
 
   const loadWorkspaces = useCallback(async () => {
     try {
-      const [ws, cur] = await Promise.all([
-        apiService.getWorkspaces(),
-        apiService.getCurrentWorkspace().catch(() => ''),
-      ])
+      const ws = await apiService.getWorkspaces()
       setWorkspaces(ws)
-      if (cur) setCurrentWorkspace(cur)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load workspaces')
     }
@@ -90,30 +83,14 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning, 
     if (!infoCache[name]) loadInfo(name)
   }
 
-  const switchWorkspace = async (name: string) => {
-    if (busyName || name === currentWorkspace) return
-    setBusyName(name); setError('')
-    try {
-      await apiService.switchWorkspace(name)
-      setCurrentWorkspace(name)
-      onWorkspaceChange?.(name)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to switch workspace')
-    } finally {
-      setBusyName('')
-    }
-  }
-
   const pickAndCreate = async () => {
     if (creating) return
     setCreating(true); setError('')
     try {
       const dir = await apiService.pickDirectory()
       if (!dir) return
-      const name = await apiService.createWorkspaceFromDir(dir)
+      await apiService.createWorkspaceFromDir(dir)
       await loadWorkspaces()
-      setCurrentWorkspace(name)
-      onWorkspaceChange?.(name)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create workspace')
     } finally {
@@ -128,12 +105,9 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning, 
       setError('The "default" workspace is protected and cannot be deleted.')
       return
     }
-    const isActive = name === currentWorkspace
     const isLast = workspaces.length === 1
-    const extra = isActive
-      ? isLast
-        ? '\n\nThis is your only workspace. After deletion you will need to add a folder before starting a new chat.'
-        : '\n\nThis is the active workspace. Another workspace will be activated automatically.'
+    const extra = isLast
+      ? '\n\nThis is your only workspace. After deletion you will need to add a folder before starting a new chat.'
       : ''
     const ok = window.confirm(
       `Delete workspace "${name}"?\n\nThis removes the workspace folder (workspace.json, memory.md, logs). The original project directory it points to is NOT touched.${extra}`
@@ -147,11 +121,6 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning, 
         const next = { ...prev }; delete next[name]; return next
       })
       if (expanded === name) setExpanded('')
-      if (isActive) {
-        const nextActive = await apiService.getCurrentWorkspace().catch(() => '')
-        setCurrentWorkspace(nextActive)
-        if (nextActive !== currentWorkspace) onWorkspaceChange?.(nextActive)
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete workspace')
     } finally {
@@ -190,7 +159,6 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning, 
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {workspaces.map(ws => {
-            const active = currentWorkspace === ws
             const isBusy = busyName === ws
             const isOpen = expanded === ws
             const info = infoCache[ws]
@@ -198,8 +166,8 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning, 
               <div
                 key={ws}
                 style={{
-                  background: active ? C.surface3 : C.surface2,
-                  border: `1px solid ${active ? C.accent + '55' : C.border}`,
+                  background: C.surface2,
+                  border: `1px solid ${C.border}`,
                   borderRadius: 10,
                   cursor: isBusy ? 'wait' : 'default',
                   transition: 'border-color 0.15s, background 0.15s',
@@ -216,22 +184,11 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning, 
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                    <ChevronIcon color={active ? C.accent : C.fg2} open={isOpen} />
-                    <FolderIcon color={active ? C.accent : C.fg2} />
-                    <span style={{ color: active ? C.accent : C.fg, fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ws}</span>
+                    <ChevronIcon color={C.fg2} open={isOpen} />
+                    <FolderIcon color={C.fg2} />
+                    <span style={{ color: C.fg, fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ws}</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {active ? (
-                      <span style={{ color: C.accent, fontSize: 11, fontWeight: 600 }}>Active</span>
-                    ) : (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); switchWorkspace(ws) }}
-                        disabled={isBusy}
-                        style={styles.switchBtn}
-                      >
-                        Switch
-                      </button>
-                    )}
                     <button
                       onClick={(e) => removeWorkspace(ws, e)}
                       disabled={isBusy || ws === 'default'}
@@ -259,11 +216,7 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning, 
                     </div>
 
                     <div style={{ marginTop: 12 }}>
-                      {active ? (
-                        <TeamsSection workspace={ws} />
-                      ) : (
-                        <ReadOnlyTeams teams={info?.teams ?? {}} loaded={!!info} />
-                      )}
+                      <TeamsSection workspace={ws} />
                     </div>
                   </div>
                 )}
@@ -373,38 +326,6 @@ const MemorySection: React.FC<{ workspace: string }> = ({ workspace }) => {
   )
 }
 
-const ReadOnlyTeams: React.FC<{ teams: Record<string, string[]>; loaded: boolean }> = ({ teams, loaded }) => {
-  const entries = Object.entries(teams)
-  return (
-    <div style={{ padding: 16, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <div style={{ fontSize: 14, fontWeight: 600 }}>Teams</div>
-        <span style={{ fontSize: 11, color: C.fg3 }}>read-only — switch to edit</span>
-      </div>
-      {!loaded ? (
-        <div style={{ fontSize: 12, color: C.fg3 }}>Loading…</div>
-      ) : entries.length === 0 ? (
-        <div style={{ fontSize: 12, color: C.fg3 }}>No teams declared.</div>
-      ) : (
-        entries.map(([name, members]) => (
-          <div key={name} style={{ marginBottom: 8, padding: 10, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{name}</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {members.length === 0 ? (
-                <span style={{ fontSize: 12, color: C.fg3 }}>(empty)</span>
-              ) : (
-                members.map((m, i) => (
-                  <span key={`${m}-${i}`} style={{ padding: '4px 8px', background: C.surface2, borderRadius: 14, fontSize: 12 }}>{m}</span>
-                ))
-              )}
-            </div>
-          </div>
-        ))
-      )}
-    </div>
-  )
-}
-
 const styles: Record<string, React.CSSProperties> = {
   container: { padding: 20, height: '100%', overflowY: 'auto' },
   offlineContainer: {
@@ -429,10 +350,6 @@ const styles: Record<string, React.CSSProperties> = {
   iconBtn: {
     background: 'transparent', border: 'none', padding: 4, borderRadius: 6,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-  },
-  switchBtn: {
-    background: 'transparent', color: C.accent, border: `1px solid ${C.accent}55`,
-    borderRadius: 6, padding: '3px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
   },
   expandedBody: {
     padding: '12px 16px 16px',
