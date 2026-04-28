@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-28
+
+### Added
+- **Open Workspace** button in the chat list footer reveals the active chat's working directory in Finder.
+- **Default Workspace** dropdown in the Gateway tab — replaces the per-row "Active / Switch" UI, since the gateway-current workspace only matters for chat-platform routing.
+- Per-workspace **+** buttons in chat list group headers; the top "+ New Chat" button now labels its target workspace.
+- Green status dot in the chat list highlights whichever workspace is the gateway default.
+
+### Changed
+- **Teams editing is now workspace-scoped.** The Workspaces tab lets you edit Teams in any workspace; previously edits silently went to whatever workspace the gateway considered current.
+- Trimmed `workspaces:info` payload to `{ workingDir }`.
+
+[0.2.0]: https://github.com/its-ahoh/codey/releases/tag/v0.2.0
+
 ## [0.1.1] - 2026-04-28
 
 ### Changed
