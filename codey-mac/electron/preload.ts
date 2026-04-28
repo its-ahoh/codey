@@ -13,6 +13,14 @@ contextBridge.exposeInMainWorld('codey', {
     list: () => ipcRenderer.invoke('workspaces:list'),
     current: () => ipcRenderer.invoke('workspaces:current'),
     switch: (name: string) => ipcRenderer.invoke('workspaces:switch', name),
+    info: (name: string) => ipcRenderer.invoke('workspaces:info', name),
+    getMemory: (name: string) => ipcRenderer.invoke('workspaces:memory:get', name),
+    setMemory: (name: string, content: string) => ipcRenderer.invoke('workspaces:memory:set', name, content),
+    create: (dir: string) => ipcRenderer.invoke('workspaces:create', dir),
+    delete: (name: string) => ipcRenderer.invoke('workspaces:delete', name),
+  },
+  dialog: {
+    pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),
   },
   teams: {
     get: () => ipcRenderer.invoke('teams:get'),
