@@ -25,7 +25,7 @@ declare global {
         list: () => Promise<IpcResult<string[]>>
         current: () => Promise<IpcResult<string>>
         switch: (name: string) => Promise<IpcResult<void>>
-        info: (name: string) => Promise<IpcResult<{ workingDir: string; teams: Record<string, string[]> }>>
+        info: (name: string) => Promise<IpcResult<{ workingDir: string }>>
         getMemory: (name: string) => Promise<IpcResult<string>>
         setMemory: (name: string, content: string) => Promise<IpcResult<void>>
         create: (dir: string) => Promise<IpcResult<string>>
@@ -35,8 +35,8 @@ declare global {
         pickDirectory: () => Promise<IpcResult<string | null>>
       }
       teams: {
-        get: () => Promise<IpcResult<Record<string, string[]>>>
-        set: (teams: Record<string, string[]>) => Promise<IpcResult<void>>
+        get: (name?: string) => Promise<IpcResult<Record<string, string[]>>>
+        set: (name: string, teams: Record<string, string[]>) => Promise<IpcResult<void>>
       }
       conversations: {
         list: () => Promise<IpcResult<string[]>>
@@ -84,6 +84,7 @@ declare global {
         } | null>>
       }
       openExternal: (url: string) => Promise<void>
+      openPath: (path: string) => Promise<string>
       onLog: (handler: (msg: string) => void) => () => void
     }
   }

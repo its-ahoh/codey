@@ -10,7 +10,7 @@ type Tab = 'workers' | 'workspaces' | 'status' | 'settings'
 const TABS: { key: Tab; label: string }[] = [
   { key: 'workers',    label: 'Workers' },
   { key: 'workspaces', label: 'Workspaces' },
-  { key: 'status',     label: 'Status' },
+  { key: 'status',     label: 'Gateway' },
   { key: 'settings',   label: 'Settings' },
 ]
 
@@ -46,7 +46,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose }) => {
       </div>
       <div style={styles.body}>
         {tab === 'status'     && <StatusTab status={status} logs={logs} isRunning={isRunning} />}
-        {tab === 'workspaces' && <WorkspacesTab isGatewayRunning={isRunning} onWorkspaceChange={() => {}} />}
+        {tab === 'workspaces' && <WorkspacesTab isGatewayRunning={isRunning} />}
         {tab === 'workers'    && <WorkersTab />}
         {tab === 'settings'   && <SettingsTab isGatewayRunning={isRunning} />}
       </div>
