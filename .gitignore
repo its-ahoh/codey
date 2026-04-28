@@ -17,3 +17,6 @@ codey-mac/dist-electron/
 codey-mac/release/
 # git worktrees
 .worktrees/
+
+# Intermediate iconset (icon.icns is committed)
+codey-mac/build/icon.iconset/

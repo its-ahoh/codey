@@ -1,8 +1,13 @@
 {
   "name": "codey-monorepo",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Codey — a gateway that routes prompts from chat platforms to coding agents",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/its-ahoh/codey.git"
+  },
   "workspaces": [
     "packages/*",
     "codey-mac"

@@ -1,10 +1,14 @@
 {
   "name": "codey-mac",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Codey - macOS menu bar application for coding agents",
   "main": "dist-electron/main.js",
-  "author": "",
+  "author": "its-ahoh",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/its-ahoh/codey.git"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build && electron-builder",
@@ -37,12 +41,19 @@
       "output": "release"
     },
     "mac": {
-      "target": ["dmg"],
-      "category": "public.app-category.developer-tools"
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns"
     },
     "files": [
       "dist/**/*",
       "dist-electron/**/*"
+    ],
+    "extraResources": [
+      { "from": "build/trayIconTemplate.png", "to": "trayIconTemplate.png" },
+      { "from": "build/trayIconTemplate@2x.png", "to": "trayIconTemplate@2x.png" }
     ]
   }
 }
