@@ -60,7 +60,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
           return (
             <div key={ws}>
               <div style={styles.groupHeader} onClick={() => toggleWorkspace(ws)}>
-                <span style={styles.chevron}>{collapsed ? '▸' : '▾'}</span>
+                <span style={{ ...styles.chevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>▸</span>
                 <span>{ws}</span>
               </div>
               {!collapsed && groups[ws].map(chat => {
@@ -160,10 +160,10 @@ const styles: Record<string, React.CSSProperties> = {
   empty: { color: C.fg3, fontSize: 12, padding: 12, textAlign: 'center' },
   groupHeader: {
     display: 'flex', alignItems: 'center', gap: 6,
-    padding: '6px 8px', color: C.fg3, fontSize: 11, fontWeight: 600,
+    padding: '6px 8px', color: C.fg3, fontSize: 12, fontWeight: 600,
     textTransform: 'uppercase', cursor: 'pointer', userSelect: 'none',
   },
-  chevron: { fontSize: 10, width: 10 },
+  chevron: { display: 'inline-block', fontSize: 12, lineHeight: 1, transition: 'transform 0.15s ease' },
   item: {
     display: 'flex', alignItems: 'center', gap: 6,
     padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
@@ -183,6 +183,6 @@ const styles: Record<string, React.CSSProperties> = {
   settingsBtn: {
     width: '100%', padding: '8px 10px', border: 'none',
     background: 'transparent', color: C.fg2, cursor: 'pointer',
-    textAlign: 'left', borderRadius: 6, fontSize: 12,
+    textAlign: 'left', borderRadius: 6, fontSize: 15,
   },
 }
