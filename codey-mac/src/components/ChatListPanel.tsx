@@ -10,8 +10,9 @@ interface Props {
 }
 
 export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId }) => {
-  const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace } = useChats()
-  const [, setWorkspaces] = useState<string[]>([])
+  const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces } = useChats()
+  const [addingWorkspace, setAddingWorkspace] = useState(false)
+  const [workspaces, setWorkspaces] = useState<string[]>([])
   const [lastWorkspace, setLastWorkspace] = useState<string>('')
   const [gatewayWorkspace, setGatewayWorkspace] = useState<string>('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -23,20 +24,22 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
       apiService.getCurrentWorkspace()
         .then(w => { if (!cancelled) setGatewayWorkspace(w) })
         .catch(() => {})
+      apiService.getWorkspaces()
+        .then(w => {
+          if (cancelled) return
+          setWorkspaces(w)
+          setLastWorkspace(prev => {
+            if (prev && w.includes(prev)) return prev
+            const stored = localStorage.getItem('codey.lastWorkspace')
+            if (stored && w.includes(stored)) return stored
+            return w[0] ?? ''
+          })
+        })
+        .catch(() => {})
     }
     refresh()
     const id = setInterval(refresh, 5000)
     return () => { cancelled = true; clearInterval(id) }
-  }, [])
-
-  useEffect(() => {
-    apiService.getWorkspaces().then(w => {
-      setWorkspaces(w)
-      if (w.length > 0) {
-        const stored = localStorage.getItem('codey.lastWorkspace')
-        setLastWorkspace(stored && w.includes(stored) ? stored : w[0])
-      }
-    })
   }, [])
 
   useEffect(() => {
@@ -50,11 +53,33 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
     setLastWorkspace(chat.workspaceName)
   }
 
+  const handleAddWorkspace = async () => {
+    if (addingWorkspace) return
+    setAddingWorkspace(true)
+    try {
+      const dir = await apiService.pickDirectory()
+      if (!dir) return
+      const name = await apiService.createWorkspaceFromDir(dir)
+      const fresh = await apiService.getWorkspaces()
+      setWorkspaces(fresh)
+      await refreshWorkspaces()
+      const chat = await createChat(name)
+      setLastWorkspace(chat.workspaceName)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to add workspace')
+    } finally {
+      setAddingWorkspace(false)
+    }
+  }
+
   const groups: Record<string, Chat[]> = {}
   for (const id of state.order) {
     const c = state.chats[id]
     if (!c) continue
     ;(groups[c.workspaceName] ??= []).push(c)
+  }
+  for (const ws of workspaces) {
+    if (!groups[ws]) groups[ws] = []
   }
   const groupNames = Object.keys(groups).sort()
 
@@ -94,7 +119,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
                 const active = chat.id === activeChatId
                 const flight = state.inFlight[chat.id]
                 const isRenaming = renamingId === chat.id
-                const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
+                const orphaned = workspaces.length > 0 && !workspaces.includes(chat.workspaceName)
                 return (
                   <div
                     key={chat.id}
@@ -153,17 +178,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
       <div style={styles.footer}>
         <button
           style={styles.settingsBtn}
-          onClick={async () => {
-            const ws = activeChatId && state.chats[activeChatId]?.workspaceName
-            if (!ws) return
-            try {
-              const info = await apiService.getWorkspaceInfo(ws)
-              if (info.workingDir) await window.codey.openPath(info.workingDir)
-            } catch {}
-          }}
-          disabled={!activeChatId || !state.chats[activeChatId!]?.workspaceName}
-          title="Open this chat's workspace folder in Finder"
-        >+ Open Workspace</button>
+          onClick={handleAddWorkspace}
+          disabled={addingWorkspace}
+          title="Pick a folder and create a new workspace + chat"
+        >{addingWorkspace ? 'Picking…' : '+ Add Workspace'}</button>
         <button style={styles.settingsBtn} onClick={onOpenSettings}>⚙ Settings</button>
       </div>
       <style>{`
