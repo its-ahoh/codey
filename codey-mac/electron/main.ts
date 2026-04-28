@@ -312,14 +312,9 @@ app.whenReady().then(async () => {
       const pathMod = await import('path')
       const root = workspaceManager.getWorkspacesRoot()
       const configPath = pathMod.join(root, name, 'workspace.json')
-      if (!fsMod.existsSync(configPath)) {
-        return { workingDir: '', teams: {} as Record<string, string[]> }
-      }
+      if (!fsMod.existsSync(configPath)) return { workingDir: '' }
       const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
-      return {
-        workingDir: data.workingDir || '',
-        teams: (data.teams || {}) as Record<string, string[]>,
-      }
+      return { workingDir: data.workingDir || '' }
     })
   )
 
@@ -355,13 +350,46 @@ app.whenReady().then(async () => {
   )
 
   // ── Teams IPC ─────────────────────────────────────────────────────
-  ipcMain.handle('teams:get', async () =>
-    wrap(async () => workspaceManager?.getTeams() ?? {})
+  ipcMain.handle('teams:get', async (_e, name?: string) =>
+    wrap(async () => {
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      const target = name || workspaceManager.getCurrentWorkspace()
+      if (!target) return {} as Record<string, string[]>
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const configPath = pathMod.join(workspaceManager.getWorkspacesRoot(), target, 'workspace.json')
+      if (!fsMod.existsSync(configPath)) return {} as Record<string, string[]>
+      const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
+      return (data.teams || {}) as Record<string, string[]>
+    })
   )
 
-  ipcMain.handle('teams:set', async (_e, teams: Record<string, string[]>) =>
+  ipcMain.handle('teams:set', async (_e, nameOrTeams: string | Record<string, string[]>, maybeTeams?: Record<string, string[]>) =>
     wrap(async () => {
-      await workspaceManager?.setTeams(teams)
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      // Backward-compat: support both (teams) and (name, teams) call shapes.
+      let target: string
+      let teams: Record<string, string[]>
+      if (typeof nameOrTeams === 'string') {
+        target = nameOrTeams || workspaceManager.getCurrentWorkspace()
+        teams = maybeTeams || {}
+      } else {
+        target = workspaceManager.getCurrentWorkspace()
+        teams = nameOrTeams || {}
+      }
+      if (!target) throw new Error('No workspace specified')
+
+      if (target === workspaceManager.getCurrentWorkspace()) {
+        await workspaceManager.setTeams(teams)
+        return
+      }
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const configPath = pathMod.join(workspaceManager.getWorkspacesRoot(), target, 'workspace.json')
+      if (!fsMod.existsSync(configPath)) throw new Error(`Workspace "${target}" does not exist`)
+      const existing = JSON.parse(await fsMod.promises.readFile(configPath, 'utf-8'))
+      existing.teams = teams
+      await fsMod.promises.writeFile(configPath, JSON.stringify(existing, null, 2), 'utf-8')
     })
   )
 
@@ -588,4 +616,9 @@ ipcMain.handle('open-external', (_event, url: string) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
     shell.openExternal(url)
   }
+})
+
+ipcMain.handle('shell:openPath', async (_event, p: string) => {
+  if (typeof p !== 'string' || !p) return ''
+  return await shell.openPath(p)
 })
