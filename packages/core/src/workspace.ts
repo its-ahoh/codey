@@ -36,10 +36,23 @@ export class WorkspaceManager {
 
   async load(): Promise<void> {
     if (!this.currentWorkspace) {
-      // No workspace selected yet — don't materialize files at the workspaces
-      // root, or "memory"/"logs" will appear as phantom workspaces on the next
-      // listWorkspaces() call.
-      return;
+      // Auto-select a workspace so callers (logger setup, etc.) get real paths
+      // instead of resolving against the workspaces root — which would create
+      // phantom "logs"/"memory" entries and trip ENOENT on first write.
+      const existing = this.listWorkspaces();
+      const pick = existing.includes('default') ? 'default' : existing[0];
+      if (pick) {
+        this.currentWorkspace = pick;
+      } else {
+        const fallback = 'default';
+        const fallbackPath = path.join(this.workspacesDir, fallback);
+        fs.mkdirSync(fallbackPath, { recursive: true });
+        fs.writeFileSync(
+          path.join(fallbackPath, 'workspace.json'),
+          JSON.stringify({ workingDir: process.cwd() }, null, 2),
+        );
+        this.currentWorkspace = fallback;
+      }
     }
     const configPath = this.getConfigPath();
     const workspacePath = this.getWorkspacePath();
