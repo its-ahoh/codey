@@ -6,13 +6,23 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-A local gateway that routes prompts from chat platforms (Telegram, Discord, iMessage) to coding agents with support for multi-workspace and worker teams.
+A local gateway that routes prompts from chat platforms (Telegram, Discord, iMessage) to coding agents with support for multi-workspace and worker teams. Ships with a native macOS menu-bar app for managing chats, workspaces, and agents locally.
+
+## Download
+
+Grab the latest macOS app from the [Releases page](https://github.com/its-ahoh/codey/releases/latest):
+
+- Apple Silicon: `Codey-<version>-arm64.dmg`
+- Intel: `Codey-<version>.dmg`
+
+Builds are currently unsigned — on first launch, right-click the app → **Open** → confirm to bypass Gatekeeper.
 
 ## Features
 
+- **macOS menu-bar app** with multi-chat tabs, workspace switcher, and inline settings
 - **Multi-channel support**: Telegram, Discord, iMessage
-- **Multiple coding agents**: Claude Code, OpenCode, Codex
-- **Multi-workspace**: Each workspace has its own workers
+- **Multiple coding agents**: Claude Code, OpenCode, Codex (with session resume)
+- **Multi-workspace**: Each workspace has its own working directory, memory, and workers
 - **Worker teams**: Define workers with roles, personalities, and relationships
 - **Parallel execution**: Run multiple agents or workers simultaneously
 - **Conversation context**: Remembers previous messages within a session
@@ -20,9 +30,14 @@ A local gateway that routes prompts from chat platforms (Telegram, Discord, iMes
 
 ## Quick Start
 
+This is a monorepo with three workspaces: `@codey/core`, `@codey/gateway`, and `codey-mac`.
+
 ```bash
-# Install dependencies
+# Install dependencies (all workspaces)
 npm install
+
+# Build everything
+npm run build
 
 # Copy config template
 cp gateway.json.example gateway.json
@@ -32,6 +47,13 @@ npm run configure
 
 # Start the gateway
 npm start
+```
+
+To run the macOS app in development:
+
+```bash
+npm run dev -w codey-mac        # dev with hot reload
+npm run build:mac -w codey-mac  # produce a DMG in codey-mac/release/
 ```
 
 ## Configuration
@@ -198,30 +220,38 @@ The gateway exposes health endpoints on `port + 1`:
 ## CLI Commands
 
 ```bash
-npm run configure     # Interactive configuration
-npm run status       # Show config
-npm run set-agent claude-code
-npm run set-model gpt-4.1
-npm run set-telegram <token>
-npm run set-profile anthropic https://api.anthropic.com sk-...
-npm run enable telegram
+npm run configure              # Interactive configuration
+npm run status                 # Show config
+npm run set-agent claude-code  # Set default coding agent
+npm run set-model              # Set default model
+npm run tui                    # Launch terminal UI
+npm run build                  # Build all workspaces
 ```
+
+For everything else (channels, profiles, API keys), edit `gateway.json` directly or use the macOS app's Settings panel.
 
 ## Project Structure
 
 ```
-src/
-├── agents/          # Coding agent adapters
-├── channels/        # Chat platform handlers
-├── config.ts        # Configuration manager
-├── conversation.ts  # Conversation context
-├── gateway.ts       # Main gateway logic
-├── health.ts       # Health server
-├── logger.ts       # Logging utility
-├── workers.ts      # Worker manager
-└── index.ts        # Entry point
+packages/
+├── core/                # Shared types, workspace + worker managers
+│   └── src/
+└── gateway/             # Gateway server, channels, agents
+    └── src/
+        ├── agents/      # Coding agent adapters (claude-code, opencode, codex)
+        ├── channels/    # Chat platform handlers (telegram, discord, imessage)
+        ├── config.ts
+        ├── conversation.ts
+        ├── gateway.ts
+        ├── health.ts
+        ├── logger.ts
+        └── index.ts
+codey-mac/               # macOS menu-bar app (Electron + React)
+├── electron/            # Main + preload processes
+└── src/                 # Renderer (React UI)
+workspaces/              # Per-workspace config, memory, and workers
 ```
 
 ## License
 
-ISC
+[MIT](LICENSE)
