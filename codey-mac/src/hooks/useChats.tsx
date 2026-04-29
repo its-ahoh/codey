@@ -29,7 +29,7 @@ type Action =
   | { type: 'streamToken'; chatId: string; token: string }
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: 'working' | 'writing' }
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number }
+  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
 
 function reorder(order: string[], chatId: string): string[] {
@@ -138,11 +138,13 @@ function reducer(state: State, action: Action): State {
           ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, isComplete: true }
           : m
       )
+      const updatedChat: Chat = { ...chat, messages, updatedAt: Date.now() }
+      if (action.title) updatedChat.title = action.title
       const inFlight = { ...state.inFlight }
       delete inFlight[action.chatId]
       return {
         ...state,
-        chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } },
+        chats: { ...state.chats, [chat.id]: updatedChat },
         order: reorder(state.order, chat.id),
         inFlight,
       }
@@ -269,6 +271,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               content: ev.response,
               tokens: ev.tokens,
               durationSec: ev.durationSec,
+              title: ev.title,
             })
             delete pendingAssistantId.current[ev.chatId]
           }

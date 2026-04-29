@@ -1913,9 +1913,9 @@ Example: /model gpt-4.1 write a Python script`;
         tokens,
         durationSec,
       };
-      this.chatManager.appendMessage(chatId, assistantMessage);
+      const updated = this.chatManager.appendMessage(chatId, assistantMessage);
 
-      sink({ type: 'done', chatId, response: output, tokens, durationSec });
+      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title });
       return { response: output, chatId, tokens, durationSec };
     } catch (err) {
       const message = `Error: ${(err as Error).message}`;
