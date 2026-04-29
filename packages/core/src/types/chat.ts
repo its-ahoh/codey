@@ -1,3 +1,11 @@
+export interface FileAttachment {
+  id: string;
+  name: string;        // original filename
+  path: string;        // absolute path on disk after save
+  mimeType: string;    // e.g. "image/png", "text/typescript"
+  size: number;        // bytes
+}
+
 export interface ToolCallEntry {
   id: string;
   type: 'tool_start' | 'tool_end' | 'info';
@@ -12,6 +20,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  attachments?: FileAttachment[];
   toolCalls?: ToolCallEntry[];
   isComplete?: boolean;
   /** Total tokens for the assistant response, set when the turn completes. */
