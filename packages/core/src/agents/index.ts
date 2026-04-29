@@ -34,6 +34,12 @@ export class AgentFactory {
     }
   }
 
+  dispose(): void {
+    for (const adapter of this.agents.values()) {
+      adapter.dispose?.();
+    }
+  }
+
   async run(agent: CodingAgent, request: AgentRequest): Promise<AgentResponse> {
     const adapter = this.agents.get(agent);
     if (!adapter) {
