@@ -1,6 +1,6 @@
 {
   "name": "codey-mac",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Codey - macOS menu bar application for coding agents",
   "main": "dist-electron/main.js",
   "author": "its-ahoh",

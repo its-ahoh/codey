@@ -1,7 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { CoreLogger } from './types';
 import { WorkerManager } from './workers';
 import { MemoryStore } from './memory';
+
+const defaultLogger: CoreLogger = {
+  info: (msg: string) => console.log(msg),
+  warn: (msg: string) => console.warn(msg),
+  error: (msg: string) => console.error(msg),
+};
 
 export interface WorkspaceJson {
   workingDir: string;
@@ -15,11 +22,13 @@ export class WorkspaceManager {
   private workerManager: WorkerManager;
   private memoryStore: MemoryStore;
   private teams: Map<string, string[]> = new Map();
+  private logger: CoreLogger;
 
-  constructor(workerManager: WorkerManager, workspacesDir: string = './workspaces') {
+  constructor(workerManager: WorkerManager, workspacesDir: string = './workspaces', logger?: CoreLogger) {
     this.workspacesDir = workspacesDir;
     this.workerManager = workerManager;
     this.memoryStore = new MemoryStore(this.getWorkspacePath());
+    this.logger = logger || defaultLogger;
   }
 
   private getWorkspacePath(): string {
@@ -60,10 +69,10 @@ export class WorkspaceManager {
     if (fs.existsSync(configPath)) {
       const data = fs.readFileSync(configPath, 'utf-8');
       this.config = JSON.parse(data);
-      console.log(`[Workspace] Loaded workspace: ${this.currentWorkspace}`);
+      this.logger.info(`[Workspace] Loaded workspace: ${this.currentWorkspace}`);
     } else {
       this.config = { workingDir: process.cwd() };
-      console.log(`[Workspace] No config found for ${this.currentWorkspace}, using defaults`);
+      this.logger.info(`[Workspace] No config found for ${this.currentWorkspace}, using defaults`);
     }
 
     // Parse + validate teams against the global worker library.
@@ -71,12 +80,12 @@ export class WorkspaceManager {
     const rawTeams = this.config?.teams || {};
     for (const [teamName, members] of Object.entries(rawTeams)) {
       if (!Array.isArray(members)) {
-        console.error(`[Workspace] Team "${teamName}" is not an array — skipping`);
+        this.logger.error(`[Workspace] Team "${teamName}" is not an array — skipping`);
         continue;
       }
       const unknown = members.filter(m => !this.workerManager.hasWorker(m));
       if (unknown.length > 0) {
-        console.error(`[Workspace] Team "${teamName}" references unknown workers: ${unknown.join(', ')} — skipping`);
+        this.logger.error(`[Workspace] Team "${teamName}" references unknown workers: ${unknown.join(', ')} — skipping`);
         continue;
       }
       this.teams.set(teamName.toLowerCase(), members);
@@ -129,7 +138,7 @@ export class WorkspaceManager {
     fs.writeFileSync(path.join(workspacePath, 'workspace.json'), JSON.stringify(config, null, 2));
     fs.writeFileSync(path.join(workspacePath, 'memory.md'), `# ${name} — Project Memory\n`);
 
-    console.log(`[Workspace] Created new workspace: ${name} -> ${dir}`);
+    this.logger.info(`[Workspace] Created new workspace: ${name} -> ${dir}`);
     await this.switchWorkspace(name);
     return name;
   }
@@ -164,7 +173,7 @@ export class WorkspaceManager {
     }
     const wasActive = name === this.currentWorkspace;
     await fs.promises.rm(resolved, { recursive: true, force: true });
-    console.log(`[Workspace] Deleted workspace: ${name}`);
+    this.logger.info(`[Workspace] Deleted workspace: ${name}`);
 
     if (wasActive) {
       this.currentWorkspace = '';
