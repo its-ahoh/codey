@@ -575,6 +575,13 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('chats:stop', async (_e, chatId: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.stopChat(chatId)
+    })
+  )
+
   ipcMain.handle('chats:send', async (_e, payload: { chatId: string; text: string }) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')

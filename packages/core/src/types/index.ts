@@ -1,3 +1,11 @@
+// Minimal logger interface so core modules can accept a logger without
+// depending on the gateway Logger class.
+export interface CoreLogger {
+  info(message: string): void;
+  warn(message: string): void;
+  error(message: string): void;
+}
+
 // Channel type
 export type ChannelType = 'telegram' | 'discord' | 'imessage' | 'tui';
 
@@ -95,6 +103,12 @@ export interface AgentRequest {
    * `resumeSessionId`.
    */
   newSessionId?: string;
+  /**
+   * Optional abort signal. When triggered, the adapter kills the spawned CLI
+   * process and resolves with a non-success response so callers can surface
+   * the cancellation to the user.
+   */
+  signal?: AbortSignal;
 }
 
 export interface StatusUpdate {

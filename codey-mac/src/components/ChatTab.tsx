@@ -17,6 +17,12 @@ const SendIcon: React.FC<{ color: string }> = ({ color }) => (
   </svg>
 )
 
+const StopIcon: React.FC<{ color: string }> = ({ color }) => (
+  <svg width={12} height={12} viewBox="0 0 24 24" fill={color}>
+    <rect x="4" y="4" width="16" height="16" rx="2" />
+  </svg>
+)
+
 const fmtTime = (ts: number) =>
   new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 
@@ -34,7 +40,7 @@ const TypingDots: React.FC = () => {
 }
 
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
-  const { state, sendMessage, setSelection, renameChat } = useChats()
+  const { state, sendMessage, stopChat, setSelection, renameChat } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -48,6 +54,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
 
   useEffect(() => { apiService.listWorkers().then(setWorkers) }, [])
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chat?.messages?.length])
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && flight) stopChat(chatId)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [flight, chatId])
 
   if (!chat) return null
 
@@ -256,13 +269,23 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           rows={1}
           style={styles.input}
         />
-        <button
-          onClick={send}
-          disabled={!canSend}
-          style={{ ...styles.sendButton, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
-        >
-          <SendIcon color={canSend ? '#fff' : C.fg3} />
-        </button>
+        {isSending ? (
+          <button
+            onClick={() => stopChat(chatId)}
+            style={{ ...styles.sendButton, background: '#e04040', cursor: 'pointer' }}
+            title="Stop (Esc)"
+          >
+            <StopIcon color="#fff" />
+          </button>
+        ) : (
+          <button
+            onClick={send}
+            disabled={!canSend}
+            style={{ ...styles.sendButton, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
+          >
+            <SendIcon color={canSend ? '#fff' : C.fg3} />
+          </button>
+        )}
       </div>
     </div>
   )

@@ -73,6 +73,7 @@ declare global {
         delete: (id: string) => Promise<IpcResult<null>>
         updateSelection: (id: string, selection: ChatSelection) => Promise<IpcResult<Chat>>
         send: (payload: { chatId: string; text: string }) => Promise<IpcResult<{ response: string; chatId: string; tokens?: number; durationSec?: number }>>
+        stop: (chatId: string) => Promise<IpcResult<boolean>>
         onEvent: (handler: (ev: ChatStreamEvent) => void) => () => void
       }
       gateway: {

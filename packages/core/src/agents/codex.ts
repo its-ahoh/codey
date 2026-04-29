@@ -212,6 +212,24 @@ export class CodexAdapter extends BaseAgentAdapter {
           duration,
         });
       }, timeout);
+
+      if (request.signal) {
+        const onAbort = () => {
+          if (resolved) return;
+          try { childProcess.kill('SIGTERM'); } catch { /* already dead */ }
+          const duration = Math.round((Date.now() - startTime) / 1000);
+          safeResolve({
+            success: false,
+            output: 'Stopped',
+            error: 'aborted',
+            duration,
+            statusUpdates,
+            states,
+          });
+        };
+        if (request.signal.aborted) onAbort();
+        else request.signal.addEventListener('abort', onAbort, { once: true });
+      }
     });
   }
 }
