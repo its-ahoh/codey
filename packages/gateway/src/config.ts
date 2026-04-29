@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
-import { FallbackConfig, ModelEntry } from '@codey/core';
+import { CodingAgent, FallbackConfig, FallbackEntry, ModelEntry } from '@codey/core';
 
 // ── Configuration types ─────────────────────────────────────────────
 
@@ -126,6 +126,9 @@ export class ConfigManager extends EventEmitter {
       const slot = this.config.agents[agent];
       if (slot && slot.defaultModel === oldId) slot.defaultModel = newId;
     }
+    for (const entry of this.config.fallback.order) {
+      if (entry.model === oldId) entry.model = newId;
+    }
     this.save();
     return true;
   }
@@ -136,6 +139,9 @@ export class ConfigManager extends EventEmitter {
     for (const agent of Object.keys(this.config.agents) as (keyof typeof this.config.agents)[]) {
       const slot = this.config.agents[agent];
       if (slot && slot.defaultModel === modelId) slot.defaultModel = undefined;
+    }
+    for (const entry of this.config.fallback.order) {
+      if (entry.model === modelId) entry.model = undefined;
     }
     if (this.config.models.length !== before) {
       this.save();
@@ -167,8 +173,13 @@ export class ConfigManager extends EventEmitter {
   // ── Fallback config ────────────────────────────────────────────────
   getFallback(): FallbackConfig { return this.config.fallback; }
 
-  setFallback(fb: FallbackConfig): void {
-    this.config.fallback = fb;
+  /**
+   * Accepts either the canonical FallbackConfig or a legacy
+   * `{ enabled, order: string[] }` payload (still sent by older UI clients).
+   * Both shapes are normalized to FallbackEntry[] before being persisted.
+   */
+  setFallback(fb: { enabled?: boolean; order?: Array<FallbackEntry | CodingAgent | string> }): void {
+    this.config.fallback = normalizeFallback(fb, this.config.fallback);
     this.save();
   }
 
@@ -245,13 +256,47 @@ export class ConfigManager extends EventEmitter {
       const on = slot?.enabled !== false;
       console.log(`  ${on ? '✅' : '❌'} ${a} → ${slot?.defaultModel || '(no model)'}`);
     }
-    console.log(`\nFallback: ${this.config.fallback.enabled ? '✅' : '❌'} order=${this.config.fallback.order.join(' → ')}`);
+    console.log(`\nFallback: ${this.config.fallback.enabled ? '✅' : '❌'} order=${formatFallbackOrder(this.config.fallback.order)}`);
     console.log(`\nDev:\n  Log Level: ${this.config.dev.logLevel}`);
     console.log('─'.repeat(40) + '\n');
   }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+const KNOWN_AGENTS: ReadonlySet<CodingAgent> = new Set(['claude-code', 'opencode', 'codex']);
+
+/**
+ * Coerce a raw fallback blob (legacy `string[]` order or new `FallbackEntry[]`)
+ * into the canonical FallbackConfig shape. Unknown agents get dropped; missing
+ * model ids are kept and validated lazily at run time so a stale model rename
+ * doesn't silently delete user-configured fallback steps.
+ */
+export function formatFallbackOrder(order: FallbackEntry[]): string {
+  return order.map(e => (e.model ? `${e.agent}(${e.model})` : e.agent)).join(' → ');
+}
+
+function normalizeFallback(raw: any, defaults: FallbackConfig): FallbackConfig {
+  if (!raw || typeof raw !== 'object') return defaults;
+  const order: FallbackEntry[] = Array.isArray(raw.order)
+    ? raw.order
+        .map((e: any): FallbackEntry | null => {
+          if (typeof e === 'string') {
+            return KNOWN_AGENTS.has(e as CodingAgent) ? { agent: e as CodingAgent } : null;
+          }
+          if (e && typeof e === 'object' && typeof e.agent === 'string' && KNOWN_AGENTS.has(e.agent)) {
+            const model = typeof e.model === 'string' && e.model.length > 0 ? e.model : undefined;
+            return model ? { agent: e.agent, model } : { agent: e.agent };
+          }
+          return null;
+        })
+        .filter((x: FallbackEntry | null): x is FallbackEntry => x !== null)
+    : defaults.order;
+  return {
+    enabled: typeof raw.enabled === 'boolean' ? raw.enabled : defaults.enabled,
+    order,
+  };
+}
 
 function getDefaultConfig(): GatewayConfigJson {
   return {
@@ -272,7 +317,14 @@ function getDefaultConfig(): GatewayConfigJson {
       { apiType: 'anthropic', model: 'claude-haiku-4-5',  provider: 'anthropic' },
       { apiType: 'openai',    model: 'gpt-5',             provider: 'openai' },
     ],
-    fallback: { enabled: true, order: ['claude-code', 'opencode', 'codex'] },
+    fallback: {
+      enabled: true,
+      order: [
+        { agent: 'claude-code' },
+        { agent: 'opencode' },
+        { agent: 'codex' },
+      ],
+    },
     dev: { logLevel: 'info' },
   };
 }
@@ -303,7 +355,7 @@ function normalize(raw: Partial<GatewayConfigJson> & { models?: any[] }): Gatewa
     channels: raw.channels ?? defaults.channels,
     agents: { ...defaults.agents, ...rawAgents },
     models,
-    fallback: raw.fallback ?? defaults.fallback,
+    fallback: normalizeFallback(raw.fallback, defaults.fallback),
     dev: raw.dev ?? defaults.dev,
   };
 }

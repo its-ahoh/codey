@@ -218,8 +218,8 @@ const styles: Record<string, React.CSSProperties> = {
   empty: { color: C.fg3, fontSize: 12, padding: 12, textAlign: 'center' },
   groupHeader: {
     display: 'flex', alignItems: 'center', gap: 6,
-    padding: '6px 8px', color: C.fg3, fontSize: 12, fontWeight: 600,
-    textTransform: 'uppercase', cursor: 'pointer', userSelect: 'none',
+    padding: '6px 8px', color: C.fg3, fontSize: 13, fontWeight: 600,
+    cursor: 'pointer', userSelect: 'none',
   },
   groupName: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   groupAddBtn: {
