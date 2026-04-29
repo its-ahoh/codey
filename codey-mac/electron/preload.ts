@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.invoke('chats:updateSelection', id, selection),
     send: (payload: { chatId: string; text: string }) =>
       ipcRenderer.invoke('chats:send', payload),
+    stop: (chatId: string) => ipcRenderer.invoke('chats:stop', chatId),
     onEvent: (handler: (ev: any) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, ev: any) => handler(ev)
       ipcRenderer.on('chats:event', listener)
