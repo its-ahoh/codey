@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry } from '@codey/core';
+import { AgentRequest, AgentResponse, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -1503,26 +1503,68 @@ Example: /model gpt-4.1 write a Python script`;
     const fb = this.config.fallback;
     if (fb && fb.enabled === false) return response;
 
-    // Prefer the user-configured order; else fall back to all enabled agents.
-    const ordered = (fb?.order && fb.order.length > 0 ? fb.order : this.getEnabledAgents())
-      .filter(a => a !== agent)
-      .filter(a => this.config.agents?.[a]?.enabled !== false);
-    for (const fallbackAgent of ordered) {
-      this.logger.warn(`Agent ${agent} failed, trying ${fallbackAgent}...`);
-      const fallbackResponse = await this.agentFactory.run(fallbackAgent, {
+    // Prefer the user-configured order; else default to every enabled agent
+    // with no specific model (resolved to that agent's defaultModel below).
+    const rawOrder: FallbackEntry[] = fb?.order && fb.order.length > 0
+      ? fb.order
+      : this.getEnabledAgents().map(a => ({ agent: a }));
+
+    // Skip the (agent, model) we just tried so we don't infinite-loop on the
+    // same combination. Same agent with a different model is allowed.
+    const originalModel = request.model?.model;
+    const seen = new Set<string>([`${agent}::${originalModel ?? ''}`]);
+
+    for (const entry of rawOrder) {
+      if (this.config.agents?.[entry.agent]?.enabled === false) continue;
+      const resolvedModel = this.resolveFallbackModel(entry);
+      if (!resolvedModel) {
+        this.logger.warn(`Skipping fallback ${entry.agent}${entry.model ? `(${entry.model})` : ''}: no usable model config`);
+        continue;
+      }
+      const key = `${entry.agent}::${resolvedModel.model}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const label = `${entry.agent}(${resolvedModel.model})`;
+      this.logger.warn(`Agent ${agent} failed, trying ${label}...`);
+      const fallbackResponse = await this.agentFactory.run(entry.agent, {
         ...request,
-        agent: fallbackAgent,
-        model: this.getDefaultModelConfig(fallbackAgent),
+        agent: entry.agent,
+        model: resolvedModel,
       });
       if (fallbackResponse.success) {
-        fallbackResponse.output = `[Fallback: ${agent} → ${fallbackAgent}]\n\n${fallbackResponse.output}`;
+        const fromLabel = originalModel ? `${agent}(${originalModel})` : agent;
+        fallbackResponse.output = `[Fallback: ${fromLabel} → ${label}]\n\n${fallbackResponse.output}`;
         return fallbackResponse;
       }
-      this.logger.error(`Fallback agent ${fallbackAgent} also failed: ${fallbackResponse.error || fallbackResponse.output}`);
+      this.logger.error(`Fallback ${label} also failed: ${fallbackResponse.error || fallbackResponse.output}`);
     }
 
-    // All agents failed, return original error
+    // All fallbacks failed, return original error
     return response;
+  }
+
+  /**
+   * Resolve a fallback entry to a ModelConfig. When `entry.model` references a
+   * known ModelEntry, copy its apiType/apiKey/baseUrl through so the adapter
+   * can spawn the CLI with the right env vars. Falls back to the agent's
+   * default model when no override is set.
+   */
+  private resolveFallbackModel(entry: FallbackEntry): ModelConfig | undefined {
+    if (!entry.model) return this.getDefaultModelConfig(entry.agent);
+    const modelEntry = this.configManager?.getModel(entry.model);
+    if (modelEntry) {
+      return {
+        provider: modelEntry.provider ?? (modelEntry.apiType === 'anthropic' ? 'anthropic' : 'openai'),
+        model: modelEntry.model,
+        apiKey: modelEntry.apiKey,
+        baseUrl: modelEntry.baseUrl,
+        apiType: modelEntry.apiType,
+      };
+    }
+    // Model id not in catalog — fall through to the agent's gateway-side
+    // resolver (handles bare anthropic/openai/google ids by prefix).
+    return this.getModelConfig(entry.agent, entry.model);
   }
 
   private checkRateLimit(userId: string): boolean {

@@ -11,7 +11,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'workers',    label: 'Workers' },
   { key: 'workspaces', label: 'Workspaces' },
   { key: 'status',     label: 'Gateway' },
-  { key: 'settings',   label: 'Settings' },
+  { key: 'settings',   label: 'AI Models' },
 ]
 
 interface Props { onClose: () => void }

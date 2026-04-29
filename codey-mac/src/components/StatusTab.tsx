@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { GatewayStatus } from '../types'
 import { apiService } from '../services/api'
 import { C } from '../theme'
+import { ChannelsSection } from './ChannelsSection'
 
 interface StatusTabProps {
   status: GatewayStatus
@@ -50,12 +51,6 @@ export const StatusTab: React.FC<StatusTabProps> = ({ status, logs, isRunning })
     { label: 'Messages', value: isRunning ? String(status.messagesProcessed ?? 0) : '—' },
     { label: 'Errors',   value: isRunning ? String(status.errors ?? 0) : '—' },
     { label: 'Status',   value: isRunning ? 'OK' : '—' },
-  ]
-
-  const channels = [
-    { name: 'Telegram', active: !!status.channels?.telegram },
-    { name: 'Discord',  active: !!status.channels?.discord },
-    { name: 'iMessage', active: !!status.channels?.imessage },
   ]
 
   return (
@@ -111,16 +106,14 @@ export const StatusTab: React.FC<StatusTabProps> = ({ status, logs, isRunning })
 
       <div style={{ marginBottom: 20 }}>
         <div style={styles.sectionHead}>Channels</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {channels.map(ch => (
-            <div key={ch.name} style={styles.listItem}>
-              <span style={{ color: C.fg, fontSize: 13 }}>{ch.name}</span>
-              <span style={{ color: ch.active ? C.green : C.fg3, fontSize: 12, fontWeight: 500 }}>
-                {ch.active ? 'Connected' : 'Disabled'}
-              </span>
-            </div>
-          ))}
-        </div>
+        <ChannelsSection
+          isGatewayRunning={isRunning}
+          liveStatus={{
+            telegram: !!status.channels?.telegram,
+            discord:  !!status.channels?.discord,
+            imessage: !!status.channels?.imessage,
+          }}
+        />
       </div>
 
       <div>

@@ -58,8 +58,8 @@ declare global {
         rename: (oldName: string, newName: string) => Promise<IpcResult<void>>
       }
       fallback: {
-        get: () => Promise<IpcResult<{ enabled: boolean; order: string[] }>>
-        set: (fb: { enabled: boolean; order: string[] }) => Promise<IpcResult<void>>
+        get: () => Promise<IpcResult<{ enabled: boolean; order: Array<{ agent: string; model?: string }> }>>
+        set: (fb: { enabled: boolean; order: Array<{ agent: string; model?: string }> }) => Promise<IpcResult<void>>
       }
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string }>>>
