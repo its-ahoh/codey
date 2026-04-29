@@ -261,7 +261,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                             return next
                           })
                           const headline = formatHeadline(row.tool, row.input)
-                          const marker = row.done ? '✓' : '⋯'
                           const markerColor = row.done ? '#5c5' : '#6ab0f3'
                           return (
                             <div key={row.id}>
@@ -269,7 +268,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                                 style={{ ...styles.toolCallRow, cursor: detail ? 'pointer' : 'default' }}
                                 onClick={detail ? toggle : undefined}
                               >
-                                <span style={{ width: 14, color: markerColor, flexShrink: 0 }}>{marker}</span>
                                 {detail && (
                                   <span style={{ ...styles.chevron, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
                                 )}
