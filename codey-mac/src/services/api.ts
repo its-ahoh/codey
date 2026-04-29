@@ -152,6 +152,8 @@ export const apiService = {
       unwrap(await window.codey.chats.updateSelection(id, selection)),
     send: async (chatId: string, text: string): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> =>
       unwrap(await window.codey.chats.send({ chatId, text })),
+    stop: async (chatId: string): Promise<boolean> =>
+      unwrap(await window.codey.chats.stop(chatId)),
     onEvent: (handler: (ev: ChatStreamEvent) => void): (() => void) =>
       window.codey.chats.onEvent(handler),
   },

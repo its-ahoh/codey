@@ -220,6 +220,17 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
           safeResolve(this.createResponse(`Timeout after ${Math.round(timeout / 60000)} minutes`, false, undefined, duration));
         }
       }, timeout);
+
+      if (request.signal) {
+        const onAbort = () => {
+          if (resolved) return;
+          try { childProcess.kill('SIGTERM'); } catch { /* already dead */ }
+          const duration = Math.round((Date.now() - startTime) / 1000);
+          safeResolve(this.createResponse('Stopped', false, undefined, duration, statusUpdates, states));
+        };
+        if (request.signal.aborted) onAbort();
+        else request.signal.addEventListener('abort', onAbort, { once: true });
+      }
     });
   }
 }

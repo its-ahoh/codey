@@ -176,6 +176,7 @@ interface ChatsContextValue {
   deleteChat: (chatId: string) => Promise<void>
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
   sendMessage: (chatId: string, text: string) => Promise<void>
+  stopChat: (chatId: string) => Promise<void>
   toggleWorkspace: (workspaceName: string) => void
   refreshWorkspaces: () => Promise<void>
 }
@@ -324,6 +325,9 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         dispatch({ type: 'errorSend', chatId, assistantMessageId, error: `Error: ${(err as Error).message}` })
         delete pendingAssistantId.current[chatId]
       }
+    },
+    async stopChat(chatId) {
+      try { await apiService.chats.stop(chatId) } catch { /* nothing in flight */ }
     },
     toggleWorkspace(workspaceName) { dispatch({ type: 'toggleWorkspace', workspaceName }) },
     async refreshWorkspaces() {

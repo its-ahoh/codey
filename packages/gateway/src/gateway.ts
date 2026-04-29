@@ -41,6 +41,7 @@ export class Codey {
   private chatManager: ChatManager;
   private configManager?: ConfigManager;
   private chatSemaphore = new RunSemaphore();
+  private chatAborts: Map<string, AbortController> = new Map();
 
   // Rate limiting: userId -> last request timestamp
   private userCooldowns: Map<string, number> = new Map();
@@ -81,21 +82,9 @@ export class Codey {
    * right env vars when spawning the CLI.
    */
   getDefaultModelConfig(agent: CodingAgent): ModelConfig | undefined {
-    const agentConfig = this.config.agents?.[agent];
-    const modelName = agentConfig?.defaultModel;
+    const modelName = this.config.agents?.[agent]?.defaultModel;
     if (!modelName) return undefined;
-    const entry = this.configManager?.getModel(modelName);
-    if (!entry) {
-      // Bare model id — still callable, but no credentials attached.
-      return { provider: 'unknown', model: modelName };
-    }
-    return {
-      provider: entry.provider ?? (entry.apiType === 'anthropic' ? 'anthropic' : 'openai'),
-      model: entry.model,
-      apiKey: entry.apiKey,
-      baseUrl: entry.baseUrl,
-      apiType: entry.apiType,
-    };
+    return this.getModelConfig(agent, modelName);
   }
 
   private conversationCleanupInterval?: NodeJS.Timeout;
@@ -127,7 +116,7 @@ export class Codey {
       apiKey: plannerApiKey,
     });
     const wm = workerManager || new WorkerManager('./workers');
-    this.workspaceManager = new WorkspaceManager(wm, workspaceDir || './workspaces');
+    this.workspaceManager = new WorkspaceManager(wm, workspaceDir || './workspaces', this.logger);
     this.chatManager = new ChatManager(this.workspaceManager.getWorkspacesRoot());
     this.COOLDOWN_MS = config.rateLimitMs || 3000; // Default 3 seconds
   }
@@ -1180,12 +1169,13 @@ Example: /model gpt-4.1 write a Python script`;
     // Get enabled agents
     const enabledAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex'];
 
-    // Run all agents in parallel
+    // Run all agents in parallel (with per-agent fallback)
     const results = await Promise.allSettled(
-      enabledAgents.map(agent => 
-        this.agentFactory.run(agent, {
+      enabledAgents.map(agent =>
+        this.runWithFallback(agent, {
           prompt,
           agent,
+          model: this.getDefaultModelConfig(agent),
           context: { workingDir: this.workingDir },
         })
       )
@@ -1372,6 +1362,7 @@ Example: /model gpt-4.1 write a Python script`;
     workingDir: string,
     sink: ChatStreamSink,
     chatId: string,
+    signal?: AbortSignal,
   ): Promise<{ response: string; tokens?: number }> {
     if (!members || members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
@@ -1380,6 +1371,7 @@ Example: /model gpt-4.1 write a Python script`;
     let carry = prompt;
     const parts: string[] = [];
     for (let i = 0; i < members.length; i++) {
+      if (signal?.aborted) break;
       const memberName = members[i];
       sink({ type: 'info', chatId, message: `Step ${i + 1}/${members.length}: ${memberName}` });
       const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
@@ -1393,6 +1385,7 @@ Example: /model gpt-4.1 write a Python script`;
         context: { workingDir },
         onStream: (text: string) => sink({ type: 'stream', chatId, token: text }),
         onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
+        signal,
       });
       const output = response?.success ? this.formatAgentResponse(response) : '';
       parts.push(`### ${memberName}\n\n${output}`);
@@ -1544,26 +1537,8 @@ Example: /model gpt-4.1 write a Python script`;
     return response;
   }
 
-  /**
-   * Resolve a fallback entry to a ModelConfig. When `entry.model` references a
-   * known ModelEntry, copy its apiType/apiKey/baseUrl through so the adapter
-   * can spawn the CLI with the right env vars. Falls back to the agent's
-   * default model when no override is set.
-   */
   private resolveFallbackModel(entry: FallbackEntry): ModelConfig | undefined {
     if (!entry.model) return this.getDefaultModelConfig(entry.agent);
-    const modelEntry = this.configManager?.getModel(entry.model);
-    if (modelEntry) {
-      return {
-        provider: modelEntry.provider ?? (modelEntry.apiType === 'anthropic' ? 'anthropic' : 'openai'),
-        model: modelEntry.model,
-        apiKey: modelEntry.apiKey,
-        baseUrl: modelEntry.baseUrl,
-        apiType: modelEntry.apiType,
-      };
-    }
-    // Model id not in catalog — fall through to the agent's gateway-side
-    // resolver (handles bare anthropic/openai/google ids by prefix).
     return this.getModelConfig(entry.agent, entry.model);
   }
 
@@ -1574,16 +1549,27 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   private getModelConfig(agent: CodingAgent, modelName: string): ModelConfig | undefined {
+    // 1. Check the global model catalog (has credentials + full config)
+    const catalogEntry = this.configManager?.getModel(modelName);
+    if (catalogEntry) {
+      return {
+        provider: catalogEntry.provider ?? (catalogEntry.apiType === 'anthropic' ? 'anthropic' : 'openai'),
+        model: catalogEntry.model,
+        apiKey: catalogEntry.apiKey,
+        baseUrl: catalogEntry.baseUrl,
+        apiType: catalogEntry.apiType,
+      };
+    }
+
+    // 2. Check if model is in the agent's model list
     const agentConfig = this.config.agents?.[agent];
     const provider = agentConfig?.provider || 'anthropic';
-
-    // Check if model is in the agent's model list
     if (agentConfig?.models?.some(m => m.toLowerCase() === modelName.toLowerCase())) {
       return { provider, model: modelName };
     }
 
+    // 3. Infer provider from model name prefix
     const modelLower = modelName.toLowerCase();
-
     if (modelLower.startsWith('claude-') || modelLower.startsWith('claude/')) {
       return { provider: 'anthropic', model: modelName };
     }
@@ -1594,11 +1580,11 @@ Example: /model gpt-4.1 write a Python script`;
       return { provider: 'google', model: modelName };
     }
 
-    return undefined;
+    // Bare model id — still callable, but no credentials attached.
+    return { provider: 'unknown', model: modelName };
   }
 
   private async resolveDirectory(dirPath: string): Promise<DirectoryResolveResult> {
-    const fs = require('fs');
     const resolvedDir = path.resolve(dirPath);
 
     if (fs.existsSync(resolvedDir) && fs.statSync(resolvedDir).isDirectory()) {
@@ -1808,6 +1794,9 @@ Example: /model gpt-4.1 write a Python script`;
     }
     await this.chatSemaphore.acquire();
 
+    const abortController = new AbortController();
+    this.chatAborts.set(chatId, abortController);
+
     const started = Date.now();
 
     // Resolve workspace → workingDir by reading workspace.json from disk.
@@ -1891,7 +1880,7 @@ Example: /model gpt-4.1 write a Python script`;
         const teamName = teamNames[0];
         const members = chatWorkspaceTeams[teamName];
         if (!members || members.length === 0) throw new Error(`Team "${teamName}" is empty`);
-        const r = await this.runTeamForChat(teamName, members, prompt, workingDir, sink, chatId);
+        const r = await this.runTeamForChat(teamName, members, prompt, workingDir, sink, chatId, abortController.signal);
         output = r.response;
         tokens = r.tokens;
       } else {
@@ -1902,9 +1891,13 @@ Example: /model gpt-4.1 write a Python script`;
           context: { workingDir },
           onStream,
           onStatus,
+          signal: abortController.signal,
         });
         output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
         tokens = (response as any)?.tokens?.total;
+        if (abortController.signal.aborted && !output) {
+          output = 'Stopped';
+        }
       }
 
       const durationSec = Math.round((Date.now() - started) / 1000);
@@ -1937,6 +1930,19 @@ Example: /model gpt-4.1 write a Python script`;
       throw err;
     } finally {
       this.chatSemaphore.release();
+      if (this.chatAborts.get(chatId) === abortController) {
+        this.chatAborts.delete(chatId);
+      }
     }
+  }
+
+  /**
+   * Cancel an in-flight chat turn. Returns true if a run was aborted.
+   */
+  stopChat(chatId: string): boolean {
+    const controller = this.chatAborts.get(chatId);
+    if (!controller) return false;
+    controller.abort();
+    return true;
   }
 }
