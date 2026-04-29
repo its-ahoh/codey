@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef } from 'react'
 import { apiService } from '../services/api'
-import type { Chat, ChatSelection, ChatMessage, ToolCallEntry } from '../types'
+import type { Chat, ChatSelection, ChatMessage, ToolCallEntry, FileAttachment } from '../types'
 import type { ChatStreamEvent } from '../../../packages/gateway/src/chat-runner'
 
 interface InFlight {
@@ -175,7 +175,7 @@ interface ChatsContextValue {
   renameChat: (chatId: string, title: string) => Promise<void>
   deleteChat: (chatId: string) => Promise<void>
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
-  sendMessage: (chatId: string, text: string) => Promise<void>
+  sendMessage: (chatId: string, text: string, attachments?: FileAttachment[]) => Promise<void>
   stopChat: (chatId: string) => Promise<void>
   toggleWorkspace: (workspaceName: string) => void
   refreshWorkspaces: () => Promise<void>
@@ -308,19 +308,20 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const chat = await apiService.chats.updateSelection(chatId, selection)
       dispatch({ type: 'upsert', chat })
     },
-    async sendMessage(chatId, text) {
+    async sendMessage(chatId, text, attachments) {
       const assistantMessageId = `asst-${Date.now()}-${Math.random()}`
       const userMessage: ChatMessage = {
         id: `user-${Date.now()}-${Math.random()}`,
         role: 'user',
         content: text,
         timestamp: Date.now(),
+        attachments: attachments && attachments.length > 0 ? attachments : undefined,
         isComplete: true,
       }
       pendingAssistantId.current[chatId] = assistantMessageId
       dispatch({ type: 'startSend', chatId, userMessage, assistantMessageId })
       try {
-        await apiService.chats.send(chatId, text)
+        await apiService.chats.send(chatId, text, attachments)
       } catch (err) {
         dispatch({ type: 'errorSend', chatId, assistantMessageId, error: `Error: ${(err as Error).message}` })
         delete pendingAssistantId.current[chatId]

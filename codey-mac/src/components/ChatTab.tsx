@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import type { ChatSelection } from '../types'
+import type { ChatSelection, FileAttachment } from '../types'
 import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
@@ -49,6 +49,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
+  const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>([])
+  const [isDragging, setIsDragging] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
@@ -78,12 +81,68 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     await setSelection(chat.id, next)
   }
 
+  const uploadFiles = async (files: FileList | File[]) => {
+    const fileArray = Array.from(files)
+    const maxSize = 10 * 1024 * 1024 // 10MB
+    const maxAttachments = 10
+
+    for (const file of fileArray) {
+      if (pendingAttachments.length >= maxAttachments) break
+      if (file.size > maxSize) {
+        console.warn(`File ${file.name} exceeds 10MB limit`)
+        continue
+      }
+
+      try {
+        const buffer = await file.arrayBuffer()
+        const attachment = await apiService.chats.upload(chatId, file.name, file.type || 'application/octet-stream', buffer)
+        setPendingAttachments(prev => [...prev, attachment])
+      } catch (err) {
+        console.error(`Failed to upload ${file.name}:`, err)
+      }
+    }
+  }
+
+  const removeAttachment = (id: string) => {
+    setPendingAttachments(prev => prev.filter(a => a.id !== id))
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+  }
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    if (e.dataTransfer.files.length > 0) {
+      await uploadFiles(e.dataTransfer.files)
+    }
+  }
+
+  const handleFilePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      await uploadFiles(e.target.files)
+      e.target.value = '' // reset so same file can be re-selected
+    }
+  }
+
   const send = async () => {
-    if (!input.trim() || !isGatewayRunning || !!flight) return
+    if ((!input.trim() && pendingAttachments.length === 0) || !isGatewayRunning || !!flight) return
     const text = input
+    const atts = pendingAttachments.length > 0 ? [...pendingAttachments] : undefined
     setInput('')
+    setPendingAttachments([])
     if (taRef.current) taRef.current.style.height = 'auto'
-    await sendMessage(chat.id, text)
+    await sendMessage(chat.id, text, atts)
   }
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -95,7 +154,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
 
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
-  const canSend = isGatewayRunning && !isSending && !!input.trim() && !orphaned
+  const canSend = isGatewayRunning && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
   const statusLabel = flight?.queuedPosition
     ? `Queued (#${flight.queuedPosition})`
     : flight?.agentStatus === 'thinking' ? 'Thinking…'
@@ -132,7 +191,17 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         </select>
       </div>
 
-      <div style={styles.messages}>
+      <div
+        style={{ ...styles.messages, position: 'relative' }}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {isDragging && (
+          <div style={styles.dropOverlay}>
+            <div style={styles.dropOverlayInner}>Drop files here</div>
+          </div>
+        )}
         {chat.messages.map(msg => {
           const isUser = msg.role === 'user'
           return (
@@ -220,6 +289,25 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                   )
                 })()}
                 {msg.content && <Markdown variant={isUser ? 'user' : 'assistant'}>{msg.content}</Markdown>}
+                {isUser && msg.attachments && msg.attachments.length > 0 && (
+                  <div style={styles.attachmentsContainer}>
+                    {msg.attachments.map(att => (
+                      <div key={att.id} style={styles.attachmentChip}>
+                        {att.mimeType.startsWith('image/') ? (
+                          <img
+                            src={`file://${att.path}`}
+                            alt={att.name}
+                            style={styles.attachmentThumb}
+                            onClick={() => window.codey?.openPath?.(att.path)}
+                          />
+                        ) : (
+                          <span style={styles.attachmentIcon}>📄</span>
+                        )}
+                        <span style={styles.attachmentName}>{att.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <div style={styles.tsLabel}>
                 <span>{fmtTime(msg.timestamp)}</span>
@@ -254,6 +342,39 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         </div>
       )}
       <div style={styles.inputContainer}>
+        {pendingAttachments.length > 0 && (
+          <div style={styles.pendingRow}>
+            {pendingAttachments.map(att => (
+              <div key={att.id} style={styles.pendingChip}>
+                {att.mimeType.startsWith('image/') ? (
+                  <img src={`file://${att.path}`} alt={att.name} style={styles.pendingThumb} />
+                ) : (
+                  <span style={{ fontSize: 11 }}>📄</span>
+                )}
+                <span style={styles.pendingName}>{att.name}</span>
+                <button onClick={() => removeAttachment(att.id)} style={styles.removeBtn}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/*,text/*,.json,.ts,.tsx,.js,.jsx,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.css,.html,.md,.yaml,.yml,.toml,.xml,.sh,.bash,.zsh,.log,.csv,.sql"
+          style={{ display: 'none' }}
+          onChange={handleFilePick}
+        />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={!isGatewayRunning || isSending}
+          style={styles.attachButton}
+          title="Attach file"
+        >
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={C.fg3} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
         <textarea
           ref={taRef}
           value={input}
@@ -330,4 +451,55 @@ const styles: Record<string, React.CSSProperties> = {
   chevron: { display: 'inline-block', fontSize: 13, marginRight: 4, transition: 'transform 0.15s ease', color: '#555' },
   toolDetail: { marginLeft: 20, marginTop: 4, marginBottom: 6, padding: 8, background: 'rgba(0,0,0,0.3)', borderRadius: 6, border: `1px solid ${C.border}` },
   orphanBanner: { padding: '8px 12px', background: '#ff950033', color: '#ffb84d', fontSize: 12, borderTop: `1px solid ${C.border}` },
+  dropOverlay: {
+    position: 'absolute' as const, inset: 0, zIndex: 10,
+    background: 'rgba(0,0,0,0.6)', display: 'flex',
+    alignItems: 'center', justifyContent: 'center',
+    borderRadius: 8, border: `2px dashed ${C.accent}`,
+  },
+  dropOverlayInner: {
+    color: C.accent, fontSize: 16, fontWeight: 600,
+  },
+  attachmentsContainer: {
+    display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginTop: 8,
+  },
+  attachmentChip: {
+    display: 'flex', alignItems: 'center', gap: 4,
+    background: 'rgba(255,255,255,0.08)', borderRadius: 6,
+    padding: '4px 8px', fontSize: 11, maxWidth: 180,
+  },
+  attachmentThumb: {
+    width: 32, height: 32, borderRadius: 4, objectFit: 'cover' as const, cursor: 'pointer',
+  },
+  attachmentIcon: { fontSize: 14 },
+  attachmentName: {
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
+    color: C.fg2, maxWidth: 120,
+  },
+  pendingRow: {
+    display: 'flex', flexWrap: 'wrap' as const, gap: 6,
+    padding: '8px 14px 0', borderTop: `1px solid ${C.border}`,
+  },
+  pendingChip: {
+    display: 'flex', alignItems: 'center', gap: 4,
+    background: C.surface3, borderRadius: 6,
+    padding: '4px 6px', fontSize: 11,
+  },
+  pendingThumb: {
+    width: 24, height: 24, borderRadius: 3, objectFit: 'cover' as const,
+  },
+  pendingName: {
+    color: C.fg2, maxWidth: 100, overflow: 'hidden',
+    textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
+  },
+  removeBtn: {
+    background: 'none', border: 'none', color: C.fg3,
+    cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1,
+  },
+  attachButton: {
+    width: 36, height: 36, borderRadius: 9, border: 'none',
+    background: C.surface3, display: 'flex', alignItems: 'center',
+    justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
+    transition: 'background 0.15s',
+  },
 }
