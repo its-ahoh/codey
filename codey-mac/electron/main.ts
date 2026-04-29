@@ -582,7 +582,54 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('chats:send', async (_e, payload: { chatId: string; text: string }) =>
+  ipcMain.handle('chats:upload', async (_e, chatId: string, fileName: string, mimeType: string, data: ArrayBuffer) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      const chat = inProcessGateway.getChatManager().get(chatId)
+      if (!chat) throw new Error(`Chat not found: ${chatId}`)
+
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const cryptoMod = await import('crypto')
+
+      // Resolve workspace working directory
+      const workspacesRoot = (inProcessGateway as any).workspaceManager.getWorkspacesRoot()
+      const wsConfigPath = pathMod.join(workspacesRoot, chat.workspaceName, 'workspace.json')
+      let workingDir = (inProcessGateway as any).workingDir
+      if (fsMod.existsSync(wsConfigPath)) {
+        try {
+          const wsConfig = JSON.parse(fsMod.readFileSync(wsConfigPath, 'utf-8'))
+          if (wsConfig.workingDir) workingDir = wsConfig.workingDir
+        } catch { /* use default */ }
+      }
+
+      // Create .codey/uploads/ directory
+      const uploadsDir = pathMod.join(workingDir, '.codey', 'uploads')
+      fsMod.mkdirSync(uploadsDir, { recursive: true })
+
+      // Generate unique filename
+      const timestamp = Date.now()
+      const random = cryptoMod.randomBytes(4).toString('hex')
+      const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const uniqueName = `${timestamp}-${random}-${safeName}`
+      const filePath = pathMod.join(uploadsDir, uniqueName)
+
+      // Write file
+      const buffer = Buffer.from(data)
+      fsMod.writeFileSync(filePath, buffer)
+
+      const { randomUUID } = cryptoMod
+      return {
+        id: randomUUID(),
+        name: fileName,
+        path: filePath,
+        mimeType,
+        size: buffer.length,
+      }
+    })
+  )
+
+  ipcMain.handle('chats:send', async (_e, payload: { chatId: string; text: string; attachments?: any[] }) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       const sink = (ev: any) => {
@@ -590,7 +637,7 @@ app.whenReady().then(async () => {
         // so the frontend can route by chatId without sniffing event names.
         sendToRenderer('chats:event', ev)
       }
-      return inProcessGateway.sendToChat(payload.chatId, payload.text, sink)
+      return inProcessGateway.sendToChat(payload.chatId, payload.text, sink, payload.attachments)
     })
   )
 
