@@ -46,6 +46,7 @@ interface CodexEvent {
  */
 export class CodexAdapter extends BaseAgentAdapter {
   name = 'codex';
+  private activeProcess?: ChildProcess;
 
   async run(request: AgentRequest): Promise<AgentResponse> {
     return new Promise((resolve) => {
@@ -77,6 +78,11 @@ export class CodexAdapter extends BaseAgentAdapter {
         stdio: ['ignore', 'pipe', 'pipe'],
         env,
         cwd: request.context?.workingDir || undefined,
+      });
+      this.activeProcess = childProcess;
+
+      childProcess.on('close', () => {
+        this.activeProcess = undefined;
       });
 
       const startTime = Date.now();
@@ -231,5 +237,12 @@ export class CodexAdapter extends BaseAgentAdapter {
         else request.signal.addEventListener('abort', onAbort, { once: true });
       }
     });
+  }
+
+  dispose(): void {
+    if (this.activeProcess) {
+      this.activeProcess.kill('SIGTERM');
+      this.activeProcess = undefined;
+    }
   }
 }

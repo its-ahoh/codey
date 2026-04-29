@@ -4,6 +4,7 @@ export interface CodingAgentAdapter {
   name: string;
   run(request: AgentRequest): Promise<AgentResponse>;
   resetSession?(): void;
+  dispose?(): void;
 }
 
 // Base class for agent adapters

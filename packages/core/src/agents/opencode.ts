@@ -32,6 +32,7 @@ interface OpenCodeEvent {
 export class OpenCodeAdapter extends BaseAgentAdapter {
   name = 'opencode';
   private debug: (msg: string) => void;
+  private activeProcess?: ChildProcess;
 
   constructor(debug?: (msg: string) => void) {
     super();
@@ -65,6 +66,11 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: request.context?.workingDir || undefined,
         env,
+      });
+      this.activeProcess = childProcess;
+
+      childProcess.on('close', () => {
+        this.activeProcess = undefined;
       });
 
       // Track start time for duration calculation
@@ -232,5 +238,12 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
         else request.signal.addEventListener('abort', onAbort, { once: true });
       }
     });
+  }
+
+  dispose(): void {
+    if (this.activeProcess) {
+      this.activeProcess.kill('SIGTERM');
+      this.activeProcess = undefined;
+    }
   }
 }
