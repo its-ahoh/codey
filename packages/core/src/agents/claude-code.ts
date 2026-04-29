@@ -43,6 +43,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
   name = 'claude-code';
   private sessionId?: string;
   private debug: (msg: string) => void;
+  private activeProcess?: ChildProcess;
 
   constructor(debug?: (msg: string) => void) {
     super();
@@ -106,6 +107,11 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         stdio: [request.interactive ? 'inherit' : 'pipe', 'pipe', request.interactive ? 'inherit' : 'pipe'],
         cwd: request.context?.workingDir || undefined,
         env,
+      });
+      this.activeProcess = childProcess;
+
+      childProcess.on('close', () => {
+        this.activeProcess = undefined;
       });
 
       // Close stdin for non-interactive mode so the child process doesn't hang
@@ -304,5 +310,12 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
 
   resetSession(): void {
     this.sessionId = undefined;
+  }
+
+  dispose(): void {
+    if (this.activeProcess) {
+      this.activeProcess.kill('SIGTERM');
+      this.activeProcess = undefined;
+    }
   }
 }
