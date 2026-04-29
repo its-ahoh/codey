@@ -150,8 +150,10 @@ export const apiService = {
     },
     updateSelection: async (id: string, selection: ChatSelection): Promise<Chat> =>
       unwrap(await window.codey.chats.updateSelection(id, selection)),
-    send: async (chatId: string, text: string): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> =>
-      unwrap(await window.codey.chats.send({ chatId, text })),
+    upload: async (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer): Promise<{ id: string; name: string; path: string; mimeType: string; size: number }> =>
+      unwrap(await window.codey.chats.upload(chatId, fileName, mimeType, data)),
+    send: async (chatId: string, text: string, attachments?: { id: string; name: string; path: string; mimeType: string; size: number }[]): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> =>
+      unwrap(await window.codey.chats.send({ chatId, text, attachments })),
     stop: async (chatId: string): Promise<boolean> =>
       unwrap(await window.codey.chats.stop(chatId)),
     onEvent: (handler: (ev: ChatStreamEvent) => void): (() => void) =>
