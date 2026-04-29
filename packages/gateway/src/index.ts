@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { ConfigManager } from './config';
+import { ConfigManager, formatFallbackOrder } from './config';
 import { Logger } from './logger';
 import { handleCommand } from './cli';
 import { GatewayConfig } from '@codey/core';
@@ -62,7 +62,7 @@ function startGateway(): void {
     logger.info(`Default agent: ${configManager.getDefaultAgent()}`);
     logger.info(`Default model: ${configManager.getDefaultModel()}`);
     logger.info(`Models in catalog: ${configManager.listModels().length}`);
-    logger.info(`Fallback: ${configManager.getFallback().enabled ? 'on' : 'off'} (${configManager.getFallback().order.join(' → ')})`);
+    logger.info(`Fallback: ${configManager.getFallback().enabled ? 'on' : 'off'} (${formatFallbackOrder(configManager.getFallback().order)})`);
     logger.info(`Log level: ${configManager.getLogLevel()}`);
 
     const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager, workerManager);

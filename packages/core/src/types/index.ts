@@ -54,9 +54,20 @@ export interface ModelEntry {
   provider?: string;      // optional human label (anthropic, minimax, openai, …)
 }
 
+export interface FallbackEntry {
+  agent: CodingAgent;
+  /**
+   * Optional model id from the global ModelEntry catalog. When omitted, the
+   * gateway resolves the agent's defaultModel at run time. Two entries with
+   * the same agent but different models are valid (e.g. claude-code with
+   * sonnet → claude-code with haiku).
+   */
+  model?: string;
+}
+
 export interface FallbackConfig {
   enabled: boolean;
-  order: CodingAgent[];
+  order: FallbackEntry[];
 }
 
 export interface AgentRequest {
