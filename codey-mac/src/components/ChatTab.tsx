@@ -71,14 +71,28 @@ const formatBytes = (n: number): string => {
   return `${(n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`
 }
 
+// Agents that the gateway supports. Mirror of AGENT_NAMES in SettingsTab — kept
+// local so the chat header doesn't depend on the settings module.
+const AGENT_NAMES = ['claude-code', 'opencode', 'codex'] as const
+const AGENT_API_TYPE: Record<string, 'anthropic' | 'openai'> = {
+  'claude-code': 'anthropic',
+  'opencode': 'openai',
+  'codex': 'openai',
+}
+type ModelEntry = { apiType: 'anthropic' | 'openai'; model: string }
+
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
-  const { state, sendMessage, stopChat, setSelection, renameChat } = useChats()
+  const { state, sendMessage, stopChat, setSelection, setAgentModel, renameChat } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
   const [input, setInput] = useState('')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [workers, setWorkers] = useState<WorkerDto[]>([])
+  const [models, setModels] = useState<ModelEntry[]>([])
+  const [enabledAgents, setEnabledAgents] = useState<string[]>([...AGENT_NAMES])
+  const [defaultAgent, setDefaultAgent] = useState<string | null>(null)
+  const [agentDefaultModels, setAgentDefaultModels] = useState<Record<string, string | undefined>>({})
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>([])
@@ -90,6 +104,32 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const taRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => { apiService.listWorkers().then(setWorkers) }, [])
+  useEffect(() => {
+    if (!isGatewayRunning) return
+    ;(async () => {
+      try {
+        const [m, fb] = await Promise.all([
+          window.codey.models.list(),
+          window.codey.fallback.get(),
+        ])
+        if (m.ok) setModels(m.data as ModelEntry[])
+        // Everything we need (which agents are usable, which is the default,
+        // and per-agent default model) is encoded in fallback.order. Membership
+        // == enabled; order[0] is the gateway default; first entry per agent
+        // that pins a model is that agent's default model.
+        if (fb.ok) {
+          const order = fb.data.order ?? []
+          setEnabledAgents(AGENT_NAMES.filter(n => order.some(e => e.agent === n)))
+          setDefaultAgent(order[0]?.agent ?? null)
+          const defaults: Record<string, string | undefined> = {}
+          for (const n of AGENT_NAMES) {
+            defaults[n] = order.find(e => e.agent === n && !!e.model)?.model
+          }
+          setAgentDefaultModels(defaults)
+        }
+      } catch { /* surface via dropdown placeholders */ }
+    })()
+  }, [isGatewayRunning])
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chat?.messages?.length])
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -113,6 +153,22 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     else if (v === 'team') next = { type: 'team' }
     else next = { type: 'worker', name: v.slice('worker:'.length) }
     await setSelection(chat.id, next)
+  }
+
+  // Resolve which agent/model are *actually* used for this chat (override or default).
+  const effectiveAgent: string = chat.agent ?? defaultAgent ?? 'claude-code'
+  const effectiveModel: string | undefined = chat.model ?? agentDefaultModels[effectiveAgent]
+  const apiTypeForAgent = AGENT_API_TYPE[effectiveAgent]
+  const modelsForAgent = models.filter(m => m.apiType === apiTypeForAgent)
+
+  const onAgentChange = async (v: string) => {
+    const nextAgent = v === '' ? null : v
+    // Clear the model override when switching agents — the previous model id
+    // is unlikely to be valid for the new agent's apiType.
+    await setAgentModel(chat.id, nextAgent, null)
+  }
+  const onModelChange = async (v: string) => {
+    await setAgentModel(chat.id, chat.agent ?? null, v === '' ? null : v)
   }
 
   const uploadFiles = async (files: FileList | File[]) => {
@@ -244,6 +300,29 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           <option value="none">No worker</option>
           <option value="team">Team</option>
           {workers.map(w => <option key={w.name} value={`worker:${w.name}`}>{w.name}</option>)}
+        </select>
+        <select
+          value={chat.agent ?? ''}
+          onChange={e => onAgentChange(e.target.value)}
+          style={styles.workerSelect}
+          title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : ' (default)'}`}
+        >
+          <option value="">{`Agent: ${effectiveAgent}`}</option>
+          {AGENT_NAMES.filter(n => enabledAgents.includes(n) || n === chat.agent).map(n => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+        <select
+          value={chat.model ?? ''}
+          onChange={e => onModelChange(e.target.value)}
+          style={styles.workerSelect}
+          title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : ' (default)'}`}
+          disabled={modelsForAgent.length === 0}
+        >
+          <option value="">{`Model: ${effectiveModel ?? '(default)'}`}</option>
+          {modelsForAgent.map(m => (
+            <option key={m.model} value={m.model}>{m.model}</option>
+          ))}
         </select>
       </div>
 

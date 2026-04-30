@@ -108,6 +108,21 @@ export class ChatManager {
     return chat;
   }
 
+  /**
+   * Set or clear the per-chat agent/model override. Pass `undefined` (or null
+   * via JSON) to clear a field and fall back to the gateway default.
+   */
+  updateAgentModel(chatId: string, agent?: Chat['agent'] | null, model?: string | null): Chat {
+    const chat = this.requireChat(chatId);
+    if (agent === null || agent === undefined) delete chat.agent;
+    else chat.agent = agent;
+    if (model === null || model === undefined || model === '') delete chat.model;
+    else chat.model = model;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
   delete(chatId: string): void {
     const chat = this.cache.get(chatId);
     if (!chat) return;

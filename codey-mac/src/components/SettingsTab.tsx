@@ -14,7 +14,7 @@ interface ModelEntry {
   apiKey?: string
   provider?: string
 }
-interface AgentSlot { enabled?: boolean; defaultModel?: string }
+interface AgentSlot { enabled?: boolean }
 interface FallbackEntry { agent: string; model?: string }
 interface FallbackCfg { enabled: boolean; order: FallbackEntry[] }
 
@@ -26,6 +26,15 @@ const AGENT_API_TYPE: Record<string, ApiType> = {
   'codex': 'openai',
 }
 const AGENT_NAMES = ['claude-code', 'opencode', 'codex'] as const
+
+// Where the user goes to install each agent's CLI when it isn't on PATH.
+// Picked to land on the official quickstart / install page rather than a
+// generic homepage so the next click is "run this command".
+const AGENT_INSTALL_URL: Record<string, string> = {
+  'claude-code': 'https://docs.claude.com/en/docs/claude-code/quickstart',
+  'opencode':    'https://opencode.ai',
+  'codex':       'https://github.com/openai/codex',
+}
 
 // ── Shared style atoms ───────────────────────────────────────────────
 
@@ -57,6 +66,56 @@ const Section: React.FC<{ title: string; right?: React.ReactNode }> = ({ title, 
     {right}
   </div>
 )
+
+// One of three states: probe in flight, installed, not installed. We render
+// the green pill with the resolved path as a tooltip so power users can see
+// *which* binary the gateway will spawn (helpful when a stale node version
+// is on PATH).
+const AgentInstallChip: React.FC<{
+  status?: { installed: boolean; path?: string }
+  checking: boolean
+  onInstall: () => void
+}> = ({ status, checking, onInstall }) => {
+  if (!status) {
+    return (
+      <span style={{ color: C.fg3, fontSize: 11, fontStyle: 'italic' }}>
+        {checking ? 'checking…' : ''}
+      </span>
+    )
+  }
+  if (status.installed) {
+    return (
+      <span
+        title={status.path ? `Found at ${status.path}` : undefined}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          color: '#34c759', fontSize: 11, fontWeight: 600,
+          padding: '3px 8px', borderRadius: 999,
+          background: 'rgba(52,199,89,0.12)',
+          border: '1px solid rgba(52,199,89,0.35)',
+        }}
+      >
+        <span style={{ width: 6, height: 6, borderRadius: 3, background: '#34c759' }}/>
+        Installed
+      </span>
+    )
+  }
+  return (
+    <button
+      onClick={onInstall}
+      style={{
+        ...pillButton('ghost'),
+        color: '#ff9f0a',
+        background: 'rgba(255,159,10,0.12)',
+        border: '1px solid rgba(255,159,10,0.35)',
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+      }}
+      title="Open the install instructions in your browser"
+    >
+      Install ↗
+    </button>
+  )
+}
 
 const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on, onChange }) => (
   <div onClick={() => onChange(!on)} style={{
@@ -164,9 +223,8 @@ const FallbackList: React.FC<{
   order: FallbackEntry[]
   models: ModelEntry[]
   enabledAgents: string[]
-  disabledAgents: string[]
   onChange: (next: FallbackEntry[]) => void
-}> = ({ order, models, enabledAgents, disabledAgents, onChange }) => {
+}> = ({ order, models, enabledAgents, onChange }) => {
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropIdx, setDropIdx] = useState<number | null>(null)
 
@@ -213,7 +271,6 @@ const FallbackList: React.FC<{
       {order.map((entry, i) => {
         const isDragging = dragIdx === i
         const showInsertAbove = dropIdx === i && dragIdx !== null && dragIdx !== i && dragIdx !== i - 1
-        const isDisabled = disabledAgents.includes(entry.agent)
         return (
           <React.Fragment key={i}>
             {showInsertAbove && <div style={{ height: 2, background: C.accent, borderRadius: 1 }}/>}
@@ -248,14 +305,18 @@ const FallbackList: React.FC<{
               }}
             >
               <span style={{ color: C.fg3, fontSize: 14, cursor: 'grab', userSelect: 'none' }} title="Drag to reorder">⋮⋮</span>
-              <span style={{ color: C.fg3, fontSize: 12, width: 18 }}>{i + 1}.</span>
+              <span style={{
+                color: i === 0 ? C.accent : C.fg3,
+                fontSize: 11, fontWeight: i === 0 ? 600 : 400,
+                width: 56, letterSpacing: 0.3,
+              }}>{i === 0 ? 'DEFAULT' : `Step ${i + 1}`}</span>
               <select
                 value={entry.agent}
                 onChange={e => update(i, { agent: e.target.value })}
                 style={{ ...selectStyle, width: 130 }}
               >
                 {AGENT_NAMES.map(a => (
-                  <option key={a} value={a}>{a}{disabledAgents.includes(a) ? ' (off)' : ''}</option>
+                  <option key={a} value={a}>{a}</option>
                 ))}
               </select>
               <select
@@ -268,10 +329,11 @@ const FallbackList: React.FC<{
                   <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
                 ))}
               </select>
-              {isDisabled && (
-                <span style={{ color: C.fg3, fontSize: 10 }} title="This agent is disabled and will be skipped">skipped</span>
+              {i === 0 ? (
+                <span style={{ width: 28, fontSize: 10, color: C.fg3, textAlign: 'center' }} title="The default agent — drag a row above to replace it">—</span>
+              ) : (
+                <button onClick={() => remove(i)} style={pillButton('danger')}>✕</button>
               )}
-              <button onClick={() => remove(i)} style={pillButton('danger')}>✕</button>
             </div>
             {dropIdx === order.length && i === order.length - 1 && dragIdx !== null && dragIdx !== i && (
               <div style={{ height: 2, background: C.accent, borderRadius: 1 }}/>
@@ -288,22 +350,37 @@ const FallbackList: React.FC<{
 
 // ── Main Settings tab ────────────────────────────────────────────────
 
+type InstallStatus = { installed: boolean; path?: string }
+
 export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) => {
   const [models, setModels] = useState<ModelEntry[]>([])
-  const [agents, setAgents] = useState<Record<string, AgentSlot>>({})
   const [fallback, setFallback] = useState<FallbackCfg>({ enabled: true, order: [] })
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Probe runs async after the rest of the panel paints — the chip flips from
+  // a neutral "checking…" to green/install once the result lands.
+  const [installStatus, setInstallStatus] = useState<Record<string, InstallStatus>>({})
+  const [checkingInstalls, setCheckingInstalls] = useState(false)
+
+  const refreshInstallStatus = useCallback(async () => {
+    setCheckingInstalls(true)
+    try {
+      const r = await window.codey.agents.checkInstalled()
+      if (r.ok) setInstallStatus(r.data)
+    } catch { /* leave previous status as-is */ }
+    finally { setCheckingInstalls(false) }
+  }, [])
+
+  useEffect(() => { if (isGatewayRunning) void refreshInstallStatus() }, [isGatewayRunning, refreshInstallStatus])
 
   const reload = useCallback(async () => {
     setError(null)
     try {
-      const [m, a, f] = await Promise.all([
+      const [m, f] = await Promise.all([
         unwrap(await window.codey.models.list()),
-        unwrap(await window.codey.agents.get()),
         unwrap(await window.codey.fallback.get()),
       ])
-      setModels(m); setAgents(a as any); setFallback(f as FallbackCfg)
+      setModels(m); setFallback(f as FallbackCfg)
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
@@ -333,18 +410,17 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
     await reload()
   }
 
-  const updateAgent = async (agent: string, patch: AgentSlot) => {
-    const next = { ...agents, [agent]: { ...(agents[agent] ?? {}), ...patch } }
-    setAgents(next)
-    await unwrap(await window.codey.agents.set({ [agent]: next[agent] }))
-  }
-
   const updateFallback = async (fb: FallbackCfg) => {
     setFallback(fb)
     await unwrap(await window.codey.fallback.set(fb))
   }
 
-  const enabledAgents = AGENT_NAMES.filter(a => agents[a]?.enabled !== false)
+  // Enablement is derived from priority-list membership now; the chat header
+  // and fallback "+ Add step" both use this to decide what an agent looks
+  // like in dropdown menus.
+  const enabledAgents = AGENT_NAMES.filter(a =>
+    fallback.order.some(e => e.agent === a)
+  )
 
   return (
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
@@ -368,51 +444,46 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
         .map(m => <ModelRow key={m.model} entry={m} onSave={saveModel} onDelete={deleteModel}/>)}
 
-      <Section title="Agents"/>
-      {AGENT_NAMES.map(a => (
-        <div key={a} style={fieldStyle}>
-          <span style={{ color: C.fg, fontSize: 13 }}>{a}</span>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <select
-              value={agents[a]?.defaultModel ?? ''}
-              onChange={e => updateAgent(a, { defaultModel: e.target.value })}
-              style={{ ...selectStyle, width: 220 }}
-              disabled={agents[a]?.enabled === false || models.length === 0}
-            >
-              <option value="">(default)</option>
-              {[...models]
-                .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
-                .map(m => (
-                  <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
-                ))}
-            </select>
-            <Toggle on={agents[a]?.enabled !== false} onChange={v => updateAgent(a, { enabled: v })}/>
+      <Section title="Agents" right={
+        <button onClick={refreshInstallStatus} style={pillButton('ghost')} disabled={checkingInstalls} title="Re-check whether each agent's CLI is installed">
+          {checkingInstalls ? 'Checking…' : '↻ Recheck'}
+        </button>
+      }/>
+      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 4 }}>
+        Each agent shows whether its CLI is installed locally. To stop using an agent, remove it from the priority list below.
+      </div>
+      {AGENT_NAMES.map(a => {
+        const status = installStatus[a]
+        return (
+          <div key={a} style={fieldStyle}>
+            <span style={{ color: C.fg, fontSize: 13 }}>{a}</span>
+            <AgentInstallChip
+              status={status}
+              checking={checkingInstalls && !status}
+              onInstall={() => window.codey.openExternal(AGENT_INSTALL_URL[a])}
+            />
           </div>
-        </div>
-      ))}
+        )
+      })}
 
-      <Section title="Fallback" right={
+      <Section title="Agent priority" right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ color: C.fg3, fontSize: 11 }}>{fallback.enabled ? 'Enabled' : 'Disabled'}</span>
           <Toggle on={fallback.enabled} onChange={enabled => updateFallback({ ...fallback, enabled })}/>
         </div>
       }/>
-      {fallback.enabled ? (
-        <>
-          <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-            When a request fails, the gateway tries each step in order. Pin a specific model to retry the same agent with a different model.
-          </div>
-          <FallbackList
-            order={fallback.order}
-            models={models}
-            enabledAgents={enabledAgents}
-            disabledAgents={AGENT_NAMES.filter(a => agents[a]?.enabled === false)}
-            onChange={next => updateFallback({ ...fallback, order: next })}
-          />
-        </>
-      ) : (
-        <div style={{ color: C.fg3, fontSize: 12, padding: '8px 0' }}>
-          Fallback is off. Failures surface the original error instead of trying another agent.
+      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
+        Row 1 is the default agent + model. When fallback is enabled and a request fails, the gateway tries each subsequent row in order. Drag to reorder.
+      </div>
+      <FallbackList
+        order={fallback.order}
+        models={models}
+        enabledAgents={enabledAgents}
+        onChange={next => updateFallback({ ...fallback, order: next })}
+      />
+      {!fallback.enabled && (
+        <div style={{ color: C.fg3, fontSize: 11, padding: '8px 0' }}>
+          Fallback is off — only Row 1 (the default) will run. Failures surface as errors instead of trying the rest of the list.
         </div>
       )}
     </div>

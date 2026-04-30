@@ -64,6 +64,7 @@ declare global {
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string }>>>
         set: (updates: Record<string, { enabled?: boolean; defaultModel?: string }>) => Promise<IpcResult<void>>
+        checkInstalled: () => Promise<IpcResult<Record<string, { installed: boolean; path?: string }>>>
       }
       chats: {
         upload: (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer) =>
@@ -74,6 +75,7 @@ declare global {
         rename: (id: string, title: string) => Promise<IpcResult<Chat>>
         delete: (id: string) => Promise<IpcResult<null>>
         updateSelection: (id: string, selection: ChatSelection) => Promise<IpcResult<Chat>>
+        updateAgentModel: (id: string, agent: string | null, model: string | null) => Promise<IpcResult<Chat>>
         send: (payload: { chatId: string; text: string; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) => Promise<IpcResult<{ response: string; chatId: string; tokens?: number; durationSec?: number }>>
         stop: (chatId: string) => Promise<IpcResult<boolean>>
         onEvent: (handler: (ev: ChatStreamEvent) => void) => () => void

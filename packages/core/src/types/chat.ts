@@ -42,4 +42,8 @@ export interface Chat {
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;
+  /** Per-chat coding agent override. Falls back to gateway default when unset. */
+  agent?: 'claude-code' | 'opencode' | 'codex';
+  /** Per-chat model override (model id from the global catalog). Falls back to the agent's default model when unset. */
+  model?: string;
 }
