@@ -8,14 +8,18 @@ import { CodingAgent, FallbackConfig, FallbackEntry, ModelEntry } from '@codey/c
 export interface GatewayConfigJson {
   gateway: {
     port: number;
-    defaultAgent: string;
   };
   channels: {
     telegram?: { enabled: boolean; botToken: string; notifyChatId?: string };
     discord?: { enabled: boolean; botToken: string };
     imessage?: { enabled: boolean };
   };
-  /** Agent enablement and which model each agent should use by default. */
+  /**
+   * Reserved per-agent settings slot. Currently empty — enablement is derived
+   * from membership in `fallback.order`, and per-agent default model lives on
+   * those fallback entries. Kept in the schema for forward compatibility so
+   * future per-agent options (custom env vars, timeouts, …) have a home.
+   */
   agents: {
     'claude-code'?: AgentSlot;
     'opencode'?: AgentSlot;
@@ -23,7 +27,12 @@ export interface GatewayConfigJson {
   };
   /** Global, reusable model catalog. Each agent references an entry by name. */
   models: ModelEntry[];
-  /** Fallback behaviour when the selected agent fails. */
+  /**
+   * Ordered priority list. `order[0]` is the canonical default agent+model;
+   * subsequent entries are tried only when an earlier one fails (and only if
+   * `enabled` is true). One source of truth for both "which agent runs by
+   * default" and "what to try after a failure".
+   */
   fallback: FallbackConfig;
   dev: {
     logLevel: 'debug' | 'info' | 'warn' | 'error';
@@ -31,11 +40,8 @@ export interface GatewayConfigJson {
   };
 }
 
-export interface AgentSlot {
-  enabled?: boolean;
-  /** Name of a ModelEntry in the global models[] array. */
-  defaultModel?: string;
-}
+/** Reserved for future per-agent settings. Currently empty. */
+export type AgentSlot = Record<string, never>;
 
 // ── ConfigManager ────────────────────────────────────────────────────
 
@@ -86,10 +92,28 @@ export class ConfigManager extends EventEmitter {
 
   // ── Gateway settings ───────────────────────────────────────────────
   getPort(): number { return this.config.gateway.port; }
-  getDefaultAgent(): string { return this.config.gateway.defaultAgent; }
 
+  /** Canonical default = first entry in fallback.order. */
+  getDefaultAgent(): CodingAgent {
+    return (this.config.fallback.order[0]?.agent ?? 'claude-code') as CodingAgent;
+  }
+
+  /**
+   * Promote (or insert) `agent` to position 0 of fallback.order. The previous
+   * position-0 entry slides down — it remains in the priority list as the
+   * primary fallback step, which matches user intent ("I want X first, but
+   * keep what I had before as backup").
+   */
   setDefaultAgent(agent: string): void {
-    this.config.gateway.defaultAgent = agent;
+    if (!KNOWN_AGENTS.has(agent as CodingAgent)) return;
+    const existing = this.config.fallback.order.findIndex(e => e.agent === agent);
+    if (existing === 0) return;
+    if (existing > 0) {
+      const [entry] = this.config.fallback.order.splice(existing, 1);
+      this.config.fallback.order.unshift(entry);
+    } else {
+      this.config.fallback.order.unshift({ agent: agent as CodingAgent });
+    }
     this.save();
   }
 
@@ -111,7 +135,7 @@ export class ConfigManager extends EventEmitter {
   }
 
   /**
-   * Change a model entry's identifier and rewrite every agent slot that
+   * Change a model entry's identifier and rewrite every fallback entry that
    * pointed at it. Content (apiType, baseUrl, apiKey) is preserved.
    */
   renameModel(oldId: string, newId: string): boolean {
@@ -122,10 +146,6 @@ export class ConfigManager extends EventEmitter {
     const idx = this.config.models.findIndex(m => m.model === oldId);
     if (idx < 0) return false;
     this.config.models[idx] = { ...this.config.models[idx], model: newId };
-    for (const agent of Object.keys(this.config.agents) as (keyof typeof this.config.agents)[]) {
-      const slot = this.config.agents[agent];
-      if (slot && slot.defaultModel === oldId) slot.defaultModel = newId;
-    }
     for (const entry of this.config.fallback.order) {
       if (entry.model === oldId) entry.model = newId;
     }
@@ -136,10 +156,6 @@ export class ConfigManager extends EventEmitter {
   deleteModel(modelId: string): boolean {
     const before = this.config.models.length;
     this.config.models = this.config.models.filter(m => m.model !== modelId);
-    for (const agent of Object.keys(this.config.agents) as (keyof typeof this.config.agents)[]) {
-      const slot = this.config.agents[agent];
-      if (slot && slot.defaultModel === modelId) slot.defaultModel = undefined;
-    }
     for (const entry of this.config.fallback.order) {
       if (entry.model === modelId) entry.model = undefined;
     }
@@ -150,24 +166,32 @@ export class ConfigManager extends EventEmitter {
     return false;
   }
 
-  /** Returns the ModelEntry referenced by the agent's defaultModel. */
+  /** First fallback entry for `agent` that pins a model — that's the agent's default. */
   getAgentModel(agent: string): ModelEntry | undefined {
-    const slot = this.config.agents[agent as keyof typeof this.config.agents];
-    if (!slot?.defaultModel) return undefined;
-    return this.getModel(slot.defaultModel);
+    const entry = this.config.fallback.order.find(e => e.agent === agent && e.model);
+    if (!entry?.model) return undefined;
+    return this.getModel(entry.model);
   }
 
+  /** Resolved default model id (the model on fallback.order[0], if any). */
   getDefaultModel(): string {
-    const agent = this.config.gateway.defaultAgent;
-    return this.getAgentModel(agent)?.model ?? '';
+    return this.config.fallback.order[0]?.model ?? '';
   }
 
+  /**
+   * Set the default model for `agent`. Updates the first fallback entry for
+   * that agent in place, or inserts one. When the agent is the current default
+   * (position 0), the new model becomes the gateway-wide default model too.
+   */
   setAgentModel(agent: string, modelId: string): void {
-    const slot = this.config.agents[agent as keyof typeof this.config.agents];
-    if (slot) {
-      slot.defaultModel = modelId;
-      this.save();
+    if (!KNOWN_AGENTS.has(agent as CodingAgent)) return;
+    const idx = this.config.fallback.order.findIndex(e => e.agent === agent);
+    if (idx >= 0) {
+      this.config.fallback.order[idx] = { agent: agent as CodingAgent, model: modelId || undefined };
+    } else {
+      this.config.fallback.order.push({ agent: agent as CodingAgent, model: modelId || undefined });
     }
+    this.save();
   }
 
   // ── Fallback config ────────────────────────────────────────────────
@@ -188,12 +212,6 @@ export class ConfigManager extends EventEmitter {
     return this.config.agents[agent as keyof typeof this.config.agents];
   }
 
-  setAgentEnabled(agent: string, enabled: boolean): void {
-    const slot = this.config.agents[agent as keyof typeof this.config.agents] ?? {};
-    slot.enabled = enabled;
-    this.config.agents[agent as keyof typeof this.config.agents] = slot;
-    this.save();
-  }
 
   // ── Channels ───────────────────────────────────────────────────────
   getTelegramConfig() { return this.config.channels.telegram; }
@@ -237,7 +255,7 @@ export class ConfigManager extends EventEmitter {
     console.log('\n📋 Current Configuration:');
     console.log('─'.repeat(40));
     console.log('Gateway:');
-    console.log(`  Default Agent: ${this.config.gateway.defaultAgent}`);
+    console.log(`  Default Agent: ${this.getDefaultAgent()}`);
     console.log(`  Default Model: ${this.getDefaultModel() || '(none)'}`);
     console.log(`  Port: ${this.config.gateway.port}`);
     console.log('\nChannels:');
@@ -251,12 +269,11 @@ export class ConfigManager extends EventEmitter {
       console.log(`  • ${m.model} [${m.apiType}]${urlHint}${keyHint}`);
     }
     console.log(`\nAgents:`);
+    const inOrder = new Set(this.config.fallback.order.map(e => e.agent));
     for (const a of ['claude-code', 'opencode', 'codex'] as const) {
-      const slot = this.config.agents[a];
-      const on = slot?.enabled !== false;
-      console.log(`  ${on ? '✅' : '❌'} ${a} → ${slot?.defaultModel || '(no model)'}`);
+      console.log(`  ${inOrder.has(a) ? '✅' : '❌'} ${a}`);
     }
-    console.log(`\nFallback: ${this.config.fallback.enabled ? '✅' : '❌'} order=${formatFallbackOrder(this.config.fallback.order)}`);
+    console.log(`\nPriority: ${this.config.fallback.enabled ? '✅' : '❌'} order=${formatFallbackOrder(this.config.fallback.order)}`);
     console.log(`\nDev:\n  Log Level: ${this.config.dev.logLevel}`);
     console.log('─'.repeat(40) + '\n');
   }
@@ -300,16 +317,16 @@ function normalizeFallback(raw: any, defaults: FallbackConfig): FallbackConfig {
 
 function getDefaultConfig(): GatewayConfigJson {
   return {
-    gateway: { port: 3000, defaultAgent: 'claude-code' },
+    gateway: { port: 3000 },
     channels: {
       telegram: { enabled: false, botToken: '' },
       discord: { enabled: false, botToken: '' },
       imessage: { enabled: false },
     },
     agents: {
-      'claude-code': { enabled: true, defaultModel: 'claude-sonnet-4-5' },
-      'opencode':    { enabled: true, defaultModel: 'gpt-5' },
-      'codex':       { enabled: true, defaultModel: 'gpt-5' },
+      'claude-code': {},
+      'opencode':    {},
+      'codex':       {},
     },
     models: [
       { apiType: 'anthropic', model: 'claude-sonnet-4-5', provider: 'anthropic' },
@@ -320,9 +337,9 @@ function getDefaultConfig(): GatewayConfigJson {
     fallback: {
       enabled: true,
       order: [
-        { agent: 'claude-code' },
-        { agent: 'opencode' },
-        { agent: 'codex' },
+        { agent: 'claude-code', model: 'claude-sonnet-4-5' },
+        { agent: 'opencode',    model: 'gpt-5' },
+        { agent: 'codex',       model: 'gpt-5' },
       ],
     },
     dev: { logLevel: 'info' },
@@ -330,31 +347,13 @@ function getDefaultConfig(): GatewayConfigJson {
 }
 
 /** Fill in any missing top-level fields with defaults so downstream code can assume shape. */
-function normalize(raw: Partial<GatewayConfigJson> & { models?: any[] }): GatewayConfigJson {
+function normalize(raw: Partial<GatewayConfigJson>): GatewayConfigJson {
   const defaults = getDefaultConfig();
-  // Strip any legacy `name` fields left over from the earlier schema so
-  // they don't get round-tripped to disk on the next save().
-  const models = Array.isArray(raw.models)
-    ? raw.models.map(({ name: _ignored, ...rest }: any) => rest as ModelEntry)
-    : defaults.models;
-  // Also coerce agents[].defaultModel from any legacy `name` references
-  // onto the canonical model id (best-effort: match by name → model id).
-  const rawAgents = { ...(raw.agents ?? {}) } as GatewayConfigJson['agents'];
-  const nameToModel = new Map<string, string>();
-  if (Array.isArray(raw.models)) {
-    for (const m of raw.models as any[]) if (m?.name && m?.model) nameToModel.set(m.name, m.model);
-  }
-  for (const a of Object.keys(rawAgents) as (keyof typeof rawAgents)[]) {
-    const slot = rawAgents[a];
-    if (slot?.defaultModel && nameToModel.has(slot.defaultModel)) {
-      slot.defaultModel = nameToModel.get(slot.defaultModel)!;
-    }
-  }
   return {
     gateway: { ...defaults.gateway, ...(raw.gateway ?? {}) },
     channels: raw.channels ?? defaults.channels,
-    agents: { ...defaults.agents, ...rawAgents },
-    models,
+    agents: { ...defaults.agents, ...(raw.agents ?? {}) },
+    models: Array.isArray(raw.models) ? raw.models : defaults.models,
     fallback: normalizeFallback(raw.fallback, defaults.fallback),
     dev: raw.dev ?? defaults.dev,
   };

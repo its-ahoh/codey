@@ -67,22 +67,44 @@ export class Codey {
   private static readonly REGEX_MODEL = /\/model\s+(\S+)/i;
   private static readonly REGEX_HELP_COMMAND = /^\/(help|status|clear|reset|model|agents|config)\s*/i;
 
+  /**
+   * Canonical default agent. Reads from the on-disk fallback.order[0] via the
+   * ConfigManager when available, falling back to a runtime-config hint or
+   * 'claude-code'. Centralizing this here keeps every call site consistent
+   * after the schema migration that made fallback.order the source of truth.
+   */
+  getDefaultAgent(): CodingAgent {
+    const fromCfg = this.configManager?.getDefaultAgent();
+    if (fromCfg) return fromCfg as CodingAgent;
+    const fromFallback = this.config.fallback?.order?.[0]?.agent;
+    return (fromFallback ?? this.config.defaultAgent ?? 'claude-code') as CodingAgent;
+  }
+
+  /**
+   * Per-agent default model name. Looks up the first fallback entry for the
+   * agent that pins a model. Used to resolve `getDefaultModelConfig` without
+   * depending on the now-removed `agents.{}.defaultModel` slot.
+   */
+  private getDefaultModelName(agent: CodingAgent): string | undefined {
+    const fb = this.configManager?.getFallback() ?? this.config.fallback;
+    return fb?.order.find(e => e.agent === agent && !!e.model)?.model;
+  }
+
   private getEffectiveModel(agent?: CodingAgent): string {
-    const effectiveAgent = agent || this.config.defaultAgent;
-    const modelName = this.config.agents?.[effectiveAgent]?.defaultModel;
+    const effectiveAgent = agent || this.getDefaultAgent();
+    const modelName = this.getDefaultModelName(effectiveAgent);
     if (!modelName) return 'unknown';
     const entry = this.configManager?.getModel(modelName);
     return entry?.model || modelName;
   }
 
   /**
-   * Resolve the ModelConfig the agent adapter should use. The agent's
-   * defaultModel names a ModelEntry in the global catalog; we copy its
-   * apiType, baseUrl, and apiKey through so the adapter can set the
-   * right env vars when spawning the CLI.
+   * Resolve the ModelConfig the agent adapter should use. Looks up the agent's
+   * default model in fallback.order, then expands it via the global catalog
+   * so the adapter sees apiType, baseUrl, and apiKey.
    */
   getDefaultModelConfig(agent: CodingAgent): ModelConfig | undefined {
-    const modelName = this.config.agents?.[agent]?.defaultModel;
+    const modelName = this.getDefaultModelName(agent);
     if (!modelName) return undefined;
     return this.getModelConfig(agent, modelName);
   }
@@ -183,7 +205,7 @@ export class Codey {
   getWorkingDir(): string { return this.workingDir; }
 
   getEffectiveModelConfig(): ModelConfig {
-    const agent = this.config.defaultAgent;
+    const agent = this.getDefaultAgent();
     return this.getDefaultModelConfig(agent) || {
       provider: 'anthropic',
       model: this.getEffectiveModel(agent),
@@ -310,7 +332,7 @@ export class Codey {
   private async sendStartupNotification(): Promise<void> {
     const channels = [...this.handlers.keys()].join(', ') || 'none';
     const agents = this.getEnabledAgents().join(', ');
-    const defaultAgent = this.config.defaultAgent;
+    const defaultAgent = this.getDefaultAgent();
     const workspace = this.workspaceManager.getCurrentWorkspace();
     const workingDir = this.workingDir;
 
@@ -471,7 +493,7 @@ export class Codey {
       return;
     }
 
-    const agent = parsed.agent || this.config.defaultAgent;
+    const agent = parsed.agent || this.getDefaultAgent();
 
     // ── Task planning ─────────────────────────────────────────
     const plan = await this.planner.plan(parsed.prompt, memoryContext);
@@ -763,7 +785,7 @@ export class Codey {
         `Codey routes your prompts to coding agents that can read, write, and refactor code in your projects.`,
         ``,
         `**Current Config**`,
-        `Agent: ${this.config.defaultAgent}`,
+        `Agent: ${this.getDefaultAgent()}`,
         `Model: ${this.getEffectiveModel()}`,
         `Agents: ${agents}`,
         `Workspace: ${workspace}`,
@@ -801,7 +823,7 @@ export class Codey {
         `Uptime: ${this.formatUptime(status.uptime)}\n` +
         `Messages: ${status.stats.messagesProcessed}\n` +
         `Errors: ${status.stats.errors}\n` +
-        `Default Agent: ${this.config.defaultAgent}\n` +
+        `Default Agent: ${this.getDefaultAgent()}\n` +
         `Default Model: ${this.getEffectiveModel()}`,
     });
   }
@@ -848,7 +870,9 @@ export class Codey {
       const agentName = args[0].toLowerCase();
       const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex'];
       if (validAgents.includes(agentName as CodingAgent)) {
-        this.config.defaultAgent = agentName as CodingAgent;
+        // Persist via the canonical setter so fallback.order[0] stays in sync;
+        // the runtime config gets refreshed on the next applyConfig() event.
+        this.configManager?.setDefaultAgent(agentName);
         this.resetSession();
         const model = this.getEffectiveModel(agentName as CodingAgent);
         await this.sendResponse({
@@ -867,7 +891,7 @@ export class Codey {
       await this.sendResponse({
         chatId,
         channel,
-        text: `Current agent: **${this.config.defaultAgent}**\nModel: ${this.getEffectiveModel()}\n\nSwitch with: /agent <name>`,
+        text: `Current agent: **${this.getDefaultAgent()}**\nModel: ${this.getEffectiveModel()}\n\nSwitch with: /agent <name>`,
       });
     }
   }
@@ -875,7 +899,7 @@ export class Codey {
   private async cmdAgents(chatId: string, channel: ChannelType): Promise<void> {
     const agentsList = this.getEnabledAgents().map(a => {
       const model = this.getEffectiveModel(a);
-      const current = a === this.config.defaultAgent ? ' ← current' : '';
+      const current = a === this.getDefaultAgent() ? ' ← current' : '';
       return `${a} (${model})${current}`;
     }).join('\n');
     await this.sendResponse({
@@ -890,7 +914,7 @@ export class Codey {
       chatId,
       channel,
       text: `📋 Current Settings\n\n` +
-        `Agent: ${this.config.defaultAgent}\n` +
+        `Agent: ${this.getDefaultAgent()}\n` +
         `Model: ${this.getEffectiveModel()}\n\n` +
         `Configure via CLI: npm run configure`,
     });
@@ -1375,7 +1399,7 @@ Example: /model gpt-4.1 write a Python script`;
       const memberName = members[i];
       sink({ type: 'info', chatId, message: `Step ${i + 1}/${members.length}: ${memberName}` });
       const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
-      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? this.config.defaultAgent) as CodingAgent;
+      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? this.getDefaultAgent()) as CodingAgent;
       const workerModel = workerManager.getWorkerModel(memberName);
       const modelConfig = this.getModelConfig(codingAgent, workerModel);
       const response = await this.runWithFallback(codingAgent, {
@@ -1416,7 +1440,7 @@ Example: /model gpt-4.1 write a Python script`;
         return { 
           command: 'worker', 
           args: [workerMatch[1]], 
-          agent: this.config.defaultAgent as CodingAgent, 
+          agent: this.getDefaultAgent() as CodingAgent, 
           model: undefined, 
           prompt: workerMatch[2] 
         };
@@ -1428,14 +1452,14 @@ Example: /model gpt-4.1 write a Python script`;
         return {
           command: 'team',
           args: [teamMatch[1]],
-          agent: this.config.defaultAgent as CodingAgent,
+          agent: this.getDefaultAgent() as CodingAgent,
           model: undefined,
           prompt: teamMatch[2]
         };
       }
 
       // Check for agent switch
-      let agent = this.config.defaultAgent as CodingAgent;
+      let agent = this.getDefaultAgent() as CodingAgent;
       let model: ModelConfig | undefined;
       let prompt = '';
 
@@ -1459,7 +1483,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Not a command - parse agent/model from anywhere in text
     const agentMatch = text.match(/\/agent\s+(claude-code|opencode|codex)/i);
-    const agent = (agentMatch ? agentMatch[1] : this.config.defaultAgent) as CodingAgent;
+    const agent = (agentMatch ? agentMatch[1] : this.getDefaultAgent()) as CodingAgent;
 
     const modelMatch = text.match(/\/model\s+(\S+)/i);
     let model: ModelConfig | undefined;
@@ -1480,10 +1504,18 @@ Example: /model gpt-4.1 write a Python script`;
   private static readonly ALL_AGENTS: CodingAgent[] = ['claude-code', 'opencode', 'codex'];
 
   private getEnabledAgents(): CodingAgent[] {
-    return Codey.ALL_AGENTS.filter(a => {
-      const agentConfig = this.config.agents?.[a];
-      return agentConfig?.enabled !== false;
-    });
+    // Enablement is membership in fallback.order. Order matters: the priority
+    // list defines both *which* agents are usable and what to try first.
+    const fb = this.configManager?.getFallback() ?? this.config.fallback;
+    const seen = new Set<CodingAgent>();
+    const out: CodingAgent[] = [];
+    for (const e of fb?.order ?? []) {
+      if (Codey.ALL_AGENTS.includes(e.agent) && !seen.has(e.agent)) {
+        seen.add(e.agent);
+        out.push(e.agent);
+      }
+    }
+    return out;
   }
 
   private async runWithFallback(agent: CodingAgent, request: AgentRequest): Promise<AgentResponse> {
@@ -1493,7 +1525,9 @@ Example: /model gpt-4.1 write a Python script`;
     this.logger.error(`Agent ${agent} failed: ${response.error || response.output}`);
 
     // Fallback is opt-in. When disabled, surface the original failure.
-    const fb = this.config.fallback;
+    // Prefer the live configManager so a recent edit doesn't get masked by
+    // the snapshot in `this.config`.
+    const fb = this.configManager?.getFallback() ?? this.config.fallback;
     if (fb && fb.enabled === false) return response;
 
     // Prefer the user-configured order; else default to every enabled agent
@@ -1508,7 +1542,9 @@ Example: /model gpt-4.1 write a Python script`;
     const seen = new Set<string>([`${agent}::${originalModel ?? ''}`]);
 
     for (const entry of rawOrder) {
-      if (this.config.agents?.[entry.agent]?.enabled === false) continue;
+      // Agents are now considered "enabled" iff they appear in fallback.order,
+      // and `rawOrder` is sourced from fallback.order — so every entry here is
+      // by definition enabled. No additional skip needed.
       const resolvedModel = this.resolveFallbackModel(entry);
       if (!resolvedModel) {
         this.logger.warn(`Skipping fallback ${entry.agent}${entry.model ? `(${entry.model})` : ''}: no usable model config`);
@@ -1548,7 +1584,7 @@ Example: /model gpt-4.1 write a Python script`;
     return Date.now() - lastRequest >= this.COOLDOWN_MS;
   }
 
-  private getModelConfig(agent: CodingAgent, modelName: string): ModelConfig | undefined {
+  getModelConfig(agent: CodingAgent, modelName: string): ModelConfig | undefined {
     // 1. Check the global model catalog (has credentials + full config)
     const catalogEntry = this.configManager?.getModel(modelName);
     if (catalogEntry) {
@@ -1667,7 +1703,7 @@ Example: /model gpt-4.1 write a Python script`;
     sse?: (event: string, data: string) => void,
     conversationId?: string,
   ): Promise<{ response: string; conversationId: string; tokens?: number; durationSec?: number }> {
-    const agent = this.config.defaultAgent;
+    const agent = this.getDefaultAgent();
     const model = this.getDefaultModelConfig(agent);
 
     // Use existing context window if provided, otherwise create a new one
@@ -1836,8 +1872,11 @@ Example: /model gpt-4.1 write a Python script`;
     };
     this.chatManager.appendMessage(chatId, userMessage);
 
-    const agent = this.config.defaultAgent;
-    const model = this.getDefaultModelConfig(agent);
+    // Per-chat override takes precedence over the gateway default.
+    const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
+    const model = chat.model
+      ? this.getModelConfig(agent, chat.model)
+      : this.getDefaultModelConfig(agent);
 
     const toolCalls: ToolCallEntry[] = [];
     let streamedText = '';

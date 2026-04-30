@@ -123,14 +123,56 @@ function resolveDataRoot(): string {
   return root
 }
 
+/**
+ * One-shot probe for whether each agent's CLI binary is on PATH. Used by the
+ * Settings tab to render an "Installed" chip vs. an "Install" link. We shell
+ * out via the user's login shell so PATH includes whatever they've set up
+ * interactively (homebrew, nvm, asdf, …); a bare child_process.spawn from
+ * Electron sees a much narrower PATH.
+ */
+async function detectInstalledAgents(): Promise<Record<string, { installed: boolean; path?: string }>> {
+  const { spawn } = await import('child_process')
+  const binaries: Record<string, string> = {
+    'claude-code': 'claude',
+    'opencode': 'opencode',
+    'codex': 'codex',
+  }
+  const shell = process.env.SHELL || '/bin/zsh'
+  const probe = (bin: string) => new Promise<string | null>(resolve => {
+    // -i -c so login dotfiles (.zshrc, .bash_profile) populate PATH the way
+    // the user expects when they run `claude` in Terminal.
+    const p = spawn(shell, ['-i', '-c', `command -v ${bin}`], { stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    p.stdout.on('data', d => { out += d.toString() })
+    const timer = setTimeout(() => { try { p.kill() } catch { /* already gone */ } resolve(null) }, 4000)
+    p.on('close', code => {
+      clearTimeout(timer)
+      const path = out.trim().split('\n').filter(Boolean).pop()
+      resolve(code === 0 && path ? path : null)
+    })
+    p.on('error', () => { clearTimeout(timer); resolve(null) })
+  })
+  const result: Record<string, { installed: boolean; path?: string }> = {}
+  await Promise.all(Object.entries(binaries).map(async ([agent, bin]) => {
+    const p = await probe(bin)
+    result[agent] = p ? { installed: true, path: p } : { installed: false }
+  }))
+  return result
+}
+
 function buildRuntimeConfig(json: any): any {
   // Flatten the on-disk GatewayConfigJson into the runtime GatewayConfig
-  // the Codey class expects (defaultAgent at top level, channels pruned
-  // to enabled-only).
+  // the Codey class expects. Default agent + per-agent default model now
+  // live in `fallback.order`, so we plumb `fallback` and `models` through
+  // — without them, Codey's runtime view would be missing the priority
+  // list entirely and `runWithFallback` would silently fall back to
+  // every-enabled-agent regardless of user configuration.
   return {
     port: json?.gateway?.port,
-    defaultAgent: json?.gateway?.defaultAgent,
+    defaultAgent: json?.fallback?.order?.[0]?.agent ?? 'claude-code',
     agents: json?.agents,
+    models: json?.models,
+    fallback: json?.fallback,
     channels: {
       telegram: json?.channels?.telegram?.enabled
         ? { botToken: json.channels.telegram.botToken, notifyChatId: json.channels.telegram.notifyChatId }
@@ -523,6 +565,10 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('agents:checkInstalled', async () =>
+    wrap(async () => detectInstalledAgents())
+  )
+
   // ── Conversations IPC ─────────────────────────────────────────────
   ipcMain.handle('conversations:list', async () =>
     wrap(async () => {
@@ -604,6 +650,13 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       return inProcessGateway.getChatManager().updateSelection(id, selection)
+    })
+  )
+
+  ipcMain.handle('chats:updateAgentModel', async (_e, id: string, agent: string | null, model: string | null) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.getChatManager().updateAgentModel(id, agent as any, model)
     })
   )
 
