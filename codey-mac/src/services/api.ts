@@ -150,6 +150,8 @@ export const apiService = {
     },
     updateSelection: async (id: string, selection: ChatSelection): Promise<Chat> =>
       unwrap(await window.codey.chats.updateSelection(id, selection)),
+    updateAgentModel: async (id: string, agent: string | null, model: string | null): Promise<Chat> =>
+      unwrap(await window.codey.chats.updateAgentModel(id, agent, model)),
     upload: async (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer): Promise<{ id: string; name: string; path: string; mimeType: string; size: number }> =>
       unwrap(await window.codey.chats.upload(chatId, fileName, mimeType, data)),
     send: async (chatId: string, text: string, attachments?: { id: string; name: string; path: string; mimeType: string; size: number }[]): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> =>

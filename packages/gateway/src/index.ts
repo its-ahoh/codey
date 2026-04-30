@@ -75,7 +75,7 @@ function startGateway(): void {
     configManager.on('change', (updated) => {
       const newConfig: GatewayConfig = {
         port: updated.gateway.port,
-        defaultAgent: updated.gateway.defaultAgent as any,
+        defaultAgent: configManager.getDefaultAgent() as any,
         agents: updated.agents as any,
         models: updated.models,
         fallback: updated.fallback,

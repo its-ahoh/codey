@@ -38,14 +38,36 @@ export class WorkerManager {
     }
 
     const entries = fs.readdirSync(this.workersDir, { withFileTypes: true });
+    const skipped: string[] = [];
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      // Workers are directories with personality.md + config.json. Anything
+      // else here (stray .json files from the old flat schema, leftover .DS_Store,
+      // backups) is unloadable — surface it so the user can clean up rather
+      // than wonder why a worker they "see on disk" doesn't appear in the UI.
+      if (!entry.isDirectory()) {
+        if (!entry.name.startsWith('.')) {
+          console.warn(`[Workers] Ignoring non-directory entry: ${entry.name}`);
+          skipped.push(entry.name);
+        }
+        continue;
+      }
       const name = entry.name;
+      const dir = path.join(this.workersDir, name);
+      const contents = fs.readdirSync(dir);
+      if (contents.length === 0) {
+        // An empty <name>/ blocks re-creation under the same name — call it
+        // out specifically so the user knows to remove the directory.
+        console.warn(`[Workers] Ignoring empty directory: ${name} (delete it to free the name)`);
+        skipped.push(name);
+        continue;
+      }
       const worker = this.loadWorker(name);
       if (worker) this.workers.set(name.toLowerCase(), worker);
+      else skipped.push(name);
     }
 
-    console.log(`[Workers] Loaded ${this.workers.size} workers from ${this.workersDir}`);
+    console.log(`[Workers] Loaded ${this.workers.size} workers from ${this.workersDir}` +
+      (skipped.length > 0 ? ` (skipped: ${skipped.join(', ')})` : ''));
   }
 
   private loadWorker(name: string): Worker | null {

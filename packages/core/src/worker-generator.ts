@@ -99,7 +99,11 @@ export async function generateWorker(
     const parsed = tryParse(response.output);
     const err = validate(parsed);
     if (!err && parsed) {
-      if (fs.existsSync(path.join(deps.workersDir, parsed.name))) {
+      // Consult the loaded map rather than just `fs.existsSync` on the
+      // directory: an orphaned empty `<name>/` (left behind by an interrupted
+      // create or a manual edit) wouldn't load as a worker but would still
+      // make the disk path exist, falsely blocking re-creation.
+      if (deps.workerManager.hasWorker(parsed.name)) {
         return { ok: false, status: 409, error: `Worker "${parsed.name}" already exists` };
       }
       const dir = path.join(deps.workersDir, parsed.name);
