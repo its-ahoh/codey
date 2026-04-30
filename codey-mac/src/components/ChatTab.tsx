@@ -322,7 +322,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                             return next
                           })
                           const headline = formatHeadline(row.tool, row.input)
-                          const markerColor = row.done ? '#5c5' : '#6ab0f3'
                           return (
                             <div key={row.id}>
                               <div
