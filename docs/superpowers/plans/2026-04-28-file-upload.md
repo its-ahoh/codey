@@ -345,7 +345,22 @@ Find the `chats:send` handler (line 585) and update it to pass attachments:
   )
 ```
 
-- [ ] **Step 5: Build Electron**
+- [ ] **Step 5: Update codey-api.d.ts type declarations**
+
+Open `codey-mac/src/codey-api.d.ts`. Add `upload` to the `chats` section and update `send`:
+
+```typescript
+      chats: {
+        upload: (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer) =>
+          Promise<IpcResult<{ id: string; name: string; path: string; mimeType: string; size: number }>>
+        list: (workspaceName?: string) => Promise<IpcResult<Chat[]>>
+        // ... existing methods
+        send: (payload: { chatId: string; text: string; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) =>
+          Promise<IpcResult<{ response: string; chatId: string; tokens?: number; durationSec?: number }>>
+        // ... rest unchanged
+```
+
+- [ ] **Step 6: Build Electron**
 
 ```bash
 cd codey-mac && npx tsc -p tsconfig.electron.json --noEmit
@@ -353,10 +368,10 @@ cd codey-mac && npx tsc -p tsconfig.electron.json --noEmit
 
 Expected: No type errors.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add codey-mac/electron/preload.ts codey-mac/electron/main.ts
+git add codey-mac/electron/preload.ts codey-mac/electron/main.ts codey-mac/src/codey-api.d.ts
 git commit -m "feat(mac): add chats:upload IPC for file upload"
 ```
 

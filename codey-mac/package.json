@@ -62,7 +62,8 @@
     ],
     "extraResources": [
       { "from": "build/trayIconTemplate.png", "to": "trayIconTemplate.png" },
-      { "from": "build/trayIconTemplate@2x.png", "to": "trayIconTemplate@2x.png" }
+      { "from": "build/trayIconTemplate@2x.png", "to": "trayIconTemplate@2x.png" },
+      { "from": "../workers", "to": "bundled-workers", "filter": ["**/*"] }
     ]
   }
 }
