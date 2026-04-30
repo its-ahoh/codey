@@ -39,6 +39,38 @@ const TypingDots: React.FC = () => {
   return <span style={{ letterSpacing: 2 }}>{'●'.repeat(n + 1).padEnd(3, '○')}</span>
 }
 
+const PaperclipIcon: React.FC<{ color: string }> = ({ color }) => (
+  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21.44 11.05L12.25 20.24a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 11-2.83-2.83l8.49-8.48" />
+  </svg>
+)
+
+const UploadCloudIcon: React.FC<{ color: string; size?: number }> = ({ color, size = 32 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M16 16l-4-4-4 4" />
+    <path d="M12 12v9" />
+    <path d="M20.39 18.39A5 5 0 0018 9h-1.26A8 8 0 103 16.3" />
+    <path d="M16 16l-4-4-4 4" />
+  </svg>
+)
+
+const FileIcon: React.FC<{ color: string; size?: number }> = ({ color, size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+    <path d="M14 2v6h6" />
+  </svg>
+)
+
+const assetUrl = (absPath: string): string =>
+  `codey-asset://file/${encodeURIComponent(absPath)}`
+
+const formatBytes = (n: number): string => {
+  if (!Number.isFinite(n) || n < 0) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`
+  return `${(n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`
+}
+
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const { state, sendMessage, stopChat, setSelection, renameChat } = useChats()
   const chat = state.chats[chatId]
@@ -51,6 +83,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [titleDraft, setTitleDraft] = useState('')
   const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const dragDepthRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -85,11 +119,16 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     const fileArray = Array.from(files)
     const maxSize = 10 * 1024 * 1024 // 10MB
     const maxAttachments = 10
+    let count = pendingAttachments.length
+    const errors: string[] = []
 
     for (const file of fileArray) {
-      if (pendingAttachments.length >= maxAttachments) break
+      if (count >= maxAttachments) {
+        errors.push(`Limit of ${maxAttachments} attachments reached`)
+        break
+      }
       if (file.size > maxSize) {
-        console.warn(`File ${file.name} exceeds 10MB limit`)
+        errors.push(`${file.name} exceeds 10 MB`)
         continue
       }
 
@@ -97,9 +136,14 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         const buffer = await file.arrayBuffer()
         const attachment = await apiService.chats.upload(chatId, file.name, file.type || 'application/octet-stream', buffer)
         setPendingAttachments(prev => [...prev, attachment])
+        count++
       } catch (err) {
-        console.error(`Failed to upload ${file.name}:`, err)
+        errors.push(`${file.name}: ${(err as Error).message}`)
       }
+    }
+    if (errors.length > 0) {
+      setUploadError(errors.join(' · '))
+      window.setTimeout(() => setUploadError(null), 4000)
     }
   }
 
@@ -107,21 +151,33 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     setPendingAttachments(prev => prev.filter(a => a.id !== id))
   }
 
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!e.dataTransfer.types.includes('Files')) return
+    dragDepthRef.current += 1
+    setIsDragging(true)
+  }
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setIsDragging(true)
+    if (e.dataTransfer.types.includes('Files')) {
+      e.dataTransfer.dropEffect = 'copy'
+    }
   }
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setIsDragging(false)
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setIsDragging(false)
   }
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    dragDepthRef.current = 0
     setIsDragging(false)
     if (e.dataTransfer.files.length > 0) {
       await uploadFiles(e.dataTransfer.files)
@@ -193,13 +249,18 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
 
       <div
         style={{ ...styles.messages, position: 'relative' }}
+        onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
         {isDragging && (
           <div style={styles.dropOverlay}>
-            <div style={styles.dropOverlayInner}>Drop files here</div>
+            <div style={styles.dropOverlayCard}>
+              <UploadCloudIcon color={C.accent} size={36} />
+              <div style={styles.dropOverlayTitle}>Drop to attach</div>
+              <div style={styles.dropOverlaySubtitle}>Up to 10 files · max 10 MB each</div>
+            </div>
           </div>
         )}
         {chat.messages.map(msg => {
@@ -289,21 +350,31 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 {msg.content && <Markdown variant={isUser ? 'user' : 'assistant'}>{msg.content}</Markdown>}
                 {isUser && msg.attachments && msg.attachments.length > 0 && (
                   <div style={styles.attachmentsContainer}>
-                    {msg.attachments.map(att => (
-                      <div key={att.id} style={styles.attachmentChip}>
-                        {att.mimeType.startsWith('image/') ? (
+                    {msg.attachments.map(att => {
+                      const isImage = att.mimeType.startsWith('image/')
+                      const open = () => window.codey?.openPath?.(att.path)
+                      if (isImage) {
+                        return (
                           <img
-                            src={`file://${att.path}`}
+                            key={att.id}
+                            src={assetUrl(att.path)}
                             alt={att.name}
-                            style={styles.attachmentThumb}
-                            onClick={() => window.codey?.openPath?.(att.path)}
+                            title={att.name}
+                            style={styles.attachmentImage}
+                            onClick={open}
                           />
-                        ) : (
-                          <span style={styles.attachmentIcon}>📄</span>
-                        )}
-                        <span style={styles.attachmentName}>{att.name}</span>
-                      </div>
-                    ))}
+                        )
+                      }
+                      return (
+                        <div key={att.id} style={styles.attachmentFileChip} onClick={open} title={`${att.name} · ${formatBytes(att.size)}`}>
+                          <div style={styles.attachmentFileIcon}><FileIcon color={C.fg2} /></div>
+                          <div style={styles.attachmentFileMeta}>
+                            <span style={styles.attachmentFileName}>{att.name}</span>
+                            <span style={styles.attachmentFileSize}>{formatBytes(att.size)}</span>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -340,71 +411,86 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         </div>
       )}
       <div style={styles.inputContainer}>
-        {pendingAttachments.length > 0 && (
-          <div style={styles.pendingRow}>
-            {pendingAttachments.map(att => (
-              <div key={att.id} style={styles.pendingChip}>
-                {att.mimeType.startsWith('image/') ? (
-                  <img src={`file://${att.path}`} alt={att.name} style={styles.pendingThumb} />
-                ) : (
-                  <span style={{ fontSize: 11 }}>📄</span>
-                )}
-                <span style={styles.pendingName}>{att.name}</span>
-                <button onClick={() => removeAttachment(att.id)} style={styles.removeBtn}>×</button>
-              </div>
-            ))}
+        {uploadError && (
+          <div style={styles.uploadError}>{uploadError}</div>
+        )}
+        <div style={styles.composer}>
+          {pendingAttachments.length > 0 && (
+            <div style={styles.pendingRow}>
+              {pendingAttachments.map(att => {
+                const isImage = att.mimeType.startsWith('image/')
+                if (isImage) {
+                  return (
+                    <div key={att.id} style={styles.pendingImageWrap} title={`${att.name} · ${formatBytes(att.size)}`}>
+                      <img src={assetUrl(att.path)} alt={att.name} style={styles.pendingImage} />
+                      <button onClick={() => removeAttachment(att.id)} style={styles.pendingRemoveBtn} aria-label="Remove">×</button>
+                    </div>
+                  )
+                }
+                return (
+                  <div key={att.id} style={styles.pendingFileChip} title={`${att.name} · ${formatBytes(att.size)}`}>
+                    <div style={styles.pendingFileIcon}><FileIcon color={C.fg2} size={16} /></div>
+                    <div style={styles.pendingFileMeta}>
+                      <span style={styles.pendingFileName}>{att.name}</span>
+                      <span style={styles.pendingFileSize}>{formatBytes(att.size)}</span>
+                    </div>
+                    <button onClick={() => removeAttachment(att.id)} style={styles.pendingFileRemoveBtn} aria-label="Remove">×</button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          <div style={styles.composerRow}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,text/*,.json,.ts,.tsx,.js,.jsx,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.css,.html,.md,.yaml,.yml,.toml,.xml,.sh,.bash,.zsh,.log,.csv,.sql"
+              style={{ display: 'none' }}
+              onChange={handleFilePick}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!isGatewayRunning || isSending}
+              style={styles.attachButton}
+              title="Attach file"
+            >
+              <PaperclipIcon color={isGatewayRunning && !isSending ? C.fg2 : C.fg3} />
+            </button>
+            <textarea
+              ref={taRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKey}
+              onInput={e => {
+                const el = e.currentTarget
+                el.style.height = 'auto'
+                el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+              }}
+              placeholder={isGatewayRunning ? (isSending ? 'Sending…' : 'Message Codey… (↵ to send)') : 'Start gateway to chat'}
+              disabled={!isGatewayRunning || isSending}
+              rows={1}
+              style={styles.input}
+            />
+            {isSending ? (
+              <button
+                onClick={() => stopChat(chatId)}
+                style={{ ...styles.sendButton, background: '#e04040', cursor: 'pointer' }}
+                title="Stop (Esc)"
+              >
+                <StopIcon color="#fff" />
+              </button>
+            ) : (
+              <button
+                onClick={send}
+                disabled={!canSend}
+                style={{ ...styles.sendButton, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
+              >
+                <SendIcon color={canSend ? '#fff' : C.fg3} />
+              </button>
+            )}
           </div>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="image/*,text/*,.json,.ts,.tsx,.js,.jsx,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.css,.html,.md,.yaml,.yml,.toml,.xml,.sh,.bash,.zsh,.log,.csv,.sql"
-          style={{ display: 'none' }}
-          onChange={handleFilePick}
-        />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={!isGatewayRunning || isSending}
-          style={styles.attachButton}
-          title="Attach file"
-        >
-          <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={C.fg3} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-        </button>
-        <textarea
-          ref={taRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKey}
-          onInput={e => {
-            const el = e.currentTarget
-            el.style.height = 'auto'
-            el.style.height = Math.min(el.scrollHeight, 120) + 'px'
-          }}
-          placeholder={isGatewayRunning ? (isSending ? 'Sending…' : 'Message Codey… (↵ to send)') : 'Start gateway to chat'}
-          disabled={!isGatewayRunning || isSending}
-          rows={1}
-          style={styles.input}
-        />
-        {isSending ? (
-          <button
-            onClick={() => stopChat(chatId)}
-            style={{ ...styles.sendButton, background: '#e04040', cursor: 'pointer' }}
-            title="Stop (Esc)"
-          >
-            <StopIcon color="#fff" />
-          </button>
-        ) : (
-          <button
-            onClick={send}
-            disabled={!canSend}
-            style={{ ...styles.sendButton, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
-          >
-            <SendIcon color={canSend ? '#fff' : C.fg3} />
-          </button>
-        )}
+        </div>
       </div>
     </div>
   )
@@ -427,10 +513,15 @@ const styles: Record<string, React.CSSProperties> = {
   typingRow: { display: 'flex', alignItems: 'center', gap: 8, color: C.fg3, fontSize: 13, marginBottom: 12 },
   tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, paddingLeft: 4, paddingRight: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   tsMeta: { color: C.fg3, opacity: 0.55, fontVariantNumeric: 'tabular-nums' },
-  inputContainer: { padding: '12px 14px', borderTop: `1px solid ${C.border}`, display: 'flex', gap: 8, alignItems: 'flex-end', flexShrink: 0 },
+  inputContainer: { padding: '10px 14px 12px', borderTop: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 },
+  composer: {
+    background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 12,
+    display: 'flex', flexDirection: 'column', overflow: 'hidden',
+  },
+  composerRow: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: 6 },
   input: {
-    flex: 1, background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 10,
-    color: C.fg, fontSize: 13, padding: '10px 12px', outline: 'none', resize: 'none',
+    flex: 1, background: 'transparent', border: 'none', borderRadius: 8,
+    color: C.fg, fontSize: 13, padding: '8px 6px', outline: 'none', resize: 'none',
     lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
   },
   sendButton: {
@@ -450,53 +541,89 @@ const styles: Record<string, React.CSSProperties> = {
   toolDetail: { marginLeft: 20, marginTop: 4, marginBottom: 6, padding: 8, background: 'rgba(0,0,0,0.3)', borderRadius: 6, border: `1px solid ${C.border}` },
   orphanBanner: { padding: '8px 12px', background: '#ff950033', color: '#ffb84d', fontSize: 12, borderTop: `1px solid ${C.border}` },
   dropOverlay: {
-    position: 'absolute' as const, inset: 0, zIndex: 10,
-    background: 'rgba(0,0,0,0.6)', display: 'flex',
-    alignItems: 'center', justifyContent: 'center',
-    borderRadius: 8, border: `2px dashed ${C.accent}`,
+    position: 'absolute' as const, inset: 8, zIndex: 10,
+    background: 'rgba(10, 132, 255, 0.08)',
+    backdropFilter: 'blur(4px)',
+    WebkitBackdropFilter: 'blur(4px)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    borderRadius: 12, border: `2px dashed ${C.accent}`,
+    pointerEvents: 'none' as const,
   },
-  dropOverlayInner: {
-    color: C.accent, fontSize: 16, fontWeight: 600,
+  dropOverlayCard: {
+    display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: 8,
+    padding: '20px 28px', background: C.surface2, borderRadius: 12,
+    border: `1px solid ${C.border2}`, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
   },
+  dropOverlayTitle: { color: C.fg, fontSize: 14, fontWeight: 600 },
+  dropOverlaySubtitle: { color: C.fg3, fontSize: 11 },
   attachmentsContainer: {
     display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginTop: 8,
   },
-  attachmentChip: {
-    display: 'flex', alignItems: 'center', gap: 4,
-    background: 'rgba(255,255,255,0.08)', borderRadius: 6,
-    padding: '4px 8px', fontSize: 11, maxWidth: 180,
+  attachmentImage: {
+    width: 96, height: 96, borderRadius: 8, objectFit: 'cover' as const, cursor: 'pointer',
+    border: `1px solid ${C.border2}`,
   },
-  attachmentThumb: {
-    width: 32, height: 32, borderRadius: 4, objectFit: 'cover' as const, cursor: 'pointer',
+  attachmentFileChip: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    background: 'rgba(255,255,255,0.06)',
+    border: `1px solid ${C.border2}`, borderRadius: 8,
+    padding: '6px 10px', cursor: 'pointer', maxWidth: 220,
   },
-  attachmentIcon: { fontSize: 14 },
-  attachmentName: {
-    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
-    color: C.fg2, maxWidth: 120,
+  attachmentFileIcon: {
+    width: 28, height: 28, borderRadius: 6, background: C.surface3,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
+  attachmentFileMeta: { display: 'flex', flexDirection: 'column' as const, minWidth: 0, gap: 1 },
+  attachmentFileName: {
+    color: C.fg, fontSize: 12, fontWeight: 500,
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 160,
+  },
+  attachmentFileSize: { color: C.fg3, fontSize: 10, fontVariantNumeric: 'tabular-nums' as const },
   pendingRow: {
-    display: 'flex', flexWrap: 'wrap' as const, gap: 6,
-    padding: '8px 14px 0', borderTop: `1px solid ${C.border}`,
+    display: 'flex', flexWrap: 'wrap' as const, gap: 8,
+    padding: '8px 8px 4px',
   },
-  pendingChip: {
-    display: 'flex', alignItems: 'center', gap: 4,
-    background: C.surface3, borderRadius: 6,
-    padding: '4px 6px', fontSize: 11,
+  pendingImageWrap: {
+    position: 'relative' as const, width: 56, height: 56,
+    borderRadius: 8, overflow: 'hidden', border: `1px solid ${C.border2}`,
   },
-  pendingThumb: {
-    width: 24, height: 24, borderRadius: 3, objectFit: 'cover' as const,
+  pendingImage: {
+    width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block',
   },
-  pendingName: {
-    color: C.fg2, maxWidth: 100, overflow: 'hidden',
-    textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
+  pendingRemoveBtn: {
+    position: 'absolute' as const, top: 2, right: 2,
+    width: 18, height: 18, borderRadius: 9, border: 'none',
+    background: 'rgba(0,0,0,0.7)', color: '#fff',
+    cursor: 'pointer', fontSize: 13, lineHeight: '16px', padding: 0,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
-  removeBtn: {
-    background: 'none', border: 'none', color: C.fg3,
-    cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1,
+  pendingFileChip: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 8,
+    padding: '6px 6px 6px 10px', height: 56, boxSizing: 'border-box' as const,
+  },
+  pendingFileIcon: {
+    width: 32, height: 32, borderRadius: 6, background: C.surface3,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  pendingFileMeta: { display: 'flex', flexDirection: 'column' as const, minWidth: 0, gap: 2 },
+  pendingFileName: {
+    color: C.fg, fontSize: 12, fontWeight: 500,
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 140,
+  },
+  pendingFileSize: { color: C.fg3, fontSize: 10, fontVariantNumeric: 'tabular-nums' as const },
+  pendingFileRemoveBtn: {
+    width: 22, height: 22, borderRadius: 11, border: 'none',
+    background: 'transparent', color: C.fg3,
+    cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  },
+  uploadError: {
+    color: '#ff8a80', fontSize: 11, padding: '0 4px',
   },
   attachButton: {
-    width: 36, height: 36, borderRadius: 9, border: 'none',
-    background: C.surface3, display: 'flex', alignItems: 'center',
+    width: 32, height: 32, borderRadius: 8, border: 'none',
+    background: 'transparent', display: 'flex', alignItems: 'center',
     justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
     transition: 'background 0.15s',
   },

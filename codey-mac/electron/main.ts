@@ -1,5 +1,10 @@
-import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net } from 'electron'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
+])
 import { WorkerManager, WorkspaceManager } from '@codey/core'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
@@ -104,6 +109,16 @@ function resolveDataRoot(): string {
     if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true })
     if (!fs.existsSync(join(root, 'workers'))) fs.mkdirSync(join(root, 'workers'), { recursive: true })
     if (!fs.existsSync(join(root, 'workspaces'))) fs.mkdirSync(join(root, 'workspaces'), { recursive: true })
+    // Seed bundled workers into ~/.codey/workers/ on first run
+    const bundledDir = join(process.resourcesPath, 'bundled-workers')
+    if (fs.existsSync(bundledDir)) {
+      for (const name of fs.readdirSync(bundledDir)) {
+        const dest = join(root, 'workers', name)
+        if (!fs.existsSync(dest)) {
+          fs.cpSync(join(bundledDir, name), dest, { recursive: true })
+        }
+      }
+    }
   } catch { /* best-effort */ }
   return root
 }
@@ -217,6 +232,23 @@ function createAppMenu() {
 }
 
 app.whenReady().then(async () => {
+  protocol.handle('codey-asset', async (request) => {
+    try {
+      const url = new URL(request.url)
+      const encoded = url.pathname.replace(/^\/+/, '')
+      const decoded = decodeURIComponent(encoded)
+      const path = await import('path')
+      const absPath = path.resolve(decoded)
+      // Only serve files inside a workspace's .codey/uploads/ directory.
+      if (!absPath.includes(`${path.sep}.codey${path.sep}uploads${path.sep}`)) {
+        return new Response('Forbidden', { status: 403 })
+      }
+      return await net.fetch(pathToFileURL(absPath).toString())
+    } catch (err) {
+      return new Response(`Error: ${(err as Error).message}`, { status: 500 })
+    }
+  })
+
   createAppMenu()
   createWindow()
   createTray()
@@ -603,8 +635,10 @@ app.whenReady().then(async () => {
         } catch { /* use default */ }
       }
 
-      // Create .codey/uploads/ directory
-      const uploadsDir = pathMod.join(workingDir, '.codey', 'uploads')
+      // Create .codey/uploads/ directory (always absolute so frontend / asset
+      // protocol can reference it regardless of process cwd)
+      const absWorkingDir = pathMod.resolve(workingDir || process.cwd())
+      const uploadsDir = pathMod.join(absWorkingDir, '.codey', 'uploads')
       fsMod.mkdirSync(uploadsDir, { recursive: true })
 
       // Generate unique filename
