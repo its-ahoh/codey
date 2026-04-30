@@ -1,4 +1,4 @@
-export type { ChatMessage, ToolCallEntry, Chat, ChatSelection } from '@codey/core';
+export type { ChatMessage, ToolCallEntry, Chat, ChatSelection, FileAttachment } from '@codey/core';
 
 export interface GatewayStatus {
   status: string;

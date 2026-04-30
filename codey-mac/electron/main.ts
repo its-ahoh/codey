@@ -1,5 +1,10 @@
-import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net } from 'electron'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
+])
 import { WorkerManager, WorkspaceManager } from '@codey/core'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
@@ -104,6 +109,16 @@ function resolveDataRoot(): string {
     if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true })
     if (!fs.existsSync(join(root, 'workers'))) fs.mkdirSync(join(root, 'workers'), { recursive: true })
     if (!fs.existsSync(join(root, 'workspaces'))) fs.mkdirSync(join(root, 'workspaces'), { recursive: true })
+    // Seed bundled workers into ~/.codey/workers/ on first run
+    const bundledDir = join(process.resourcesPath, 'bundled-workers')
+    if (fs.existsSync(bundledDir)) {
+      for (const name of fs.readdirSync(bundledDir)) {
+        const dest = join(root, 'workers', name)
+        if (!fs.existsSync(dest)) {
+          fs.cpSync(join(bundledDir, name), dest, { recursive: true })
+        }
+      }
+    }
   } catch { /* best-effort */ }
   return root
 }
@@ -217,6 +232,23 @@ function createAppMenu() {
 }
 
 app.whenReady().then(async () => {
+  protocol.handle('codey-asset', async (request) => {
+    try {
+      const url = new URL(request.url)
+      const encoded = url.pathname.replace(/^\/+/, '')
+      const decoded = decodeURIComponent(encoded)
+      const path = await import('path')
+      const absPath = path.resolve(decoded)
+      // Only serve files inside a workspace's .codey/uploads/ directory.
+      if (!absPath.includes(`${path.sep}.codey${path.sep}uploads${path.sep}`)) {
+        return new Response('Forbidden', { status: 403 })
+      }
+      return await net.fetch(pathToFileURL(absPath).toString())
+    } catch (err) {
+      return new Response(`Error: ${(err as Error).message}`, { status: 500 })
+    }
+  })
+
   createAppMenu()
   createWindow()
   createTray()
@@ -582,7 +614,56 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('chats:send', async (_e, payload: { chatId: string; text: string }) =>
+  ipcMain.handle('chats:upload', async (_e, chatId: string, fileName: string, mimeType: string, data: ArrayBuffer) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      const chat = inProcessGateway.getChatManager().get(chatId)
+      if (!chat) throw new Error(`Chat not found: ${chatId}`)
+
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const cryptoMod = await import('crypto')
+
+      // Resolve workspace working directory
+      const workspacesRoot = (inProcessGateway as any).workspaceManager.getWorkspacesRoot()
+      const wsConfigPath = pathMod.join(workspacesRoot, chat.workspaceName, 'workspace.json')
+      let workingDir = (inProcessGateway as any).workingDir
+      if (fsMod.existsSync(wsConfigPath)) {
+        try {
+          const wsConfig = JSON.parse(fsMod.readFileSync(wsConfigPath, 'utf-8'))
+          if (wsConfig.workingDir) workingDir = wsConfig.workingDir
+        } catch { /* use default */ }
+      }
+
+      // Create .codey/uploads/ directory (always absolute so frontend / asset
+      // protocol can reference it regardless of process cwd)
+      const absWorkingDir = pathMod.resolve(workingDir || process.cwd())
+      const uploadsDir = pathMod.join(absWorkingDir, '.codey', 'uploads')
+      fsMod.mkdirSync(uploadsDir, { recursive: true })
+
+      // Generate unique filename
+      const timestamp = Date.now()
+      const random = cryptoMod.randomBytes(4).toString('hex')
+      const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const uniqueName = `${timestamp}-${random}-${safeName}`
+      const filePath = pathMod.join(uploadsDir, uniqueName)
+
+      // Write file
+      const buffer = Buffer.from(data)
+      fsMod.writeFileSync(filePath, buffer)
+
+      const { randomUUID } = cryptoMod
+      return {
+        id: randomUUID(),
+        name: fileName,
+        path: filePath,
+        mimeType,
+        size: buffer.length,
+      }
+    })
+  )
+
+  ipcMain.handle('chats:send', async (_e, payload: { chatId: string; text: string; attachments?: any[] }) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       const sink = (ev: any) => {
@@ -590,7 +671,7 @@ app.whenReady().then(async () => {
         // so the frontend can route by chatId without sniffing event names.
         sendToRenderer('chats:event', ev)
       }
-      return inProcessGateway.sendToChat(payload.chatId, payload.text, sink)
+      return inProcessGateway.sendToChat(payload.chatId, payload.text, sink, payload.attachments)
     })
   )
 

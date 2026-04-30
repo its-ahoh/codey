@@ -68,6 +68,8 @@ contextBridge.exposeInMainWorld('codey', {
     set: (updates: any) => ipcRenderer.invoke('agents:set', updates),
   },
   chats: {
+    upload: (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer) =>
+      ipcRenderer.invoke('chats:upload', chatId, fileName, mimeType, data),
     list: (workspaceName?: string) => ipcRenderer.invoke('chats:list', workspaceName),
     get: (id: string) => ipcRenderer.invoke('chats:get', id),
     create: (input: { workspaceName: string; selection?: any; title?: string }) =>
@@ -76,7 +78,7 @@ contextBridge.exposeInMainWorld('codey', {
     delete: (id: string) => ipcRenderer.invoke('chats:delete', id),
     updateSelection: (id: string, selection: any) =>
       ipcRenderer.invoke('chats:updateSelection', id, selection),
-    send: (payload: { chatId: string; text: string }) =>
+    send: (payload: { chatId: string; text: string; attachments?: any[] }) =>
       ipcRenderer.invoke('chats:send', payload),
     stop: (chatId: string) => ipcRenderer.invoke('chats:stop', chatId),
     onEvent: (handler: (ev: any) => void) => {
