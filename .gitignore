@@ -23,3 +23,5 @@ codey-mac/build/icon.iconset/
 
 # Private local docs (plans/specs)
 docs/
+
+.codey/

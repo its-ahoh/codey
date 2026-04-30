@@ -1784,6 +1784,7 @@ Example: /model gpt-4.1 write a Python script`;
     chatId: string,
     userText: string,
     sink: ChatStreamSink,
+    attachments?: import('@codey/core').FileAttachment[],
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
@@ -1823,7 +1824,7 @@ Example: /model gpt-4.1 write a Python script`;
     // BEFORE persisting the user message. Persisting first would cause
     // buildChatPrompt to see the new turn in the tail AND get it appended
     // again as `User: ${userText}`, doubling the user message in the prompt.
-    const prompt = assistantPrefixForSelection(chat) + buildChatPrompt(chat, userText);
+    const prompt = assistantPrefixForSelection(chat) + buildChatPrompt(chat, userText, attachments);
 
     const userMessage: ChatMessage = {
       id: randomUUID(),
@@ -1831,6 +1832,7 @@ Example: /model gpt-4.1 write a Python script`;
       content: userText,
       timestamp: started,
       isComplete: true,
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
     };
     this.chatManager.appendMessage(chatId, userMessage);
 
@@ -1911,9 +1913,9 @@ Example: /model gpt-4.1 write a Python script`;
         tokens,
         durationSec,
       };
-      this.chatManager.appendMessage(chatId, assistantMessage);
+      const updated = this.chatManager.appendMessage(chatId, assistantMessage);
 
-      sink({ type: 'done', chatId, response: output, tokens, durationSec });
+      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title });
       return { response: output, chatId, tokens, durationSec };
     } catch (err) {
       const message = `Error: ${(err as Error).message}`;
