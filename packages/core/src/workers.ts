@@ -11,6 +11,13 @@ export interface WorkerConfig {
   codingAgent: 'claude-code' | 'opencode' | 'codex';
   model: string;
   tools: string[];
+  /**
+   * Optional one-line summary fed to the auto-dispatcher when this worker
+   * appears in a team with `dispatch: 'auto'`. When unset, the dispatcher
+   * uses the first line of `personality.role` truncated to 120 chars.
+   * `personality.soul` and `.instructions` are never sent to the dispatcher.
+   */
+  dispatchHint?: string;
 }
 
 export interface Worker {

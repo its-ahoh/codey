@@ -10,9 +10,20 @@ const defaultLogger: CoreLogger = {
   error: (msg: string) => console.error(msg),
 };
 
+export type TeamDispatchMode = 'all' | 'auto';
+
+/** Raw team value as it can appear in workspace.json. */
+export type TeamConfigRaw = string[] | { members: string[]; dispatch?: TeamDispatchMode };
+
+/** Normalized team value used at runtime. */
+export interface TeamConfig {
+  members: string[];
+  dispatch: TeamDispatchMode;
+}
+
 export interface WorkspaceJson {
   workingDir: string;
-  teams?: Record<string, string[]>;
+  teams?: Record<string, TeamConfigRaw>;
 }
 
 export class WorkspaceManager {

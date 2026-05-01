@@ -38,6 +38,11 @@ export interface GatewayConfigJson {
     logLevel: 'debug' | 'info' | 'warn' | 'error';
     logFile?: string;
   };
+  /** See GatewayConfig.dispatcher in @codey/core types. Optional. */
+  dispatcher?: {
+    agent?: CodingAgent;
+    model?: string;
+  };
 }
 
 /** Reserved for future per-agent settings. Currently empty. */
