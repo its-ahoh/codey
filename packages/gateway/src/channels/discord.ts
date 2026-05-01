@@ -1,6 +1,6 @@
 import { Client, GatewayIntentBits, Message, TextChannel } from 'discord.js';
 import { BaseChannelHandler } from './base';
-import { UserMessage, GatewayResponse } from '@codey/core';
+import { UserMessage, GatewayResponse, ChatRoute } from '@codey/core';
 
 export class DiscordHandler extends BaseChannelHandler {
   name = 'discord';
@@ -54,6 +54,14 @@ export class DiscordHandler extends BaseChannelHandler {
     const channel = await this.client.channels.fetch(response.chatId);
     if (channel && channel instanceof TextChannel) {
       await channel.send(response.text);
+    }
+  }
+
+  async sendToRoute(route: ChatRoute, text: string): Promise<void> {
+    if (route.channel !== 'discord' || !this.client) return;
+    const channel = await this.client.channels.fetch(route.channelChatId).catch(() => null);
+    if (channel && channel instanceof TextChannel) {
+      await channel.send(text);
     }
   }
 }
