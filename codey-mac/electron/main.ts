@@ -230,6 +230,11 @@ async function bootInProcessCore() {
     void inProcessGateway.start().catch((err: any) => {
       sendToRenderer('gateway-log', `[core] gateway.start failed: ${err?.message ?? err}`)
     })
+    // Forward all chat stream events (including those triggered by channel
+    // messages on paired surfaces) to the renderer so the Mac UI stays in sync.
+    inProcessGateway.setChatEventListener((ev: any) => {
+      sendToRenderer('chats:event', ev)
+    })
   } catch (err: any) {
     sendToRenderer('gateway-log', `[core] Boot failed: ${err?.message ?? err}`)
   }

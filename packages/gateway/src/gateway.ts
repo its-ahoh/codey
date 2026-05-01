@@ -47,6 +47,7 @@ export class Codey {
   private chatSemaphore = new RunSemaphore();
   private chatAborts: Map<string, AbortController> = new Map();
   private turnQueue: TurnQueue;
+  private chatEventListener: ((ev: any) => void) | undefined;
 
   // Rate limiting: userId -> last request timestamp
   private userCooldowns: Map<string, number> = new Map();
@@ -212,6 +213,10 @@ export class Codey {
 
   getWorkspaceManager(): WorkspaceManager { return this.workspaceManager; }
   getChatManager(): ChatManager { return this.chatManager; }
+
+  public setChatEventListener(fn: (ev: any) => void): void {
+    this.chatEventListener = fn;
+  }
 
   /** Mac calls this to start a pairing flow. Returns a 6-digit code shown in the UI. */
   public startPairing(channel: ChannelKind): string {
@@ -565,6 +570,16 @@ export class Codey {
   private async runOneTurn(message: UserMessage, parsed: ParsedCommand): Promise<void> {
     const { userId, chatId, channel, id: messageId } = message;
 
+    // Channel-side with a linked Codey chat → route through sendToChat so the
+    // Codey Chat record is updated and the Mac app sees the events.
+    if (this.isPairableChannel(channel)) {
+      const binding = this.pairingStore.findByChannelUser(channel, userId);
+      if (binding?.currentChatId) {
+        await this.runChannelTurnViaChat(message, parsed, binding.currentChatId);
+        return;
+      }
+    }
+
     // Channel-side: if this user has a paired binding with a current chat,
     // use it for Codey-side state (context window, fan-out lookup). Replies
     // continue to use `chatId` (the channel-side chat id) for routing.
@@ -682,6 +697,43 @@ export class Codey {
     // send the reply to every other attached route too.
     if (codeyChatId) {
       await this.fanOutToOtherRoutes(codeyChatId, channel, userId, replyText);
+    }
+  }
+
+  private async runChannelTurnViaChat(
+    message: UserMessage,
+    parsed: ParsedCommand,
+    codeyChatId: string,
+  ): Promise<void> {
+    const { chatId, channel, userId, id: messageId } = message;
+
+    // Sink: forward `done` to the originating channel + fan out to other routes.
+    // Streamed tokens are not relayed to channels (channels only get the final
+    // formatted response, matching the existing behavior).
+    const sink = (ev: any) => {
+      if (ev?.type === 'done' && typeof ev.response === 'string') {
+        // Fire-and-forget — channel sends are non-blocking from the sink's view.
+        void this.sendResponse({
+          chatId,
+          channel,
+          text: ev.response,
+          replyTo: messageId,
+        }).then(() => this.fanOutToOtherRoutes(codeyChatId, channel, userId, ev.response));
+      } else if (ev?.type === 'error' && typeof ev.message === 'string') {
+        void this.sendResponse({
+          chatId,
+          channel,
+          text: `❌ ${ev.message}`,
+          replyTo: messageId,
+        });
+      }
+      // Ignore stream/tool_* events for channel surfaces.
+    };
+
+    try {
+      await this.sendToChat(codeyChatId, parsed.prompt ?? message.text ?? '', sink);
+    } catch (err) {
+      this.logger.error(`runChannelTurnViaChat failed: ${(err as Error).message}`);
     }
   }
 
@@ -2079,11 +2131,20 @@ Example: /model gpt-4.1 write a Python script`;
   async sendToChat(
     chatId: string,
     userText: string,
-    sink: ChatStreamSink,
+    sinkParam: ChatStreamSink,
     attachments?: import('@codey/core').FileAttachment[],
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
+
+    // Tee every sink event to the registered global listener so other surfaces
+    // (e.g., the Mac app) see channel-driven chat updates too.
+    const sink: ChatStreamSink = (ev) => {
+      try { sinkParam(ev); } catch { /* swallow */ }
+      if (this.chatEventListener) {
+        try { this.chatEventListener(ev); } catch { /* swallow */ }
+      }
+    };
 
     // Queue if at capacity
     if ((this.chatSemaphore as any).running >= (this.chatSemaphore as any).max) {
