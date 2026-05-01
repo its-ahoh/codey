@@ -5,6 +5,8 @@ import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { Markdown } from './Markdown'
 import { formatHeadline, hasDetail as toolHasDetail, ToolDetail, normalizeTool } from './toolFormat'
+import { RouteIcons } from './RouteIcons'
+import { PairingModal } from './PairingModal'
 
 interface Props {
   chatId: string
@@ -98,12 +100,19 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [pairings, setPairings] = useState<Array<{ channel: 'telegram'|'discord'|'imessage'; channelUserId: string }>>([])
+  const [pairingModal, setPairingModal] = useState<null | 'telegram' | 'discord' | 'imessage'>(null)
   const dragDepthRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => { apiService.listWorkers().then(setWorkers) }, [])
+  useEffect(() => {
+    apiService.listPairings()
+      .then(p => setPairings(p as any))
+      .catch(() => {})
+  }, [])
   useEffect(() => {
     if (!isGatewayRunning) return
     ;(async () => {
@@ -264,6 +273,35 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     }
   }
 
+  const isLinked = (channel: string, userId: string) =>
+    chat.routes?.some(r => r.channel === channel && r.channelUserId === userId) ?? false
+
+  const onLinkButton = async () => {
+    if (pairings.length === 0) {
+      setPairingModal('telegram')
+      return
+    }
+    if (pairings.length === 1) {
+      const p = pairings[0]
+      if (isLinked(p.channel, p.channelUserId)) {
+        await apiService.unlinkChat(chat.id, p.channel, p.channelUserId)
+      } else {
+        await apiService.linkChat(chat.id, p.channel, p.channelUserId)
+      }
+      return
+    }
+    const choice = window.prompt(`Pick a pairing to toggle:\n${pairings.map((p, i) => `${i+1}. ${p.channel}:${p.channelUserId}`).join('\n')}\n\nEnter number:`)
+    const idx = choice ? parseInt(choice, 10) - 1 : -1
+    if (idx >= 0 && idx < pairings.length) {
+      const p = pairings[idx]
+      if (isLinked(p.channel, p.channelUserId)) {
+        await apiService.unlinkChat(chat.id, p.channel, p.channelUserId)
+      } else {
+        await apiService.linkChat(chat.id, p.channel, p.channelUserId)
+      }
+    }
+  }
+
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
   const canSend = isGatewayRunning && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
@@ -324,6 +362,14 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
             <option key={m.model} value={m.model}>{m.model}</option>
           ))}
         </select>
+        <RouteIcons routes={chat.routes} />
+        <button
+          onClick={onLinkButton}
+          style={styles.linkBtn}
+          title={chat.routes?.length ? 'Manage channel links' : 'Link to a channel'}
+        >
+          {chat.routes?.length ? '🔗' : '🔗+'}
+        </button>
       </div>
 
       <div
@@ -570,6 +616,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           </div>
         </div>
       </div>
+      {pairingModal && (
+        <PairingModal channel={pairingModal} onClose={() => setPairingModal(null)} />
+      )}
     </div>
   )
 }
@@ -704,5 +753,15 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent', display: 'flex', alignItems: 'center',
     justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
     transition: 'background 0.15s',
+  },
+  linkBtn: {
+    marginLeft: 6,
+    padding: '4px 8px',
+    background: 'transparent',
+    border: `1px solid ${C.border}`,
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontSize: 12,
+    color: C.fg,
   },
 }
