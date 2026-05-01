@@ -522,7 +522,17 @@ export class Codey {
   }
 
   private async processPrompt(message: UserMessage, parsed: ParsedCommand): Promise<void> {
-    const { userId, chatId, channel, id: messageId } = message;
+    const { userId, channel, id: messageId } = message;
+
+    // Channel-side: if this user has a paired binding, prefer their current chat
+    // over the channel-derived chatId.
+    let chatId = message.chatId;
+    if (this.isPairableChannel(channel)) {
+      const binding = this.pairingStore.findByChannelUser(channel, userId);
+      if (binding?.currentChatId) {
+        chatId = binding.currentChatId;
+      }
+    }
 
     // Get or create structured context window keyed by conversationId
     const conversationId = message.conversationId ?? `${message.channel}-${message.chatId}`;
@@ -774,6 +784,12 @@ export class Codey {
         break;
       case 'agent':
         await this.cmdAgent(args, chatId, channel);
+        if (this.isPairableChannel(channel) && args.length > 0) {
+          const a = args[0].toLowerCase();
+          if (['claude-code', 'opencode', 'codex'].includes(a)) {
+            this.pairingStore.updatePrefs(channel, message.userId, { agent: a as 'claude-code' | 'opencode' | 'codex' });
+          }
+        }
         break;
       case 'agents':
         await this.cmdAgents(chatId, channel);
@@ -800,6 +816,9 @@ export class Codey {
       case 'workspace':
       case 'ws':
         await this.cmdWorkspace(args, chatId, channel);
+        if (this.isPairableChannel(channel) && args.length > 0) {
+          this.pairingStore.updatePrefs(channel, message.userId, { workspace: args.join(' ') });
+        }
         break;
       case 'workspaces':
       case 'wss':
@@ -818,6 +837,18 @@ export class Codey {
         break;
       case 'remember':
         await this.cmdRemember(args, message);
+        break;
+      case 'pair':
+        await this.cmdPair(args, message);
+        break;
+      case 'new':
+        await this.cmdNewChat(args, message);
+        break;
+      case 'list':
+        await this.cmdListChats(message);
+        break;
+      case 'switch':
+        await this.cmdSwitchChat(args, message);
         break;
       default:
         return;
@@ -1153,6 +1184,115 @@ export class Codey {
       channel,
       text: `\ud83e\udde0 Remembered: ${entry.content}`,
     });
+  }
+
+  private isPairableChannel(channel: ChannelType): channel is 'telegram' | 'discord' | 'imessage' {
+    return channel === 'telegram' || channel === 'discord' || channel === 'imessage';
+  }
+
+  private async cmdPair(args: string[], message: UserMessage): Promise<void> {
+    const { chatId, channel, userId } = message;
+    if (!this.isPairableChannel(channel)) {
+      await this.sendResponse({ chatId, channel, text: 'Pairing is only available on Telegram, Discord, or iMessage.' });
+      return;
+    }
+    const code = args[0];
+    if (!code || !/^\d{6}$/.test(code)) {
+      await this.sendResponse({ chatId, channel, text: 'Usage: /pair <6-digit code from the Mac app>' });
+      return;
+    }
+    const ok = this.pairingStore.completePairing(code, { channel, channelUserId: userId });
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: ok
+        ? '✅ Paired. Use /new to start a chat, or link an existing chat from the Mac app.'
+        : '❌ Invalid or expired code.',
+    });
+  }
+
+  private async cmdNewChat(args: string[], message: UserMessage): Promise<void> {
+    const { chatId, channel, userId } = message;
+    if (!this.isPairableChannel(channel)) {
+      await this.sendResponse({ chatId, channel, text: '/new is only available on paired channels.' });
+      return;
+    }
+    const binding = this.pairingStore.findByChannelUser(channel, userId);
+    if (!binding) {
+      await this.sendResponse({ chatId, channel, text: 'You need to /pair first.' });
+      return;
+    }
+    const workspace = binding.prefs?.workspace ?? this.workspaceManager.getCurrentWorkspace();
+    const title = args.join(' ').trim() || undefined;
+    const chat = this.chatManager.create({ workspaceName: workspace, title });
+    if (binding.prefs?.agent || binding.prefs?.model) {
+      this.chatManager.updateAgentModel(chat.id, binding.prefs.agent, binding.prefs.model);
+    }
+    this.chatManager.addRoute(chat.id, {
+      channel,
+      channelUserId: userId,
+      channelChatId: userId,
+      attachedAt: Date.now(),
+    });
+    this.pairingStore.setCurrentChat(channel, userId, chat.id);
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `Started chat "${chat.title}" (${chat.id.slice(0, 8)}). Send messages to continue.`,
+    });
+  }
+
+  private async cmdListChats(message: UserMessage): Promise<void> {
+    const { chatId, channel, userId } = message;
+    if (!this.isPairableChannel(channel)) {
+      await this.sendResponse({ chatId, channel, text: '/list is only available on paired channels.' });
+      return;
+    }
+    const binding = this.pairingStore.findByChannelUser(channel, userId);
+    if (!binding) {
+      await this.sendResponse({ chatId, channel, text: 'You need to /pair first.' });
+      return;
+    }
+    const all = this.chatManager.list().filter(c =>
+      c.routes?.some(r => r.channel === channel && r.channelUserId === userId)
+    );
+    if (all.length === 0) {
+      await this.sendResponse({ chatId, channel, text: 'No linked chats yet. /new <title> to start one.' });
+      return;
+    }
+    const lines = all.slice(0, 10).map(c => {
+      const marker = c.id === binding.currentChatId ? '→' : ' ';
+      return `${marker} ${c.id.slice(0, 8)}  ${c.title}`;
+    });
+    await this.sendResponse({ chatId, channel, text: lines.join('\n') });
+  }
+
+  private async cmdSwitchChat(args: string[], message: UserMessage): Promise<void> {
+    const { chatId, channel, userId } = message;
+    if (!this.isPairableChannel(channel)) {
+      await this.sendResponse({ chatId, channel, text: '/switch is only available on paired channels.' });
+      return;
+    }
+    const prefix = args[0];
+    if (!prefix) {
+      await this.sendResponse({ chatId, channel, text: 'Usage: /switch <chat-id-prefix>' });
+      return;
+    }
+    const binding = this.pairingStore.findByChannelUser(channel, userId);
+    if (!binding) {
+      await this.sendResponse({ chatId, channel, text: 'You need to /pair first.' });
+      return;
+    }
+    const target = this.chatManager.list().find(c =>
+      c.id.startsWith(prefix) &&
+      c.routes?.some(r => r.channel === channel && r.channelUserId === userId)
+    );
+    if (!target) {
+      await this.sendResponse({ chatId, channel, text: `No matching linked chat for "${prefix}".` });
+      return;
+    }
+    this.pairingStore.setCurrentChat(channel, userId, target.id);
+    await this.sendResponse({ chatId, channel, text: `Switched to "${target.title}".` });
   }
 
   private async cmdPlan(args: string[], chatId: string, channel: ChannelType): Promise<void> {
