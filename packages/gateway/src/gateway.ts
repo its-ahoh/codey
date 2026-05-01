@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry } from '@codey/core';
+import { AgentRequest, AgentResponse, ChannelKind, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -12,6 +12,8 @@ import { TaskPlanner, TaskPlan, PlanStep } from '@codey/core';
 import { WorkspaceManager } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
+import { PairingStore, ChannelBinding } from './pairings';
+import { summarizePriorHistory } from './summary';
 import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
 
 interface ParsedCommand {
@@ -39,6 +41,7 @@ export class Codey {
   private planner: TaskPlanner;
   private workspaceManager: WorkspaceManager;
   private chatManager: ChatManager;
+  private pairingStore: PairingStore;
   private configManager?: ConfigManager;
   private chatSemaphore = new RunSemaphore();
   private chatAborts: Map<string, AbortController> = new Map();
@@ -140,6 +143,7 @@ export class Codey {
     const wm = workerManager || new WorkerManager('./workers');
     this.workspaceManager = new WorkspaceManager(wm, workspaceDir || './workspaces', this.logger);
     this.chatManager = new ChatManager(this.workspaceManager.getWorkspacesRoot());
+    this.pairingStore = new PairingStore(path.join(process.cwd(), 'pairings.json'));
     this.COOLDOWN_MS = config.rateLimitMs || 3000; // Default 3 seconds
   }
 
@@ -199,6 +203,53 @@ export class Codey {
 
   getWorkspaceManager(): WorkspaceManager { return this.workspaceManager; }
   getChatManager(): ChatManager { return this.chatManager; }
+
+  /** Mac calls this to start a pairing flow. Returns a 6-digit code shown in the UI. */
+  public startPairing(channel: ChannelKind): string {
+    return this.pairingStore.startPairing({ channel });
+  }
+
+  public listPairings(): ChannelBinding[] {
+    return this.pairingStore.list();
+  }
+
+  /** Get the pairing store directly (used by command handlers in later tasks). */
+  public getPairingStore(): PairingStore {
+    return this.pairingStore;
+  }
+
+  /**
+   * Mac calls this to attach a channel route to an existing chat.
+   * Pushes a one-time summary to the channel after attaching.
+   */
+  public async linkChat(chatId: string, channel: ChannelKind, channelUserId: string): Promise<void> {
+    const binding = this.pairingStore.findByChannelUser(channel, channelUserId);
+    if (!binding) throw new Error(`No pairing for ${channel}:${channelUserId}`);
+
+    // 1:1 DM model — channelChatId equals channelUserId. See spec §Identity.
+    const channelChatId = channelUserId;
+    const route: ChatRoute = { channel, channelUserId, channelChatId, attachedAt: Date.now() };
+
+    this.chatManager.addRoute(chatId, route);
+    this.pairingStore.setCurrentChat(channel, channelUserId, chatId);
+
+    const chat = this.chatManager.get(chatId);
+    if (!chat) return;
+    const summary = summarizePriorHistory(chat);
+    const handler = this.handlers.get(channel);
+    if (handler?.sendToRoute) {
+      try {
+        await handler.sendToRoute(route, summary);
+      } catch (err) {
+        this.logger.warn(`linkChat: failed to push summary to ${channel}: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  public unlinkChat(chatId: string, channel: ChannelKind, channelUserId: string): void {
+    const channelChatId = channelUserId;
+    this.chatManager.removeRoute(chatId, channel, channelUserId, channelChatId);
+  }
 
   getAgentFactory(): AgentFactory { return this.agentFactory; }
 
