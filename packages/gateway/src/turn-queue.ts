@@ -5,6 +5,8 @@ export interface QueuedMessage {
   text: string;
   userId: string;
   timestamp: number;
+  /** Optional payload used by the gateway runner. */
+  payload?: any;
 }
 
 export type TurnRunner = (chatId: string, batch: QueuedMessage[]) => Promise<unknown>;

@@ -15,6 +15,7 @@ import { ChatManager } from './chats';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
+import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 
 interface ParsedCommand {
   command: string;
@@ -45,6 +46,7 @@ export class Codey {
   private configManager?: ConfigManager;
   private chatSemaphore = new RunSemaphore();
   private chatAborts: Map<string, AbortController> = new Map();
+  private turnQueue: TurnQueue;
 
   // Rate limiting: userId -> last request timestamp
   private userCooldowns: Map<string, number> = new Map();
@@ -144,6 +146,13 @@ export class Codey {
     this.workspaceManager = new WorkspaceManager(wm, workspaceDir || './workspaces', this.logger);
     this.chatManager = new ChatManager(this.workspaceManager.getWorkspacesRoot());
     this.pairingStore = new PairingStore(path.join(process.cwd(), 'pairings.json'));
+    this.turnQueue = new TurnQueue(async (_chatId, batch) => {
+      // No coalescing in this version: process each queued message in order.
+      for (const item of batch) {
+        if (!item.payload) continue;
+        await this.runOneTurn(item.payload.message, item.payload.parsed);
+      }
+    });
     this.COOLDOWN_MS = config.rateLimitMs || 3000; // Default 3 seconds
   }
 
@@ -471,8 +480,9 @@ export class Codey {
       return;
     }
 
-    // Check rate limit
-    if (!this.checkAndSetRateLimit(message.userId, message)) {
+    // Check rate limit (keyed by Codey chat id when available, else by user id)
+    const cooldownKey = this.cooldownKeyFor(message);
+    if (!this.checkAndSetRateLimit(cooldownKey, message)) {
       return;
     }
 
@@ -507,6 +517,14 @@ export class Codey {
     }
   }
 
+  private cooldownKeyFor(message: UserMessage): string {
+    if (this.isPairableChannel(message.channel)) {
+      const binding = this.pairingStore.findByChannelUser(message.channel, message.userId);
+      if (binding?.currentChatId) return `chat:${binding.currentChatId}`;
+    }
+    return `user:${message.userId}`;
+  }
+
   private checkAndSetRateLimit(userId: string, message: UserMessage): boolean {
     if (this.checkRateLimit(userId)) {
       this.userCooldowns.set(userId, Date.now());
@@ -522,20 +540,45 @@ export class Codey {
   }
 
   private async processPrompt(message: UserMessage, parsed: ParsedCommand): Promise<void> {
-    const { userId, channel, id: messageId } = message;
+    const { userId, chatId, channel } = message;
 
-    // Channel-side: if this user has a paired binding, prefer their current chat
-    // over the channel-derived chatId.
-    let chatId = message.chatId;
+    let codeyChatId: string | undefined;
+    if (this.isPairableChannel(channel)) {
+      const binding = this.pairingStore.findByChannelUser(channel, userId);
+      if (binding?.currentChatId) codeyChatId = binding.currentChatId;
+    }
+
+    // Queue key: prefer the Codey chat id; fall back to the channel-derived id
+    // so non-paired channels and Mac users still get per-conversation serialization.
+    // Note: 'tui' is mapped to 'mac' for queueing purposes (Surface doesn't know 'tui').
+    const queueKey = codeyChatId ?? `${channel}-${chatId}`;
+
+    this.turnQueue.submit(queueKey, {
+      surface: (channel === 'tui' ? 'mac' : channel) as Surface,
+      text: parsed.prompt ?? '',
+      userId,
+      timestamp: Date.now(),
+      payload: { message, parsed },
+    });
+  }
+
+  private async runOneTurn(message: UserMessage, parsed: ParsedCommand): Promise<void> {
+    const { userId, chatId, channel, id: messageId } = message;
+
+    // Channel-side: if this user has a paired binding with a current chat,
+    // use it for Codey-side state (context window, fan-out lookup). Replies
+    // continue to use `chatId` (the channel-side chat id) for routing.
+    let codeyChatId: string | undefined;
     if (this.isPairableChannel(channel)) {
       const binding = this.pairingStore.findByChannelUser(channel, userId);
       if (binding?.currentChatId) {
-        chatId = binding.currentChatId;
+        codeyChatId = binding.currentChatId;
       }
     }
 
     // Get or create structured context window keyed by conversationId
-    const conversationId = message.conversationId ?? `${message.channel}-${message.chatId}`;
+    const conversationId = message.conversationId
+      ?? (codeyChatId ? `chat-${codeyChatId}` : `${message.channel}-${message.chatId}`);
     const ctxWindow = await this.contextManager.getOrCreate(conversationId);
 
     // Build memory context from workspace memory store
@@ -634,6 +677,32 @@ export class Codey {
       text: replyText,
       replyTo: messageId,
     });
+
+    // Fan-out: if this message belongs to a Codey chat with multiple routes,
+    // send the reply to every other attached route too.
+    if (codeyChatId) {
+      await this.fanOutToOtherRoutes(codeyChatId, channel, userId, replyText);
+    }
+  }
+
+  private async fanOutToOtherRoutes(
+    codeyChatId: string,
+    originChannel: ChannelType,
+    originUserId: string,
+    text: string,
+  ): Promise<void> {
+    const chat = this.chatManager.get(codeyChatId);
+    if (!chat?.routes) return;
+    for (const route of chat.routes) {
+      if (route.channel === originChannel && route.channelUserId === originUserId) continue;
+      const handler = this.handlers.get(route.channel);
+      if (!handler?.sendToRoute) continue;
+      try {
+        await handler.sendToRoute(route, text);
+      } catch (err) {
+        this.logger.warn(`fanOut: failed to send to ${route.channel}: ${(err as Error).message}`);
+      }
+    }
   }
 
   /**
