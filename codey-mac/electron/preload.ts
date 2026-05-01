@@ -81,6 +81,10 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.invoke('chats:updateSelection', id, selection),
     updateAgentModel: (id: string, agent: string | null, model: string | null) =>
       ipcRenderer.invoke('chats:updateAgentModel', id, agent, model),
+    link: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) =>
+      ipcRenderer.invoke('chats:link', chatId, channel, channelUserId),
+    unlink: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) =>
+      ipcRenderer.invoke('chats:unlink', chatId, channel, channelUserId),
     send: (payload: { chatId: string; text: string; attachments?: any[] }) =>
       ipcRenderer.invoke('chats:send', payload),
     stop: (chatId: string) => ipcRenderer.invoke('chats:stop', chatId),
@@ -89,6 +93,10 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.on('chats:event', listener)
       return () => ipcRenderer.removeListener('chats:event', listener)
     },
+  },
+  pairing: {
+    start: (channel: 'telegram' | 'discord' | 'imessage') => ipcRenderer.invoke('pairing:start', channel),
+    list: () => ipcRenderer.invoke('pairing:list'),
   },
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
