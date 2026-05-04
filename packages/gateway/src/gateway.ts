@@ -1371,6 +1371,8 @@ Example: /model gpt-4.1 write a Python script`;
       header =
         `⚠️ Auto-dispatch failed (${dispatchInfo.fallbackReason ?? 'unknown'}), running all members.\n` +
         `👥 Running team **${teamName}** (${runMembers.join(' → ')})`;
+    } else if (dispatch === 'auto' && opts.forceAll) {
+      header = `👥 Running team **${teamName}** (${runMembers.join(' → ')}) [--all override]`;
     } else {
       header = `👥 Running team **${teamName}** (${runMembers.join(' → ')})`;
     }
