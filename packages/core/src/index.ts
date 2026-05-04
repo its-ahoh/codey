@@ -9,3 +9,5 @@ export * from './agents';
 export * from './errors';
 export * from './planner';
 export * from './context';
+export * from './dispatcher';
+export * from './dispatcher-personality';
