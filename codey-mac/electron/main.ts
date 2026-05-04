@@ -328,8 +328,13 @@ app.whenReady().then(async () => {
         const teams = workspaceManager.getTeams()
         let changed = false
         for (const team of Object.keys(teams)) {
-          const filtered = teams[team].filter((m: string) => m !== name)
-          if (filtered.length !== teams[team].length) { teams[team] = filtered; changed = true }
+          const raw = teams[team]
+          const arr = Array.isArray(raw) ? raw : raw.members
+          const filtered = arr.filter((m: string) => m !== name)
+          if (filtered.length !== arr.length) {
+            teams[team] = Array.isArray(raw) ? filtered : { ...raw, members: filtered }
+            changed = true
+          }
         }
         if (changed) await workspaceManager.setTeams(teams)
       }
@@ -434,7 +439,14 @@ app.whenReady().then(async () => {
       const configPath = pathMod.join(workspaceManager.getWorkspacesRoot(), target, 'workspace.json')
       if (!fsMod.existsSync(configPath)) return {} as Record<string, string[]>
       const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
-      return (data.teams || {}) as Record<string, string[]>
+      // Flatten TeamConfigRaw → string[] for UI (dispatch mode not yet surfaced in UI)
+      // TODO: surface dispatch mode in UI
+      const raw: Record<string, unknown> = data.teams || {}
+      const result: Record<string, string[]> = {}
+      for (const [k, v] of Object.entries(raw)) {
+        result[k] = Array.isArray(v) ? v : (v as any).members ?? []
+      }
+      return result
     })
   )
 

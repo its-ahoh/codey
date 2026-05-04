@@ -253,7 +253,7 @@ export class WorkspaceManager {
     }
     const configPath = this.getConfigPath();
     const existing = JSON.parse(await fs.promises.readFile(configPath, 'utf-8'));
-    existing.teams = teams;
+    existing.teams = this.getTeams();
     await fs.promises.writeFile(configPath, JSON.stringify(existing, null, 2), 'utf-8');
   }
 

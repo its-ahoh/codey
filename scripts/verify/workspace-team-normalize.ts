@@ -26,6 +26,7 @@ async function main() {
         modern: { members: ['a'], dispatch: 'auto' },
         explicit_all: { members: ['a', 'b'], dispatch: 'all' },
         bad_dispatch: { members: ['a'], dispatch: 'parallel' },
+        unknown_team: ['a', 'ghost'],
       },
     }));
 
@@ -38,6 +39,7 @@ async function main() {
     assert.deepStrictEqual(ws.getTeam('modern'), { members: ['a'], dispatch: 'auto' }, 'modern preserved');
     assert.deepStrictEqual(ws.getTeam('explicit_all'), { members: ['a', 'b'], dispatch: 'all' }, 'explicit all');
     assert.deepStrictEqual(ws.getTeam('bad_dispatch'), { members: ['a'], dispatch: 'all' }, 'invalid dispatch falls back to all');
+    assert.strictEqual(ws.getTeam('unknown_team'), undefined, 'team with unknown worker is dropped');
 
     const list = ws.listTeams();
     assert.ok(list.includes('**modern** [auto]'), 'list shows [auto] tag');
