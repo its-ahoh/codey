@@ -32,7 +32,7 @@ export class WorkspaceManager {
   private config: WorkspaceJson | null = null;
   private workerManager: WorkerManager;
   private memoryStore: MemoryStore;
-  private teams: Map<string, string[]> = new Map();
+  private teams: Map<string, TeamConfig> = new Map();
   private logger: CoreLogger;
 
   constructor(workerManager: WorkerManager, workspacesDir: string = './workspaces', logger?: CoreLogger) {
@@ -86,20 +86,13 @@ export class WorkspaceManager {
       this.logger.info(`[Workspace] No config found for ${this.currentWorkspace}, using defaults`);
     }
 
-    // Parse + validate teams against the global worker library.
+    // Parse + validate teams against the global worker library. Accept legacy
+    // string[] form (= dispatch:'all') and the object form { members, dispatch }.
     this.teams.clear();
     const rawTeams = this.config?.teams || {};
-    for (const [teamName, members] of Object.entries(rawTeams)) {
-      if (!Array.isArray(members)) {
-        this.logger.error(`[Workspace] Team "${teamName}" is not an array — skipping`);
-        continue;
-      }
-      const unknown = members.filter(m => !this.workerManager.hasWorker(m));
-      if (unknown.length > 0) {
-        this.logger.error(`[Workspace] Team "${teamName}" references unknown workers: ${unknown.join(', ')} — skipping`);
-        continue;
-      }
-      this.teams.set(teamName.toLowerCase(), members);
+    for (const [teamName, raw] of Object.entries(rawTeams)) {
+      const normalized = this.normalizeTeam(teamName, raw);
+      if (normalized) this.teams.set(teamName.toLowerCase(), normalized);
     }
 
     if (!fs.existsSync(this.getMemoryPath())) {
@@ -111,6 +104,31 @@ export class WorkspaceManager {
 
     this.memoryStore = new MemoryStore(workspacePath);
     await this.memoryStore.load();
+  }
+
+  private normalizeTeam(name: string, raw: TeamConfigRaw): TeamConfig | null {
+    let members: string[];
+    let dispatch: TeamDispatchMode = 'all';
+
+    if (Array.isArray(raw)) {
+      members = raw;
+    } else if (raw && typeof raw === 'object' && Array.isArray(raw.members)) {
+      members = raw.members;
+      if (raw.dispatch === 'auto' || raw.dispatch === 'all') dispatch = raw.dispatch;
+      else if (raw.dispatch !== undefined) {
+        this.logger.warn(`[Workspace] Team "${name}" has invalid dispatch="${raw.dispatch}" — defaulting to "all"`);
+      }
+    } else {
+      this.logger.error(`[Workspace] Team "${name}" has invalid shape — skipping`);
+      return null;
+    }
+
+    const unknown = members.filter(m => !this.workerManager.hasWorker(m));
+    if (unknown.length > 0) {
+      this.logger.error(`[Workspace] Team "${name}" references unknown workers: ${unknown.join(', ')} — skipping`);
+      return null;
+    }
+    return { members, dispatch };
   }
 
   async switchWorkspace(workspaceId: string): Promise<boolean> {
@@ -209,7 +227,7 @@ export class WorkspaceManager {
     });
   }
 
-  getTeam(name: string): string[] | undefined {
+  getTeam(name: string): TeamConfig | undefined {
     return this.teams.get(name.toLowerCase());
   }
 
@@ -220,14 +238,18 @@ export class WorkspaceManager {
   listTeams(): string {
     if (this.teams.size === 0) return 'No teams declared for this workspace.';
     return Array.from(this.teams.entries())
-      .map(([name, members]) => `• **${name}** → ${members.join(' → ')}`)
+      .map(([name, t]) => {
+        const mode = t.dispatch === 'auto' ? ' [auto]' : '';
+        return `• **${name}**${mode} → ${t.members.join(' → ')}`;
+      })
       .join('\n');
   }
 
-  async setTeams(teams: Record<string, string[]>): Promise<void> {
+  async setTeams(teams: Record<string, TeamConfigRaw>): Promise<void> {
     this.teams.clear();
-    for (const [name, members] of Object.entries(teams)) {
-      this.teams.set(name, members);
+    for (const [name, raw] of Object.entries(teams)) {
+      const normalized = this.normalizeTeam(name, raw);
+      if (normalized) this.teams.set(name.toLowerCase(), normalized);
     }
     const configPath = this.getConfigPath();
     const existing = JSON.parse(await fs.promises.readFile(configPath, 'utf-8'));
@@ -235,10 +257,11 @@ export class WorkspaceManager {
     await fs.promises.writeFile(configPath, JSON.stringify(existing, null, 2), 'utf-8');
   }
 
-  getTeams(): Record<string, string[]> {
-    const result: Record<string, string[]> = {};
-    for (const [name, members] of this.teams.entries()) {
-      result[name] = members;
+  /** Returns team configs in their most compact form: legacy string[] when default dispatch, object form otherwise. */
+  getTeams(): Record<string, TeamConfigRaw> {
+    const result: Record<string, TeamConfigRaw> = {};
+    for (const [name, t] of this.teams.entries()) {
+      result[name] = t.dispatch === 'all' ? t.members : { members: t.members, dispatch: t.dispatch };
     }
     return result;
   }

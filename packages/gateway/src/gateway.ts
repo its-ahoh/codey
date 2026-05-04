@@ -9,7 +9,7 @@ import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
 import { TaskPlanner, TaskPlan, PlanStep } from '@codey/core';
-import { WorkspaceManager } from '@codey/core';
+import { WorkspaceManager, TeamConfigRaw } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
 import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
@@ -1327,13 +1327,13 @@ Example: /model gpt-4.1 write a Python script`;
     await this.sendResponse({
       chatId,
       channel,
-      text: `👥 Running team **${teamName}** (${members.join(' → ')})\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
+      text: `👥 Running team **${teamName}** (${members.members.join(' → ')})\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
 
     let currentTask = task;
     const results: string[] = [];
 
-    for (const memberName of members) {
+    for (const memberName of members.members) {
       const worker = workerManager.getWorker(memberName);
       if (!worker) {
         results.push(`**${memberName}**: ❌ not found in global library`);
@@ -1842,7 +1842,7 @@ Example: /model gpt-4.1 write a Python script`;
     const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
     const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
     let workingDir = this.workingDir;
-    let chatWorkspaceTeams: Record<string, string[]> = {};
+    let chatWorkspaceTeams: Record<string, TeamConfigRaw> = {};
     if (fs.existsSync(wsConfigPath)) {
       try {
         const wsConfig = JSON.parse(fs.readFileSync(wsConfigPath, 'utf-8'));
@@ -1919,7 +1919,8 @@ Example: /model gpt-4.1 write a Python script`;
         const teamNames = Object.keys(chatWorkspaceTeams);
         if (teamNames.length === 0) throw new Error(`No teams configured in workspace "${chat.workspaceName}"`);
         const teamName = teamNames[0];
-        const members = chatWorkspaceTeams[teamName];
+        const rawTeam = chatWorkspaceTeams[teamName];
+        const members: string[] = Array.isArray(rawTeam) ? rawTeam : (rawTeam?.members ?? []);
         if (!members || members.length === 0) throw new Error(`Team "${teamName}" is empty`);
         const r = await this.runTeamForChat(teamName, members, prompt, workingDir, sink, chatId, abortController.signal);
         output = r.response;
