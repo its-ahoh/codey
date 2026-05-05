@@ -61,6 +61,10 @@ declare global {
         get: () => Promise<IpcResult<{ enabled: boolean; order: Array<{ agent: string; model?: string }> }>>
         set: (fb: { enabled: boolean; order: Array<{ agent: string; model?: string }> }) => Promise<IpcResult<void>>
       }
+      dispatcher: {
+        get: () => Promise<IpcResult<{ agent?: string; model?: string }>>
+        set: (updates: { agent?: string; model?: string }) => Promise<IpcResult<void>>
+      }
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string }>>>
         set: (updates: Record<string, { enabled?: boolean; defaultModel?: string }>) => Promise<IpcResult<void>>
