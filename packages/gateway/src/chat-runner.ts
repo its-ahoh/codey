@@ -62,7 +62,7 @@ export function buildChatPrompt(
 export function assistantPrefixForSelection(chat: Chat): string {
   switch (chat.selection.type) {
     case 'worker': return `[worker:${chat.selection.name}]\n`;
-    case 'team': return `[team]\n`;
+    case 'team': return `[team:${chat.selection.name ?? '(unset)'}]\n`;
     default: return '';
   }
 }

@@ -11,6 +11,13 @@ export interface WorkerConfig {
   codingAgent: 'claude-code' | 'opencode' | 'codex';
   model: string;
   tools: string[];
+  /**
+   * Optional one-line summary fed to the auto-dispatcher when this worker
+   * appears in a team with `dispatch: 'auto'`. When unset, the dispatcher
+   * uses the first line of `personality.role` truncated to 120 chars.
+   * `personality.soul` and `.instructions` are never sent to the dispatcher.
+   */
+  dispatchHint?: string;
 }
 
 export interface Worker {
@@ -163,6 +170,22 @@ export class WorkerManager {
 
   getWorkerModel(name: string): string {
     return this.getWorker(name)?.config.model || '';
+  }
+
+  /**
+   * Returns the one-line summary the auto-dispatcher should see for this worker.
+   * Prefers `config.dispatchHint`; otherwise falls back to the first line of
+   * `personality.role` truncated to 120 characters. Empty string if the worker
+   * is unknown.
+   */
+  getDispatchHint(name: string): string {
+    const w = this.getWorker(name);
+    if (!w) return '';
+    if (w.config.dispatchHint && w.config.dispatchHint.trim()) {
+      return w.config.dispatchHint.trim();
+    }
+    const firstLine = (w.personality.role || '').split('\n')[0].trim();
+    return firstLine.length > 120 ? firstLine.slice(0, 117) + '...' : firstLine;
   }
 
   buildWorkerPrompt(name: string, task: string): string {

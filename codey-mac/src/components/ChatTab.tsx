@@ -89,6 +89,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [input, setInput] = useState('')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [workers, setWorkers] = useState<WorkerDto[]>([])
+  const [teamNames, setTeamNames] = useState<string[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
   const [enabledAgents, setEnabledAgents] = useState<string[]>([...AGENT_NAMES])
   const [defaultAgent, setDefaultAgent] = useState<string | null>(null)
@@ -104,6 +105,10 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const taRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => { apiService.listWorkers().then(setWorkers) }, [])
+  useEffect(() => {
+    if (!chat?.workspaceName) return
+    apiService.getTeams(chat.workspaceName).then(t => setTeamNames(Object.keys(t))).catch(() => setTeamNames([]))
+  }, [chat?.workspaceName])
   useEffect(() => {
     if (!isGatewayRunning) return
     ;(async () => {
@@ -144,13 +149,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const selectionValue: string = chat.selection.type === 'worker'
     ? `worker:${chat.selection.name}`
     : chat.selection.type === 'team'
-      ? 'team'
+      ? `team:${chat.selection.name ?? ''}`
       : 'none'
 
   const onSelectionChange = async (v: string) => {
     let next: ChatSelection
     if (v === 'none') next = { type: 'none' }
-    else if (v === 'team') next = { type: 'team' }
+    else if (v.startsWith('team:')) next = { type: 'team', name: v.slice('team:'.length) }
     else next = { type: 'worker', name: v.slice('worker:'.length) }
     await setSelection(chat.id, next)
   }
@@ -298,8 +303,16 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         <div style={{ flex: 1 }} />
         <select value={selectionValue} onChange={e => onSelectionChange(e.target.value)} style={styles.workerSelect}>
           <option value="none">No worker</option>
-          <option value="team">Team</option>
-          {workers.map(w => <option key={w.name} value={`worker:${w.name}`}>{w.name}</option>)}
+          {workers.length > 0 && (
+            <optgroup label="Workers">
+              {workers.map(w => <option key={w.name} value={`worker:${w.name}`}>{w.name}</option>)}
+            </optgroup>
+          )}
+          {teamNames.length > 0 && (
+            <optgroup label="Teams">
+              {teamNames.map(n => <option key={n} value={`team:${n}`}>{n}</option>)}
+            </optgroup>
+          )}
         </select>
         <select
           value={chat.agent ?? ''}

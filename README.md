@@ -91,6 +91,8 @@ Edit `gateway.json`:
 }
 ```
 
+Auto-dispatch settings: `dispatcher.{agent, model}` (optional).
+
 ## Workspace Structure
 
 ```
@@ -166,7 +168,17 @@ When prompted, analyze requirements and provide...
 |---------|-------------|
 | `/workers` | List all workers in current workspace |
 | `/worker <name> <task>` | Run a specific worker |
-| `/team <task>` | Run workers in sequence |
+| `/team <name> [--all] <task>` | Run a named team (see below) |
+
+**Team dispatch details:**
+
+- `/team <name> [--all] <task>` — Run a named team. Members run sequentially with carry chain.
+  - Teams default to `dispatch: 'all'` (every member runs).
+  - Teams configured with `dispatch: 'auto'` first invoke a built-in dispatcher
+    that selects the relevant subset. Pass `--all` to bypass it for one call.
+  - Optional `dispatchHint` on each worker's `config.json` improves routing accuracy.
+  - The dispatcher's agent/model is configured under `gateway.json` `dispatcher.{agent, model}`,
+    defaulting to the gateway's default agent/model.
 
 ### Workspaces
 | Command | Description |
