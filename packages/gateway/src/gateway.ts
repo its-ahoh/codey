@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry } from '@codey/core';
+import { AgentRequest, AgentResponse, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runDispatcher, DispatchResult } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -9,7 +9,7 @@ import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
 import { TaskPlanner, TaskPlan, PlanStep } from '@codey/core';
-import { WorkspaceManager } from '@codey/core';
+import { WorkspaceManager, TeamConfigRaw } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
 import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
@@ -60,7 +60,7 @@ export class Codey {
   // Pre-compiled regex patterns for parseCommand
   private static readonly REGEX_COMMAND = /^\/(\w+)(?:\s+(.*))?$/;
   private static readonly REGEX_WORKER = /\/worker\s+(\w+)\s+(.+)/i;
-  private static readonly REGEX_TEAM = /\/team\s+(\w+)\s+(.+)/i;
+  private static readonly REGEX_TEAM = /\/team\s+(\w+)(?:\s+(--all))?\s+(?!--all\s*$)(.+)/i;
   private static readonly REGEX_AGENT_PROMPT = /\/agent\s+(claude-code|opencode|codex)\s+(.+)/i;
   private static readonly REGEX_AGENT = /\/agent\s+(claude-code|opencode|codex)/i;
   private static readonly REGEX_MODEL_PROMPT = /\/model\s+(\S+)(?:\s+(.+))?/i;
@@ -108,6 +108,18 @@ export class Codey {
     if (!modelName) return undefined;
     return this.getModelConfig(agent, modelName);
   }
+
+  private getDispatcherAgentAndModel(): { agent: CodingAgent; model?: ModelConfig } {
+    const cfg = this.config.dispatcher;
+    const agent = (cfg?.agent as CodingAgent | undefined) ?? this.getDefaultAgent();
+    const modelName = cfg?.model;
+    const model = modelName ? this.getModelConfig(agent, modelName) : this.getDefaultModelConfig(agent);
+    return { agent, model };
+  }
+
+  private dispatcherRunner = (req: AgentRequest): Promise<AgentResponse> => {
+    return this.runWithFallback(req.agent, req);
+  };
 
   private conversationCleanupInterval?: NodeJS.Timeout;
 
@@ -740,9 +752,13 @@ export class Codey {
       case 'worker':
         await this.cmdWorker(args, message, parsed.prompt);
         break;
-      case 'team':
-        await this.runTeamTask(message, args[0] || '', args.slice(1).join(' ') || parsed.prompt);
+      case 'team': {
+        const teamName = args[0] || '';
+        const forceAll = args.includes('--all');
+        const taskArgs = args.slice(1).filter(a => a !== '--all').join(' ');
+        await this.runTeamTask(message, teamName, taskArgs || parsed.prompt, { forceAll });
         break;
+      }
       case 'teams':
         await this.cmdTeams(chatId, channel);
         break;
@@ -795,7 +811,7 @@ export class Codey {
         `- Send any message to get coding help from the active agent`,
         `- /worker <name> <task> — run a specific worker`,
         `- /teams — list teams for this workspace`,
-        `- /team <name> <task> — run a named team in sequence`,
+        `- /team <name> [--all] <task> — run a named team. Use --all to bypass auto-dispatch when team mode is "auto".`,
         `- /parallel <prompt> — run all agents in parallel`,
         `- /agent <name> — switch agent (${agents})`,
         `- /workspace <name> — switch workspace`,
@@ -1139,7 +1155,7 @@ export class Codey {
 /workers - List all workers in the global library
 /worker <name> <task> - Run a specific worker
 /teams - List teams declared on this workspace
-/team <name> <task> - Run a named team in sequence
+/team <name> [--all] <task> - Run a team. Use --all to bypass auto-dispatch when team mode is "auto".
 
 \ud83e\udd16 Agents (legacy)
 /parallel <prompt> - Run all agents in parallel
@@ -1298,7 +1314,12 @@ Example: /model gpt-4.1 write a Python script`;
     });
   }
 
-  private async runTeamTask(message: UserMessage, teamName: string, task: string): Promise<void> {
+  private async runTeamTask(
+    message: UserMessage,
+    teamName: string,
+    task: string,
+    opts: { forceAll?: boolean } = {},
+  ): Promise<void> {
     const { chatId, channel } = message;
 
     if (!teamName || !task.trim()) {
@@ -1306,13 +1327,13 @@ Example: /model gpt-4.1 write a Python script`;
       await this.sendResponse({
         chatId,
         channel,
-        text: `Usage: /team <name> <task>\n\nTeams on this workspace:\n${teamList}`,
+        text: `Usage: /team <name> [--all] <task>\n\nTeams on this workspace:\n${teamList}`,
       });
       return;
     }
 
-    const members = this.workspaceManager.getTeam(teamName);
-    if (!members) {
+    const team = this.workspaceManager.getTeam(teamName);
+    if (!team) {
       const teamList = this.workspaceManager.listTeams();
       await this.sendResponse({
         chatId,
@@ -1323,17 +1344,48 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     const workerManager = this.workspaceManager.getWorkerManager();
+    const { members, dispatch } = team;
+    let runMembers = members;
+    let dispatchInfo: DispatchResult | null = null;
 
+    if (dispatch === 'auto' && !opts.forceAll) {
+      const { agent: dAgent, model: dModel } = this.getDispatcherAgentAndModel();
+      dispatchInfo = await runDispatcher(
+        {
+          task,
+          members: members.map(name => ({ name, hint: workerManager.getDispatchHint(name) })),
+        },
+        { agent: dAgent, model: dModel, runner: this.dispatcherRunner },
+      );
+      if (!dispatchInfo.fallback) runMembers = dispatchInfo.selected;
+    }
+
+    let header: string;
+    if (dispatch === 'auto' && dispatchInfo && !dispatchInfo.fallback) {
+      const skipped = members.filter(m => !runMembers.includes(m));
+      header =
+        `🧭 Dispatched **${teamName}**: ${runMembers.join(' → ')}` +
+        (skipped.length ? ` (skipped: ${skipped.join(', ')})` : '') +
+        (dispatchInfo.reason ? `\nReason: ${dispatchInfo.reason}` : '');
+    } else if (dispatch === 'auto' && dispatchInfo && dispatchInfo.fallback) {
+      header =
+        `⚠️ Auto-dispatch failed (${dispatchInfo.fallbackReason ?? 'unknown'}), running all members.\n` +
+        `👥 Running team **${teamName}** (${runMembers.join(' → ')})`;
+    } else if (dispatch === 'auto' && opts.forceAll) {
+      header = `👥 Running team **${teamName}** (${runMembers.join(' → ')}) [--all override]`;
+    } else {
+      header = `👥 Running team **${teamName}** (${runMembers.join(' → ')})`;
+    }
     await this.sendResponse({
       chatId,
       channel,
-      text: `👥 Running team **${teamName}** (${members.join(' → ')})\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
+      text: `${header}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
 
     let currentTask = task;
     const results: string[] = [];
 
-    for (const memberName of members) {
+    for (const memberName of runMembers) {
       const worker = workerManager.getWorker(memberName);
       if (!worker) {
         results.push(`**${memberName}**: ❌ not found in global library`);
@@ -1381,23 +1433,45 @@ Example: /model gpt-4.1 write a Python script`;
 
   private async runTeamForChat(
     teamName: string,
-    members: string[],
+    team: { members: string[]; dispatch: 'all' | 'auto' },
     prompt: string,
     workingDir: string,
     sink: ChatStreamSink,
     chatId: string,
     signal?: AbortSignal,
+    opts: { forceAll?: boolean } = {},
   ): Promise<{ response: string; tokens?: number }> {
-    if (!members || members.length === 0) {
+    if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
     }
     const workerManager = this.workspaceManager.getWorkerManager();
+
+    let runMembers = team.members;
+    let dispatchInfo: DispatchResult | null = null;
+    if (team.dispatch === 'auto' && !opts.forceAll) {
+      const { agent: dAgent, model: dModel } = this.getDispatcherAgentAndModel();
+      dispatchInfo = await runDispatcher(
+        {
+          task: prompt,
+          members: team.members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
+        },
+        { agent: dAgent, model: dModel, runner: this.dispatcherRunner, signal },
+      );
+      if (!dispatchInfo.fallback) runMembers = dispatchInfo.selected;
+      if (dispatchInfo.fallback) {
+        sink({ type: 'info', chatId, message: `Auto-dispatch failed (${dispatchInfo.fallbackReason ?? 'unknown'}), running all members` });
+      } else {
+        const skipped = team.members.filter(m => !runMembers.includes(m));
+        sink({ type: 'info', chatId, message: `Dispatched ${runMembers.join(' → ')}` + (skipped.length ? ` (skipped: ${skipped.join(', ')})` : '') });
+      }
+    }
+
     let carry = prompt;
     const parts: string[] = [];
-    for (let i = 0; i < members.length; i++) {
+    for (let i = 0; i < runMembers.length; i++) {
       if (signal?.aborted) break;
-      const memberName = members[i];
-      sink({ type: 'info', chatId, message: `Step ${i + 1}/${members.length}: ${memberName}` });
+      const memberName = runMembers[i];
+      sink({ type: 'info', chatId, message: `Step ${i + 1}/${runMembers.length}: ${memberName}` });
       const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
       const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? this.getDefaultAgent()) as CodingAgent;
       const workerModel = workerManager.getWorkerModel(memberName);
@@ -1447,14 +1521,15 @@ Example: /model gpt-4.1 write a Python script`;
       }
       
       // Check for team command
-      const teamMatch = text.match(/\/team\s+(\w+)\s+(.+)/i);
+      const teamMatch = text.match(Codey.REGEX_TEAM);
       if (teamMatch) {
+        const forceAll = teamMatch[2] === '--all';
         return {
           command: 'team',
-          args: [teamMatch[1]],
+          args: [teamMatch[1], ...(forceAll ? ['--all'] : [])],
           agent: this.getDefaultAgent() as CodingAgent,
           model: undefined,
-          prompt: teamMatch[2]
+          prompt: teamMatch[3]
         };
       }
 
@@ -1842,7 +1917,7 @@ Example: /model gpt-4.1 write a Python script`;
     const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
     const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
     let workingDir = this.workingDir;
-    let chatWorkspaceTeams: Record<string, string[]> = {};
+    let chatWorkspaceTeams: Record<string, TeamConfigRaw> = {};
     if (fs.existsSync(wsConfigPath)) {
       try {
         const wsConfig = JSON.parse(fs.readFileSync(wsConfigPath, 'utf-8'));
@@ -1918,10 +1993,22 @@ Example: /model gpt-4.1 write a Python script`;
         // active workspace differs from the chat's).
         const teamNames = Object.keys(chatWorkspaceTeams);
         if (teamNames.length === 0) throw new Error(`No teams configured in workspace "${chat.workspaceName}"`);
-        const teamName = teamNames[0];
-        const members = chatWorkspaceTeams[teamName];
-        if (!members || members.length === 0) throw new Error(`Team "${teamName}" is empty`);
-        const r = await this.runTeamForChat(teamName, members, prompt, workingDir, sink, chatId, abortController.signal);
+        // Prefer the team named on the selection. Falling through to teamNames[0]
+        // keeps legacy chats (persisted before per-team selection) working.
+        const teamName = chat.selection.name && teamNames.includes(chat.selection.name)
+          ? chat.selection.name
+          : teamNames[0];
+        const rawTeam = chatWorkspaceTeams[teamName];
+        const rawMembers: string[] = Array.isArray(rawTeam) ? rawTeam : (rawTeam?.members ?? []);
+        if (!rawMembers || rawMembers.length === 0) throw new Error(`Team "${teamName}" is empty`);
+        // Prefer the active workspace's normalized team (which carries dispatch mode);
+        // fall back to building a TeamConfig inline from the chat's raw config.
+        const wsTeam = this.workspaceManager.getTeam(teamName);
+        const team = wsTeam ?? {
+          members: rawMembers,
+          dispatch: (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as 'all' | 'auto',
+        };
+        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, abortController.signal);
         output = r.response;
         tokens = r.tokens;
       } else {

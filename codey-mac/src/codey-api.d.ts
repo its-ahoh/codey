@@ -1,5 +1,6 @@
 import type { Chat, ChatSelection } from '../../packages/core/src/types/chat'
 import type { ChatStreamEvent } from '../../packages/gateway/src/chat-runner'
+import type { TeamConfigRaw } from '../../packages/core/src/workspace'
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
@@ -35,8 +36,8 @@ declare global {
         pickDirectory: () => Promise<IpcResult<string | null>>
       }
       teams: {
-        get: (name?: string) => Promise<IpcResult<Record<string, string[]>>>
-        set: (name: string, teams: Record<string, string[]>) => Promise<IpcResult<void>>
+        get: (name?: string) => Promise<IpcResult<Record<string, TeamConfigRaw>>>
+        set: (name: string, teams: Record<string, TeamConfigRaw>) => Promise<IpcResult<void>>
       }
       conversations: {
         list: () => Promise<IpcResult<string[]>>
@@ -60,6 +61,10 @@ declare global {
       fallback: {
         get: () => Promise<IpcResult<{ enabled: boolean; order: Array<{ agent: string; model?: string }> }>>
         set: (fb: { enabled: boolean; order: Array<{ agent: string; model?: string }> }) => Promise<IpcResult<void>>
+      }
+      dispatcher: {
+        get: () => Promise<IpcResult<{ agent?: string; model?: string }>>
+        set: (updates: { agent?: string; model?: string }) => Promise<IpcResult<void>>
       }
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string }>>>

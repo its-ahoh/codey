@@ -75,5 +75,9 @@
   "dev": {
     "logLevel": "info",
     "logFile": "gateway.log"
+  },
+  "dispatcher": {
+    "agent": "claude-code",
+    "model": "claude-haiku-4-5"
   }
 }
