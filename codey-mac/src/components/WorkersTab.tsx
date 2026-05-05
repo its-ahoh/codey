@@ -2,6 +2,13 @@ import { useEffect, useState, useCallback } from 'react'
 import { apiService, WorkerDto } from '../services/api'
 import { C } from '../theme'
 
+interface ModelEntry { apiType: 'anthropic' | 'openai'; model: string }
+const AGENT_API_TYPE: Record<string, 'anthropic' | 'openai'> = {
+  'claude-code': 'anthropic',
+  'opencode': 'openai',
+  'codex': 'openai',
+}
+
 type Mode = { kind: 'idle' } | { kind: 'select'; name: string } | { kind: 'create' }
 
 export default function WorkersTab() {
@@ -93,12 +100,22 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [models, setModels] = useState<ModelEntry[]>([])
+
+  useEffect(() => {
+    window.codey.models.list().then(r => { if (r.ok) setModels(r.data as ModelEntry[]) }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     setRole(worker.personality.role); setSoul(worker.personality.soul); setInstructions(worker.personality.instructions)
     setCodingAgent(worker.config.codingAgent); setModel(worker.config.model); setToolsText(worker.config.tools.join(', '))
     setSaved(false); setError(null)
   }, [worker.name])
+
+  const filteredModels = models.filter(m => {
+    const want = AGENT_API_TYPE[codingAgent]
+    return !want || m.apiType === want
+  })
 
   const save = async () => {
     setSaving(true); setError(null)
@@ -141,14 +158,29 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
       <textarea value={instructions} onChange={e => setInstructions(e.target.value)} style={{ ...fieldStyle, minHeight: 140 }} />
 
       <label style={labelStyle}>Coding Agent</label>
-      <select value={codingAgent} onChange={e => setCodingAgent(e.target.value as any)} style={fieldStyle}>
+      <select value={codingAgent} onChange={e => {
+        const next = e.target.value as any
+        setCodingAgent(next)
+        // Reset model if incompatible with the new agent
+        const want = AGENT_API_TYPE[next]
+        const compatible = models.some(m => m.model === model && (!want || m.apiType === want))
+        if (!compatible) {
+          const first = models.find(m => !want || m.apiType === want)
+          setModel(first?.model ?? '')
+        }
+      }} style={fieldStyle}>
         <option value="claude-code">claude-code</option>
         <option value="opencode">opencode</option>
         <option value="codex">codex</option>
       </select>
 
       <label style={labelStyle}>Model</label>
-      <input value={model} onChange={e => setModel(e.target.value)} style={fieldStyle} />
+      <select value={model} onChange={e => setModel(e.target.value)} style={{ ...fieldStyle, cursor: 'pointer' }}>
+        {filteredModels.map(m => (
+          <option key={m.model} value={m.model}>{m.model}</option>
+        ))}
+        {filteredModels.length === 0 && <option value={model}>{model || '(no models available)'}</option>}
+      </select>
 
       <label style={labelStyle}>Tools (comma-separated)</label>
       <input value={toolsText} onChange={e => setToolsText(e.target.value)} style={fieldStyle} />
