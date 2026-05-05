@@ -185,6 +185,7 @@ function buildRuntimeConfig(json: any): any {
     planner: json?.planner,
     context: json?.context,
     memory: json?.memory,
+    dispatcher: json?.dispatcher,
   }
 }
 
