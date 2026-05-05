@@ -511,8 +511,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
         When a team is configured with <code>dispatch: 'auto'</code>, this agent + model decides which workers participate. Leave both blank to use the gateway default.
       </div>
-      <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Agent</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <select
           value={dispatcher.agent}
           onChange={e => {
@@ -523,20 +522,17 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
             const keepModel = !dispatcher.model || !want || (m && m.apiType === want)
             updateDispatcher({ agent: nextAgent, model: keepModel ? dispatcher.model : '' })
           }}
-          style={selectStyle}
+          style={{ ...selectStyle, width: 130 }}
         >
           <option value="">Use default</option>
           {AGENT_NAMES.map(a => (
             <option key={a} value={a}>{a}</option>
           ))}
         </select>
-      </div>
-      <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Model</span>
         <select
           value={dispatcher.model}
           onChange={e => updateDispatcher({ agent: dispatcher.agent, model: e.target.value })}
-          style={selectStyle}
+          style={{ ...selectStyle, flex: 1, minWidth: 0 }}
         >
           <option value="">Use default</option>
           {dispatcherModels.map(m => (

@@ -429,33 +429,27 @@ app.whenReady().then(async () => {
   )
 
   // ── Teams IPC ─────────────────────────────────────────────────────
+  // Returns the raw TeamConfigRaw shape so the UI can surface dispatch mode.
   ipcMain.handle('teams:get', async (_e, name?: string) =>
     wrap(async () => {
       if (!workspaceManager) throw new Error('Workspace manager not ready')
       const target = name || workspaceManager.getCurrentWorkspace()
-      if (!target) return {} as Record<string, string[]>
+      if (!target) return {} as Record<string, unknown>
       const fsMod = await import('fs')
       const pathMod = await import('path')
       const configPath = pathMod.join(workspaceManager.getWorkspacesRoot(), target, 'workspace.json')
-      if (!fsMod.existsSync(configPath)) return {} as Record<string, string[]>
+      if (!fsMod.existsSync(configPath)) return {} as Record<string, unknown>
       const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
-      // Flatten TeamConfigRaw → string[] for UI (dispatch mode not yet surfaced in UI)
-      // TODO: surface dispatch mode in UI
-      const raw: Record<string, unknown> = data.teams || {}
-      const result: Record<string, string[]> = {}
-      for (const [k, v] of Object.entries(raw)) {
-        result[k] = Array.isArray(v) ? v : (v as any).members ?? []
-      }
-      return result
+      return (data.teams || {}) as Record<string, unknown>
     })
   )
 
-  ipcMain.handle('teams:set', async (_e, nameOrTeams: string | Record<string, string[]>, maybeTeams?: Record<string, string[]>) =>
+  ipcMain.handle('teams:set', async (_e, nameOrTeams: string | Record<string, unknown>, maybeTeams?: Record<string, unknown>) =>
     wrap(async () => {
       if (!workspaceManager) throw new Error('Workspace manager not ready')
       // Backward-compat: support both (teams) and (name, teams) call shapes.
       let target: string
-      let teams: Record<string, string[]>
+      let teams: Record<string, any>
       if (typeof nameOrTeams === 'string') {
         target = nameOrTeams || workspaceManager.getCurrentWorkspace()
         teams = maybeTeams || {}

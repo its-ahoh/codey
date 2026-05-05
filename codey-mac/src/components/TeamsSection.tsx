@@ -1,57 +1,87 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { apiService, WorkerDto } from '../services/api'
+import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 import { C } from '../theme'
 
+type DispatchMode = 'all' | 'auto'
+interface TeamState { members: string[]; dispatch: DispatchMode }
+type TeamsState = Record<string, TeamState>
+
+function fromRaw(raw: TeamConfigRaw): TeamState {
+  if (Array.isArray(raw)) return { members: raw, dispatch: 'all' }
+  const dispatch: DispatchMode = raw?.dispatch === 'auto' ? 'auto' : 'all'
+  return { members: Array.isArray(raw?.members) ? raw.members : [], dispatch }
+}
+
+function toRaw(t: TeamState): TeamConfigRaw {
+  return t.dispatch === 'all' ? t.members : { members: t.members, dispatch: 'auto' }
+}
+
+function normalizeAll(raw: Record<string, TeamConfigRaw>): TeamsState {
+  const out: TeamsState = {}
+  for (const [k, v] of Object.entries(raw)) out[k] = fromRaw(v)
+  return out
+}
+
+function denormalizeAll(state: TeamsState): Record<string, TeamConfigRaw> {
+  const out: Record<string, TeamConfigRaw> = {}
+  for (const [k, v] of Object.entries(state)) out[k] = toRaw(v)
+  return out
+}
+
 export default function TeamsSection({ workspace }: { workspace: string }) {
-  const [teams, setTeams] = useState<Record<string, string[]>>({})
+  const [teams, setTeams] = useState<TeamsState>({})
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   const [savedAt, setSavedAt] = useState<number>(0)
   const [error, setError] = useState<string | null>(null)
   const saveTimer = useRef<number | null>(null)
 
   const reload = useCallback(async () => {
-    setTeams(await apiService.getTeams(workspace))
+    setTeams(normalizeAll(await apiService.getTeams(workspace)))
     setWorkers(await apiService.listWorkers())
   }, [workspace])
 
   useEffect(() => { reload() }, [reload])
 
-  const queueSave = (next: Record<string, string[]>) => {
+  const queueSave = (next: TeamsState) => {
     setTeams(next); setError(null)
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(async () => {
-      try { await apiService.setTeams(workspace, next); setSavedAt(Date.now()) }
+      try { await apiService.setTeams(workspace, denormalizeAll(next)); setSavedAt(Date.now()) }
       catch (err: any) { setError(err.unknown ? `Unknown workers: ${err.unknown.join(', ')}` : err.message) }
     }, 400)
   }
 
   const addTeam = () => {
     let i = 1; while (teams[`team${i}`]) i++
-    queueSave({ ...teams, [`team${i}`]: [] })
+    queueSave({ ...teams, [`team${i}`]: { members: [], dispatch: 'all' } })
   }
   const renameTeam = (oldName: string, newName: string) => {
     if (!newName || oldName === newName || teams[newName]) return
-    const next: Record<string, string[]> = {}
+    const next: TeamsState = {}
     for (const [k, v] of Object.entries(teams)) next[k === oldName ? newName : k] = v
     queueSave(next)
   }
   const removeTeam = (name: string) => {
     const next = { ...teams }; delete next[name]; queueSave(next)
   }
+  const setDispatch = (name: string, dispatch: DispatchMode) => {
+    queueSave({ ...teams, [name]: { ...teams[name], dispatch } })
+  }
   const addMember = (team: string, member: string) => {
-    if (teams[team].includes(member)) return
-    queueSave({ ...teams, [team]: [...teams[team], member] })
+    if (teams[team].members.includes(member)) return
+    queueSave({ ...teams, [team]: { ...teams[team], members: [...teams[team].members, member] } })
   }
   const removeMember = (team: string, idx: number) => {
-    queueSave({ ...teams, [team]: teams[team].filter((_, i) => i !== idx) })
+    queueSave({ ...teams, [team]: { ...teams[team], members: teams[team].members.filter((_, i) => i !== idx) } })
   }
   const reorderMember = (team: string, from: number, to: number) => {
     if (from === to || from < 0 || to < 0) return
-    const members = [...teams[team]]
+    const members = [...teams[team].members]
     if (from >= members.length || to >= members.length) return
     const [moved] = members.splice(from, 1)
     members.splice(to, 0, moved)
-    queueSave({ ...teams, [team]: members })
+    queueSave({ ...teams, [team]: { ...teams[team], members } })
   }
   const [drag, setDrag] = useState<{ team: string; idx: number } | null>(null)
   const [dragOver, setDragOver] = useState<{ team: string; idx: number } | null>(null)
@@ -66,7 +96,7 @@ export default function TeamsSection({ workspace }: { workspace: string }) {
     try {
       const worker = await apiService.generateWorker(createPrompt)
       const team = creatingFor
-      const next = { ...teams, [team]: [...teams[team], worker.name] }
+      const next: TeamsState = { ...teams, [team]: { ...teams[team], members: [...teams[team].members, worker.name] } }
       setWorkers(await apiService.listWorkers())
       queueSave(next)
       setCreatingFor(null); setCreatePrompt('')
@@ -77,7 +107,7 @@ export default function TeamsSection({ workspace }: { workspace: string }) {
     }
   }
 
-  const available = (team: string) => workers.filter(w => !teams[team].includes(w.name))
+  const available = (team: string) => workers.filter(w => !teams[team].members.includes(w.name))
 
   return (
     <div style={{ marginTop: 24, padding: 16, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8 }}>
@@ -90,15 +120,26 @@ export default function TeamsSection({ workspace }: { workspace: string }) {
       </div>
       {error && <div style={{ background: '#3a1a1a', color: '#ff8080', padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{error}</div>}
       {Object.keys(teams).length === 0 && <div style={{ fontSize: 12, color: C.fg3 }}>No teams yet. Click &quot;+ New team&quot;.</div>}
-      {Object.entries(teams).map(([name, members]) => (
+      {Object.entries(teams).map(([name, team]) => (
         <div key={name} style={{ marginBottom: 12, padding: 10, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <input defaultValue={name} onBlur={e => renameTeam(name, e.target.value.trim())}
               style={{ flex: 1, background: 'transparent', color: C.fg, border: 'none', fontSize: 14, fontWeight: 600 }} />
+            <label
+              title="When on, a built-in dispatcher picks the relevant subset of members for each task. Off (default): every member runs sequentially."
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: C.fg3, userSelect: 'none', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={team.dispatch === 'auto'}
+                onChange={e => setDispatch(name, e.target.checked ? 'auto' : 'all')}
+                style={{ cursor: 'pointer' }}
+              />
+              Auto-dispatch
+            </label>
             <button onClick={() => removeTeam(name)} style={{ background: 'transparent', color: '#ff6060', border: 'none', cursor: 'pointer', fontSize: 12 }}>Delete</button>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-            {members.map((m, i) => {
+            {team.members.map((m, i) => {
               const isDragging = drag?.team === name && drag.idx === i
               const isOver = dragOver?.team === name && dragOver.idx === i && !isDragging
               return (
