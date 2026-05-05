@@ -91,6 +91,8 @@ npm run build:mac -w codey-mac  # 在 codey-mac/release/ 生成 DMG
 }
 ```
 
+Auto-dispatch 设置：`dispatcher.{agent, model}`（可选）。
+
 ## 工作区结构
 
 ```
@@ -166,7 +168,15 @@ file-system, git, web-search
 |------|------|
 | `/workers` | 列出当前工作区的所有工作者 |
 | `/worker <名称> <任务>` | 运行指定的工作者 |
-| `/team <任务>` | 按顺序运行工作者 |
+| `/team <名称> [--all] <任务>` | 运行指定的 team（详见下方） |
+
+**Team dispatch 说明：**
+
+- `/team <name> [--all] <task>` — 运行指定的 team，成员按顺序串行执行，输出会作为下一个成员的输入。
+  - 默认 `dispatch: 'all'`（所有成员参与）。
+  - 配置为 `dispatch: 'auto'` 的 team 会先调用内置 dispatcher，自动选择本次任务真正需要的成员子集。临时跳过 dispatcher 可以加 `--all` 标志。
+  - 在 worker 的 `config.json` 里加可选的 `dispatchHint` 字段（一句话）可以提升路由准确性。
+  - Dispatcher 用的 agent/model 在 `gateway.json` 的 `dispatcher.{agent, model}` 字段配置，未配置时回退到 gateway 默认 agent/model。
 
 ### 工作区
 | 命令 | 描述 |
