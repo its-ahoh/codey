@@ -509,9 +509,17 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
 
       <Section title="Dispatcher (Auto Mode)"/>
       <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        When a team is configured with <code>dispatch: 'auto'</code>, this agent + model decides which workers participate. Leave both blank to use the gateway default.
+        When a team's mode is set to <strong>Auto</strong>, this agent + model picks the relevant subset of workers for each task. Leave both as <em>Use default</em> to fall back to the gateway default agent + model.
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
+        padding: '8px 12px',
+      }}>
+        <span style={{
+          color: C.fg3, fontSize: 11, fontWeight: 400,
+          width: 56, letterSpacing: 0.3,
+        }}>ROUTER</span>
         <select
           value={dispatcher.agent}
           onChange={e => {

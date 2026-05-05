@@ -36,9 +36,13 @@ export default function TeamsSection({ workspace }: { workspace: string }) {
   const [error, setError] = useState<string | null>(null)
   const saveTimer = useRef<number | null>(null)
 
+  const [dispatcherConfigured, setDispatcherConfigured] = useState(false)
+
   const reload = useCallback(async () => {
     setTeams(normalizeAll(await apiService.getTeams(workspace)))
     setWorkers(await apiService.listWorkers())
+    const r = await window.codey.dispatcher.get()
+    if (r.ok) setDispatcherConfigured(!!(r.data.agent || r.data.model))
   }, [workspace])
 
   useEffect(() => { reload() }, [reload])
@@ -125,17 +129,23 @@ export default function TeamsSection({ workspace }: { workspace: string }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <input defaultValue={name} onBlur={e => renameTeam(name, e.target.value.trim())}
               style={{ flex: 1, background: 'transparent', color: C.fg, border: 'none', fontSize: 14, fontWeight: 600 }} />
-            <label
-              title="When on, a built-in dispatcher picks the relevant subset of members for each task. Off (default): every member runs sequentially."
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: C.fg3, userSelect: 'none', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={team.dispatch === 'auto'}
-                onChange={e => setDispatch(name, e.target.checked ? 'auto' : 'all')}
-                style={{ cursor: 'pointer' }}
-              />
-              Auto-dispatch
-            </label>
+            <select
+              value={team.dispatch}
+              onChange={e => setDispatch(name, e.target.value as DispatchMode)}
+              title={dispatcherConfigured
+                ? 'Sequential: members run in order, output passed forward. Auto: a dispatcher picks the relevant subset.'
+                : 'Configure a dispatcher in Settings → Dispatcher (Auto Mode) to enable Auto.'}
+              style={{
+                background: C.surface2, color: C.fg, border: `1px solid ${C.border}`,
+                borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer',
+              }}
+            >
+              <option value="all">Sequential</option>
+              <option value="auto" disabled={!dispatcherConfigured && team.dispatch !== 'auto'}>
+                Auto{!dispatcherConfigured ? ' (configure dispatcher first)' : ''}
+              </option>
+              <option value="parallel" disabled>Parallel (coming soon)</option>
+            </select>
             <button onClick={() => removeTeam(name)} style={{ background: 'transparent', color: '#ff6060', border: 'none', cursor: 'pointer', fontSize: 12 }}>Delete</button>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
