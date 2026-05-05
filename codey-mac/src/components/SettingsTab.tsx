@@ -532,7 +532,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
           }}
           style={{ ...selectStyle, width: 130 }}
         >
-          <option value="">Use default</option>
+          <option value="">Select Agent</option>
           {AGENT_NAMES.map(a => (
             <option key={a} value={a}>{a}</option>
           ))}
@@ -542,7 +542,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
           onChange={e => updateDispatcher({ agent: dispatcher.agent, model: e.target.value })}
           style={{ ...selectStyle, flex: 1, minWidth: 0 }}
         >
-          <option value="">Use default</option>
+          <option value="">Select Model</option>
           {dispatcherModels.map(m => (
             <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
           ))}
