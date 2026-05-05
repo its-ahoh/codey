@@ -1440,6 +1440,8 @@ Example: /model gpt-4.1 write a Python script`;
     chatId: string,
     signal?: AbortSignal,
     opts: { forceAll?: boolean } = {},
+    chatAgent?: CodingAgent,
+    chatModel?: ModelConfig,
   ): Promise<{ response: string; tokens?: number }> {
     if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
@@ -1473,9 +1475,9 @@ Example: /model gpt-4.1 write a Python script`;
       const memberName = runMembers[i];
       sink({ type: 'info', chatId, message: `Step ${i + 1}/${runMembers.length}: ${memberName}` });
       const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
-      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? this.getDefaultAgent()) as CodingAgent;
+      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
       const workerModel = workerManager.getWorkerModel(memberName);
-      const modelConfig = this.getModelConfig(codingAgent, workerModel);
+      const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
       const response = await this.runWithFallback(codingAgent, {
         prompt: stepPrompt,
         agent: codingAgent,
@@ -2008,7 +2010,7 @@ Example: /model gpt-4.1 write a Python script`;
           members: rawMembers,
           dispatch: (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as 'all' | 'auto',
         };
-        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, abortController.signal);
+        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, abortController.signal, {}, agent, model);
         output = r.response;
         tokens = r.tokens;
       } else {
