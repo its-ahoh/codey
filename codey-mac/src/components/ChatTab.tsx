@@ -135,7 +135,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
       } catch { /* surface via dropdown placeholders */ }
     })()
   }, [isGatewayRunning])
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chat?.messages?.length])
+  const lastMsg = chat?.messages?.[chat.messages.length - 1]
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chat?.messages?.length, lastMsg?.content, lastMsg?.toolCalls?.length])
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && flight) stopChat(chatId)
