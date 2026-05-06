@@ -120,7 +120,7 @@ export const StatusTab: React.FC<StatusTabProps> = ({ status, logs, isRunning })
         <div style={styles.sectionHead}>Logs</div>
         <div style={styles.logsBox}>
           {logs.length === 0
-            ? <div style={{ color: '#444' }}>No logs yet.</div>
+            ? <div style={{ color: C.fg3 }}>No logs yet.</div>
             : logs.map((l, i) => <div key={i}>{l}</div>)}
         </div>
       </div>
@@ -178,13 +178,13 @@ const styles: Record<string, React.CSSProperties> = {
     outline: 'none',
   },
   logsBox: {
-    background: '#0d0d0d',
+    background: C.logBg,
     borderRadius: 10,
     border: `1px solid ${C.border}`,
     padding: 12,
     fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
     fontSize: 11,
-    color: '#6a9955',
+    color: C.logFg,
     maxHeight: 180,
     overflowY: 'auto',
     lineHeight: 1.6,

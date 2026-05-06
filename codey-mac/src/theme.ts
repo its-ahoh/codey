@@ -24,6 +24,20 @@ interface Palette {
   userBg: string
   aiBg: string
   scrollbar: string
+  // danger / error surfaces (used by error toasts in many components)
+  dangerBg: string
+  dangerBorder: string
+  dangerFg: string
+  // code / log surfaces (chat code blocks, inline code, status logs)
+  codeBg: string
+  codeFg: string
+  inlineCodeBg: string
+  inlineCodeFg: string
+  logBg: string
+  logFg: string
+  // warning (orange) surfaces — orphan banners, gateway-stopped notice
+  warningBg: string
+  warningFg: string
 }
 
 export const darkPalette: Palette = {
@@ -44,6 +58,17 @@ export const darkPalette: Palette = {
   userBg:    '#0A84FF',
   aiBg:      '#252525',
   scrollbar: '#3a3a3a',
+  dangerBg:      '#3a1a1a',
+  dangerBorder:  '#6a2a2a',
+  dangerFg:      '#ff8080',
+  codeBg:        '#141414',
+  codeFg:        '#e6e6e6',
+  inlineCodeBg:  '#1a1a1a',
+  inlineCodeFg:  '#e6e6e6',
+  logBg:         '#0d0d0d',
+  logFg:         '#6a9955',
+  warningBg:     '#ff950033',
+  warningFg:     '#ffb84d',
 }
 
 export const lightPalette: Palette = {
@@ -64,6 +89,17 @@ export const lightPalette: Palette = {
   userBg:    '#0A84FF',
   aiBg:      '#f5f5f7',
   scrollbar: '#c7c7cc',
+  dangerBg:      '#FFE5E5',
+  dangerBorder:  '#FFB3B3',
+  dangerFg:      '#C92A2A',
+  codeBg:        '#f5f5f7',
+  codeFg:        '#1d1d1f',
+  inlineCodeBg:  '#ebebef',
+  inlineCodeFg:  '#1d1d1f',
+  logBg:         '#fafafa',
+  logFg:         '#28792B',
+  warningBg:     '#FFE9C4',
+  warningFg:     '#A85D00',
 }
 
 // Token names mirror Palette keys; `C.bg` etc. resolve to `var(--bg)` at render time.

@@ -67,7 +67,7 @@ const Shell: React.FC = () => {
         <div style={{
           ...styles.statusPill,
           borderColor: C.green + '55',
-          background: '#32D74B11',
+          background: C.green + '11',
           color: C.green,
         }}>
           <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green }} />

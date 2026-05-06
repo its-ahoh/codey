@@ -54,7 +54,7 @@ const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' }
 const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSProperties => ({
   padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600,
   border: 'none', cursor: 'pointer',
-  background: variant === 'primary' ? C.accent : variant === 'danger' ? '#FF453A22' : C.surface3,
+  background: variant === 'primary' ? C.accent : variant === 'danger' ? C.red + '22' : C.surface3,
   color: variant === 'primary' ? '#fff' : variant === 'danger' ? C.red : C.fg2,
 })
 
@@ -89,13 +89,13 @@ const AgentInstallChip: React.FC<{
         title={status.path ? `Found at ${status.path}` : undefined}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 6,
-          color: '#34c759', fontSize: 11, fontWeight: 600,
+          color: C.green, fontSize: 11, fontWeight: 600,
           padding: '3px 8px', borderRadius: 999,
           background: 'rgba(52,199,89,0.12)',
           border: '1px solid rgba(52,199,89,0.35)',
         }}
       >
-        <span style={{ width: 6, height: 6, borderRadius: 3, background: '#34c759' }}/>
+        <span style={{ width: 6, height: 6, borderRadius: 3, background: C.green }}/>
         Installed
       </span>
     )
@@ -105,7 +105,7 @@ const AgentInstallChip: React.FC<{
       onClick={onInstall}
       style={{
         ...pillButton('ghost'),
-        color: '#ff9f0a',
+        color: C.warningFg,
         background: 'rgba(255,159,10,0.12)',
         border: '1px solid rgba(255,159,10,0.35)',
         display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -444,7 +444,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
 
   return (
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
-      {error && <div style={{ background: '#FF453A22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
+      {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
       <Section title="Models" right={
         <button onClick={() => setCreating(true)} style={pillButton('primary')} disabled={creating}>+ Add</button>

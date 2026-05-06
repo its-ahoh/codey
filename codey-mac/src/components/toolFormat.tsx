@@ -128,10 +128,10 @@ const lineDiff = (a: string, b: string): DiffLine[] => {
 const diffStyles: Record<string, React.CSSProperties> = {
   wrap: { fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 11.5, lineHeight: 1.45, borderRadius: 4, overflow: 'hidden', border: `1px solid ${C.border}` },
   row: { display: 'flex', whiteSpace: 'pre', padding: '0 6px' },
-  add: { background: 'rgba(50,215,75,0.13)', color: '#7ee895' },
-  del: { background: 'rgba(255,69,58,0.13)', color: '#ff8a82' },
-  eq:  { color: '#9a9a9a' },
-  marker: { width: 14, color: '#666', flexShrink: 0 },
+  add: { background: 'rgba(50,215,75,0.13)', color: C.green },
+  del: { background: 'rgba(255,69,58,0.13)', color: C.dangerFg },
+  eq:  { color: C.fg2 },
+  marker: { width: 14, color: C.fg3, flexShrink: 0 },
 }
 
 const DiffView: React.FC<{ oldText: string; newText: string }> = ({ oldText, newText }) => {
@@ -155,10 +155,10 @@ const DiffView: React.FC<{ oldText: string; newText: string }> = ({ oldText, new
 // ── Detail rendering ──────────────────────────────────────────────────────────
 
 const detailStyles: Record<string, React.CSSProperties> = {
-  label: { fontSize: 10, color: '#777', fontFamily: 'Menlo, Monaco, "Courier New", monospace', marginBottom: 4, marginTop: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  pre: { margin: 0, fontSize: 11.5, color: '#d0d0d0', fontFamily: 'Menlo, Monaco, "Courier New", monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+  label: { fontSize: 10, color: C.fg3, fontFamily: 'Menlo, Monaco, "Courier New", monospace', marginBottom: 4, marginTop: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
+  pre: { margin: 0, fontSize: 11.5, color: C.fg, fontFamily: 'Menlo, Monaco, "Courier New", monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
   block: { padding: 8, background: 'rgba(0,0,0,0.35)', borderRadius: 4, border: `1px solid ${C.border}` },
-  meta: { fontSize: 11, color: '#a0a0a0', fontFamily: 'Menlo, Monaco, "Courier New", monospace' },
+  meta: { fontSize: 11, color: C.fg2, fontFamily: 'Menlo, Monaco, "Courier New", monospace' },
   todoRow: { display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, padding: '2px 0', fontFamily: 'Menlo, Monaco, "Courier New", monospace' },
 }
 
@@ -167,11 +167,11 @@ const TodoList: React.FC<{ todos: Array<{ content?: string; status?: string; act
     {todos.map((t, i) => {
       const status = t.status ?? 'pending'
       const mark = status === 'completed' ? '✓' : status === 'in_progress' ? '◐' : '○'
-      const color = status === 'completed' ? C.green : status === 'in_progress' ? C.yellow : '#888'
+      const color = status === 'completed' ? C.green : status === 'in_progress' ? C.yellow : C.fg3
       return (
         <div key={i} style={detailStyles.todoRow}>
           <span style={{ color, width: 14, flexShrink: 0 }}>{mark}</span>
-          <span style={{ color: status === 'completed' ? '#888' : '#d0d0d0', textDecoration: status === 'completed' ? 'line-through' : 'none' }}>
+          <span style={{ color: status === 'completed' ? C.fg3 : C.fg, textDecoration: status === 'completed' ? 'line-through' : 'none' }}>
             {t.content ?? t.activeForm ?? ''}
           </span>
         </div>
