@@ -91,6 +91,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [input, setInput] = useState('')
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [workers, setWorkers] = useState<WorkerDto[]>([])
+  const [teamNames, setTeamNames] = useState<string[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
   const [enabledAgents, setEnabledAgents] = useState<string[]>([...AGENT_NAMES])
   const [defaultAgent, setDefaultAgent] = useState<string | null>(null)
@@ -113,6 +114,10 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
       .then(p => setPairings(p as any))
       .catch(() => {})
   }, [])
+  useEffect(() => {
+    if (!chat?.workspaceName) return
+    apiService.getTeams(chat.workspaceName).then(t => setTeamNames(Object.keys(t))).catch(() => setTeamNames([]))
+  }, [chat?.workspaceName])
   useEffect(() => {
     if (!isGatewayRunning) return
     ;(async () => {
@@ -139,7 +144,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
       } catch { /* surface via dropdown placeholders */ }
     })()
   }, [isGatewayRunning])
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chat?.messages?.length])
+  const lastMsg = chat?.messages?.[chat.messages.length - 1]
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chat?.messages?.length, lastMsg?.content, lastMsg?.toolCalls?.length])
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && flight) stopChat(chatId)
@@ -153,20 +159,26 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const selectionValue: string = chat.selection.type === 'worker'
     ? `worker:${chat.selection.name}`
     : chat.selection.type === 'team'
-      ? 'team'
+      ? `team:${chat.selection.name ?? ''}`
       : 'none'
 
   const onSelectionChange = async (v: string) => {
     let next: ChatSelection
     if (v === 'none') next = { type: 'none' }
-    else if (v === 'team') next = { type: 'team' }
+    else if (v.startsWith('team:')) next = { type: 'team', name: v.slice('team:'.length) }
     else next = { type: 'worker', name: v.slice('worker:'.length) }
     await setSelection(chat.id, next)
   }
 
-  // Resolve which agent/model are *actually* used for this chat (override or default).
-  const effectiveAgent: string = chat.agent ?? defaultAgent ?? 'claude-code'
-  const effectiveModel: string | undefined = chat.model ?? agentDefaultModels[effectiveAgent]
+  // Resolve which agent/model are *actually* used for this chat.
+  // Priority: per-chat override → worker config → gateway fallback default.
+  const selectedWorker = chat.selection.type === 'worker'
+    ? workers.find(w => w.name === chat.selection.name)
+    : undefined
+  const workerAgent = selectedWorker?.config.codingAgent
+  const workerModel = selectedWorker?.config.model
+  const effectiveAgent: string = chat.agent ?? workerAgent ?? defaultAgent ?? 'claude-code'
+  const effectiveModel: string | undefined = chat.model ?? workerModel ?? agentDefaultModels[effectiveAgent]
   const apiTypeForAgent = AGENT_API_TYPE[effectiveAgent]
   const modelsForAgent = models.filter(m => m.apiType === apiTypeForAgent)
 
@@ -336,32 +348,44 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         <div style={{ flex: 1 }} />
         <select value={selectionValue} onChange={e => onSelectionChange(e.target.value)} style={styles.workerSelect}>
           <option value="none">No worker</option>
-          <option value="team">Team</option>
-          {workers.map(w => <option key={w.name} value={`worker:${w.name}`}>{w.name}</option>)}
+          {workers.length > 0 && (
+            <optgroup label="Workers">
+              {workers.map(w => <option key={w.name} value={`worker:${w.name}`}>{w.name}</option>)}
+            </optgroup>
+          )}
+          {teamNames.length > 0 && (
+            <optgroup label="Teams">
+              {teamNames.map(n => <option key={n} value={`team:${n}`}>{n}</option>)}
+            </optgroup>
+          )}
         </select>
-        <select
-          value={chat.agent ?? ''}
-          onChange={e => onAgentChange(e.target.value)}
-          style={styles.workerSelect}
-          title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : ' (default)'}`}
-        >
-          <option value="">{`Agent: ${effectiveAgent}`}</option>
-          {AGENT_NAMES.filter(n => enabledAgents.includes(n) || n === chat.agent).map(n => (
-            <option key={n} value={n}>{n}</option>
-          ))}
-        </select>
-        <select
-          value={chat.model ?? ''}
-          onChange={e => onModelChange(e.target.value)}
-          style={styles.workerSelect}
-          title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : ' (default)'}`}
-          disabled={modelsForAgent.length === 0}
-        >
-          <option value="">{`Model: ${effectiveModel ?? '(default)'}`}</option>
-          {modelsForAgent.map(m => (
-            <option key={m.model} value={m.model}>{m.model}</option>
-          ))}
-        </select>
+        {chat.selection.type !== 'team' && (
+          <>
+            <select
+              value={chat.agent ?? ''}
+              onChange={e => onAgentChange(e.target.value)}
+              style={styles.workerSelect}
+              title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : workerAgent ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
+            >
+              <option value="">{`Agent: ${effectiveAgent}`}</option>
+              {AGENT_NAMES.filter(n => enabledAgents.includes(n) || n === chat.agent).map(n => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <select
+              value={chat.model ?? ''}
+              onChange={e => onModelChange(e.target.value)}
+              style={styles.workerSelect}
+              title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : workerModel ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
+              disabled={modelsForAgent.length === 0}
+            >
+              <option value="">{`Model: ${effectiveModel ?? '(default)'}`}</option>
+              {modelsForAgent.map(m => (
+                <option key={m.model} value={m.model}>{m.model}</option>
+              ))}
+            </select>
+          </>
+        )}
         <RouteIcons routes={chat.routes} />
         <button
           onClick={onLinkButton}

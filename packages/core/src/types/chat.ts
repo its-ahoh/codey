@@ -32,9 +32,10 @@ export interface ChatMessage {
 }
 
 export type ChatSelection =
-  | { type: 'none' }
+  | { type: 'none'; name?: string }
   | { type: 'worker'; name: string }
-  | { type: 'team' };
+  /** `name` identifies which team to run. Optional only for backward compat with chats persisted before per-team selection landed; the UI always sets it. */
+  | { type: 'team'; name?: string };
 
 export interface Chat {
   id: string;

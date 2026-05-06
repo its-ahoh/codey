@@ -185,6 +185,7 @@ function buildRuntimeConfig(json: any): any {
     planner: json?.planner,
     context: json?.context,
     memory: json?.memory,
+    dispatcher: json?.dispatcher,
   }
 }
 
@@ -333,8 +334,13 @@ app.whenReady().then(async () => {
         const teams = workspaceManager.getTeams()
         let changed = false
         for (const team of Object.keys(teams)) {
-          const filtered = teams[team].filter((m: string) => m !== name)
-          if (filtered.length !== teams[team].length) { teams[team] = filtered; changed = true }
+          const raw = teams[team]
+          const arr = Array.isArray(raw) ? raw : raw.members
+          const filtered = arr.filter((m: string) => m !== name)
+          if (filtered.length !== arr.length) {
+            teams[team] = Array.isArray(raw) ? filtered : { ...raw, members: filtered }
+            changed = true
+          }
         }
         if (changed) await workspaceManager.setTeams(teams)
       }
@@ -429,26 +435,27 @@ app.whenReady().then(async () => {
   )
 
   // ── Teams IPC ─────────────────────────────────────────────────────
+  // Returns the raw TeamConfigRaw shape so the UI can surface dispatch mode.
   ipcMain.handle('teams:get', async (_e, name?: string) =>
     wrap(async () => {
       if (!workspaceManager) throw new Error('Workspace manager not ready')
       const target = name || workspaceManager.getCurrentWorkspace()
-      if (!target) return {} as Record<string, string[]>
+      if (!target) return {} as Record<string, unknown>
       const fsMod = await import('fs')
       const pathMod = await import('path')
       const configPath = pathMod.join(workspaceManager.getWorkspacesRoot(), target, 'workspace.json')
-      if (!fsMod.existsSync(configPath)) return {} as Record<string, string[]>
+      if (!fsMod.existsSync(configPath)) return {} as Record<string, unknown>
       const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
-      return (data.teams || {}) as Record<string, string[]>
+      return (data.teams || {}) as Record<string, unknown>
     })
   )
 
-  ipcMain.handle('teams:set', async (_e, nameOrTeams: string | Record<string, string[]>, maybeTeams?: Record<string, string[]>) =>
+  ipcMain.handle('teams:set', async (_e, nameOrTeams: string | Record<string, unknown>, maybeTeams?: Record<string, unknown>) =>
     wrap(async () => {
       if (!workspaceManager) throw new Error('Workspace manager not ready')
       // Backward-compat: support both (teams) and (name, teams) call shapes.
       let target: string
-      let teams: Record<string, string[]>
+      let teams: Record<string, any>
       if (typeof nameOrTeams === 'string') {
         target = nameOrTeams || workspaceManager.getCurrentWorkspace()
         teams = maybeTeams || {}
@@ -540,6 +547,28 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       coreConfigManager.renameModel(oldName, newName)
+    })
+  )
+
+  // ── Dispatcher IPC ────────────────────────────────────────────────
+  // The dispatcher block selects the agent + model that decides which workers
+  // a `dispatch: 'auto'` team uses. Empty values mean "use gateway default".
+  ipcMain.handle('dispatcher:get', async () =>
+    wrap(async () => {
+      const cfg = coreConfigManager?.get()
+      return { agent: cfg?.dispatcher?.agent, model: cfg?.dispatcher?.model }
+    })
+  )
+
+  ipcMain.handle('dispatcher:set', async (_e, updates: { agent?: string; model?: string } | null | undefined) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      const agent = updates?.agent || undefined
+      const model = updates?.model || undefined
+      // ConfigManager.update() skips dispatcher when partial.dispatcher === undefined,
+      // so we always pass an explicit object. Both fields undefined keeps the slot
+      // present-but-empty, which the gateway reads identically to "no override".
+      coreConfigManager.update({ dispatcher: { agent: agent as any, model } })
     })
   )
 

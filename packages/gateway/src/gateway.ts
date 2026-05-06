@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, ChannelKind, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry } from '@codey/core';
+import { AgentRequest, AgentResponse, ChannelKind, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runManager, ManagerTurn, ManagerHistoryEntry } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -9,7 +9,7 @@ import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
 import { TaskPlanner, TaskPlan, PlanStep } from '@codey/core';
-import { WorkspaceManager } from '@codey/core';
+import { WorkspaceManager, TeamConfigRaw } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
 import { PairingStore, ChannelBinding } from './pairings';
@@ -66,7 +66,7 @@ export class Codey {
   // Pre-compiled regex patterns for parseCommand
   private static readonly REGEX_COMMAND = /^\/(\w+)(?:\s+(.*))?$/;
   private static readonly REGEX_WORKER = /\/worker\s+(\w+)\s+(.+)/i;
-  private static readonly REGEX_TEAM = /\/team\s+(\w+)\s+(.+)/i;
+  private static readonly REGEX_TEAM = /\/team\s+(\w+)(?:\s+(--all))?\s+(?!--all\s*$)(.+)/i;
   private static readonly REGEX_AGENT_PROMPT = /\/agent\s+(claude-code|opencode|codex)\s+(.+)/i;
   private static readonly REGEX_AGENT = /\/agent\s+(claude-code|opencode|codex)/i;
   private static readonly REGEX_MODEL_PROMPT = /\/model\s+(\S+)(?:\s+(.+))?/i;
@@ -114,6 +114,18 @@ export class Codey {
     if (!modelName) return undefined;
     return this.getModelConfig(agent, modelName);
   }
+
+  private getDispatcherAgentAndModel(): { agent: CodingAgent; model?: ModelConfig } {
+    const cfg = this.config.dispatcher;
+    const agent = (cfg?.agent as CodingAgent | undefined) ?? this.getDefaultAgent();
+    const modelName = cfg?.model;
+    const model = modelName ? this.getModelConfig(agent, modelName) : this.getDefaultModelConfig(agent);
+    return { agent, model };
+  }
+
+  private dispatcherRunner = (req: AgentRequest): Promise<AgentResponse> => {
+    return this.runWithFallback(req.agent, req);
+  };
 
   private conversationCleanupInterval?: NodeJS.Timeout;
 
@@ -928,9 +940,13 @@ export class Codey {
       case 'worker':
         await this.cmdWorker(args, message, parsed.prompt);
         break;
-      case 'team':
-        await this.runTeamTask(message, args[0] || '', args.slice(1).join(' ') || parsed.prompt);
+      case 'team': {
+        const teamName = args[0] || '';
+        const forceAll = args.includes('--all');
+        const taskArgs = args.slice(1).filter(a => a !== '--all').join(' ');
+        await this.runTeamTask(message, teamName, taskArgs || parsed.prompt, { forceAll });
         break;
+      }
       case 'teams':
         await this.cmdTeams(chatId, channel);
         break;
@@ -998,7 +1014,7 @@ export class Codey {
         `- Send any message to get coding help from the active agent`,
         `- /worker <name> <task> — run a specific worker`,
         `- /teams — list teams for this workspace`,
-        `- /team <name> <task> — run a named team in sequence`,
+        `- /team <name> [--all] <task> — run a named team. With dispatch:auto the Manager iteratively picks workers and may loop back for revisions; --all bypasses the Manager and runs every member in declared order.`,
         `- /parallel <prompt> — run all agents in parallel`,
         `- /agent <name> — switch agent (${agents})`,
         `- /workspace <name> — switch workspace`,
@@ -1451,7 +1467,7 @@ export class Codey {
 /workers - List all workers in the global library
 /worker <name> <task> - Run a specific worker
 /teams - List teams declared on this workspace
-/team <name> <task> - Run a named team in sequence
+/team <name> [--all] <task> — run a named team. With dispatch:auto the Manager iteratively picks workers and may loop back for revisions; --all bypasses the Manager and runs every member in declared order.
 
 \ud83e\udd16 Agents (legacy)
 /parallel <prompt> - Run all agents in parallel
@@ -1610,7 +1626,153 @@ Example: /model gpt-4.1 write a Python script`;
     });
   }
 
-  private async runTeamTask(message: UserMessage, teamName: string, task: string): Promise<void> {
+  /**
+   * Iteratively drives the team Manager. Returns the chronological run result
+   * or `{ fallback: true }` when the Manager fails on turn 1 — caller should
+   * fall back to running all members in input order.
+   *
+   * Mid-run Manager failures (turn 2+) end the loop gracefully: the parts
+   * collected so far are returned with `fallbackMidRun` set so the caller
+   * can annotate the user-visible header.
+   */
+  private async runManagerLoop(
+    team: { members: string[] },
+    task: string,
+    signal: AbortSignal | undefined,
+    chatAgent: CodingAgent | undefined,
+    chatModel: ModelConfig | undefined,
+    perStep: (msg: { kind: 'route'; step: number; worker: string; reason: string; isRevision: boolean }) => void | Promise<void>,
+    runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined) => Promise<{ success: boolean; output: string; error?: string }>,
+  ): Promise<
+    | { fallback: true; fallbackReason: string }
+    | {
+        fallback: false;
+        parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>;
+        finalSummary: string;
+        fallbackMidRun?: { reason: string };
+      }
+  > {
+    const workerManager = this.workspaceManager.getWorkerManager();
+    const members = team.members;
+    const cap = Math.max(Math.min(2 * members.length, 12), 4);
+
+    const history: ManagerHistoryEntry[] = [];
+    let lastWorker: string | null = null;
+    let lastOutput: string | null = null;
+    const parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }> = [];
+    let finalSummary = '';
+    let fallbackMidRun: { reason: string } | undefined;
+
+    const { agent: mAgent, model: mModel } = this.getDispatcherAgentAndModel();
+    const seenWorkers = new Set<string>();
+
+    for (let step = 1; step <= cap; step++) {
+      if (signal?.aborted) break;
+      const turn: ManagerTurn = await runManager(
+        {
+          task,
+          members: members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
+          history,
+          lastWorker,
+          lastOutput,
+        },
+        { agent: mAgent, model: mModel, runner: this.dispatcherRunner, signal },
+      );
+      if (turn.fallback) {
+        if (parts.length === 0) {
+          return { fallback: true, fallbackReason: turn.fallbackReason ?? 'unknown' };
+        }
+        fallbackMidRun = { reason: turn.fallbackReason ?? 'unknown' };
+        break;
+      }
+      if (lastWorker && turn.summary_of_last) {
+        history.push({ worker: lastWorker, summary: turn.summary_of_last });
+      }
+      if (turn.done || !turn.next) {
+        finalSummary = turn.final_summary ?? '';
+        break;
+      }
+      const isRevision = seenWorkers.has(turn.next);
+      await perStep({ kind: 'route', step, worker: turn.next, reason: turn.reason ?? '', isRevision });
+
+      const codingAgent = (workerManager.getWorkerCodingAgent(turn.next) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const workerModelName = workerManager.getWorkerModel(turn.next);
+      const modelConfig = workerModelName
+        ? this.getModelConfig(codingAgent, workerModelName)
+        : chatModel ?? this.getDefaultModelConfig(codingAgent);
+
+      const stepTaskBody = this.composeStepTask(task, turn.instruction, lastWorker, lastOutput);
+      const prompt = workerManager.buildWorkerPrompt(turn.next, stepTaskBody);
+
+      const response = await runWorker(turn.next, prompt, codingAgent, modelConfig);
+      if (!response.success) {
+        fallbackMidRun = { reason: `worker ${turn.next} failed: ${response.error ?? 'unknown'}` };
+        break;
+      }
+      parts.push({ step, worker: turn.next, output: response.output, isRevision });
+      seenWorkers.add(turn.next);
+      lastWorker = turn.next;
+      lastOutput = response.output;
+    }
+
+    // Cap exhausted without explicit done — request a final summary.
+    // Skip when the user aborted: the inner runner will fail anyway and we
+    // shouldn't send a fresh request after cancellation.
+    if (!finalSummary && parts.length > 0 && !fallbackMidRun && !signal?.aborted) {
+      const closing = await runManager(
+        {
+          task,
+          members: members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
+          history,
+          lastWorker,
+          lastOutput,
+          finalize: true,
+        },
+        { agent: mAgent, model: mModel, runner: this.dispatcherRunner, signal },
+      );
+      if (!closing.fallback) finalSummary = closing.final_summary ?? '';
+    }
+
+    return { fallback: false, parts, finalSummary, fallbackMidRun };
+  }
+
+  private composeStepTask(
+    originalTask: string,
+    instruction: string,
+    lastWorker: string | null,
+    lastOutput: string | null,
+  ): string {
+    const sections: string[] = [];
+    if (instruction.trim()) sections.push(instruction.trim());
+    sections.push(`Original task: ${originalTask}`);
+    if (lastWorker && lastOutput) {
+      sections.push(`Previous worker (${lastWorker}) output:\n${lastOutput}`);
+    }
+    return sections.join('\n\n');
+  }
+
+  private formatManagerParts(
+    parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>,
+    finalSummary: string,
+    truncatePerStep?: number,
+  ): string {
+    const head = finalSummary ? `🧭 Manager summary: ${finalSummary}\n\n` : '';
+    const body = parts
+      .map(p => {
+        const label = p.isRevision ? `${p.worker} (revision)` : p.worker;
+        const out = truncatePerStep ? p.output.substring(0, truncatePerStep) : p.output;
+        return `### Step ${p.step}: ${label}\n\n${out}`;
+      })
+      .join('\n\n---\n\n');
+    return head + body;
+  }
+
+  private async runTeamTask(
+    message: UserMessage,
+    teamName: string,
+    task: string,
+    opts: { forceAll?: boolean } = {},
+  ): Promise<void> {
     const { chatId, channel } = message;
 
     if (!teamName || !task.trim()) {
@@ -1618,13 +1780,13 @@ Example: /model gpt-4.1 write a Python script`;
       await this.sendResponse({
         chatId,
         channel,
-        text: `Usage: /team <name> <task>\n\nTeams on this workspace:\n${teamList}`,
+        text: `Usage: /team <name> [--all] <task>\n\nTeams on this workspace:\n${teamList}`,
       });
       return;
     }
 
-    const members = this.workspaceManager.getTeam(teamName);
-    if (!members) {
+    const team = this.workspaceManager.getTeam(teamName);
+    if (!team) {
       const teamList = this.workspaceManager.listTeams();
       await this.sendResponse({
         chatId,
@@ -1634,38 +1796,18 @@ Example: /model gpt-4.1 write a Python script`;
       return;
     }
 
-    const workerManager = this.workspaceManager.getWorkerManager();
+    const handler = this.handlers.get(channel);
+    const { members, dispatch } = team;
 
-    await this.sendResponse({
-      chatId,
-      channel,
-      text: `👥 Running team **${teamName}** (${members.join(' → ')})\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
-    });
-
-    let currentTask = task;
-    const results: string[] = [];
-
-    for (const memberName of members) {
-      const worker = workerManager.getWorker(memberName);
-      if (!worker) {
-        results.push(`**${memberName}**: ❌ not found in global library`);
-        break;
-      }
-
-      const codingAgent = workerManager.getWorkerCodingAgent(memberName) as CodingAgent;
-      const model = workerManager.getWorkerModel(memberName);
-
-      await this.sendResponse({
-        chatId,
-        channel,
-        text: `🔄 Worker **${worker.name}** is working...`,
-      });
-
-      const prompt = workerManager.buildWorkerPrompt(memberName, currentTask);
-      const modelConfig = this.getModelConfig(codingAgent, model);
-      const handler = this.handlers.get(channel);
+    // Helper to run one worker once, used by both the Manager loop and the
+    // legacy "all members in input order" fallback.
+    const runOneWorker = async (
+      workerName: string,
+      prompt: string,
+      codingAgent: CodingAgent,
+      modelConfig: ModelConfig | undefined,
+    ): Promise<{ success: boolean; output: string; error?: string }> => {
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
-
       const response = await this.runWithFallback(codingAgent, {
         prompt,
         agent: codingAgent,
@@ -1674,7 +1816,106 @@ Example: /model gpt-4.1 write a Python script`;
         onStream,
         context: { workingDir: this.workingDir },
       });
+      return response.success
+        ? { success: true, output: response.output }
+        : { success: false, output: '', error: response.error };
+    };
 
+    const useManager = dispatch === 'auto' && !opts.forceAll;
+
+    if (useManager) {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `🧭 Manager running team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
+      });
+
+      const result = await this.runManagerLoop(
+        team,
+        task,
+        undefined,
+        undefined,
+        undefined,
+        async ({ step, worker, reason, isRevision }) => {
+          await this.sendResponse({
+            chatId,
+            channel,
+            text: `🔄 Step ${step}: **${worker}**${isRevision ? ' (revision)' : ''} — ${reason}`,
+          });
+        },
+        runOneWorker,
+      );
+
+      if (result.fallback) {
+        await this.sendResponse({
+          chatId,
+          channel,
+          text: `⚠️ Auto-routing failed (${result.fallbackReason}), running all members.`,
+        });
+        await this.runAllMembersInOrder(message, teamName, members, task, runOneWorker);
+        return;
+      }
+
+      if (result.fallbackMidRun) {
+        await this.sendResponse({
+          chatId,
+          channel,
+          text: `⚠️ Manager halted mid-run: ${result.fallbackMidRun.reason}`,
+        });
+      }
+
+      const text = this.formatManagerParts(result.parts, result.finalSummary, /*truncatePerStep*/ 500);
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `📊 Team **${teamName}** results\n\n${text}`,
+      });
+      return;
+    }
+
+    // dispatch === 'all' OR forceAll: legacy path
+    const headerSuffix = opts.forceAll ? ' [--all override]' : '';
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `👥 Running team **${teamName}** (${members.join(' → ')})${headerSuffix}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
+    });
+    await this.runAllMembersInOrder(message, teamName, members, task, runOneWorker);
+  }
+
+  private async runAllMembersInOrder(
+    message: UserMessage,
+    teamName: string,
+    members: string[],
+    task: string,
+    runOneWorker: (
+      workerName: string,
+      prompt: string,
+      codingAgent: CodingAgent,
+      modelConfig: ModelConfig | undefined,
+    ) => Promise<{ success: boolean; output: string; error?: string }>,
+  ): Promise<void> {
+    const { chatId, channel } = message;
+    const workerManager = this.workspaceManager.getWorkerManager();
+    const results: string[] = [];
+    let currentTask = task;
+
+    for (const memberName of members) {
+      const worker = workerManager.getWorker(memberName);
+      if (!worker) {
+        results.push(`**${memberName}**: ❌ not found in global library`);
+        break;
+      }
+      const codingAgent = workerManager.getWorkerCodingAgent(memberName) as CodingAgent;
+      const model = workerManager.getWorkerModel(memberName);
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `🔄 Worker **${worker.name}** is working...`,
+      });
+      const prompt = workerManager.buildWorkerPrompt(memberName, currentTask);
+      const modelConfig = this.getModelConfig(codingAgent, model);
+      const response = await runOneWorker(memberName, prompt, codingAgent, modelConfig);
       if (response.success) {
         results.push(`**${worker.name}**: ${response.output.substring(0, 500)}`);
         currentTask = `Previous worker output:\n${response.output}\n\nYour task: ${task}`;
@@ -1693,29 +1934,29 @@ Example: /model gpt-4.1 write a Python script`;
 
   private async runTeamForChat(
     teamName: string,
-    members: string[],
+    team: { members: string[]; dispatch: 'all' | 'auto' },
     prompt: string,
     workingDir: string,
     sink: ChatStreamSink,
     chatId: string,
     signal?: AbortSignal,
+    opts: { forceAll?: boolean } = {},
+    chatAgent?: CodingAgent,
+    chatModel?: ModelConfig,
   ): Promise<{ response: string; tokens?: number }> {
-    if (!members || members.length === 0) {
+    if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
     }
     const workerManager = this.workspaceManager.getWorkerManager();
-    let carry = prompt;
-    const parts: string[] = [];
-    for (let i = 0; i < members.length; i++) {
-      if (signal?.aborted) break;
-      const memberName = members[i];
-      sink({ type: 'info', chatId, message: `Step ${i + 1}/${members.length}: ${memberName}` });
-      const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
-      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? this.getDefaultAgent()) as CodingAgent;
-      const workerModel = workerManager.getWorkerModel(memberName);
-      const modelConfig = this.getModelConfig(codingAgent, workerModel);
+
+    const runOneWorker = async (
+      workerName: string,
+      workerPrompt: string,
+      codingAgent: CodingAgent,
+      modelConfig: ModelConfig | undefined,
+    ): Promise<{ success: boolean; output: string; error?: string }> => {
       const response = await this.runWithFallback(codingAgent, {
-        prompt: stepPrompt,
+        prompt: workerPrompt,
         agent: codingAgent,
         model: modelConfig,
         context: { workingDir },
@@ -1723,9 +1964,57 @@ Example: /model gpt-4.1 write a Python script`;
         onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
         signal,
       });
-      const output = response?.success ? this.formatAgentResponse(response) : '';
+      return response?.success
+        ? { success: true, output: this.formatAgentResponse(response) }
+        : { success: false, output: '', error: response?.error };
+    };
+
+    const useManager = team.dispatch === 'auto' && !opts.forceAll;
+
+    if (useManager) {
+      const result = await this.runManagerLoop(
+        team,
+        prompt,
+        signal,
+        chatAgent,
+        chatModel,
+        ({ step, worker, reason, isRevision }) => {
+          sink({
+            type: 'info',
+            chatId,
+            message: `Step ${step}: ${worker}${isRevision ? ' (revision)' : ''} — ${reason}`,
+          });
+        },
+        runOneWorker,
+      );
+
+      if (result.fallback) {
+        sink({ type: 'info', chatId, message: `Auto-routing failed (${result.fallbackReason}), running all members` });
+        // fall through to all-members path below
+      } else {
+        if (result.fallbackMidRun) {
+          sink({ type: 'info', chatId, message: `Manager halted mid-run: ${result.fallbackMidRun.reason}` });
+        }
+        return { response: this.formatManagerParts(result.parts, result.finalSummary) };
+      }
+    }
+
+    // dispatch === 'all', forceAll, or auto-routing fallback
+    let carry = prompt;
+    const parts: string[] = [];
+    for (let i = 0; i < team.members.length; i++) {
+      if (signal?.aborted) break;
+      const memberName = team.members[i];
+      sink({ type: 'info', chatId, message: `Step ${i + 1}/${team.members.length}: ${memberName}` });
+      const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
+      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const workerModel = workerManager.getWorkerModel(memberName);
+      const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
+      const response = await runOneWorker(memberName, stepPrompt, codingAgent, modelConfig);
+      const output = response.success ? response.output : '';
       parts.push(`### ${memberName}\n\n${output}`);
       carry = output;
+      if (!response.success) break;
     }
     return { response: parts.join('\n\n---\n\n') };
   }
@@ -1759,14 +2048,15 @@ Example: /model gpt-4.1 write a Python script`;
       }
       
       // Check for team command
-      const teamMatch = text.match(/\/team\s+(\w+)\s+(.+)/i);
+      const teamMatch = text.match(Codey.REGEX_TEAM);
       if (teamMatch) {
+        const forceAll = teamMatch[2] === '--all';
         return {
           command: 'team',
-          args: [teamMatch[1]],
+          args: [teamMatch[1], ...(forceAll ? ['--all'] : [])],
           agent: this.getDefaultAgent() as CodingAgent,
           model: undefined,
-          prompt: teamMatch[2]
+          prompt: teamMatch[3]
         };
       }
 
@@ -2163,7 +2453,7 @@ Example: /model gpt-4.1 write a Python script`;
     const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
     const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
     let workingDir = this.workingDir;
-    let chatWorkspaceTeams: Record<string, string[]> = {};
+    let chatWorkspaceTeams: Record<string, TeamConfigRaw> = {};
     if (fs.existsSync(wsConfigPath)) {
       try {
         const wsConfig = JSON.parse(fs.readFileSync(wsConfigPath, 'utf-8'));
@@ -2239,10 +2529,22 @@ Example: /model gpt-4.1 write a Python script`;
         // active workspace differs from the chat's).
         const teamNames = Object.keys(chatWorkspaceTeams);
         if (teamNames.length === 0) throw new Error(`No teams configured in workspace "${chat.workspaceName}"`);
-        const teamName = teamNames[0];
-        const members = chatWorkspaceTeams[teamName];
-        if (!members || members.length === 0) throw new Error(`Team "${teamName}" is empty`);
-        const r = await this.runTeamForChat(teamName, members, prompt, workingDir, sink, chatId, abortController.signal);
+        // Prefer the team named on the selection. Falling through to teamNames[0]
+        // keeps legacy chats (persisted before per-team selection) working.
+        const teamName = chat.selection.name && teamNames.includes(chat.selection.name)
+          ? chat.selection.name
+          : teamNames[0];
+        const rawTeam = chatWorkspaceTeams[teamName];
+        const rawMembers: string[] = Array.isArray(rawTeam) ? rawTeam : (rawTeam?.members ?? []);
+        if (!rawMembers || rawMembers.length === 0) throw new Error(`Team "${teamName}" is empty`);
+        // Prefer the active workspace's normalized team (which carries dispatch mode);
+        // fall back to building a TeamConfig inline from the chat's raw config.
+        const wsTeam = this.workspaceManager.getTeam(teamName);
+        const team = wsTeam ?? {
+          members: rawMembers,
+          dispatch: (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as 'all' | 'auto',
+        };
+        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, abortController.signal, {}, agent, model);
         output = r.response;
         tokens = r.tokens;
       } else {

@@ -1,6 +1,7 @@
 // IPC proxy — all calls go through window.codey.* (Electron preload)
 
 import type { Chat, ChatSelection } from '../types'
+import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 
 // Inline ChatStreamEvent to avoid cross-package import
 export type ChatStreamEvent =
@@ -80,10 +81,10 @@ export const apiService = {
     unwrap(await window.codey.dialog.pickDirectory()),
 
   // Teams
-  getTeams: async (workspace?: string): Promise<Record<string, string[]>> =>
+  getTeams: async (workspace?: string): Promise<Record<string, TeamConfigRaw>> =>
     unwrap(await window.codey.teams.get(workspace)),
 
-  setTeams: async (workspace: string, teams: Record<string, string[]>): Promise<void> =>
+  setTeams: async (workspace: string, teams: Record<string, TeamConfigRaw>): Promise<void> =>
     unwrap(await window.codey.teams.set(workspace, teams)),
 
   // Chat — gateway is in-process; streaming comes via chat:token IPC events

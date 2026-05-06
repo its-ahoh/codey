@@ -355,6 +355,7 @@ type InstallStatus = { installed: boolean; path?: string }
 export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) => {
   const [models, setModels] = useState<ModelEntry[]>([])
   const [fallback, setFallback] = useState<FallbackCfg>({ enabled: true, order: [] })
+  const [dispatcher, setDispatcher] = useState<{ agent: string; model: string }>({ agent: '', model: '' })
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Probe runs async after the rest of the panel paints — the chip flips from
@@ -376,11 +377,13 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const reload = useCallback(async () => {
     setError(null)
     try {
-      const [m, f] = await Promise.all([
+      const [m, f, d] = await Promise.all([
         unwrap(await window.codey.models.list()),
         unwrap(await window.codey.fallback.get()),
+        unwrap(await window.codey.dispatcher.get()),
       ])
       setModels(m); setFallback(f as FallbackCfg)
+      setDispatcher({ agent: d.agent ?? '', model: d.model ?? '' })
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
@@ -414,6 +417,23 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
     setFallback(fb)
     await unwrap(await window.codey.fallback.set(fb))
   }
+
+  const updateDispatcher = async (next: { agent: string; model: string }) => {
+    setDispatcher(next)
+    await unwrap(await window.codey.dispatcher.set({
+      agent: next.agent || undefined,
+      model: next.model || undefined,
+    }))
+  }
+
+  // Mirror the fallback editor's filter: when an agent is picked, only show
+  // models compatible with its apiType. When no agent is picked, show all.
+  const dispatcherModels = (() => {
+    const want = dispatcher.agent ? AGENT_API_TYPE[dispatcher.agent] : undefined
+    return [...models]
+      .filter(m => !want || m.apiType === want)
+      .sort((a, b) => a.model.localeCompare(b.model))
+  })()
 
   // Enablement is derived from priority-list membership now; the chat header
   // and fallback "+ Add step" both use this to decide what an agent looks
@@ -486,6 +506,48 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
           Fallback is off — only Row 1 (the default) will run. Failures surface as errors instead of trying the rest of the list.
         </div>
       )}
+
+      <Section title="Dispatcher (Auto Mode)"/>
+      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
+        When a team's mode is set to <strong>Auto</strong>, this agent + model picks the relevant subset of workers for each task. Leave both as <em>Use default</em> to fall back to the gateway default agent + model.
+      </div>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
+        padding: '8px 12px',
+      }}>
+        <span style={{
+          color: C.fg3, fontSize: 11, fontWeight: 400,
+          width: 56, letterSpacing: 0.3,
+        }}>ROUTER</span>
+        <select
+          value={dispatcher.agent}
+          onChange={e => {
+            const nextAgent = e.target.value
+            // Drop the pinned model if it's not compatible with the new agent.
+            const want = nextAgent ? AGENT_API_TYPE[nextAgent] : undefined
+            const m = models.find(mm => mm.model === dispatcher.model)
+            const keepModel = !dispatcher.model || !want || (m && m.apiType === want)
+            updateDispatcher({ agent: nextAgent, model: keepModel ? dispatcher.model : '' })
+          }}
+          style={{ ...selectStyle, width: 130 }}
+        >
+          <option value="">Select Agent</option>
+          {AGENT_NAMES.map(a => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+        <select
+          value={dispatcher.model}
+          onChange={e => updateDispatcher({ agent: dispatcher.agent, model: e.target.value })}
+          style={{ ...selectStyle, flex: 1, minWidth: 0 }}
+        >
+          <option value="">Select Model</option>
+          {dispatcherModels.map(m => (
+            <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
+          ))}
+        </select>
+      </div>
     </div>
   )
 }

@@ -215,6 +215,13 @@ export interface GatewayConfig {
   planner?: PlannerSettings;
   context?: ContextSettings;
   memory?: MemorySettings;
+  /** Optional auto-dispatcher settings used when a team has dispatch: 'auto'. */
+  dispatcher?: {
+    /** Coding agent to use for the dispatch decision. Defaults to gateway default. */
+    agent?: CodingAgent;
+    /** Model name (must exist in the global model catalog). Defaults to default agent's default model. */
+    model?: string;
+  };
 }
 
 export * from './chat';

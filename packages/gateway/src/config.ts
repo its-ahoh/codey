@@ -38,6 +38,11 @@ export interface GatewayConfigJson {
     logLevel: 'debug' | 'info' | 'warn' | 'error';
     logFile?: string;
   };
+  /** See GatewayConfig.dispatcher in @codey/core types. Optional. */
+  dispatcher?: {
+    agent?: CodingAgent;
+    model?: string;
+  };
 }
 
 /** Reserved for future per-agent settings. Currently empty. */
@@ -85,6 +90,7 @@ export class ConfigManager extends EventEmitter {
     if (partial.dev) Object.assign(this.config.dev, partial.dev);
     if (partial.models !== undefined) this.config.models = partial.models;
     if (partial.fallback !== undefined) this.config.fallback = partial.fallback;
+    if (partial.dispatcher !== undefined) this.config.dispatcher = partial.dispatcher;
     this.save();
   }
 
@@ -349,7 +355,7 @@ function getDefaultConfig(): GatewayConfigJson {
 /** Fill in any missing top-level fields with defaults so downstream code can assume shape. */
 function normalize(raw: Partial<GatewayConfigJson>): GatewayConfigJson {
   const defaults = getDefaultConfig();
-  return {
+  const out: GatewayConfigJson = {
     gateway: { ...defaults.gateway, ...(raw.gateway ?? {}) },
     channels: raw.channels ?? defaults.channels,
     agents: { ...defaults.agents, ...(raw.agents ?? {}) },
@@ -357,4 +363,11 @@ function normalize(raw: Partial<GatewayConfigJson>): GatewayConfigJson {
     fallback: normalizeFallback(raw.fallback, defaults.fallback),
     dev: raw.dev ?? defaults.dev,
   };
+  if (raw.dispatcher && typeof raw.dispatcher === 'object') {
+    out.dispatcher = {
+      agent: raw.dispatcher.agent,
+      model: raw.dispatcher.model,
+    };
+  }
+  return out;
 }
