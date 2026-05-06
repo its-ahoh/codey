@@ -109,6 +109,13 @@ export interface AgentRequest {
    * the cancellation to the user.
    */
   signal?: AbortSignal;
+  /**
+   * When true, pass `--dangerously-skip-permissions` (or equivalent) to the
+   * spawned CLI. Defaults to `!interactive` when unset (preserving existing
+   * behaviour). Claude Code only for MVP; unsupported agents log a warning
+   * and ignore the flag.
+   */
+  bypassPermissions?: boolean;
 }
 
 export interface StatusUpdate {

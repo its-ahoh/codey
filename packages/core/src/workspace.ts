@@ -24,6 +24,8 @@ export interface TeamConfig {
 export interface WorkspaceJson {
   workingDir: string;
   teams?: Record<string, TeamConfigRaw>;
+  /** When true, pass --dangerously-skip-permissions to Claude Code even in interactive mode. */
+  allowDangerousPermissions?: boolean;
 }
 
 export class WorkspaceManager {
@@ -92,7 +94,7 @@ export class WorkspaceManager {
     const rawTeams = this.config?.teams || {};
     for (const [teamName, raw] of Object.entries(rawTeams)) {
       const normalized = this.normalizeTeam(teamName, raw);
-      if (normalized) this.teams.set(teamName.toLowerCase(), normalized);
+      if (normalized) this.teams.set(teamName, normalized);
     }
 
     if (!fs.existsSync(this.getMemoryPath())) {
@@ -182,6 +184,19 @@ export class WorkspaceManager {
   getWorkerManager(): WorkerManager { return this.workerManager; }
   getMemoryStore(): MemoryStore { return this.memoryStore; }
 
+  getAllowDangerousPermissions(): boolean | undefined {
+    return this.config?.allowDangerousPermissions;
+  }
+
+  async setAllowDangerousPermissions(value: boolean): Promise<void> {
+    if (!this.config) return;
+    this.config.allowDangerousPermissions = value;
+    const configPath = this.getConfigPath();
+    const raw = JSON.parse(await fs.promises.readFile(configPath, 'utf-8'));
+    raw.allowDangerousPermissions = value;
+    await fs.promises.writeFile(configPath, JSON.stringify(raw, null, 2), 'utf-8');
+  }
+
   getMemory(): string {
     const memoryPath = this.getMemoryPath();
     return fs.existsSync(memoryPath) ? fs.readFileSync(memoryPath, 'utf-8') : '';
@@ -228,7 +243,10 @@ export class WorkspaceManager {
   }
 
   getTeam(name: string): TeamConfig | undefined {
-    return this.teams.get(name.toLowerCase());
+    for (const [key, value] of this.teams) {
+      if (key.toLowerCase() === name.toLowerCase()) return value;
+    }
+    return undefined;
   }
 
   getTeamNames(): string[] {
@@ -249,7 +267,7 @@ export class WorkspaceManager {
     this.teams.clear();
     for (const [name, raw] of Object.entries(teams)) {
       const normalized = this.normalizeTeam(name, raw);
-      if (normalized) this.teams.set(name.toLowerCase(), normalized);
+      if (normalized) this.teams.set(name, normalized);
     }
     const configPath = this.getConfigPath();
     const existing = JSON.parse(await fs.promises.readFile(configPath, 'utf-8'));

@@ -398,6 +398,35 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('workspaces:permissions:get', async (_e, name: string) =>
+    wrap(async () => {
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const root = workspaceManager.getWorkspacesRoot()
+      const configPath = pathMod.join(root, name, 'workspace.json')
+      if (!fsMod.existsSync(configPath)) return false
+      const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
+      return data.allowDangerousPermissions === true
+    })
+  )
+
+  ipcMain.handle('workspaces:permissions:set', async (_e, name: string, value: boolean) =>
+    wrap(async () => {
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const root = workspaceManager.getWorkspacesRoot()
+      const configPath = pathMod.join(root, name, 'workspace.json')
+      if (!fsMod.existsSync(configPath)) throw new Error(`Workspace "${name}" not found`)
+      const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
+      if (value) data.allowDangerousPermissions = true
+      else delete data.allowDangerousPermissions
+      await fsMod.promises.writeFile(configPath, JSON.stringify(data, null, 2), 'utf-8')
+      if (workspaceManager.getCurrentWorkspace() === name) await workspaceManager.load()
+    })
+  )
+
   ipcMain.handle('workspaces:create', async (_e, dir: string) =>
     wrap(async () => {
       if (!workspaceManager) throw new Error('Workspace manager not ready')

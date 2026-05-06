@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('codey', {
     setMemory: (name: string, content: string) => ipcRenderer.invoke('workspaces:memory:set', name, content),
     create: (dir: string) => ipcRenderer.invoke('workspaces:create', dir),
     delete: (name: string) => ipcRenderer.invoke('workspaces:delete', name),
+    getPermissions: (name: string) => ipcRenderer.invoke('workspaces:permissions:get', name),
+    setPermissions: (name: string, value: boolean) => ipcRenderer.invoke('workspaces:permissions:set', name, value),
   },
   dialog: {
     pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),

@@ -31,6 +31,8 @@ declare global {
         setMemory: (name: string, content: string) => Promise<IpcResult<void>>
         create: (dir: string) => Promise<IpcResult<string>>
         delete: (name: string) => Promise<IpcResult<void>>
+        getPermissions: (name: string) => Promise<IpcResult<boolean>>
+        setPermissions: (name: string, value: boolean) => Promise<IpcResult<void>>
       }
       dialog: {
         pickDirectory: () => Promise<IpcResult<string | null>>

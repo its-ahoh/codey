@@ -57,8 +57,8 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         '--output-format', 'stream-json',
       ];
 
-      // Only skip permissions for non-interactive (chat platform) usage
-      if (!request.interactive) {
+      // Skip permissions when caller requests bypass, or by default for non-interactive mode.
+      if (request.bypassPermissions ?? !request.interactive) {
         args.push('--dangerously-skip-permissions');
       }
 

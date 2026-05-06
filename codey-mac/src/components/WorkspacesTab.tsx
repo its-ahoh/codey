@@ -218,6 +218,10 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
                     <div style={{ marginTop: 12 }}>
                       <TeamsSection workspace={ws} />
                     </div>
+
+                    <div style={{ marginTop: 12 }}>
+                      <PermissionsSection workspace={ws} />
+                    </div>
                   </div>
                 )}
               </div>
@@ -322,6 +326,73 @@ const MemorySection: React.FC<{ workspace: string }> = ({ workspace }) => {
           }}
         >{content || '(empty — click Edit to add notes)'}</pre>
       )}
+    </div>
+  )
+}
+
+const PermissionsSection: React.FC<{ workspace: string }> = ({ workspace }) => {
+  const [allowed, setAllowed] = useState<boolean | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string>('')
+
+  useEffect(() => {
+    let cancelled = false
+    setErr('')
+    apiService.getWorkspacePermissions(workspace)
+      .then(v => { if (!cancelled) setAllowed(v) })
+      .catch(e => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed to load') })
+    return () => { cancelled = true }
+  }, [workspace])
+
+  const toggle = async () => {
+    if (saving || allowed === null) return
+    const next = !allowed
+    if (next && !window.confirm(
+      'Enable dangerous permissions bypass?\n\n' +
+      'This passes --dangerously-skip-permissions to Claude Code, which lets it read, write, and execute files without confirmation prompts.\n\n' +
+      'Only enable this if you trust the workers in this workspace.'
+    )) return
+    setSaving(true); setErr('')
+    try {
+      await apiService.setWorkspacePermissions(workspace, next)
+      setAllowed(next)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={{ padding: 16, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Permissions</div>
+      {err && <div style={{ background: '#3a1a1a', color: '#ff8080', padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{err}</div>}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, color: C.fg }}>Bypass agent permission prompts</div>
+          <div style={{ fontSize: 11, color: C.fg3, marginTop: 2 }}>
+            Passes <code style={{ background: C.bg, padding: '1px 4px', borderRadius: 3 }}>--dangerously-skip-permissions</code> to Claude Code. Off by default for interactive mode.
+          </div>
+        </div>
+        <button
+          onClick={toggle}
+          disabled={saving || allowed === null}
+          style={{
+            width: 42, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
+            background: allowed ? C.accent : C.border2,
+            position: 'relative', flexShrink: 0,
+            opacity: (saving || allowed === null) ? 0.6 : 1,
+            transition: 'background 0.2s',
+          }}
+          title={allowed ? 'Click to disable' : 'Click to enable'}
+        >
+          <span style={{
+            position: 'absolute', top: 3, left: allowed ? 20 : 3,
+            width: 18, height: 18, borderRadius: '50%', background: '#fff',
+            transition: 'left 0.2s',
+          }} />
+        </button>
+      </div>
     </div>
   )
 }

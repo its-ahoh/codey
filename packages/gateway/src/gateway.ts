@@ -29,6 +29,40 @@ interface DirectoryResolveResult {
   isWorkspaceName?: boolean;
 }
 
+interface TeamMemberOutput { member: string; output: string }
+
+interface ExecuteTeamSequenceDone {
+  done: true;
+  memberOutputs: TeamMemberOutput[];
+  finalCarry: string;
+}
+
+interface ExecuteTeamSequencePaused {
+  done: false;
+  question: string;
+  questionWorker: string;
+  completedOutputs: TeamMemberOutput[];
+  remainingMembers: string[];
+  carry: string;
+}
+
+type ExecuteTeamSequenceResult = ExecuteTeamSequenceDone | ExecuteTeamSequencePaused;
+
+interface PendingTeamClarification {
+  teamName: string;
+  remainingMembers: string[];
+  completedOutputs: TeamMemberOutput[];
+  carry: string;
+  originalTask: string;
+  chatId: string;
+  channel: ChannelType;
+  workingDir: string;
+  createdAt: number;
+  isChatMode?: boolean;
+  chatAgent?: CodingAgent;
+  chatModel?: ModelConfig;
+}
+
 export class Codey {
   private config: GatewayConfig;
   private agentFactory: AgentFactory;
@@ -49,6 +83,10 @@ export class Codey {
 
   // Response chunking
   private readonly MAX_MESSAGE_LENGTH = 2000;
+
+  // Pending team clarifications: conversationId (channel) or "chat:<chatId>" (chat mode)
+  private pendingTeamClarifications: Map<string, PendingTeamClarification> = new Map();
+  private readonly TEAM_CLARIFICATION_TTL_MS = 30 * 60 * 1000;
 
   // Stats
   private messagesProcessed = 0;
@@ -333,6 +371,13 @@ export class Codey {
       if (ctxCleaned > 0) {
         this.logger.debug(`Cleaned up ${ctxCleaned} expired context windows`);
       }
+      const now = Date.now();
+      for (const [key, pending] of this.pendingTeamClarifications) {
+        if (now - pending.createdAt > this.TEAM_CLARIFICATION_TTL_MS) {
+          this.pendingTeamClarifications.delete(key);
+          this.logger.debug(`Expired pending team clarification: ${key}`);
+        }
+      }
     }, 60000); // Every minute
 
     this.logger.info(`Started on port ${this.config.port}`);
@@ -426,6 +471,14 @@ export class Codey {
     };
   }
 
+  private getConversationId(message: UserMessage): string {
+    return message.conversationId ?? `${message.channel}-${message.chatId}`;
+  }
+
+  private getBypassPermissions(): boolean {
+    return this.workspaceManager.getAllowDangerousPermissions() ?? !this.tuiMode;
+  }
+
   private async handleMessage(message: UserMessage): Promise<void> {
     // Skip if already processing
     if (this.processingMessages.has(message.id)) {
@@ -443,8 +496,40 @@ export class Codey {
     try {
       this.logger.info(`[INPUT] ${message.channel}/${message.username}: ${message.text}`);
 
+      const convKey = this.getConversationId(message);
+      const text = message.text.trim();
+
+      // Handle pending team clarification
+      if (this.pendingTeamClarifications.has(convKey)) {
+        if (text.toLowerCase() === '/cancel') {
+          this.pendingTeamClarifications.delete(convKey);
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: '🚫 Team run cancelled.',
+          });
+          return;
+        }
+        if (!text.startsWith('/')) {
+          const pending = this.pendingTeamClarifications.get(convKey)!;
+          this.pendingTeamClarifications.delete(convKey);
+          await this.resumeTeamTask(message, pending);
+          return;
+        }
+      }
+
       // Parse command
       const parsed = this.parseCommand(message.text);
+
+      // Reject a new /team while a clarification is still pending
+      if (parsed.command === 'team' && this.pendingTeamClarifications.has(convKey)) {
+        await this.sendResponse({
+          chatId: message.chatId,
+          channel: message.channel,
+          text: '⏳ Answer the pending question first, or send /cancel to abandon it.',
+        });
+        return;
+      }
 
       // Handle built-in commands
       if (parsed.command) {
@@ -784,6 +869,16 @@ export class Codey {
       case 'remember':
         await this.cmdRemember(args, message);
         break;
+      case 'cancel': {
+        const convKey = this.getConversationId(message);
+        if (this.pendingTeamClarifications.has(convKey)) {
+          this.pendingTeamClarifications.delete(convKey);
+          await this.sendResponse({ chatId, channel, text: '🚫 Team run cancelled.' });
+        } else {
+          await this.sendResponse({ chatId, channel, text: 'No pending team run to cancel.' });
+        }
+        break;
+      }
       default:
         return;
     }
@@ -1314,6 +1409,72 @@ Example: /model gpt-4.1 write a Python script`;
     });
   }
 
+  /**
+   * Runs a sequence of team members, passing each output as input to the next.
+   * Returns early with `done: false` if a worker emits `[QUESTION: ...]`,
+   * allowing the caller to pause and forward the question to the user.
+   */
+  private async executeTeamSequence(
+    members: string[],
+    carry: string,
+    workingDir: string,
+    opts: {
+      onMemberStart?: (name: string, index: number, total: number) => void;
+      onStream?: (memberName: string, text: string) => void;
+      signal?: AbortSignal;
+      chatAgent?: CodingAgent;
+      chatModel?: ModelConfig;
+    } = {},
+  ): Promise<ExecuteTeamSequenceResult> {
+    const workerManager = this.workspaceManager.getWorkerManager();
+    const completedOutputs: TeamMemberOutput[] = [];
+
+    for (let i = 0; i < members.length; i++) {
+      if (opts.signal?.aborted) break;
+      const memberName = members[i];
+      opts.onMemberStart?.(memberName, i, members.length);
+
+      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? opts.chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const workerModel = workerManager.getWorkerModel(memberName);
+      const modelConfig = workerModel
+        ? this.getModelConfig(codingAgent, workerModel)
+        : opts.chatModel ?? this.getDefaultModelConfig(codingAgent);
+
+      const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
+      const response = await this.runWithFallback(codingAgent, {
+        prompt: stepPrompt,
+        agent: codingAgent,
+        model: modelConfig,
+        context: { workingDir },
+        onStream: opts.onStream ? (text: string) => opts.onStream!(memberName, text) : undefined,
+        signal: opts.signal,
+      });
+
+      if (!response.success) {
+        completedOutputs.push({ member: memberName, output: `❌ Failed - ${response.error}` });
+        break;
+      }
+
+      const output = this.formatAgentResponse(response);
+      const questionMatch = output.match(/\[QUESTION:\s*([\s\S]+?)\]/);
+      if (questionMatch) {
+        return {
+          done: false,
+          question: questionMatch[1].trim(),
+          questionWorker: memberName,
+          completedOutputs,
+          remainingMembers: members.slice(i + 1),
+          carry,
+        };
+      }
+
+      completedOutputs.push({ member: memberName, output });
+      carry = output;
+    }
+
+    return { done: true, memberOutputs: completedOutputs, finalCarry: carry };
+  }
+
   private async runTeamTask(
     message: UserMessage,
     teamName: string,
@@ -1382,53 +1543,78 @@ Example: /model gpt-4.1 write a Python script`;
       text: `${header}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
 
-    let currentTask = task;
-    const results: string[] = [];
+    const result = await this.executeTeamSequence(runMembers, task, this.workingDir, {
+      onMemberStart: (memberName) => {
+        this.sendResponse({ chatId, channel, text: `🔄 Worker **${memberName}** is working...` });
+      },
+    });
 
-    for (const memberName of runMembers) {
-      const worker = workerManager.getWorker(memberName);
-      if (!worker) {
-        results.push(`**${memberName}**: ❌ not found in global library`);
-        break;
-      }
+    await this.finalizeTeamTask(message, teamName, task, result);
+  }
 
-      const codingAgent = workerManager.getWorkerCodingAgent(memberName) as CodingAgent;
-      const model = workerManager.getWorkerModel(memberName);
+  private async finalizeTeamTask(
+    message: UserMessage,
+    teamName: string,
+    originalTask: string,
+    result: ExecuteTeamSequenceResult,
+    priorOutputs: TeamMemberOutput[] = [],
+  ): Promise<void> {
+    const { chatId, channel } = message;
+    const allCompleted = [...priorOutputs, ...(result.done ? result.memberOutputs : result.completedOutputs)];
 
+    if (!result.done) {
+      // Worker asked a question — save state and forward to user.
+      const convKey = this.getConversationId(message);
+      this.pendingTeamClarifications.set(convKey, {
+        teamName,
+        remainingMembers: result.remainingMembers,
+        completedOutputs: allCompleted,
+        carry: result.carry,
+        originalTask,
+        chatId,
+        channel,
+        workingDir: this.workingDir,
+        createdAt: Date.now(),
+      });
+
+      const prevResults = allCompleted.map(r => `**${r.member}**: ${r.output.substring(0, 500)}`).join('\n\n');
       await this.sendResponse({
         chatId,
         channel,
-        text: `🔄 Worker **${worker.name}** is working...`,
+        text:
+          (prevResults ? `${prevResults}\n\n` : '') +
+          `❓ **${result.questionWorker}** asks:\n${result.question}\n\n` +
+          `_Reply to answer, or /cancel to abandon._`,
       });
-
-      const prompt = workerManager.buildWorkerPrompt(memberName, currentTask);
-      const modelConfig = this.getModelConfig(codingAgent, model);
-      const handler = this.handlers.get(channel);
-      const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
-
-      const response = await this.runWithFallback(codingAgent, {
-        prompt,
-        agent: codingAgent,
-        model: modelConfig,
-        interactive: this.tuiMode,
-        onStream,
-        context: { workingDir: this.workingDir },
-      });
-
-      if (response.success) {
-        results.push(`**${worker.name}**: ${response.output.substring(0, 500)}`);
-        currentTask = `Previous worker output:\n${response.output}\n\nYour task: ${task}`;
-      } else {
-        results.push(`**${worker.name}**: ❌ Failed - ${response.error}`);
-        break;
-      }
+      return;
     }
 
+    const resultLines = allCompleted.map(r => `**${r.member}**: ${r.output.substring(0, 500)}`);
     await this.sendResponse({
       chatId,
       channel,
-      text: `📊 Team **${teamName}** results\n\n${results.join('\n\n')}`,
+      text: `📊 Team **${teamName}** results\n\n${resultLines.join('\n\n')}`,
     });
+  }
+
+  private async resumeTeamTask(message: UserMessage, pending: PendingTeamClarification): Promise<void> {
+    const { chatId, channel } = message;
+    const answer = message.text.trim();
+
+    await this.sendResponse({ chatId, channel, text: `✅ Got it — resuming team **${pending.teamName}**...` });
+
+    const resumeCarry =
+      `Previous worker output:\n${pending.carry}\n\n` +
+      `[User clarification: "${answer}"]\n\n` +
+      `Your task: ${pending.originalTask}`;
+
+    const result = await this.executeTeamSequence(pending.remainingMembers, resumeCarry, pending.workingDir, {
+      onMemberStart: (memberName) => {
+        this.sendResponse({ chatId, channel, text: `🔄 Worker **${memberName}** is working...` });
+      },
+    });
+
+    await this.finalizeTeamTask(message, pending.teamName, pending.originalTask, result, pending.completedOutputs);
   }
 
   private async runTeamForChat(
@@ -1468,29 +1654,54 @@ Example: /model gpt-4.1 write a Python script`;
       }
     }
 
-    let carry = prompt;
-    const parts: string[] = [];
-    for (let i = 0; i < runMembers.length; i++) {
-      if (signal?.aborted) break;
-      const memberName = runMembers[i];
-      sink({ type: 'info', chatId, message: `Step ${i + 1}/${runMembers.length}: ${memberName}` });
-      const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
-      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
-      const workerModel = workerManager.getWorkerModel(memberName);
-      const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
-      const response = await this.runWithFallback(codingAgent, {
-        prompt: stepPrompt,
-        agent: codingAgent,
-        model: modelConfig,
-        context: { workingDir },
-        onStream: (text: string) => sink({ type: 'stream', chatId, token: text }),
-        onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
-        signal,
+    const result = await this.executeTeamSequence(runMembers, prompt, workingDir, {
+      onMemberStart: (memberName, index, total) => {
+        sink({ type: 'info', chatId, message: `Step ${index + 1}/${total}: ${memberName}` });
+      },
+      onStream: (_, text) => sink({ type: 'stream', chatId, token: text }),
+      signal,
+      chatAgent,
+      chatModel,
+    });
+
+    return this.finalizeChatTeam(teamName, chatId, prompt, workingDir, result, [], chatAgent, chatModel);
+  }
+
+  private finalizeChatTeam(
+    teamName: string,
+    chatId: string,
+    originalTask: string,
+    workingDir: string,
+    result: ExecuteTeamSequenceResult,
+    priorOutputs: TeamMemberOutput[],
+    chatAgent?: CodingAgent,
+    chatModel?: ModelConfig,
+  ): { response: string; tokens?: number } {
+    const allCompleted = [...priorOutputs, ...(result.done ? result.memberOutputs : result.completedOutputs)];
+
+    if (!result.done) {
+      const chatKey = `chat:${chatId}`;
+      this.pendingTeamClarifications.set(chatKey, {
+        teamName,
+        remainingMembers: result.remainingMembers,
+        completedOutputs: allCompleted,
+        carry: result.carry,
+        originalTask,
+        chatId,
+        channel: 'tui',
+        workingDir,
+        createdAt: Date.now(),
+        isChatMode: true,
+        chatAgent,
+        chatModel,
       });
-      const output = response?.success ? this.formatAgentResponse(response) : '';
-      parts.push(`### ${memberName}\n\n${output}`);
-      carry = output;
+
+      const prevParts = allCompleted.map(r => `### ${r.member}\n\n${r.output}`).join('\n\n---\n\n');
+      const question = `❓ **${result.questionWorker}** asks:\n\n${result.question}\n\n_Reply to continue, or start a new chat to cancel._`;
+      return { response: prevParts ? `${prevParts}\n\n---\n\n${question}` : question };
     }
+
+    const parts = allCompleted.map(r => `### ${r.member}\n\n${r.output}`);
     return { response: parts.join('\n\n---\n\n') };
   }
 
@@ -1596,7 +1807,11 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   private async runWithFallback(agent: CodingAgent, request: AgentRequest): Promise<AgentResponse> {
-    const response = await this.agentFactory.run(agent, request);
+    // Inject bypassPermissions from workspace config unless the caller already set it.
+    const enriched: AgentRequest = request.bypassPermissions !== undefined
+      ? request
+      : { ...request, bypassPermissions: this.getBypassPermissions() };
+    const response = await this.agentFactory.run(agent, enriched);
     if (response.success) return response;
 
     this.logger.error(`Agent ${agent} failed: ${response.error || response.output}`);
@@ -1615,7 +1830,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Skip the (agent, model) we just tried so we don't infinite-loop on the
     // same combination. Same agent with a different model is allowed.
-    const originalModel = request.model?.model;
+    const originalModel = enriched.model?.model;
     const seen = new Set<string>([`${agent}::${originalModel ?? ''}`]);
 
     for (const entry of rawOrder) {
@@ -1634,7 +1849,7 @@ Example: /model gpt-4.1 write a Python script`;
       const label = `${entry.agent}(${resolvedModel.model})`;
       this.logger.warn(`Agent ${agent} failed, trying ${label}...`);
       const fallbackResponse = await this.agentFactory.run(entry.agent, {
-        ...request,
+        ...enriched,
         agent: entry.agent,
         model: resolvedModel,
       });
@@ -2010,9 +2225,43 @@ Example: /model gpt-4.1 write a Python script`;
           members: rawMembers,
           dispatch: (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as 'all' | 'auto',
         };
-        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, abortController.signal, {}, agent, model);
-        output = r.response;
-        tokens = r.tokens;
+
+        // Check for a pending clarification from a previous turn.
+        const chatKey = `chat:${chatId}`;
+        const pending = this.pendingTeamClarifications.get(chatKey);
+        if (pending) {
+          this.pendingTeamClarifications.delete(chatKey);
+          sink({ type: 'info', chatId, message: `Resuming team ${pending.teamName}...` });
+          const resumeCarry =
+            `Previous worker output:\n${pending.carry}\n\n` +
+            `[User clarification: "${userText}"]\n\n` +
+            `Your task: ${pending.originalTask}`;
+          const resumeResult = await this.executeTeamSequence(
+            pending.remainingMembers,
+            resumeCarry,
+            workingDir,
+            {
+              onMemberStart: (_name, index, _total) => {
+                sink({ type: 'info', chatId, message: `Step ${pending.completedOutputs.length + index + 1}: ${pending.remainingMembers[index]}` });
+              },
+              onStream: (_, text) => sink({ type: 'stream', chatId, token: text }),
+              signal: abortController.signal,
+              chatAgent: pending.chatAgent ?? agent,
+              chatModel: pending.chatModel ?? model,
+            },
+          );
+          const r = this.finalizeChatTeam(
+            pending.teamName, chatId, pending.originalTask, workingDir,
+            resumeResult, pending.completedOutputs,
+            pending.chatAgent ?? agent, pending.chatModel ?? model,
+          );
+          output = r.response;
+          tokens = r.tokens;
+        } else {
+          const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, abortController.signal, {}, agent, model);
+          output = r.response;
+          tokens = r.tokens;
+        }
       } else {
         const response = await this.runWithFallback(agent, {
           prompt,
