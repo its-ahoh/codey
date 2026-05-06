@@ -1,4 +1,4 @@
-import { UserMessage, GatewayResponse } from '@codey/core';
+import { UserMessage, GatewayResponse, ChatRoute } from '@codey/core';
 
 export interface ChannelHandler {
   name: string;
@@ -8,6 +8,7 @@ export interface ChannelHandler {
   onMessage(callback: (message: UserMessage) => Promise<void>): void;
   streamText?(text: string): void;
   sendStartupMessage?(text: string): Promise<void>;
+  sendToRoute?(route: ChatRoute, text: string): Promise<void>;
 }
 
 // Base class for channel handlers

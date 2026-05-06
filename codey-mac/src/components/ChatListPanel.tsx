@@ -3,6 +3,7 @@ import { useChats } from '../hooks/useChats'
 import { apiService } from '../services/api'
 import type { Chat } from '../types'
 import { C } from '../theme'
+import { RouteIcons } from './RouteIcons'
 
 interface Props {
   onOpenSettings: () => void
@@ -155,6 +156,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
                     ) : (
                       <span style={styles.title}>{chat.title}</span>
                     )}
+                    <RouteIcons routes={chat.routes} />
                     {flight && <span style={styles.dot} />}
                     {!isRenaming && (
                       <button

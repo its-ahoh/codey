@@ -4,6 +4,8 @@ dist/
 *.log
 .DS_Store
 gateway.json
+pairings.json
+codey-mac/pairings.json
 workspaces/*
 !workspaces/.gitkeep
 
