@@ -4,7 +4,15 @@ import { ChatListPanel } from './components/ChatListPanel'
 import { SettingsOverlay } from './components/SettingsOverlay'
 import { ChatsProvider, useChats } from './hooks/useChats'
 import { useGateway } from './hooks/useGateway'
-import { C } from './theme'
+import {
+  C,
+  applyTheme,
+  getStoredThemeMode,
+  resolveEffectiveTheme,
+  paletteToCssVars,
+  darkPalette,
+  lightPalette,
+} from './theme'
 
 const Shell: React.FC = () => {
   const { isRunning } = useGateway()
@@ -33,6 +41,18 @@ const Shell: React.FC = () => {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [state.order, state.workspaces, createChat, selectChat])
+
+  useEffect(() => {
+    applyTheme(getStoredThemeMode())
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = () => {
+      if (getStoredThemeMode() === 'system') {
+        document.documentElement.dataset.theme = resolveEffectiveTheme('system')
+      }
+    }
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
 
   return (
     <div style={styles.root}>
@@ -82,19 +102,28 @@ const Shell: React.FC = () => {
         {settingsOpen && <SettingsOverlay onClose={() => { setSettingsOpen(false); refreshWorkspaces() }} />}
       </div>
       <style>{`
-        html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; color: ${C.fg}; }
-        * { box-sizing: border-box; }
-        ::-webkit-scrollbar { width: 5px; height: 5px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
-        textarea, input, select, button { font-family: inherit; }
-        input, select, textarea { color: ${C.fg}; }
-        @keyframes codey-pulse {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.4; transform: scale(0.8); }
-        }
-      `}</style>
+  :root {
+${paletteToCssVars(darkPalette)}
+  }
+  :root[data-theme="light"] {
+${paletteToCssVars(lightPalette)}
+  }
+  :root[data-theme="dark"] {
+${paletteToCssVars(darkPalette)}
+  }
+  html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; color: ${C.fg}; }
+  * { box-sizing: border-box; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: ${C.scrollbar}; border-radius: 3px; }
+  textarea, input, select, button { font-family: inherit; }
+  input, select, textarea { color: ${C.fg}; }
+  @keyframes codey-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.8); }
+  }
+`}</style>
     </div>
   )
 }
