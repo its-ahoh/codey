@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import { exec } from 'child_process';
 import { BaseChannelHandler } from './base';
-import { UserMessage, GatewayResponse } from '@codey/core';
+import { UserMessage, GatewayResponse, ChatRoute } from '@codey/core';
 
 // iMessage handler using macOS AppleScript
 // Note: Requires Mac OS and iMessage enabled
@@ -33,6 +33,25 @@ export class IMessageHandler extends BaseChannelHandler {
       exec(`osascript -e '${script}'`, (error) => {
         if (error) {
           console.error('[iMessage] Send error:', error.message);
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  async sendToRoute(route: ChatRoute, text: string): Promise<void> {
+    if (route.channel !== 'imessage') return;
+    const script = `
+      tell application "Messages"
+        send "${this.escapeString(text)}" to buddy "${route.channelChatId}"
+      end tell
+    `;
+    return new Promise((resolve, reject) => {
+      exec(`osascript -e '${script}'`, (error) => {
+        if (error) {
+          console.error('[iMessage] sendToRoute error:', error.message);
           reject(error);
         } else {
           resolve();

@@ -1,3 +1,5 @@
+import { ChatRoute } from './route';
+
 export interface FileAttachment {
   id: string;
   name: string;        // original filename
@@ -47,4 +49,6 @@ export interface Chat {
   agent?: 'claude-code' | 'opencode' | 'codex';
   /** Per-chat model override (model id from the global catalog). Falls back to the agent's default model when unset. */
   model?: string;
+  /** Attached channel routes. Absent or empty means Mac-only. */
+  routes?: ChatRoute[];
 }

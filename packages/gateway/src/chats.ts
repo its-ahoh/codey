@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { Chat, ChatMessage, ChatSelection } from '@codey/core';
+import { Chat, ChatMessage, ChatSelection, ChatRoute, ChannelKind } from '@codey/core';
 import { Logger } from './logger';
 
 const log = Logger.getInstance();
@@ -153,6 +153,50 @@ export class ChatManager {
     if (fs.existsSync(dir)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  }
+
+  addRoute(chatId: string, route: ChatRoute): Chat {
+    const chat = this.requireChat(chatId);
+    chat.routes ??= [];
+    const exists = chat.routes.some(r =>
+      r.channel === route.channel &&
+      r.channelUserId === route.channelUserId &&
+      r.channelChatId === route.channelChatId
+    );
+    if (!exists) {
+      chat.routes.push(route);
+      chat.updatedAt = Date.now();
+      this.persist(chat);
+    }
+    return chat;
+  }
+
+  removeRoute(chatId: string, channel: ChannelKind, channelUserId: string, channelChatId: string): Chat {
+    const chat = this.requireChat(chatId);
+    if (!chat.routes) return chat;
+    const before = chat.routes.length;
+    chat.routes = chat.routes.filter(r =>
+      !(r.channel === channel && r.channelUserId === channelUserId && r.channelChatId === channelChatId)
+    );
+    if (chat.routes.length !== before) {
+      chat.updatedAt = Date.now();
+      this.persist(chat);
+    }
+    return chat;
+  }
+
+  findByRoute(channel: ChannelKind, channelUserId: string, channelChatId: string): Chat | undefined {
+    this.ensureLoaded();
+    for (const chat of this.cache.values()) {
+      if (chat.routes?.some(r =>
+        r.channel === channel &&
+        r.channelUserId === channelUserId &&
+        r.channelChatId === channelChatId
+      )) {
+        return chat;
+      }
+    }
+    return undefined;
   }
 
   private requireChat(chatId: string): Chat {

@@ -231,6 +231,11 @@ async function bootInProcessCore() {
     void inProcessGateway.start().catch((err: any) => {
       sendToRenderer('gateway-log', `[core] gateway.start failed: ${err?.message ?? err}`)
     })
+    // Forward all chat stream events (including those triggered by channel
+    // messages on paired surfaces) to the renderer so the Mac UI stays in sync.
+    inProcessGateway.setChatEventListener((ev: any) => {
+      sendToRenderer('chats:event', ev)
+    })
   } catch (err: any) {
     sendToRenderer('gateway-log', `[core] Boot failed: ${err?.message ?? err}`)
   }
@@ -754,6 +759,34 @@ app.whenReady().then(async () => {
         sendToRenderer('chats:event', ev)
       }
       return inProcessGateway.sendToChat(payload.chatId, payload.text, sink, payload.attachments)
+    })
+  )
+
+  ipcMain.handle('chats:link', async (_e, chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      await inProcessGateway.linkChat(chatId, channel, channelUserId)
+    })
+  )
+
+  ipcMain.handle('chats:unlink', async (_e, chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      inProcessGateway.unlinkChat(chatId, channel, channelUserId)
+    })
+  )
+
+  ipcMain.handle('pairing:start', async (_e, channel: 'telegram' | 'discord' | 'imessage') =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.startPairing(channel)
+    })
+  )
+
+  ipcMain.handle('pairing:list', async () =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.listPairings()
     })
   )
 

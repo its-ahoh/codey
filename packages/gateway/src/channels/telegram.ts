@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { BaseChannelHandler } from './base';
-import { UserMessage, GatewayResponse } from '@codey/core';
+import { UserMessage, GatewayResponse, ChatRoute } from '@codey/core';
 
 /**
  * Convert markdown to Telegram HTML.
@@ -153,6 +153,11 @@ export class TelegramHandler extends BaseChannelHandler {
     }
 
     await this.bot.sendMessage(response.chatId, markdownToTelegramHtml(response.text), options);
+  }
+
+  async sendToRoute(route: ChatRoute, text: string): Promise<void> {
+    if (route.channel !== 'telegram' || !this.bot) return;
+    await this.bot.sendMessage(route.channelChatId, text);
   }
 
   private startTyping(chatId: string): void {

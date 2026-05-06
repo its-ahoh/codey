@@ -161,5 +161,26 @@ export const apiService = {
       unwrap(await window.codey.chats.stop(chatId)),
     onEvent: (handler: (ev: ChatStreamEvent) => void): (() => void) =>
       window.codey.chats.onEvent(handler),
+    link: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<void> =>
+      unwrap(await window.codey.chats.link(chatId, channel, channelUserId)),
+    unlink: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<void> =>
+      unwrap(await window.codey.chats.unlink(chatId, channel, channelUserId)),
   },
+
+  linkChat: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<void> =>
+    unwrap(await window.codey.chats.link(chatId, channel, channelUserId)),
+
+  unlinkChat: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<void> =>
+    unwrap(await window.codey.chats.unlink(chatId, channel, channelUserId)),
+
+  startPairing: async (channel: 'telegram' | 'discord' | 'imessage'): Promise<string> =>
+    unwrap(await window.codey.pairing.start(channel)),
+
+  listPairings: async (): Promise<Array<{
+    channel: 'telegram' | 'discord' | 'imessage'
+    channelUserId: string
+    prefs?: { workspace?: string; agent?: string; model?: string }
+    currentChatId?: string
+    createdAt: number
+  }>> => unwrap(await window.codey.pairing.list()),
 }
