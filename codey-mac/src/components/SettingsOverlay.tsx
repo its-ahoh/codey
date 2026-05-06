@@ -7,9 +7,9 @@ import { useGateway } from '../hooks/useGateway'
 import { C } from '../theme'
 import { AppearanceTab } from './AppearanceTab'
 
-type Tab = 'appearance' | 'workers' | 'workspaces' | 'status' | 'settings'
+type Tab = 'general' | 'workers' | 'workspaces' | 'status' | 'settings'
 const TABS: { key: Tab; label: string; icon: string; description: string }[] = [
-  { key: 'appearance', label: 'General',    icon: '◐', description: 'Theme & visual options' },
+  { key: 'general',    label: 'General',    icon: '⚙', description: 'Theme & visual options' },
   { key: 'settings',   label: 'AI Models',  icon: '✦', description: 'Default agent & model' },
   { key: 'workspaces', label: 'Workspaces', icon: '◫', description: 'Project directories' },
   { key: 'workers',    label: 'Workers',    icon: '☰', description: 'Personalities & teams' },
@@ -66,7 +66,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose }) => {
           <main style={styles.main}>
             <div style={styles.mainHeader}>{activeTab.label}</div>
             <div style={styles.mainContent}>
-              {tab === 'appearance' && <AppearanceTab />}
+              {tab === 'general'    && <AppearanceTab />}
               {tab === 'status'     && <StatusTab status={status} logs={logs} isRunning={isRunning} />}
               {tab === 'workspaces' && <WorkspacesTab isGatewayRunning={isRunning} />}
               {tab === 'workers'    && <WorkersTab />}
