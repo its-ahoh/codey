@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runDispatcher, DispatchResult } from '@codey/core';
+import { AgentRequest, AgentResponse, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runManager, ManagerTurn, ManagerHistoryEntry } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -811,7 +811,7 @@ export class Codey {
         `- Send any message to get coding help from the active agent`,
         `- /worker <name> <task> — run a specific worker`,
         `- /teams — list teams for this workspace`,
-        `- /team <name> [--all] <task> — run a named team. Use --all to bypass auto-dispatch when team mode is "auto".`,
+        `- /team <name> [--all] <task> — run a named team. With dispatch:auto the Manager iteratively picks workers and may loop back for revisions; --all bypasses the Manager and runs every member in declared order.`,
         `- /parallel <prompt> — run all agents in parallel`,
         `- /agent <name> — switch agent (${agents})`,
         `- /workspace <name> — switch workspace`,
@@ -1155,7 +1155,7 @@ export class Codey {
 /workers - List all workers in the global library
 /worker <name> <task> - Run a specific worker
 /teams - List teams declared on this workspace
-/team <name> [--all] <task> - Run a team. Use --all to bypass auto-dispatch when team mode is "auto".
+/team <name> [--all] <task> — run a named team. With dispatch:auto the Manager iteratively picks workers and may loop back for revisions; --all bypasses the Manager and runs every member in declared order.
 
 \ud83e\udd16 Agents (legacy)
 /parallel <prompt> - Run all agents in parallel
@@ -1314,6 +1314,147 @@ Example: /model gpt-4.1 write a Python script`;
     });
   }
 
+  /**
+   * Iteratively drives the team Manager. Returns the chronological run result
+   * or `{ fallback: true }` when the Manager fails on turn 1 — caller should
+   * fall back to running all members in input order.
+   *
+   * Mid-run Manager failures (turn 2+) end the loop gracefully: the parts
+   * collected so far are returned with `fallbackMidRun` set so the caller
+   * can annotate the user-visible header.
+   */
+  private async runManagerLoop(
+    team: { members: string[] },
+    task: string,
+    signal: AbortSignal | undefined,
+    chatAgent: CodingAgent | undefined,
+    chatModel: ModelConfig | undefined,
+    perStep: (msg: { kind: 'route'; step: number; worker: string; reason: string; isRevision: boolean }) => void | Promise<void>,
+    runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined) => Promise<{ success: boolean; output: string; error?: string }>,
+  ): Promise<
+    | { fallback: true; fallbackReason: string }
+    | {
+        fallback: false;
+        parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>;
+        finalSummary: string;
+        fallbackMidRun?: { reason: string };
+      }
+  > {
+    const workerManager = this.workspaceManager.getWorkerManager();
+    const members = team.members;
+    const cap = Math.max(Math.min(2 * members.length, 12), 4);
+
+    const history: ManagerHistoryEntry[] = [];
+    let lastWorker: string | null = null;
+    let lastOutput: string | null = null;
+    const parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }> = [];
+    let finalSummary = '';
+    let fallbackMidRun: { reason: string } | undefined;
+
+    const { agent: mAgent, model: mModel } = this.getDispatcherAgentAndModel();
+    const seenWorkers = new Set<string>();
+
+    for (let step = 1; step <= cap; step++) {
+      if (signal?.aborted) break;
+      const turn: ManagerTurn = await runManager(
+        {
+          task,
+          members: members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
+          history,
+          lastWorker,
+          lastOutput,
+        },
+        { agent: mAgent, model: mModel, runner: this.dispatcherRunner, signal },
+      );
+      if (turn.fallback) {
+        if (parts.length === 0) {
+          return { fallback: true, fallbackReason: turn.fallbackReason ?? 'unknown' };
+        }
+        fallbackMidRun = { reason: turn.fallbackReason ?? 'unknown' };
+        break;
+      }
+      if (lastWorker && turn.summary_of_last) {
+        history.push({ worker: lastWorker, summary: turn.summary_of_last });
+      }
+      if (turn.done || !turn.next) {
+        finalSummary = turn.final_summary ?? '';
+        break;
+      }
+      const isRevision = seenWorkers.has(turn.next);
+      await perStep({ kind: 'route', step, worker: turn.next, reason: turn.reason ?? '', isRevision });
+
+      const codingAgent = (workerManager.getWorkerCodingAgent(turn.next) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const workerModelName = workerManager.getWorkerModel(turn.next);
+      const modelConfig = workerModelName
+        ? this.getModelConfig(codingAgent, workerModelName)
+        : chatModel ?? this.getDefaultModelConfig(codingAgent);
+
+      const stepTaskBody = this.composeStepTask(task, turn.instruction, lastWorker, lastOutput);
+      const prompt = workerManager.buildWorkerPrompt(turn.next, stepTaskBody);
+
+      const response = await runWorker(turn.next, prompt, codingAgent, modelConfig);
+      if (!response.success) {
+        fallbackMidRun = { reason: `worker ${turn.next} failed: ${response.error ?? 'unknown'}` };
+        break;
+      }
+      parts.push({ step, worker: turn.next, output: response.output, isRevision });
+      seenWorkers.add(turn.next);
+      lastWorker = turn.next;
+      lastOutput = response.output;
+    }
+
+    // Cap exhausted without explicit done — request a final summary.
+    // Skip when the user aborted: the inner runner will fail anyway and we
+    // shouldn't send a fresh request after cancellation.
+    if (!finalSummary && parts.length > 0 && !fallbackMidRun && !signal?.aborted) {
+      const closing = await runManager(
+        {
+          task,
+          members: members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
+          history,
+          lastWorker,
+          lastOutput,
+          finalize: true,
+        },
+        { agent: mAgent, model: mModel, runner: this.dispatcherRunner, signal },
+      );
+      if (!closing.fallback) finalSummary = closing.final_summary ?? '';
+    }
+
+    return { fallback: false, parts, finalSummary, fallbackMidRun };
+  }
+
+  private composeStepTask(
+    originalTask: string,
+    instruction: string,
+    lastWorker: string | null,
+    lastOutput: string | null,
+  ): string {
+    const sections: string[] = [];
+    if (instruction.trim()) sections.push(instruction.trim());
+    sections.push(`Original task: ${originalTask}`);
+    if (lastWorker && lastOutput) {
+      sections.push(`Previous worker (${lastWorker}) output:\n${lastOutput}`);
+    }
+    return sections.join('\n\n');
+  }
+
+  private formatManagerParts(
+    parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>,
+    finalSummary: string,
+    truncatePerStep?: number,
+  ): string {
+    const head = finalSummary ? `🧭 Manager summary: ${finalSummary}\n\n` : '';
+    const body = parts
+      .map(p => {
+        const label = p.isRevision ? `${p.worker} (revision)` : p.worker;
+        const out = truncatePerStep ? p.output.substring(0, truncatePerStep) : p.output;
+        return `### Step ${p.step}: ${label}\n\n${out}`;
+      })
+      .join('\n\n---\n\n');
+    return head + body;
+  }
+
   private async runTeamTask(
     message: UserMessage,
     teamName: string,
@@ -1343,69 +1484,18 @@ Example: /model gpt-4.1 write a Python script`;
       return;
     }
 
-    const workerManager = this.workspaceManager.getWorkerManager();
+    const handler = this.handlers.get(channel);
     const { members, dispatch } = team;
-    let runMembers = members;
-    let dispatchInfo: DispatchResult | null = null;
 
-    if (dispatch === 'auto' && !opts.forceAll) {
-      const { agent: dAgent, model: dModel } = this.getDispatcherAgentAndModel();
-      dispatchInfo = await runDispatcher(
-        {
-          task,
-          members: members.map(name => ({ name, hint: workerManager.getDispatchHint(name) })),
-        },
-        { agent: dAgent, model: dModel, runner: this.dispatcherRunner },
-      );
-      if (!dispatchInfo.fallback) runMembers = dispatchInfo.selected;
-    }
-
-    let header: string;
-    if (dispatch === 'auto' && dispatchInfo && !dispatchInfo.fallback) {
-      const skipped = members.filter(m => !runMembers.includes(m));
-      header =
-        `🧭 Dispatched **${teamName}**: ${runMembers.join(' → ')}` +
-        (skipped.length ? ` (skipped: ${skipped.join(', ')})` : '') +
-        (dispatchInfo.reason ? `\nReason: ${dispatchInfo.reason}` : '');
-    } else if (dispatch === 'auto' && dispatchInfo && dispatchInfo.fallback) {
-      header =
-        `⚠️ Auto-dispatch failed (${dispatchInfo.fallbackReason ?? 'unknown'}), running all members.\n` +
-        `👥 Running team **${teamName}** (${runMembers.join(' → ')})`;
-    } else if (dispatch === 'auto' && opts.forceAll) {
-      header = `👥 Running team **${teamName}** (${runMembers.join(' → ')}) [--all override]`;
-    } else {
-      header = `👥 Running team **${teamName}** (${runMembers.join(' → ')})`;
-    }
-    await this.sendResponse({
-      chatId,
-      channel,
-      text: `${header}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
-    });
-
-    let currentTask = task;
-    const results: string[] = [];
-
-    for (const memberName of runMembers) {
-      const worker = workerManager.getWorker(memberName);
-      if (!worker) {
-        results.push(`**${memberName}**: ❌ not found in global library`);
-        break;
-      }
-
-      const codingAgent = workerManager.getWorkerCodingAgent(memberName) as CodingAgent;
-      const model = workerManager.getWorkerModel(memberName);
-
-      await this.sendResponse({
-        chatId,
-        channel,
-        text: `🔄 Worker **${worker.name}** is working...`,
-      });
-
-      const prompt = workerManager.buildWorkerPrompt(memberName, currentTask);
-      const modelConfig = this.getModelConfig(codingAgent, model);
-      const handler = this.handlers.get(channel);
+    // Helper to run one worker once, used by both the Manager loop and the
+    // legacy "all members in input order" fallback.
+    const runOneWorker = async (
+      workerName: string,
+      prompt: string,
+      codingAgent: CodingAgent,
+      modelConfig: ModelConfig | undefined,
+    ): Promise<{ success: boolean; output: string; error?: string }> => {
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
-
       const response = await this.runWithFallback(codingAgent, {
         prompt,
         agent: codingAgent,
@@ -1414,7 +1504,106 @@ Example: /model gpt-4.1 write a Python script`;
         onStream,
         context: { workingDir: this.workingDir },
       });
+      return response.success
+        ? { success: true, output: response.output }
+        : { success: false, output: '', error: response.error };
+    };
 
+    const useManager = dispatch === 'auto' && !opts.forceAll;
+
+    if (useManager) {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `🧭 Manager running team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
+      });
+
+      const result = await this.runManagerLoop(
+        team,
+        task,
+        undefined,
+        undefined,
+        undefined,
+        async ({ step, worker, reason, isRevision }) => {
+          await this.sendResponse({
+            chatId,
+            channel,
+            text: `🔄 Step ${step}: **${worker}**${isRevision ? ' (revision)' : ''} — ${reason}`,
+          });
+        },
+        runOneWorker,
+      );
+
+      if (result.fallback) {
+        await this.sendResponse({
+          chatId,
+          channel,
+          text: `⚠️ Auto-routing failed (${result.fallbackReason}), running all members.`,
+        });
+        await this.runAllMembersInOrder(message, teamName, members, task, runOneWorker);
+        return;
+      }
+
+      if (result.fallbackMidRun) {
+        await this.sendResponse({
+          chatId,
+          channel,
+          text: `⚠️ Manager halted mid-run: ${result.fallbackMidRun.reason}`,
+        });
+      }
+
+      const text = this.formatManagerParts(result.parts, result.finalSummary, /*truncatePerStep*/ 500);
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `📊 Team **${teamName}** results\n\n${text}`,
+      });
+      return;
+    }
+
+    // dispatch === 'all' OR forceAll: legacy path
+    const headerSuffix = opts.forceAll ? ' [--all override]' : '';
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `👥 Running team **${teamName}** (${members.join(' → ')})${headerSuffix}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
+    });
+    await this.runAllMembersInOrder(message, teamName, members, task, runOneWorker);
+  }
+
+  private async runAllMembersInOrder(
+    message: UserMessage,
+    teamName: string,
+    members: string[],
+    task: string,
+    runOneWorker: (
+      workerName: string,
+      prompt: string,
+      codingAgent: CodingAgent,
+      modelConfig: ModelConfig | undefined,
+    ) => Promise<{ success: boolean; output: string; error?: string }>,
+  ): Promise<void> {
+    const { chatId, channel } = message;
+    const workerManager = this.workspaceManager.getWorkerManager();
+    const results: string[] = [];
+    let currentTask = task;
+
+    for (const memberName of members) {
+      const worker = workerManager.getWorker(memberName);
+      if (!worker) {
+        results.push(`**${memberName}**: ❌ not found in global library`);
+        break;
+      }
+      const codingAgent = workerManager.getWorkerCodingAgent(memberName) as CodingAgent;
+      const model = workerManager.getWorkerModel(memberName);
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `🔄 Worker **${worker.name}** is working...`,
+      });
+      const prompt = workerManager.buildWorkerPrompt(memberName, currentTask);
+      const modelConfig = this.getModelConfig(codingAgent, model);
+      const response = await runOneWorker(memberName, prompt, codingAgent, modelConfig);
       if (response.success) {
         results.push(`**${worker.name}**: ${response.output.substring(0, 500)}`);
         currentTask = `Previous worker output:\n${response.output}\n\nYour task: ${task}`;
@@ -1448,38 +1637,14 @@ Example: /model gpt-4.1 write a Python script`;
     }
     const workerManager = this.workspaceManager.getWorkerManager();
 
-    let runMembers = team.members;
-    let dispatchInfo: DispatchResult | null = null;
-    if (team.dispatch === 'auto' && !opts.forceAll) {
-      const { agent: dAgent, model: dModel } = this.getDispatcherAgentAndModel();
-      dispatchInfo = await runDispatcher(
-        {
-          task: prompt,
-          members: team.members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
-        },
-        { agent: dAgent, model: dModel, runner: this.dispatcherRunner, signal },
-      );
-      if (!dispatchInfo.fallback) runMembers = dispatchInfo.selected;
-      if (dispatchInfo.fallback) {
-        sink({ type: 'info', chatId, message: `Auto-dispatch failed (${dispatchInfo.fallbackReason ?? 'unknown'}), running all members` });
-      } else {
-        const skipped = team.members.filter(m => !runMembers.includes(m));
-        sink({ type: 'info', chatId, message: `Dispatched ${runMembers.join(' → ')}` + (skipped.length ? ` (skipped: ${skipped.join(', ')})` : '') });
-      }
-    }
-
-    let carry = prompt;
-    const parts: string[] = [];
-    for (let i = 0; i < runMembers.length; i++) {
-      if (signal?.aborted) break;
-      const memberName = runMembers[i];
-      sink({ type: 'info', chatId, message: `Step ${i + 1}/${runMembers.length}: ${memberName}` });
-      const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
-      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
-      const workerModel = workerManager.getWorkerModel(memberName);
-      const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
+    const runOneWorker = async (
+      workerName: string,
+      workerPrompt: string,
+      codingAgent: CodingAgent,
+      modelConfig: ModelConfig | undefined,
+    ): Promise<{ success: boolean; output: string; error?: string }> => {
       const response = await this.runWithFallback(codingAgent, {
-        prompt: stepPrompt,
+        prompt: workerPrompt,
         agent: codingAgent,
         model: modelConfig,
         context: { workingDir },
@@ -1487,9 +1652,57 @@ Example: /model gpt-4.1 write a Python script`;
         onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
         signal,
       });
-      const output = response?.success ? this.formatAgentResponse(response) : '';
+      return response?.success
+        ? { success: true, output: this.formatAgentResponse(response) }
+        : { success: false, output: '', error: response?.error };
+    };
+
+    const useManager = team.dispatch === 'auto' && !opts.forceAll;
+
+    if (useManager) {
+      const result = await this.runManagerLoop(
+        team,
+        prompt,
+        signal,
+        chatAgent,
+        chatModel,
+        ({ step, worker, reason, isRevision }) => {
+          sink({
+            type: 'info',
+            chatId,
+            message: `Step ${step}: ${worker}${isRevision ? ' (revision)' : ''} — ${reason}`,
+          });
+        },
+        runOneWorker,
+      );
+
+      if (result.fallback) {
+        sink({ type: 'info', chatId, message: `Auto-routing failed (${result.fallbackReason}), running all members` });
+        // fall through to all-members path below
+      } else {
+        if (result.fallbackMidRun) {
+          sink({ type: 'info', chatId, message: `Manager halted mid-run: ${result.fallbackMidRun.reason}` });
+        }
+        return { response: this.formatManagerParts(result.parts, result.finalSummary) };
+      }
+    }
+
+    // dispatch === 'all', forceAll, or auto-routing fallback
+    let carry = prompt;
+    const parts: string[] = [];
+    for (let i = 0; i < team.members.length; i++) {
+      if (signal?.aborted) break;
+      const memberName = team.members[i];
+      sink({ type: 'info', chatId, message: `Step ${i + 1}/${team.members.length}: ${memberName}` });
+      const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
+      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const workerModel = workerManager.getWorkerModel(memberName);
+      const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
+      const response = await runOneWorker(memberName, stepPrompt, codingAgent, modelConfig);
+      const output = response.success ? response.output : '';
       parts.push(`### ${memberName}\n\n${output}`);
       carry = output;
+      if (!response.success) break;
     }
     return { response: parts.join('\n\n---\n\n') };
   }
