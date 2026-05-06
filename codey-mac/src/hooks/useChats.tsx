@@ -275,6 +275,12 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               title: ev.title,
             })
             delete pendingAssistantId.current[ev.chatId]
+          } else {
+            // Channel-driven turn (no Mac-side placeholder). Re-fetch the chat
+            // so the new user + assistant messages show up in the sidebar/view.
+            apiService.chats.get(ev.chatId)
+              .then(chat => dispatch({ type: 'upsert', chat }))
+              .catch(() => {})
           }
           break
         }
@@ -283,6 +289,10 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (asstId) {
             dispatch({ type: 'errorSend', chatId: ev.chatId, assistantMessageId: asstId, error: ev.message })
             delete pendingAssistantId.current[ev.chatId]
+          } else {
+            apiService.chats.get(ev.chatId)
+              .then(chat => dispatch({ type: 'upsert', chat }))
+              .catch(() => {})
           }
           break
         }
