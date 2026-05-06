@@ -9,7 +9,7 @@ import { AppearanceTab } from './AppearanceTab'
 
 type Tab = 'appearance' | 'workers' | 'workspaces' | 'status' | 'settings'
 const TABS: { key: Tab; label: string; icon: string; description: string }[] = [
-  { key: 'appearance', label: 'Appearance', icon: '◐', description: 'Theme & visual options' },
+  { key: 'appearance', label: 'System',     icon: '◐', description: 'Theme & visual options' },
   { key: 'settings',   label: 'AI Models',  icon: '✦', description: 'Default agent & model' },
   { key: 'workspaces', label: 'Workspaces', icon: '◫', description: 'Project directories' },
   { key: 'workers',    label: 'Workers',    icon: '☰', description: 'Personalities & teams' },
