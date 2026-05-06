@@ -1326,7 +1326,6 @@ Example: /model gpt-4.1 write a Python script`;
   private async runManagerLoop(
     team: { members: string[] },
     task: string,
-    workingDir: string,
     signal: AbortSignal | undefined,
     chatAgent: CodingAgent | undefined,
     chatModel: ModelConfig | undefined,
@@ -1390,7 +1389,7 @@ Example: /model gpt-4.1 write a Python script`;
         ? this.getModelConfig(codingAgent, workerModelName)
         : chatModel ?? this.getDefaultModelConfig(codingAgent);
 
-      const stepTaskBody = this.composeStepTask(task, turn.instruction ?? '', lastWorker, lastOutput);
+      const stepTaskBody = this.composeStepTask(task, turn.instruction, lastWorker, lastOutput);
       const prompt = workerManager.buildWorkerPrompt(turn.next, stepTaskBody);
 
       const response = await runWorker(turn.next, prompt, codingAgent, modelConfig);
@@ -1405,7 +1404,9 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // Cap exhausted without explicit done — request a final summary.
-    if (!finalSummary && parts.length > 0 && !fallbackMidRun) {
+    // Skip when the user aborted: the inner runner will fail anyway and we
+    // shouldn't send a fresh request after cancellation.
+    if (!finalSummary && parts.length > 0 && !fallbackMidRun && !signal?.aborted) {
       const closing = await runManager(
         {
           task,
@@ -1520,7 +1521,6 @@ Example: /model gpt-4.1 write a Python script`;
       const result = await this.runManagerLoop(
         team,
         task,
-        this.workingDir,
         undefined,
         undefined,
         undefined,
@@ -1663,7 +1663,6 @@ Example: /model gpt-4.1 write a Python script`;
       const result = await this.runManagerLoop(
         team,
         prompt,
-        workingDir,
         signal,
         chatAgent,
         chatModel,
