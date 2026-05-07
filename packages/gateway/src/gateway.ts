@@ -1989,9 +1989,15 @@ Example: /model gpt-4.1 write a Python script`;
       );
 
       if (result.fallback) {
+        if (signal?.aborted) {
+          return { response: '' };
+        }
         sink({ type: 'info', chatId, message: `Auto-routing failed (${result.fallbackReason}), running all members` });
         // fall through to all-members path below
       } else {
+        if (signal?.aborted) {
+          return { response: this.formatManagerParts(result.parts, result.finalSummary) };
+        }
         if (result.fallbackMidRun) {
           sink({ type: 'info', chatId, message: `Manager halted mid-run: ${result.fallbackMidRun.reason}` });
         }
@@ -2559,9 +2565,9 @@ Example: /model gpt-4.1 write a Python script`;
         });
         output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
         tokens = (response as any)?.tokens?.total;
-        if (abortController.signal.aborted && !output) {
-          output = 'Stopped';
-        }
+      }
+      if (abortController.signal.aborted && !output) {
+        output = 'Stopped';
       }
 
       const durationSec = Math.round((Date.now() - started) / 1000);
