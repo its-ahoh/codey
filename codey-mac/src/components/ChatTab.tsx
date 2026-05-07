@@ -623,7 +623,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
             {isSending ? (
               <button
                 onClick={() => stopChat(chatId)}
-                style={{ ...styles.sendButton, background: '#e04040', cursor: 'pointer' }}
+                style={{ ...styles.sendButton, background: C.red, cursor: 'pointer' }}
                 title="Stop (Esc)"
               >
                 <StopIcon color="#fff" />
@@ -686,11 +686,11 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#6ab0f3', fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     padding: '2px 0', userSelect: 'text',
   },
-  toolCallInfo: { color: '#888', fontStyle: 'italic' },
+  toolCallInfo: { color: C.fg3, fontStyle: 'italic' },
   toolCallSep: { borderTop: `1px solid ${C.border2}`, marginBottom: 6, marginTop: 4 },
-  chevron: { display: 'inline-block', fontSize: 13, marginRight: 4, transition: 'transform 0.15s ease', color: '#555' },
+  chevron: { display: 'inline-block', fontSize: 13, marginRight: 4, transition: 'transform 0.15s ease', color: C.fg3 },
   toolDetail: { marginLeft: 20, marginTop: 4, marginBottom: 6, padding: 8, background: 'rgba(0,0,0,0.3)', borderRadius: 6, border: `1px solid ${C.border}` },
-  orphanBanner: { padding: '8px 12px', background: '#ff950033', color: '#ffb84d', fontSize: 12, borderTop: `1px solid ${C.border}` },
+  orphanBanner: { padding: '8px 12px', background: C.warningBg, color: C.warningFg, fontSize: 12, borderTop: `1px solid ${C.border}` },
   dropOverlay: {
     position: 'absolute' as const, inset: 8, zIndex: 10,
     background: 'rgba(10, 132, 255, 0.08)',
@@ -770,7 +770,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   uploadError: {
-    color: '#ff8a80', fontSize: 11, padding: '0 4px',
+    color: C.dangerFg, fontSize: 11, padding: '0 4px',
   },
   attachButton: {
     width: 32, height: 32, borderRadius: 8, border: 'none',

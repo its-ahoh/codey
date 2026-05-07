@@ -4,14 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Codey</title>
+    <script>
+      (function () {
+        try {
+          var m = localStorage.getItem('codey.theme');
+          if (m !== 'light' && m !== 'dark' && m !== 'system') m = 'system';
+          var eff = m === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : m;
+          document.documentElement.dataset.theme = eff;
+          // Match Task 2 default vars so initial paint isn't white-on-white or vice versa.
+          var bg = eff === 'light' ? '#ffffff' : '#141414';
+          var fg = eff === 'light' ? '#1d1d1f' : '#f0f0f0';
+          document.documentElement.style.background = bg;
+          document.documentElement.style.color = fg;
+        } catch (e) {}
+      })();
+    </script>
     <style>
-      body {
-        margin: 0;
-        padding: 0;
-        background-color: #1a1a1a;
-        color: #fff;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      }
+      body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
     </style>
   </head>
   <body>

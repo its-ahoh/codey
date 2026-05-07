@@ -122,7 +122,7 @@ export default function TeamsSection({ workspace }: { workspace: string }) {
           <button onClick={addTeam} style={{ padding: '4px 10px', fontSize: 12, background: 'transparent', color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 6, cursor: 'pointer' }}>+ New team</button>
         </div>
       </div>
-      {error && <div style={{ background: '#3a1a1a', color: '#ff8080', padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{error}</div>}
+      {error && <div style={{ background: C.dangerBg, color: C.dangerFg, padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{error}</div>}
       {Object.keys(teams).length === 0 && <div style={{ fontSize: 12, color: C.fg3 }}>No teams yet. Click &quot;+ New team&quot;.</div>}
       {Object.entries(teams).map(([name, team]) => (
         <div key={name} style={{ marginBottom: 12, padding: 10, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6 }}>
@@ -146,7 +146,7 @@ export default function TeamsSection({ workspace }: { workspace: string }) {
               </option>
               <option value="parallel" disabled>Parallel (coming soon)</option>
             </select>
-            <button onClick={() => removeTeam(name)} style={{ background: 'transparent', color: '#ff6060', border: 'none', cursor: 'pointer', fontSize: 12 }}>Delete</button>
+            <button onClick={() => removeTeam(name)} style={{ background: 'transparent', color: C.dangerFg, border: 'none', cursor: 'pointer', fontSize: 12 }}>Delete</button>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
             {team.members.map((m, i) => {
@@ -203,7 +203,7 @@ export default function TeamsSection({ workspace }: { workspace: string }) {
             style={{ width: 520, padding: 20, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8 }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>New worker for "{creatingFor}"</div>
             <div style={{ fontSize: 12, color: C.fg3, marginBottom: 10 }}>The active coding agent will generate a personality and config from your description.</div>
-            {createError && <div style={{ background: '#3a1a1a', border: '1px solid #6a2a2a', color: '#ff8080', padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{createError}</div>}
+            {createError && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{createError}</div>}
             <textarea value={createPrompt} onChange={e => setCreatePrompt(e.target.value)} disabled={createBusy}
               placeholder="e.g. A reviewer that audits PRs for security issues, leans on Opus."
               style={{ width: '100%', minHeight: 120, padding: 10, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, fontFamily: 'inherit', fontSize: 13, resize: 'vertical' }} />

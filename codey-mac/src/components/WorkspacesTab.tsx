@@ -293,7 +293,7 @@ const MemorySection: React.FC<{ workspace: string }> = ({ workspace }) => {
           )}
         </div>
       </div>
-      {err && <div style={{ background: '#3a1a1a', color: '#ff8080', padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{err}</div>}
+      {err && <div style={{ background: C.dangerBg, color: C.dangerFg, padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{err}</div>}
       {!loaded ? (
         <div style={{ fontSize: 12, color: C.fg3 }}>Loading…</div>
       ) : editing ? (
@@ -341,7 +341,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12, fontWeight: 600,
   },
   error: {
-    background: '#ff453a22', color: '#ff8a82', border: `1px solid #ff453a55`,
+    background: C.dangerBg, color: C.dangerFg, border: `1px solid ${C.dangerBorder}`,
     borderRadius: 8, padding: '8px 12px', fontSize: 12, marginBottom: 12,
   },
   wsTopRow: {

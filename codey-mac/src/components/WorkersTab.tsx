@@ -75,7 +75,7 @@ function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: bo
     <div style={{ padding: 24, maxWidth: 640 }}>
       <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Describe the worker</div>
       <div style={{ fontSize: 12, color: C.fg3, marginBottom: 12 }}>The active coding agent will generate a personality and config from your description.</div>
-      {error && <div style={{ background: '#3a1a1a', border: '1px solid #6a2a2a', color: '#ff8080', padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 12 }}>{error}</div>}
+      {error && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 12 }}>{error}</div>}
       <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="e.g. A reviewer that audits PRs for security issues, leans on Opus, uses file-system and git tools."
         style={{ width: '100%', minHeight: 160, padding: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, fontFamily: 'inherit', fontSize: 14, resize: 'vertical' }} />
       <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
@@ -144,9 +144,9 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
     <div style={{ padding: 24, maxWidth: 720 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <div style={{ fontSize: 18, fontWeight: 600 }}>{worker.name}</div>
-        <button onClick={confirmDelete} style={{ background: 'transparent', color: '#ff6060', border: `1px solid #6a2a2a`, padding: '6px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>Delete</button>
+        <button onClick={confirmDelete} style={{ background: 'transparent', color: C.dangerFg, border: `1px solid ${C.dangerBorder}`, padding: '6px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>Delete</button>
       </div>
-      {error && <div style={{ background: '#3a1a1a', border: '1px solid #6a2a2a', color: '#ff8080', padding: 10, borderRadius: 6, fontSize: 12 }}>{error}</div>}
+      {error && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 10, borderRadius: 6, fontSize: 12 }}>{error}</div>}
 
       <label style={labelStyle}>Role</label>
       <textarea value={role} onChange={e => setRole(e.target.value)} style={{ ...fieldStyle, minHeight: 60 }} />

@@ -22,9 +22,9 @@ function preserveLineBreaks(src: string): string {
 
 export const Markdown: React.FC<MarkdownProps> = ({ children, variant = 'assistant' }) => {
   const onUser = variant === 'user'
-  const inlineCodeBg = onUser ? 'rgba(0,0,0,0.22)' : '#1a1a1a'
-  const inlineCodeFg = onUser ? '#f0f0f0' : '#e6e6e6'
-  const codeBlockBg = onUser ? 'rgba(0,0,0,0.25)' : '#141414'
+  const inlineCodeBg = onUser ? 'rgba(0,0,0,0.22)' : C.inlineCodeBg
+  const inlineCodeFg = onUser ? '#f0f0f0' : C.inlineCodeFg
+  const codeBlockBg = onUser ? 'rgba(0,0,0,0.25)' : C.codeBg
   const codeBlockBorder = onUser ? 'rgba(255,255,255,0.12)' : C.border2
   const linkColor = onUser ? '#cfe6ff' : C.accent
   const quoteBorder = onUser ? 'rgba(255,255,255,0.35)' : C.border2
@@ -121,7 +121,7 @@ export const Markdown: React.FC<MarkdownProps> = ({ children, variant = 'assista
                   fontSize: 12,
                   lineHeight: 1.5,
                   fontFamily: MONO,
-                  color: '#e6e6e6',
+                  color: C.codeFg,
                   position: 'relative',
                 }}
               >
