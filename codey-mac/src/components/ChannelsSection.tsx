@@ -159,7 +159,7 @@ export const ChannelsSection: React.FC<ChannelsSectionProps> = ({ liveStatus, is
 
   return (
     <div>
-      {error && <div style={{ background: '#FF453A22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
+      {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
       <ChannelEditor
         label="Telegram"
         enabled={!!channels.telegram?.enabled}
