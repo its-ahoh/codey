@@ -92,7 +92,7 @@ export class WorkspaceManager {
     const rawTeams = this.config?.teams || {};
     for (const [teamName, raw] of Object.entries(rawTeams)) {
       const normalized = this.normalizeTeam(teamName, raw);
-      if (normalized) this.teams.set(teamName.toLowerCase(), normalized);
+      if (normalized) this.teams.set(teamName, normalized);
     }
 
     if (!fs.existsSync(this.getMemoryPath())) {
@@ -228,7 +228,10 @@ export class WorkspaceManager {
   }
 
   getTeam(name: string): TeamConfig | undefined {
-    return this.teams.get(name.toLowerCase());
+    for (const [key, value] of this.teams) {
+      if (key.toLowerCase() === name.toLowerCase()) return value;
+    }
+    return undefined;
   }
 
   getTeamNames(): string[] {
@@ -249,7 +252,7 @@ export class WorkspaceManager {
     this.teams.clear();
     for (const [name, raw] of Object.entries(teams)) {
       const normalized = this.normalizeTeam(name, raw);
-      if (normalized) this.teams.set(name.toLowerCase(), normalized);
+      if (normalized) this.teams.set(name, normalized);
     }
     const configPath = this.getConfigPath();
     const existing = JSON.parse(await fs.promises.readFile(configPath, 'utf-8'));
