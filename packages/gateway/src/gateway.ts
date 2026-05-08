@@ -1976,7 +1976,7 @@ Example: /model gpt-4.1 write a Python script`;
     const workerManager = this.workspaceManager.getWorkerManager();
 
     const runOneWorker = async (
-      workerName: string,
+      _workerName: string,
       workerPrompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
