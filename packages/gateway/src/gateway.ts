@@ -16,7 +16,7 @@ import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
-import { renderQuestionMessage } from './team-pause';
+import { renderQuestionMessage, renderCancelNotice } from './team-pause';
 
 interface ParsedCommand {
   command: string;
@@ -513,6 +513,26 @@ export class Codey {
 
     try {
       this.logger.info(`[INPUT] ${message.channel}/${message.username}: ${message.text}`);
+
+      // Resume paused team if any
+      const pendingChat = this.chatManager.get(message.chatId);
+      const pending = pendingChat?.pendingTeam;
+      if (pending) {
+        const isSlash = message.text.trimStart().startsWith('/');
+        if (isSlash) {
+          try { this.chatManager.setPendingTeam(message.chatId, null); } catch (_) { /* ignore */ }
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: renderCancelNotice(pending),
+          });
+          // fall through to normal command handling
+        } else {
+          try { this.chatManager.setPendingTeam(message.chatId, null); } catch (_) { /* ignore */ }
+          await this.resumeTeamFromAnswer(message, pending, message.text);
+          return;
+        }
+      }
 
       // Parse command
       const parsed = this.parseCommand(message.text);
@@ -1837,7 +1857,7 @@ Example: /model gpt-4.1 write a Python script`;
     // Helper to run one worker once, used by both the Manager loop and the
     // legacy "all members in input order" fallback.
     const runOneWorker = async (
-      workerName: string,
+      _workerName: string,
       prompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
