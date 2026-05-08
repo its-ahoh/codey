@@ -1946,6 +1946,212 @@ Example: /model gpt-4.1 write a Python script`;
     await this.runAllMembersInOrder(message, teamName, members, task, runOneWorker);
   }
 
+  /**
+   * Resume a paused team using the user's answer to a worker's [ASK_USER] question.
+   * Caller (handleMessage) is responsible for clearing chat.pendingTeam BEFORE invoking this,
+   * so any new pause state we set here is not stomped.
+   */
+  private async resumeTeamFromAnswer(
+    message: UserMessage,
+    pending: PendingTeamState,
+    answer: string,
+  ): Promise<void> {
+    const team = this.workspaceManager.getTeam(pending.teamName);
+    if (!team) {
+      await this.sendResponse({
+        chatId: message.chatId,
+        channel: message.channel,
+        text: `Team \`${pending.teamName}\` no longer exists; the paused run was dropped.`,
+      });
+      return;
+    }
+    const handler = this.handlers.get(message.channel);
+    const runOneWorker = async (
+      _workerName: string,
+      prompt: string,
+      codingAgent: CodingAgent,
+      modelConfig: ModelConfig | undefined,
+    ): Promise<{ success: boolean; output: string; error?: string }> => {
+      const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
+      const response = await this.runWithFallback(codingAgent, {
+        prompt,
+        agent: codingAgent,
+        model: modelConfig,
+        interactive: this.tuiMode,
+        onStream,
+        context: { workingDir: this.workingDir },
+      });
+      return response.success
+        ? { success: true, output: response.output }
+        : { success: false, output: '', error: response.error };
+    };
+
+    if (pending.mode === 'sequential') {
+      const wm = this.workspaceManager.getWorkerManager();
+      const memberName = team.members[pending.memberIndex];
+      const codingAgent = wm.getWorkerCodingAgent(memberName) as CodingAgent;
+      const modelConfig = this.getModelConfig(codingAgent, wm.getWorkerModel(memberName));
+      const reprompt = wm.buildWorkerPrompt(
+        memberName,
+        `${pending.carry}\n\n[User answer to your question "${pending.question}"]:\n${answer}`,
+      );
+      await this.sendResponse({
+        chatId: message.chatId,
+        channel: message.channel,
+        text: `🔄 Resuming **${memberName}** with your answer…`,
+      });
+      const response = await runOneWorker(memberName, reprompt, codingAgent, modelConfig);
+      if (!response.success) {
+        await this.sendResponse({
+          chatId: message.chatId,
+          channel: message.channel,
+          text: `❌ Worker **${memberName}** failed on resume: ${response.error}`,
+        });
+        return;
+      }
+      const ask = parseAskUser(response.output);
+      if (ask) {
+        try {
+          this.chatManager.setPendingTeam(message.chatId, {
+            mode: 'sequential',
+            teamName: pending.teamName,
+            task: pending.task,
+            memberIndex: pending.memberIndex,
+            carry: pending.carry,
+            askingWorker: memberName,
+            question: ask.question,
+            askedAt: Date.now(),
+          });
+        } catch (_) { /* chat may not exist */ }
+        await this.sendResponse({
+          chatId: message.chatId,
+          channel: message.channel,
+          text: renderQuestionMessage(memberName, ask.preamble, ask.question),
+        });
+        return;
+      }
+      const carryForNext = `Previous worker output:\n${response.output}\n\nYour task: ${pending.task}`;
+      const priorResults: string[] = [`**${memberName}**: ${response.output.substring(0, 500)}`];
+      await this.runAllMembersInOrder(
+        message,
+        pending.teamName,
+        team.members,
+        pending.task,
+        runOneWorker,
+        { startIndex: pending.memberIndex + 1, startCarry: carryForNext, priorResults },
+      );
+      return;
+    }
+
+    // mode === 'auto'
+    const { agent: mAgent, model: mModel } = this.getDispatcherAgentAndModel();
+    const wm = this.workspaceManager.getWorkerManager();
+    const turn = await runManager(
+      {
+        task: pending.task,
+        members: team.members.map(n => ({ name: n, hint: wm.getDispatchHint(n) })),
+        history: pending.history,
+        lastWorker: pending.lastWorker,
+        lastOutput: pending.lastOutput,
+        userClarification: {
+          worker: pending.askingWorker,
+          question: pending.question,
+          answer,
+        },
+      },
+      { agent: mAgent, model: mModel, runner: this.dispatcherRunner },
+    );
+    if (turn.fallback) {
+      await this.sendResponse({
+        chatId: message.chatId,
+        channel: message.channel,
+        text: `⚠️ Manager failed on resume (${turn.fallbackReason}). Paused run dropped.`,
+      });
+      return;
+    }
+    const seededHistory: ManagerHistoryEntry[] = [
+      ...pending.history,
+      { worker: pending.askingWorker, summary: `User clarified: ${pending.question} → ${answer}` },
+    ];
+    if (turn.done || !turn.next) {
+      await this.sendResponse({
+        chatId: message.chatId,
+        channel: message.channel,
+        text: this.formatManagerParts(pending.partsSoFar, turn.final_summary ?? '', 500),
+      });
+      return;
+    }
+    const isRevision = pending.seenWorkers.includes(turn.next);
+    await this.sendResponse({
+      chatId: message.chatId,
+      channel: message.channel,
+      text: `🔄 Step ${pending.step}: **${turn.next}**${isRevision ? ' (revision)' : ''} — ${turn.reason}`,
+    });
+    const codingAgent = (wm.getWorkerCodingAgent(turn.next) ?? this.getDefaultAgent()) as CodingAgent;
+    const workerModelName = wm.getWorkerModel(turn.next);
+    const modelConfig = workerModelName
+      ? this.getModelConfig(codingAgent, workerModelName)
+      : this.getDefaultModelConfig(codingAgent);
+    const stepTaskBody = this.composeStepTask(pending.task, turn.instruction, pending.lastWorker, pending.lastOutput);
+    const stepPrompt = wm.buildWorkerPrompt(turn.next, stepTaskBody);
+    const response = await runOneWorker(turn.next, stepPrompt, codingAgent, modelConfig);
+    if (!response.success) {
+      await this.sendResponse({
+        chatId: message.chatId,
+        channel: message.channel,
+        text: `❌ Worker **${turn.next}** failed on resume: ${response.error}`,
+      });
+      return;
+    }
+    const ask = parseAskUser(response.output);
+    const newParts = [...pending.partsSoFar, { step: pending.step, worker: turn.next, output: response.output, isRevision }];
+    const newSeen = Array.from(new Set([...pending.seenWorkers, turn.next]));
+    const newHistory = turn.summary_of_last
+      ? [...seededHistory, { worker: pending.askingWorker, summary: turn.summary_of_last }]
+      : seededHistory;
+    if (ask) {
+      try {
+        this.chatManager.setPendingTeam(message.chatId, {
+          mode: 'auto',
+          teamName: pending.teamName,
+          task: pending.task,
+          history: newHistory,
+          lastWorker: turn.next,
+          lastOutput: response.output,
+          partsSoFar: newParts,
+          seenWorkers: newSeen,
+          step: pending.step + 1,
+          askingWorker: turn.next,
+          question: ask.question,
+          askedAt: Date.now(),
+        });
+      } catch (_) { /* chat may not exist */ }
+      await this.sendResponse({
+        chatId: message.chatId,
+        channel: message.channel,
+        text: renderQuestionMessage(turn.next, ask.preamble, ask.question),
+      });
+      return;
+    }
+    const closing = await runManager(
+      {
+        task: pending.task,
+        members: team.members.map(n => ({ name: n, hint: wm.getDispatchHint(n) })),
+        history: newHistory,
+        lastWorker: turn.next,
+        lastOutput: response.output,
+        finalize: true,
+      },
+      { agent: mAgent, model: mModel, runner: this.dispatcherRunner },
+    );
+    const finalSummary = closing.fallback ? '' : (closing.final_summary ?? '');
+    await this.sendResponse({
+      chatId: message.chatId,
+      channel: message.channel,
+      text: this.formatManagerParts(newParts, finalSummary, 500),
+    });
+  }
+
   private async runAllMembersInOrder(
     message: UserMessage,
     teamName: string,
