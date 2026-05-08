@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, ChannelKind, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runManager, ManagerTurn, ManagerHistoryEntry } from '@codey/core';
+import { AgentRequest, AgentResponse, ChannelKind, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runManager, ManagerTurn, ManagerHistoryEntry, parseAskUser, PendingTeamState } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -16,6 +16,7 @@ import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
+import { renderQuestionMessage } from './team-pause';
 
 interface ParsedCommand {
   command: string;
@@ -1898,13 +1899,15 @@ Example: /model gpt-4.1 write a Python script`;
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
     ) => Promise<{ success: boolean; output: string; error?: string }>,
+    opts: { startIndex?: number; startCarry?: string; priorResults?: string[] } = {},
   ): Promise<void> {
     const { chatId, channel } = message;
     const workerManager = this.workspaceManager.getWorkerManager();
-    const results: string[] = [];
-    let currentTask = task;
+    const results: string[] = opts.priorResults ? [...opts.priorResults] : [];
+    let currentTask = opts.startCarry ?? task;
 
-    for (const memberName of members) {
+    for (let i = opts.startIndex ?? 0; i < members.length; i++) {
+      const memberName = members[i];
       const worker = workerManager.getWorker(memberName);
       if (!worker) {
         results.push(`**${memberName}**: ❌ not found in global library`);
@@ -1920,13 +1923,32 @@ Example: /model gpt-4.1 write a Python script`;
       const prompt = workerManager.buildWorkerPrompt(memberName, currentTask);
       const modelConfig = this.getModelConfig(codingAgent, model);
       const response = await runOneWorker(memberName, prompt, codingAgent, modelConfig);
-      if (response.success) {
-        results.push(`**${worker.name}**: ${response.output.substring(0, 500)}`);
-        currentTask = `Previous worker output:\n${response.output}\n\nYour task: ${task}`;
-      } else {
+      if (!response.success) {
         results.push(`**${worker.name}**: ❌ Failed - ${response.error}`);
         break;
       }
+      const ask = parseAskUser(response.output);
+      if (ask) {
+        const pending: PendingTeamState = {
+          mode: 'sequential',
+          teamName,
+          task,
+          memberIndex: i,
+          carry: currentTask,
+          askingWorker: memberName,
+          question: ask.question,
+          askedAt: Date.now(),
+        };
+        try { this.chatManager.setPendingTeam(chatId, pending); } catch (_) { /* chat may be missing in some channels */ }
+        await this.sendResponse({
+          chatId,
+          channel,
+          text: renderQuestionMessage(worker.name, ask.preamble, ask.question),
+        });
+        return;
+      }
+      results.push(`**${worker.name}**: ${response.output.substring(0, 500)}`);
+      currentTask = `Previous worker output:\n${response.output}\n\nYour task: ${task}`;
     }
 
     await this.sendResponse({
