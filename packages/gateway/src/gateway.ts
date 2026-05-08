@@ -1652,9 +1652,23 @@ Example: /model gpt-4.1 write a Python script`;
     | { fallback: true; fallbackReason: string }
     | {
         fallback: false;
+        paused?: undefined;
         parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>;
         finalSummary: string;
         fallbackMidRun?: { reason: string };
+      }
+    | {
+        fallback: false;
+        paused: {
+          history: ManagerHistoryEntry[];
+          lastWorker: string;
+          lastOutput: string;
+          parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>;
+          seenWorkers: string[];
+          step: number;
+          askingWorker: string;
+          question: string;
+        };
       }
   > {
     const workerManager = this.workspaceManager.getWorkerManager();
@@ -1713,6 +1727,22 @@ Example: /model gpt-4.1 write a Python script`;
       if (!response.success) {
         fallbackMidRun = { reason: `worker ${turn.next} failed: ${response.error ?? 'unknown'}` };
         break;
+      }
+      const ask = parseAskUser(response.output);
+      if (ask) {
+        return {
+          fallback: false,
+          paused: {
+            history,
+            lastWorker: turn.next,
+            lastOutput: response.output,
+            parts,
+            seenWorkers: Array.from(seenWorkers),
+            step: step + 1,
+            askingWorker: turn.next,
+            question: ask.question,
+          },
+        };
       }
       parts.push({ step, worker: turn.next, output: response.output, isRevision });
       seenWorkers.add(turn.next);
@@ -1858,6 +1888,34 @@ Example: /model gpt-4.1 write a Python script`;
           text: `⚠️ Auto-routing failed (${result.fallbackReason}), running all members.`,
         });
         await this.runAllMembersInOrder(message, teamName, members, task, runOneWorker);
+        return;
+      }
+
+      if ('paused' in result && result.paused) {
+        const p = result.paused;
+        const wm = this.workspaceManager.getWorkerManager();
+        const askWorkerName = wm.getWorker(p.askingWorker)?.name ?? p.askingWorker;
+        try {
+          this.chatManager.setPendingTeam(message.chatId, {
+            mode: 'auto',
+            teamName,
+            task,
+            history: p.history,
+            lastWorker: p.lastWorker,
+            lastOutput: p.lastOutput,
+            partsSoFar: p.parts,
+            seenWorkers: p.seenWorkers,
+            step: p.step,
+            askingWorker: p.askingWorker,
+            question: p.question,
+            askedAt: Date.now(),
+          });
+        } catch (_) { /* chat may not exist for non-Mac channels */ }
+        await this.sendResponse({
+          chatId: message.chatId,
+          channel: message.channel,
+          text: renderQuestionMessage(askWorkerName, '', p.question),
+        });
         return;
       }
 
@@ -2020,7 +2078,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
         sink({ type: 'info', chatId, message: `Auto-routing failed (${result.fallbackReason}), running all members` });
         // fall through to all-members path below
-      } else {
+      } else if (!result.paused) {
         if (signal?.aborted) {
           return { response: this.formatManagerParts(result.parts, result.finalSummary) };
         }
