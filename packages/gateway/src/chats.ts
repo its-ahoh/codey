@@ -123,6 +123,18 @@ export class ChatManager {
     return chat;
   }
 
+  /** Set or clear pendingTeam state for a chat. Pass null to clear. */
+  setPendingTeam(chatId: string, pending: NonNullable<Chat['pendingTeam']> | null): Chat {
+    this.ensureLoaded();
+    const chat = this.cache.get(chatId);
+    if (!chat) throw new Error(`Chat not found: ${chatId}`);
+    if (pending) chat.pendingTeam = pending;
+    else delete chat.pendingTeam;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
   delete(chatId: string): void {
     const chat = this.cache.get(chatId);
     if (!chat) return;

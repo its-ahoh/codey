@@ -47,6 +47,26 @@ async function run() {
   const reloaded = new ChatManager(root);
   assert.strictEqual(reloaded.findByRoute('discord', 'd1', 'd1')?.id, chat.id);
 
+  // pendingTeam round-trip
+  const pending = {
+    mode: 'sequential' as const,
+    teamName: 'review',
+    task: 'audit pr',
+    memberIndex: 1,
+    carry: 'previous output',
+    askingWorker: 'reviewer',
+    question: 'should I include style nits?',
+    askedAt: 1_700_000_000_000,
+  };
+  mgr.setPendingTeam(chat.id, pending);
+  assert.deepStrictEqual(mgr.get(chat.id)?.pendingTeam, pending);
+
+  const reloadedForPending = new ChatManager(root);
+  assert.deepStrictEqual(reloadedForPending.get(chat.id)?.pendingTeam, pending);
+
+  mgr.setPendingTeam(chat.id, null);
+  assert.strictEqual(mgr.get(chat.id)?.pendingTeam, undefined);
+
   fs.rmSync(root, { recursive: true, force: true });
   console.log('chats.test ok');
 }
