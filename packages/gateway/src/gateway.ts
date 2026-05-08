@@ -158,7 +158,11 @@ export class Codey {
     const wm = workerManager || new WorkerManager('./workers');
     this.workspaceManager = new WorkspaceManager(wm, workspaceDir || './workspaces', this.logger);
     this.chatManager = new ChatManager(this.workspaceManager.getWorkspacesRoot());
-    this.pairingStore = new PairingStore(path.join(process.cwd(), 'pairings.json'));
+    // Anchor pairings.json to the data root (parent of the workspaces dir),
+    // not process.cwd(). In the packaged Mac app cwd can be `/`, which is
+    // read-only and produces EROFS on first write.
+    const dataRoot = path.dirname(this.workspaceManager.getWorkspacesRoot());
+    this.pairingStore = new PairingStore(path.join(dataRoot, 'pairings.json'));
     this.turnQueue = new TurnQueue(async (_chatId, batch) => {
       // No coalescing in this version: process each queued message in order.
       for (const item of batch) {
