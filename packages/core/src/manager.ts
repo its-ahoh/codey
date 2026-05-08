@@ -19,6 +19,8 @@ export interface ManagerInput {
   lastOutput: string | null;
   /** When true, return only done:true with a final_summary; do not pick next. */
   finalize?: boolean;
+  /** Set on the turn immediately after a paused run resumes. */
+  userClarification?: { worker: string; question: string; answer: string };
 }
 
 export interface ManagerTurn {
@@ -73,6 +75,12 @@ export function buildManagerPrompt(input: ManagerInput): string {
     lines.push(input.lastOutput);
   } else {
     lines.push('(none — first turn)');
+  }
+  if (input.userClarification) {
+    const u = input.userClarification;
+    lines.push('## User Clarification');
+    lines.push(`Worker ${u.worker} asked: ${u.question}`);
+    lines.push(`User answered: ${u.answer}`);
   }
   if (input.finalize) {
     lines.push('## Finalize');
