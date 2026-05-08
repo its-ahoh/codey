@@ -2078,7 +2078,30 @@ Example: /model gpt-4.1 write a Python script`;
         }
         sink({ type: 'info', chatId, message: `Auto-routing failed (${result.fallbackReason}), running all members` });
         // fall through to all-members path below
-      } else if (!result.paused) {
+      } else if (result.paused) {
+        const p = result.paused;
+        const wm = this.workspaceManager.getWorkerManager();
+        const askWorkerName = wm.getWorker(p.askingWorker)?.name ?? p.askingWorker;
+        try {
+          this.chatManager.setPendingTeam(chatId, {
+            mode: 'auto',
+            teamName,
+            task: prompt,
+            history: p.history,
+            lastWorker: p.lastWorker,
+            lastOutput: p.lastOutput,
+            partsSoFar: p.parts,
+            seenWorkers: p.seenWorkers,
+            step: p.step,
+            askingWorker: p.askingWorker,
+            question: p.question,
+            askedAt: Date.now(),
+          });
+        } catch (_) { /* chat may not exist */ }
+        const text = renderQuestionMessage(askWorkerName, '', p.question);
+        sink({ type: 'stream', chatId, token: text });
+        return { response: text };
+      } else {
         if (signal?.aborted) {
           return { response: this.formatManagerParts(result.parts, result.finalSummary) };
         }
@@ -2101,10 +2124,31 @@ Example: /model gpt-4.1 write a Python script`;
       const workerModel = workerManager.getWorkerModel(memberName);
       const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
       const response = await runOneWorker(memberName, stepPrompt, codingAgent, modelConfig);
-      const output = response.success ? response.output : '';
-      parts.push(`### ${memberName}\n\n${output}`);
-      carry = output;
-      if (!response.success) break;
+      if (!response.success) {
+        parts.push(`### ${memberName}\n\n`);
+        break;
+      }
+      const ask = parseAskUser(response.output);
+      if (ask) {
+        const askWorkerName = workerManager.getWorker(memberName)?.name ?? memberName;
+        try {
+          this.chatManager.setPendingTeam(chatId, {
+            mode: 'sequential',
+            teamName,
+            task: prompt,
+            memberIndex: i,
+            carry,
+            askingWorker: memberName,
+            question: ask.question,
+            askedAt: Date.now(),
+          });
+        } catch (_) { /* chat may not exist */ }
+        const text = renderQuestionMessage(askWorkerName, ask.preamble, ask.question);
+        sink({ type: 'stream', chatId, token: text });
+        return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + text : text };
+      }
+      parts.push(`### ${memberName}\n\n${response.output}`);
+      carry = response.output;
     }
     return { response: parts.join('\n\n---\n\n') };
   }
