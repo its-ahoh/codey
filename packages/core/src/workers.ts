@@ -199,6 +199,8 @@ export class WorkerManager {
       worker.personality.soul,
       `## Instructions`,
       worker.personality.instructions,
+      `## Pause for user input`,
+      'If you cannot proceed without information from the user, output a single line `[ASK_USER]: <your question>` and stop. Do not guess. Do not continue the work.',
       `## Task`,
       task,
     ].join('\n\n');
