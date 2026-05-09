@@ -206,6 +206,45 @@ export class WorkerManager {
     ].join('\n\n');
   }
 
+  /**
+   * Auto-mode variant of buildWorkerPrompt. Injects the team roster (excluding self)
+   * so the worker can address questions to a specific teammate via `[ASK: name]: q`,
+   * falling back to `[ASK_USER]: q` when no teammate can help.
+   *
+   * `roster` should contain {name, hint} for every member except the running worker.
+   */
+  buildTeamWorkerPrompt(
+    name: string,
+    task: string,
+    roster: Array<{ name: string; hint: string }>,
+  ): string {
+    const worker = this.getWorker(name);
+    if (!worker) return task;
+    const rosterLines = roster.length > 0
+      ? roster.map(r => `- ${r.name}: ${r.hint || '(no description)'}`).join('\n')
+      : '(you are the only worker on this team)';
+    return [
+      `# Worker: ${worker.name}`,
+      `## Role`,
+      worker.personality.role,
+      `## Personality`,
+      worker.personality.soul,
+      `## Instructions`,
+      worker.personality.instructions,
+      `## Teammates`,
+      rosterLines,
+      `## When you have a question`,
+      [
+        'If you need information you do not have:',
+        '1. First check the Teammates list. If a teammate plausibly knows the answer, output a single line `[ASK: <teammate>]: <your question>` and stop. The team manager will route the question to that teammate.',
+        '2. If no teammate could plausibly answer, output a single line `[ASK_USER]: <your question>` and stop. The manager will decide whether to ask the user or route to a teammate.',
+        'Use exactly one marker per output. Do not guess. Do not continue the work after emitting a marker.',
+      ].join('\n'),
+      `## Task`,
+      task,
+    ].join('\n\n');
+  }
+
   listWorkers(): string {
     const all = this.getAllWorkers();
     if (all.length === 0) return 'No workers configured. Create folders under ./workers/<name>/ with personality.md and config.json.';

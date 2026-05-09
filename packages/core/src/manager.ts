@@ -21,6 +21,11 @@ export interface ManagerInput {
   finalize?: boolean;
   /** Set on the turn immediately after a paused run resumes. */
   userClarification?: { worker: string; question: string; answer: string };
+  /**
+   * Set when a worker emitted `[ASK_USER]: q` and the Manager must decide
+   * whether to route the question to a teammate or escalate to the user.
+   */
+  pendingQuestion?: { worker: string; question: string };
 }
 
 export interface ManagerTurn {
@@ -32,6 +37,8 @@ export interface ManagerTurn {
   final_summary?: string;
   fallback: boolean;
   fallbackReason?: string;
+  /** Set by the Manager to escalate the pending question to the user. */
+  escalateToUser?: boolean;
 }
 
 export type ManagerRunner = (req: AgentRequest) => Promise<AgentResponse>;
@@ -81,6 +88,14 @@ export function buildManagerPrompt(input: ManagerInput): string {
     lines.push('## User Clarification');
     lines.push(`Worker ${u.worker} asked: ${u.question}`);
     lines.push(`User answered: ${u.answer}`);
+  }
+  if (input.pendingQuestion) {
+    const q = input.pendingQuestion;
+    lines.push('## Pending Question');
+    lines.push(`Worker ${q.worker} asked: ${q.question}`);
+    lines.push(
+      'Decide one of: (a) route this to a teammate from the Roster who can answer — set `next` to that teammate and put the question in `instruction`; or (b) escalate to the user — set `escalate_to_user: true` and `done: true` with no `next`. Prefer (a) when a teammate plausibly has the answer.',
+    );
   }
   if (input.finalize) {
     lines.push('## Finalize');
@@ -187,6 +202,7 @@ export async function runManager(
         reason?: unknown;
         done?: unknown;
         final_summary?: unknown;
+        escalate_to_user?: unknown;
       }
     | null;
   if (!obj) return fallback('no JSON object in manager output');
@@ -196,6 +212,7 @@ export async function runManager(
   const instruction = typeof obj.instruction === 'string' ? obj.instruction : '';
   const done = obj.done === true;
   const final_summary = typeof obj.final_summary === 'string' ? obj.final_summary : undefined;
+  const escalateToUser = obj.escalate_to_user === true;
 
   let next: string | null = null;
   if (obj.next === null || obj.next === undefined) {
@@ -220,6 +237,21 @@ export async function runManager(
       done: true,
       final_summary: final_summary ?? '',
       fallback: false,
+    };
+  }
+
+  // When the Manager is arbitrating a pending question, escalate_to_user is a
+  // valid resolution: done=true, no next, and we surface the question to the user.
+  if (input.pendingQuestion && escalateToUser) {
+    return {
+      summary_of_last,
+      next: null,
+      instruction: '',
+      reason,
+      done: true,
+      final_summary,
+      fallback: false,
+      escalateToUser: true,
     };
   }
 

@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, ChannelKind, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runManager, ManagerTurn, ManagerHistoryEntry, parseAskUser, PendingTeamState } from '@codey/core';
+import { AgentRequest, AgentResponse, ChannelKind, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runManager, ManagerTurn, ManagerHistoryEntry, parseAskUser, parseAsk, PendingTeamState } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -1694,6 +1694,7 @@ Example: /model gpt-4.1 write a Python script`;
     const workerManager = this.workspaceManager.getWorkerManager();
     const members = team.members;
     const cap = Math.max(Math.min(2 * members.length, 12), 4);
+    const FORWARD_HOP_CAP = 2;
 
     const history: ManagerHistoryEntry[] = [];
     let lastWorker: string | null = null;
@@ -1705,69 +1706,121 @@ Example: /model gpt-4.1 write a Python script`;
     const { agent: mAgent, model: mModel } = this.getDispatcherAgentAndModel();
     const seenWorkers = new Set<string>();
 
+    // When set, skip the next Manager call and run this worker directly
+    // (used when a worker emits `[ASK: <teammate>]: q` to forward).
+    let directNext: { worker: string; instruction: string } | null = null;
+    // When set, the next Manager turn arbitrates this pending question
+    // (used when a worker emits `[ASK_USER]:` or forwards to an unknown target).
+    let pendingArbitration: { worker: string; question: string } | null = null;
+    // Number of consecutive direct forwards since the last Manager turn.
+    let forwardHops = 0;
+
     for (let step = 1; step <= cap; step++) {
       if (signal?.aborted) break;
-      const turn: ManagerTurn = await runManager(
-        {
-          task,
-          members: members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
-          history,
-          lastWorker,
-          lastOutput,
-        },
-        { agent: mAgent, model: mModel, runner: this.dispatcherRunner, signal },
-      );
-      if (turn.fallback) {
-        if (parts.length === 0) {
-          return { fallback: true, fallbackReason: turn.fallbackReason ?? 'unknown' };
-        }
-        fallbackMidRun = { reason: turn.fallbackReason ?? 'unknown' };
-        break;
-      }
-      if (lastWorker && turn.summary_of_last) {
-        history.push({ worker: lastWorker, summary: turn.summary_of_last });
-      }
-      if (turn.done || !turn.next) {
-        finalSummary = turn.final_summary ?? '';
-        break;
-      }
-      const isRevision = seenWorkers.has(turn.next);
-      await perStep({ kind: 'route', step, worker: turn.next, reason: turn.reason ?? '', isRevision });
 
-      const codingAgent = (workerManager.getWorkerCodingAgent(turn.next) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
-      const workerModelName = workerManager.getWorkerModel(turn.next);
+      let turnNext: string;
+      let turnInstruction: string;
+      let turnReason: string;
+      let isRevision: boolean;
+
+      if (directNext) {
+        turnNext = directNext.worker;
+        turnInstruction = directNext.instruction;
+        turnReason = `Forwarded from ${lastWorker ?? 'previous worker'}`;
+        isRevision = seenWorkers.has(turnNext);
+        directNext = null;
+      } else {
+        const turn: ManagerTurn = await runManager(
+          {
+            task,
+            members: members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
+            history,
+            lastWorker,
+            lastOutput,
+            pendingQuestion: pendingArbitration ?? undefined,
+          },
+          { agent: mAgent, model: mModel, runner: this.dispatcherRunner, signal },
+        );
+        if (turn.fallback) {
+          if (parts.length === 0) {
+            return { fallback: true, fallbackReason: turn.fallbackReason ?? 'unknown' };
+          }
+          fallbackMidRun = { reason: turn.fallbackReason ?? 'unknown' };
+          break;
+        }
+        if (lastWorker && turn.summary_of_last) {
+          history.push({ worker: lastWorker, summary: turn.summary_of_last });
+        }
+        if (pendingArbitration && turn.escalateToUser) {
+          return {
+            fallback: false,
+            paused: {
+              history,
+              lastWorker: pendingArbitration.worker,
+              lastOutput: lastOutput ?? '',
+              parts,
+              seenWorkers: Array.from(seenWorkers),
+              step,
+              askingWorker: pendingArbitration.worker,
+              question: pendingArbitration.question,
+            },
+          };
+        }
+        if (turn.done || !turn.next) {
+          finalSummary = turn.final_summary ?? '';
+          break;
+        }
+        turnNext = turn.next;
+        turnInstruction = turn.instruction;
+        turnReason = turn.reason ?? '';
+        isRevision = seenWorkers.has(turn.next);
+        pendingArbitration = null;
+        forwardHops = 0;
+      }
+
+      await perStep({ kind: 'route', step, worker: turnNext, reason: turnReason, isRevision });
+
+      const codingAgent = (workerManager.getWorkerCodingAgent(turnNext) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const workerModelName = workerManager.getWorkerModel(turnNext);
       const modelConfig = workerModelName
         ? this.getModelConfig(codingAgent, workerModelName)
         : chatModel ?? this.getDefaultModelConfig(codingAgent);
 
-      const stepTaskBody = this.composeStepTask(task, turn.instruction, lastWorker, lastOutput);
-      const prompt = workerManager.buildWorkerPrompt(turn.next, stepTaskBody);
+      const stepTaskBody = this.composeStepTask(task, turnInstruction, lastWorker, lastOutput);
+      const teamRoster = members
+        .filter(n => n !== turnNext)
+        .map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
+      const prompt = workerManager.buildTeamWorkerPrompt(turnNext, stepTaskBody, teamRoster);
 
-      const response = await runWorker(turn.next, prompt, codingAgent, modelConfig);
+      const response = await runWorker(turnNext, prompt, codingAgent, modelConfig);
       if (!response.success) {
-        fallbackMidRun = { reason: `worker ${turn.next} failed: ${response.error ?? 'unknown'}` };
+        fallbackMidRun = { reason: `worker ${turnNext} failed: ${response.error ?? 'unknown'}` };
         break;
       }
-      const ask = parseAskUser(response.output);
-      if (ask) {
-        return {
-          fallback: false,
-          paused: {
-            history,
-            lastWorker: turn.next,
-            lastOutput: response.output,
-            parts,
-            seenWorkers: Array.from(seenWorkers),
-            step: step + 1,
-            askingWorker: turn.next,
-            question: ask.question,
-          },
-        };
-      }
-      parts.push({ step, worker: turn.next, output: response.output, isRevision });
-      seenWorkers.add(turn.next);
-      lastWorker = turn.next;
+      parts.push({ step, worker: turnNext, output: response.output, isRevision });
+      seenWorkers.add(turnNext);
+      lastWorker = turnNext;
       lastOutput = response.output;
+
+      const ask = parseAsk(response.output);
+      if (!ask) continue;
+
+      if (ask.kind === 'team') {
+        const targetValid = members.includes(ask.target) && ask.target !== turnNext;
+        if (targetValid && forwardHops < FORWARD_HOP_CAP) {
+          forwardHops += 1;
+          directNext = {
+            worker: ask.target,
+            instruction: `${turnNext} forwarded a question to you: "${ask.question}". Answer it concisely so the team can continue.`,
+          };
+          continue;
+        }
+        // Invalid target or hop cap exceeded → Manager arbitrates.
+        pendingArbitration = { worker: turnNext, question: ask.question };
+        continue;
+      }
+      // kind === 'user' → Manager arbitrates whether to route or escalate.
+      pendingArbitration = { worker: turnNext, question: ask.question };
     }
 
     // Cap exhausted without explicit done — request a final summary.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAskUser } from './ask-user';
+import { parseAskUser, parseAsk } from './ask-user';
 
 describe('parseAskUser', () => {
   it('returns null when no marker is present', () => {
@@ -41,5 +41,58 @@ describe('parseAskUser', () => {
 
   it('returns null when the question is empty after trim', () => {
     expect(parseAskUser('[ASK_USER]:    ')).toBeNull();
+  });
+});
+
+describe('parseAsk', () => {
+  it('parses [ASK_USER]: as kind="user"', () => {
+    const out = parseAsk('[ASK_USER]: foo?');
+    expect(out).toEqual({ kind: 'user', preamble: '', question: 'foo?' });
+  });
+
+  it('parses [ASK: name]: as kind="team" with target', () => {
+    const out = parseAsk('[ASK: alice]: did you finish the schema?');
+    expect(out).toEqual({
+      kind: 'team',
+      target: 'alice',
+      preamble: '',
+      question: 'did you finish the schema?',
+    });
+  });
+
+  it('preserves preamble before a team marker', () => {
+    const text = 'looked at the code\n[ASK: bob]: what about TLS?';
+    const out = parseAsk(text);
+    expect(out).toEqual({
+      kind: 'team',
+      target: 'bob',
+      preamble: 'looked at the code',
+      question: 'what about TLS?',
+    });
+  });
+
+  it('returns the earlier of two markers', () => {
+    const out = parseAsk('[ASK: alice]: q1\n[ASK_USER]: q2');
+    expect(out?.kind).toBe('team');
+    expect((out as any).target).toBe('alice');
+  });
+
+  it('skips a malformed [ASK: ]: line and finds a later valid one', () => {
+    const out = parseAsk('[ASK: ]: blank target\n[ASK_USER]: real question');
+    expect(out?.kind).toBe('user');
+  });
+
+  it('returns null when no marker is present', () => {
+    expect(parseAsk('plain output, no markers')).toBeNull();
+  });
+
+  it('tolerates whitespace inside the [ASK: name] brackets', () => {
+    const out = parseAsk('[ASK :  carol  ]:  hello?');
+    expect(out).toEqual({
+      kind: 'team',
+      target: 'carol',
+      preamble: '',
+      question: 'hello?',
+    });
   });
 });
