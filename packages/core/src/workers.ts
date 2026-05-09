@@ -216,12 +216,17 @@ export class WorkerManager {
   buildTeamWorkerPrompt(
     name: string,
     task: string,
-    roster: Array<{ name: string; hint: string }>,
+    roster: Array<{ name: string; hint: string; lastDid?: string }>,
   ): string {
     const worker = this.getWorker(name);
     if (!worker) return task;
     const rosterLines = roster.length > 0
-      ? roster.map(r => `- ${r.name}: ${r.hint || '(no description)'}`).join('\n')
+      ? roster
+          .map(r => {
+            const head = `- ${r.name}: ${r.hint || '(no description)'}`;
+            return r.lastDid ? `${head}\n  last did: ${r.lastDid}` : head;
+          })
+          .join('\n')
       : '(you are the only worker on this team)';
     return [
       `# Worker: ${worker.name}`,

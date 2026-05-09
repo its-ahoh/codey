@@ -1787,9 +1787,16 @@ Example: /model gpt-4.1 write a Python script`;
         : chatModel ?? this.getDefaultModelConfig(codingAgent);
 
       const stepTaskBody = this.composeStepTask(task, turnInstruction, lastWorker, lastOutput);
+      // Build a per-step "last did" map from Manager history: latest entry per worker.
+      const lastDidByWorker = new Map<string, string>();
+      for (const h of history) lastDidByWorker.set(h.worker, h.summary);
       const teamRoster = members
         .filter(n => n !== turnNext)
-        .map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
+        .map(n => ({
+          name: n,
+          hint: workerManager.getDispatchHint(n),
+          lastDid: lastDidByWorker.get(n),
+        }));
       const prompt = workerManager.buildTeamWorkerPrompt(turnNext, stepTaskBody, teamRoster);
 
       const response = await runWorker(turnNext, prompt, codingAgent, modelConfig);
