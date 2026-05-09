@@ -1816,6 +1816,12 @@ Example: /model gpt-4.1 write a Python script`;
         const targetValid = members.includes(ask.target) && ask.target !== turnNext;
         if (targetValid && forwardHops < FORWARD_HOP_CAP) {
           forwardHops += 1;
+          // Record the forward in history so the Manager retains visibility of
+          // the asking worker's contribution despite skipping the Manager turn.
+          history.push({
+            worker: turnNext,
+            summary: `Asked ${ask.target}: "${ask.question}"`,
+          });
           directNext = {
             worker: ask.target,
             instruction: `${turnNext} forwarded a question to you: "${ask.question}". Answer it concisely so the team can continue.`,

@@ -241,7 +241,7 @@ export class WorkerManager {
       `## When you have a question`,
       [
         'If you need information you do not have:',
-        '1. First check the Teammates list. If a teammate plausibly knows the answer, output a single line `[ASK: <teammate>]: <your question>` and stop. The team manager will route the question to that teammate.',
+        '1. First check the Teammates list. If a teammate plausibly knows the answer, output a single line `[ASK: <teammate>]: <your question>` and stop. The team will route the question to that teammate directly.',
         '2. If no teammate could plausibly answer, output a single line `[ASK_USER]: <your question>` and stop. The manager will decide whether to ask the user or route to a teammate.',
         'Use exactly one marker per output. Do not guess. Do not continue the work after emitting a marker.',
       ].join('\n'),
