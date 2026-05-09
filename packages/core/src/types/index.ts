@@ -226,3 +226,4 @@ export interface GatewayConfig {
 
 export * from './chat';
 export * from './route';
+export * from './pending-team';

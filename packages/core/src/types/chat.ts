@@ -1,4 +1,5 @@
 import { ChatRoute } from './route';
+import { PendingTeamState } from './pending-team';
 
 export interface FileAttachment {
   id: string;
@@ -51,4 +52,6 @@ export interface Chat {
   model?: string;
   /** Attached channel routes. Absent or empty means Mac-only. */
   routes?: ChatRoute[];
+  /** Set while a /team run is paused waiting for the user to answer a worker's question. */
+  pendingTeam?: PendingTeamState;
 }
