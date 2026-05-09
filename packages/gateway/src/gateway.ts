@@ -16,7 +16,7 @@ import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
-import { renderQuestionMessage, renderCancelNotice } from './team-pause';
+import { renderQuestionMessage, renderCancelNotice, stripAskMarker } from './team-pause';
 
 interface ParsedCommand {
   command: string;
@@ -502,10 +502,20 @@ export class Codey {
       return;
     }
 
+    // Pre-rate-limit: detect a paused team waiting on this chat's user.
+    // Resume answers must bypass the cooldown — otherwise a quick reply to a
+    // worker's question would be dropped silently.
+    const pendingChat = this.chatManager.get(message.chatId);
+    const pending = pendingChat?.pendingTeam;
+    const isSlash = message.text.trimStart().startsWith('/');
+    const isPausedAnswer = !!pending && !isSlash;
+
     // Check rate limit (keyed by Codey chat id when available, else by user id)
-    const cooldownKey = this.cooldownKeyFor(message);
-    if (!this.checkAndSetRateLimit(cooldownKey, message)) {
-      return;
+    if (!isPausedAnswer) {
+      const cooldownKey = this.cooldownKeyFor(message);
+      if (!this.checkAndSetRateLimit(cooldownKey, message)) {
+        return;
+      }
     }
 
     this.processingMessages.add(message.id);
@@ -514,11 +524,7 @@ export class Codey {
     try {
       this.logger.info(`[INPUT] ${message.channel}/${message.username}: ${message.text}`);
 
-      // Resume paused team if any
-      const pendingChat = this.chatManager.get(message.chatId);
-      const pending = pendingChat?.pendingTeam;
       if (pending) {
-        const isSlash = message.text.trimStart().startsWith('/');
         if (isSlash) {
           try { this.chatManager.setPendingTeam(message.chatId, null); } catch (_) { /* ignore */ }
           await this.sendResponse({
@@ -1752,13 +1758,22 @@ Example: /model gpt-4.1 write a Python script`;
           history.push({ worker: lastWorker, summary: turn.summary_of_last });
         }
         if (pendingArbitration && turn.escalateToUser) {
+          // Strip the [ASK_USER] marker line from the asker's persisted output
+          // so it doesn't leak into the run log when the team finalizes after
+          // the user replies.
+          const strippedLastOutput = stripAskMarker(lastOutput ?? '');
+          const strippedParts = parts.map((p, i) =>
+            i === parts.length - 1 && p.worker === pendingArbitration!.worker
+              ? { ...p, output: stripAskMarker(p.output) }
+              : p,
+          );
           return {
             fallback: false,
             paused: {
               history,
               lastWorker: pendingArbitration.worker,
-              lastOutput: lastOutput ?? '',
-              parts,
+              lastOutput: strippedLastOutput,
+              parts: strippedParts,
               seenWorkers: Array.from(seenWorkers),
               step,
               askingWorker: pendingArbitration.worker,
@@ -1981,22 +1996,20 @@ Example: /model gpt-4.1 write a Python script`;
         const p = result.paused;
         const wm = this.workspaceManager.getWorkerManager();
         const askWorkerName = wm.getWorker(p.askingWorker)?.name ?? p.askingWorker;
-        try {
-          this.chatManager.setPendingTeam(message.chatId, {
-            mode: 'auto',
-            teamName,
-            task,
-            history: p.history,
-            lastWorker: p.lastWorker,
-            lastOutput: p.lastOutput,
-            partsSoFar: p.parts,
-            seenWorkers: p.seenWorkers,
-            step: p.step,
-            askingWorker: p.askingWorker,
-            question: p.question,
-            askedAt: Date.now(),
-          });
-        } catch (_) { /* chat may not exist for non-Mac channels */ }
+        this.persistPendingTeam(message.chatId, {
+          mode: 'auto',
+          teamName,
+          task,
+          history: p.history,
+          lastWorker: p.lastWorker,
+          lastOutput: p.lastOutput,
+          partsSoFar: p.parts,
+          seenWorkers: p.seenWorkers,
+          step: p.step,
+          askingWorker: p.askingWorker,
+          question: p.question,
+          askedAt: Date.now(),
+        });
         await this.sendResponse({
           chatId: message.chatId,
           channel: message.channel,
@@ -2037,6 +2050,25 @@ Example: /model gpt-4.1 write a Python script`;
    * Caller (handleMessage) is responsible for clearing chat.pendingTeam BEFORE invoking this,
    * so any new pause state we set here is not stomped.
    */
+  /**
+   * Persist pending-team state on a chat. If the chat doesn't exist (e.g. some
+   * channels haven't created a Codey chat record), log a clear warning — the
+   * run effectively can't be resumed since we have nowhere to attach the
+   * answer.
+   */
+  private persistPendingTeam(chatId: string, pending: PendingTeamState): boolean {
+    try {
+      this.chatManager.setPendingTeam(chatId, pending);
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `Cannot persist paused team for chat ${chatId} (${(err as Error).message}); ` +
+          `team "${pending.teamName}" surfaced "${pending.question}" but no chat record exists to track the reply.`,
+      );
+      return false;
+    }
+  }
+
   private async resumeTeamFromAnswer(
     message: UserMessage,
     pending: PendingTeamState,
@@ -2097,18 +2129,16 @@ Example: /model gpt-4.1 write a Python script`;
       }
       const ask = parseAskUser(response.output);
       if (ask) {
-        try {
-          this.chatManager.setPendingTeam(message.chatId, {
-            mode: 'sequential',
-            teamName: pending.teamName,
-            task: pending.task,
-            memberIndex: pending.memberIndex,
-            carry: pending.carry,
-            askingWorker: memberName,
-            question: ask.question,
-            askedAt: Date.now(),
-          });
-        } catch (_) { /* chat may not exist */ }
+        this.persistPendingTeam(message.chatId, {
+          mode: 'sequential',
+          teamName: pending.teamName,
+          task: pending.task,
+          memberIndex: pending.memberIndex,
+          carry: pending.carry,
+          askingWorker: memberName,
+          question: ask.question,
+          askedAt: Date.now(),
+        });
         await this.sendResponse({
           chatId: message.chatId,
           channel: message.channel,
@@ -2196,22 +2226,20 @@ Example: /model gpt-4.1 write a Python script`;
       ? [...seededHistory, { worker: pending.askingWorker, summary: turn.summary_of_last }]
       : seededHistory;
     if (ask) {
-      try {
-        this.chatManager.setPendingTeam(message.chatId, {
-          mode: 'auto',
-          teamName: pending.teamName,
-          task: pending.task,
-          history: newHistory,
-          lastWorker: turn.next,
-          lastOutput: response.output,
-          partsSoFar: newParts,
-          seenWorkers: newSeen,
-          step: pending.step + 1,
-          askingWorker: turn.next,
-          question: ask.question,
-          askedAt: Date.now(),
-        });
-      } catch (_) { /* chat may not exist */ }
+      this.persistPendingTeam(message.chatId, {
+        mode: 'auto',
+        teamName: pending.teamName,
+        task: pending.task,
+        history: newHistory,
+        lastWorker: turn.next,
+        lastOutput: response.output,
+        partsSoFar: newParts,
+        seenWorkers: newSeen,
+        step: pending.step + 1,
+        askingWorker: turn.next,
+        question: ask.question,
+        askedAt: Date.now(),
+      });
       await this.sendResponse({
         chatId: message.chatId,
         channel: message.channel,
@@ -2289,7 +2317,7 @@ Example: /model gpt-4.1 write a Python script`;
           question: ask.question,
           askedAt: Date.now(),
         };
-        try { this.chatManager.setPendingTeam(chatId, pending); } catch (_) { /* chat may be missing in some channels */ }
+        this.persistPendingTeam(chatId, pending);
         await this.sendResponse({
           chatId,
           channel,
@@ -2374,22 +2402,20 @@ Example: /model gpt-4.1 write a Python script`;
         const p = result.paused;
         const wm = this.workspaceManager.getWorkerManager();
         const askWorkerName = wm.getWorker(p.askingWorker)?.name ?? p.askingWorker;
-        try {
-          this.chatManager.setPendingTeam(chatId, {
-            mode: 'auto',
-            teamName,
-            task: prompt,
-            history: p.history,
-            lastWorker: p.lastWorker,
-            lastOutput: p.lastOutput,
-            partsSoFar: p.parts,
-            seenWorkers: p.seenWorkers,
-            step: p.step,
-            askingWorker: p.askingWorker,
-            question: p.question,
-            askedAt: Date.now(),
-          });
-        } catch (_) { /* chat may not exist */ }
+        this.persistPendingTeam(chatId, {
+          mode: 'auto',
+          teamName,
+          task: prompt,
+          history: p.history,
+          lastWorker: p.lastWorker,
+          lastOutput: p.lastOutput,
+          partsSoFar: p.parts,
+          seenWorkers: p.seenWorkers,
+          step: p.step,
+          askingWorker: p.askingWorker,
+          question: p.question,
+          askedAt: Date.now(),
+        });
         const text = renderQuestionMessage(askWorkerName, '', p.question);
         sink({ type: 'stream', chatId, token: text });
         return { response: text };
@@ -2423,18 +2449,16 @@ Example: /model gpt-4.1 write a Python script`;
       const ask = parseAskUser(response.output);
       if (ask) {
         const askWorkerName = workerManager.getWorker(memberName)?.name ?? memberName;
-        try {
-          this.chatManager.setPendingTeam(chatId, {
-            mode: 'sequential',
-            teamName,
-            task: prompt,
-            memberIndex: i,
-            carry,
-            askingWorker: memberName,
-            question: ask.question,
-            askedAt: Date.now(),
-          });
-        } catch (_) { /* chat may not exist */ }
+        this.persistPendingTeam(chatId, {
+          mode: 'sequential',
+          teamName,
+          task: prompt,
+          memberIndex: i,
+          carry,
+          askingWorker: memberName,
+          question: ask.question,
+          askedAt: Date.now(),
+        });
         const text = renderQuestionMessage(askWorkerName, ask.preamble, ask.question);
         sink({ type: 'stream', chatId, token: text });
         return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + text : text };

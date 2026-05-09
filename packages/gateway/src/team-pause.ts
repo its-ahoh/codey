@@ -1,4 +1,14 @@
-import { PendingTeamState } from '@codey/core';
+import { PendingTeamState, parseAsk } from '@codey/core';
+
+/**
+ * Returns the worker output with the [ASK_USER] / [ASK: name] marker line
+ * removed (and any trailing content after it). Used when persisting pause
+ * state so the marker doesn't leak into the rendered run log on resume.
+ */
+export function stripAskMarker(output: string): string {
+  const ask = parseAsk(output);
+  return ask ? ask.preamble : output;
+}
 
 /** User-visible message rendered when a team pauses on a worker question. */
 export function renderQuestionMessage(
