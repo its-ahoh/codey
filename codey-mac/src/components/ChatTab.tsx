@@ -424,7 +424,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 maxWidth: '72%', padding: '10px 14px',
                 borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
                 background: isUser ? C.userBg : C.aiBg,
-                color: C.fg, fontSize: 13, lineHeight: 1.55, wordBreak: 'break-word',
+                color: isUser ? '#ffffff' : C.fg, fontSize: 13, lineHeight: 1.55, wordBreak: 'break-word',
                 boxShadow: isUser ? 'none' : '0 1px 3px rgba(0,0,0,0.3)',
                 border: isUser ? 'none' : `1px solid ${C.border2}`,
               }}>
