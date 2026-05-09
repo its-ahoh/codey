@@ -2109,9 +2109,16 @@ Example: /model gpt-4.1 write a Python script`;
       const memberName = team.members[pending.memberIndex];
       const codingAgent = wm.getWorkerCodingAgent(memberName) as CodingAgent;
       const modelConfig = this.getModelConfig(codingAgent, wm.getWorkerModel(memberName));
-      const reprompt = wm.buildWorkerPrompt(
+      const seqRoster = team.members.map(n => ({ name: n, hint: wm.getDispatchHint(n) }));
+      const seqNextName = team.members[pending.memberIndex + 1];
+      const seqNextWorker = seqNextName
+        ? { name: seqNextName, hint: wm.getDispatchHint(seqNextName) }
+        : null;
+      const reprompt = wm.buildSequentialWorkerPrompt(
         memberName,
         `${pending.carry}\n\n[User answer to your question "${pending.question}"]:\n${answer}`,
+        seqRoster,
+        seqNextWorker,
       );
       await this.sendResponse({
         chatId: message.chatId,
@@ -2298,7 +2305,17 @@ Example: /model gpt-4.1 write a Python script`;
         channel,
         text: `🔄 Worker **${worker.name}** is working...`,
       });
-      const prompt = workerManager.buildWorkerPrompt(memberName, currentTask);
+      const roster = members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
+      const nextName = members[i + 1];
+      const nextWorker = nextName
+        ? { name: nextName, hint: workerManager.getDispatchHint(nextName) }
+        : null;
+      const prompt = workerManager.buildSequentialWorkerPrompt(
+        memberName,
+        currentTask,
+        roster,
+        nextWorker,
+      );
       const modelConfig = this.getModelConfig(codingAgent, model);
       const response = await runOneWorker(memberName, prompt, codingAgent, modelConfig);
       if (!response.success) {
@@ -2437,7 +2454,17 @@ Example: /model gpt-4.1 write a Python script`;
       if (signal?.aborted) break;
       const memberName = team.members[i];
       sink({ type: 'info', chatId, message: `Step ${i + 1}/${team.members.length}: ${memberName}` });
-      const stepPrompt = workerManager.buildWorkerPrompt(memberName, carry);
+      const seqRoster = team.members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
+      const seqNextName = team.members[i + 1];
+      const seqNextWorker = seqNextName
+        ? { name: seqNextName, hint: workerManager.getDispatchHint(seqNextName) }
+        : null;
+      const stepPrompt = workerManager.buildSequentialWorkerPrompt(
+        memberName,
+        carry,
+        seqRoster,
+        seqNextWorker,
+      );
       const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
       const workerModel = workerManager.getWorkerModel(memberName);
       const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);

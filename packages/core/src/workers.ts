@@ -207,6 +207,45 @@ export class WorkerManager {
   }
 
   /**
+   * Sequential-mode variant. Includes the full team roster and (optionally) the
+   * next worker in the chain so this worker can shape its output to feed into
+   * the next step. Sequential mode has no Manager arbitration, so we keep only
+   * the `[ASK_USER]:` marker (no forwarding).
+   */
+  buildSequentialWorkerPrompt(
+    name: string,
+    task: string,
+    roster: Array<{ name: string; hint: string }>,
+    nextWorker: { name: string; hint: string } | null,
+  ): string {
+    const worker = this.getWorker(name);
+    if (!worker) return task;
+    const rosterLines = roster.length > 0
+      ? roster.map(r => `- ${r.name}: ${r.hint || '(no description)'}`).join('\n')
+      : '(you are the only worker on this team)';
+    const nextSection = nextWorker
+      ? `Next up after you: **${nextWorker.name}** — ${nextWorker.hint || '(no description)'}.\nShape your output so it gives them what they need to do their step well: be explicit about decisions, hand off open questions clearly, and avoid burying important context in passing remarks.`
+      : 'You are the last worker in this run. Aim for a complete, polished result.';
+    return [
+      `# Worker: ${worker.name}`,
+      `## Role`,
+      worker.personality.role,
+      `## Personality`,
+      worker.personality.soul,
+      `## Instructions`,
+      worker.personality.instructions,
+      `## Teammates (full sequence)`,
+      rosterLines,
+      `## Handoff`,
+      nextSection,
+      `## Pause for user input`,
+      'If you cannot proceed without information from the user, output a single line `[ASK_USER]: <your question>` and stop. Do not guess.',
+      `## Task`,
+      task,
+    ].join('\n\n');
+  }
+
+  /**
    * Auto-mode variant of buildWorkerPrompt. Injects the team roster (excluding self)
    * so the worker can address questions to a specific teammate via `[ASK: name]: q`,
    * falling back to `[ASK_USER]: q` when no teammate can help.
