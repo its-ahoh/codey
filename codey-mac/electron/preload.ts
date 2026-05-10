@@ -89,6 +89,8 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.invoke('chats:link', chatId, channel, channelUserId),
     unlink: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) =>
       ipcRenderer.invoke('chats:unlink', chatId, channel, channelUserId),
+    updateContextPanelOpen: (id: string, open: boolean | null) =>
+      ipcRenderer.invoke('chats:updateContextPanelOpen', id, open),
     send: (payload: { chatId: string; text: string; attachments?: any[] }) =>
       ipcRenderer.invoke('chats:send', payload),
     stop: (chatId: string) => ipcRenderer.invoke('chats:stop', chatId),
@@ -107,6 +109,7 @@ contextBridge.exposeInMainWorld('codey', {
   },
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
+  revealInFolder: (path: string) => ipcRenderer.invoke('shell:showItemInFolder', path),
   onLog: (handler: (msg: string) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, msg: string) => handler(msg)
     ipcRenderer.on('gateway-log', listener)

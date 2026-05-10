@@ -694,6 +694,13 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('chats:updateContextPanelOpen', async (_e, id: string, open: boolean | null) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.getChatManager().updateContextPanelOpen(id, open)
+    })
+  )
+
   ipcMain.handle('chats:stop', async (_e, chatId: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
@@ -824,4 +831,10 @@ ipcMain.handle('open-external', (_event, url: string) => {
 ipcMain.handle('shell:openPath', async (_event, p: string) => {
   if (typeof p !== 'string' || !p) return ''
   return await shell.openPath(p)
+})
+
+ipcMain.handle('shell:showItemInFolder', async (_event, p: string) => {
+  if (typeof p !== 'string' || !p) return false
+  shell.showItemInFolder(p)
+  return true
 })

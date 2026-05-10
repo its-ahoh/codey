@@ -178,6 +178,7 @@ interface ChatsContextValue {
   deleteChat: (chatId: string) => Promise<void>
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
   setAgentModel: (chatId: string, agent: string | null, model: string | null) => Promise<void>
+  setContextPanelOpen: (chatId: string, open: boolean | null) => Promise<void>
   sendMessage: (chatId: string, text: string, attachments?: FileAttachment[]) => Promise<void>
   stopChat: (chatId: string) => Promise<void>
   toggleWorkspace: (workspaceName: string) => void
@@ -324,6 +325,10 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     async setAgentModel(chatId, agent, model) {
       const chat = await apiService.chats.updateAgentModel(chatId, agent, model)
+      dispatch({ type: 'upsert', chat })
+    },
+    async setContextPanelOpen(chatId, open) {
+      const chat = await apiService.chats.updateContextPanelOpen(chatId, open)
       dispatch({ type: 'upsert', chat })
     },
     async sendMessage(chatId, text, attachments) {
