@@ -123,6 +123,17 @@ export class ChatManager {
     return chat;
   }
 
+  /** Set or clear the per-chat context-panel preference. Pass null to clear
+   *  (returns to "undecided" so auto-open logic applies again). */
+  updateContextPanelOpen(chatId: string, open: boolean | null): Chat {
+    const chat = this.requireChat(chatId);
+    if (open === null) delete chat.contextPanelOpen;
+    else chat.contextPanelOpen = open;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
   /** Set or clear pendingTeam state for a chat. Pass null to clear. */
   setPendingTeam(chatId: string, pending: NonNullable<Chat['pendingTeam']> | null): Chat {
     this.ensureLoaded();
