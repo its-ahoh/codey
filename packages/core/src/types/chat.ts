@@ -54,4 +54,8 @@ export interface Chat {
   routes?: ChatRoute[];
   /** Set while a /team run is paused waiting for the user to answer a worker's question. */
   pendingTeam?: PendingTeamState;
+  /** Per-chat preference for the right-side context panel in codey-mac.
+   *  undefined = user hasn't decided; auto-open logic applies on first tool call.
+   *  true/false = explicit user choice; honored verbatim. */
+  contextPanelOpen?: boolean;
 }
