@@ -111,6 +111,12 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     const n = v ? parseInt(v, 10) : NaN
     return Number.isFinite(n) ? Math.max(260, Math.min(520, n)) : 340
   })
+  const [winNarrow, setWinNarrow] = useState<boolean>(() => window.innerWidth < 900)
+  useEffect(() => {
+    const onResize = () => setWinNarrow(window.innerWidth < 900)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
   const dragDepthRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -212,7 +218,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     }
     return null
   })()
-  const panelOpen: boolean = chat?.contextPanelOpen ?? false
+  const panelOpen: boolean = !winNarrow && (chat?.contextPanelOpen ?? false)
 
   const selectionValue: string = chat.selection.type === 'worker'
     ? `worker:${chat.selection.name}`
