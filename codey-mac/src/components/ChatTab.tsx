@@ -189,7 +189,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   }, [chat?.id, chat?.contextPanelOpen, lastMsg?.toolCalls?.length])
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'i' || e.key === 'I')) {
+      // Cmd/Ctrl+Backslash mirrors VS Code's toggle-sidebar binding and avoids
+      // colliding with Electron's built-in Cmd+Shift+I devtools accelerator.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === '\\') {
         e.preventDefault()
         if (chat) setContextPanelOpen(chat.id, !(chat.contextPanelOpen ?? false))
       }
@@ -458,7 +460,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         <button
           onClick={() => setContextPanelOpen(chat.id, !panelOpen)}
           style={styles.linkBtn}
-          title={panelOpen ? 'Hide context panel (⌘⇧I)' : 'Show context panel (⌘⇧I)'}
+          title={panelOpen ? 'Hide context panel (⌘\\)' : 'Show context panel (⌘\\)'}
         >
           {panelOpen ? '◧' : '◨'}
         </button>
