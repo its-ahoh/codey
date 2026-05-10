@@ -16,6 +16,8 @@ interface Props {
   workerName?: string
   /** Team name actively bound, when chat selection is a team. */
   teamName?: string
+  /** Working directory of the workspace, used to render relative file paths. */
+  workingDir?: string
   width: number
   onFollowLatest: () => void
   onClose: () => void
@@ -35,7 +37,7 @@ const formatTokens = (n: number): string | null => {
 
 export const ChatContextPanel: React.FC<Props> = ({
   chat, selectedTurnId, followLatest, selectedTurnIndex,
-  effectiveAgent, effectiveModel, workerName, teamName,
+  effectiveAgent, effectiveModel, workerName, teamName, workingDir,
   width, onFollowLatest, onClose, onResize, onRevealFile,
 }) => {
   const turn: ChatMessage | undefined = selectedTurnId
@@ -100,6 +102,7 @@ export const ChatContextPanel: React.FC<Props> = ({
         </Section>
 
         {turn && <ToolTimeline toolCalls={turn.toolCalls ?? []} />}
+        {turn && <FilesTouched toolCalls={turn.toolCalls ?? []} workingDir={workingDir} onReveal={onRevealFile} />}
         {turn && (turn.toolCalls?.length ?? 0) === 0 && (
           <Section title="Tool calls">
             <div style={styles.emptyHint}>No tool activity for this turn.</div>
@@ -109,6 +112,71 @@ export const ChatContextPanel: React.FC<Props> = ({
       </div>
     </div>
   )
+}
+
+const FILE_TOOLS = new Set(['Read', 'Edit', 'Write', 'NotebookEdit'])
+
+const FilesTouched: React.FC<{
+  toolCalls: import('../types').ToolCallEntry[]
+  workingDir?: string
+  onReveal: (absPath: string) => void
+}> = ({ toolCalls, workingDir, onReveal }) => {
+  const paths: string[] = []
+  const seen = new Set<string>()
+  for (const tc of toolCalls) {
+    if (tc.type !== 'tool_start') continue
+    if (!tc.tool || !FILE_TOOLS.has(tc.tool)) continue
+    const p = (tc.input as any)?.file_path
+    if (typeof p !== 'string' || !p) continue
+    if (!seen.has(p)) { seen.add(p); paths.push(p) }
+  }
+  if (paths.length === 0) return null
+
+  const display = (abs: string): string => {
+    if (workingDir && abs.startsWith(workingDir)) {
+      const rel = abs.slice(workingDir.length).replace(/^\/+/, '')
+      return rel || abs
+    }
+    return abs
+  }
+
+  return (
+    <Section title="Files touched">
+      <div style={filesStyles.list}>
+        {paths.sort().map(p => (
+          <div key={p} style={filesStyles.row} title={p}>
+            <span style={filesStyles.path}>{display(p)}</span>
+            <button
+              style={filesStyles.iconBtn}
+              onClick={() => onReveal(p)}
+              title="Reveal in Finder"
+            >⤴</button>
+            <button
+              style={filesStyles.iconBtn}
+              onClick={() => navigator.clipboard.writeText(p)}
+              title="Copy path"
+            >⧉</button>
+          </div>
+        ))}
+      </div>
+    </Section>
+  )
+}
+
+const filesStyles: Record<string, React.CSSProperties> = {
+  list: { display: 'flex', flexDirection: 'column', gap: 2 },
+  row: {
+    display: 'flex', alignItems: 'center', gap: 4,
+    padding: '2px 0', fontSize: 11,
+  },
+  path: {
+    flex: 1, color: C.fg2, fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
+  },
+  iconBtn: {
+    background: 'transparent', border: 'none', color: C.fg3,
+    cursor: 'pointer', fontSize: 12, padding: '0 4px', flexShrink: 0,
+  },
 }
 
 const ToolTimeline: React.FC<{ toolCalls: import('../types').ToolCallEntry[] }> = ({ toolCalls }) => {

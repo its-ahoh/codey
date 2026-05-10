@@ -126,6 +126,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     if (!chat?.workspaceName) return
     apiService.getTeams(chat.workspaceName).then(t => setTeamNames(Object.keys(t))).catch(() => setTeamNames([]))
   }, [chat?.workspaceName])
+  const [workingDir, setWorkingDir] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    if (!chat?.workspaceName) return
+    apiService.getWorkspaceInfo(chat.workspaceName)
+      .then(info => setWorkingDir(info.workingDir))
+      .catch(() => setWorkingDir(undefined))
+  }, [chat?.workspaceName])
   useEffect(() => {
     if (!isGatewayRunning) return
     ;(async () => {
@@ -727,6 +734,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           effectiveModel={effectiveModel}
           workerName={panelWorkerName}
           teamName={panelTeamName}
+          workingDir={workingDir}
           width={panelWidth}
           onFollowLatest={() => setFollowLatest(true)}
           onClose={() => setContextPanelOpen(chat.id, false)}
