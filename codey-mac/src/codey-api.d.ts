@@ -86,6 +86,7 @@ declare global {
         onEvent: (handler: (ev: ChatStreamEvent) => void) => () => void
         link: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<IpcResult<void>>
         unlink: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<IpcResult<void>>
+        updateContextPanelOpen: (id: string, open: boolean | null) => Promise<IpcResult<Chat>>
       }
       pairing: {
         start: (channel: 'telegram' | 'discord' | 'imessage') => Promise<IpcResult<string>>
@@ -107,6 +108,7 @@ declare global {
       }
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<string>
+      revealInFolder: (path: string) => Promise<boolean>
       onLog: (handler: (msg: string) => void) => () => void
     }
   }
