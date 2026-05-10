@@ -44,6 +44,23 @@ export const ChatContextPanel: React.FC<Props> = ({
     ? chat.messages.find(m => m.id === selectedTurnId && m.role === 'assistant')
     : undefined
 
+  const triggeringUserMsg: ChatMessage | undefined = (() => {
+    if (!turn) return undefined
+    const idx = chat.messages.findIndex(m => m.id === turn.id)
+    if (idx <= 0) return undefined
+    for (let i = idx - 1; i >= 0; i--) {
+      if (chat.messages[i].role === 'user') return chat.messages[i]
+    }
+    return undefined
+  })()
+
+  const latestAssistantId: string | null = (() => {
+    for (let i = chat.messages.length - 1; i >= 0; i--) {
+      if (chat.messages[i].role === 'assistant') return chat.messages[i].id
+    }
+    return null
+  })()
+
   // Resize drag handler
   const onResizerMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -103,6 +120,12 @@ export const ChatContextPanel: React.FC<Props> = ({
 
         {turn && <ToolTimeline toolCalls={turn.toolCalls ?? []} />}
         {turn && <FilesTouched toolCalls={turn.toolCalls ?? []} workingDir={workingDir} onReveal={onRevealFile} />}
+        {triggeringUserMsg?.attachments && triggeringUserMsg.attachments.length > 0 && (
+          <AttachmentsSection attachments={triggeringUserMsg.attachments} />
+        )}
+        {chat.pendingTeam && turn && turn.id === latestAssistantId && (
+          <PendingTeamSection pending={chat.pendingTeam} />
+        )}
         {turn && (turn.toolCalls?.length ?? 0) === 0 && (
           <Section title="Tool calls">
             <div style={styles.emptyHint}>No tool activity for this turn.</div>
@@ -308,6 +331,75 @@ const timelineStyles: Record<string, React.CSSProperties> = {
     color: C.fg, fontSize: 11, fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     margin: '4px 0 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
   },
+}
+
+const AttachmentsSection: React.FC<{ attachments: import('../types').FileAttachment[] }> = ({ attachments }) => {
+  if (!attachments.length) return null
+  return (
+    <Section title="Attachments">
+      <div style={attStyles.row}>
+        {attachments.map(a => {
+          const isImage = a.mimeType.startsWith('image/')
+          if (isImage) {
+            return (
+              <img
+                key={a.id}
+                src={`codey-asset://file/${encodeURIComponent(a.path)}`}
+                alt={a.name}
+                title={a.name}
+                style={attStyles.img}
+                onClick={() => window.codey?.openPath?.(a.path)}
+              />
+            )
+          }
+          return (
+            <div key={a.id} style={attStyles.chip} title={a.name} onClick={() => window.codey?.openPath?.(a.path)}>
+              {a.name}
+            </div>
+          )
+        })}
+      </div>
+    </Section>
+  )
+}
+
+const attStyles: Record<string, React.CSSProperties> = {
+  row: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  img: {
+    width: 64, height: 64, objectFit: 'cover',
+    borderRadius: 6, border: `1px solid ${C.border2}`, cursor: 'pointer',
+  },
+  chip: {
+    padding: '4px 8px', background: C.surface3, border: `1px solid ${C.border2}`,
+    borderRadius: 6, fontSize: 11, color: C.fg2, cursor: 'pointer',
+    maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+}
+
+const PendingTeamSection: React.FC<{ pending: NonNullable<Chat['pendingTeam']> }> = ({ pending }) => {
+  // Both variants of PendingTeamState (mode: 'sequential' and mode: 'auto')
+  // expose askingWorker + question — see packages/core/src/types/pending-team.ts.
+  const workerName = pending.askingWorker
+  const question = pending.question
+  return (
+    <Section title="Pending team">
+      <div style={pendStyles.callout}>
+        <div style={pendStyles.title}>Waiting on input for {workerName}</div>
+        {question && <div style={pendStyles.body}>{question}</div>}
+        <div style={pendStyles.hint}>Type a reply in the chat to resume the team.</div>
+      </div>
+    </Section>
+  )
+}
+
+const pendStyles: Record<string, React.CSSProperties> = {
+  callout: {
+    background: 'rgba(255, 196, 0, 0.10)', border: '1px solid rgba(255, 196, 0, 0.35)',
+    borderRadius: 6, padding: '8px 10px',
+  },
+  title: { color: C.fg, fontSize: 12, fontWeight: 600, marginBottom: 4 },
+  body: { color: C.fg2, fontSize: 11, marginBottom: 6, whiteSpace: 'pre-wrap' },
+  hint: { color: C.fg3, fontSize: 10, fontStyle: 'italic' },
 }
 
 const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
