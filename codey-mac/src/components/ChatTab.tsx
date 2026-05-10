@@ -167,6 +167,14 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     setSelectedTurnIdState(null)
   }, [chatId])
   useEffect(() => {
+    if (!chat) return
+    if (chat.contextPanelOpen !== undefined) return
+    const hasToolActivity = chat.messages.some(
+      m => m.role === 'assistant' && (m.toolCalls?.length ?? 0) > 0
+    )
+    if (hasToolActivity) setContextPanelOpen(chat.id, true)
+  }, [chat?.id, chat?.contextPanelOpen, lastMsg?.toolCalls?.length])
+  useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'i' || e.key === 'I')) {
         e.preventDefault()
