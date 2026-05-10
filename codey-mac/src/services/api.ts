@@ -80,6 +80,10 @@ export const apiService = {
   pickDirectory: async (): Promise<string | null> =>
     unwrap(await window.codey.dialog.pickDirectory()),
 
+  revealInFolder: async (absPath: string): Promise<void> => {
+    try { await window.codey.revealInFolder(absPath) } catch { /* silent no-op */ }
+  },
+
   // Teams
   getTeams: async (workspace?: string): Promise<Record<string, TeamConfigRaw>> =>
     unwrap(await window.codey.teams.get(workspace)),
@@ -153,6 +157,8 @@ export const apiService = {
       unwrap(await window.codey.chats.updateSelection(id, selection)),
     updateAgentModel: async (id: string, agent: string | null, model: string | null): Promise<Chat> =>
       unwrap(await window.codey.chats.updateAgentModel(id, agent, model)),
+    updateContextPanelOpen: async (id: string, open: boolean | null): Promise<Chat> =>
+      unwrap(await window.codey.chats.updateContextPanelOpen(id, open)),
     upload: async (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer): Promise<{ id: string; name: string; path: string; mimeType: string; size: number }> =>
       unwrap(await window.codey.chats.upload(chatId, fileName, mimeType, data)),
     send: async (chatId: string, text: string, attachments?: { id: string; name: string; path: string; mimeType: string; size: number }[]): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> =>
