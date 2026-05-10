@@ -7,6 +7,7 @@ import { Markdown } from './Markdown'
 import { formatHeadline, hasDetail as toolHasDetail, ToolDetail, normalizeTool } from './toolFormat'
 import { RouteIcons } from './RouteIcons'
 import { PairingModal } from './PairingModal'
+import { ChatContextPanel } from './ChatContextPanel'
 
 interface Props {
   chatId: string
@@ -84,7 +85,7 @@ const AGENT_API_TYPE: Record<string, 'anthropic' | 'openai'> = {
 type ModelEntry = { apiType: 'anthropic' | 'openai'; model: string }
 
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
-  const { state, sendMessage, stopChat, setSelection, setAgentModel, renameChat } = useChats()
+  const { state, sendMessage, stopChat, setSelection, setAgentModel, renameChat, setContextPanelOpen } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -103,6 +104,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [pairings, setPairings] = useState<Array<{ channel: 'telegram'|'discord'|'imessage'; channelUserId: string }>>([])
   const [pairingModal, setPairingModal] = useState<null | 'telegram' | 'discord' | 'imessage'>(null)
+  const [followLatest, setFollowLatest] = useState(true)
+  const [selectedTurnIdState, setSelectedTurnIdState] = useState<string | null>(null)
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    const v = localStorage.getItem('codey.contextPanelWidth')
+    const n = v ? parseInt(v, 10) : NaN
+    return Number.isFinite(n) ? Math.max(260, Math.min(520, n)) : 340
+  })
   const dragDepthRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -153,8 +161,43 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [flight, chatId])
+  useEffect(() => { localStorage.setItem('codey.contextPanelWidth', String(panelWidth)) }, [panelWidth])
+  useEffect(() => {
+    setFollowLatest(true)
+    setSelectedTurnIdState(null)
+  }, [chatId])
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault()
+        if (chat) setContextPanelOpen(chat.id, !(chat.contextPanelOpen ?? false))
+      }
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [chat?.id, chat?.contextPanelOpen])
 
   if (!chat) return null
+
+  const latestAssistantId: string | null = (() => {
+    for (let i = chat.messages.length - 1; i >= 0; i--) {
+      if (chat.messages[i].role === 'assistant') return chat.messages[i].id
+    }
+    return null
+  })()
+  const selectedTurnId: string | null = followLatest ? latestAssistantId : selectedTurnIdState
+  const selectedTurnIndex: number | null = (() => {
+    if (!selectedTurnId) return null
+    let n = 0
+    for (const m of chat.messages) {
+      if (m.role === 'assistant') {
+        n++
+        if (m.id === selectedTurnId) return n
+      }
+    }
+    return null
+  })()
+  const panelOpen: boolean = chat?.contextPanelOpen ?? false
 
   const selectionValue: string = chat.selection.type === 'worker'
     ? `worker:${chat.selection.name}`
@@ -275,6 +318,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     setInput('')
     setPendingAttachments([])
     if (taRef.current) taRef.current.style.height = 'auto'
+    setFollowLatest(true)
     await sendMessage(chat.id, text, atts)
   }
 
@@ -324,8 +368,12 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     : flight?.agentStatus === 'writing'  ? 'Writing…'
     : ''
 
+  const panelWorkerName = chat.selection.type === 'worker' ? chat.selection.name : undefined
+  const panelTeamName = chat.selection.type === 'team' ? chat.selection.name : undefined
+
   return (
-    <div style={styles.container}>
+    <div style={styles.outer}>
+      <div style={styles.container}>
       <div style={styles.header}>
         {editingTitle ? (
           <input
@@ -386,6 +434,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
             </select>
           </>
         )}
+        <button
+          onClick={() => setContextPanelOpen(chat.id, !panelOpen)}
+          style={styles.linkBtn}
+          title={panelOpen ? 'Hide context panel (⌘⇧I)' : 'Show context panel (⌘⇧I)'}
+        >
+          {panelOpen ? '◧' : '◨'}
+        </button>
         <RouteIcons routes={chat.routes} />
         <button
           onClick={onLinkButton}
@@ -414,12 +469,22 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         )}
         {chat.messages.map(msg => {
           const isUser = msg.role === 'user'
+          const isSelected = !isUser && msg.id === selectedTurnId && panelOpen
           return (
-            <div key={msg.id} style={{
-              display: 'flex', flexDirection: 'column',
-              alignItems: isUser ? 'flex-end' : 'flex-start',
-              marginBottom: 12,
-            }}>
+            <div key={msg.id}
+              onClick={isUser ? undefined : () => {
+                setSelectedTurnIdState(msg.id)
+                setFollowLatest(false)
+              }}
+              style={{
+                display: 'flex', flexDirection: 'column',
+                alignItems: isUser ? 'flex-end' : 'flex-start',
+                marginBottom: 12,
+                cursor: isUser ? 'default' : 'pointer',
+                paddingLeft: !isUser ? 6 : 0,
+                borderLeft: isSelected ? `2px solid ${C.accent}` : '2px solid transparent',
+              }}
+            >
               <div style={{
                 maxWidth: '72%', padding: '10px 14px',
                 borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
@@ -643,12 +708,31 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
       {pairingModal && (
         <PairingModal channel={pairingModal} onClose={() => setPairingModal(null)} />
       )}
+      </div>
+      {panelOpen && (
+        <ChatContextPanel
+          chat={chat}
+          selectedTurnId={selectedTurnId}
+          followLatest={followLatest}
+          selectedTurnIndex={selectedTurnIndex}
+          effectiveAgent={effectiveAgent}
+          effectiveModel={effectiveModel}
+          workerName={panelWorkerName}
+          teamName={panelTeamName}
+          width={panelWidth}
+          onFollowLatest={() => setFollowLatest(true)}
+          onClose={() => setContextPanelOpen(chat.id, false)}
+          onResize={setPanelWidth}
+          onRevealFile={(p) => apiService.revealInFolder(p)}
+        />
+      )}
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { display: 'flex', flexDirection: 'column', height: '100%' },
+  outer: { display: 'flex', flexDirection: 'row', height: '100%', minHeight: 0 },
+  container: { display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0 },
   header: {
     padding: '10px 16px', borderBottom: `1px solid ${C.border}`,
     display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
