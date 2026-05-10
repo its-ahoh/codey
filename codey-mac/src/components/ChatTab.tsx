@@ -64,6 +64,14 @@ const FileIcon: React.FC<{ color: string; size?: number }> = ({ color, size = 14
   </svg>
 )
 
+const PanelRightIcon: React.FC<{ color: string; size?: number; filled?: boolean }> = ({ color, size = 14, filled }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <line x1="15" y1="3" x2="15" y2="21" />
+    {filled && <rect x="15" y="3" width="6" height="18" rx="0" fill={color} stroke="none" />}
+  </svg>
+)
+
 const assetUrl = (absPath: string): string =>
   `codey-asset://file/${encodeURIComponent(absPath)}`
 
@@ -459,10 +467,11 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         )}
         <button
           onClick={() => setContextPanelOpen(chat.id, !panelOpen)}
-          style={styles.linkBtn}
+          style={{ ...styles.linkBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px' }}
           title={panelOpen ? 'Hide context panel (⌘\\)' : 'Show context panel (⌘\\)'}
+          aria-label={panelOpen ? 'Hide context panel' : 'Show context panel'}
         >
-          {panelOpen ? '◧' : '◨'}
+          <PanelRightIcon color={C.fg} filled={panelOpen} />
         </button>
         <RouteIcons routes={chat.routes} />
         <button
