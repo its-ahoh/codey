@@ -2929,7 +2929,7 @@ Example: /model gpt-4.1 write a Python script`;
       conversationId: ctxId,
       tokens: response.tokens?.total,
       durationSec: response.duration,
-      ...(httpAsk.options && httpAsk.options.length >= 2 ? { choices: httpAsk.options } : {}),
+      ...(httpAsk?.options && httpAsk.options.length >= 2 ? { choices: httpAsk.options } : {}),
     };
   }
 
