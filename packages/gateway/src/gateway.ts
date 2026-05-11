@@ -2950,9 +2950,20 @@ Example: /model gpt-4.1 write a Python script`;
     const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
 
+    // Persisted alongside the assistant message at completion. Declared here
+    // so the sink wrapper can capture 'info' events into it (see below).
+    const toolCalls: ToolCallEntry[] = [];
+
     // Tee every sink event to the registered global listener so other surfaces
-    // (e.g., the Mac app) see channel-driven chat updates too.
+    // (e.g., the Mac app) see channel-driven chat updates too. Also capture
+    // 'info' events into the persisted toolCalls array so the right Context
+    // Panel still shows manager routing reasons after a chat reload (info
+    // events come from team-mode orchestration via direct sink calls and
+    // never go through onStatus, so they would otherwise vanish on persist).
     const sink: ChatStreamSink = (ev) => {
+      if (ev.type === 'info') {
+        toolCalls.push({ id: randomUUID(), type: 'info', message: ev.message });
+      }
       try { sinkParam(ev); } catch { /* swallow */ }
       if (this.chatEventListener) {
         try { this.chatEventListener(ev); } catch { /* swallow */ }
@@ -3012,7 +3023,6 @@ Example: /model gpt-4.1 write a Python script`;
       ? this.getModelConfig(agent, chat.model)
       : this.getDefaultModelConfig(agent);
 
-    const toolCalls: ToolCallEntry[] = [];
     let streamedText = '';
 
     const onStream = (text: string) => {
