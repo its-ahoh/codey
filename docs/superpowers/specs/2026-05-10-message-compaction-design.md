@@ -52,7 +52,7 @@ The Mac UI parses any assistant message whose content matches this pattern and r
 - **Manager summary line** (if present): rendered at the top, visually emphasized (slightly larger / accent color). When `final_summary` is missing, nothing is shown in its place.
 - **Each Step**: a collapsible card.
   - Collapsed (default for completed steps): one row showing `▶ Step N: <worker> · <preview>`.
-    - `<preview>` = the **first sentence of the last non-empty paragraph** of the worker's output. "Sentence" = up to the first `。`/`.`/`!`/`?` (Chinese or ASCII), or the whole paragraph if no terminator. Truncated to ~120 chars with `…`.
+    - `<preview>` = a one-sentence excerpt from the last non-empty paragraph of the worker's output. For ASCII text, this is the last sentence of that paragraph (agents typically conclude at the end). For CJK text (no spaces between sentences), this is the first CJK-terminated sentence of the paragraph. If no terminator is present, the whole paragraph is used. Truncated to ~120 chars with `…`.
     - If the worker output is empty, preview shows `(no output)`.
   - Expanded: full worker markdown rendered with the existing `<Markdown>` component.
 - **Step status while running**: when a streaming response is in progress, the **last** parsed step is treated as "in progress" and rendered expanded by default; all earlier steps render collapsed. Once streaming completes (message no longer the streaming target), the last step also collapses.

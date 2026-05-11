@@ -92,6 +92,53 @@ const AGENT_API_TYPE: Record<string, 'anthropic' | 'openai'> = {
 }
 type ModelEntry = { apiType: 'anthropic' | 'openai'; model: string }
 
+const TeamMessage: React.FC<{
+  messageId: string
+  parsed: NonNullable<ReturnType<typeof parseTeamMessage>>
+  isStreaming: boolean
+  expanded: Set<string>
+  setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
+}> = ({ messageId, parsed, isStreaming, expanded, setExpanded }) => {
+  const lastIdx = parsed.steps.length - 1
+  const toggle = (key: string) => setExpanded(prev => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  })
+  return (
+    <div>
+      {parsed.summary && (
+        <div style={styles.teamSummary}>🧭 {parsed.summary}</div>
+      )}
+      {parsed.steps.map((s, i) => {
+        const baseKey = `${messageId}::${s.step}`
+        const isLastDuringStream = isStreaming && i === lastIdx
+        const collapsedMarker = baseKey + '::collapsed'
+        const isOpen = isLastDuringStream
+          ? !expanded.has(collapsedMarker)
+          : expanded.has(baseKey)
+        const onClick = () => toggle(isLastDuringStream ? collapsedMarker : baseKey)
+        const preview = extractPreview(s.output)
+        return (
+          <div key={baseKey} style={styles.teamStepCard}>
+            <div style={styles.teamStepHeader} onClick={onClick}>
+              <span style={{ ...styles.teamStepChevron, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+              <span style={styles.teamStepLabel}>Step {s.step}: {s.worker}</span>
+              {!isOpen && <span style={styles.teamStepPreview}> · {preview}</span>}
+            </div>
+            {isOpen && (
+              <div style={styles.teamStepBody}>
+                <Markdown variant="assistant">{s.output}</Markdown>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const { state, sendMessage, stopChat, setSelection, setAgentModel, renameChat, setContextPanelOpen } = useChats()
   const chat = state.chats[chatId]
@@ -392,52 +439,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         await apiService.linkChat(chat.id, p.channel, p.channelUserId)
       }
     }
-  }
-
-  const TeamMessage: React.FC<{
-    messageId: string
-    parsed: NonNullable<ReturnType<typeof parseTeamMessage>>
-    isStreaming: boolean
-    expanded: Set<string>
-    setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
-  }> = ({ messageId, parsed, isStreaming, expanded, setExpanded }) => {
-    const lastIdx = parsed.steps.length - 1
-    const toggle = (key: string) => setExpanded(prev => {
-      const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
-      return next
-    })
-    return (
-      <div>
-        {parsed.summary && (
-          <div style={styles.teamSummary}>🧭 {parsed.summary}</div>
-        )}
-        {parsed.steps.map((s, i) => {
-          const baseKey = `${messageId}::${s.step}`
-          const isLastDuringStream = isStreaming && i === lastIdx
-          const collapsedMarker = baseKey + '::collapsed'
-          const isOpen = isLastDuringStream
-            ? !expanded.has(collapsedMarker)
-            : expanded.has(baseKey)
-          const onClick = () => toggle(isLastDuringStream ? collapsedMarker : baseKey)
-          const preview = extractPreview(s.output)
-          return (
-            <div key={baseKey} style={styles.teamStepCard}>
-              <div style={styles.teamStepHeader} onClick={onClick}>
-                <span style={{ ...styles.teamStepChevron, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
-                <span style={styles.teamStepLabel}>Step {s.step}: {s.worker}</span>
-                {!isOpen && <span style={styles.teamStepPreview}> · {preview}</span>}
-              </div>
-              {isOpen && (
-                <div style={styles.teamStepBody}>
-                  <Markdown variant="assistant">{s.output}</Markdown>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    )
   }
 
   const isSending = !!flight
