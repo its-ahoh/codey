@@ -201,6 +201,7 @@ export class WorkerManager {
       worker.personality.instructions,
       `## Pause for user input`,
       'If you cannot proceed without information from the user, output a single line `[ASK_USER]: <your question>` and stop. Do not guess. Do not continue the work.',
+      'When the question is yes/no or a pick-one from a small set (≤ 8) of explicit options, prefer `[ASK_USER:choice]: <question> | <option 1> | <option 2>` so the user can answer with a tap. Use the free-text `[ASK_USER]:` form for open-ended questions.',
       `## Task`,
       task,
     ].join('\n\n');
@@ -240,6 +241,7 @@ export class WorkerManager {
       nextSection,
       `## Pause for user input`,
       'If you cannot proceed without information from the user, output a single line `[ASK_USER]: <your question>` and stop. Do not guess.',
+      'When the question is yes/no or a pick-one from a small set (≤ 8) of explicit options, prefer `[ASK_USER:choice]: <question> | <option 1> | <option 2>` so the user can answer with a tap. Use the free-text `[ASK_USER]:` form for open-ended questions.',
       `## Task`,
       task,
     ].join('\n\n');
@@ -282,6 +284,7 @@ export class WorkerManager {
         'If you need information you do not have:',
         '1. First check the Teammates list. If a teammate plausibly knows the answer, output a single line `[ASK: <teammate>]: <your question>` and stop. The team will route the question to that teammate directly.',
         '2. If no teammate could plausibly answer, output a single line `[ASK_USER]: <your question>` and stop. The manager will decide whether to ask the user or route to a teammate.',
+        'When the question is yes/no or a pick-one from a small set (≤ 8) of explicit options, prefer `[ASK_USER:choice]: <question> | <option 1> | <option 2>` so the user can answer with a tap. Use the free-text `[ASK_USER]:` form for open-ended questions.',
         'Use exactly one marker per output. Do not guess. Do not continue the work after emitting a marker.',
       ].join('\n'),
       `## Task`,

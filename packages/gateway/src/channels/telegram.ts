@@ -67,6 +67,7 @@ export class TelegramHandler extends BaseChannelHandler {
   name = 'telegram';
   private bot?: TelegramBot;
   private typingIntervals: Map<string, NodeJS.Timeout> = new Map();
+  private lastChoiceMessageByChat = new Map<string, number>(); // chatId → message_id
 
   private notifyChatId?: string;
 
@@ -123,6 +124,41 @@ export class TelegramHandler extends BaseChannelHandler {
       this.emitMessage(message);
     });
 
+    this.bot.on('callback_query', async (query: TelegramBot.CallbackQuery) => {
+      const data = query.data;
+      const fromId = query.from?.id?.toString();
+      const chatId = query.message?.chat?.id?.toString();
+      if (!data || !fromId || !chatId) {
+        this.bot!.answerCallbackQuery(query.id).catch(() => {});
+        return;
+      }
+      // Resolve indexed payload to a digit so the gateway's digit-mapping picks it up.
+      let text = data;
+      if (/^opt:\d+$/.test(data)) {
+        const idx = parseInt(data.slice(4), 10);
+        text = String(idx + 1);
+      }
+      this.bot!.answerCallbackQuery(query.id).catch(() => {}); // dismiss the spinner
+      // Clear buttons on the clicked message so it can't be clicked again
+      try {
+        await this.bot!.editMessageReplyMarkup(
+          { inline_keyboard: [] },
+          { chat_id: chatId, message_id: query.message?.message_id },
+        );
+      } catch { /* message too old or already edited; ignore */ }
+      this.lastChoiceMessageByChat.delete(chatId);
+      const message: UserMessage = {
+        id: `tg-${Date.now()}`,
+        channel: 'telegram',
+        userId: fromId,
+        username: query.from?.username ?? fromId,
+        chatId,
+        text,
+        timestamp: Date.now(),
+      };
+      this.emitMessage(message);
+    });
+
     console.log('[Telegram] Handler started');
   }
 
@@ -142,8 +178,22 @@ export class TelegramHandler extends BaseChannelHandler {
   async sendMessage(response: GatewayResponse): Promise<void> {
     if (!this.bot) return;
 
+    const chatId = response.chatId;
+
     // Stop typing indicator when sending a response
-    this.stopTyping(response.chatId);
+    this.stopTyping(chatId);
+
+    // Clear stale choice buttons from the previous bot message (if any)
+    const prior = this.lastChoiceMessageByChat.get(chatId);
+    if (prior !== undefined) {
+      try {
+        await this.bot.editMessageReplyMarkup(
+          { inline_keyboard: [] },
+          { chat_id: chatId, message_id: prior },
+        );
+      } catch { /* message too old or already edited; ignore */ }
+      this.lastChoiceMessageByChat.delete(chatId);
+    }
 
     const options: TelegramBot.SendMessageOptions = {
       parse_mode: 'HTML',
@@ -152,7 +202,26 @@ export class TelegramHandler extends BaseChannelHandler {
       options.reply_to_message_id = parseInt(response.replyTo);
     }
 
-    await this.bot.sendMessage(response.chatId, markdownToTelegramHtml(response.text), options);
+    if (response.choices && response.choices.length > 0) {
+      // Telegram callback_data limit is 64 bytes. Long labels fall back to indexed
+      // payload ("opt:N"); the channel intake below maps "opt:N" back to digit "N+1"
+      // and the gateway's digit-mapping helper resolves it via pendingTeam.options /
+      // lastAskedOptions.options.
+      const buttons = response.choices.map((label, idx) => {
+        const data = Buffer.byteLength(label, 'utf8') <= 60 ? label : `opt:${idx}`;
+        return { text: label, callback_data: data };
+      });
+      const rows: TelegramBot.InlineKeyboardButton[][] = [];
+      for (let i = 0; i < buttons.length; i += 3) rows.push(buttons.slice(i, i + 3));
+      options.reply_markup = { inline_keyboard: rows };
+    }
+
+    const sent = await this.bot.sendMessage(chatId, markdownToTelegramHtml(response.text), options);
+    // Track this message so the next sendMessage can clear its buttons if the user
+    // types a free-text reply instead of clicking
+    if (response.choices && response.choices.length > 0) {
+      this.lastChoiceMessageByChat.set(chatId, sent.message_id);
+    }
   }
 
   async sendToRoute(route: ChatRoute, text: string): Promise<void> {

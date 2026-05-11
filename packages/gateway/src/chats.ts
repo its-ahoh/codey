@@ -134,6 +134,24 @@ export class ChatManager {
     return chat;
   }
 
+  /** Set lastAskedOptions on a non-team chat (the question message id + options). */
+  setLastAskedOptions(chatId: string, messageId: string, options: string[]): void {
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    chat.lastAskedOptions = { messageId, options };
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+  }
+
+  /** Clear lastAskedOptions when the user sends any reply. */
+  clearLastAskedOptions(chatId: string): void {
+    const chat = this.cache.get(chatId);
+    if (!chat || !chat.lastAskedOptions) return;
+    delete chat.lastAskedOptions;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+  }
+
   /** Set or clear pendingTeam state for a chat. Pass null to clear. */
   setPendingTeam(chatId: string, pending: NonNullable<Chat['pendingTeam']> | null): Chat {
     this.ensureLoaded();

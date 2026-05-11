@@ -18,6 +18,8 @@ export type PendingTeamState =
       carry: string;
       askingWorker: string;
       question: string;
+      /** Options when worker emitted [ASK_USER:choice]; absent for free-text questions. */
+      options?: string[];
       askedAt: number;
     }
   | {
@@ -32,5 +34,6 @@ export type PendingTeamState =
       step: number;
       askingWorker: string;
       question: string;
+      options?: string[];
       askedAt: number;
     };

@@ -1,6 +1,10 @@
 {
   "workingDir": "./",
   "teams": {
-    "review": ["architect", "executor"]
+    "review": [
+      "architect",
+      "executor",
+      "code-reviewer"
+    ]
   }
 }
