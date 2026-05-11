@@ -2426,6 +2426,7 @@ Example: /model gpt-4.1 write a Python script`;
     const useManager = team.dispatch === 'auto' && !opts.forceAll;
 
     if (useManager) {
+      let isFirstStep = true;
       const result = await this.runManagerLoop(
         team,
         prompt,
@@ -2438,6 +2439,10 @@ Example: /model gpt-4.1 write a Python script`;
             chatId,
             message: `Step ${step}: ${worker}${isRevision ? ' (revision)' : ''} — ${reason}`,
           });
+          const label = isRevision ? `${worker} (revision)` : worker;
+          const sep = isFirstStep ? '' : '\n\n---\n\n';
+          sink({ type: 'stream', chatId, token: `${sep}### Step ${step}: ${label}\n\n` });
+          isFirstStep = false;
         },
         runOneWorker,
       );
@@ -2487,7 +2492,10 @@ Example: /model gpt-4.1 write a Python script`;
     for (let i = 0; i < team.members.length; i++) {
       if (signal?.aborted) break;
       const memberName = team.members[i];
-      sink({ type: 'info', chatId, message: `Step ${i + 1}/${team.members.length}: ${memberName}` });
+      const stepNum = i + 1;
+      sink({ type: 'info', chatId, message: `Step ${stepNum}/${team.members.length}: ${memberName}` });
+      const sep = i === 0 ? '' : '\n\n---\n\n';
+      sink({ type: 'stream', chatId, token: `${sep}### Step ${stepNum}: ${memberName}\n\n` });
       const seqRoster = team.members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
       const seqNextName = team.members[i + 1];
       const seqNextWorker = seqNextName
@@ -2504,7 +2512,7 @@ Example: /model gpt-4.1 write a Python script`;
       const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
       const response = await runOneWorker(memberName, stepPrompt, codingAgent, modelConfig);
       if (!response.success) {
-        parts.push(`### ${memberName}\n\n`);
+        parts.push(`### Step ${stepNum}: ${memberName}\n\n`);
         break;
       }
       const ask = parseAskUser(response.output);
@@ -2525,7 +2533,7 @@ Example: /model gpt-4.1 write a Python script`;
         sink({ type: 'stream', chatId, token: rendered6.text });
         return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + rendered6.text : rendered6.text, choices: rendered6.choices };
       }
-      parts.push(`### ${memberName}\n\n${response.output}`);
+      parts.push(`### Step ${stepNum}: ${memberName}\n\n${response.output}`);
       carry = response.output;
     }
     return { response: parts.join('\n\n---\n\n') };

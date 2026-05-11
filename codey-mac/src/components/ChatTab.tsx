@@ -192,9 +192,11 @@ const TeamMessage: React.FC<{
   messageId: string
   parsed: NonNullable<ReturnType<typeof parseTeamMessage>>
   infos: { id: string; message: string }[]
+  isStreaming: boolean
   expanded: Set<string>
   setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
-}> = ({ messageId, parsed, infos, expanded, setExpanded }) => {
+}> = ({ messageId, parsed, infos, isStreaming, expanded, setExpanded }) => {
+  const lastIdx = parsed.steps.length - 1
   const toggle = (key: string) => setExpanded(prev => {
     const next = new Set(prev)
     if (next.has(key)) next.delete(key)
@@ -209,16 +211,25 @@ const TeamMessage: React.FC<{
       {infos.length > 0 && (
         <ManagerSteps messageId={messageId} infos={infos} expanded={expanded} setExpanded={setExpanded} />
       )}
-      {parsed.steps.map(s => {
+      {parsed.steps.map((s, i) => {
         const baseKey = `${messageId}::${s.step}`
         const bodyKey = `${baseKey}::body`
-        const isOpen = expanded.has(baseKey)
+        const isLastDuringStream = isStreaming && i === lastIdx
+        const collapsedMarker = baseKey + '::collapsed'
+        const isOpen = isLastDuringStream
+          ? !expanded.has(collapsedMarker)
+          : expanded.has(baseKey)
+        const onClick = () => toggle(isLastDuringStream ? collapsedMarker : baseKey)
         const preview = extractPreview(s.output)
+        const cardStyle = isLastDuringStream
+          ? { ...styles.teamStepCard, ...styles.teamStepCardActive }
+          : styles.teamStepCard
         return (
-          <div key={baseKey} style={styles.teamStepCard}>
-            <div style={styles.teamStepHeader} onClick={() => toggle(baseKey)}>
+          <div key={baseKey} style={cardStyle}>
+            <div style={styles.teamStepHeader} onClick={onClick}>
               <span style={{ ...styles.teamStepChevron, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
               <span style={styles.teamStepLabel}>Step {s.step}: {s.worker}</span>
+              {isLastDuringStream && <span style={styles.teamStepRunning}>● running</span>}
               {!isOpen && <span style={styles.teamStepPreview}> · {preview}</span>}
             </div>
             {isOpen && (
@@ -687,11 +698,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                   const infos = (msg.toolCalls ?? [])
                     .filter(tc => tc.type === 'info')
                     .map(tc => ({ id: tc.id, message: tc.message }))
+                  const isStreaming = !!flight && msg === lastMsg
                   return (
                     <TeamMessage
                       messageId={msg.id}
                       parsed={parsed}
                       infos={infos}
+                      isStreaming={isStreaming}
                       expanded={expandedSteps}
                       setExpanded={setExpandedSteps}
                     />
@@ -1077,10 +1090,23 @@ const styles: Record<string, React.CSSProperties> = {
     borderLeft: `3px solid ${C.accent}`, background: 'rgba(255,255,255,0.03)',
     borderRadius: 4,
   },
-  teamStepCard: { marginBottom: 6 },
+  teamStepCard: {
+    marginBottom: 10, padding: '8px 10px',
+    background: 'rgba(255,255,255,0.025)',
+    border: `1px solid ${C.border2}`, borderRadius: 8,
+  },
+  teamStepCardActive: {
+    border: `1px solid ${C.accent}`,
+    boxShadow: `0 0 0 1px ${C.accentDim}`,
+    background: 'rgba(106,176,243,0.06)',
+  },
   teamStepHeader: {
     display: 'flex', alignItems: 'baseline', cursor: 'pointer',
     fontSize: 12, color: C.fg2, padding: '2px 0', userSelect: 'none' as const,
+  },
+  teamStepRunning: {
+    marginLeft: 8, fontSize: 10, color: '#6ab0f3',
+    fontStyle: 'italic',
   },
   teamStepChevron: {
     display: 'inline-block', fontSize: 11, marginRight: 6,
