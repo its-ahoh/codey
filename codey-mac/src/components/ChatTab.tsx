@@ -514,7 +514,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 marginBottom: 12,
                 cursor: isUser ? 'default' : 'pointer',
                 paddingLeft: !isUser ? 6 : 0,
-                borderLeft: isSelected ? `2px solid ${C.accent}` : '2px solid transparent',
+                transform: isSelected ? 'translateY(-3px)' : 'translateY(0)',
+                transition: 'transform 0.18s ease',
               }}
             >
               <div style={{
@@ -522,8 +523,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
                 background: isUser ? C.userBg : C.aiBg,
                 color: isUser ? '#ffffff' : C.fg, fontSize: 13, lineHeight: 1.55, wordBreak: 'break-word',
-                boxShadow: isUser ? 'none' : '0 1px 3px rgba(0,0,0,0.3)',
-                border: isUser ? 'none' : `1px solid ${C.border2}`,
+                boxShadow: isUser
+                  ? 'none'
+                  : (isSelected
+                      ? `0 10px 24px ${C.accentDim}, 0 6px 14px ${C.accentDim}`
+                      : '0 1px 3px rgba(0,0,0,0.18)'),
+                border: isUser ? 'none' : `1px solid ${isSelected ? C.accent : C.border2}`,
+                transition: 'box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease',
               }}>
                 {msg.toolCalls && msg.toolCalls.length > 0 && (() => {
                   type Row =
