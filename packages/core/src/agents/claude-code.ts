@@ -37,6 +37,11 @@ interface StreamEvent {
     content?: string;
   }>;
   tool_use_id?: string;
+  // stream_event (emitted with --include-partial-messages)
+  event?: {
+    type: string;
+    delta?: { type?: string; text?: string };
+  };
 }
 
 export class ClaudeCodeAdapter extends BaseAgentAdapter {
@@ -55,6 +60,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       const args = [
         '--verbose',
         '--output-format', 'stream-json',
+        '--include-partial-messages',
       ];
 
       // Only skip permissions for non-interactive (chat platform) usage
@@ -139,16 +145,31 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         }
       };
 
+      // With --include-partial-messages, the SDK emits stream_event deltas
+      // before the final assistant event. We stream from those deltas so the
+      // UI updates token-by-token; the final assistant event then re-emits
+      // the same text in one block — skip the onStream call there to avoid
+      // double-rendering, but still record blocks (tool_use) and tally.
+      let streamedFromDeltas = false;
       const processEvent = (event: StreamEvent) => {
         this.debug(`[claude-code] Event: ${event.type} ${event.subtype || ''}`);
 
         if (event.type === 'system' && event.session_id) {
           this.sessionId = event.session_id;
+        } else if (event.type === 'stream_event' && event.event?.type === 'content_block_delta') {
+          const delta = event.event.delta;
+          if (delta?.type === 'text_delta' && delta.text) {
+            streamedText += delta.text;
+            request.onStream?.(delta.text);
+            streamedFromDeltas = true;
+          }
         } else if (event.type === 'assistant' && event.message?.content) {
           for (const block of event.message.content) {
             if (block.type === 'text' && block.text) {
-              streamedText += block.text;
-              request.onStream?.(block.text);
+              if (!streamedFromDeltas) {
+                streamedText += block.text;
+                request.onStream?.(block.text);
+              }
             } else if (block.type === 'tool_use' && block.name) {
               // Tool invocation — record it
               const toolName = block.name;

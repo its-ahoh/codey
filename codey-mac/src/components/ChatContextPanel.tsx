@@ -1,6 +1,7 @@
 import React from 'react'
 import type { Chat, ChatMessage } from '../types'
 import { C } from '../theme'
+import { parseTeamMessage } from './teamMessageFormat'
 
 interface Props {
   chat: Chat
@@ -23,6 +24,9 @@ interface Props {
   onClose: () => void
   onResize: (next: number) => void
   onRevealFile: (absPath: string) => void
+  onScrollToStep: (messageId: string, stepNum: number) => void
+  /** True when the selected turn is the last assistant message and the chat is currently in flight. */
+  isTurnStreaming: boolean
 }
 
 const fmtTime = (ts: number) =>
@@ -38,7 +42,7 @@ const formatTokens = (n: number): string | null => {
 export const ChatContextPanel: React.FC<Props> = ({
   chat, selectedTurnId, followLatest, selectedTurnIndex,
   effectiveAgent, effectiveModel, workerName, teamName, workingDir,
-  width, onFollowLatest, onClose, onResize, onRevealFile,
+  width, onFollowLatest, onClose, onResize, onRevealFile, onScrollToStep, isTurnStreaming,
 }) => {
   const turn: ChatMessage | undefined = selectedTurnId
     ? chat.messages.find(m => m.id === selectedTurnId && m.role === 'assistant')
@@ -118,6 +122,13 @@ export const ChatContextPanel: React.FC<Props> = ({
           </div>
         </Section>
 
+        {turn && (
+          <TeamFlow
+            turn={turn}
+            isStreaming={isTurnStreaming}
+            onScrollToStep={onScrollToStep}
+          />
+        )}
         {turn && <ToolTimeline toolCalls={turn.toolCalls ?? []} />}
         {turn && <FilesTouched toolCalls={turn.toolCalls ?? []} workingDir={workingDir} onReveal={onRevealFile} />}
         {triggeringUserMsg?.attachments && triggeringUserMsg.attachments.length > 0 && (
@@ -200,6 +211,76 @@ const filesStyles: Record<string, React.CSSProperties> = {
     background: 'transparent', border: 'none', color: C.fg3,
     cursor: 'pointer', fontSize: 12, padding: '0 4px', flexShrink: 0,
   },
+}
+
+const TeamFlow: React.FC<{
+  turn: ChatMessage
+  isStreaming: boolean
+  onScrollToStep: (messageId: string, stepNum: number) => void
+}> = ({ turn, isStreaming, onScrollToStep }) => {
+  const parsed = parseTeamMessage(turn.content)
+  if (!parsed) return null
+  const infos = (turn.toolCalls ?? []).filter(tc => tc.type === 'info')
+  // Match info messages to steps by step number prefix ("Step N:" or "Step N/M:")
+  const reasonByStep = new Map<number, string>()
+  for (const info of infos) {
+    const m = info.message.match(/^Step\s+(\d+)/)
+    if (!m) continue
+    reasonByStep.set(parseInt(m[1], 10), info.message)
+  }
+  const lastIdx = parsed.steps.length - 1
+  return (
+    <Section title={`Team flow (${parsed.steps.length} step${parsed.steps.length === 1 ? '' : 's'})`}>
+      <div style={flowStyles.list}>
+        {parsed.steps.map((s, i) => {
+          const isRunning = isStreaming && i === lastIdx
+          const status: 'done' | 'running' = isRunning ? 'running' : 'done'
+          const reason = reasonByStep.get(s.step)
+          return (
+            <div
+              key={`${turn.id}::${s.step}`}
+              style={flowStyles.row}
+              onClick={() => onScrollToStep(turn.id, s.step)}
+              title="Click to jump to this step"
+            >
+              <span style={status === 'running' ? flowStyles.dotRunning : flowStyles.dotDone}>
+                {status === 'running' ? '●' : '✓'}
+              </span>
+              <div style={flowStyles.body}>
+                <div style={flowStyles.workerLine}>
+                  <span style={flowStyles.stepNum}>Step {s.step}</span>
+                  <span style={flowStyles.workerName}>{s.worker}</span>
+                </div>
+                {reason && <div style={flowStyles.reason}>{reason.replace(/^Step\s+\d+(?:\/\d+)?:\s*\S+\s*(?:—|—|-)?\s*/, '')}</div>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </Section>
+  )
+}
+
+const flowStyles: Record<string, React.CSSProperties> = {
+  list: { display: 'flex', flexDirection: 'column', gap: 0, position: 'relative' },
+  row: {
+    display: 'flex', alignItems: 'flex-start', gap: 8,
+    padding: '6px 0', cursor: 'pointer',
+    borderBottom: `1px dashed ${C.border2}`,
+  },
+  dotRunning: {
+    color: '#6ab0f3', fontSize: 12, lineHeight: '16px',
+    width: 14, flexShrink: 0, textAlign: 'center' as const,
+  },
+  dotDone: {
+    color: '#7ec97e', fontSize: 12, lineHeight: '16px',
+    width: 14, flexShrink: 0, textAlign: 'center' as const,
+  },
+  body: { flex: 1, minWidth: 0 },
+  workerLine: { display: 'flex', alignItems: 'baseline', gap: 6 },
+  stepNum: { fontSize: 10, color: C.fg3, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+  workerName: { fontSize: 12, color: C.fg, fontWeight: 500 },
+  reason: { fontSize: 11, color: C.fg3, marginTop: 2, lineHeight: 1.4 },
 }
 
 const ToolTimeline: React.FC<{ toolCalls: import('../types').ToolCallEntry[] }> = ({ toolCalls }) => {

@@ -4,10 +4,11 @@ import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { Markdown } from './Markdown'
-import { formatHeadline, hasDetail as toolHasDetail, ToolDetail, normalizeTool } from './toolFormat'
 import { RouteIcons } from './RouteIcons'
 import { PairingModal } from './PairingModal'
 import { ChatContextPanel } from './ChatContextPanel'
+import { parseTeamMessage } from './teamMessageFormat'
+import { formatHeadline, normalizeTool } from './toolFormat'
 
 interface Props {
   chatId: string
@@ -92,13 +93,118 @@ const AGENT_API_TYPE: Record<string, 'anthropic' | 'openai'> = {
 }
 type ModelEntry = { apiType: 'anthropic' | 'openai'; model: string }
 
+const splitParagraphs = (text: string): string[] =>
+  text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
+
+const LiveActivity: React.FC<{ toolCalls?: import('../types').ToolCallEntry[] }> = ({ toolCalls }) => {
+  if (!toolCalls || toolCalls.length === 0) return null
+  const pending = new Map<string, { id: string; tool?: string; input?: Record<string, unknown> }>()
+  let lastDone: { tool?: string; input?: Record<string, unknown> } | null = null
+  for (const tc of toolCalls) {
+    if (tc.type === 'tool_start') {
+      pending.set(normalizeTool(tc.tool), { id: tc.id, tool: tc.tool, input: tc.input })
+    } else if (tc.type === 'tool_end') {
+      const key = normalizeTool(tc.tool)
+      const p = pending.get(key)
+      if (p) { lastDone = { tool: p.tool, input: p.input }; pending.delete(key) }
+      else { lastDone = { tool: tc.tool } }
+    }
+  }
+  const active = pending.size > 0 ? Array.from(pending.values()).pop()! : null
+  const target = active ?? lastDone
+  if (!target) return null
+  const headline = formatHeadline(target.tool, target.input ?? {})
+  return (
+    <div style={styles.liveActivity}>
+      <span style={styles.liveActivityDot}>{active ? '●' : '○'}</span>
+      <span>{headline}</span>
+    </div>
+  )
+}
+
+const StepBody: React.FC<{
+  output: string
+  bodyKey: string
+  expanded: Set<string>
+  setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
+}> = ({ output, bodyKey, expanded, setExpanded }) => {
+  const paragraphs = splitParagraphs(output)
+  const showAll = expanded.has(bodyKey)
+  if (paragraphs.length <= 1) {
+    return <Markdown variant="assistant">{output}</Markdown>
+  }
+  const last = paragraphs[paragraphs.length - 1]
+  const earlierCount = paragraphs.length - 1
+  const toggle = () => setExpanded(prev => {
+    const next = new Set(prev)
+    if (next.has(bodyKey)) next.delete(bodyKey)
+    else next.add(bodyKey)
+    return next
+  })
+  return (
+    <div>
+      <div style={styles.thinkingToggle} onClick={toggle}>
+        <span style={{ ...styles.teamStepChevron, transform: showAll ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+        <span>{showAll ? 'Hide thinking' : `Show thinking (${earlierCount} paragraph${earlierCount === 1 ? '' : 's'})`}</span>
+      </div>
+      {showAll && (
+        <div style={styles.thinkingBody}>
+          <Markdown variant="assistant">{paragraphs.slice(0, -1).join('\n\n')}</Markdown>
+        </div>
+      )}
+      <Markdown variant="assistant">{last}</Markdown>
+    </div>
+  )
+}
+
+const stepDomId = (messageId: string, stepNum: number) => `step-${messageId}-${stepNum}`
+
+const TeamMessage: React.FC<{
+  messageId: string
+  parsed: NonNullable<ReturnType<typeof parseTeamMessage>>
+  isStreaming: boolean
+  expanded: Set<string>
+  setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
+}> = ({ messageId, parsed, isStreaming, expanded, setExpanded }) => {
+  const lastIdx = parsed.steps.length - 1
+  return (
+    <div>
+      {parsed.summary && (
+        <div style={styles.teamSummary}>🧭 {parsed.summary}</div>
+      )}
+      {parsed.steps.map((s, i) => {
+        const baseKey = `${messageId}::${s.step}`
+        const bodyKey = `${baseKey}::body`
+        const isLastDuringStream = isStreaming && i === lastIdx
+        const cardStyle = isLastDuringStream
+          ? { ...styles.teamStepCard, ...styles.teamStepCardActive }
+          : styles.teamStepCard
+        return (
+          <div key={baseKey} id={stepDomId(messageId, s.step)} style={cardStyle}>
+            <div style={styles.teamStepHeader}>
+              <span style={styles.teamStepLabel}>Step {s.step}: {s.worker}</span>
+              {isLastDuringStream && <span style={styles.teamStepRunning}>● running</span>}
+            </div>
+            <div style={styles.teamStepBody}>
+              {isLastDuringStream ? (
+                <Markdown variant="assistant">{s.output || '…'}</Markdown>
+              ) : (
+                <StepBody output={s.output} bodyKey={bodyKey} expanded={expanded} setExpanded={setExpanded} />
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const { state, sendMessage, stopChat, setSelection, setAgentModel, renameChat, setContextPanelOpen } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
   const [input, setInput] = useState('')
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   const [teamNames, setTeamNames] = useState<string[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
@@ -114,17 +220,12 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [pairingModal, setPairingModal] = useState<null | 'telegram' | 'discord' | 'imessage'>(null)
   const [followLatest, setFollowLatest] = useState(true)
   const [selectedTurnIdState, setSelectedTurnIdState] = useState<string | null>(null)
+  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
   const [panelWidth, setPanelWidth] = useState<number>(() => {
     const v = localStorage.getItem('codey.contextPanelWidth')
     const n = v ? parseInt(v, 10) : NaN
     return Number.isFinite(n) ? Math.max(260, Math.min(520, n)) : 340
   })
-  const [winNarrow, setWinNarrow] = useState<boolean>(() => window.innerWidth < 900)
-  useEffect(() => {
-    const onResize = () => setWinNarrow(window.innerWidth < 900)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
   const dragDepthRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -174,7 +275,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     })()
   }, [isGatewayRunning])
   const lastMsg = chat?.messages?.[chat.messages.length - 1]
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chat?.messages?.length, lastMsg?.content, lastMsg?.toolCalls?.length])
+  useEffect(() => {
+    if (followLatest) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chat?.messages?.length, lastMsg?.content, lastMsg?.toolCalls?.length, chat?.contextPanelOpen, followLatest])
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && flight) stopChat(chatId)
@@ -229,11 +332,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     return null
   })()
   const panelOpen: boolean = chat?.contextPanelOpen ?? false
-  const panelOverlay: boolean = panelOpen && winNarrow
-  const overlayPanelWidth: number = Math.min(
-    panelWidth,
-    Math.max(280, Math.floor(window.innerWidth * 0.55))
-  )
 
   const selectionValue: string = chat.selection.type === 'worker'
     ? `worker:${chat.selection.name}`
@@ -536,74 +634,24 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 border: isUser ? 'none' : `1px solid ${isSelected ? C.accent : C.border2}`,
                 transition: 'box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease',
               }}>
-                {msg.toolCalls && msg.toolCalls.length > 0 && (() => {
-                  type Row =
-                    | { kind: 'call'; id: string; tool?: string; input?: Record<string, unknown>; output?: string; done: boolean }
-                    | { kind: 'info'; id: string; message: string }
-                  const rows: Row[] = []
-                  const pendingByTool = new Map<string, number>()
-                  for (const tc of msg.toolCalls) {
-                    if (tc.type === 'info') { rows.push({ kind: 'info', id: tc.id, message: tc.message }); continue }
-                    const key = normalizeTool(tc.tool)
-                    if (tc.type === 'tool_start') {
-                      const idx = rows.push({ kind: 'call', id: tc.id, tool: tc.tool, input: tc.input, done: false }) - 1
-                      pendingByTool.set(key, idx)
-                    } else {
-                      const idx = pendingByTool.get(key)
-                      if (idx != null) {
-                        const row = rows[idx] as Extract<Row, { kind: 'call' }>
-                        row.done = true
-                        if (tc.output) row.output = tc.output
-                        pendingByTool.delete(key)
-                      } else {
-                        rows.push({ kind: 'call', id: tc.id, tool: tc.tool, output: tc.output, done: true })
-                      }
-                    }
-                  }
+                {!isUser && !!flight && msg === lastMsg && (
+                  <LiveActivity toolCalls={msg.toolCalls} />
+                )}
+                {msg.content && (() => {
+                  if (isUser) return <Markdown variant="user">{msg.content}</Markdown>
+                  const parsed = parseTeamMessage(msg.content)
+                  if (!parsed) return <Markdown variant="assistant">{msg.content}</Markdown>
+                  const isStreaming = !!flight && msg === lastMsg
                   return (
-                    <>
-                      <div style={styles.toolCallsContainer}>
-                        {rows.map(row => {
-                          if (row.kind === 'info') {
-                            return (
-                              <div key={row.id} style={{ ...styles.toolCallRow, ...styles.toolCallInfo }}>
-                                <span>• {row.message}</span>
-                              </div>
-                            )
-                          }
-                          const isExpanded = expandedIds.has(row.id)
-                          const detail = toolHasDetail(row.tool, row.input, row.output)
-                          const toggle = () => setExpandedIds(prev => {
-                            const next = new Set(prev)
-                            next.has(row.id) ? next.delete(row.id) : next.add(row.id)
-                            return next
-                          })
-                          const headline = formatHeadline(row.tool, row.input)
-                          return (
-                            <div key={row.id}>
-                              <div
-                                style={{ ...styles.toolCallRow, cursor: detail ? 'pointer' : 'default' }}
-                                onClick={detail ? toggle : undefined}
-                              >
-                                {detail && (
-                                  <span style={{ ...styles.chevron, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
-                                )}
-                                <span style={{ marginLeft: 2, color: row.done ? '#9bbcd9' : '#6ab0f3' }}>{headline}</span>
-                              </div>
-                              {detail && isExpanded && (
-                                <div style={styles.toolDetail}>
-                                  <ToolDetail rawTool={row.tool} input={row.input} output={row.output} />
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                      {msg.content && <div style={styles.toolCallSep} />}
-                    </>
+                    <TeamMessage
+                      messageId={msg.id}
+                      parsed={parsed}
+                      isStreaming={isStreaming}
+                      expanded={expandedSteps}
+                      setExpanded={setExpandedSteps}
+                    />
                   )
                 })()}
-                {msg.content && <Markdown variant={isUser ? 'user' : 'assistant'}>{msg.content}</Markdown>}
                 {isUser && msg.attachments && msg.attachments.length > 0 && (
                   <div style={styles.attachmentsContainer}>
                     {msg.attachments.map(att => {
@@ -773,49 +821,26 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
       )}
       </div>
       {panelOpen && (
-        panelOverlay ? (
-          <>
-            <div
-              style={styles.panelBackdrop}
-              onClick={() => setContextPanelOpen(chat.id, false)}
-            />
-            <div style={styles.panelOverlay}>
-              <ChatContextPanel
-                chat={chat}
-                selectedTurnId={selectedTurnId}
-                followLatest={followLatest}
-                selectedTurnIndex={selectedTurnIndex}
-                effectiveAgent={effectiveAgent}
-                effectiveModel={effectiveModel}
-                workerName={panelWorkerName}
-                teamName={panelTeamName}
-                workingDir={workingDir}
-                width={overlayPanelWidth}
-                onFollowLatest={() => setFollowLatest(true)}
-                onClose={() => setContextPanelOpen(chat.id, false)}
-                onResize={setPanelWidth}
-                onRevealFile={(p) => apiService.revealInFolder(p)}
-              />
-            </div>
-          </>
-        ) : (
-          <ChatContextPanel
-            chat={chat}
-            selectedTurnId={selectedTurnId}
-            followLatest={followLatest}
-            selectedTurnIndex={selectedTurnIndex}
-            effectiveAgent={effectiveAgent}
-            effectiveModel={effectiveModel}
-            workerName={panelWorkerName}
-            teamName={panelTeamName}
-            workingDir={workingDir}
-            width={panelWidth}
-            onFollowLatest={() => setFollowLatest(true)}
-            onClose={() => setContextPanelOpen(chat.id, false)}
-            onResize={setPanelWidth}
-            onRevealFile={(p) => apiService.revealInFolder(p)}
-          />
-        )
+        <ChatContextPanel
+          chat={chat}
+          selectedTurnId={selectedTurnId}
+          followLatest={followLatest}
+          selectedTurnIndex={selectedTurnIndex}
+          effectiveAgent={effectiveAgent}
+          effectiveModel={effectiveModel}
+          workerName={panelWorkerName}
+          teamName={panelTeamName}
+          workingDir={workingDir}
+          width={Math.min(panelWidth, Math.max(240, Math.floor(window.innerWidth * 0.5)))}
+          onFollowLatest={() => setFollowLatest(true)}
+          onClose={() => setContextPanelOpen(chat.id, false)}
+          onResize={setPanelWidth}
+          onRevealFile={(p) => apiService.revealInFolder(p)}
+          onScrollToStep={(mid, step) => {
+            document.getElementById(stepDomId(mid, step))?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }}
+          isTurnStreaming={!!flight && selectedTurnId === lastMsg?.id}
+        />
       )}
     </div>
   )
@@ -823,15 +848,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
 
 const styles: Record<string, React.CSSProperties> = {
   outer: { display: 'flex', flexDirection: 'row', height: '100%', minHeight: 0, position: 'relative' },
-  panelBackdrop: {
-    position: 'absolute', inset: 0, zIndex: 20,
-    background: 'rgba(0,0,0,0.35)',
-  },
-  panelOverlay: {
-    position: 'absolute', top: 0, right: 0, bottom: 0, zIndex: 21,
-    boxShadow: '-12px 0 32px rgba(0,0,0,0.45)',
-    display: 'flex',
-  },
   container: { display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0 },
   header: {
     padding: '10px 16px', borderBottom: `1px solid ${C.border}`,
@@ -864,16 +880,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, transition: 'background 0.15s',
   },
-  toolCallsContainer: { marginBottom: 6, display: 'flex', flexDirection: 'column', gap: 2 },
-  toolCallRow: {
-    display: 'flex', alignItems: 'flex-start', fontSize: 12,
-    color: '#6ab0f3', fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    padding: '2px 0', userSelect: 'text',
-  },
-  toolCallInfo: { color: C.fg3, fontStyle: 'italic' },
-  toolCallSep: { borderTop: `1px solid ${C.border2}`, marginBottom: 6, marginTop: 4 },
-  chevron: { display: 'inline-block', fontSize: 13, marginRight: 4, transition: 'transform 0.15s ease', color: C.fg3 },
-  toolDetail: { marginLeft: 20, marginTop: 4, marginBottom: 6, padding: 8, background: 'rgba(0,0,0,0.3)', borderRadius: 6, border: `1px solid ${C.border}` },
   orphanBanner: { padding: '8px 12px', background: C.warningBg, color: C.warningFg, fontSize: 12, borderTop: `1px solid ${C.border}` },
   dropOverlay: {
     position: 'absolute' as const, inset: 8, zIndex: 10,
@@ -988,4 +994,56 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     color: C.fg,
   },
+  teamSummary: {
+    fontSize: 13, fontWeight: 600, color: C.accent,
+    padding: '6px 8px', marginBottom: 8,
+    borderLeft: `3px solid ${C.accent}`, background: 'rgba(255,255,255,0.03)',
+    borderRadius: 4,
+  },
+  teamStepCard: {
+    marginBottom: 10, padding: '8px 10px',
+    background: 'rgba(255,255,255,0.025)',
+    border: `1px solid ${C.border2}`, borderRadius: 8,
+  },
+  teamStepCardActive: {
+    border: `1px solid ${C.accent}`,
+    boxShadow: `0 0 0 1px ${C.accentDim}`,
+    background: 'rgba(106,176,243,0.06)',
+  },
+  teamStepHeader: {
+    display: 'flex', alignItems: 'baseline', cursor: 'pointer',
+    fontSize: 12, color: C.fg2, padding: '2px 0', userSelect: 'none' as const,
+  },
+  teamStepRunning: {
+    marginLeft: 8, fontSize: 10, color: '#6ab0f3',
+    fontStyle: 'italic',
+  },
+  teamStepChevron: {
+    display: 'inline-block', fontSize: 11, marginRight: 6,
+    transition: 'transform 0.15s ease', color: C.fg3, flexShrink: 0,
+  },
+  teamStepLabel: { color: C.fg, fontWeight: 500 },
+  teamStepPreview: {
+    color: C.fg3, fontStyle: 'italic', marginLeft: 4,
+    whiteSpace: 'nowrap' as const, overflow: 'hidden' as const, textOverflow: 'ellipsis',
+    flex: 1, minWidth: 0,
+  },
+  teamStepBody: { marginTop: 4, marginLeft: 17 },
+  thinkingToggle: {
+    display: 'flex', alignItems: 'center', cursor: 'pointer',
+    fontSize: 11, color: C.fg3, padding: '2px 0', userSelect: 'none' as const,
+    marginBottom: 6,
+  },
+  thinkingBody: {
+    marginLeft: 17, marginBottom: 8, paddingLeft: 8,
+    borderLeft: `2px solid ${C.border2}`, opacity: 0.85,
+  },
+  liveActivity: {
+    display: 'flex', alignItems: 'center', gap: 6,
+    fontSize: 11, color: C.fg3, fontStyle: 'italic',
+    padding: '2px 6px', marginBottom: 6,
+    background: 'rgba(106,176,243,0.08)',
+    borderRadius: 4, border: `1px solid ${C.border2}`,
+  },
+  liveActivityDot: { color: '#6ab0f3', fontSize: 9 },
 }
