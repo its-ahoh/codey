@@ -504,7 +504,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
             </div>
           </div>
         )}
-        {chat.messages.map(msg => {
+        {chat.messages.map((msg, idx) => {
           const isUser = msg.role === 'user'
           const isSelected = !isUser && msg.id === selectedTurnId && panelOpen
           return (
@@ -634,6 +634,26 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                   </div>
                 )}
               </div>
+              {msg.role === 'assistant'
+                && msg.choices
+                && msg.choices.length > 0
+                && idx === chat.messages.length - 1
+                && chat.messages[chat.messages.length - 1]?.role !== 'user'
+                && (
+                  <div style={styles.choiceRow}>
+                    {msg.choices.map((label, i) => (
+                      <button
+                        key={i}
+                        style={styles.choiceButton}
+                        disabled={isSending || !!flight}
+                        onClick={() => { void sendMessage(chat.id, label) }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )
+              }
               <div style={styles.tsLabel}>
                 <span>{fmtTime(msg.timestamp)}</span>
                 {(() => {
@@ -935,6 +955,22 @@ const styles: Record<string, React.CSSProperties> = {
   },
   uploadError: {
     color: C.dangerFg, fontSize: 11, padding: '0 4px',
+  },
+  choiceRow: {
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: 8,
+    marginTop: 8,
+    marginLeft: 12,
+  },
+  choiceButton: {
+    padding: '6px 12px',
+    borderRadius: 6,
+    border: `1px solid ${C.border2}`,
+    background: C.surface3,
+    color: C.fg,
+    cursor: 'pointer',
+    fontSize: 13,
   },
   attachButton: {
     width: 32, height: 32, borderRadius: 8, border: 'none',

@@ -635,6 +635,7 @@ app.whenReady().then(async () => {
           response: result.response,
           tokens: result.tokens,
           durationSec: result.durationSec,
+          choices: (result as any).choices,   // forward when present
         })
       }
       return result

@@ -38,7 +38,7 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.on('chat:token', listener)
       return () => ipcRenderer.removeListener('chat:token', listener)
     },
-    onDone: (handler: (msg: { conversationId: string; response: string }) => void) => {
+    onDone: (handler: (msg: { conversationId: string; response: string; tokens?: number; durationSec?: number; choices?: string[] }) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, msg: any) => handler(msg)
       ipcRenderer.on('chat:done', listener)
       return () => ipcRenderer.removeListener('chat:done', listener)

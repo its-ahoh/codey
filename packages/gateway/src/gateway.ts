@@ -2816,7 +2816,7 @@ Example: /model gpt-4.1 write a Python script`;
     prompt: string,
     sse?: (event: string, data: string) => void,
     conversationId?: string,
-  ): Promise<{ response: string; conversationId: string; tokens?: number; durationSec?: number }> {
+  ): Promise<{ response: string; conversationId: string; tokens?: number; durationSec?: number; choices?: string[] }> {
     const agent = this.getDefaultAgent();
     const model = this.getDefaultModelConfig(agent);
 
@@ -2922,11 +2922,14 @@ Example: /model gpt-4.1 write a Python script`;
       });
     }
 
+    const formattedResponse = this.formatAgentResponse(response);
+    const httpAsk = parseAskUser(formattedResponse);
     return {
-      response: this.formatAgentResponse(response),
+      response: formattedResponse,
       conversationId: ctxId,
       tokens: response.tokens?.total,
       durationSec: response.duration,
+      ...(httpAsk.options && httpAsk.options.length >= 2 ? { choices: httpAsk.options } : {}),
     };
   }
 
