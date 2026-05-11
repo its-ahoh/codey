@@ -1694,6 +1694,7 @@ Example: /model gpt-4.1 write a Python script`;
           step: number;
           askingWorker: string;
           question: string;
+          options?: string[];
         };
       }
   > {
@@ -1717,7 +1718,7 @@ Example: /model gpt-4.1 write a Python script`;
     let directNext: { worker: string; instruction: string } | null = null;
     // When set, the next Manager turn arbitrates this pending question
     // (used when a worker emits `[ASK_USER]:` or forwards to an unknown target).
-    let pendingArbitration: { worker: string; question: string } | null = null;
+    let pendingArbitration: { worker: string; question: string; options?: string[] } | null = null;
     // Number of consecutive direct forwards since the last Manager turn.
     let forwardHops = 0;
 
@@ -1778,6 +1779,7 @@ Example: /model gpt-4.1 write a Python script`;
               step,
               askingWorker: pendingArbitration.worker,
               question: pendingArbitration.question,
+              options: pendingArbitration.options,
             },
           };
         }
@@ -1844,11 +1846,11 @@ Example: /model gpt-4.1 write a Python script`;
           continue;
         }
         // Invalid target or hop cap exceeded → Manager arbitrates.
-        pendingArbitration = { worker: turnNext, question: ask.question };
+        pendingArbitration = { worker: turnNext, question: ask.question, options: undefined };
         continue;
       }
       // kind === 'user' → Manager arbitrates whether to route or escalate.
-      pendingArbitration = { worker: turnNext, question: ask.question };
+      pendingArbitration = { worker: turnNext, question: ask.question, options: ask.options };
     }
 
     // Cap exhausted without explicit done — request a final summary.
@@ -2008,10 +2010,10 @@ Example: /model gpt-4.1 write a Python script`;
           step: p.step,
           askingWorker: p.askingWorker,
           question: p.question,
-          options: undefined,
+          options: p.options,
           askedAt: Date.now(),
         });
-        const rendered1 = renderQuestion(askWorkerName, '', p.question, undefined);
+        const rendered1 = renderQuestion(askWorkerName, '', p.question, p.options);
         await this.sendResponse({
           chatId: message.chatId,
           channel: message.channel,
@@ -2443,10 +2445,10 @@ Example: /model gpt-4.1 write a Python script`;
           step: p.step,
           askingWorker: p.askingWorker,
           question: p.question,
-          options: undefined,
+          options: p.options,
           askedAt: Date.now(),
         });
-        const rendered5 = renderQuestion(askWorkerName, '', p.question, undefined);
+        const rendered5 = renderQuestion(askWorkerName, '', p.question, p.options);
         sink({ type: 'stream', chatId, token: rendered5.text });
         return { response: rendered5.text, choices: rendered5.choices };
       } else {
