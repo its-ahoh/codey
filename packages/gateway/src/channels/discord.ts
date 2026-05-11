@@ -6,6 +6,7 @@ export class DiscordHandler extends BaseChannelHandler {
   name = 'discord';
   private client?: Client;
   private config?: { botToken: string };
+  private lastChoiceMessageByChannel = new Map<string, string>(); // channelId → messageId
 
   async start(config: { botToken: string }): Promise<void> {
     this.config = config;
@@ -69,8 +70,19 @@ export class DiscordHandler extends BaseChannelHandler {
   async sendMessage(response: GatewayResponse): Promise<void> {
     if (!this.client) return;
 
-    const channel = await this.client.channels.fetch(response.chatId);
+    const channelId = response.chatId;
+    const channel = await this.client.channels.fetch(channelId);
     if (channel && channel instanceof TextChannel) {
+      // Clear stale choice buttons from the previous bot message (if any)
+      const prior = this.lastChoiceMessageByChannel.get(channelId);
+      if (prior) {
+        try {
+          const msg = await channel.messages.fetch(prior);
+          await msg.edit({ components: [] });
+        } catch { /* deleted or too old */ }
+        this.lastChoiceMessageByChannel.delete(channelId);
+      }
+
       const components: ActionRowBuilder<ButtonBuilder>[] = [];
       if (response.choices && response.choices.length > 0) {
         const buttons = response.choices.slice(0, 25).map((label, idx) =>
@@ -84,7 +96,12 @@ export class DiscordHandler extends BaseChannelHandler {
           components.push(row);
         }
       }
-      await channel.send({ content: response.text, components });
+      const sent = await channel.send({ content: response.text, components });
+      // Track this message so the next sendMessage can clear its buttons if the user
+      // types a free-text reply instead of clicking
+      if (response.choices && response.choices.length > 0) {
+        this.lastChoiceMessageByChannel.set(channelId, sent.id);
+      }
     }
   }
 

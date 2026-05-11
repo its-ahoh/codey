@@ -67,6 +67,7 @@ export class TelegramHandler extends BaseChannelHandler {
   name = 'telegram';
   private bot?: TelegramBot;
   private typingIntervals: Map<string, NodeJS.Timeout> = new Map();
+  private lastChoiceMessageByChat = new Map<string, number>(); // chatId → message_id
 
   private notifyChatId?: string;
 
@@ -123,7 +124,7 @@ export class TelegramHandler extends BaseChannelHandler {
       this.emitMessage(message);
     });
 
-    this.bot.on('callback_query', (query: TelegramBot.CallbackQuery) => {
+    this.bot.on('callback_query', async (query: TelegramBot.CallbackQuery) => {
       const data = query.data;
       const fromId = query.from?.id?.toString();
       const chatId = query.message?.chat?.id?.toString();
@@ -138,6 +139,14 @@ export class TelegramHandler extends BaseChannelHandler {
         text = String(idx + 1);
       }
       this.bot!.answerCallbackQuery(query.id).catch(() => {}); // dismiss the spinner
+      // Clear buttons on the clicked message so it can't be clicked again
+      try {
+        await this.bot!.editMessageReplyMarkup(
+          { inline_keyboard: [] },
+          { chat_id: chatId, message_id: query.message?.message_id },
+        );
+      } catch { /* message too old or already edited; ignore */ }
+      this.lastChoiceMessageByChat.delete(chatId);
       const message: UserMessage = {
         id: `tg-${Date.now()}`,
         channel: 'telegram',
@@ -169,8 +178,22 @@ export class TelegramHandler extends BaseChannelHandler {
   async sendMessage(response: GatewayResponse): Promise<void> {
     if (!this.bot) return;
 
+    const chatId = response.chatId;
+
     // Stop typing indicator when sending a response
-    this.stopTyping(response.chatId);
+    this.stopTyping(chatId);
+
+    // Clear stale choice buttons from the previous bot message (if any)
+    const prior = this.lastChoiceMessageByChat.get(chatId);
+    if (prior !== undefined) {
+      try {
+        await this.bot.editMessageReplyMarkup(
+          { inline_keyboard: [] },
+          { chat_id: chatId, message_id: prior },
+        );
+      } catch { /* message too old or already edited; ignore */ }
+      this.lastChoiceMessageByChat.delete(chatId);
+    }
 
     const options: TelegramBot.SendMessageOptions = {
       parse_mode: 'HTML',
@@ -193,7 +216,12 @@ export class TelegramHandler extends BaseChannelHandler {
       options.reply_markup = { inline_keyboard: rows };
     }
 
-    await this.bot.sendMessage(response.chatId, markdownToTelegramHtml(response.text), options);
+    const sent = await this.bot.sendMessage(chatId, markdownToTelegramHtml(response.text), options);
+    // Track this message so the next sendMessage can clear its buttons if the user
+    // types a free-text reply instead of clicking
+    if (response.choices && response.choices.length > 0) {
+      this.lastChoiceMessageByChat.set(chatId, sent.message_id);
+    }
   }
 
   async sendToRoute(route: ChatRoute, text: string): Promise<void> {
