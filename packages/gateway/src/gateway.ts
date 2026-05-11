@@ -538,6 +538,11 @@ export class Codey {
         }
       }
 
+      // Clear lastAskedOptions on ANY user message (button click / digit / free text).
+      if (pendingChat?.lastAskedOptions) {
+        this.chatManager.clearLastAskedOptions(pendingChat.id);
+      }
+
       if (pending) {
         if (isSlash) {
           try { this.chatManager.setPendingTeam(message.chatId, null); } catch (_) { /* ignore */ }
@@ -3084,7 +3089,23 @@ Example: /model gpt-4.1 write a Python script`;
       };
       const updated = this.chatManager.appendMessage(chatId, assistantMessage);
 
-      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title });
+      // Plain-chat ASK_USER:choice detection. Team flows handled this earlier in
+      // their own pause paths. For non-team chats, surface the options to the
+      // channel and persist on the chat so the next user reply can be digit-mapped.
+      let plainChoices: string[] | undefined;
+      if (!updated.pendingTeam) {
+        const plainAsk = parseAskUser(output);
+        if (plainAsk?.options && plainAsk.options.length >= 2) {
+          plainChoices = plainAsk.options;
+          const lastMsg = updated.messages[updated.messages.length - 1];
+          if (lastMsg && lastMsg.role === 'assistant') {
+            lastMsg.choices = plainAsk.options;
+            this.chatManager.setLastAskedOptions(chatId, lastMsg.id, plainAsk.options);
+          }
+        }
+      }
+
+      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title, choices: plainChoices });
       return { response: output, chatId, tokens, durationSec };
     } catch (err) {
       const message = `Error: ${(err as Error).message}`;
