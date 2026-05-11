@@ -4,7 +4,6 @@ import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { Markdown } from './Markdown'
-import { formatHeadline, hasDetail as toolHasDetail, ToolDetail, normalizeTool } from './toolFormat'
 import { RouteIcons } from './RouteIcons'
 import { PairingModal } from './PairingModal'
 import { ChatContextPanel } from './ChatContextPanel'
@@ -98,7 +97,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const flight = state.inFlight[chatId]
 
   const [input, setInput] = useState('')
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   const [teamNames, setTeamNames] = useState<string[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
@@ -536,73 +534,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 border: isUser ? 'none' : `1px solid ${isSelected ? C.accent : C.border2}`,
                 transition: 'box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease',
               }}>
-                {msg.toolCalls && msg.toolCalls.length > 0 && (() => {
-                  type Row =
-                    | { kind: 'call'; id: string; tool?: string; input?: Record<string, unknown>; output?: string; done: boolean }
-                    | { kind: 'info'; id: string; message: string }
-                  const rows: Row[] = []
-                  const pendingByTool = new Map<string, number>()
-                  for (const tc of msg.toolCalls) {
-                    if (tc.type === 'info') { rows.push({ kind: 'info', id: tc.id, message: tc.message }); continue }
-                    const key = normalizeTool(tc.tool)
-                    if (tc.type === 'tool_start') {
-                      const idx = rows.push({ kind: 'call', id: tc.id, tool: tc.tool, input: tc.input, done: false }) - 1
-                      pendingByTool.set(key, idx)
-                    } else {
-                      const idx = pendingByTool.get(key)
-                      if (idx != null) {
-                        const row = rows[idx] as Extract<Row, { kind: 'call' }>
-                        row.done = true
-                        if (tc.output) row.output = tc.output
-                        pendingByTool.delete(key)
-                      } else {
-                        rows.push({ kind: 'call', id: tc.id, tool: tc.tool, output: tc.output, done: true })
-                      }
-                    }
-                  }
-                  return (
-                    <>
-                      <div style={styles.toolCallsContainer}>
-                        {rows.map(row => {
-                          if (row.kind === 'info') {
-                            return (
-                              <div key={row.id} style={{ ...styles.toolCallRow, ...styles.toolCallInfo }}>
-                                <span>• {row.message}</span>
-                              </div>
-                            )
-                          }
-                          const isExpanded = expandedIds.has(row.id)
-                          const detail = toolHasDetail(row.tool, row.input, row.output)
-                          const toggle = () => setExpandedIds(prev => {
-                            const next = new Set(prev)
-                            next.has(row.id) ? next.delete(row.id) : next.add(row.id)
-                            return next
-                          })
-                          const headline = formatHeadline(row.tool, row.input)
-                          return (
-                            <div key={row.id}>
-                              <div
-                                style={{ ...styles.toolCallRow, cursor: detail ? 'pointer' : 'default' }}
-                                onClick={detail ? toggle : undefined}
-                              >
-                                {detail && (
-                                  <span style={{ ...styles.chevron, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
-                                )}
-                                <span style={{ marginLeft: 2, color: row.done ? '#9bbcd9' : '#6ab0f3' }}>{headline}</span>
-                              </div>
-                              {detail && isExpanded && (
-                                <div style={styles.toolDetail}>
-                                  <ToolDetail rawTool={row.tool} input={row.input} output={row.output} />
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                      {msg.content && <div style={styles.toolCallSep} />}
-                    </>
-                  )
-                })()}
                 {msg.content && <Markdown variant={isUser ? 'user' : 'assistant'}>{msg.content}</Markdown>}
                 {isUser && msg.attachments && msg.attachments.length > 0 && (
                   <div style={styles.attachmentsContainer}>
@@ -864,16 +795,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, transition: 'background 0.15s',
   },
-  toolCallsContainer: { marginBottom: 6, display: 'flex', flexDirection: 'column', gap: 2 },
-  toolCallRow: {
-    display: 'flex', alignItems: 'flex-start', fontSize: 12,
-    color: '#6ab0f3', fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    padding: '2px 0', userSelect: 'text',
-  },
-  toolCallInfo: { color: C.fg3, fontStyle: 'italic' },
-  toolCallSep: { borderTop: `1px solid ${C.border2}`, marginBottom: 6, marginTop: 4 },
-  chevron: { display: 'inline-block', fontSize: 13, marginRight: 4, transition: 'transform 0.15s ease', color: C.fg3 },
-  toolDetail: { marginLeft: 20, marginTop: 4, marginBottom: 6, padding: 8, background: 'rgba(0,0,0,0.3)', borderRadius: 6, border: `1px solid ${C.border}` },
   orphanBanner: { padding: '8px 12px', background: C.warningBg, color: C.warningFg, fontSize: 12, borderTop: `1px solid ${C.border}` },
   dropOverlay: {
     position: 'absolute' as const, inset: 8, zIndex: 10,
