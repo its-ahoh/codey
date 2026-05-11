@@ -31,6 +31,7 @@ type Action =
   | { type: 'queued'; chatId: string; position: number }
   | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string; choices?: string[] }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
+  | { type: 'patchContextPanelOpen'; chatId: string; open: boolean | null }
 
 function reorder(order: string[], chatId: string): string[] {
   return [chatId, ...order.filter(id => id !== chatId)]
@@ -47,9 +48,30 @@ function reducer(state: State, action: Action): State {
     case 'setWorkspaces':
       return { ...state, workspaces: action.workspaces }
     case 'upsert': {
-      const chats = { ...state.chats, [action.chat.id]: action.chat }
+      // When an assistant message is in flight, the server's view does not
+      // include the streaming content (or even the placeholder). A blind
+      // overwrite would erase the in-progress message until 'done' fires —
+      // making the bubble appear to vanish whenever any field on the chat
+      // is touched mid-stream (e.g. toggling the context panel).
+      // Preserve the in-flight assistant message in that case.
+      const fl = state.inFlight[action.chat.id]
+      const existing = state.chats[action.chat.id]
+      let next = action.chat
+      if (fl && existing) {
+        const inFlightMsg = existing.messages.find(m => m.id === fl.assistantMessageId)
+        if (inFlightMsg && !next.messages.some(m => m.id === fl.assistantMessageId)) {
+          next = { ...next, messages: [...next.messages, inFlightMsg] }
+        }
+      }
+      const chats = { ...state.chats, [action.chat.id]: next }
       const order = state.order.includes(action.chat.id) ? state.order : [action.chat.id, ...state.order]
       return { ...state, chats, order: reorder(order, action.chat.id) }
+    }
+    case 'patchContextPanelOpen': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      const updated: Chat = { ...chat, contextPanelOpen: action.open ?? undefined }
+      return { ...state, chats: { ...state.chats, [chat.id]: updated } }
     }
     case 'remove': {
       const chats = { ...state.chats }
@@ -329,8 +351,11 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       dispatch({ type: 'upsert', chat })
     },
     async setContextPanelOpen(chatId, open) {
-      const chat = await apiService.chats.updateContextPanelOpen(chatId, open)
-      dispatch({ type: 'upsert', chat })
+      // Optimistically patch the local state so we don't replace the chat
+      // (which would clobber an in-flight streaming assistant message).
+      // The server-side write happens in the background.
+      dispatch({ type: 'patchContextPanelOpen', chatId, open })
+      try { await apiService.chats.updateContextPanelOpen(chatId, open) } catch { /* swallow */ }
     },
     async sendMessage(chatId, text, attachments) {
       const assistantMessageId = `asst-${Date.now()}-${Math.random()}`

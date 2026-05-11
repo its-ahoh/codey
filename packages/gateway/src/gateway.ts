@@ -2426,6 +2426,7 @@ Example: /model gpt-4.1 write a Python script`;
     const useManager = team.dispatch === 'auto' && !opts.forceAll;
 
     if (useManager) {
+      let isFirstStep = true;
       const result = await this.runManagerLoop(
         team,
         prompt,
@@ -2438,6 +2439,10 @@ Example: /model gpt-4.1 write a Python script`;
             chatId,
             message: `Step ${step}: ${worker}${isRevision ? ' (revision)' : ''} — ${reason}`,
           });
+          const label = isRevision ? `${worker} (revision)` : worker;
+          const sep = isFirstStep ? '' : '\n\n---\n\n';
+          sink({ type: 'stream', chatId, token: `${sep}### Step ${step}: ${label}\n\n` });
+          isFirstStep = false;
         },
         runOneWorker,
       );
@@ -2487,7 +2492,10 @@ Example: /model gpt-4.1 write a Python script`;
     for (let i = 0; i < team.members.length; i++) {
       if (signal?.aborted) break;
       const memberName = team.members[i];
-      sink({ type: 'info', chatId, message: `Step ${i + 1}/${team.members.length}: ${memberName}` });
+      const stepNum = i + 1;
+      sink({ type: 'info', chatId, message: `Step ${stepNum}/${team.members.length}: ${memberName}` });
+      const sep = i === 0 ? '' : '\n\n---\n\n';
+      sink({ type: 'stream', chatId, token: `${sep}### Step ${stepNum}: ${memberName}\n\n` });
       const seqRoster = team.members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
       const seqNextName = team.members[i + 1];
       const seqNextWorker = seqNextName
@@ -2504,7 +2512,7 @@ Example: /model gpt-4.1 write a Python script`;
       const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
       const response = await runOneWorker(memberName, stepPrompt, codingAgent, modelConfig);
       if (!response.success) {
-        parts.push(`### ${memberName}\n\n`);
+        parts.push(`### Step ${stepNum}: ${memberName}\n\n`);
         break;
       }
       const ask = parseAskUser(response.output);
@@ -2525,7 +2533,7 @@ Example: /model gpt-4.1 write a Python script`;
         sink({ type: 'stream', chatId, token: rendered6.text });
         return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + rendered6.text : rendered6.text, choices: rendered6.choices };
       }
-      parts.push(`### ${memberName}\n\n${response.output}`);
+      parts.push(`### Step ${stepNum}: ${memberName}\n\n${response.output}`);
       carry = response.output;
     }
     return { response: parts.join('\n\n---\n\n') };
@@ -2942,9 +2950,20 @@ Example: /model gpt-4.1 write a Python script`;
     const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
 
+    // Persisted alongside the assistant message at completion. Declared here
+    // so the sink wrapper can capture 'info' events into it (see below).
+    const toolCalls: ToolCallEntry[] = [];
+
     // Tee every sink event to the registered global listener so other surfaces
-    // (e.g., the Mac app) see channel-driven chat updates too.
+    // (e.g., the Mac app) see channel-driven chat updates too. Also capture
+    // 'info' events into the persisted toolCalls array so the right Context
+    // Panel still shows manager routing reasons after a chat reload (info
+    // events come from team-mode orchestration via direct sink calls and
+    // never go through onStatus, so they would otherwise vanish on persist).
     const sink: ChatStreamSink = (ev) => {
+      if (ev.type === 'info') {
+        toolCalls.push({ id: randomUUID(), type: 'info', message: ev.message });
+      }
       try { sinkParam(ev); } catch { /* swallow */ }
       if (this.chatEventListener) {
         try { this.chatEventListener(ev); } catch { /* swallow */ }
@@ -3004,7 +3023,6 @@ Example: /model gpt-4.1 write a Python script`;
       ? this.getModelConfig(agent, chat.model)
       : this.getDefaultModelConfig(agent);
 
-    const toolCalls: ToolCallEntry[] = [];
     let streamedText = '';
 
     const onStream = (text: string) => {
