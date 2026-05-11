@@ -123,6 +123,33 @@ export class TelegramHandler extends BaseChannelHandler {
       this.emitMessage(message);
     });
 
+    this.bot.on('callback_query', (query: TelegramBot.CallbackQuery) => {
+      const data = query.data;
+      const fromId = query.from?.id?.toString();
+      const chatId = query.message?.chat?.id?.toString();
+      if (!data || !fromId || !chatId) {
+        this.bot!.answerCallbackQuery(query.id).catch(() => {});
+        return;
+      }
+      // Resolve indexed payload to a digit so the gateway's digit-mapping picks it up.
+      let text = data;
+      if (/^opt:\d+$/.test(data)) {
+        const idx = parseInt(data.slice(4), 10);
+        text = String(idx + 1);
+      }
+      this.bot!.answerCallbackQuery(query.id).catch(() => {}); // dismiss the spinner
+      const message: UserMessage = {
+        id: `tg-${Date.now()}`,
+        channel: 'telegram',
+        userId: fromId,
+        username: query.from?.username ?? fromId,
+        chatId,
+        text,
+        timestamp: Date.now(),
+      };
+      this.emitMessage(message);
+    });
+
     console.log('[Telegram] Handler started');
   }
 
@@ -150,6 +177,20 @@ export class TelegramHandler extends BaseChannelHandler {
     };
     if (response.replyTo) {
       options.reply_to_message_id = parseInt(response.replyTo);
+    }
+
+    if (response.choices && response.choices.length > 0) {
+      // Telegram callback_data limit is 64 bytes. Long labels fall back to indexed
+      // payload ("opt:N"); the channel intake below maps "opt:N" back to digit "N+1"
+      // and the gateway's digit-mapping helper resolves it via pendingTeam.options /
+      // lastAskedOptions.options.
+      const buttons = response.choices.map((label, idx) => {
+        const data = Buffer.byteLength(label, 'utf8') <= 60 ? label : `opt:${idx}`;
+        return { text: label, callback_data: data };
+      });
+      const rows: TelegramBot.InlineKeyboardButton[][] = [];
+      for (let i = 0; i < buttons.length; i += 3) rows.push(buttons.slice(i, i + 3));
+      options.reply_markup = { inline_keyboard: rows };
     }
 
     await this.bot.sendMessage(response.chatId, markdownToTelegramHtml(response.text), options);
