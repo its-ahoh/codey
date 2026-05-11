@@ -16,7 +16,7 @@ import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
-import { renderQuestionMessage, renderCancelNotice, stripAskMarker } from './team-pause';
+import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
 
 interface ParsedCommand {
   command: string;
@@ -2008,12 +2008,15 @@ Example: /model gpt-4.1 write a Python script`;
           step: p.step,
           askingWorker: p.askingWorker,
           question: p.question,
+          options: undefined,
           askedAt: Date.now(),
         });
+        const rendered1 = renderQuestion(askWorkerName, '', p.question, undefined);
         await this.sendResponse({
           chatId: message.chatId,
           channel: message.channel,
-          text: renderQuestionMessage(askWorkerName, '', p.question),
+          text: rendered1.text,
+          choices: rendered1.choices,
         });
         return;
       }
@@ -2144,12 +2147,15 @@ Example: /model gpt-4.1 write a Python script`;
           carry: pending.carry,
           askingWorker: memberName,
           question: ask.question,
+          options: ask.options,
           askedAt: Date.now(),
         });
+        const rendered2 = renderQuestion(memberName, ask.preamble, ask.question, ask.options);
         await this.sendResponse({
           chatId: message.chatId,
           channel: message.channel,
-          text: renderQuestionMessage(memberName, ask.preamble, ask.question),
+          text: rendered2.text,
+          choices: rendered2.choices,
         });
         return;
       }
@@ -2245,12 +2251,15 @@ Example: /model gpt-4.1 write a Python script`;
         step: pending.step + 1,
         askingWorker: turn.next,
         question: ask.question,
+        options: ask.options,
         askedAt: Date.now(),
       });
+      const rendered3 = renderQuestion(turn.next, ask.preamble, ask.question, ask.options);
       await this.sendResponse({
         chatId: message.chatId,
         channel: message.channel,
-        text: renderQuestionMessage(turn.next, ask.preamble, ask.question),
+        text: rendered3.text,
+        choices: rendered3.choices,
       });
       return;
     }
@@ -2332,13 +2341,16 @@ Example: /model gpt-4.1 write a Python script`;
           carry: currentTask,
           askingWorker: memberName,
           question: ask.question,
+          options: ask.options,
           askedAt: Date.now(),
         };
         this.persistPendingTeam(chatId, pending);
+        const rendered4 = renderQuestion(worker.name, ask.preamble, ask.question, ask.options);
         await this.sendResponse({
           chatId,
           channel,
-          text: renderQuestionMessage(worker.name, ask.preamble, ask.question),
+          text: rendered4.text,
+          choices: rendered4.choices,
         });
         return;
       }
@@ -2364,7 +2376,7 @@ Example: /model gpt-4.1 write a Python script`;
     opts: { forceAll?: boolean } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
-  ): Promise<{ response: string; tokens?: number }> {
+  ): Promise<{ response: string; tokens?: number; choices?: string[] }> {
     if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
     }
@@ -2431,11 +2443,12 @@ Example: /model gpt-4.1 write a Python script`;
           step: p.step,
           askingWorker: p.askingWorker,
           question: p.question,
+          options: undefined,
           askedAt: Date.now(),
         });
-        const text = renderQuestionMessage(askWorkerName, '', p.question);
-        sink({ type: 'stream', chatId, token: text });
-        return { response: text };
+        const rendered5 = renderQuestion(askWorkerName, '', p.question, undefined);
+        sink({ type: 'stream', chatId, token: rendered5.text });
+        return { response: rendered5.text, choices: rendered5.choices };
       } else {
         if (signal?.aborted) {
           return { response: this.formatManagerParts(result.parts, result.finalSummary) };
@@ -2484,11 +2497,12 @@ Example: /model gpt-4.1 write a Python script`;
           carry,
           askingWorker: memberName,
           question: ask.question,
+          options: ask.options,
           askedAt: Date.now(),
         });
-        const text = renderQuestionMessage(askWorkerName, ask.preamble, ask.question);
-        sink({ type: 'stream', chatId, token: text });
-        return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + text : text };
+        const rendered6 = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
+        sink({ type: 'stream', chatId, token: rendered6.text });
+        return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + rendered6.text : rendered6.text, choices: rendered6.choices };
       }
       parts.push(`### ${memberName}\n\n${response.output}`);
       carry = response.output;
