@@ -7,6 +7,7 @@ import { Markdown } from './Markdown'
 import { RouteIcons } from './RouteIcons'
 import { PairingModal } from './PairingModal'
 import { ChatContextPanel } from './ChatContextPanel'
+import { parseTeamMessage, extractPreview } from './teamMessageFormat'
 
 interface Props {
   chatId: string
@@ -112,6 +113,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [pairingModal, setPairingModal] = useState<null | 'telegram' | 'discord' | 'imessage'>(null)
   const [followLatest, setFollowLatest] = useState(true)
   const [selectedTurnIdState, setSelectedTurnIdState] = useState<string | null>(null)
+  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
   const [panelWidth, setPanelWidth] = useState<number>(() => {
     const v = localStorage.getItem('codey.contextPanelWidth')
     const n = v ? parseInt(v, 10) : NaN
@@ -392,6 +394,52 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     }
   }
 
+  const TeamMessage: React.FC<{
+    messageId: string
+    parsed: NonNullable<ReturnType<typeof parseTeamMessage>>
+    isStreaming: boolean
+    expanded: Set<string>
+    setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
+  }> = ({ messageId, parsed, isStreaming, expanded, setExpanded }) => {
+    const lastIdx = parsed.steps.length - 1
+    const toggle = (key: string) => setExpanded(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+    return (
+      <div>
+        {parsed.summary && (
+          <div style={styles.teamSummary}>🧭 {parsed.summary}</div>
+        )}
+        {parsed.steps.map((s, i) => {
+          const baseKey = `${messageId}::${s.step}`
+          const isLastDuringStream = isStreaming && i === lastIdx
+          const collapsedMarker = baseKey + '::collapsed'
+          const isOpen = isLastDuringStream
+            ? !expanded.has(collapsedMarker)
+            : expanded.has(baseKey)
+          const onClick = () => toggle(isLastDuringStream ? collapsedMarker : baseKey)
+          const preview = extractPreview(s.output)
+          return (
+            <div key={baseKey} style={styles.teamStepCard}>
+              <div style={styles.teamStepHeader} onClick={onClick}>
+                <span style={{ ...styles.teamStepChevron, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+                <span style={styles.teamStepLabel}>Step {s.step}: {s.worker}</span>
+                {!isOpen && <span style={styles.teamStepPreview}> · {preview}</span>}
+              </div>
+              {isOpen && (
+                <div style={styles.teamStepBody}>
+                  <Markdown variant="assistant">{s.output}</Markdown>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
   const canSend = isGatewayRunning && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
@@ -534,7 +582,21 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 border: isUser ? 'none' : `1px solid ${isSelected ? C.accent : C.border2}`,
                 transition: 'box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease',
               }}>
-                {msg.content && <Markdown variant={isUser ? 'user' : 'assistant'}>{msg.content}</Markdown>}
+                {msg.content && (() => {
+                  if (isUser) return <Markdown variant="user">{msg.content}</Markdown>
+                  const parsed = parseTeamMessage(msg.content)
+                  if (!parsed) return <Markdown variant="assistant">{msg.content}</Markdown>
+                  const isStreaming = !!flight && msg === lastMsg
+                  return (
+                    <TeamMessage
+                      messageId={msg.id}
+                      parsed={parsed}
+                      isStreaming={isStreaming}
+                      expanded={expandedSteps}
+                      setExpanded={setExpandedSteps}
+                    />
+                  )
+                })()}
                 {isUser && msg.attachments && msg.attachments.length > 0 && (
                   <div style={styles.attachmentsContainer}>
                     {msg.attachments.map(att => {
@@ -909,4 +971,26 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     color: C.fg,
   },
+  teamSummary: {
+    fontSize: 13, fontWeight: 600, color: C.accent,
+    padding: '6px 8px', marginBottom: 8,
+    borderLeft: `3px solid ${C.accent}`, background: 'rgba(255,255,255,0.03)',
+    borderRadius: 4,
+  },
+  teamStepCard: { marginBottom: 6 },
+  teamStepHeader: {
+    display: 'flex', alignItems: 'baseline', cursor: 'pointer',
+    fontSize: 12, color: C.fg2, padding: '2px 0', userSelect: 'none' as const,
+  },
+  teamStepChevron: {
+    display: 'inline-block', fontSize: 11, marginRight: 6,
+    transition: 'transform 0.15s ease', color: C.fg3, flexShrink: 0,
+  },
+  teamStepLabel: { color: C.fg, fontWeight: 500 },
+  teamStepPreview: {
+    color: C.fg3, fontStyle: 'italic', marginLeft: 4,
+    whiteSpace: 'nowrap' as const, overflow: 'hidden' as const, textOverflow: 'ellipsis',
+    flex: 1, minWidth: 0,
+  },
+  teamStepBody: { marginTop: 4, marginLeft: 17 },
 }
