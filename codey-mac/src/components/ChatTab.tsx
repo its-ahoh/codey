@@ -228,7 +228,12 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     }
     return null
   })()
-  const panelOpen: boolean = !winNarrow && (chat?.contextPanelOpen ?? false)
+  const panelOpen: boolean = chat?.contextPanelOpen ?? false
+  const panelOverlay: boolean = panelOpen && winNarrow
+  const overlayPanelWidth: number = Math.min(
+    panelWidth,
+    Math.max(280, Math.floor(window.innerWidth * 0.55))
+  )
 
   const selectionValue: string = chat.selection.type === 'worker'
     ? `worker:${chat.selection.name}`
@@ -748,29 +753,65 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
       )}
       </div>
       {panelOpen && (
-        <ChatContextPanel
-          chat={chat}
-          selectedTurnId={selectedTurnId}
-          followLatest={followLatest}
-          selectedTurnIndex={selectedTurnIndex}
-          effectiveAgent={effectiveAgent}
-          effectiveModel={effectiveModel}
-          workerName={panelWorkerName}
-          teamName={panelTeamName}
-          workingDir={workingDir}
-          width={panelWidth}
-          onFollowLatest={() => setFollowLatest(true)}
-          onClose={() => setContextPanelOpen(chat.id, false)}
-          onResize={setPanelWidth}
-          onRevealFile={(p) => apiService.revealInFolder(p)}
-        />
+        panelOverlay ? (
+          <>
+            <div
+              style={styles.panelBackdrop}
+              onClick={() => setContextPanelOpen(chat.id, false)}
+            />
+            <div style={styles.panelOverlay}>
+              <ChatContextPanel
+                chat={chat}
+                selectedTurnId={selectedTurnId}
+                followLatest={followLatest}
+                selectedTurnIndex={selectedTurnIndex}
+                effectiveAgent={effectiveAgent}
+                effectiveModel={effectiveModel}
+                workerName={panelWorkerName}
+                teamName={panelTeamName}
+                workingDir={workingDir}
+                width={overlayPanelWidth}
+                onFollowLatest={() => setFollowLatest(true)}
+                onClose={() => setContextPanelOpen(chat.id, false)}
+                onResize={setPanelWidth}
+                onRevealFile={(p) => apiService.revealInFolder(p)}
+              />
+            </div>
+          </>
+        ) : (
+          <ChatContextPanel
+            chat={chat}
+            selectedTurnId={selectedTurnId}
+            followLatest={followLatest}
+            selectedTurnIndex={selectedTurnIndex}
+            effectiveAgent={effectiveAgent}
+            effectiveModel={effectiveModel}
+            workerName={panelWorkerName}
+            teamName={panelTeamName}
+            workingDir={workingDir}
+            width={panelWidth}
+            onFollowLatest={() => setFollowLatest(true)}
+            onClose={() => setContextPanelOpen(chat.id, false)}
+            onResize={setPanelWidth}
+            onRevealFile={(p) => apiService.revealInFolder(p)}
+          />
+        )
       )}
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  outer: { display: 'flex', flexDirection: 'row', height: '100%', minHeight: 0 },
+  outer: { display: 'flex', flexDirection: 'row', height: '100%', minHeight: 0, position: 'relative' },
+  panelBackdrop: {
+    position: 'absolute', inset: 0, zIndex: 20,
+    background: 'rgba(0,0,0,0.35)',
+  },
+  panelOverlay: {
+    position: 'absolute', top: 0, right: 0, bottom: 0, zIndex: 21,
+    boxShadow: '-12px 0 32px rgba(0,0,0,0.45)',
+    display: 'flex',
+  },
   container: { display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0 },
   header: {
     padding: '10px 16px', borderBottom: `1px solid ${C.border}`,
