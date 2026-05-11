@@ -8,6 +8,7 @@ import { RouteIcons } from './RouteIcons'
 import { PairingModal } from './PairingModal'
 import { ChatContextPanel } from './ChatContextPanel'
 import { parseTeamMessage, extractPreview } from './teamMessageFormat'
+import { formatHeadline, normalizeTool } from './toolFormat'
 
 interface Props {
   chatId: string
@@ -92,14 +93,108 @@ const AGENT_API_TYPE: Record<string, 'anthropic' | 'openai'> = {
 }
 type ModelEntry = { apiType: 'anthropic' | 'openai'; model: string }
 
+const splitParagraphs = (text: string): string[] =>
+  text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
+
+const LiveActivity: React.FC<{ toolCalls?: import('../types').ToolCallEntry[] }> = ({ toolCalls }) => {
+  if (!toolCalls || toolCalls.length === 0) return null
+  const pending = new Map<string, { id: string; tool?: string; input?: Record<string, unknown> }>()
+  let lastDone: { tool?: string; input?: Record<string, unknown> } | null = null
+  for (const tc of toolCalls) {
+    if (tc.type === 'tool_start') {
+      pending.set(normalizeTool(tc.tool), { id: tc.id, tool: tc.tool, input: tc.input })
+    } else if (tc.type === 'tool_end') {
+      const key = normalizeTool(tc.tool)
+      const p = pending.get(key)
+      if (p) { lastDone = { tool: p.tool, input: p.input }; pending.delete(key) }
+      else { lastDone = { tool: tc.tool } }
+    }
+  }
+  const active = pending.size > 0 ? Array.from(pending.values()).pop()! : null
+  const target = active ?? lastDone
+  if (!target) return null
+  const headline = formatHeadline(target.tool, target.input ?? {})
+  return (
+    <div style={styles.liveActivity}>
+      <span style={styles.liveActivityDot}>{active ? '●' : '○'}</span>
+      <span>{headline}</span>
+    </div>
+  )
+}
+
+const StepBody: React.FC<{
+  output: string
+  bodyKey: string
+  expanded: Set<string>
+  setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
+}> = ({ output, bodyKey, expanded, setExpanded }) => {
+  const paragraphs = splitParagraphs(output)
+  const showAll = expanded.has(bodyKey)
+  if (paragraphs.length <= 1) {
+    return <Markdown variant="assistant">{output}</Markdown>
+  }
+  const last = paragraphs[paragraphs.length - 1]
+  const earlierCount = paragraphs.length - 1
+  const toggle = () => setExpanded(prev => {
+    const next = new Set(prev)
+    if (next.has(bodyKey)) next.delete(bodyKey)
+    else next.add(bodyKey)
+    return next
+  })
+  return (
+    <div>
+      <div style={styles.thinkingToggle} onClick={toggle}>
+        <span style={{ ...styles.teamStepChevron, transform: showAll ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+        <span>{showAll ? 'Hide thinking' : `Show thinking (${earlierCount} paragraph${earlierCount === 1 ? '' : 's'})`}</span>
+      </div>
+      {showAll && (
+        <div style={styles.thinkingBody}>
+          <Markdown variant="assistant">{paragraphs.slice(0, -1).join('\n\n')}</Markdown>
+        </div>
+      )}
+      <Markdown variant="assistant">{last}</Markdown>
+    </div>
+  )
+}
+
+const ManagerSteps: React.FC<{
+  messageId: string
+  infos: { id: string; message: string }[]
+  expanded: Set<string>
+  setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
+}> = ({ messageId, infos, expanded, setExpanded }) => {
+  const key = `${messageId}::manager-steps`
+  const open = expanded.has(key)
+  const toggle = () => setExpanded(prev => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  })
+  return (
+    <div style={styles.managerStepsBox}>
+      <div style={styles.managerStepsHeader} onClick={toggle}>
+        <span style={{ ...styles.teamStepChevron, transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+        <span>Manager routing ({infos.length})</span>
+      </div>
+      {open && (
+        <div style={styles.managerStepsList}>
+          {infos.map(i => (
+            <div key={i.id} style={styles.managerStepLine}>• {i.message}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const TeamMessage: React.FC<{
   messageId: string
   parsed: NonNullable<ReturnType<typeof parseTeamMessage>>
-  isStreaming: boolean
+  infos: { id: string; message: string }[]
   expanded: Set<string>
   setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
-}> = ({ messageId, parsed, isStreaming, expanded, setExpanded }) => {
-  const lastIdx = parsed.steps.length - 1
+}> = ({ messageId, parsed, infos, expanded, setExpanded }) => {
   const toggle = (key: string) => setExpanded(prev => {
     const next = new Set(prev)
     if (next.has(key)) next.delete(key)
@@ -111,25 +206,24 @@ const TeamMessage: React.FC<{
       {parsed.summary && (
         <div style={styles.teamSummary}>🧭 {parsed.summary}</div>
       )}
-      {parsed.steps.map((s, i) => {
+      {infos.length > 0 && (
+        <ManagerSteps messageId={messageId} infos={infos} expanded={expanded} setExpanded={setExpanded} />
+      )}
+      {parsed.steps.map(s => {
         const baseKey = `${messageId}::${s.step}`
-        const isLastDuringStream = isStreaming && i === lastIdx
-        const collapsedMarker = baseKey + '::collapsed'
-        const isOpen = isLastDuringStream
-          ? !expanded.has(collapsedMarker)
-          : expanded.has(baseKey)
-        const onClick = () => toggle(isLastDuringStream ? collapsedMarker : baseKey)
+        const bodyKey = `${baseKey}::body`
+        const isOpen = expanded.has(baseKey)
         const preview = extractPreview(s.output)
         return (
           <div key={baseKey} style={styles.teamStepCard}>
-            <div style={styles.teamStepHeader} onClick={onClick}>
+            <div style={styles.teamStepHeader} onClick={() => toggle(baseKey)}>
               <span style={{ ...styles.teamStepChevron, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
               <span style={styles.teamStepLabel}>Step {s.step}: {s.worker}</span>
               {!isOpen && <span style={styles.teamStepPreview}> · {preview}</span>}
             </div>
             {isOpen && (
               <div style={styles.teamStepBody}>
-                <Markdown variant="assistant">{s.output}</Markdown>
+                <StepBody output={s.output} bodyKey={bodyKey} expanded={expanded} setExpanded={setExpanded} />
               </div>
             )}
           </div>
@@ -583,16 +677,21 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 border: isUser ? 'none' : `1px solid ${isSelected ? C.accent : C.border2}`,
                 transition: 'box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease',
               }}>
+                {!isUser && !!flight && msg === lastMsg && (
+                  <LiveActivity toolCalls={msg.toolCalls} />
+                )}
                 {msg.content && (() => {
                   if (isUser) return <Markdown variant="user">{msg.content}</Markdown>
                   const parsed = parseTeamMessage(msg.content)
                   if (!parsed) return <Markdown variant="assistant">{msg.content}</Markdown>
-                  const isStreaming = !!flight && msg === lastMsg
+                  const infos = (msg.toolCalls ?? [])
+                    .filter(tc => tc.type === 'info')
+                    .map(tc => ({ id: tc.id, message: tc.message }))
                   return (
                     <TeamMessage
                       messageId={msg.id}
                       parsed={parsed}
-                      isStreaming={isStreaming}
+                      infos={infos}
                       expanded={expandedSteps}
                       setExpanded={setExpandedSteps}
                     />
@@ -994,4 +1093,31 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1, minWidth: 0,
   },
   teamStepBody: { marginTop: 4, marginLeft: 17 },
+  thinkingToggle: {
+    display: 'flex', alignItems: 'center', cursor: 'pointer',
+    fontSize: 11, color: C.fg3, padding: '2px 0', userSelect: 'none' as const,
+    marginBottom: 6,
+  },
+  thinkingBody: {
+    marginLeft: 17, marginBottom: 8, paddingLeft: 8,
+    borderLeft: `2px solid ${C.border2}`, opacity: 0.85,
+  },
+  managerStepsBox: { marginBottom: 8 },
+  managerStepsHeader: {
+    display: 'flex', alignItems: 'center', cursor: 'pointer',
+    fontSize: 11, color: C.fg3, padding: '2px 0', userSelect: 'none' as const,
+  },
+  managerStepsList: { marginLeft: 17, marginTop: 4 },
+  managerStepLine: {
+    fontSize: 11, color: C.fg3, padding: '1px 0',
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+  },
+  liveActivity: {
+    display: 'flex', alignItems: 'center', gap: 6,
+    fontSize: 11, color: C.fg3, fontStyle: 'italic',
+    padding: '2px 6px', marginBottom: 6,
+    background: 'rgba(106,176,243,0.08)',
+    borderRadius: 4, border: `1px solid ${C.border2}`,
+  },
+  liveActivityDot: { color: '#6ab0f3', fontSize: 9 },
 }
