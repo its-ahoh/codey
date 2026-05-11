@@ -16,7 +16,8 @@ import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
-import { renderQuestionMessage, renderCancelNotice, stripAskMarker } from './team-pause';
+import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
+import { resolveChoiceDigit } from './digit-mapping';
 
 interface ParsedCommand {
   command: string;
@@ -496,7 +497,9 @@ export class Codey {
     };
   }
 
-  private async handleMessage(message: UserMessage): Promise<void> {
+  private async handleMessage(messageParam: UserMessage): Promise<void> {
+    let message = messageParam;
+
     // Skip if already processing
     if (this.processingMessages.has(message.id)) {
       return;
@@ -523,6 +526,22 @@ export class Codey {
 
     try {
       this.logger.info(`[INPUT] ${message.channel}/${message.username}: ${message.text}`);
+
+      // Digit → option resolution for choice questions (works for both pendingTeam
+      // and plain-chat lastAskedOptions). Mutates `message.text` so downstream
+      // handling sees the resolved option string.
+      const pendingOpts = pendingChat?.pendingTeam?.options ?? pendingChat?.lastAskedOptions?.options;
+      if (pendingOpts && pendingOpts.length > 0) {
+        const resolved = resolveChoiceDigit(message.text, pendingOpts);
+        if (resolved !== null) {
+          message = { ...message, text: resolved };
+        }
+      }
+
+      // Clear lastAskedOptions on ANY user message (button click / digit / free text).
+      if (pendingChat?.lastAskedOptions) {
+        this.chatManager.clearLastAskedOptions(pendingChat.id);
+      }
 
       if (pending) {
         if (isSlash) {
@@ -1694,6 +1713,7 @@ Example: /model gpt-4.1 write a Python script`;
           step: number;
           askingWorker: string;
           question: string;
+          options?: string[];
         };
       }
   > {
@@ -1717,7 +1737,7 @@ Example: /model gpt-4.1 write a Python script`;
     let directNext: { worker: string; instruction: string } | null = null;
     // When set, the next Manager turn arbitrates this pending question
     // (used when a worker emits `[ASK_USER]:` or forwards to an unknown target).
-    let pendingArbitration: { worker: string; question: string } | null = null;
+    let pendingArbitration: { worker: string; question: string; options?: string[] } | null = null;
     // Number of consecutive direct forwards since the last Manager turn.
     let forwardHops = 0;
 
@@ -1778,6 +1798,7 @@ Example: /model gpt-4.1 write a Python script`;
               step,
               askingWorker: pendingArbitration.worker,
               question: pendingArbitration.question,
+              options: pendingArbitration.options,
             },
           };
         }
@@ -1844,11 +1865,11 @@ Example: /model gpt-4.1 write a Python script`;
           continue;
         }
         // Invalid target or hop cap exceeded → Manager arbitrates.
-        pendingArbitration = { worker: turnNext, question: ask.question };
+        pendingArbitration = { worker: turnNext, question: ask.question, options: undefined };
         continue;
       }
       // kind === 'user' → Manager arbitrates whether to route or escalate.
-      pendingArbitration = { worker: turnNext, question: ask.question };
+      pendingArbitration = { worker: turnNext, question: ask.question, options: ask.options };
     }
 
     // Cap exhausted without explicit done — request a final summary.
@@ -2008,12 +2029,15 @@ Example: /model gpt-4.1 write a Python script`;
           step: p.step,
           askingWorker: p.askingWorker,
           question: p.question,
+          options: p.options,
           askedAt: Date.now(),
         });
+        const rendered1 = renderQuestion(askWorkerName, '', p.question, p.options);
         await this.sendResponse({
           chatId: message.chatId,
           channel: message.channel,
-          text: renderQuestionMessage(askWorkerName, '', p.question),
+          text: rendered1.text,
+          choices: rendered1.choices,
         });
         return;
       }
@@ -2144,12 +2168,15 @@ Example: /model gpt-4.1 write a Python script`;
           carry: pending.carry,
           askingWorker: memberName,
           question: ask.question,
+          options: ask.options,
           askedAt: Date.now(),
         });
+        const rendered2 = renderQuestion(memberName, ask.preamble, ask.question, ask.options);
         await this.sendResponse({
           chatId: message.chatId,
           channel: message.channel,
-          text: renderQuestionMessage(memberName, ask.preamble, ask.question),
+          text: rendered2.text,
+          choices: rendered2.choices,
         });
         return;
       }
@@ -2245,12 +2272,15 @@ Example: /model gpt-4.1 write a Python script`;
         step: pending.step + 1,
         askingWorker: turn.next,
         question: ask.question,
+        options: ask.options,
         askedAt: Date.now(),
       });
+      const rendered3 = renderQuestion(turn.next, ask.preamble, ask.question, ask.options);
       await this.sendResponse({
         chatId: message.chatId,
         channel: message.channel,
-        text: renderQuestionMessage(turn.next, ask.preamble, ask.question),
+        text: rendered3.text,
+        choices: rendered3.choices,
       });
       return;
     }
@@ -2332,13 +2362,16 @@ Example: /model gpt-4.1 write a Python script`;
           carry: currentTask,
           askingWorker: memberName,
           question: ask.question,
+          options: ask.options,
           askedAt: Date.now(),
         };
         this.persistPendingTeam(chatId, pending);
+        const rendered4 = renderQuestion(worker.name, ask.preamble, ask.question, ask.options);
         await this.sendResponse({
           chatId,
           channel,
-          text: renderQuestionMessage(worker.name, ask.preamble, ask.question),
+          text: rendered4.text,
+          choices: rendered4.choices,
         });
         return;
       }
@@ -2364,7 +2397,7 @@ Example: /model gpt-4.1 write a Python script`;
     opts: { forceAll?: boolean } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
-  ): Promise<{ response: string; tokens?: number }> {
+  ): Promise<{ response: string; tokens?: number; choices?: string[] }> {
     if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
     }
@@ -2431,11 +2464,12 @@ Example: /model gpt-4.1 write a Python script`;
           step: p.step,
           askingWorker: p.askingWorker,
           question: p.question,
+          options: p.options,
           askedAt: Date.now(),
         });
-        const text = renderQuestionMessage(askWorkerName, '', p.question);
-        sink({ type: 'stream', chatId, token: text });
-        return { response: text };
+        const rendered5 = renderQuestion(askWorkerName, '', p.question, p.options);
+        sink({ type: 'stream', chatId, token: rendered5.text });
+        return { response: rendered5.text, choices: rendered5.choices };
       } else {
         if (signal?.aborted) {
           return { response: this.formatManagerParts(result.parts, result.finalSummary) };
@@ -2484,11 +2518,12 @@ Example: /model gpt-4.1 write a Python script`;
           carry,
           askingWorker: memberName,
           question: ask.question,
+          options: ask.options,
           askedAt: Date.now(),
         });
-        const text = renderQuestionMessage(askWorkerName, ask.preamble, ask.question);
-        sink({ type: 'stream', chatId, token: text });
-        return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + text : text };
+        const rendered6 = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
+        sink({ type: 'stream', chatId, token: rendered6.text });
+        return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + rendered6.text : rendered6.text, choices: rendered6.choices };
       }
       parts.push(`### ${memberName}\n\n${response.output}`);
       carry = response.output;
@@ -2781,7 +2816,7 @@ Example: /model gpt-4.1 write a Python script`;
     prompt: string,
     sse?: (event: string, data: string) => void,
     conversationId?: string,
-  ): Promise<{ response: string; conversationId: string; tokens?: number; durationSec?: number }> {
+  ): Promise<{ response: string; conversationId: string; tokens?: number; durationSec?: number; choices?: string[] }> {
     const agent = this.getDefaultAgent();
     const model = this.getDefaultModelConfig(agent);
 
@@ -2887,11 +2922,14 @@ Example: /model gpt-4.1 write a Python script`;
       });
     }
 
+    const formattedResponse = this.formatAgentResponse(response);
+    const httpAsk = parseAskUser(formattedResponse);
     return {
-      response: this.formatAgentResponse(response),
+      response: formattedResponse,
       conversationId: ctxId,
       tokens: response.tokens?.total,
       durationSec: response.duration,
+      ...(httpAsk?.options && httpAsk.options.length >= 2 ? { choices: httpAsk.options } : {}),
     };
   }
 
@@ -3054,7 +3092,23 @@ Example: /model gpt-4.1 write a Python script`;
       };
       const updated = this.chatManager.appendMessage(chatId, assistantMessage);
 
-      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title });
+      // Plain-chat ASK_USER:choice detection. Team flows handled this earlier in
+      // their own pause paths. For non-team chats, surface the options to the
+      // channel and persist on the chat so the next user reply can be digit-mapped.
+      let plainChoices: string[] | undefined;
+      if (!updated.pendingTeam) {
+        const plainAsk = parseAskUser(output);
+        if (plainAsk?.options && plainAsk.options.length >= 2) {
+          plainChoices = plainAsk.options;
+          const lastMsg = updated.messages[updated.messages.length - 1];
+          if (lastMsg && lastMsg.role === 'assistant') {
+            lastMsg.choices = plainAsk.options;
+            this.chatManager.setLastAskedOptions(chatId, lastMsg.id, plainAsk.options);
+          }
+        }
+      }
+
+      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title, choices: plainChoices });
       return { response: output, chatId, tokens, durationSec };
     } catch (err) {
       const message = `Error: ${(err as Error).message}`;

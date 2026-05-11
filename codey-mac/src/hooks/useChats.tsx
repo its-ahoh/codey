@@ -29,7 +29,7 @@ type Action =
   | { type: 'streamToken'; chatId: string; token: string }
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: 'working' | 'writing' }
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string }
+  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string; choices?: string[] }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
 
 function reorder(order: string[], chatId: string): string[] {
@@ -135,7 +135,7 @@ function reducer(state: State, action: Action): State {
       if (!chat) return state
       const messages = chat.messages.map(m =>
         m.id === action.assistantMessageId
-          ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, isComplete: true }
+          ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, isComplete: true, choices: action.choices }
           : m
       )
       const updatedChat: Chat = { ...chat, messages, updatedAt: Date.now() }
@@ -274,6 +274,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               tokens: ev.tokens,
               durationSec: ev.durationSec,
               title: ev.title,
+              choices: ev.choices,
             })
             delete pendingAssistantId.current[ev.chatId]
           } else {

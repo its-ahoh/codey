@@ -1,7 +1,7 @@
 import * as readline from 'readline';
 import { marked } from 'marked';
 import { markedTerminal } from 'marked-terminal';
-import { BaseChannelHandler } from './base';
+import { BaseChannelHandler, formatChoicesAsText } from './base';
 import { GatewayResponse, UserMessage } from '@codey/core';
 
 marked.use(markedTerminal() as any);
@@ -93,6 +93,7 @@ export class TuiHandler extends BaseChannelHandler {
   }
 
   async sendMessage(response: GatewayResponse): Promise<void> {
+    const text = formatChoicesAsText(response.text, response.choices);
     // Clear timer
     if (this.timerInterval) {
       clearInterval(this.timerInterval);
@@ -104,8 +105,8 @@ export class TuiHandler extends BaseChannelHandler {
       process.stdout.write('\r\x1b[J'); // clear current line
     }
 
-    if (response.text) {
-      console.log(`\n${this.renderMarkdown(response.text)}`);
+    if (text) {
+      console.log(`\n${this.renderMarkdown(text)}`);
     }
 
     console.log(`\n${SEPARATOR}\n`);

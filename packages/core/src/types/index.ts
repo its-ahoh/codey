@@ -27,6 +27,8 @@ export interface GatewayResponse {
   channel: ChannelType;
   text: string;
   replyTo?: string;
+  /** When present, the response is asking the user to pick from these options. */
+  choices?: string[];
 }
 
 // Coding agent types

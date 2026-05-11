@@ -228,7 +228,12 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     }
     return null
   })()
-  const panelOpen: boolean = !winNarrow && (chat?.contextPanelOpen ?? false)
+  const panelOpen: boolean = chat?.contextPanelOpen ?? false
+  const panelOverlay: boolean = panelOpen && winNarrow
+  const overlayPanelWidth: number = Math.min(
+    panelWidth,
+    Math.max(280, Math.floor(window.innerWidth * 0.55))
+  )
 
   const selectionValue: string = chat.selection.type === 'worker'
     ? `worker:${chat.selection.name}`
@@ -499,7 +504,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
             </div>
           </div>
         )}
-        {chat.messages.map(msg => {
+        {chat.messages.map((msg, idx) => {
           const isUser = msg.role === 'user'
           const isSelected = !isUser && msg.id === selectedTurnId && panelOpen
           return (
@@ -514,7 +519,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 marginBottom: 12,
                 cursor: isUser ? 'default' : 'pointer',
                 paddingLeft: !isUser ? 6 : 0,
-                borderLeft: isSelected ? `2px solid ${C.accent}` : '2px solid transparent',
+                transform: isSelected ? 'translateY(-3px)' : 'translateY(0)',
+                transition: 'transform 0.18s ease',
               }}
             >
               <div style={{
@@ -522,8 +528,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
                 background: isUser ? C.userBg : C.aiBg,
                 color: isUser ? '#ffffff' : C.fg, fontSize: 13, lineHeight: 1.55, wordBreak: 'break-word',
-                boxShadow: isUser ? 'none' : '0 1px 3px rgba(0,0,0,0.3)',
-                border: isUser ? 'none' : `1px solid ${C.border2}`,
+                boxShadow: isUser
+                  ? 'none'
+                  : (isSelected
+                      ? `0 10px 24px ${C.accentDim}, 0 6px 14px ${C.accentDim}`
+                      : '0 1px 3px rgba(0,0,0,0.18)'),
+                border: isUser ? 'none' : `1px solid ${isSelected ? C.accent : C.border2}`,
+                transition: 'box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease',
               }}>
                 {msg.toolCalls && msg.toolCalls.length > 0 && (() => {
                   type Row =
@@ -623,6 +634,26 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                   </div>
                 )}
               </div>
+              {msg.role === 'assistant'
+                && msg.choices
+                && msg.choices.length > 0
+                && idx === chat.messages.length - 1
+                && chat.messages[chat.messages.length - 1]?.role !== 'user'
+                && (
+                  <div style={styles.choiceRow}>
+                    {msg.choices.map((label, i) => (
+                      <button
+                        key={i}
+                        style={styles.choiceButton}
+                        disabled={isSending || !!flight}
+                        onClick={() => { void sendMessage(chat.id, label) }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )
+              }
               <div style={styles.tsLabel}>
                 <span>{fmtTime(msg.timestamp)}</span>
                 {(() => {
@@ -742,29 +773,65 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
       )}
       </div>
       {panelOpen && (
-        <ChatContextPanel
-          chat={chat}
-          selectedTurnId={selectedTurnId}
-          followLatest={followLatest}
-          selectedTurnIndex={selectedTurnIndex}
-          effectiveAgent={effectiveAgent}
-          effectiveModel={effectiveModel}
-          workerName={panelWorkerName}
-          teamName={panelTeamName}
-          workingDir={workingDir}
-          width={panelWidth}
-          onFollowLatest={() => setFollowLatest(true)}
-          onClose={() => setContextPanelOpen(chat.id, false)}
-          onResize={setPanelWidth}
-          onRevealFile={(p) => apiService.revealInFolder(p)}
-        />
+        panelOverlay ? (
+          <>
+            <div
+              style={styles.panelBackdrop}
+              onClick={() => setContextPanelOpen(chat.id, false)}
+            />
+            <div style={styles.panelOverlay}>
+              <ChatContextPanel
+                chat={chat}
+                selectedTurnId={selectedTurnId}
+                followLatest={followLatest}
+                selectedTurnIndex={selectedTurnIndex}
+                effectiveAgent={effectiveAgent}
+                effectiveModel={effectiveModel}
+                workerName={panelWorkerName}
+                teamName={panelTeamName}
+                workingDir={workingDir}
+                width={overlayPanelWidth}
+                onFollowLatest={() => setFollowLatest(true)}
+                onClose={() => setContextPanelOpen(chat.id, false)}
+                onResize={setPanelWidth}
+                onRevealFile={(p) => apiService.revealInFolder(p)}
+              />
+            </div>
+          </>
+        ) : (
+          <ChatContextPanel
+            chat={chat}
+            selectedTurnId={selectedTurnId}
+            followLatest={followLatest}
+            selectedTurnIndex={selectedTurnIndex}
+            effectiveAgent={effectiveAgent}
+            effectiveModel={effectiveModel}
+            workerName={panelWorkerName}
+            teamName={panelTeamName}
+            workingDir={workingDir}
+            width={panelWidth}
+            onFollowLatest={() => setFollowLatest(true)}
+            onClose={() => setContextPanelOpen(chat.id, false)}
+            onResize={setPanelWidth}
+            onRevealFile={(p) => apiService.revealInFolder(p)}
+          />
+        )
       )}
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  outer: { display: 'flex', flexDirection: 'row', height: '100%', minHeight: 0 },
+  outer: { display: 'flex', flexDirection: 'row', height: '100%', minHeight: 0, position: 'relative' },
+  panelBackdrop: {
+    position: 'absolute', inset: 0, zIndex: 20,
+    background: 'rgba(0,0,0,0.35)',
+  },
+  panelOverlay: {
+    position: 'absolute', top: 0, right: 0, bottom: 0, zIndex: 21,
+    boxShadow: '-12px 0 32px rgba(0,0,0,0.45)',
+    display: 'flex',
+  },
   container: { display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0 },
   header: {
     padding: '10px 16px', borderBottom: `1px solid ${C.border}`,
@@ -888,6 +955,22 @@ const styles: Record<string, React.CSSProperties> = {
   },
   uploadError: {
     color: C.dangerFg, fontSize: 11, padding: '0 4px',
+  },
+  choiceRow: {
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: 8,
+    marginTop: 8,
+    marginLeft: 12,
+  },
+  choiceButton: {
+    padding: '6px 12px',
+    borderRadius: 6,
+    border: `1px solid ${C.border2}`,
+    background: C.surface3,
+    color: C.fg,
+    cursor: 'pointer',
+    fontSize: 13,
   },
   attachButton: {
     width: 32, height: 32, borderRadius: 8, border: 'none',

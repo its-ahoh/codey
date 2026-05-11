@@ -27,3 +27,5 @@ codey-mac/build/icon.iconset/
 docs/
 
 .codey/
+
+*.tsbuildinfo

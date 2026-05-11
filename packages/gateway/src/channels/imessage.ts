@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { exec } from 'child_process';
-import { BaseChannelHandler } from './base';
+import { BaseChannelHandler, formatChoicesAsText } from './base';
 import { UserMessage, GatewayResponse, ChatRoute } from '@codey/core';
 
 // iMessage handler using macOS AppleScript
@@ -23,9 +23,10 @@ export class IMessageHandler extends BaseChannelHandler {
   }
 
   async sendMessage(response: GatewayResponse): Promise<void> {
+    const text = formatChoicesAsText(response.text, response.choices);
     const script = `
       tell application "Messages"
-        send "${this.escapeString(response.text)}" to buddy "${response.chatId}"
+        send "${this.escapeString(text)}" to buddy "${response.chatId}"
       end tell
     `;
 

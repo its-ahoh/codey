@@ -30,6 +30,8 @@ export interface ChatMessage {
   tokens?: number;
   /** Wall-clock seconds the agent took to produce the response. */
   durationSec?: number;
+  /** Option labels when this assistant message ended in [ASK_USER:choice]. */
+  choices?: string[];
 }
 
 export type ChatSelection =
@@ -58,4 +60,6 @@ export interface Chat {
    *  undefined = user hasn't decided; auto-open logic applies on first tool call.
    *  true/false = explicit user choice; honored verbatim. */
   contextPanelOpen?: boolean;
+  /** Last unanswered choice question in a non-team chat. Cleared on next user message. */
+  lastAskedOptions?: { messageId: string; options: string[] };
 }

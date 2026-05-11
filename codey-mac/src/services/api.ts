@@ -10,7 +10,7 @@ export type ChatStreamEvent =
   | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string }
   | { type: 'info'; chatId: string; message: string }
   | { type: 'stream'; chatId: string; token: string }
-  | { type: 'done'; chatId: string; response: string; tokens?: number; durationSec?: number; title?: string }
+  | { type: 'done'; chatId: string; response: string; tokens?: number; durationSec?: number; title?: string; choices?: string[] }
   | { type: 'error'; chatId: string; message: string };
 
 function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
