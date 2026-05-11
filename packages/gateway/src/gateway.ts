@@ -17,6 +17,7 @@ import { summarizePriorHistory } from './summary';
 import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
+import { resolveChoiceDigit } from './digit-mapping';
 
 interface ParsedCommand {
   command: string;
@@ -496,7 +497,9 @@ export class Codey {
     };
   }
 
-  private async handleMessage(message: UserMessage): Promise<void> {
+  private async handleMessage(messageParam: UserMessage): Promise<void> {
+    let message = messageParam;
+
     // Skip if already processing
     if (this.processingMessages.has(message.id)) {
       return;
@@ -523,6 +526,17 @@ export class Codey {
 
     try {
       this.logger.info(`[INPUT] ${message.channel}/${message.username}: ${message.text}`);
+
+      // Digit → option resolution for choice questions (works for both pendingTeam
+      // and plain-chat lastAskedOptions). Mutates `message.text` so downstream
+      // handling sees the resolved option string.
+      const pendingOpts = pendingChat?.pendingTeam?.options ?? pendingChat?.lastAskedOptions?.options;
+      if (pendingOpts && pendingOpts.length > 0) {
+        const resolved = resolveChoiceDigit(message.text, pendingOpts);
+        if (resolved !== null) {
+          message = { ...message, text: resolved };
+        }
+      }
 
       if (pending) {
         if (isSlash) {
