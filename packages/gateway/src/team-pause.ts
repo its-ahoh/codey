@@ -1,28 +1,41 @@
 import { PendingTeamState, parseAsk } from '@codey/core';
 
-/**
- * Returns the worker output with the [ASK_USER] / [ASK: name] marker line
- * removed (and any trailing content after it). Used when persisting pause
- * state so the marker doesn't leak into the rendered run log on resume.
- */
 export function stripAskMarker(output: string): string {
   const ask = parseAsk(output);
   return ask ? ask.preamble : output;
 }
 
-/** User-visible message rendered when a team pauses on a worker question. */
+export interface QuestionRender {
+  text: string;
+  choices?: string[];
+}
+
+export function renderQuestion(
+  workerName: string,
+  preamble: string,
+  question: string,
+  options?: string[],
+  truncate = 500,
+): QuestionRender {
+  const head = preamble.trim();
+  const trimmedHead = head.length > truncate ? head.substring(0, truncate) + '…' : head;
+  const intro = `❓ **${workerName}** needs your input:`;
+  const body = `${question}`;
+  const footer = options && options.length > 0
+    ? '_Tap an option below, or type your own answer._'
+    : '_Reply with your answer to continue, or send a slash command to cancel._';
+  const text = [trimmedHead, intro, body, footer].filter(Boolean).join('\n\n');
+  return options && options.length > 0 ? { text, choices: options } : { text };
+}
+
+/** Legacy string-returning helper kept for callers that don't yet pass choices through. */
 export function renderQuestionMessage(
   workerName: string,
   preamble: string,
   question: string,
   truncate = 500,
 ): string {
-  const head = preamble.trim();
-  const trimmedHead = head.length > truncate ? head.substring(0, truncate) + '…' : head;
-  const intro = `❓ **${workerName}** needs your input:`;
-  const body = `${question}`;
-  const footer = '_Reply with your answer to continue, or send a slash command to cancel._';
-  return [trimmedHead, intro, body, footer].filter(Boolean).join('\n\n');
+  return renderQuestion(workerName, preamble, question, undefined, truncate).text;
 }
 
 /** Notice shown when a slash command arrives while a team is paused. */
