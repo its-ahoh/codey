@@ -7,7 +7,7 @@ import { Markdown } from './Markdown'
 import { RouteIcons } from './RouteIcons'
 import { PairingModal } from './PairingModal'
 import { ChatContextPanel } from './ChatContextPanel'
-import { parseTeamMessage, extractPreview } from './teamMessageFormat'
+import { parseTeamMessage } from './teamMessageFormat'
 import { formatHeadline, normalizeTool } from './toolFormat'
 
 interface Props {
@@ -167,12 +167,6 @@ const TeamMessage: React.FC<{
   setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
 }> = ({ messageId, parsed, isStreaming, expanded, setExpanded }) => {
   const lastIdx = parsed.steps.length - 1
-  const toggle = (key: string) => setExpanded(prev => {
-    const next = new Set(prev)
-    if (next.has(key)) next.delete(key)
-    else next.add(key)
-    return next
-  })
   return (
     <div>
       {parsed.summary && (
@@ -182,28 +176,22 @@ const TeamMessage: React.FC<{
         const baseKey = `${messageId}::${s.step}`
         const bodyKey = `${baseKey}::body`
         const isLastDuringStream = isStreaming && i === lastIdx
-        const collapsedMarker = baseKey + '::collapsed'
-        const isOpen = isLastDuringStream
-          ? !expanded.has(collapsedMarker)
-          : expanded.has(baseKey)
-        const onClick = () => toggle(isLastDuringStream ? collapsedMarker : baseKey)
-        const preview = extractPreview(s.output)
         const cardStyle = isLastDuringStream
           ? { ...styles.teamStepCard, ...styles.teamStepCardActive }
           : styles.teamStepCard
         return (
           <div key={baseKey} id={stepDomId(messageId, s.step)} style={cardStyle}>
-            <div style={styles.teamStepHeader} onClick={onClick}>
-              <span style={{ ...styles.teamStepChevron, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+            <div style={styles.teamStepHeader}>
               <span style={styles.teamStepLabel}>Step {s.step}: {s.worker}</span>
               {isLastDuringStream && <span style={styles.teamStepRunning}>● running</span>}
-              {!isOpen && <span style={styles.teamStepPreview}> · {preview}</span>}
             </div>
-            {isOpen && (
-              <div style={styles.teamStepBody}>
+            <div style={styles.teamStepBody}>
+              {isLastDuringStream ? (
+                <Markdown variant="assistant">{s.output || '…'}</Markdown>
+              ) : (
                 <StepBody output={s.output} bodyKey={bodyKey} expanded={expanded} setExpanded={setExpanded} />
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )
       })}
@@ -850,11 +838,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           onRevealFile={(p) => apiService.revealInFolder(p)}
           onScrollToStep={(mid, step) => {
             document.getElementById(stepDomId(mid, step))?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-            setExpandedSteps(prev => {
-              const next = new Set(prev)
-              next.add(`${mid}::${step}`)
-              return next
-            })
           }}
           isTurnStreaming={!!flight && selectedTurnId === lastMsg?.id}
         />
