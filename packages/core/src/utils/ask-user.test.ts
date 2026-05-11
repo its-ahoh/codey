@@ -96,3 +96,64 @@ describe('parseAsk', () => {
     });
   });
 });
+
+describe('parseAskUser (choice variant)', () => {
+  it('parses two options', () => {
+    const out = parseAskUser('[ASK_USER:choice]: merge into main? | yes | no');
+    expect(out).toEqual({
+      preamble: '',
+      question: 'merge into main?',
+      options: ['yes', 'no'],
+    });
+  });
+
+  it('parses many options and trims whitespace', () => {
+    const out = parseAskUser('[ASK_USER:choice]: pick db?  |  postgres  | sqlite |  mysql ');
+    expect(out?.options).toEqual(['postgres', 'sqlite', 'mysql']);
+  });
+
+  it('caps at 8 options', () => {
+    const opts = Array.from({ length: 12 }, (_, i) => `o${i}`).join(' | ');
+    const out = parseAskUser(`[ASK_USER:choice]: q? | ${opts}`);
+    expect(out?.options).toHaveLength(8);
+    expect(out?.options?.[0]).toBe('o0');
+    expect(out?.options?.[7]).toBe('o7');
+  });
+
+  it('skips empty option segments', () => {
+    const out = parseAskUser('[ASK_USER:choice]: q? | a | | b |   ');
+    expect(out?.options).toEqual(['a', 'b']);
+  });
+
+  it('degrades to plain text when fewer than 2 valid options remain', () => {
+    const out = parseAskUser('[ASK_USER:choice]: only one? | yes');
+    expect(out).toEqual({ preamble: '', question: 'only one? | yes' });
+    expect((out as any).options).toBeUndefined();
+  });
+
+  it('degrades when no pipe present', () => {
+    const out = parseAskUser('[ASK_USER:choice]: just a question');
+    expect(out).toEqual({ preamble: '', question: 'just a question' });
+  });
+
+  it('preserves preamble for choice marker', () => {
+    const text = 'I looked into it.\n[ASK_USER:choice]: which? | a | b';
+    const out = parseAskUser(text);
+    expect(out?.preamble).toBe('I looked into it.');
+    expect(out?.options).toEqual(['a', 'b']);
+  });
+});
+
+describe('parseAsk (choice variant)', () => {
+  it('returns user kind with options', () => {
+    const out = parseAsk('[ASK_USER:choice]: q? | a | b');
+    expect(out).toEqual({ kind: 'user', preamble: '', question: 'q?', options: ['a', 'b'] });
+  });
+
+  it('does not treat [ASK: name]:choice as a team-choice variant', () => {
+    const out = parseAsk('[ASK: alice:choice]: q? | a | b');
+    if (out?.kind === 'team') {
+      expect((out as any).options).toBeUndefined();
+    }
+  });
+});
