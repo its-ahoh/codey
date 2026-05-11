@@ -157,45 +157,15 @@ const StepBody: React.FC<{
   )
 }
 
-const ManagerSteps: React.FC<{
-  messageId: string
-  infos: { id: string; message: string }[]
-  expanded: Set<string>
-  setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
-}> = ({ messageId, infos, expanded, setExpanded }) => {
-  const key = `${messageId}::manager-steps`
-  const open = expanded.has(key)
-  const toggle = () => setExpanded(prev => {
-    const next = new Set(prev)
-    if (next.has(key)) next.delete(key)
-    else next.add(key)
-    return next
-  })
-  return (
-    <div style={styles.managerStepsBox}>
-      <div style={styles.managerStepsHeader} onClick={toggle}>
-        <span style={{ ...styles.teamStepChevron, transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
-        <span>Manager routing ({infos.length})</span>
-      </div>
-      {open && (
-        <div style={styles.managerStepsList}>
-          {infos.map(i => (
-            <div key={i.id} style={styles.managerStepLine}>• {i.message}</div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
+const stepDomId = (messageId: string, stepNum: number) => `step-${messageId}-${stepNum}`
 
 const TeamMessage: React.FC<{
   messageId: string
   parsed: NonNullable<ReturnType<typeof parseTeamMessage>>
-  infos: { id: string; message: string }[]
   isStreaming: boolean
   expanded: Set<string>
   setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
-}> = ({ messageId, parsed, infos, isStreaming, expanded, setExpanded }) => {
+}> = ({ messageId, parsed, isStreaming, expanded, setExpanded }) => {
   const lastIdx = parsed.steps.length - 1
   const toggle = (key: string) => setExpanded(prev => {
     const next = new Set(prev)
@@ -207,9 +177,6 @@ const TeamMessage: React.FC<{
     <div>
       {parsed.summary && (
         <div style={styles.teamSummary}>🧭 {parsed.summary}</div>
-      )}
-      {infos.length > 0 && (
-        <ManagerSteps messageId={messageId} infos={infos} expanded={expanded} setExpanded={setExpanded} />
       )}
       {parsed.steps.map((s, i) => {
         const baseKey = `${messageId}::${s.step}`
@@ -225,7 +192,7 @@ const TeamMessage: React.FC<{
           ? { ...styles.teamStepCard, ...styles.teamStepCardActive }
           : styles.teamStepCard
         return (
-          <div key={baseKey} style={cardStyle}>
+          <div key={baseKey} id={stepDomId(messageId, s.step)} style={cardStyle}>
             <div style={styles.teamStepHeader} onClick={onClick}>
               <span style={{ ...styles.teamStepChevron, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
               <span style={styles.teamStepLabel}>Step {s.step}: {s.worker}</span>
@@ -695,15 +662,11 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                   if (isUser) return <Markdown variant="user">{msg.content}</Markdown>
                   const parsed = parseTeamMessage(msg.content)
                   if (!parsed) return <Markdown variant="assistant">{msg.content}</Markdown>
-                  const infos = (msg.toolCalls ?? [])
-                    .filter(tc => tc.type === 'info')
-                    .map(tc => ({ id: tc.id, message: tc.message }))
                   const isStreaming = !!flight && msg === lastMsg
                   return (
                     <TeamMessage
                       messageId={msg.id}
                       parsed={parsed}
-                      infos={infos}
                       isStreaming={isStreaming}
                       expanded={expandedSteps}
                       setExpanded={setExpandedSteps}
@@ -901,6 +864,15 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 onClose={() => setContextPanelOpen(chat.id, false)}
                 onResize={setPanelWidth}
                 onRevealFile={(p) => apiService.revealInFolder(p)}
+                onScrollToStep={(mid, step) => {
+                  document.getElementById(stepDomId(mid, step))?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  setExpandedSteps(prev => {
+                    const next = new Set(prev)
+                    next.add(`${mid}::${step}`)
+                    return next
+                  })
+                }}
+                isTurnStreaming={!!flight && selectedTurnId === lastMsg?.id}
               />
             </div>
           </>
@@ -920,6 +892,15 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
             onClose={() => setContextPanelOpen(chat.id, false)}
             onResize={setPanelWidth}
             onRevealFile={(p) => apiService.revealInFolder(p)}
+            onScrollToStep={(mid, step) => {
+              document.getElementById(stepDomId(mid, step))?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              setExpandedSteps(prev => {
+                const next = new Set(prev)
+                next.add(`${mid}::${step}`)
+                return next
+              })
+            }}
+            isTurnStreaming={!!flight && selectedTurnId === lastMsg?.id}
           />
         )
       )}
@@ -1127,16 +1108,6 @@ const styles: Record<string, React.CSSProperties> = {
   thinkingBody: {
     marginLeft: 17, marginBottom: 8, paddingLeft: 8,
     borderLeft: `2px solid ${C.border2}`, opacity: 0.85,
-  },
-  managerStepsBox: { marginBottom: 8 },
-  managerStepsHeader: {
-    display: 'flex', alignItems: 'center', cursor: 'pointer',
-    fontSize: 11, color: C.fg3, padding: '2px 0', userSelect: 'none' as const,
-  },
-  managerStepsList: { marginLeft: 17, marginTop: 4 },
-  managerStepLine: {
-    fontSize: 11, color: C.fg3, padding: '1px 0',
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
   },
   liveActivity: {
     display: 'flex', alignItems: 'center', gap: 6,
