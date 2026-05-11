@@ -30,3 +30,9 @@ export abstract class BaseChannelHandler implements ChannelHandler {
     }
   }
 }
+
+export function formatChoicesAsText(text: string, choices?: string[]): string {
+  if (!choices || choices.length === 0) return text;
+  const list = choices.map((c, i) => `${i + 1}) ${c}`).join('\n');
+  return `${text}\n\n${list}\n\n_Reply with the number or the option text._`;
+}
