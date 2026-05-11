@@ -293,7 +293,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     })()
   }, [isGatewayRunning])
   const lastMsg = chat?.messages?.[chat.messages.length - 1]
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chat?.messages?.length, lastMsg?.content, lastMsg?.toolCalls?.length])
+  useEffect(() => {
+    if (followLatest) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chat?.messages?.length, lastMsg?.content, lastMsg?.toolCalls?.length, chat?.contextPanelOpen, followLatest])
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && flight) stopChat(chatId)
