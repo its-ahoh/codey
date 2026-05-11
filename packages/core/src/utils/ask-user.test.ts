@@ -150,9 +150,12 @@ describe('parseAsk (choice variant)', () => {
     expect(out).toEqual({ kind: 'user', preamble: '', question: 'q?', options: ['a', 'b'] });
   });
 
-  it('does not treat [ASK: name]:choice as a team-choice variant', () => {
+  it('does not treat [ASK: name:choice] as a team-choice variant', () => {
     const out = parseAsk('[ASK: alice:choice]: q? | a | b');
+    expect(out?.kind).toBe('team');
     if (out?.kind === 'team') {
+      expect(out.target).toBe('alice:choice');
+      expect(out.question).toBe('q? | a | b');
       expect((out as any).options).toBeUndefined();
     }
   });

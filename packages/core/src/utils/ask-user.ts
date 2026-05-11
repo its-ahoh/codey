@@ -18,8 +18,7 @@ export type AskMarker =
   | ({ kind: 'user' } & AskUser)
   | ({ kind: 'team' } & AskTeam);
 
-const USER_MARKER_RE = /^\s*\[ASK_USER(?::choice)?\]\s*:\s*(.*)$/;
-const USER_CHOICE_MARKER_RE = /^\s*\[ASK_USER:choice\]\s*:\s*(.*)$/;
+const USER_MARKER_RE = /^\s*\[ASK_USER(:choice)?\]\s*:\s*(.*)$/;
 const TEAM_MARKER_RE = /^\s*\[ASK\s*:\s*([^\]]+?)\s*\]\s*:\s*(.*)$/;
 
 const MAX_OPTIONS = 8;
@@ -40,18 +39,18 @@ export function parseAskUser(output: string): AskUser | null {
   if (!output) return null;
   const lines = output.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
-    const choiceMatch = lines[i].match(USER_CHOICE_MARKER_RE);
-    if (choiceMatch) {
-      const { question, options } = splitChoicePayload(choiceMatch[1]);
+    const m = lines[i].match(USER_MARKER_RE);
+    if (!m) continue;
+    const isChoice = !!m[1];
+    const payload = m[2];
+    const preamble = lines.slice(0, i).join('\n').replace(/\s+$/, '');
+    if (isChoice) {
+      const { question, options } = splitChoicePayload(payload);
       if (!question) return null;
-      const preamble = lines.slice(0, i).join('\n').replace(/\s+$/, '');
       return options ? { preamble, question, options } : { preamble, question };
     }
-    const userMatch = lines[i].match(USER_MARKER_RE);
-    if (!userMatch) continue;
-    const question = userMatch[1].trim();
+    const question = payload.trim();
     if (!question) return null;
-    const preamble = lines.slice(0, i).join('\n').replace(/\s+$/, '');
     return { preamble, question };
   }
   return null;
@@ -66,20 +65,20 @@ export function parseAsk(output: string): AskMarker | null {
   const lines = output.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const choiceMatch = line.match(USER_CHOICE_MARKER_RE);
-    if (choiceMatch) {
-      const { question, options } = splitChoicePayload(choiceMatch[1]);
-      if (!question) return null;
+    const m = line.match(USER_MARKER_RE);
+    if (m) {
+      const isChoice = !!m[1];
+      const payload = m[2];
       const preamble = lines.slice(0, i).join('\n').replace(/\s+$/, '');
-      return options
-        ? { kind: 'user', preamble, question, options }
-        : { kind: 'user', preamble, question };
-    }
-    const userMatch = line.match(USER_MARKER_RE);
-    if (userMatch) {
-      const question = userMatch[1].trim();
+      if (isChoice) {
+        const { question, options } = splitChoicePayload(payload);
+        if (!question) return null;
+        return options
+          ? { kind: 'user', preamble, question, options }
+          : { kind: 'user', preamble, question };
+      }
+      const question = payload.trim();
       if (!question) return null;
-      const preamble = lines.slice(0, i).join('\n').replace(/\s+$/, '');
       return { kind: 'user', preamble, question };
     }
     const teamMatch = line.match(TEAM_MARKER_RE);
