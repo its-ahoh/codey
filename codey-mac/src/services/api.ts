@@ -84,12 +84,19 @@ export const apiService = {
     try { await window.codey.revealInFolder(absPath) } catch { /* silent no-op */ }
   },
 
-  // Teams
-  getTeams: async (workspace?: string): Promise<Record<string, TeamConfigRaw>> =>
+  // Workspace teams — the names of global teams enabled for this workspace.
+  getTeams: async (workspace?: string): Promise<string[]> =>
     unwrap(await window.codey.teams.get(workspace)),
 
-  setTeams: async (workspace: string, teams: Record<string, TeamConfigRaw>): Promise<void> =>
-    unwrap(await window.codey.teams.set(workspace, teams)),
+  setTeams: async (workspace: string, names: string[]): Promise<void> =>
+    unwrap(await window.codey.teams.set(workspace, names)),
+
+  // Global team library — defined once, opted into per workspace.
+  getGlobalTeams: async (): Promise<Record<string, TeamConfigRaw>> =>
+    unwrap(await window.codey.globalTeams.get()),
+
+  setGlobalTeams: async (teams: Record<string, TeamConfigRaw>): Promise<void> =>
+    unwrap(await window.codey.globalTeams.set(teams)),
 
   // Chat — gateway is in-process; streaming comes via chat:token IPC events
   sendMessage: async (

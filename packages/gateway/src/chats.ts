@@ -50,6 +50,35 @@ export class ChatManager {
         }
       }
     }
+    this.reconcileExclusiveRoutes();
+  }
+
+  /**
+   * Enforce the one-channel-one-chat invariant for routes already on disk.
+   * Before addRoute became exclusive, the same (channel, channelUserId) could
+   * end up attached to multiple chats — leaving stale ✈ icons in the UI.
+   * Keep it on the most recently updated chat; strip from the rest.
+   */
+  private reconcileExclusiveRoutes(): void {
+    const owner = new Map<string, Chat>();
+    for (const chat of this.cache.values()) {
+      if (!chat.routes?.length) continue;
+      for (const r of chat.routes) {
+        const key = `${r.channel}:${r.channelUserId}`;
+        const incumbent = owner.get(key);
+        if (!incumbent || chat.updatedAt > incumbent.updatedAt) owner.set(key, chat);
+      }
+    }
+    for (const chat of this.cache.values()) {
+      if (!chat.routes?.length) continue;
+      const before = chat.routes.length;
+      chat.routes = chat.routes.filter(r =>
+        owner.get(`${r.channel}:${r.channelUserId}`)?.id === chat.id
+      );
+      if (chat.routes.length !== before) {
+        this.persist(chat);
+      }
+    }
   }
 
   private persist(chat: Chat): void {
@@ -197,7 +226,23 @@ export class ChatManager {
   }
 
   addRoute(chatId: string, route: ChatRoute): Chat {
+    this.ensureLoaded();
     const chat = this.requireChat(chatId);
+    // A given (channel, channelUserId) is exclusive: one channel-user maps to
+    // one chat at a time. Strip the route from every other chat first so the
+    // UI doesn't end up showing two chats as "linked" to the same Telegram /
+    // Discord / iMessage user.
+    for (const other of this.cache.values()) {
+      if (other.id === chatId || !other.routes?.length) continue;
+      const before = other.routes.length;
+      other.routes = other.routes.filter(r =>
+        !(r.channel === route.channel && r.channelUserId === route.channelUserId)
+      );
+      if (other.routes.length !== before) {
+        other.updatedAt = Date.now();
+        this.persist(other);
+      }
+    }
     chat.routes ??= [];
     const exists = chat.routes.some(r =>
       r.channel === route.channel &&

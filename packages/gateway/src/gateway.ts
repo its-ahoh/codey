@@ -2987,12 +2987,19 @@ Example: /model gpt-4.1 write a Python script`;
     const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
     const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
     let workingDir = this.workingDir;
-    let chatWorkspaceTeams: Record<string, TeamConfigRaw> = {};
+    let chatWorkspaceTeamNames: string[] = [];
+    // The global team library, looked up against the workspace's enabled names below.
+    const globalTeams: Record<string, TeamConfigRaw> = this.configManager?.getTeams() ?? {};
     if (fs.existsSync(wsConfigPath)) {
       try {
         const wsConfig = JSON.parse(fs.readFileSync(wsConfigPath, 'utf-8'));
         if (wsConfig.workingDir) workingDir = wsConfig.workingDir;
-        if (wsConfig.teams && typeof wsConfig.teams === 'object') chatWorkspaceTeams = wsConfig.teams;
+        if (Array.isArray(wsConfig.teams)) {
+          chatWorkspaceTeamNames = wsConfig.teams.filter((n: any) => typeof n === 'string');
+        } else if (wsConfig.teams && typeof wsConfig.teams === 'object') {
+          // Legacy: workspace held its own definitions. Treat keys as the enabled names.
+          chatWorkspaceTeamNames = Object.keys(wsConfig.teams);
+        }
       } catch { /* use default */ }
     } else {
       this.chatSemaphore.release();
@@ -3060,14 +3067,15 @@ Example: /model gpt-4.1 write a Python script`;
         // even if WorkspaceManager has loaded A. Worker prompt bodies still come
         // from WorkerManager's loaded workers/ dir (a known limitation when the
         // active workspace differs from the chat's).
-        const teamNames = Object.keys(chatWorkspaceTeams);
+        // Only count enabled names that actually resolve in the global library.
+        const teamNames = chatWorkspaceTeamNames.filter(n => globalTeams[n] !== undefined);
         if (teamNames.length === 0) throw new Error(`No teams configured in workspace "${chat.workspaceName}"`);
         // Prefer the team named on the selection. Falling through to teamNames[0]
         // keeps legacy chats (persisted before per-team selection) working.
         const teamName = chat.selection.name && teamNames.includes(chat.selection.name)
           ? chat.selection.name
           : teamNames[0];
-        const rawTeam = chatWorkspaceTeams[teamName];
+        const rawTeam = globalTeams[teamName];
         const rawMembers: string[] = Array.isArray(rawTeam) ? rawTeam : (rawTeam?.members ?? []);
         if (!rawMembers || rawMembers.length === 0) throw new Error(`Team "${teamName}" is empty`);
         // Prefer the active workspace's normalized team (which carries dispatch mode);
