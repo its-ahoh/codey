@@ -23,8 +23,19 @@ export interface TeamConfig {
 
 export interface WorkspaceJson {
   workingDir: string;
-  teams?: Record<string, TeamConfigRaw>;
+  /**
+   * Names of global teams enabled for this workspace. Definitions live in the
+   * gateway-level team library; this is just the opt-in list.
+   *
+   * Legacy: an older `Record<string, TeamConfigRaw>` value is still accepted
+   * on read — its keys are treated as the enabled-name list, and the values
+   * are ignored (the global library is the source of truth).
+   */
+  teams?: string[] | Record<string, TeamConfigRaw>;
 }
+
+/** Returns the global team library. Injected so core stays independent of gateway config storage. */
+export type GlobalTeamsProvider = () => Record<string, TeamConfigRaw>;
 
 export class WorkspaceManager {
   private workspacesDir: string;
@@ -33,13 +44,28 @@ export class WorkspaceManager {
   private workerManager: WorkerManager;
   private memoryStore: MemoryStore;
   private teams: Map<string, TeamConfig> = new Map();
+  private enabledTeamNames: string[] = [];
+  private globalTeamsProvider: GlobalTeamsProvider;
   private logger: CoreLogger;
 
-  constructor(workerManager: WorkerManager, workspacesDir: string = './workspaces', logger?: CoreLogger) {
+  constructor(
+    workerManager: WorkerManager,
+    workspacesDir: string = './workspaces',
+    logger?: CoreLogger,
+    globalTeamsProvider?: GlobalTeamsProvider,
+  ) {
     this.workspacesDir = workspacesDir;
     this.workerManager = workerManager;
     this.memoryStore = new MemoryStore(this.getWorkspacePath());
     this.logger = logger || defaultLogger;
+    this.globalTeamsProvider = globalTeamsProvider || (() => ({}));
+  }
+
+  /** Swap the global teams provider after construction (e.g. once the gateway ConfigManager is wired up). */
+  setGlobalTeamsProvider(provider: GlobalTeamsProvider): void {
+    this.globalTeamsProvider = provider;
+    // Re-resolve so the current workspace immediately sees the live library.
+    this.resolveTeamsFromGlobal();
   }
 
   private getWorkspacePath(): string {
@@ -86,14 +112,18 @@ export class WorkspaceManager {
       this.logger.info(`[Workspace] No config found for ${this.currentWorkspace}, using defaults`);
     }
 
-    // Parse + validate teams against the global worker library. Accept legacy
-    // string[] form (= dispatch:'all') and the object form { members, dispatch }.
-    this.teams.clear();
-    const rawTeams = this.config?.teams || {};
-    for (const [teamName, raw] of Object.entries(rawTeams)) {
-      const normalized = this.normalizeTeam(teamName, raw);
-      if (normalized) this.teams.set(teamName, normalized);
+    // Workspace.teams is now a `string[]` of enabled team names; definitions
+    // come from the global library. Accept legacy `Record<...>` shape by
+    // using its keys as the enabled names — old workspaces keep working.
+    const rawTeamsField = this.config?.teams;
+    if (Array.isArray(rawTeamsField)) {
+      this.enabledTeamNames = rawTeamsField.filter(n => typeof n === 'string' && n.trim().length > 0);
+    } else if (rawTeamsField && typeof rawTeamsField === 'object') {
+      this.enabledTeamNames = Object.keys(rawTeamsField);
+    } else {
+      this.enabledTeamNames = [];
     }
+    this.resolveTeamsFromGlobal();
 
     if (!fs.existsSync(this.getMemoryPath())) {
       fs.writeFileSync(this.getMemoryPath(), `# ${this.currentWorkspace} — Project Memory\n`);
@@ -104,6 +134,21 @@ export class WorkspaceManager {
 
     this.memoryStore = new MemoryStore(workspacePath);
     await this.memoryStore.load();
+  }
+
+  /** Repopulate the in-memory team map from `enabledTeamNames` ∩ global library. */
+  private resolveTeamsFromGlobal(): void {
+    this.teams.clear();
+    const lib = this.globalTeamsProvider() || {};
+    for (const name of this.enabledTeamNames) {
+      const raw = lib[name];
+      if (raw === undefined) {
+        this.logger.warn(`[Workspace] Team "${name}" enabled on workspace but not defined in global library — skipping`);
+        continue;
+      }
+      const normalized = this.normalizeTeam(name, raw);
+      if (normalized) this.teams.set(name, normalized);
+    }
   }
 
   private normalizeTeam(name: string, raw: TeamConfigRaw): TeamConfig | null {
@@ -248,24 +293,28 @@ export class WorkspaceManager {
       .join('\n');
   }
 
-  async setTeams(teams: Record<string, TeamConfigRaw>): Promise<void> {
-    this.teams.clear();
-    for (const [name, raw] of Object.entries(teams)) {
-      const normalized = this.normalizeTeam(name, raw);
-      if (normalized) this.teams.set(name, normalized);
-    }
+  /**
+   * Replace the workspace's enabled-team list. Definitions are not stored here
+   * — they live in the global team library and are resolved on read.
+   * Names that don't exist in the global library are persisted anyway (so a
+   * later library edit lights them up) but logged.
+   */
+  async setEnabledTeams(names: string[]): Promise<void> {
+    const seen = new Set<string>();
+    this.enabledTeamNames = (names || []).filter(n => {
+      if (typeof n !== 'string' || !n.trim() || seen.has(n)) return false;
+      seen.add(n);
+      return true;
+    });
+    this.resolveTeamsFromGlobal();
     const configPath = this.getConfigPath();
     const existing = JSON.parse(await fs.promises.readFile(configPath, 'utf-8'));
-    existing.teams = this.getTeams();
+    existing.teams = [...this.enabledTeamNames];
     await fs.promises.writeFile(configPath, JSON.stringify(existing, null, 2), 'utf-8');
   }
 
-  /** Returns team configs in their most compact form: legacy string[] when default dispatch, object form otherwise. */
-  getTeams(): Record<string, TeamConfigRaw> {
-    const result: Record<string, TeamConfigRaw> = {};
-    for (const [name, t] of this.teams.entries()) {
-      result[name] = t.dispatch === 'all' ? t.members : { members: t.members, dispatch: t.dispatch };
-    }
-    return result;
+  /** Names of global teams enabled for this workspace. */
+  getEnabledTeamNames(): string[] {
+    return [...this.enabledTeamNames];
   }
 }

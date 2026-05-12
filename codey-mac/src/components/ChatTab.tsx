@@ -239,7 +239,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   }, [])
   useEffect(() => {
     if (!chat?.workspaceName) return
-    apiService.getTeams(chat.workspaceName).then(t => setTeamNames(Object.keys(t))).catch(() => setTeamNames([]))
+    apiService.getTeams(chat.workspaceName).then(names => setTeamNames(names)).catch(() => setTeamNames([]))
   }, [chat?.workspaceName])
   const [workingDir, setWorkingDir] = useState<string | undefined>(undefined)
   useEffect(() => {
@@ -286,6 +286,15 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     return () => window.removeEventListener('keydown', handler)
   }, [flight, chatId])
   useEffect(() => { localStorage.setItem('codey.contextPanelWidth', String(panelWidth)) }, [panelWidth])
+  // Track window width so the context panel can shrink (or be hidden) when
+  // the user resizes Codey down — at small widths the middle column was
+  // collapsing to ~200px and wrapping CJK characters one per line.
+  const [windowWidth, setWindowWidth] = useState<number>(() => window.innerWidth)
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
   useEffect(() => {
     setFollowLatest(true)
     setSelectedTurnIdState(null)
@@ -820,7 +829,19 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         <PairingModal channel={pairingModal} onClose={() => setPairingModal(null)} />
       )}
       </div>
-      {panelOpen && (
+      {/* The context panel only renders when there's room for both the chat
+          list (~180-240px) AND a usable conversation column (>= MIN_MIDDLE).
+          On very narrow windows we hide it entirely so the conversation
+          doesn't get squeezed to a single character per line. */}
+      {(() => {
+        if (!panelOpen) return null
+        const CHAT_LIST_W = windowWidth < 600 ? 180 : 240
+        const MIN_MIDDLE = 360
+        const MIN_PANEL = 260
+        const available = windowWidth - CHAT_LIST_W - MIN_MIDDLE
+        if (available < MIN_PANEL) return null
+        const effectiveWidth = Math.min(panelWidth, available)
+        return (
         <ChatContextPanel
           chat={chat}
           selectedTurnId={selectedTurnId}
@@ -831,7 +852,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           workerName={panelWorkerName}
           teamName={panelTeamName}
           workingDir={workingDir}
-          width={Math.min(panelWidth, Math.max(240, Math.floor(window.innerWidth * 0.5)))}
+          width={effectiveWidth}
           onFollowLatest={() => setFollowLatest(true)}
           onClose={() => setContextPanelOpen(chat.id, false)}
           onResize={setPanelWidth}
@@ -841,7 +862,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           }}
           isTurnStreaming={!!flight && selectedTurnId === lastMsg?.id}
         />
-      )}
+        )
+      })()}
     </div>
   )
 }

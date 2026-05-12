@@ -195,7 +195,15 @@ async function bootInProcessCore() {
     coreConfigManager = new ConfigManager(join(root, 'gateway.json'))
     workerManager = new WorkerManager(join(root, 'workers'))
     await workerManager.loadWorkers()
-    workspaceManager = new WorkspaceManager(workerManager, join(root, 'workspaces'))
+    // Teams are defined globally in gateway.json; the workspace just stores
+    // the names it has enabled. Inject a live provider so workspace.json edits
+    // never need to know about the global library shape.
+    workspaceManager = new WorkspaceManager(
+      workerManager,
+      join(root, 'workspaces'),
+      undefined,
+      () => coreConfigManager?.getTeams() ?? {},
+    )
     let existing = workspaceManager.listWorkspaces()
     if (existing.length === 0) {
       // Cold start (or user deleted every workspace): seed a "default"
@@ -206,7 +214,7 @@ async function bootInProcessCore() {
       fsMod.mkdirSync(defaultDir, { recursive: true })
       fsMod.writeFileSync(
         join(defaultDir, 'workspace.json'),
-        JSON.stringify({ workingDir: app.getPath('home'), teams: {} }, null, 2)
+        JSON.stringify({ workingDir: app.getPath('home'), teams: [] }, null, 2)
       )
       fsMod.writeFileSync(join(defaultDir, 'memory.md'), '# default — Project Memory\n')
       existing = workspaceManager.listWorkspaces()
@@ -329,20 +337,21 @@ app.whenReady().then(async () => {
   ipcMain.handle('workers:delete', async (_e, name: string) =>
     wrap(async () => {
       await workerManager?.deleteWorker(name)
-      // cascade: remove from all teams
-      if (workspaceManager) {
-        const teams = workspaceManager.getTeams()
+      // Cascade: remove the worker from every global team that referenced it.
+      // Teams are now defined globally, so we no longer walk per-workspace.
+      if (coreConfigManager) {
+        const teams = { ...coreConfigManager.getTeams() }
         let changed = false
-        for (const team of Object.keys(teams)) {
-          const raw = teams[team]
+        for (const teamName of Object.keys(teams)) {
+          const raw = teams[teamName]
           const arr = Array.isArray(raw) ? raw : raw.members
           const filtered = arr.filter((m: string) => m !== name)
           if (filtered.length !== arr.length) {
-            teams[team] = Array.isArray(raw) ? filtered : { ...raw, members: filtered }
+            teams[teamName] = Array.isArray(raw) ? filtered : { ...raw, members: filtered }
             changed = true
           }
         }
-        if (changed) await workspaceManager.setTeams(teams)
+        if (changed) coreConfigManager.setTeams(teams)
       }
     })
   )
@@ -434,39 +443,45 @@ app.whenReady().then(async () => {
     })
   )
 
-  // ── Teams IPC ─────────────────────────────────────────────────────
-  // Returns the raw TeamConfigRaw shape so the UI can surface dispatch mode.
+  // ── Workspace teams IPC (enabled names only) ─────────────────────
+  // Returns the names of global teams enabled for this workspace. Definitions
+  // live in `globalTeams`, not here.
   ipcMain.handle('teams:get', async (_e, name?: string) =>
     wrap(async () => {
       if (!workspaceManager) throw new Error('Workspace manager not ready')
       const target = name || workspaceManager.getCurrentWorkspace()
-      if (!target) return {} as Record<string, unknown>
+      if (!target) return [] as string[]
       const fsMod = await import('fs')
       const pathMod = await import('path')
       const configPath = pathMod.join(workspaceManager.getWorkspacesRoot(), target, 'workspace.json')
-      if (!fsMod.existsSync(configPath)) return {} as Record<string, unknown>
+      if (!fsMod.existsSync(configPath)) return [] as string[]
       const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
-      return (data.teams || {}) as Record<string, unknown>
+      if (Array.isArray(data.teams)) return data.teams.filter((n: any) => typeof n === 'string') as string[]
+      // Legacy: workspace held its own definitions. Surface its keys so the
+      // user can re-enable them once they're promoted to the global library.
+      if (data.teams && typeof data.teams === 'object') return Object.keys(data.teams)
+      return [] as string[]
     })
   )
 
-  ipcMain.handle('teams:set', async (_e, nameOrTeams: string | Record<string, unknown>, maybeTeams?: Record<string, unknown>) =>
+  ipcMain.handle('teams:set', async (_e, nameOrNames: string | string[], maybeNames?: string[]) =>
     wrap(async () => {
       if (!workspaceManager) throw new Error('Workspace manager not ready')
-      // Backward-compat: support both (teams) and (name, teams) call shapes.
+      // Accept both (names) and (workspaceName, names).
       let target: string
-      let teams: Record<string, any>
-      if (typeof nameOrTeams === 'string') {
-        target = nameOrTeams || workspaceManager.getCurrentWorkspace()
-        teams = maybeTeams || {}
+      let names: string[]
+      if (typeof nameOrNames === 'string') {
+        target = nameOrNames || workspaceManager.getCurrentWorkspace()
+        names = Array.isArray(maybeNames) ? maybeNames : []
       } else {
         target = workspaceManager.getCurrentWorkspace()
-        teams = nameOrTeams || {}
+        names = Array.isArray(nameOrNames) ? nameOrNames : []
       }
       if (!target) throw new Error('No workspace specified')
 
+      const sanitized = names.filter(n => typeof n === 'string' && n.trim().length > 0)
       if (target === workspaceManager.getCurrentWorkspace()) {
-        await workspaceManager.setTeams(teams)
+        await workspaceManager.setEnabledTeams(sanitized)
         return
       }
       const fsMod = await import('fs')
@@ -474,8 +489,25 @@ app.whenReady().then(async () => {
       const configPath = pathMod.join(workspaceManager.getWorkspacesRoot(), target, 'workspace.json')
       if (!fsMod.existsSync(configPath)) throw new Error(`Workspace "${target}" does not exist`)
       const existing = JSON.parse(await fsMod.promises.readFile(configPath, 'utf-8'))
-      existing.teams = teams
+      existing.teams = sanitized
       await fsMod.promises.writeFile(configPath, JSON.stringify(existing, null, 2), 'utf-8')
+    })
+  )
+
+  // ── Global teams IPC ──────────────────────────────────────────────
+  // The global team library: a Record<name, TeamConfigRaw>. Each workspace
+  // opts into a subset by listing names in its workspace.json `teams` array.
+  ipcMain.handle('globalTeams:get', async () =>
+    wrap(async () => coreConfigManager?.getTeams() ?? {})
+  )
+
+  ipcMain.handle('globalTeams:set', async (_e, teams: Record<string, unknown>) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.setTeams((teams ?? {}) as any)
+      // Re-resolve the active workspace so its team Map picks up library edits
+      // (e.g. members or dispatch mode changed under an enabled name).
+      try { workspaceManager?.setGlobalTeamsProvider(() => coreConfigManager!.getTeams()) } catch { /* ok */ }
     })
   )
 

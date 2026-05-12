@@ -36,8 +36,12 @@ declare global {
         pickDirectory: () => Promise<IpcResult<string | null>>
       }
       teams: {
-        get: (name?: string) => Promise<IpcResult<Record<string, TeamConfigRaw>>>
-        set: (name: string, teams: Record<string, TeamConfigRaw>) => Promise<IpcResult<void>>
+        get: (name?: string) => Promise<IpcResult<string[]>>
+        set: (name: string, names: string[]) => Promise<IpcResult<void>>
+      }
+      globalTeams: {
+        get: () => Promise<IpcResult<Record<string, TeamConfigRaw>>>
+        set: (teams: Record<string, TeamConfigRaw>) => Promise<IpcResult<void>>
       }
       conversations: {
         list: () => Promise<IpcResult<string[]>>

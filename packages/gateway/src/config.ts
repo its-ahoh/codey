@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
-import { CodingAgent, FallbackConfig, FallbackEntry, ModelEntry } from '@codey/core';
+import { CodingAgent, FallbackConfig, FallbackEntry, ModelEntry, TeamConfigRaw } from '@codey/core';
 
 // ── Configuration types ─────────────────────────────────────────────
 
@@ -43,6 +43,12 @@ export interface GatewayConfigJson {
     agent?: CodingAgent;
     model?: string;
   };
+  /**
+   * Global team library. Each entry maps a team name to its members + dispatch
+   * mode. Workspaces opt into teams by listing their names in workspace.json's
+   * `teams: string[]` field.
+   */
+  teams?: Record<string, TeamConfigRaw>;
 }
 
 /** Reserved for future per-agent settings. Currently empty. */
@@ -91,6 +97,7 @@ export class ConfigManager extends EventEmitter {
     if (partial.models !== undefined) this.config.models = partial.models;
     if (partial.fallback !== undefined) this.config.fallback = partial.fallback;
     if (partial.dispatcher !== undefined) this.config.dispatcher = partial.dispatcher;
+    if (partial.teams !== undefined) this.config.teams = partial.teams;
     this.save();
   }
 
@@ -197,6 +204,14 @@ export class ConfigManager extends EventEmitter {
     } else {
       this.config.fallback.order.push({ agent: agent as CodingAgent, model: modelId || undefined });
     }
+    this.save();
+  }
+
+  // ── Global teams ───────────────────────────────────────────────────
+  getTeams(): Record<string, TeamConfigRaw> { return this.config.teams ?? {}; }
+
+  setTeams(teams: Record<string, TeamConfigRaw>): void {
+    this.config.teams = teams || {};
     this.save();
   }
 
@@ -368,6 +383,9 @@ function normalize(raw: Partial<GatewayConfigJson>): GatewayConfigJson {
       agent: raw.dispatcher.agent,
       model: raw.dispatcher.model,
     };
+  }
+  if (raw.teams && typeof raw.teams === 'object') {
+    out.teams = raw.teams as Record<string, TeamConfigRaw>;
   }
   return out;
 }
