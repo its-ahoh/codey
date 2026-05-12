@@ -3,16 +3,18 @@ import { StatusTab } from './StatusTab'
 import { SettingsTab } from './SettingsTab'
 import { WorkspacesTab } from './WorkspacesTab'
 import WorkersTab from './WorkersTab'
+import { TeamsTab } from './TeamsTab'
 import { useGateway } from '../hooks/useGateway'
 import { C } from '../theme'
 import { AppearanceTab } from './AppearanceTab'
 
-type Tab = 'general' | 'workers' | 'workspaces' | 'status' | 'settings'
+type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings'
 const TABS: { key: Tab; label: string; icon: string; description: string }[] = [
   { key: 'general',    label: 'General',    icon: '⚙', description: 'Theme & visual options' },
   { key: 'settings',   label: 'AI Models',  icon: '✦', description: 'Default agent & model' },
   { key: 'workspaces', label: 'Workspaces', icon: '◫', description: 'Project directories' },
-  { key: 'workers',    label: 'Workers',    icon: '☰', description: 'Personalities & teams' },
+  { key: 'workers',    label: 'Workers',    icon: '☰', description: 'Personalities' },
+  { key: 'teams',      label: 'Teams',      icon: '⚉', description: 'Shared team library' },
   { key: 'status',     label: 'Gateway',    icon: '◉', description: 'Server status & logs' },
 ]
 
@@ -70,6 +72,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose }) => {
               {tab === 'status'     && <StatusTab status={status} logs={logs} isRunning={isRunning} />}
               {tab === 'workspaces' && <WorkspacesTab isGatewayRunning={isRunning} />}
               {tab === 'workers'    && <WorkersTab />}
+              {tab === 'teams'      && <TeamsTab />}
               {tab === 'settings'   && <SettingsTab isGatewayRunning={isRunning} />}
             </div>
           </main>

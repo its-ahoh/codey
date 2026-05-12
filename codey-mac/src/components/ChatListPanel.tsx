@@ -18,6 +18,14 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
   const [gatewayWorkspace, setGatewayWorkspace] = useState<string>('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  // Shrink the panel on narrow windows so the conversation column keeps
+  // breathing room. Matches the threshold used in ChatTab for the context panel.
+  const [narrow, setNarrow] = useState<boolean>(() => window.innerWidth < 600)
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < 600)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -85,7 +93,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
   const groupNames = Object.keys(groups).sort()
 
   return (
-    <div style={styles.root}>
+    <div style={{ ...styles.root, width: narrow ? 180 : 240 }}>
       <div style={styles.header}>
         <button
           style={styles.newBtn}
