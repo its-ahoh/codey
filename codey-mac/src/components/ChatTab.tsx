@@ -536,8 +536,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           </span>
         )}
         <span style={styles.workspaceTag}>{chat.workspaceName}</span>
-        <div style={{ flex: 1 }} />
-        <select value={selectionValue} onChange={e => onSelectionChange(e.target.value)} style={styles.workerSelect}>
+        <select value={selectionValue} onChange={e => onSelectionChange(e.target.value)} style={{ ...styles.workerSelect, marginLeft: 'auto' }}>
           <option value="none">No worker</option>
           {workers.length > 0 && (
             <optgroup label="Workers">
@@ -874,13 +873,15 @@ const styles: Record<string, React.CSSProperties> = {
   header: {
     padding: '10px 16px', borderBottom: `1px solid ${C.border}`,
     display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+    flexWrap: 'wrap', rowGap: 6,
   },
-  title: { color: C.fg, fontSize: 13, fontWeight: 600, cursor: 'text' },
+  title: { color: C.fg, fontSize: 13, fontWeight: 600, cursor: 'text', flexShrink: 0 },
   titleInput: { background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 4, padding: '2px 6px', color: C.fg, fontSize: 13, outline: 'none' },
-  workspaceTag: { color: C.fg3, fontSize: 11 },
+  workspaceTag: { color: C.fg3, fontSize: 11, flexShrink: 0 },
   workerSelect: {
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6,
     color: C.fg2, fontSize: 12, padding: '4px 8px', outline: 'none',
+    flexShrink: 0, maxWidth: 200,
   },
   messages: { flex: 1, overflowY: 'auto', padding: 16 },
   typingRow: { display: 'flex', alignItems: 'center', gap: 8, color: C.fg3, fontSize: 13, marginBottom: 12 },
