@@ -779,6 +779,7 @@ export class Codey {
           chatId,
           channel,
           text: ev.response,
+          choices: ev.choices,
           replyTo: messageId,
         }).then(() => this.fanOutToOtherRoutes(codeyChatId, channel, userId, ev.response));
       } else if (ev?.type === 'error' && typeof ev.message === 'string') {
