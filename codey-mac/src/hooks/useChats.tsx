@@ -201,6 +201,8 @@ interface ChatsContextValue {
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
   setAgentModel: (chatId: string, agent: string | null, model: string | null) => Promise<void>
   setContextPanelOpen: (chatId: string, open: boolean | null) => Promise<void>
+  linkChannel: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<void>
+  unlinkChannel: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<void>
   sendMessage: (chatId: string, text: string, attachments?: FileAttachment[]) => Promise<void>
   stopChat: (chatId: string) => Promise<void>
   toggleWorkspace: (workspaceName: string) => void
@@ -356,6 +358,14 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // The server-side write happens in the background.
       dispatch({ type: 'patchContextPanelOpen', chatId, open })
       try { await apiService.chats.updateContextPanelOpen(chatId, open) } catch { /* swallow */ }
+    },
+    async linkChannel(chatId, channel, channelUserId) {
+      const chat = await apiService.linkChat(chatId, channel, channelUserId)
+      dispatch({ type: 'upsert', chat })
+    },
+    async unlinkChannel(chatId, channel, channelUserId) {
+      const chat = await apiService.unlinkChat(chatId, channel, channelUserId)
+      dispatch({ type: 'upsert', chat })
     },
     async sendMessage(chatId, text, attachments) {
       const assistantMessageId = `asst-${Date.now()}-${Math.random()}`

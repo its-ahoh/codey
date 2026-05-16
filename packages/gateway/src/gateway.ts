@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, ChannelKind, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runManager, ManagerTurn, ManagerHistoryEntry, parseAskUser, parseAsk, PendingTeamState } from '@codey/core';
+import { AgentRequest, AgentResponse, ChannelKind, Chat, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runManager, ManagerTurn, ManagerHistoryEntry, parseAskUser, parseAsk, PendingTeamState } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -254,7 +254,7 @@ export class Codey {
    * Mac calls this to attach a channel route to an existing chat.
    * Pushes a one-time summary to the channel after attaching.
    */
-  public async linkChat(chatId: string, channel: ChannelKind, channelUserId: string): Promise<void> {
+  public async linkChat(chatId: string, channel: ChannelKind, channelUserId: string): Promise<Chat> {
     const binding = this.pairingStore.findByChannelUser(channel, channelUserId);
     if (!binding) throw new Error(`No pairing for ${channel}:${channelUserId}`);
 
@@ -262,25 +262,37 @@ export class Codey {
     const channelChatId = channelUserId;
     const route: ChatRoute = { channel, channelUserId, channelChatId, attachedAt: Date.now() };
 
-    this.chatManager.addRoute(chatId, route);
+    // Detect "already linked" before mutating, so we can skip the summary push
+    // on repeat clicks. addRoute is idempotent but unconditionally re-sending
+    // the summary would spam the channel every time the user clicks the link
+    // button while the route is already attached.
+    const existing = this.chatManager.get(chatId);
+    const alreadyLinked = !!existing?.routes?.some(r =>
+      r.channel === channel &&
+      r.channelUserId === channelUserId &&
+      r.channelChatId === channelChatId
+    );
+
+    const updated = this.chatManager.addRoute(chatId, route);
     this.pairingStore.setCurrentChat(channel, channelUserId, chatId);
 
-    const chat = this.chatManager.get(chatId);
-    if (!chat) return;
-    const summary = summarizePriorHistory(chat);
-    const handler = this.handlers.get(channel);
-    if (handler?.sendToRoute) {
-      try {
-        await handler.sendToRoute(route, summary);
-      } catch (err) {
-        this.logger.warn(`linkChat: failed to push summary to ${channel}: ${(err as Error).message}`);
+    if (!alreadyLinked) {
+      const summary = summarizePriorHistory(updated);
+      const handler = this.handlers.get(channel);
+      if (handler?.sendToRoute) {
+        try {
+          await handler.sendToRoute(route, summary);
+        } catch (err) {
+          this.logger.warn(`linkChat: failed to push summary to ${channel}: ${(err as Error).message}`);
+        }
       }
     }
+    return updated;
   }
 
-  public unlinkChat(chatId: string, channel: ChannelKind, channelUserId: string): void {
+  public unlinkChat(chatId: string, channel: ChannelKind, channelUserId: string): Chat {
     const channelChatId = channelUserId;
-    this.chatManager.removeRoute(chatId, channel, channelUserId, channelChatId);
+    return this.chatManager.removeRoute(chatId, channel, channelUserId, channelChatId);
   }
 
   getAgentFactory(): AgentFactory { return this.agentFactory; }
@@ -3145,6 +3157,15 @@ Example: /model gpt-4.1 write a Python script`;
       }
 
       sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title, choices: surfacedChoices });
+
+      // Fan out the Mac-originated turn to every attached channel route so the
+      // other surface (Telegram/Discord/iMessage) sees both the user prompt
+      // and the agent reply. Passing a synthetic origin that no real route
+      // uses ensures every route receives both messages.
+      const MAC_ORIGIN = '__mac__' as unknown as ChannelType;
+      await this.fanOutToOtherRoutes(chatId, MAC_ORIGIN, '', `📱 ${userText}`);
+      await this.fanOutToOtherRoutes(chatId, MAC_ORIGIN, '', output);
+
       return { response: output, chatId, tokens, durationSec };
     } catch (err) {
       const message = `Error: ${(err as Error).message}`;
