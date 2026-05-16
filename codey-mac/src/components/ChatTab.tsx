@@ -200,7 +200,7 @@ const TeamMessage: React.FC<{
 }
 
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
-  const { state, sendMessage, stopChat, setSelection, setAgentModel, renameChat, setContextPanelOpen } = useChats()
+  const { state, sendMessage, stopChat, setSelection, setAgentModel, renameChat, setContextPanelOpen, linkChannel, unlinkChannel } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -483,9 +483,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     if (pairings.length === 1) {
       const p = pairings[0]
       if (isLinked(p.channel, p.channelUserId)) {
-        await apiService.unlinkChat(chat.id, p.channel, p.channelUserId)
+        await unlinkChannel(chat.id, p.channel, p.channelUserId)
       } else {
-        await apiService.linkChat(chat.id, p.channel, p.channelUserId)
+        await linkChannel(chat.id, p.channel, p.channelUserId)
       }
       return
     }
@@ -494,9 +494,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     if (idx >= 0 && idx < pairings.length) {
       const p = pairings[idx]
       if (isLinked(p.channel, p.channelUserId)) {
-        await apiService.unlinkChat(chat.id, p.channel, p.channelUserId)
+        await unlinkChannel(chat.id, p.channel, p.channelUserId)
       } else {
-        await apiService.linkChat(chat.id, p.channel, p.channelUserId)
+        await linkChannel(chat.id, p.channel, p.channelUserId)
       }
     }
   }

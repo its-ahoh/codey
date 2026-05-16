@@ -174,16 +174,16 @@ export const apiService = {
       unwrap(await window.codey.chats.stop(chatId)),
     onEvent: (handler: (ev: ChatStreamEvent) => void): (() => void) =>
       window.codey.chats.onEvent(handler),
-    link: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<void> =>
+    link: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<Chat> =>
       unwrap(await window.codey.chats.link(chatId, channel, channelUserId)),
-    unlink: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<void> =>
+    unlink: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<Chat> =>
       unwrap(await window.codey.chats.unlink(chatId, channel, channelUserId)),
   },
 
-  linkChat: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<void> =>
+  linkChat: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<Chat> =>
     unwrap(await window.codey.chats.link(chatId, channel, channelUserId)),
 
-  unlinkChat: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<void> =>
+  unlinkChat: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<Chat> =>
     unwrap(await window.codey.chats.unlink(chatId, channel, channelUserId)),
 
   startPairing: async (channel: 'telegram' | 'discord' | 'imessage'): Promise<string> =>
