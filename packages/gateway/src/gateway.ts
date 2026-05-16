@@ -779,6 +779,7 @@ export class Codey {
           chatId,
           channel,
           text: ev.response,
+          choices: ev.choices,
           replyTo: messageId,
         }).then(() => this.fanOutToOtherRoutes(codeyChatId, channel, userId, ev.response));
       } else if (ev?.type === 'error' && typeof ev.message === 'string') {
@@ -3061,6 +3062,7 @@ Example: /model gpt-4.1 write a Python script`;
     try {
       let output = '';
       let tokens: number | undefined;
+      let teamChoices: string[] | undefined;
       if (chat.selection.type === 'team') {
         // Resolve the team from the chat's workspace.json (read above), not from
         // the active workspace, so a chat in workspace B uses B's team config
@@ -3088,6 +3090,7 @@ Example: /model gpt-4.1 write a Python script`;
         const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, abortController.signal, {}, agent, model);
         output = r.response;
         tokens = r.tokens;
+        teamChoices = r.choices;
       } else {
         const response = await this.runWithFallback(agent, {
           prompt,
@@ -3106,6 +3109,22 @@ Example: /model gpt-4.1 write a Python script`;
       }
 
       const durationSec = Math.round((Date.now() - started) / 1000);
+
+      // ASK_USER:choice detection. Team flows already stripped the marker into
+      // a rendered question via runTeamForChat, so reuse the choices it
+      // returned. For non-team chats, parse the worker output for the marker.
+      let surfacedChoices: string[] | undefined;
+      let plainAskOptions: string[] | undefined;
+      if (teamChoices && teamChoices.length >= 2) {
+        surfacedChoices = teamChoices;
+      } else {
+        const plainAsk = parseAskUser(output);
+        if (plainAsk?.options && plainAsk.options.length >= 2) {
+          surfacedChoices = plainAsk.options;
+          plainAskOptions = plainAsk.options;
+        }
+      }
+
       const assistantMessage: ChatMessage = {
         id: randomUUID(),
         role: 'assistant',
@@ -3115,26 +3134,17 @@ Example: /model gpt-4.1 write a Python script`;
         isComplete: true,
         tokens,
         durationSec,
+        ...(surfacedChoices ? { choices: surfacedChoices } : {}),
       };
       const updated = this.chatManager.appendMessage(chatId, assistantMessage);
 
-      // Plain-chat ASK_USER:choice detection. Team flows handled this earlier in
-      // their own pause paths. For non-team chats, surface the options to the
-      // channel and persist on the chat so the next user reply can be digit-mapped.
-      let plainChoices: string[] | undefined;
-      if (!updated.pendingTeam) {
-        const plainAsk = parseAskUser(output);
-        if (plainAsk?.options && plainAsk.options.length >= 2) {
-          plainChoices = plainAsk.options;
-          const lastMsg = updated.messages[updated.messages.length - 1];
-          if (lastMsg && lastMsg.role === 'assistant') {
-            lastMsg.choices = plainAsk.options;
-            this.chatManager.setLastAskedOptions(chatId, lastMsg.id, plainAsk.options);
-          }
-        }
+      // Persist lastAskedOptions on non-team chats so the next user reply can
+      // be digit-mapped. Team flows track this via pendingTeam.options.
+      if (plainAskOptions && !updated.pendingTeam) {
+        this.chatManager.setLastAskedOptions(chatId, assistantMessage.id, plainAskOptions);
       }
 
-      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title, choices: plainChoices });
+      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title, choices: surfacedChoices });
       return { response: output, chatId, tokens, durationSec };
     } catch (err) {
       const message = `Error: ${(err as Error).message}`;
