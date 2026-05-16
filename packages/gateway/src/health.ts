@@ -24,6 +24,7 @@ export class ApiServer {
   private port: number;
   private getStatus: () => HealthStatus;
   private configManager: ConfigManager;
+  private _voiceStatus: string = 'idle';
 
   constructor(port: number, getStatus: () => HealthStatus, configManager: ConfigManager) {
     this.port = port;
@@ -73,6 +74,109 @@ export class ApiServer {
         res.end(JSON.stringify({ ready }));
         return;
       }
+
+      // ── Voice endpoints ───────────────────────────────────────────
+
+      // CORS: block browser-origin requests to /voice/* (native clients send no Origin)
+      if (url?.startsWith('/voice/') && req.headers.origin) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Browser requests to voice endpoints are not allowed' }));
+        return;
+      }
+
+      if (url?.startsWith('/voice/') && process.platform !== 'darwin') {
+        res.writeHead(501, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Voice input is only supported on macOS' }));
+        return;
+      }
+
+      if (url === '/voice/status' && req.method === 'GET') {
+        const voice = this.configManager.get().voice;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          configured: !!voice,
+          enabled: voice?.enabled ?? false,
+          state: this._voiceStatus ?? null,
+        }));
+        return;
+      }
+
+      if (url === '/voice/status' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+          try {
+            const { status } = JSON.parse(body);
+            // Store latest helper status in memory (not persisted to config)
+            this._voiceStatus = status;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true }));
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          }
+        });
+        return;
+      }
+
+      if (url === '/voice/config' && req.method === 'GET') {
+        const voice = this.configManager.get().voice;
+        if (!voice) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Voice not configured' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(voice, null, 2));
+        return;
+      }
+
+      if (url === '/voice/config' && req.method === 'PUT') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => {
+          try {
+            const patch = JSON.parse(body);
+
+            // Validate modelPath if present
+            if (patch.modelPath !== undefined) {
+              const p = patch.modelPath as string;
+              const home = process.env.HOME || '';
+              const allowedPrefixes = [
+                `${home}/.codey/models/`,
+                `${home}/Library/Application Support/Codey/`,
+              ];
+              if (!p.startsWith('/')) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'modelPath must be an absolute path' }));
+                return;
+              }
+              if (!p.endsWith('.bin')) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'modelPath must end with .bin' }));
+                return;
+              }
+              if (!allowedPrefixes.some(prefix => p.startsWith(prefix))) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'modelPath must be under ~/.codey/models/ or ~/Library/Application Support/Codey/' }));
+                return;
+              }
+            }
+
+            const current = this.configManager.get();
+            const updated = { ...current, voice: { ...current.voice, ...patch } };
+            this.configManager.update(updated);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(updated.voice, null, 2));
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          }
+        });
+        return;
+      }
+
+      // ── Existing endpoints ────────────────────────────────────────
 
       if (url === '/config' && req.method === 'GET') {
         try {

@@ -49,6 +49,14 @@ export interface GatewayConfigJson {
    * `teams: string[]` field.
    */
   teams?: Record<string, TeamConfigRaw>;
+  /** Voice input helper (native macOS app) configuration. */
+  voice?: {
+    enabled: boolean;
+    hotkey: string;
+    modelPath: string;
+    language: string;
+    injection: 'paste' | 'ax';
+  };
 }
 
 /** Reserved for future per-agent settings. Currently empty. */
@@ -98,6 +106,7 @@ export class ConfigManager extends EventEmitter {
     if (partial.fallback !== undefined) this.config.fallback = partial.fallback;
     if (partial.dispatcher !== undefined) this.config.dispatcher = partial.dispatcher;
     if (partial.teams !== undefined) this.config.teams = partial.teams;
+    if (partial.voice !== undefined) this.config.voice = partial.voice;
     this.save();
   }
 
@@ -386,6 +395,9 @@ function normalize(raw: Partial<GatewayConfigJson>): GatewayConfigJson {
   }
   if (raw.teams && typeof raw.teams === 'object') {
     out.teams = raw.teams as Record<string, TeamConfigRaw>;
+  }
+  if (raw.voice && typeof raw.voice === 'object') {
+    out.voice = raw.voice;
   }
   return out;
 }
