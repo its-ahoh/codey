@@ -79,5 +79,12 @@
   "dispatcher": {
     "agent": "claude-code",
     "model": "claude-haiku-4-5"
+  },
+  "voice": {
+    "enabled": false,
+    "hotkey": "F5",
+    "modelPath": "~/.codey/models/ggml-tiny.bin",
+    "language": "auto",
+    "injection": "paste"
   }
 }
