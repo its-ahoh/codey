@@ -987,7 +987,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   choiceRow: {
     display: 'flex',
-    flexWrap: 'wrap' as const,
+    flexDirection: 'column' as const,
+    alignItems: 'stretch' as const,
     gap: 8,
     marginTop: 8,
     marginLeft: 12,
@@ -1000,6 +1001,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg,
     cursor: 'pointer',
     fontSize: 13,
+    textAlign: 'left' as const,
   },
   attachButton: {
     width: 32, height: 32, borderRadius: 8, border: 'none',
