@@ -29,3 +29,11 @@ docs/
 .codey/
 
 *.tsbuildinfo
+
+# Voice helper build artifacts (binary + bundle staged by `make helper`)
+voice/CodeyVoice
+voice/CodeyVoice.app/
+voice/*.bin
+
+# Stray compiled output that shouldn't sit at repo root
+/gateway.js
