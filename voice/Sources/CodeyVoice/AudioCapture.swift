@@ -12,19 +12,6 @@ final class AudioCapture {
     /// Called with the full PCM buffer when recording stops.
     var onRecordingComplete: (([Float]) -> Void)?
 
-    /// Request microphone permission.
-    static func requestPermission() async -> Bool {
-        if #available(macOS 14.0, *) {
-            return await AVCaptureDevice.requestAccess(for: .audio)
-        } else {
-            return await withCheckedContinuation { cont in
-                AVCaptureDevice.requestAccess(for: .audio) { granted in
-                    cont.resume(returning: granted)
-                }
-            }
-        }
-    }
-
     func startRecording() throws {
         guard !isRecording else { return }
 

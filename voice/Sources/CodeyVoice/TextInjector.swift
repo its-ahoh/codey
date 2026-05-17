@@ -59,21 +59,36 @@ final class TextInjector {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        // Small delay to let the pasteboard settle
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            // Synthesize ⌘V
-            let source = CGEventSource(stateID: .hidSystemState)
+        // Small delay to let the pasteboard settle (Electron apps need more)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            // Synthesize ⌘V as discrete Command + V key events so Electron apps
+            // (Cursor, VS Code, etc.) recognize them as real user input.
+            // Each event needs proper flags + a small gap for the target's event
+            // queue to register the modifier state.
+            let source = CGEventSource(stateID: .combinedSessionState)
+            let cmdKey: CGKeyCode = 0x37
+            let vKey: CGKeyCode = 0x09
 
-            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)  // V
-            keyDown?.flags = .maskCommand
-            keyDown?.post(tap: .cghidEventTap)
+            let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: cmdKey, keyDown: true)
+            cmdDown?.flags = .maskCommand
+            cmdDown?.post(tap: .cghidEventTap)
+            usleep(12_000)
 
-            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-            keyUp?.flags = .maskCommand
-            keyUp?.post(tap: .cghidEventTap)
+            let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
+            vDown?.flags = .maskCommand
+            vDown?.post(tap: .cghidEventTap)
+            usleep(12_000)
+
+            let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
+            vUp?.flags = .maskCommand
+            vUp?.post(tap: .cghidEventTap)
+            usleep(12_000)
+
+            let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: cmdKey, keyDown: false)
+            cmdUp?.post(tap: .cghidEventTap)
 
             // Restore old clipboard after a brief delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 pasteboard.clearContents()
                 let items: [NSPasteboardItem] = savedItems.map { dict in
                     let item = NSPasteboardItem()
