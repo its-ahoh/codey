@@ -20,7 +20,7 @@ function preserveLineBreaks(src: string): string {
     .join('')
 }
 
-export const Markdown: React.FC<MarkdownProps> = ({ children, variant = 'assistant' }) => {
+const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant' }) => {
   const onUser = variant === 'user'
   const inlineCodeBg = onUser ? 'rgba(0,0,0,0.22)' : C.inlineCodeBg
   const inlineCodeFg = onUser ? '#f0f0f0' : C.inlineCodeFg
@@ -172,3 +172,5 @@ export const Markdown: React.FC<MarkdownProps> = ({ children, variant = 'assista
     </div>
   )
 }
+
+export const Markdown = React.memo(MarkdownInner)

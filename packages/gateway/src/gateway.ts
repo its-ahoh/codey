@@ -277,7 +277,16 @@ export class Codey {
     this.pairingStore.setCurrentChat(channel, channelUserId, chatId);
 
     if (!alreadyLinked) {
-      const summary = summarizePriorHistory(updated);
+      // Resolve the chat's effective agent/model — same logic as sendToChat —
+      // so the summary reflects the actual runtime config, not just gateway defaults.
+      const effectiveAgent = (updated.agent ?? this.getDefaultAgent()) as CodingAgent;
+      const effectiveModel = updated.model
+        ?? this.getDefaultModelConfig(effectiveAgent)?.model
+        ?? this.getEffectiveModel(effectiveAgent);
+      const summary = summarizePriorHistory(updated, {
+        defaultAgent: effectiveAgent,
+        defaultModel: effectiveModel,
+      });
       const handler = this.handlers.get(channel);
       if (handler?.sendToRoute) {
         try {
@@ -781,19 +790,18 @@ export class Codey {
   ): Promise<void> {
     const { chatId, channel, userId, id: messageId } = message;
 
-    // Sink: forward `done` to the originating channel + fan out to other routes.
-    // Streamed tokens are not relayed to channels (channels only get the final
-    // formatted response, matching the existing behavior).
+    // Sink: forward `done` to the originating channel only. Mirror to OTHER
+    // attached routes is handled by sendToChat's built-in fan-out (which uses
+    // the `origin` passed below to skip this channel's route).
     const sink = (ev: any) => {
       if (ev?.type === 'done' && typeof ev.response === 'string') {
-        // Fire-and-forget — channel sends are non-blocking from the sink's view.
         void this.sendResponse({
           chatId,
           channel,
           text: ev.response,
           choices: ev.choices,
           replyTo: messageId,
-        }).then(() => this.fanOutToOtherRoutes(codeyChatId, channel, userId, ev.response));
+        });
       } else if (ev?.type === 'error' && typeof ev.message === 'string') {
         void this.sendResponse({
           chatId,
@@ -806,7 +814,13 @@ export class Codey {
     };
 
     try {
-      await this.sendToChat(codeyChatId, parsed.prompt ?? message.text ?? '', sink);
+      await this.sendToChat(
+        codeyChatId,
+        parsed.prompt ?? message.text ?? '',
+        sink,
+        undefined,
+        { channel: channel as ChannelType, channelUserId: userId },
+      );
     } catch (err) {
       this.logger.error(`runChannelTurnViaChat failed: ${(err as Error).message}`);
     }
@@ -819,15 +833,36 @@ export class Codey {
     text: string,
   ): Promise<void> {
     const chat = this.chatManager.get(codeyChatId);
-    if (!chat?.routes) return;
+    const routeCount = chat?.routes?.length ?? 0;
+    if (!chat?.routes || routeCount === 0) {
+      this.logger.info(`[fanOut] chat=${codeyChatId} origin=${originChannel} routes=${routeCount} → nothing to fan out`);
+      return;
+    }
+    this.logger.info(`[fanOut] chat=${codeyChatId} origin=${originChannel} routes=${routeCount} text="${text.slice(0, 80).replace(/\s+/g, ' ')}…"`);
+    // Chunk long messages — sendToRoute doesn't handle platform length limits
+    // (Telegram ~4096, Discord ~2000), so split here using the same limit as
+    // the normal sendResponse path.
+    const chunks = text.length > this.MAX_MESSAGE_LENGTH
+      ? this.splitIntoChunks(text, this.MAX_MESSAGE_LENGTH)
+      : [text];
     for (const route of chat.routes) {
-      if (route.channel === originChannel && route.channelUserId === originUserId) continue;
+      if (route.channel === originChannel && route.channelUserId === originUserId) {
+        this.logger.info(`[fanOut]   skip ${route.channel}:${route.channelUserId} (origin)`);
+        continue;
+      }
       const handler = this.handlers.get(route.channel);
-      if (!handler?.sendToRoute) continue;
+      if (!handler?.sendToRoute) {
+        this.logger.warn(`[fanOut]   no handler for ${route.channel} — handlers=[${[...this.handlers.keys()].join(',')}]`);
+        continue;
+      }
       try {
-        await handler.sendToRoute(route, text);
+        for (let i = 0; i < chunks.length; i++) {
+          const header = chunks.length > 1 && i > 0 ? `[${i + 1}/${chunks.length}]\n` : '';
+          await handler.sendToRoute(route, header + chunks[i]);
+        }
+        this.logger.info(`[fanOut]   ✓ sent to ${route.channel}:${route.channelChatId} (${chunks.length} chunk(s))`);
       } catch (err) {
-        this.logger.warn(`fanOut: failed to send to ${route.channel}: ${(err as Error).message}`);
+        this.logger.warn(`[fanOut]   ✗ failed to send to ${route.channel}: ${(err as Error).message}`);
       }
     }
   }
@@ -2959,6 +2994,12 @@ Example: /model gpt-4.1 write a Python script`;
     userText: string,
     sinkParam: ChatStreamSink,
     attachments?: import('@codey/core').FileAttachment[],
+    // Origin identifies which surface initiated this turn so the chat-mirror
+    // fan-out at the end of the turn can skip the originating route. Default
+    // is Mac (no route matches '__mac__'), so all attached channels receive
+    // the mirror. Channel-side callers must pass the real channel+userId so
+    // we don't echo the message back to the user who typed it.
+    origin?: { channel: ChannelType; channelUserId: string },
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
@@ -3158,13 +3199,20 @@ Example: /model gpt-4.1 write a Python script`;
 
       sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title, choices: surfacedChoices });
 
-      // Fan out the Mac-originated turn to every attached channel route so the
-      // other surface (Telegram/Discord/iMessage) sees both the user prompt
-      // and the agent reply. Passing a synthetic origin that no real route
-      // uses ensures every route receives both messages.
-      const MAC_ORIGIN = '__mac__' as unknown as ChannelType;
-      await this.fanOutToOtherRoutes(chatId, MAC_ORIGIN, '', `📱 ${userText}`);
-      await this.fanOutToOtherRoutes(chatId, MAC_ORIGIN, '', output);
+      // Mirror this turn to every attached route except the originating one.
+      // Mac-origin uses a synthetic '__mac__' channel that matches no real
+      // route, so every attached channel receives the user prompt + reply.
+      // Channel-origin passes the real channel+userId so the originating
+      // channel's user doesn't see their own message echoed back.
+      const originChannel = (origin?.channel ?? '__mac__') as ChannelType;
+      const originUserId = origin?.channelUserId ?? '';
+      // Only echo the user's prompt to other routes when it came from a channel,
+      // so other attached channels see the conversation in context. Mac-origin
+      // user input is intentionally not mirrored — only the assistant reply is.
+      if (origin) {
+        await this.fanOutToOtherRoutes(chatId, originChannel, originUserId, `💬 ${userText}`);
+      }
+      await this.fanOutToOtherRoutes(chatId, originChannel, originUserId, output);
 
       return { response: output, chatId, tokens, durationSec };
     } catch (err) {

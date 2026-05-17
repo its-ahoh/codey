@@ -22,10 +22,22 @@ export const useGateway = () => {
   const [isRunning, setIsRunning] = useState(false)
 
   useEffect(() => {
+    // The renderer subscribes after main has already emitted boot-time logs,
+    // so backfill the ring buffer before subscribing to live updates.
+    let cancelled = false
+    window.codey.gateway.recentLogs().then(res => {
+      if (cancelled) return
+      if (res.ok && res.data && res.data.length > 0) {
+        setLogs(prev => {
+          const initial = prev.length === 1 && prev[0] === 'Gateway running in-process' ? [] : prev
+          return [...initial, ...res.data!].slice(-100)
+        })
+      }
+    }).catch(() => {})
     const off = window.codey.onLog(msg => {
       setLogs(prev => [...prev.slice(-99), msg])
     })
-    return off
+    return () => { cancelled = true; off() }
   }, [])
 
   useEffect(() => {
