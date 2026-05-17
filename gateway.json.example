@@ -83,8 +83,12 @@
   "voice": {
     "enabled": false,
     "hotkey": "F5",
-    "modelPath": "~/.codey/models/ggml-tiny.bin",
     "language": "auto",
-    "injection": "paste"
+    "injection": "paste",
+    "provider": "api",
+    "apiUrl": "https://api.openai.com/v1",
+    "apiKey": "",
+    "apiModel": "whisper-1",
+    "localModel": "openai_whisper-large-v3-turbo"
   }
 }

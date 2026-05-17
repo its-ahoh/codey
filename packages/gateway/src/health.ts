@@ -138,31 +138,6 @@ export class ApiServer {
           try {
             const patch = JSON.parse(body);
 
-            // Validate modelPath if present
-            if (patch.modelPath !== undefined) {
-              const p = patch.modelPath as string;
-              const home = process.env.HOME || '';
-              const allowedPrefixes = [
-                `${home}/.codey/models/`,
-                `${home}/Library/Application Support/Codey/`,
-              ];
-              if (!p.startsWith('/')) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'modelPath must be an absolute path' }));
-                return;
-              }
-              if (!p.endsWith('.bin')) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'modelPath must end with .bin' }));
-                return;
-              }
-              if (!allowedPrefixes.some(prefix => p.startsWith(prefix))) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'modelPath must be under ~/.codey/models/ or ~/Library/Application Support/Codey/' }));
-                return;
-              }
-            }
-
             const current = this.configManager.get();
             const updated = { ...current, voice: { ...current.voice, ...patch } };
             this.configManager.update(updated);
