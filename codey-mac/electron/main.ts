@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 
@@ -8,6 +8,7 @@ protocol.registerSchemesAsPrivileged([
 import { WorkerManager, WorkspaceManager } from '@codey/core'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
+import { ApiServer } from '@codey/gateway/dist/health'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -16,6 +17,7 @@ let inProcessGateway: Codey | null = null
 let workerManager: WorkerManager | null = null
 let workspaceManager: WorkspaceManager | null = null
 let coreConfigManager: ConfigManager | null = null
+let apiServer: ApiServer | null = null
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
@@ -55,11 +57,42 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null
+    rendererReady = false
+  })
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    flushPendingRendererMessages()
   })
 }
 
+// Buffer messages emitted before the renderer has finished loading so early
+// boot logs (gateway-log especially) aren't silently dropped. Flushed in
+// createWindow() on did-finish-load.
+const pendingRendererMessages: Array<{ channel: string; args: any[] }> = []
+// Also keep a separate ring buffer of recent gateway-log strings so the
+// renderer can request them on mount — `did-finish-load` fires before React
+// mounts and subscribes to `onLog`, so flushed events would otherwise be lost.
+const recentGatewayLogs: string[] = []
+let rendererReady = false
 function sendToRenderer(channel: string, ...args: any[]) {
-  mainWindow?.webContents.send(channel, ...args)
+  if (channel === 'gateway-log' && typeof args[0] === 'string') {
+    recentGatewayLogs.push(args[0])
+    if (recentGatewayLogs.length > 500) recentGatewayLogs.shift()
+  }
+  if (rendererReady && mainWindow && !mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.send(channel, ...args)
+  } else {
+    pendingRendererMessages.push({ channel, args })
+    if (pendingRendererMessages.length > 500) pendingRendererMessages.shift()
+  }
+}
+function flushPendingRendererMessages() {
+  rendererReady = true
+  if (!mainWindow) return
+  for (const m of pendingRendererMessages) {
+    try { mainWindow.webContents.send(m.channel, ...m.args) } catch { /* ignore */ }
+  }
+  pendingRendererMessages.length = 0
 }
 
 function createTray() {
@@ -230,7 +263,13 @@ async function bootInProcessCore() {
       inProcessGateway?.applyConfig(buildRuntimeConfig(updated)).catch((err: any) => {
         sendToRenderer('gateway-log', `[core] applyConfig failed: ${err?.message ?? err}`)
       })
+      applyVoiceHotkey(updated)
     })
+    {
+      const v = (coreConfigManager.get() as any)?.voice
+      sendToRenderer('gateway-log', `[voice] config on boot: enabled=${!!v?.enabled} hotkey=${v?.hotkey ?? '(unset)'}`)
+    }
+    applyVoiceHotkey(coreConfigManager.get())
     sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length}, agent: ${runtimeCfg.defaultAgent})`)
     // Boot the gateway in the background so configured channels (telegram,
     // discord, imessage) connect. Done after returning so IPC handler
@@ -239,6 +278,21 @@ async function bootInProcessCore() {
     void inProcessGateway.start().catch((err: any) => {
       sendToRenderer('gateway-log', `[core] gateway.start failed: ${err?.message ?? err}`)
     })
+    // The voice helper (and any other localhost client) polls /voice/config via
+    // the ApiServer. Without it, the helper falls back to the compiled-in
+    // VoiceConfig defaults (provider=api, apiKey="") and ignores every change
+    // made through the UI or on disk.
+    try {
+      const apiPort = (coreConfigManager.get() as any)?.gateway?.port ?? 3001
+      apiServer = new ApiServer(apiPort, (): any => inProcessGateway!.getHealthStatus(), coreConfigManager)
+      void apiServer.start().then(() => {
+        sendToRenderer('gateway-log', `[core] API server listening on ${apiPort}`)
+      }).catch((err: any) => {
+        sendToRenderer('gateway-log', `[core] ApiServer.start failed: ${err?.message ?? err}`)
+      })
+    } catch (err: any) {
+      sendToRenderer('gateway-log', `[core] ApiServer init failed: ${err?.message ?? err}`)
+    }
     // Forward all chat stream events (including those triggered by channel
     // messages on paired surfaces) to the renderer so the Mac UI stays in sync.
     inProcessGateway.setChatEventListener((ev: any) => {
@@ -246,6 +300,253 @@ async function bootInProcessCore() {
     })
   } catch (err: any) {
     sendToRenderer('gateway-log', `[core] Boot failed: ${err?.message ?? err}`)
+  }
+}
+
+// ── Voice global hotkey ──────────────────────────────────────────────
+// Converts the WhisperTab-stored format ("Meta+Shift+V", "F5") to an Electron
+// accelerator string. Returns null if the binding is empty/disabled.
+function toElectronAccelerator(hotkey: string | undefined): string | null {
+  if (!hotkey) return null
+  return hotkey
+    .split('+')
+    .map(p => p.trim())
+    .map(p => {
+      const low = p.toLowerCase()
+      if (low === 'meta' || low === 'cmd' || low === 'command') return 'CommandOrControl'
+      if (low === 'control' || low === 'ctrl') return 'Control'
+      if (low === 'alt' || low === 'option') return 'Alt'
+      if (low === 'shift') return 'Shift'
+      if (low === ' ' || low === 'space') return 'Space'
+      return p.length === 1 ? p.toUpperCase() : p
+    })
+    .join('+')
+}
+
+let currentVoiceAccelerator: string | null = null
+function applyVoiceHotkey(rawCfg: any) {
+  const voice = rawCfg?.voice
+  // Fn is handled exclusively by the bundled Swift helper (Electron's
+  // globalShortcut can't bind Fn at all). When the user picks Fn, we don't
+  // register any in-process accelerator — the helper monitors it directly.
+  const hk = voice?.hotkey
+  const isFn = typeof hk === 'string' && hk.trim().toLowerCase() === 'fn'
+  const desired = voice?.enabled && !isFn ? toElectronAccelerator(hk) : null
+
+  if (currentVoiceAccelerator && currentVoiceAccelerator !== desired) {
+    try { globalShortcut.unregister(currentVoiceAccelerator) } catch { /* not registered */ }
+    currentVoiceAccelerator = null
+  }
+
+  if (!desired || currentVoiceAccelerator === desired) {
+    // Still need to (re)start the Swift helper so the renderer's
+    // electron-side hotkey isn't the only path.
+    void applyVoiceHelper(rawCfg)
+    return
+  }
+
+  const ok = globalShortcut.register(desired, () => {
+    mainWindow?.webContents.send('voice:hotkey')
+  })
+  if (ok) {
+    currentVoiceAccelerator = desired
+    sendToRenderer('gateway-log', `[voice] hotkey registered: ${desired}`)
+  } else {
+    sendToRenderer('gateway-log', `[voice] hotkey registration failed: ${desired} (likely in use by another app)`)
+  }
+  void applyVoiceHelper(rawCfg)
+}
+
+// ── Bundled Swift voice helper lifecycle ────────────────────────────
+// The DMG ships CodeyVoice.app under Resources/. We spawn it whenever
+// voice.enabled is true so the user gets system-wide hotkeys (incl. Fn)
+// without any extra install steps. It runs as an LSUIElement, communicates
+// with the gateway over HTTP, and is killed on app quit.
+let voiceHelperProc: import('child_process').ChildProcess | null = null
+let voiceHelperStarted = false
+let voicePermissionPrompted = false
+
+function promptForAccessibilityPermission(reason: string) {
+  if (voicePermissionPrompted) return
+  voicePermissionPrompted = true
+  // isTrustedAccessibilityClient(true) shows the system "add app to Accessibility" prompt
+  // automatically. We also pop our own dialog with a direct link in case the user dismissed
+  // it or wants to know why.
+  const trusted = systemPreferences.isTrustedAccessibilityClient(true)
+  if (trusted) return
+  dialog.showMessageBox({
+    type: 'warning',
+    buttons: ['Open System Settings', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Accessibility permission required',
+    message: 'Codey needs Accessibility access to use the voice hotkey.',
+    detail: `${reason}\n\nIn System Settings → Privacy & Security → Accessibility, enable Codey (or Electron in dev mode). Then restart Codey for the change to take effect.`,
+  }).then(res => {
+    if (res.response === 0) {
+      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility')
+    }
+  }).catch(() => { /* ignore */ })
+}
+
+function resolveVoiceHelperBinary(): string | null {
+  const path = require('path') as typeof import('path')
+  const fs = require('fs') as typeof import('fs')
+  // Helper is shipped as a sibling Mach-O binary (not a nested .app). TCC
+  // attributes permission prompts to the parent Codey.app, so the user only
+  // ever has to grant Microphone + Accessibility to "Codey" once.
+  const candidates = app.isPackaged
+    ? [path.join(process.resourcesPath, 'CodeyVoice')]
+    : [
+        path.join(__dirname, '..', '..', 'voice', 'CodeyVoice'),
+        path.join(__dirname, '..', '..', 'voice', '.build', 'release', 'CodeyVoice'),
+      ]
+  for (const c of candidates) {
+    try { if (fs.existsSync(c)) return c } catch { /* ignore */ }
+  }
+  return null
+}
+
+// Warm marker file: records which WhisperKit variants have already gone through
+// the one-time CoreML per-machine compile. Lets the UI distinguish "downloaded"
+// (✓, first Fn press takes 30-90s) from "warmed" (⚡, instant).
+function warmMarkerPath(): string {
+  const path = require('path') as typeof import('path')
+  return path.join(app.getPath('userData'), 'voice-warm.json')
+}
+
+type WarmMarkers = Record<string, { warmedAt: string; loadSeconds: number }>
+
+function readWarmMarkers(): WarmMarkers {
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const p = warmMarkerPath()
+    if (!fs.existsSync(p)) return {}
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8'))
+    return (raw && typeof raw === 'object') ? raw : {}
+  } catch { return {} }
+}
+
+function writeWarmMarker(model: string, loadSeconds: number) {
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const cur = readWarmMarkers()
+    // Store under both forms so lookups work whether UI sends the prefixed
+    // (`openai_whisper-...`) or bare (`large-v3...`) variant string.
+    const bare = model.startsWith('openai_whisper-') ? model.slice('openai_whisper-'.length) : model
+    const entry = { warmedAt: new Date().toISOString(), loadSeconds }
+    cur[model] = entry
+    cur[bare] = entry
+    cur[`openai_whisper-${bare}`] = entry
+    fs.writeFileSync(warmMarkerPath(), JSON.stringify(cur, null, 2))
+  } catch (e) {
+    console.warn('writeWarmMarker failed:', e)
+  }
+}
+
+function stopVoiceHelper() {
+  if (voiceHelperProc && !voiceHelperProc.killed) {
+    try { voiceHelperProc.kill() } catch { /* already gone */ }
+  }
+  voiceHelperProc = null
+  voiceHelperStarted = false
+}
+
+/**
+ * Request microphone access from the parent Codey.app bundle. The voice
+ * helper is a sibling Mach-O without a bundle identity, so AVCaptureDevice
+ * calls from inside it get silently denied by TCC (peak=0.0000 audio). Asking
+ * here, in the Electron main process (which IS Codey.app), pops the real
+ * system dialog with the bundle's NSMicrophoneUsageDescription. Once granted,
+ * spawned children inherit access via the TCC responsible-process chain.
+ */
+async function ensureMicrophoneAccess(): Promise<boolean> {
+  if (process.platform !== 'darwin') return true
+  const status = systemPreferences.getMediaAccessStatus('microphone')
+  if (status === 'granted') return true
+  if (status === 'denied' || status === 'restricted') {
+    sendToRenderer('gateway-log', `[voice] microphone access ${status} — open System Settings → Privacy & Security → Microphone and enable Codey`)
+    dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['Open System Settings', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Microphone permission required',
+      message: 'Codey needs microphone access to transcribe voice input.',
+      detail: 'Open System Settings → Privacy & Security → Microphone, enable Codey, then toggle voice off and on again.',
+    }).then(res => {
+      if (res.response === 0) {
+        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone')
+      }
+    }).catch(() => { /* ignore */ })
+    return false
+  }
+  // not-determined → triggers the system prompt attributed to Codey.app
+  const granted = await systemPreferences.askForMediaAccess('microphone')
+  sendToRenderer('gateway-log', `[voice] microphone access request: ${granted ? 'granted' : 'denied'}`)
+  return granted
+}
+
+async function applyVoiceHelper(rawCfg: any) {
+  if (process.platform !== 'darwin') return
+  const enabled = !!rawCfg?.voice?.enabled
+  if (!enabled) {
+    if (voiceHelperStarted) sendToRenderer('gateway-log', `[voice] disabled — stopping helper`)
+    stopVoiceHelper()
+    return
+  }
+  if (voiceHelperStarted && voiceHelperProc && !voiceHelperProc.killed) return
+
+  const micOk = await ensureMicrophoneAccess()
+  if (!micOk) {
+    sendToRenderer('gateway-log', `[voice] aborting helper spawn — microphone access not granted`)
+    return
+  }
+
+  const bin = resolveVoiceHelperBinary()
+  if (!bin) {
+    const expected = app.isPackaged
+      ? `${process.resourcesPath}/CodeyVoice`
+      : `voice/CodeyVoice or voice/.build/release/CodeyVoice (run: cd voice && make helper)`
+    sendToRenderer('gateway-log', `[voice] helper binary not found — expected at ${expected}`)
+    dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['OK'],
+      title: 'Voice helper missing',
+      message: 'The CodeyVoice helper binary was not found.',
+      detail: app.isPackaged
+        ? `Expected at: ${expected}\n\nThis usually means the DMG was built without the bundled helper. Reinstall Codey.`
+        : `Expected at: ${expected}\n\nIn dev mode, run:\n  cd voice && make download-model && make helper\n\nThen restart Codey.`,
+    }).catch(() => { /* ignore */ })
+    return
+  }
+
+  // Helper binary needs Accessibility to monitor Fn / inject text. Surface
+  // the system prompt now rather than silently failing on hotkey press.
+  const isFn = (rawCfg?.voice?.hotkey ?? '').toString().trim().toLowerCase() === 'fn'
+  if (isFn) {
+    promptForAccessibilityPermission('The Fn key can only be monitored by the helper after Accessibility access is granted.')
+  }
+  try {
+    const { spawn } = require('child_process') as typeof import('child_process')
+    const port = (coreConfigManager?.get() as any)?.gateway?.port ?? 3001
+    voiceHelperProc = spawn(bin, ['--gateway-port', String(port)], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
+    })
+    voiceHelperStarted = true
+    voiceHelperProc.stdout?.on('data', d => sendToRenderer('gateway-log', `[voice-helper] ${d.toString().trimEnd()}`))
+    voiceHelperProc.stderr?.on('data', d => sendToRenderer('gateway-log', `[voice-helper] ${d.toString().trimEnd()}`))
+    voiceHelperProc.on('exit', code => {
+      sendToRenderer('gateway-log', `[voice-helper] exited (code ${code})`)
+      voiceHelperProc = null
+      voiceHelperStarted = false
+    })
+    sendToRenderer('gateway-log', `[voice] helper started: ${bin}`)
+  } catch (err: any) {
+    sendToRenderer('gateway-log', `[voice] helper spawn failed: ${err?.message ?? err}`)
+    voiceHelperProc = null
+    voiceHelperStarted = false
   }
 }
 
@@ -313,6 +614,12 @@ app.whenReady().then(async () => {
   // ── Gateway status IPC ────────────────────────────────────────────
   ipcMain.handle('gateway:status', async () =>
     wrap(async () => inProcessGateway?.getHealthStatus() ?? null)
+  )
+
+  // Renderer mounts after did-finish-load fires, so any logs sent during
+  // boot would be lost. Expose the ring buffer so the renderer can backfill.
+  ipcMain.handle('gateway:recentLogs', async () =>
+    wrap(async () => recentGatewayLogs.slice())
   )
 
   // ── Workers IPC ──────────────────────────────────────────────────
@@ -537,6 +844,241 @@ app.whenReady().then(async () => {
       )
       if (!result.ok) throw new Error(result.error)
       return result.worker
+    })
+  )
+
+  // ── Voice IPC ─────────────────────────────────────────────────────
+  ipcMain.handle('voice:transcribed', async (_e, text: string) =>
+    wrap(async () => {
+      if (typeof text !== 'string' || !text.trim()) return
+      clipboard.writeText(text)
+      // Auto-paste at the cursor of whatever app is foregrounded. We only
+      // attempt this on macOS and only when the Codey window isn't focused —
+      // if the user is typing into Codey itself, the renderer handles paste
+      // through the normal clipboard. Sending Cmd+V via System Events
+      // requires Accessibility permission; if denied, the clipboard fallback
+      // still lets the user paste manually.
+      let pasted = false
+      const codeyFocused = mainWindow?.isFocused() === true
+      if (process.platform === 'darwin' && !codeyFocused) {
+        try {
+          const { spawn } = await import('child_process')
+          await new Promise<void>((resolve) => {
+            const p = spawn('osascript', [
+              '-e',
+              'tell application "System Events" to keystroke "v" using command down',
+            ])
+            const t = setTimeout(() => { try { p.kill() } catch { /* gone */ } resolve() }, 2000)
+            p.on('close', (code) => { clearTimeout(t); if (code === 0) pasted = true; resolve() })
+            p.on('error', () => { clearTimeout(t); resolve() })
+          })
+        } catch { /* fall through to notification */ }
+      }
+      if (!pasted && Notification.isSupported()) {
+        const n = new Notification({
+          title: 'Voice transcribed (copied to clipboard)',
+          body: text.length > 120 ? text.slice(0, 117) + '…' : text,
+          silent: true,
+        })
+        n.show()
+      }
+    })
+  )
+
+  ipcMain.handle('voice:error', async (_e, message: string) =>
+    wrap(async () => {
+      if (Notification.isSupported()) {
+        new Notification({ title: 'Voice input failed', body: String(message ?? 'Unknown error') }).show()
+      }
+    })
+  )
+
+  // Pre-fetches a WhisperKit model variant by spawning the helper in
+  // download-only mode. Streams `voice:downloadProgress` events to the renderer
+  // so it can show a progress bar; resolves with success/error on exit.
+  ipcMain.handle('voice:downloadModel', async (_e, modelName: string) =>
+    wrap(async () => {
+      if (process.platform !== 'darwin') throw new Error('Voice helper is macOS-only')
+      if (typeof modelName !== 'string' || !modelName.trim()) throw new Error('Model name required')
+      const bin = resolveVoiceHelperBinary()
+      if (!bin) throw new Error('Voice helper binary not found')
+
+      const { spawn } = require('child_process') as typeof import('child_process')
+      const proc = spawn(bin, ['--download-model', modelName], { stdio: ['ignore', 'pipe', 'pipe'] })
+
+      let lastErr = ''
+      const onLine = (line: string) => {
+        const s = line.trim()
+        if (!s) return
+        sendToRenderer('gateway-log', `[voice-download] ${s}`)
+        if (s.startsWith('download:progress ')) {
+          const pct = parseFloat(s.slice('download:progress '.length))
+          if (!Number.isNaN(pct)) {
+            sendToRenderer('voice:downloadProgress', { model: modelName, fraction: pct })
+          }
+        } else if (s.startsWith('download:error ')) {
+          lastErr = s.slice('download:error '.length)
+        }
+      }
+      const wireLines = (stream: NodeJS.ReadableStream | null) => {
+        if (!stream) return
+        let buf = ''
+        stream.on('data', (chunk: Buffer) => {
+          buf += chunk.toString()
+          let idx: number
+          while ((idx = buf.indexOf('\n')) >= 0) {
+            onLine(buf.slice(0, idx))
+            buf = buf.slice(idx + 1)
+          }
+        })
+        stream.on('end', () => { if (buf) onLine(buf) })
+      }
+      wireLines(proc.stdout)
+      wireLines(proc.stderr)
+
+      const code: number = await new Promise(resolve => proc.on('exit', c => resolve(c ?? 1)))
+      if (code !== 0) throw new Error(lastErr || `Download failed (exit ${code})`)
+      return { model: modelName }
+    })
+  )
+
+  // Warms a downloaded WhisperKit model: spawns the helper in --warm-model mode
+  // which forces CoreML's per-machine compile to complete and cache. After this
+  // succeeds, the model loads in ~200ms on subsequent Fn presses instead of
+  // 30-90s. On success we persist a marker so the UI shows ⚡ for warmed models.
+  ipcMain.handle('voice:warmModel', async (_e, modelName: string) =>
+    wrap(async () => {
+      if (process.platform !== 'darwin') throw new Error('Voice helper is macOS-only')
+      if (typeof modelName !== 'string' || !modelName.trim()) throw new Error('Model name required')
+      const bin = resolveVoiceHelperBinary()
+      if (!bin) throw new Error('Voice helper binary not found')
+
+      const { spawn } = require('child_process') as typeof import('child_process')
+      const proc = spawn(bin, ['--warm-model', modelName], { stdio: ['ignore', 'pipe', 'pipe'] })
+
+      let lastErr = ''
+      let loadSeconds = 0
+      sendToRenderer('voice:warmStart', { model: modelName })
+
+      const onLine = (line: string) => {
+        const s = line.trim()
+        if (!s) return
+        sendToRenderer('gateway-log', `[voice-warm] ${s}`)
+        if (s.startsWith('warm:done ')) {
+          loadSeconds = parseFloat(s.slice('warm:done '.length)) || 0
+        } else if (s.startsWith('warm:error ')) {
+          lastErr = s.slice('warm:error '.length)
+        }
+      }
+      const wireLines = (stream: NodeJS.ReadableStream | null) => {
+        if (!stream) return
+        let buf = ''
+        stream.on('data', (chunk: Buffer) => {
+          buf += chunk.toString()
+          let idx: number
+          while ((idx = buf.indexOf('\n')) >= 0) {
+            onLine(buf.slice(0, idx))
+            buf = buf.slice(idx + 1)
+          }
+        })
+        stream.on('end', () => { if (buf) onLine(buf) })
+      }
+      wireLines(proc.stdout)
+      wireLines(proc.stderr)
+
+      const code: number = await new Promise(resolve => proc.on('exit', c => resolve(c ?? 1)))
+      if (code !== 0) {
+        sendToRenderer('voice:warmError', { model: modelName, error: lastErr || `Warm failed (exit ${code})` })
+        throw new Error(lastErr || `Warm failed (exit ${code})`)
+      }
+      writeWarmMarker(modelName, loadSeconds)
+      sendToRenderer('voice:warmDone', { model: modelName, loadSeconds })
+      return { model: modelName, loadSeconds }
+    })
+  )
+
+  ipcMain.handle('voice:listWarmedModels', async () =>
+    wrap(async () => Object.keys(readWarmMarkers()))
+  )
+
+  // Lists WhisperKit model folders currently on disk. WhisperKit stores
+  // downloaded variants under ~/Documents/huggingface/models/argmaxinc/
+  // whisperkit-coreml/<variant>/. We return the raw folder names so the
+  // renderer can match against either the bare variant or the full
+  // openai_whisper-<variant> form used in the UI dropdown.
+  ipcMain.handle('voice:listDownloadedModels', async () =>
+    wrap(async () => {
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const home = app.getPath('home')
+      const candidates = [
+        pathMod.join(home, 'Documents', 'huggingface', 'models', 'argmaxinc', 'whisperkit-coreml'),
+        pathMod.join(home, 'Library', 'Application Support', 'huggingface', 'models', 'argmaxinc', 'whisperkit-coreml'),
+      ]
+      const found = new Set<string>()
+      for (const dir of candidates) {
+        if (!fsMod.existsSync(dir)) continue
+        for (const entry of fsMod.readdirSync(dir)) {
+          const full = pathMod.join(dir, entry)
+          try {
+            const st = fsMod.statSync(full)
+            // Only count variants that actually contain .mlmodelc payloads —
+            // an empty stub folder from an interrupted download shouldn't read
+            // as "downloaded".
+            if (st.isDirectory() && fsMod.readdirSync(full).some(f => f.endsWith('.mlmodelc'))) {
+              found.add(entry)
+            }
+          } catch { /* skip */ }
+        }
+      }
+      return Array.from(found)
+    })
+  )
+
+  // Deletes a WhisperKit model variant from disk: the HuggingFace download
+  // folder(s) and the warm marker entry. Caller passes any of the three name
+  // forms ("openai_whisper-X", "X", or the canonical folder name) — we try
+  // each candidate folder. Returns the list of paths actually removed.
+  ipcMain.handle('voice:deleteModel', async (_e, modelName: string) =>
+    wrap(async () => {
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      if (!modelName || typeof modelName !== 'string') {
+        throw new Error('modelName required')
+      }
+      const bare = modelName.startsWith('openai_whisper-')
+        ? modelName.slice('openai_whisper-'.length)
+        : modelName
+      const variants = new Set([modelName, bare, `openai_whisper-${bare}`])
+      const home = app.getPath('home')
+      const roots = [
+        pathMod.join(home, 'Documents', 'huggingface', 'models', 'argmaxinc', 'whisperkit-coreml'),
+        pathMod.join(home, 'Library', 'Application Support', 'huggingface', 'models', 'argmaxinc', 'whisperkit-coreml'),
+      ]
+      const removed: string[] = []
+      for (const root of roots) {
+        if (!fsMod.existsSync(root)) continue
+        for (const v of variants) {
+          const full = pathMod.join(root, v)
+          if (fsMod.existsSync(full)) {
+            fsMod.rmSync(full, { recursive: true, force: true })
+            removed.push(full)
+          }
+        }
+      }
+      try {
+        const markers = readWarmMarkers()
+        let changed = false
+        for (const v of variants) {
+          if (v in markers) { delete markers[v]; changed = true }
+        }
+        if (changed) {
+          fsMod.writeFileSync(warmMarkerPath(), JSON.stringify(markers, null, 2))
+        }
+      } catch (e) {
+        console.warn('voice:deleteModel: failed to update warm markers:', e)
+      }
+      return { removed }
     })
   )
 
@@ -850,6 +1392,8 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  try { globalShortcut.unregisterAll() } catch { /* nothing to unregister */ }
+  stopVoiceHelper()
 })
 
 // IPC handlers

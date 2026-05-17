@@ -109,6 +109,21 @@ declare global {
           channels: { telegram: boolean; discord: boolean; imessage: boolean }
           stats: { messagesProcessed: number; activeConversations: number; errors: number }
         } | null>>
+        recentLogs: () => Promise<IpcResult<string[]>>
+      }
+      voice: {
+        onHotkey: (handler: () => void) => () => void
+        notifyTranscribed: (text: string) => Promise<IpcResult<void>>
+        showError: (message: string) => Promise<IpcResult<void>>
+        downloadModel: (model: string) => Promise<IpcResult<{ model: string }>>
+        deleteModel: (model: string) => Promise<IpcResult<{ removed: string[] }>>
+        listDownloadedModels: () => Promise<IpcResult<string[]>>
+        onDownloadProgress: (handler: (msg: { model: string; fraction: number }) => void) => () => void
+        warmModel: (model: string) => Promise<IpcResult<{ model: string; loadSeconds: number }>>
+        listWarmedModels: () => Promise<IpcResult<string[]>>
+        onWarmStart: (handler: (msg: { model: string }) => void) => () => void
+        onWarmDone: (handler: (msg: { model: string; loadSeconds: number }) => void) => () => void
+        onWarmError: (handler: (msg: { model: string; error: string }) => void) => () => void
       }
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<string>

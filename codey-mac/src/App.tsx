@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { ChatTab } from './components/ChatTab'
 import { ChatListPanel } from './components/ChatListPanel'
 import { SettingsOverlay } from './components/SettingsOverlay'
+import { VoiceRecorder } from './components/VoiceRecorder'
 import { ChatsProvider, useChats } from './hooks/useChats'
 import { useGateway } from './hooks/useGateway'
 import {
@@ -80,17 +81,14 @@ const Shell: React.FC = () => {
           activeChatId={state.selectedChatId}
         />
         <div style={styles.content}>
-          {Object.values(state.chats).map(chat => (
+          {activeChat && (
             <div
-              key={chat.id}
-              style={{
-                display: state.selectedChatId === chat.id ? 'flex' : 'none',
-                flex: 1, minHeight: 0, flexDirection: 'column', overflow: 'hidden',
-              }}
+              key={activeChat.id}
+              style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
             >
-              <ChatTab chatId={chat.id} isGatewayRunning={isRunning} />
+              <ChatTab chatId={activeChat.id} isGatewayRunning={isRunning} />
             </div>
-          ))}
+          )}
           {!activeChat && (
             <div style={styles.emptyMain}>
               {state.order.length === 0
@@ -100,6 +98,7 @@ const Shell: React.FC = () => {
           )}
         </div>
         {settingsOpen && <SettingsOverlay onClose={() => { setSettingsOpen(false); refreshWorkspaces() }} />}
+        <VoiceRecorder />
       </div>
       <style>{`
   :root {

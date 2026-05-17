@@ -17,31 +17,6 @@ interface ModelEntry {
 interface AgentSlot { enabled?: boolean }
 interface FallbackEntry { agent: string; model?: string }
 interface FallbackCfg { enabled: boolean; order: FallbackEntry[] }
-interface VoiceCfg {
-  enabled: boolean
-  hotkey: string
-  modelPath: string
-  language: string
-  injection: 'paste' | 'ax'
-}
-const VOICE_DEFAULT: VoiceCfg = {
-  enabled: false,
-  hotkey: 'F5',
-  modelPath: '~/.codey/models/ggml-tiny.bin',
-  language: 'auto',
-  injection: 'paste',
-}
-const VOICE_LANGUAGES: Array<{ value: string; label: string }> = [
-  { value: 'auto', label: 'Auto-detect' },
-  { value: 'en', label: 'English' },
-  { value: 'zh', label: 'Chinese' },
-  { value: 'ja', label: 'Japanese' },
-  { value: 'ko', label: 'Korean' },
-  { value: 'es', label: 'Spanish' },
-  { value: 'fr', label: 'French' },
-  { value: 'de', label: 'German' },
-]
-
 // Each agent expects a specific apiType — surfacing this in the UI keeps users
 // from picking a model the agent's CLI cannot actually authenticate against.
 const AGENT_API_TYPE: Record<string, ApiType> = {
@@ -386,9 +361,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   // a neutral "checking…" to green/install once the result lands.
   const [installStatus, setInstallStatus] = useState<Record<string, InstallStatus>>({})
   const [checkingInstalls, setCheckingInstalls] = useState(false)
-  const [voice, setVoice] = useState<VoiceCfg>(VOICE_DEFAULT)
-  const [voiceSavedMsg, setVoiceSavedMsg] = useState<string | null>(null)
-
   const refreshInstallStatus = useCallback(async () => {
     setCheckingInstalls(true)
     try {
@@ -403,15 +375,13 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const reload = useCallback(async () => {
     setError(null)
     try {
-      const [m, f, d, cfg] = await Promise.all([
+      const [m, f, d] = await Promise.all([
         unwrap(await window.codey.models.list()),
         unwrap(await window.codey.fallback.get()),
         unwrap(await window.codey.dispatcher.get()),
-        unwrap(await window.codey.config.get()),
       ])
       setModels(m); setFallback(f as FallbackCfg)
       setDispatcher({ agent: d.agent ?? '', model: d.model ?? '' })
-      setVoice({ ...VOICE_DEFAULT, ...(cfg?.voice ?? {}) })
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
@@ -444,18 +414,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const updateFallback = async (fb: FallbackCfg) => {
     setFallback(fb)
     await unwrap(await window.codey.fallback.set(fb))
-  }
-
-  const updateVoice = async (patch: Partial<VoiceCfg>) => {
-    const next = { ...voice, ...patch }
-    setVoice(next)
-    try {
-      await unwrap(await window.codey.config.set({ voice: next }))
-      setVoiceSavedMsg('Saved')
-      setTimeout(() => setVoiceSavedMsg(null), 1500)
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
-    }
   }
 
   const updateDispatcher = async (next: { agent: string; model: string }) => {
@@ -587,63 +545,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
             <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
           ))}
         </select>
-      </div>
-
-      <Section title="Voice input" right={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {voiceSavedMsg && <span style={{ color: C.green, fontSize: 11 }}>{voiceSavedMsg}</span>}
-          <span style={{ color: C.fg3, fontSize: 11 }}>{voice.enabled ? 'Enabled' : 'Disabled'}</span>
-          <Toggle on={voice.enabled} onChange={enabled => updateVoice({ enabled })}/>
-        </div>
-      }/>
-      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        System-wide voice input via the native <code>codey-voice</code> helper (macOS). Press the hotkey anywhere to start/stop recording — transcribed text is injected at your cursor. Requires the helper app running with Microphone + Accessibility permissions.
-      </div>
-      <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Hotkey</span>
-        <input
-          value={voice.hotkey}
-          onChange={e => setVoice({ ...voice, hotkey: e.target.value })}
-          onBlur={() => updateVoice({ hotkey: voice.hotkey })}
-          placeholder="e.g. F5"
-          style={inputStyle}
-        />
-      </div>
-      <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Language</span>
-        <select
-          value={voice.language}
-          onChange={e => updateVoice({ language: e.target.value })}
-          style={selectStyle}
-        >
-          {VOICE_LANGUAGES.map(l => (
-            <option key={l.value} value={l.value}>{l.label}</option>
-          ))}
-        </select>
-      </div>
-      <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Injection mode</span>
-        <select
-          value={voice.injection}
-          onChange={e => updateVoice({ injection: e.target.value as 'paste' | 'ax' })}
-          style={selectStyle}
-        >
-          <option value="paste">Paste (⌘V — works everywhere)</option>
-          <option value="ax">Accessibility API (no clipboard touch)</option>
-        </select>
-      </div>
-      <div style={{ ...fieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Whisper model path</span>
-        <input
-          value={voice.modelPath}
-          onChange={e => setVoice({ ...voice, modelPath: e.target.value })}
-          onBlur={() => updateVoice({ modelPath: voice.modelPath })}
-          placeholder="~/.codey/models/ggml-tiny.bin"
-          style={{ ...inputStyle, width: '100%' }}
-        />
-        <span style={{ color: C.fg3, fontSize: 11 }}>
-          Must be a ggml <code>.bin</code> under <code>~/.codey/models/</code>. Run <code>make download-model</code> in <code>voice/</code> to fetch the default multilingual tiny model.
-        </span>
       </div>
     </div>
   )
