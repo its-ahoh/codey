@@ -6,7 +6,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-一个本地网关，将聊天平台（Telegram、Discord、iMessage）的提示路由到编码代理，支持多工作区和工作者团队。附带原生 macOS 菜单栏应用，可在本地管理对话、工作区与代理。
+一个本地网关，将聊天平台（Telegram、Discord、iMessage）的提示路由到编码代理，支持多工作区和工作者团队。附带原生 macOS 菜单栏应用，可在本地管理对话、工作区与代理 — 还包含一个全局热键触发的**语音输入**，可以直接把识别结果粘贴到任何前台应用的输入框。
 
 ## 下载
 
@@ -26,6 +26,7 @@
 - **工作者团队**：定义具有角色、个性和关系的工作者
 - **并行执行**：同时运行多个代理或工作者
 - **对话上下文**：在会话中记忆之前的消息
+- **语音输入 (macOS)**：热键触发的语音转录，支持本地 WhisperKit（CoreML / Neural Engine）和 OpenAI 兼容 API — 识别结果直接粘贴到当前光标所在的输入框
 - **健康检查端点**：内置健康检查和指标监控
 
 ## 快速开始
@@ -219,6 +220,28 @@ file-system, git, web-search
 /parallel create a hello world app
 ```
 
+## 语音输入 (macOS)
+
+全局按键语音听写。按住配置的热键（默认 `Fn`）说话，松开后 Codey 转录并把结果直接粘贴到当前焦点输入框 — 不管你在哪个 app 都行。
+
+**两种转录后端：**
+- **本地 (WhisperKit)** — 在 CoreML / Neural Engine 上运行。模型首次使用时从 HuggingFace 拉取，默认为 `large-v3-turbo` 量化版（~954 MB）。完全离线、无需 API key。30 秒空闲后自动卸载模型，避免常驻 RAM / ANE
+- **API** — 任何 OpenAI 兼容的 `/audio/transcriptions` 端点，配置 `apiUrl` / `apiKey` / `apiModel` 即可（如 `whisper-1`、`gpt-4o-transcribe`）
+
+**HUD 浮窗：**
+- **录音中**：浮动胶囊带 5 根实时音频条，能看到麦克风是否在拾音
+- **转写中**：spinner + "Transcribing…"
+- **已注入**：绿色 ✓，自动消失
+- **没有可粘贴的焦点**：完整识别文本展示在更宽的卡片里，自动复制到剪贴板，点击关闭
+
+**操作：**
+- **热键**（默认 `Fn`）— 切换录音开关。可配置为 F 键或修饰键组合（如 `Cmd+Shift+V`）
+- **录音中按 Esc** — 取消本次录音，buffer 直接丢弃，不转写
+
+所有配置都在 macOS 应用的 **Whisper** 标签页：切换 provider、换模型、下载 / 预热 / 删除 WhisperKit 变体、改热键或注入方式（paste 或 Accessibility API）。
+
+需要麦克风和辅助功能权限（首次启动会提示）。
+
 ## 健康检查端点
 
 网关在 `port + 1` 端口暴露健康检查端点：
@@ -259,6 +282,8 @@ packages/
 codey-mac/               # macOS 菜单栏应用（Electron + React）
 ├── electron/            # 主进程与 preload
 └── src/                 # 渲染进程（React UI）
+voice/                   # 原生 Swift helper（热键 + 录音 + WhisperKit）
+└── Sources/CodeyVoice/  # AudioCapture、HotkeyManager、HudOverlay、WhisperKitEngine 等
 workspaces/              # 各工作区的配置、记忆与工作者
 ```
 

@@ -6,7 +6,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-A local gateway that routes prompts from chat platforms (Telegram, Discord, iMessage) to coding agents with support for multi-workspace and worker teams. Ships with a native macOS menu-bar app for managing chats, workspaces, and agents locally.
+A local gateway that routes prompts from chat platforms (Telegram, Discord, iMessage) to coding agents with support for multi-workspace and worker teams. Ships with a native macOS menu-bar app for managing chats, workspaces, and agents locally — including a system-wide push-to-talk **voice input** that types into whatever app you're focused on.
 
 ## Download
 
@@ -26,6 +26,7 @@ Builds are currently unsigned — on first launch, right-click the app → **Ope
 - **Worker teams**: Define workers with roles, personalities, and relationships
 - **Parallel execution**: Run multiple agents or workers simultaneously
 - **Conversation context**: Remembers previous messages within a session
+- **Voice input (macOS)**: Hotkey-triggered dictation with on-device WhisperKit (CoreML / ANE) or OpenAI-compatible APIs — pastes directly into whichever app you're focused on
 - **Health endpoints**: Built-in health check and metrics
 
 ## Quick Start
@@ -221,6 +222,28 @@ When prompted, analyze requirements and provide...
 /parallel create a hello world app
 ```
 
+## Voice Input (macOS)
+
+System-wide push-to-talk dictation. Hold the configured hotkey (default `Fn`), speak, release — Codey transcribes and pastes into whatever text field is focused, no matter which app you're in.
+
+**Transcription backends:**
+- **Local (WhisperKit)** — on-device CoreML / Neural Engine. Models pulled from HuggingFace on first use; default is `large-v3-turbo` quantized (~954 MB). No network, no API key. Pipeline idle-unloads after 30s so RAM/ANE stay free when you're not dictating.
+- **API** — any OpenAI-compatible `/audio/transcriptions` endpoint. Just point `apiUrl` / `apiKey` / `apiModel` (e.g. `whisper-1`, `gpt-4o-transcribe`).
+
+**HUD overlay:**
+- **Recording**: floating pill with a 5-bar live audio meter so you can see the mic is hearing you
+- **Transcribing**: spinner + "Transcribing…"
+- **Inserted**: green check, auto-hide
+- **No focus to paste into**: full transcript shown in a wider card, auto-copied to clipboard, dismiss by click
+
+**Controls:**
+- **Hotkey** (default `Fn`) — toggle recording on / off. Configurable to F-keys or modifier combos (`Cmd+Shift+V`, etc.)
+- **Esc while recording** — cancel without transcribing (buffer discarded)
+
+Configure everything from the macOS app's **Whisper** tab: pick provider, swap models, download / warm / delete WhisperKit variants, change hotkey or injection mode (paste vs Accessibility API).
+
+Requires Microphone and Accessibility permissions (the app prompts on first launch).
+
 ## Health Endpoints
 
 The gateway exposes health endpoints on `port + 1`:
@@ -261,6 +284,8 @@ packages/
 codey-mac/               # macOS menu-bar app (Electron + React)
 ├── electron/            # Main + preload processes
 └── src/                 # Renderer (React UI)
+voice/                   # Native Swift helper for hotkey + capture + WhisperKit
+└── Sources/CodeyVoice/  # AudioCapture, HotkeyManager, HudOverlay, WhisperKitEngine, ...
 workspaces/              # Per-workspace config, memory, and workers
 ```
 

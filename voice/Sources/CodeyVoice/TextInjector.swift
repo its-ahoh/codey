@@ -20,6 +20,32 @@ final class TextInjector {
         }
     }
 
+    /// Pre-flight check: is there a focused UI element that will actually
+    /// accept text? Used to decide between auto-inject and "show in HUD"
+    /// when the user fires the hotkey without first clicking into a field.
+    /// Conservative: only roles we know take typed text are treated as
+    /// injectable; anything else (Finder, a desktop click, a button focus,
+    /// nothing focused at all) returns false.
+    static func canInjectAtCurrentFocus() -> Bool {
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let focused = focusedRef else {
+            return false
+        }
+        var roleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(focused as! AXUIElement, kAXRoleAttribute as CFString, &roleRef)
+        guard let role = roleRef as? String else { return false }
+        // AXSecureTextField excluded — we never inject into password fields.
+        let textRoles: Set<String> = [
+            "AXTextField",
+            "AXTextArea",
+            "AXSearchField",
+            "AXComboBox",
+        ]
+        return textRoles.contains(role)
+    }
+
     /// Returns true if the focused UI element is a secure text field (password input).
     private func isSecureFieldFocused() -> Bool {
         let systemWide = AXUIElementCreateSystemWide()
@@ -59,21 +85,36 @@ final class TextInjector {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        // Small delay to let the pasteboard settle
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            // Synthesize ⌘V
-            let source = CGEventSource(stateID: .hidSystemState)
+        // Small delay to let the pasteboard settle (Electron apps need more)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            // Synthesize ⌘V as discrete Command + V key events so Electron apps
+            // (Cursor, VS Code, etc.) recognize them as real user input.
+            // Each event needs proper flags + a small gap for the target's event
+            // queue to register the modifier state.
+            let source = CGEventSource(stateID: .combinedSessionState)
+            let cmdKey: CGKeyCode = 0x37
+            let vKey: CGKeyCode = 0x09
 
-            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)  // V
-            keyDown?.flags = .maskCommand
-            keyDown?.post(tap: .cghidEventTap)
+            let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: cmdKey, keyDown: true)
+            cmdDown?.flags = .maskCommand
+            cmdDown?.post(tap: .cghidEventTap)
+            usleep(12_000)
 
-            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-            keyUp?.flags = .maskCommand
-            keyUp?.post(tap: .cghidEventTap)
+            let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
+            vDown?.flags = .maskCommand
+            vDown?.post(tap: .cghidEventTap)
+            usleep(12_000)
+
+            let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
+            vUp?.flags = .maskCommand
+            vUp?.post(tap: .cghidEventTap)
+            usleep(12_000)
+
+            let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: cmdKey, keyDown: false)
+            cmdUp?.post(tap: .cghidEventTap)
 
             // Restore old clipboard after a brief delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 pasteboard.clearContents()
                 let items: [NSPasteboardItem] = savedItems.map { dict in
                     let item = NSPasteboardItem()

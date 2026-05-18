@@ -1,4 +1,0 @@
-module WhisperBridge {
-    header "shim.h"
-    export *
-}

@@ -12,18 +12,10 @@ final class AudioCapture {
     /// Called with the full PCM buffer when recording stops.
     var onRecordingComplete: (([Float]) -> Void)?
 
-    /// Request microphone permission.
-    static func requestPermission() async -> Bool {
-        if #available(macOS 14.0, *) {
-            return await AVCaptureDevice.requestAccess(for: .audio)
-        } else {
-            return await withCheckedContinuation { cont in
-                AVCaptureDevice.requestAccess(for: .audio) { granted in
-                    cont.resume(returning: granted)
-                }
-            }
-        }
-    }
+    /// Called from the audio tap thread (~every buffer, ~20-50ms) with a 0..1
+    /// RMS level of the latest input. Receiver must hop to main if it touches
+    /// AppKit. Used by the HUD waveform indicator.
+    var onLevel: ((Float) -> Void)?
 
     func startRecording() throws {
         guard !isRecording else { return }
@@ -49,12 +41,29 @@ final class AudioCapture {
         onRecordingComplete?(pcmBuffer)
     }
 
+    /// Stop the engine and DISCARD the buffer without firing the complete
+    /// callback. Used by the Esc-to-cancel path so the transcription pipeline
+    /// never sees the audio.
+    func cancelRecording() {
+        guard isRecording else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        isRecording = false
+        pcmBuffer.removeAll()
+    }
+
     private func processBuffer(_ buffer: AVAudioPCMBuffer) {
         let frameLength = Int(buffer.frameLength)
         guard let channelData = buffer.floatChannelData else { return }
 
         let srcRate = buffer.format.sampleRate
         let channelCount = Int(buffer.format.channelCount)
+
+        // Quick RMS of this raw buffer for the level meter — compute on the
+        // original (pre-resample) mono mix to avoid the resampling cost being
+        // on the audio thread path twice. ~20-50ms cadence depending on
+        // device buffer size.
+        var rmsSq: Float = 0
 
         // Mix to mono if stereo
         var mono = [Float](repeating: 0, count: frameLength)
@@ -67,6 +76,17 @@ final class AudioCapture {
         if channelCount > 1 {
             let scale = 1.0 / Float(channelCount)
             for i in 0..<frameLength { mono[i] *= scale }
+        }
+
+        if frameLength > 0 {
+            for i in 0..<frameLength { rmsSq += mono[i] * mono[i] }
+            let rms = sqrt(rmsSq / Float(frameLength))
+            // Mic input typically peaks around 0.1-0.3 RMS for normal speech;
+            // scale into 0..1 for the meter so quiet voice still looks lively.
+            let level = min(1.0, rms * 6.0)
+            if let cb = onLevel {
+                cb(level)
+            }
         }
 
         // Resample to 16 kHz if needed

@@ -1,11 +1,12 @@
-import Cocoa
+import Foundation
 
-/// Menu bar status item with state indicator and settings.
+/// Headless replacement for the former NSStatusBar UI. The helper is now a
+/// sibling binary inside Codey.app (no menu bar icon of its own); state is
+/// reported to the parent process via stdout / the gateway HTTP endpoint
+/// instead of an in-helper Cocoa UI. NSAlert / NSStatusItem need a real .app
+/// bundle to work, and we deliberately ship without one so TCC attributes
+/// microphone + Accessibility prompts to Codey.app.
 final class StatusItem {
-    private let item: NSStatusItem
-    private var stateMenuItem: NSMenuItem!
-    private var toggleMenuItem: NSMenuItem!
-
     enum State: Equatable {
         case idle
         case recording
@@ -14,25 +15,14 @@ final class StatusItem {
         case error(String)
         case permissionsNeeded
 
-        var icon: String {
-            switch self {
-            case .idle: return "mic"
-            case .recording: return "mic.fill"
-            case .transcribing: return "waveform"
-            case .gatewayDown: return "mic.slash"
-            case .error: return "exclamationmark.triangle"
-            case .permissionsNeeded: return "lock.shield"
-            }
-        }
-
         var label: String {
             switch self {
-            case .idle: return "Ready"
-            case .recording: return "Recording…"
-            case .transcribing: return "Transcribing…"
-            case .gatewayDown: return "Gateway offline"
-            case .error(let msg): return "Error: \(msg)"
-            case .permissionsNeeded: return "Permissions needed"
+            case .idle: return "idle"
+            case .recording: return "recording"
+            case .transcribing: return "transcribing"
+            case .gatewayDown: return "gateway-down"
+            case .error(let msg): return "error: \(msg)"
+            case .permissionsNeeded: return "permissions-needed"
             }
         }
     }
@@ -41,69 +31,16 @@ final class StatusItem {
     var onSettings: (() -> Void)?
     var onQuit: (() -> Void)?
 
-    init() {
-        item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        setupMenu()
-        updateState(.idle)
-    }
+    init() {}
 
     func updateState(_ state: State) {
-        if let button = item.button {
-            let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-            button.image = NSImage(systemSymbolName: state.icon, accessibilityDescription: "Codey Voice")?
-                .withSymbolConfiguration(config)
-            if case .recording = state {
-                button.appearsDisabled = false
-            }
-        }
-        stateMenuItem.title = state.label
-        toggleMenuItem.title = (state == .recording) ? "Stop Recording (F5)" : "Start Recording (F5)"
+        print("state: \(state.label)")
     }
 
-    private func setupMenu() {
-        let menu = NSMenu()
-
-        stateMenuItem = NSMenuItem(title: "Ready", action: nil, keyEquivalent: "")
-        stateMenuItem.isEnabled = false
-        menu.addItem(stateMenuItem)
-
-        menu.addItem(.separator())
-
-        toggleMenuItem = NSMenuItem(title: "Start Recording (F5)", action: #selector(toggleAction), keyEquivalent: "")
-        toggleMenuItem.target = self
-        menu.addItem(toggleMenuItem)
-
-        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(settingsAction), keyEquivalent: ",")
-        settingsItem.target = self
-        menu.addItem(settingsItem)
-
-        menu.addItem(.separator())
-
-        let quitItem = NSMenuItem(title: "Quit Codey Voice", action: #selector(quitAction), keyEquivalent: "q")
-        quitItem.target = self
-        menu.addItem(quitItem)
-
-        item.menu = menu
-    }
-
-    @objc private func toggleAction() { onToggle?() }
-    @objc private func settingsAction() { onSettings?() }
-    @objc private func quitAction() { onQuit?() }
-
-    // MARK: - Permission prompt
-
+    /// Surface missing permissions through stdout so the Electron main process
+    /// can render the prompt in its own UI. We do not call NSAlert here — it
+    /// requires an .app bundle and crashes when invoked from a sibling binary.
     func showPermissionAlert(missing: [String]) {
-        let alert = NSAlert()
-        alert.messageText = "Permissions Required"
-        alert.informativeText = "Codey Voice needs the following permissions:\n\n" +
-            missing.map { "• \($0)" }.joined(separator: "\n") +
-            "\n\nGrant these in System Settings → Privacy & Security."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Later")
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy")!)
-        }
+        print("permissions-needed: \(missing.joined(separator: ","))")
     }
 }

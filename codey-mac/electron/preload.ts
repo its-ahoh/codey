@@ -110,6 +110,41 @@ contextBridge.exposeInMainWorld('codey', {
   },
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
+    recentLogs: () => ipcRenderer.invoke('gateway:recentLogs'),
+  },
+  voice: {
+    onHotkey: (handler: () => void) => {
+      const listener = () => handler()
+      ipcRenderer.on('voice:hotkey', listener)
+      return () => ipcRenderer.removeListener('voice:hotkey', listener)
+    },
+    notifyTranscribed: (text: string) => ipcRenderer.invoke('voice:transcribed', text),
+    showError: (message: string) => ipcRenderer.invoke('voice:error', message),
+    downloadModel: (model: string) => ipcRenderer.invoke('voice:downloadModel', model),
+    deleteModel: (model: string) => ipcRenderer.invoke('voice:deleteModel', model),
+    listDownloadedModels: () => ipcRenderer.invoke('voice:listDownloadedModels'),
+    onDownloadProgress: (handler: (msg: { model: string; fraction: number }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, msg: any) => handler(msg)
+      ipcRenderer.on('voice:downloadProgress', listener)
+      return () => ipcRenderer.removeListener('voice:downloadProgress', listener)
+    },
+    warmModel: (model: string) => ipcRenderer.invoke('voice:warmModel', model),
+    listWarmedModels: () => ipcRenderer.invoke('voice:listWarmedModels'),
+    onWarmStart: (handler: (msg: { model: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, msg: any) => handler(msg)
+      ipcRenderer.on('voice:warmStart', listener)
+      return () => ipcRenderer.removeListener('voice:warmStart', listener)
+    },
+    onWarmDone: (handler: (msg: { model: string; loadSeconds: number }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, msg: any) => handler(msg)
+      ipcRenderer.on('voice:warmDone', listener)
+      return () => ipcRenderer.removeListener('voice:warmDone', listener)
+    },
+    onWarmError: (handler: (msg: { model: string; error: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, msg: any) => handler(msg)
+      ipcRenderer.on('voice:warmError', listener)
+      return () => ipcRenderer.removeListener('voice:warmError', listener)
+    },
   },
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
