@@ -53,9 +53,18 @@ export interface GatewayConfigJson {
   voice?: {
     enabled: boolean;
     hotkey: string;
-    modelPath: string;
     language: string;
     injection: 'paste' | 'ax';
+    /** Transcription backend: hosted API or on-device WhisperKit. */
+    provider: 'api' | 'local';
+    /** Base URL of an OpenAI-compatible transcription endpoint (e.g. https://api.openai.com/v1). */
+    apiUrl: string;
+    /** Bearer token for the API endpoint. */
+    apiKey: string;
+    /** Model identifier sent to the API (e.g. whisper-1). */
+    apiModel: string;
+    /** WhisperKit model variant for local mode (e.g. openai_whisper-large-v3-turbo). */
+    localModel: string;
   };
 }
 
@@ -67,11 +76,16 @@ export type AgentSlot = Record<string, never>;
 export class ConfigManager extends EventEmitter {
   private config: GatewayConfigJson;
   private configPath: string;
+  private watcher?: fs.FSWatcher;
+  private lastSerialized: string = '';
+  private reloadTimer?: NodeJS.Timeout;
 
   constructor(configPath?: string) {
     super();
     this.configPath = configPath || path.join(process.cwd(), 'gateway.json');
     this.config = this.loadConfig();
+    this.lastSerialized = JSON.stringify(this.config);
+    this.startWatching();
   }
 
   private loadConfig(): GatewayConfigJson {
@@ -86,9 +100,46 @@ export class ConfigManager extends EventEmitter {
     return getDefaultConfig();
   }
 
+  private startWatching(): void {
+    try {
+      this.watcher = fs.watch(this.configPath, { persistent: false }, () => {
+        if (this.reloadTimer) clearTimeout(this.reloadTimer);
+        this.reloadTimer = setTimeout(() => this.reloadFromDisk(), 150);
+      });
+      this.watcher.on('error', err => console.error('[Config] watch error:', err));
+    } catch (err) {
+      console.error('[Config] failed to watch', this.configPath, err);
+    }
+  }
+
+  private reloadFromDisk(): void {
+    try {
+      if (!fs.existsSync(this.configPath)) return;
+      const data = fs.readFileSync(this.configPath, 'utf-8');
+      const next = normalize(JSON.parse(data));
+      const serialized = JSON.stringify(next);
+      if (serialized === this.lastSerialized) return;
+      this.config = next;
+      this.lastSerialized = serialized;
+      console.log('[Config] Reloaded from disk');
+      this.emit('change', this.config);
+    } catch (err) {
+      console.error('[Config] reload failed:', err);
+    }
+  }
+
+  /** Stop the fs.watch handle (call on shutdown). */
+  stop(): void {
+    if (this.reloadTimer) clearTimeout(this.reloadTimer);
+    this.watcher?.close();
+    this.watcher = undefined;
+  }
+
   save(): void {
     try {
-      fs.writeFileSync(this.configPath, JSON.stringify(this.config, null, 2));
+      const serialized = JSON.stringify(this.config, null, 2);
+      fs.writeFileSync(this.configPath, serialized);
+      this.lastSerialized = JSON.stringify(this.config);
       console.log('[Config] Saved to', this.configPath);
       this.emit('change', this.config);
     } catch (error) {

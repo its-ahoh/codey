@@ -7,11 +7,13 @@ import { TeamsTab } from './TeamsTab'
 import { useGateway } from '../hooks/useGateway'
 import { C } from '../theme'
 import { AppearanceTab } from './AppearanceTab'
+import { WhisperTab } from './WhisperTab'
 
-type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings'
+type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings' | 'whisper'
 const TABS: { key: Tab; label: string; icon: string; description: string }[] = [
   { key: 'general',    label: 'General',    icon: '⚙', description: 'Theme & visual options' },
   { key: 'settings',   label: 'AI Models',  icon: '✦', description: 'Default agent & model' },
+  { key: 'whisper',    label: 'Whisper',    icon: '◐', description: 'Voice input & hotkey' },
   { key: 'workspaces', label: 'Workspaces', icon: '◫', description: 'Project directories' },
   { key: 'workers',    label: 'Workers',    icon: '☰', description: 'Personalities' },
   { key: 'teams',      label: 'Teams',      icon: '⚉', description: 'Shared team library' },
@@ -74,6 +76,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose }) => {
               {tab === 'workers'    && <WorkersTab />}
               {tab === 'teams'      && <TeamsTab />}
               {tab === 'settings'   && <SettingsTab isGatewayRunning={isRunning} />}
+              {tab === 'whisper'    && <WhisperTab isGatewayRunning={isRunning} />}
             </div>
           </main>
         </div>
