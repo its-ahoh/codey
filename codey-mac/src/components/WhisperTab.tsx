@@ -33,7 +33,8 @@ const VOICE_DEFAULT: VoiceCfg = {
 // The helper strips the `openai_whisper-` prefix before passing to WhisperKit.
 const LOCAL_MODELS: Array<{ value: string; label: string; note: string }> = [
   { value: 'openai_whisper-large-v3_turbo_954MB', label: 'large-v3 turbo · 954MB (recommended)', note: '量化版, 速度=small, 质量≈large, 多语言' },
-  { value: 'openai_whisper-large-v3_turbo', label: 'large-v3 turbo · ~1.6GB', note: '全精度, 质量最佳' },
+  { value: 'openai_whisper-large-v3_turbo', label: 'large-v3 turbo · ~1.6GB', note: '全精度 turbo, 质量最佳' },
+  { value: 'openai_whisper-large-v3', label: 'large-v3 · ~3GB (full precision)', note: '原版 large-v3, 最准但最慢, 不是 turbo' },
   { value: 'openai_whisper-large-v3-v20240930_turbo_632MB', label: 'large-v3 turbo · Sep 2024 · 632MB', note: '更小的量化 turbo, 中文略弱' },
   { value: 'openai_whisper-small_216MB', label: 'small · 216MB', note: '量化版, 中等质量, 中文一般' },
   { value: 'openai_whisper-small', label: 'small · ~480MB', note: '全精度 small' },
@@ -246,6 +247,11 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
     active: false, model: '', startedAt: 0, error: null,
   })
   const [warmElapsed, setWarmElapsed] = useState(0)
+  // Models that failed to warm this session — never auto-retry, otherwise the
+  // auto-warm useEffect spins in a loop (warm fails → warmState.active flips
+  // false → deps change → re-fires → "model folder is not set" flicker).
+  // User can manually retry by switching model and back.
+  const [warmFailed, setWarmFailed] = useState<Set<string>>(new Set())
 
   const refreshDownloaded = useCallback(async () => {
     try {
@@ -284,6 +290,10 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
       refreshWarmed()
     })
     const offErr = window.codey.voice.onWarmError(({ model, error }) => {
+      setWarmFailed(prev => {
+        if (prev.has(model)) return prev
+        const next = new Set(prev); next.add(model); return next
+      })
       setWarmState(s => s.model === model ? { active: false, model, startedAt: s.startedAt, error } : s)
     })
     return () => { offStart(); offDone(); offErr() }
@@ -311,6 +321,12 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
 
   const warmModel = useCallback(async (model: string) => {
     if (warmState.active) return
+    // Manual call clears the failed marker so the auto-warm effect (and this
+    // call) actually run instead of being short-circuited by the loop guard.
+    setWarmFailed(prev => {
+      if (!prev.has(model)) return prev
+      const next = new Set(prev); next.delete(model); return next
+    })
     try { await window.codey.voice.warmModel(model) } catch { /* error surfaces via onWarmError */ }
   }, [warmState.active])
 
@@ -372,8 +388,9 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
     if (dlState.active || warmState.active) return
     if (!isDownloaded(m)) return
     if (isWarmed(m)) return
+    if (warmFailed.has(m)) return
     warmModel(m)
-  }, [voice.provider, voice.localModel, downloaded, warmed, dlState.active, warmState.active, isDownloaded, isWarmed, warmModel])
+  }, [voice.provider, voice.localModel, downloaded, warmed, dlState.active, warmState.active, isDownloaded, isWarmed, warmModel, warmFailed])
 
   if (!isGatewayRunning) {
     return (
@@ -458,23 +475,28 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
       </div>
 
       <Section title="Transcription backend"/>
-      <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Provider</span>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button
-            onClick={() => updateVoice({ provider: 'api' })}
-            style={pillButton(voice.provider === 'api' ? 'primary' : 'ghost')}
-          >Cloud API</button>
-          <button
-            onClick={() => updateVoice({ provider: 'local' })}
-            style={pillButton(voice.provider === 'local' ? 'primary' : 'ghost')}
-          >Local (WhisperKit)</button>
+      {/* Provider row + descriptive note grouped as a single block: the divider
+          lives on the outer block, not the row itself, so the note doesn't get
+          orphaned below a row-divider with awkward gap. */}
+      <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
+          <span style={{ color: C.fg, fontSize: 13 }}>Provider</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              onClick={() => updateVoice({ provider: 'api' })}
+              style={pillButton(voice.provider === 'api' ? 'primary' : 'ghost')}
+            >Cloud API</button>
+            <button
+              onClick={() => updateVoice({ provider: 'local' })}
+              style={pillButton(voice.provider === 'local' ? 'primary' : 'ghost')}
+            >Local (WhisperKit)</button>
+          </div>
         </div>
-      </div>
-      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        {voice.provider === 'local'
-          ? 'On-device transcription via WhisperKit (CoreML + Neural Engine). Model auto-downloads from HuggingFace on first use (~800MB for large-v3-turbo). Idle pipeline auto-releases after 30s.'
-          : 'Sends audio to an OpenAI-compatible /audio/transcriptions endpoint. Works with OpenAI, Groq, or self-hosted Whisper servers.'}
+        <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 2 }}>
+          {voice.provider === 'local'
+            ? 'On-device transcription via WhisperKit (CoreML + Neural Engine). Model auto-downloads from HuggingFace on first use (~800MB for large-v3-turbo). Idle pipeline auto-releases after 30s.'
+            : 'Sends audio to an OpenAI-compatible /audio/transcriptions endpoint. Works with OpenAI, Groq, or self-hosted Whisper servers.'}
+        </div>
       </div>
 
       {voice.provider === 'local' && (() => {
@@ -510,8 +532,8 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
         }
 
         return (
-          <>
-            <div style={fieldStyle}>
+          <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
               <span style={{ color: C.fg, fontSize: 13 }}>Local model</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <select
@@ -567,10 +589,10 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
                 <style>{`@keyframes warmSlide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }`}</style>
               </div>
             )}
-            <div style={{ color: statusColor, fontSize: 11, marginTop: 4, marginBottom: 8 }}>
+            <div style={{ color: statusColor, fontSize: 11, lineHeight: 1.5, marginTop: 6 }}>
               {statusLine}
             </div>
-          </>
+          </div>
         )
       })()}
 

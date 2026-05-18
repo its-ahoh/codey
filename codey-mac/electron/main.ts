@@ -21,6 +21,15 @@ let apiServer: ApiServer | null = null
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
+process.on('uncaughtException', (err) => {
+  try { sendToRenderer('gateway-log', `[main] uncaughtException: ${err?.stack || err?.message || err}`) } catch { /* renderer gone */ }
+  console.error('[main] uncaughtException:', err)
+})
+process.on('unhandledRejection', (reason: any) => {
+  try { sendToRenderer('gateway-log', `[main] unhandledRejection: ${reason?.stack || reason?.message || reason}`) } catch { /* renderer gone */ }
+  console.error('[main] unhandledRejection:', reason)
+})
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 820,
@@ -58,6 +67,14 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
     rendererReady = false
+  })
+
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[main] render-process-gone:', details)
+    try { sendToRenderer('gateway-log', `[main] render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`) } catch { /* gone */ }
+  })
+  mainWindow.webContents.on('unresponsive', () => {
+    console.error('[main] renderer unresponsive')
   })
 
   mainWindow.webContents.on('did-finish-load', () => {
@@ -1022,12 +1039,25 @@ app.whenReady().then(async () => {
           const full = pathMod.join(dir, entry)
           try {
             const st = fsMod.statSync(full)
-            // Only count variants that actually contain .mlmodelc payloads —
-            // an empty stub folder from an interrupted download shouldn't read
-            // as "downloaded".
-            if (st.isDirectory() && fsMod.readdirSync(full).some(f => f.endsWith('.mlmodelc'))) {
-              found.add(entry)
-            }
+            // Only count variants that actually contain .mlmodelc payloads
+            // AND each .mlmodelc has a non-empty weights/weight.bin. CoreML
+            // partial downloads leave the folder + model.mil present but the
+            // weight file missing or zero-byte, which causes runtime "Could
+            // not open weights/weight.bin" errors and an endless warm-failure
+            // flicker in the UI. Checking weights here surfaces incomplete
+            // downloads as "not downloaded" so the user gets a Download
+            // button instead of a confusing warm error.
+            if (!st.isDirectory()) continue
+            const mlmodelcs = fsMod.readdirSync(full).filter(f => f.endsWith('.mlmodelc'))
+            if (mlmodelcs.length === 0) continue
+            const allWeightsOK = mlmodelcs.every(mc => {
+              const w = pathMod.join(full, mc, 'weights', 'weight.bin')
+              try {
+                const ws = fsMod.statSync(w)
+                return ws.isFile() && ws.size > 1024  // any real Whisper weight blob is MBs
+              } catch { return false }
+            })
+            if (allWeightsOK) found.add(entry)
           } catch { /* skip */ }
         }
       }

@@ -49,6 +49,13 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
         let pipe = try await withLoadTimeout(seconds: 10) { try await self.ensurePipeline() }
         lastUsed = Date()
 
+        // Peak-normalize to ~0.9 before sending. Mic levels often peak around
+        // 0.1-0.2 in real recordings; large-v3 turbo's confidence drops on
+        // low-energy audio and short clips can come back empty. Software gain
+        // here gives the encoder a stronger signal without us touching system
+        // mic settings.
+        let normalized = peakNormalize(audio, target: 0.9)
+
         var options = DecodingOptions()
         options.task = .transcribe
         if !language.isEmpty && language != "auto" {
@@ -56,11 +63,45 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
         }
         // Greedy + low temp keeps things fast on ANE; turbo is accurate enough.
         options.temperature = 0.0
-        options.sampleLength = 224
+        // Decoder max output tokens. 144 ≈ 18s of speech, enough for the
+        // press-to-talk use case; lower than the 224 default = fewer worst-case
+        // decoder steps.
+        options.sampleLength = 144
+        // We never use timestamps in the injected text — disabling lets the
+        // decoder skip generating timestamp tokens at every step.
+        options.withoutTimestamps = true
+        // Prefill SOT/language/task tokens in one shot rather than step-by-step.
+        // Both faster (first-token latency) and more stable (less drift toward
+        // English on short Chinese clips).
+        options.usePrefillPrompt = true
+        // Skip silence chunks via voice activity detection — large win on
+        // press-to-talk audio that has leading/trailing silence and pauses.
+        options.chunkingStrategy = .vad
+        // If a chunk decodes with very low logprob, retry with slightly higher
+        // temperature instead of returning an empty/garbled result. CJK on
+        // quantized turbo trips this often; 0 means "give up, return empty".
+        options.temperatureFallbackCount = 2
+        // VAD splits long press-to-talk clips into N voiced chunks; with
+        // workers > 1 they decode concurrently. 4 saturates ANE+GPU on
+        // M-series; short single-chunk clips are unaffected.
+        options.concurrentWorkerCount = 4
 
-        let results = try await pipe.transcribe(audioArray: audio, decodeOptions: options)
+        let t0 = Date()
+        let results = try await pipe.transcribe(audioArray: normalized, decodeOptions: options)
+        print(String(format: "WhisperKitEngine: decode took %.2fs (%d samples)", Date().timeIntervalSince(t0), normalized.count))
         let text = results.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         return text
+    }
+
+    private func peakNormalize(_ samples: [Float], target: Float) -> [Float] {
+        var peak: Float = 0
+        for s in samples {
+            let a = abs(s)
+            if a > peak { peak = a }
+        }
+        guard peak > 0.0001, peak < target else { return samples }
+        let gain = target / peak
+        return samples.map { $0 * gain }
     }
 
     func unloadIfIdle() {
@@ -92,8 +133,18 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
         let t0 = Date()
         print("WhisperKitEngine: loading model '\(modelName)'")
 
+        // Pin compute units: ANE for encoder (fastest on M-series, big mel +
+        // attention layers), GPU for decoder (token-by-token autoregressive,
+        // ANE underutilized here). This is the WhisperKit benchmark-winning
+        // combo on Apple Silicon — leaving it to .all sometimes lets CoreML
+        // route encoder to GPU, costing 30-40% throughput.
+        let computeOptions = ModelComputeOptions(
+            audioEncoderCompute: .cpuAndNeuralEngine,
+            textDecoderCompute: .cpuAndGPU
+        )
         let kitConfig = WhisperKitConfig(
             model: modelName,
+            computeOptions: computeOptions,
             verbose: false,
             logLevel: .info,
             prewarm: false,

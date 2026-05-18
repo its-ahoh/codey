@@ -54,13 +54,18 @@ if let wIdx = cliArgs.firstIndex(of: "--warm-model"), wIdx + 1 < cliArgs.count {
     Task {
         let t0 = Date()
         do {
+            // download: true so WhisperKit can resolve the existing model folder.
+            // Files are already on disk from the prior --download-model step;
+            // this is a no-op fetch + path resolution. download: false makes
+            // WhisperKit throw "model folder is not set" because nothing in
+            // this CLI path tells it where the variant lives.
             let kitConfig = WhisperKitConfig(
                 model: variant,
                 verbose: false,
                 logLevel: .info,
                 prewarm: false,
                 load: true,
-                download: false
+                download: true
             )
             let pipe = try await WhisperKit(kitConfig)
             // Force encoder + decoder mlmodelc to compile by running a real

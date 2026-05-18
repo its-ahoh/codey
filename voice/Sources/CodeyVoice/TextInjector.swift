@@ -20,6 +20,32 @@ final class TextInjector {
         }
     }
 
+    /// Pre-flight check: is there a focused UI element that will actually
+    /// accept text? Used to decide between auto-inject and "show in HUD"
+    /// when the user fires the hotkey without first clicking into a field.
+    /// Conservative: only roles we know take typed text are treated as
+    /// injectable; anything else (Finder, a desktop click, a button focus,
+    /// nothing focused at all) returns false.
+    static func canInjectAtCurrentFocus() -> Bool {
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let focused = focusedRef else {
+            return false
+        }
+        var roleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(focused as! AXUIElement, kAXRoleAttribute as CFString, &roleRef)
+        guard let role = roleRef as? String else { return false }
+        // AXSecureTextField excluded — we never inject into password fields.
+        let textRoles: Set<String> = [
+            "AXTextField",
+            "AXTextArea",
+            "AXSearchField",
+            "AXComboBox",
+        ]
+        return textRoles.contains(role)
+    }
+
     /// Returns true if the focused UI element is a secure text field (password input).
     private func isSecureFieldFocused() -> Bool {
         let systemWide = AXUIElementCreateSystemWide()

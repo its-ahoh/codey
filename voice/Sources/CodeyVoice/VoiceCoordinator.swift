@@ -23,6 +23,8 @@ final class VoiceCoordinator {
     private var pollTimer: Timer?
     private var idleUnloadTimer: Timer?
     private let gatewayPort: Int
+    private var escMonitorGlobal: Any?
+    private var escMonitorLocal: Any?
 
     init(gatewayPort: Int = 3001) {
         self.gatewayPort = gatewayPort
@@ -63,6 +65,12 @@ final class VoiceCoordinator {
             self?.handleAudioComplete(buffer)
         }
 
+        // Stream mic RMS levels to the HUD waveform meter. Audio tap thread
+        // → main hop here. The HUD itself no-ops when not in .recording.
+        audioCapture.onLevel = { [weak self] level in
+            DispatchQueue.main.async { self?.hud.updateLevel(level) }
+        }
+
         // Check permissions
         checkPermissions()
 
@@ -96,6 +104,7 @@ final class VoiceCoordinator {
             state = .recording
             statusItem?.updateState(.recording)
             hud.show(.recording)
+            installEscMonitor()
             print("startRecording: OK, audio engine running")
             Task { await gateway.reportStatus("recording") }
         } catch {
@@ -107,8 +116,48 @@ final class VoiceCoordinator {
 
     private func stopRecording() {
         print("stopRecording: requesting stop")
+        removeEscMonitor()
         audioCapture.stopRecording()
         // onRecordingComplete callback handles the rest
+    }
+
+    /// Discard the in-progress recording without transcribing. Triggered by
+    /// Esc while in the .recording state.
+    private func cancelRecording() {
+        guard state == .recording else { return }
+        print("cancelRecording: Esc pressed — discarding buffer")
+        removeEscMonitor()
+        audioCapture.cancelRecording()
+        state = .idle
+        statusItem?.updateState(.idle)
+        hud.hide()
+        Task { await gateway.reportStatus("idle") }
+    }
+
+    // MARK: - Esc-to-cancel monitor
+
+    /// While recording, watch keyDown globally + locally for Esc. Two monitors
+    /// because global doesn't fire when our own (helper) windows are key, and
+    /// local doesn't fire when another app is frontmost. Together they cover
+    /// both cases.
+    private func installEscMonitor() {
+        let handler: (NSEvent) -> Void = { [weak self] event in
+            guard let self = self, event.keyCode == 0x35 /* kVK_Escape */ else { return }
+            DispatchQueue.main.async { self.cancelRecording() }
+        }
+        escMonitorGlobal = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: handler)
+        escMonitorLocal = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 0x35 {
+                handler(event)
+                return nil // swallow Esc so it doesn't also reach the focused app
+            }
+            return event
+        }
+    }
+
+    private func removeEscMonitor() {
+        if let m = escMonitorGlobal { NSEvent.removeMonitor(m); escMonitorGlobal = nil }
+        if let m = escMonitorLocal { NSEvent.removeMonitor(m); escMonitorLocal = nil }
     }
 
     // MARK: - Audio → API → Inject pipeline
@@ -144,21 +193,28 @@ final class VoiceCoordinator {
                 print("transcribe: starting (language=\(lang.isEmpty ? "auto" : lang), provider=\(providerLabel))")
                 let text = try await activeEngine.transcribe(audio: buffer, language: lang)
                 print("transcribe: result = \"\(text)\" (\(text.count) chars)")
-                if !text.isEmpty {
+
+                let canInject = TextInjector.canInjectAtCurrentFocus()
+                if !text.isEmpty && canInject {
                     print("inject: mode=\(config.injection)")
                     textInjector.inject(text)
                     print("inject: dispatched")
+                } else if !text.isEmpty {
+                    print("inject: no text-capable focus, surfacing in HUD")
                 } else {
                     print("inject: skipped (empty transcription)")
                 }
                 state = .idle
                 statusItem?.updateState(.idle)
-                let injected = !text.isEmpty
                 await MainActor.run {
-                    if injected {
+                    if text.isEmpty {
+                        self.hud.hide()
+                    } else if canInject {
                         self.hud.show(.success)
                     } else {
-                        self.hud.hide()
+                        // Nowhere to paste: show full text + auto-copy, wait
+                        // for click to dismiss.
+                        self.hud.show(.dictation(text))
                     }
                 }
                 Task { await gateway.reportStatus("idle") }
