@@ -131,10 +131,31 @@ export class ChatManager {
 
   updateSelection(chatId: string, selection: ChatSelection): Chat {
     const chat = this.requireChat(chatId);
+    const changedKind = chat.selection.type !== selection.type
+      || (chat.selection.type === selection.type && (chat.selection as { name?: string }).name !== (selection as { name?: string }).name);
     chat.selection = selection;
+    if (changedKind) delete chat.sessionAnchor;
     chat.updatedAt = Date.now();
     this.persist(chat);
     return chat;
+  }
+
+  /** Persist the warm CLI session for this chat. */
+  setSessionAnchor(chatId: string, anchor: NonNullable<Chat['sessionAnchor']>): void {
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    chat.sessionAnchor = anchor;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+  }
+
+  /** Drop the warm CLI session — next turn will bootstrap. */
+  clearSessionAnchor(chatId: string): void {
+    const chat = this.cache.get(chatId);
+    if (!chat || !chat.sessionAnchor) return;
+    delete chat.sessionAnchor;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
   }
 
   /**
@@ -143,10 +164,12 @@ export class ChatManager {
    */
   updateAgentModel(chatId: string, agent?: Chat['agent'] | null, model?: string | null): Chat {
     const chat = this.requireChat(chatId);
+    const prevAgent = chat.agent;
     if (agent === null || agent === undefined) delete chat.agent;
     else chat.agent = agent;
     if (model === null || model === undefined || model === '') delete chat.model;
     else chat.model = model;
+    if (chat.agent !== prevAgent) delete chat.sessionAnchor;
     chat.updatedAt = Date.now();
     this.persist(chat);
     return chat;

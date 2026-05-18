@@ -14,7 +14,7 @@ import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
-import { buildChatPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
+import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
 import { resolveChoiceDigit } from './digit-mapping';
@@ -2657,6 +2657,10 @@ Example: /model gpt-4.1 write a Python script`;
     const response = await this.agentFactory.run(agent, request);
     if (response.success) return response;
 
+    // User-initiated abort — do NOT churn through every fallback agent,
+    // spawning subprocesses the user just asked to cancel.
+    if (request.signal?.aborted) return response;
+
     this.logger.error(`Agent ${agent} failed: ${response.error || response.output}`);
 
     // Fallback is opt-in. When disabled, surface the original failure.
@@ -2688,6 +2692,9 @@ Example: /model gpt-4.1 write a Python script`;
       const key = `${entry.agent}::${resolvedModel.model}`;
       if (seen.has(key)) continue;
       seen.add(key);
+
+      // Bail out mid-loop if the user aborted while a fallback was running.
+      if (request.signal?.aborted) return response;
 
       const label = `${entry.agent}(${resolvedModel.model})`;
       this.logger.warn(`Agent ${agent} failed, trying ${label}...`);
@@ -3021,11 +3028,38 @@ Example: /model gpt-4.1 write a Python script`;
       throw new Error(msg);
     }
 
-    // Build the prompt from the existing chat history + the new user turn,
-    // BEFORE persisting the user message. Persisting first would cause
-    // buildChatPrompt to see the new turn in the tail AND get it appended
-    // again as `User: ${userText}`, doubling the user message in the prompt.
-    const prompt = assistantPrefixForSelection(chat) + buildChatPrompt(chat, userText, attachments);
+    // Per-chat override takes precedence over the gateway default.
+    const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
+    const model = chat.model
+      ? this.getModelConfig(agent, chat.model)
+      : this.getDefaultModelConfig(agent);
+
+    // Decide whether this turn resumes a warm CLI session or bootstraps a
+    // new one. Resume mode skips the full history dump and uses the agent's
+    // own session memory. Bootstrap mode sends a one-shot "prior conversation"
+    // block. Team mode always uses the legacy bootstrap path (no session
+    // resume) because team dispatch builds worker prompts internally.
+    const selPrefix = assistantPrefixForSelection(chat);
+    const canResume = chat.selection.type !== 'team';
+    const warmAnchor = canResume && chat.sessionAnchor && chat.sessionAnchor.agent === agent
+      ? chat.sessionAnchor
+      : undefined;
+
+    let prompt: string;
+    let resumeSessionId: string | undefined;
+    let newSessionId: string | undefined;
+    if (warmAnchor) {
+      // Resume turn: send only the new user text (+ attachments).
+      prompt = selPrefix + buildChatResumePrompt(userText, attachments);
+      resumeSessionId = warmAnchor.sessionId;
+    } else {
+      // Bootstrap turn: include prior history once. For claude-code, pre-allocate
+      // a session id so we can resume on the next turn without parsing CLI output.
+      prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments);
+      if (canResume && agent === 'claude-code') {
+        newSessionId = randomUUID();
+      }
+    }
 
     const userMessage: ChatMessage = {
       id: randomUUID(),
@@ -3036,12 +3070,6 @@ Example: /model gpt-4.1 write a Python script`;
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
     };
     this.chatManager.appendMessage(chatId, userMessage);
-
-    // Per-chat override takes precedence over the gateway default.
-    const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
-    const model = chat.model
-      ? this.getModelConfig(agent, chat.model)
-      : this.getDefaultModelConfig(agent);
 
     let streamedText = '';
 
@@ -3104,7 +3132,7 @@ Example: /model gpt-4.1 write a Python script`;
         tokens = r.tokens;
         teamChoices = r.choices;
       } else {
-        const response = await this.runWithFallback(agent, {
+        let response = await this.runWithFallback(agent, {
           prompt,
           agent,
           model,
@@ -3112,9 +3140,39 @@ Example: /model gpt-4.1 write a Python script`;
           onStream,
           onStatus,
           signal: abortController.signal,
+          resumeSessionId,
+          newSessionId,
         });
+        // If resume failed (stale session id on disk, or agent rejected it),
+        // drop the anchor and retry once with a full bootstrap prompt.
+        if (resumeSessionId && !response?.success && !abortController.signal.aborted) {
+          this.logger.warn(`[chat ${chatId}] resume of ${resumeSessionId} failed; bootstrapping`);
+          this.chatManager.clearSessionAnchor(chatId);
+          streamedText = '';
+          resumeSessionId = undefined;
+          newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
+          prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments);
+          response = await this.runWithFallback(agent, {
+            prompt,
+            agent,
+            model,
+            context: { workingDir },
+            onStream,
+            onStatus,
+            signal: abortController.signal,
+            resumeSessionId: undefined,
+            newSessionId,
+          });
+        }
         output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
         tokens = (response as any)?.tokens?.total;
+        // Persist the anchor on success for next-turn resume.
+        if (canResume && response?.success) {
+          const anchorId = newSessionId ?? (response as any)?.sessionId;
+          if (anchorId) {
+            this.chatManager.setSessionAnchor(chatId, { agent, sessionId: anchorId });
+          }
+        }
       }
       if (abortController.signal.aborted && !output) {
         output = 'Stopped';
