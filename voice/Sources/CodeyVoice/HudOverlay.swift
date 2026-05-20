@@ -12,6 +12,10 @@ final class HudOverlay {
     enum Mode {
         case recording
         case transcribing
+        /// Live partial transcript shown while a streaming-capable API is
+        /// returning deltas. Replaces the spinner with the text so far so the
+        /// user sees progress before injection happens at the end.
+        case partial(String)
         case success
         case error(String)
         case dictation(String)
@@ -23,7 +27,7 @@ final class HudOverlay {
     private var hideWorkItem: DispatchWorkItem?
 
     private let pillHeight: CGFloat = 44
-    private let pillSidePadding: CGFloat = 12
+    private let pillSidePadding: CGFloat = 16
     /// Hard floor for sanity (avoid 0-width panels); pill auto-fits content
     /// otherwise — no artificial inflation when text is short.
     private let pillMinWidth: CGFloat = 80
@@ -66,6 +70,20 @@ final class HudOverlay {
             setMeterVisible(false)
             spinner.isHidden = false
             spinner.startAnimation(nil)
+            applyPillLayout()
+            panel.ignoresMouseEvents = true
+        case .partial(let text):
+            // Strip the spinner once the server starts producing words — the
+            // text itself is the progress indicator. Truncate for the pill so
+            // long sentences don't blow past `pillMaxWidth`.
+            let display = text.count > 80
+                ? "…" + text.suffix(80)
+                : text
+            label.stringValue = display.isEmpty ? "Transcribing…" : display
+            label.textColor = NSColor.labelColor
+            setMeterVisible(false)
+            spinner.stopAnimation(nil)
+            spinner.isHidden = true
             applyPillLayout()
             panel.ignoresMouseEvents = true
         case .success:

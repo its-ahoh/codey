@@ -12,4 +12,15 @@ protocol TranscriptionEngineProtocol: AnyObject {
     /// Called by the coordinator after an idle period so we don't keep the
     /// model resident when the user isn't dictating.
     func unloadIfIdle()
+
+    /// Optional hook for incremental transcript updates. Streaming-capable
+    /// engines (currently the API engine when the endpoint supports SSE) call
+    /// this on the main actor with the accumulated text so far. Engines that
+    /// only return a final result leave this unused.
+    var onPartial: ((String) -> Void)? { get set }
+}
+
+extension TranscriptionEngineProtocol {
+    // Default no-op storage isn't possible in a protocol extension, so each
+    // engine still declares its own `onPartial`; this just documents intent.
 }

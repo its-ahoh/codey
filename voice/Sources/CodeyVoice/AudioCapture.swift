@@ -1,13 +1,23 @@
 import AVFoundation
 import Foundation
+import QuartzCore  // CACurrentMediaTime
 
 /// Captures microphone audio at 16 kHz mono Float32 using AVAudioEngine.
 final class AudioCapture {
     private let engine = AVAudioEngine()
     private var pcmBuffer: [Float] = []
+    /// Guards `pcmBuffer` so streaming consumers can read a coherent snapshot
+    /// while the audio tap thread keeps appending. Lock is held only for the
+    /// length of an `append` or a snapshot copy — never across the resample
+    /// math, so contention is minimal.
+    private let bufferLock = NSLock()
     private let sampleRate: Double = 16000
     private let maxDurationSeconds: Double = 300  // 5-minute cap
     private(set) var isRecording = false
+    /// Last time we fired `onLevel`, in mach absolute time. Cheap to read on
+    /// the tap thread; used to throttle the level meter to ~20 Hz so we don't
+    /// hop to the main queue more often than the user can perceive.
+    private var lastLevelEmit: TimeInterval = 0
 
     /// Called with the full PCM buffer when recording stops.
     var onRecordingComplete: (([Float]) -> Void)?
@@ -16,6 +26,22 @@ final class AudioCapture {
     /// RMS level of the latest input. Receiver must hop to main if it touches
     /// AppKit. Used by the HUD waveform indicator.
     var onLevel: ((Float) -> Void)?
+
+    /// Pre-allocate the recording buffer so the audio tap thread never has to
+    /// realloc while the user is talking. Previously this also called
+    /// `engine.prepare()` to warm Core Audio, but installing the tap *after*
+    /// prepare turned out to leave the graph in a state where the tap never
+    /// fired — buffer stayed empty, transcribe-step bailed out. Apple's docs
+    /// require taps to be installed before prepare; doing it lazily in
+    /// `startRecording` is simpler and only costs a small one-time delay on
+    /// the very first press.
+    func prewarm() {
+        bufferLock.lock()
+        if pcmBuffer.capacity < Int(sampleRate * maxDurationSeconds) {
+            pcmBuffer.reserveCapacity(Int(sampleRate * maxDurationSeconds))
+        }
+        bufferLock.unlock()
+    }
 
     func startRecording() throws {
         guard !isRecording else { return }
@@ -28,7 +54,9 @@ final class AudioCapture {
             self?.processBuffer(buffer)
         }
 
-        pcmBuffer.removeAll()
+        bufferLock.lock()
+        pcmBuffer.removeAll(keepingCapacity: true)  // keep the reserved 5-min capacity
+        bufferLock.unlock()
         try engine.start()
         isRecording = true
     }
@@ -38,7 +66,19 @@ final class AudioCapture {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRecording = false
-        onRecordingComplete?(pcmBuffer)
+        bufferLock.lock()
+        let snapshot = pcmBuffer
+        bufferLock.unlock()
+        onRecordingComplete?(snapshot)
+    }
+
+    /// Coherent copy of the buffer captured so far. Safe to call from any
+    /// thread while recording. Used by the local streaming transcriber to
+    /// pull periodic snapshots without disturbing the audio tap.
+    func currentSamplesSnapshot() -> [Float] {
+        bufferLock.lock()
+        defer { bufferLock.unlock() }
+        return pcmBuffer
     }
 
     /// Stop the engine and DISCARD the buffer without firing the complete
@@ -49,7 +89,7 @@ final class AudioCapture {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRecording = false
-        pcmBuffer.removeAll()
+        bufferLock.lock(); pcmBuffer.removeAll(); bufferLock.unlock()
     }
 
     private func processBuffer(_ buffer: AVAudioPCMBuffer) {
@@ -59,37 +99,35 @@ final class AudioCapture {
         let srcRate = buffer.format.sampleRate
         let channelCount = Int(buffer.format.channelCount)
 
-        // Quick RMS of this raw buffer for the level meter — compute on the
-        // original (pre-resample) mono mix to avoid the resampling cost being
-        // on the audio thread path twice. ~20-50ms cadence depending on
-        // device buffer size.
-        var rmsSq: Float = 0
-
-        // Mix to mono if stereo
+        // Mix to mono. We do this even when channelCount == 1 (just a copy)
+        // so the rest of the path is uniform.
         var mono = [Float](repeating: 0, count: frameLength)
         for ch in 0..<channelCount {
             let ptr = channelData[ch]
-            for i in 0..<frameLength {
-                mono[i] += ptr[i]
-            }
+            for i in 0..<frameLength { mono[i] += ptr[i] }
         }
         if channelCount > 1 {
             let scale = 1.0 / Float(channelCount)
             for i in 0..<frameLength { mono[i] *= scale }
         }
 
-        if frameLength > 0 {
-            for i in 0..<frameLength { rmsSq += mono[i] * mono[i] }
-            let rms = sqrt(rmsSq / Float(frameLength))
-            // Mic input typically peaks around 0.1-0.3 RMS for normal speech;
-            // scale into 0..1 for the meter so quiet voice still looks lively.
-            let level = min(1.0, rms * 6.0)
-            if let cb = onLevel {
-                cb(level)
+        // Level meter — throttled to ~20 Hz so the HUD meter updates don't
+        // hop to main on every audio tap (20–50 ms cadence).
+        if frameLength > 0, let cb = onLevel {
+            let now = CACurrentMediaTime()
+            if now - lastLevelEmit >= 0.05 {
+                lastLevelEmit = now
+                var sumSq: Float = 0
+                for i in 0..<frameLength { sumSq += mono[i] * mono[i] }
+                let rms = sqrt(sumSq / Float(frameLength))
+                cb(min(1.0, rms * 6.0))
             }
         }
 
-        // Resample to 16 kHz if needed
+        // Resample to 16 kHz if needed (linear interpolation — fast enough
+        // for our buffer sizes and produces audio that's quite acceptable
+        // for Whisper's mel-spectrogram front end).
+        let chunk: [Float]
         if srcRate != sampleRate {
             let ratio = srcRate / sampleRate
             let outCount = Int(Double(frameLength) / ratio)
@@ -104,13 +142,18 @@ final class AudioCapture {
                     resampled[i] = mono[idx0]
                 }
             }
-            pcmBuffer.append(contentsOf: resampled)
+            chunk = resampled
         } else {
-            pcmBuffer.append(contentsOf: mono)
+            chunk = mono
         }
 
+        bufferLock.lock()
+        pcmBuffer.append(contentsOf: chunk)
+        let totalCount = pcmBuffer.count
+        bufferLock.unlock()
+
         // Auto-stop at buffer cap
-        if Double(pcmBuffer.count) / sampleRate >= maxDurationSeconds {
+        if Double(totalCount) / sampleRate >= maxDurationSeconds {
             DispatchQueue.main.async { [weak self] in
                 self?.stopRecording()
             }

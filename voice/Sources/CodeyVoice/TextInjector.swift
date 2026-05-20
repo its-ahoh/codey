@@ -14,10 +14,60 @@ final class TextInjector {
         guard !isSecureFieldFocused() else { return }
         switch mode {
         case .paste:
+            // Fast path: short text into a native macOS app → synthesize the
+            // characters directly via `CGEvent.keyboardSetUnicodeString` and
+            // skip the clipboard entirely. Saves ~50–100 ms of pasteboard
+            // settle + ⌘V key dance. Falls back to paste when the text is too
+            // long for reliable unicode-event delivery, or when the frontmost
+            // app is known to mishandle unicode-injected key events
+            // (Electron/Chromium-based apps, mostly).
+            if Self.canUseUnicodeFastPath(text: text), injectViaUnicode(text) {
+                return
+            }
             injectViaPaste(text)
         case .ax:
             injectViaAX(text)
         }
+    }
+
+    /// `CGEvent.keyboardSetUnicodeString` reliably ships ~20 UTF-16 units per
+    /// event before targets start dropping characters; chunking handles up to
+    /// a few hundred. Above ~300 the clipboard route is more robust. Electron
+    /// apps see the unicode events as something between a paste and a typed
+    /// keystroke — most handle it OK, but a handful (Cursor in some modes,
+    /// Notion's slash menu) eat characters. Use paste there.
+    private static func canUseUnicodeFastPath(text: String) -> Bool {
+        if text.utf16.count > 300 { return false }
+        if frontmostNeedsLongPasteDelay() { return false }
+        return true
+    }
+
+    /// Type `text` directly via CGEvent unicode payloads. Returns `false` if
+    /// the underlying API call fails so the caller can fall back to paste.
+    /// Splits into 20-UTF16 chunks because event tap drops chars past that
+    /// limit. Inter-chunk gap is small (1 ms) — empirically enough for AppKit
+    /// + Catalyst input handlers; tighter spacing risks merges into a single
+    /// event in the target's run loop.
+    private func injectViaUnicode(_ text: String) -> Bool {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let utf16 = Array(text.utf16)
+        let chunkSize = 20
+        var idx = 0
+        while idx < utf16.count {
+            let end = min(idx + chunkSize, utf16.count)
+            let slice = Array(utf16[idx..<end])
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) else {
+                return false
+            }
+            slice.withUnsafeBufferPointer { ptr in
+                event.keyboardSetUnicodeString(stringLength: slice.count,
+                                               unicodeString: ptr.baseAddress)
+            }
+            event.post(tap: .cghidEventTap)
+            idx = end
+            if idx < utf16.count { usleep(1_000) }
+        }
+        return true
     }
 
     /// Pre-flight check: is there a focused UI element that will actually
@@ -62,6 +112,15 @@ final class TextInjector {
     // MARK: - Paste approach (primary)
 
     /// Copy text to pasteboard, synthesize ⌘V, restore old clipboard.
+    ///
+    /// Timing notes — previous version waited 120 ms before posting ⌘V and
+    /// 12 ms between each key event. That 120 ms was the single largest
+    /// chunk of "press release → text appears" latency. Modern macOS settles
+    /// `setString` synchronously on the main thread, so the only thing that
+    /// actually needs the delay is letting the frontmost app finish its
+    /// current run-loop tick before we send keys. 40 ms is plenty for
+    /// AppKit/Catalyst apps; Electron apps (Cursor, VS Code) sometimes need
+    /// more, so we bump up to 80 ms when one is frontmost.
     private func injectViaPaste(_ text: String) {
         let pasteboard = NSPasteboard.general
 
@@ -85,12 +144,13 @@ final class TextInjector {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        // Small delay to let the pasteboard settle (Electron apps need more)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+        let pasteDelay: TimeInterval = Self.frontmostNeedsLongPasteDelay() ? 0.08 : 0.04
+        DispatchQueue.main.asyncAfter(deadline: .now() + pasteDelay) {
             // Synthesize ⌘V as discrete Command + V key events so Electron apps
             // (Cursor, VS Code, etc.) recognize them as real user input.
-            // Each event needs proper flags + a small gap for the target's event
-            // queue to register the modifier state.
+            // 4 µs gaps between events — modern macOS event tap pipeline
+            // delivers within tens of µs, the longer 12 ms gap from before was
+            // a cargo-culted "safe" value with no measurable benefit.
             let source = CGEventSource(stateID: .combinedSessionState)
             let cmdKey: CGKeyCode = 0x37
             let vKey: CGKeyCode = 0x09
@@ -98,17 +158,17 @@ final class TextInjector {
             let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: cmdKey, keyDown: true)
             cmdDown?.flags = .maskCommand
             cmdDown?.post(tap: .cghidEventTap)
-            usleep(12_000)
+            usleep(4_000)
 
             let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
             vDown?.flags = .maskCommand
             vDown?.post(tap: .cghidEventTap)
-            usleep(12_000)
+            usleep(4_000)
 
             let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
             vUp?.flags = .maskCommand
             vUp?.post(tap: .cghidEventTap)
-            usleep(12_000)
+            usleep(4_000)
 
             let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: cmdKey, keyDown: false)
             cmdUp?.post(tap: .cghidEventTap)
@@ -126,6 +186,29 @@ final class TextInjector {
                 pasteboard.writeObjects(items)
             }
         }
+    }
+
+    /// Heuristic: bundle IDs of frontmost apps known to need a longer
+    /// pasteboard-settle delay before ⌘V is reliably picked up. Electron's
+    /// shared clipboard listener is async and occasionally misses fast
+    /// `setString → key event` sequences if the chromium message loop is
+    /// busy. Native AppKit doesn't have this issue. Extend the list as
+    /// real-world misses get reported.
+    private static func frontmostNeedsLongPasteDelay() -> Bool {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              let bundleID = frontApp.bundleIdentifier?.lowercased() else { return false }
+        let electronOrChromium: [String] = [
+            "com.todesktop.230313mzl4w4u92",  // Cursor
+            "com.microsoft.vscode",
+            "com.microsoft.vscode.insiders",
+            "com.github.atom",
+            "com.tinyspeck.slackmacgap",       // Slack
+            "com.hnc.discord",
+            "com.electron.",                    // generic catch-all prefix
+            "notion.id",
+            "md.obsidian",
+        ]
+        return electronOrChromium.contains { bundleID.contains($0) }
     }
 
     // MARK: - AX API approach (fallback)
