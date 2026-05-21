@@ -8,7 +8,10 @@ struct VoiceConfig: Codable {
     var provider: Provider = .api
     var apiUrl: String = "https://api.openai.com/v1"
     var apiKey: String = ""
-    var apiModel: String = "whisper-1"
+    // gpt-4o-mini-transcribe is ~2–3× faster than whisper-1 on the same audio
+    // and supports the same /audio/transcriptions endpoint, so existing
+    // configs keep working. Users on self-hosted endpoints can override.
+    var apiModel: String = "gpt-4o-mini-transcribe"
     /// WhisperKit model variant id (HuggingFace argmaxinc/whisperkit-coreml).
     var localModel: String = "openai_whisper-large-v3_turbo_954MB"
 

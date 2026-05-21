@@ -25,7 +25,7 @@ const VOICE_DEFAULT: VoiceCfg = {
   provider: 'api',
   apiUrl: 'https://api.openai.com/v1',
   apiKey: '',
-  apiModel: 'whisper-1',
+  apiModel: 'gpt-4o-mini-transcribe',
   localModel: 'openai_whisper-large-v3_turbo_954MB',
 }
 
@@ -630,7 +630,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
           value={voice.apiModel}
           onChange={e => setVoice({ ...voice, apiModel: e.target.value })}
           onBlur={() => updateVoice({ apiModel: voice.apiModel })}
-          placeholder="whisper-1"
+          placeholder="gpt-4o-mini-transcribe"
           style={inputStyle}
         />
       </div>
