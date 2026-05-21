@@ -25,6 +25,16 @@ final class VoiceCoordinator {
     private let gatewayPort: Int
     private var escMonitorGlobal: Any?
     private var escMonitorLocal: Any?
+    /// Timestamp of the most recent `.partial` HUD push (local streaming).
+    /// Used to suppress the `.transcribing` spinner flash on stop when we
+    /// already have a fresh partial pill on screen — letting the user keep
+    /// reading the running transcript instead of seeing a half-second of
+    /// spinner before the success tick.
+    private var lastPartialAt: Date?
+    /// Latest partial text we pushed to the HUD. Reused on stop to display
+    /// `.finalizing(text)` while the final decode finishes, so the pill
+    /// content doesn't appear frozen during that window.
+    private var lastPartialText: String = ""
 
     init(gatewayPort: Int = 3001) {
         self.gatewayPort = gatewayPort
@@ -65,6 +75,23 @@ final class VoiceCoordinator {
             self?.handleAudioComplete(buffer)
         }
 
+        // Streaming-capable API engine pushes partial transcripts here. We
+        // render partials in both .recording (local streaming, while user is
+        // still talking) and .transcribing (API SSE deltas, after stop) so a
+        // late chunk that arrives after we've already injected and gone idle
+        // can't steal focus from the success/error HUD state.
+        let partialHandler: (String) -> Void = { [weak self] text in
+            // Only update the HUD with partial text while still recording.
+            // Once the user stops, we want a plain spinner — not late partial
+            // chunks (from an orphan streaming decode) overwriting it.
+            guard let self = self, self.state == .recording else { return }
+            self.lastPartialAt = Date()
+            self.lastPartialText = text
+            self.hud.show(.partial(text))
+        }
+        apiEngine.onPartial = partialHandler
+        localEngine.onPartial = partialHandler
+
         // Stream mic RMS levels to the HUD waveform meter. Audio tap thread
         // → main hop here. The HUD itself no-ops when not in .recording.
         audioCapture.onLevel = { [weak self] level in
@@ -82,6 +109,19 @@ final class VoiceCoordinator {
             guard let self = self, self.state == .idle else { return }
             self.localEngine.unloadIfIdle()
         }
+
+        // Prewarm WhisperKit so the first hotkey press doesn't pay the model
+        // load cost. We only do this when local is the active provider — no
+        // sense pulling weights for API-only users.
+        if config.provider == .local {
+            localEngine.prewarm()
+        }
+        // Prewarm the audio engine regardless of provider — `engine.prepare()`
+        // negotiates the input format with Core Audio so `start()` later on
+        // hotkey press is a fast transition rather than a cold open. Also
+        // reserves the pcmBuffer capacity once so the audio tap thread
+        // doesn't realloc during recording.
+        audioCapture.prewarm()
     }
 
     // MARK: - Toggle handler
@@ -102,9 +142,24 @@ final class VoiceCoordinator {
         do {
             try audioCapture.startRecording()
             state = .recording
+            // Reset partial tracking so an old recording's partial can't
+            // surface during this one's stop window.
+            lastPartialAt = nil
+            lastPartialText = ""
             statusItem?.updateState(.recording)
             hud.show(.recording)
             installEscMonitor()
+            // Kick off WhisperKit's sliding-window streaming so the HUD can
+            // show partial transcripts while the user is still speaking.
+            // API streaming, by contrast, only kicks in after stop because
+            // /audio/transcriptions takes a complete clip.
+            if config.provider == .local {
+                let capture = audioCapture
+                localEngine.startStreaming(
+                    audioSnapshot: { capture.currentSamplesSnapshot() },
+                    language: config.language
+                )
+            }
             print("startRecording: OK, audio engine running")
             Task { await gateway.reportStatus("recording") }
         } catch {
@@ -117,6 +172,10 @@ final class VoiceCoordinator {
     private func stopRecording() {
         print("stopRecording: requesting stop")
         removeEscMonitor()
+        // Cancel streaming partials before we run the final transcribe so a
+        // late partial can't overwrite the success HUD or trigger a duplicate
+        // injection.
+        localEngine.stopStreaming()
         audioCapture.stopRecording()
         // onRecordingComplete callback handles the rest
     }
@@ -127,6 +186,7 @@ final class VoiceCoordinator {
         guard state == .recording else { return }
         print("cancelRecording: Esc pressed — discarding buffer")
         removeEscMonitor()
+        localEngine.stopStreaming()
         audioCapture.cancelRecording()
         state = .idle
         statusItem?.updateState(.idle)
@@ -259,6 +319,11 @@ final class VoiceCoordinator {
         localEngine.updateConfig(newConfig)
         if oldProvider == .local && newConfig.provider != .local {
             localEngine.forceUnload(reason: "provider switched to \(newConfig.provider.rawValue)")
+        }
+        if oldProvider != .local && newConfig.provider == .local {
+            // User just turned local on (or changed model) — start warming now
+            // so the first press is fast.
+            localEngine.prewarm()
         }
 
         if newConfig.hotkey != oldHotkey, let hk = hotkeyManager {

@@ -72,7 +72,7 @@ export const VoiceRecorder: React.FC = () => {
       const base = (voice.apiUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
       const fd = new FormData()
       fd.append('file', blob, 'audio.webm')
-      fd.append('model', voice.apiModel || 'whisper-1')
+      fd.append('model', voice.apiModel || 'gpt-4o-mini-transcribe')
       if (voice.language && voice.language !== 'auto') fd.append('language', voice.language)
 
       const resp = await fetch(`${base}/audio/transcriptions`, {
