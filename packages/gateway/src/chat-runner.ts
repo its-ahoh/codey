@@ -36,7 +36,16 @@ function formatAttachmentList(attachments: FileAttachment[]): string {
   ].join('\n');
 }
 
-/** Build the prompt string from the tail of the chat's message history + new user message. */
+/**
+ * Build the prompt string from the tail of the chat's message history + new
+ * user message. Used by paths that don't support session resume (currently
+ * team-mode dispatch and as the bootstrap turn of resume-capable chats).
+ *
+ * History is rendered as a single "Prior conversation" block — NOT as a
+ * "User:/Assistant:" transcript — so the model does not treat the prompt as
+ * a script to continue (which previously caused it to fabricate further
+ * "User:" turns and self-answer).
+ */
 export function buildChatPrompt(
   chat: Chat,
   userText: string,
@@ -44,19 +53,51 @@ export function buildChatPrompt(
   windowSize = CHAT_CONTEXT_WINDOW,
 ): string {
   const tail = chat.messages.slice(-windowSize);
-  const lines: string[] = [];
+  const sections: string[] = [];
 
-  // Prepend attachment context if present
   if (attachments && attachments.length > 0) {
-    lines.push(formatAttachmentList(attachments));
+    sections.push(formatAttachmentList(attachments));
   }
 
-  for (const m of tail) {
-    const tag = m.role === 'user' ? 'User' : 'Assistant';
-    lines.push(`${tag}: ${m.content}`);
+  if (tail.length > 0) {
+    const transcript = tail.map(m => {
+      const tag = m.role === 'user' ? '[user]' : '[assistant]';
+      return `${tag}\n${m.content}`;
+    }).join('\n\n');
+    sections.push(
+      `[Prior conversation — context only; do not continue or fabricate further turns]\n${transcript}`,
+    );
   }
-  lines.push(`User: ${userText}`);
-  return lines.join('\n\n');
+
+  sections.push(`[Respond to this new user message]\n${userText}`);
+  return sections.join('\n\n');
+}
+
+/**
+ * Bootstrap prompt for a chat that is about to start (or restart) a CLI
+ * session. Always includes prior context — used on the FIRST turn of a fresh
+ * session anchor. Subsequent same-agent turns send only userText via resume.
+ */
+export function buildChatBootstrapPrompt(
+  chat: Chat,
+  userText: string,
+  attachments?: FileAttachment[],
+  windowSize = CHAT_CONTEXT_WINDOW,
+): string {
+  return buildChatPrompt(chat, userText, attachments, windowSize);
+}
+
+/** Resume-turn prompt: just the new user text, optionally prefixed by attachments. */
+export function buildChatResumePrompt(
+  userText: string,
+  attachments?: FileAttachment[],
+): string {
+  const parts: string[] = [];
+  if (attachments && attachments.length > 0) {
+    parts.push(formatAttachmentList(attachments));
+  }
+  parts.push(userText);
+  return parts.join('\n\n');
 }
 
 export function assistantPrefixForSelection(chat: Chat): string {

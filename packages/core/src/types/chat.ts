@@ -62,4 +62,12 @@ export interface Chat {
   contextPanelOpen?: boolean;
   /** Last unanswered choice question in a non-team chat. Cleared on next user message. */
   lastAskedOptions?: { messageId: string; options: string[] };
+  /**
+   * Warm CLI session for this chat. When set, the next turn for the same
+   * coding agent is sent via `--resume <sessionId>` (only the new user text is
+   * passed to the agent; the agent retrieves prior context from its own
+   * session store). Cleared on agent switch, selection-type change, /clear,
+   * or when a resume attempt fails.
+   */
+  sessionAnchor?: { agent: 'claude-code' | 'opencode' | 'codex'; sessionId: string };
 }
