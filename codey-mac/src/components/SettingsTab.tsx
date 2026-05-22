@@ -125,7 +125,7 @@ const ModelRow: React.FC<{
   useEffect(() => { if (!editing) setDraft(entry) }, [entry.model, editing])
 
   const save = async () => {
-    if (!draft.model.trim()) return
+    if (!draft.model.trim() || !draft.apiRef) return
     setBusy(true)
     setErr(null)
     try { await onSave(draft, entry.model); setEditing(false) }
@@ -159,6 +159,9 @@ const ModelRow: React.FC<{
     )
   }
 
+  const matchingApis = apis
+    .filter(a => a.apiType === draft.apiType)
+    .sort((a, b) => a.name.localeCompare(b.name))
   return (
     <div style={{
       padding: 12, borderRadius: 10, border: `1px solid ${C.border2}`,
@@ -169,7 +172,13 @@ const ModelRow: React.FC<{
         <input value={draft.model} onChange={e => setDraft({ ...draft, model: e.target.value })}
           placeholder="e.g. claude-sonnet-4-5" style={{ ...inputStyle, width: '100%' }}/>
         <label style={{ color: C.fg3, fontSize: 12 }}>API Type</label>
-        <select value={draft.apiType} onChange={e => setDraft({ ...draft, apiType: e.target.value as ApiType })}
+        <select value={draft.apiType} onChange={e => {
+          const nextType = e.target.value as ApiType
+          // If the currently-bound API isn't of the new apiType, drop the binding
+          // so we don't save a model pointing at an incompatible API.
+          const stillValid = apis.some(a => a.name === draft.apiRef && a.apiType === nextType)
+          setDraft({ ...draft, apiType: nextType, apiRef: stillValid ? draft.apiRef : undefined })
+        }}
           style={{ ...selectStyle, width: '100%' }}>
           <option value="anthropic">anthropic (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN)</option>
           <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
@@ -181,15 +190,13 @@ const ModelRow: React.FC<{
           style={{ ...selectStyle, width: '100%' }}
         >
           <option value="">Select an API…</option>
-          {apis
-            .filter(a => a.apiType === draft.apiType)
-            .map(a => (
+          {matchingApis.map(a => (
               <option key={a.name} value={a.name}>
                 {a.name}{a.baseUrl ? ` (${a.baseUrl})` : ''}
               </option>
             ))}
         </select>
-        {apis.filter(a => a.apiType === draft.apiType).length === 0 && (
+        {matchingApis.length === 0 && (
           <div style={{ gridColumn: '1 / span 2', color: C.fg3, fontSize: 11, marginTop: -4 }}>
             No {draft.apiType} APIs yet — add one in the APIs tab.
           </div>
@@ -198,7 +205,7 @@ const ModelRow: React.FC<{
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
         <button onClick={() => { setEditing(false); setDraft(entry); setErr(null); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
-        <button onClick={save} style={pillButton('primary')} disabled={busy || !draft.model.trim()}>
+        <button onClick={save} style={pillButton('primary')} disabled={busy || !draft.model.trim() || !draft.apiRef}>
           {busy ? 'Saving…' : 'Save'}
         </button>
       </div>
