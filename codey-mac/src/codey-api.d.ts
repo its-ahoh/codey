@@ -8,8 +8,7 @@ type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 export interface ModelEntry {
   apiType: 'anthropic' | 'openai'
   model: string
-  baseUrl?: string
-  apiKey?: string
+  apiRef?: string
   provider?: string
 }
 

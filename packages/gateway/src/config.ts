@@ -401,8 +401,7 @@ export class ConfigManager extends EventEmitter {
     console.log(`\nModels (${this.config.models.length}):`);
     for (const m of this.config.models) {
       const keyHint = m.apiRef ? ` → ${m.apiRef}` : ' (no API bound)';
-      const urlHint = '';
-      console.log(`  • ${m.model} [${m.apiType}]${urlHint}${keyHint}`);
+      console.log(`  • ${m.model} [${m.apiType}]${keyHint}`);
     }
     console.log(`\nAgents:`);
     const inOrder = new Set(this.config.fallback.order.map(e => e.agent));

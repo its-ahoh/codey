@@ -2900,9 +2900,19 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Per-chat override takes precedence over the gateway default.
     const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
-    const model = chat.model
-      ? this.getModelConfig(agent, chat.model)
-      : this.getDefaultModelConfig(agent);
+    let model: ModelConfig | undefined;
+    try {
+      model = chat.model
+        ? this.getModelConfig(agent, chat.model)
+        : this.getDefaultModelConfig(agent);
+    } catch (err) {
+      // getModelConfig throws when a model's apiRef is missing or its API isn't
+      // bound — surface that as a chat error rather than leaking the semaphore.
+      this.chatSemaphore.release();
+      const msg = (err as Error).message;
+      sink({ type: 'error', chatId, message: msg });
+      throw err;
+    }
 
     // Decide whether this turn resumes a warm CLI session or bootstraps a
     // new one. Resume mode skips the full history dump and uses the agent's
