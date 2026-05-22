@@ -236,6 +236,21 @@ export class ChatManager {
     return chat;
   }
 
+  /**
+   * Update the `workspaceName` field on every chat that referenced `oldName`
+   * after the workspace folder has been renamed on disk. The chat files
+   * themselves move with the folder; this just rewrites the in-memory cache
+   * and re-persists each chat under its new path.
+   */
+  cascadeRenameWorkspace(oldName: string, newName: string): void {
+    this.ensureLoaded();
+    for (const chat of this.cache.values()) {
+      if (chat.workspaceName !== oldName) continue;
+      chat.workspaceName = newName;
+      this.persist(chat);
+    }
+  }
+
   /** Remove all chat files for a deleted workspace. */
   cascadeDeleteWorkspace(workspaceName: string): void {
     this.ensureLoaded();

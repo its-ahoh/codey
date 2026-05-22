@@ -77,6 +77,12 @@ export const apiService = {
   deleteWorkspace: async (name: string): Promise<void> =>
     unwrap(await window.codey.workspaces.delete(name)),
 
+  renameWorkspace: async (oldName: string, newName: string): Promise<void> =>
+    unwrap(await window.codey.workspaces.rename(oldName, newName)),
+
+  revealWorkspace: async (name: string): Promise<void> =>
+    unwrap(await window.codey.workspaces.reveal(name)),
+
   pickDirectory: async (): Promise<string | null> =>
     unwrap(await window.codey.dialog.pickDirectory()),
 

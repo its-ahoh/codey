@@ -6,8 +6,14 @@ import { C } from '../theme'
 import { RouteIcons } from './RouteIcons'
 
 interface Props {
-  onOpenSettings: () => void
+  onOpenSettings: (tab?: string) => void
   activeChatId: string | null
+}
+
+interface WsMenuState {
+  workspace: string
+  x: number
+  y: number
 }
 
 export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId }) => {
@@ -18,6 +24,11 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
   const [gatewayWorkspace, setGatewayWorkspace] = useState<string>('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [wsMenu, setWsMenu] = useState<WsMenuState | null>(null)
+  const [renamingWs, setRenamingWs] = useState<string | null>(null)
+  const [wsRenameValue, setWsRenameValue] = useState('')
+  const [chatMenu, setChatMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
+  const [chatMenuView, setChatMenuView] = useState<'main' | 'connect'>('main')
   // Shrink the panel on narrow windows so the conversation column keeps
   // breathing room. Matches the threshold used in ChatTab for the context panel.
   const [narrow, setNarrow] = useState<boolean>(() => window.innerWidth < 600)
@@ -61,6 +72,92 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
     const chat = await createChat(target)
     setLastWorkspace(chat.workspaceName)
   }
+
+  const closeWsMenu = () => setWsMenu(null)
+
+  const beginRenameWs = (ws: string) => {
+    closeWsMenu()
+    if (ws === 'default') {
+      alert('The "default" workspace is protected and cannot be renamed.')
+      return
+    }
+    setRenamingWs(ws)
+    setWsRenameValue(ws)
+  }
+
+  const commitRenameWs = async () => {
+    const oldName = renamingWs
+    const newName = wsRenameValue.trim()
+    setRenamingWs(null)
+    if (!oldName || !newName || newName === oldName) return
+    try {
+      await apiService.renameWorkspace(oldName, newName)
+      const fresh = await apiService.getWorkspaces()
+      setWorkspaces(fresh)
+      await refreshWorkspaces()
+      if (lastWorkspace === oldName) setLastWorkspace(newName)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to rename workspace')
+    }
+  }
+
+  const deleteWs = async (ws: string) => {
+    closeWsMenu()
+    if (ws === 'default') {
+      alert('The "default" workspace is protected and cannot be deleted.')
+      return
+    }
+    if (!confirm(`Delete workspace "${ws}" and all its chats?`)) return
+    try {
+      await apiService.deleteWorkspace(ws)
+      const fresh = await apiService.getWorkspaces()
+      setWorkspaces(fresh)
+      await refreshWorkspaces()
+      if (lastWorkspace === ws) setLastWorkspace(fresh[0] ?? '')
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to delete workspace')
+    }
+  }
+
+  const setAsGateway = async (ws: string) => {
+    closeWsMenu()
+    try {
+      await apiService.switchWorkspace(ws)
+      const w = await apiService.getCurrentWorkspace()
+      setGatewayWorkspace(w)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to switch workspace')
+    }
+  }
+
+  const revealWs = async (ws: string) => {
+    closeWsMenu()
+    try {
+      await apiService.revealWorkspace(ws)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to reveal workspace')
+    }
+  }
+
+  const editMemoryWs = (ws: string) => {
+    closeWsMenu()
+    setLastWorkspace(ws)
+    onOpenSettings('workspaces')
+  }
+
+  useEffect(() => {
+    if (!wsMenu && !chatMenu) return
+    const onClick = () => { setWsMenu(null); setChatMenu(null) }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setWsMenu(null); setChatMenu(null) }
+    }
+    window.addEventListener('mousedown', onClick)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onClick)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [wsMenu, chatMenu])
 
   const handleAddWorkspace = async () => {
     if (addingWorkspace) return
@@ -112,9 +209,31 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
           const collapsed = !!state.collapsedWorkspaces[ws]
           return (
             <div key={ws}>
-              <div style={styles.groupHeader} onClick={() => toggleWorkspace(ws)}>
-                <span style={{ ...styles.chevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>▸</span>
-                <span style={styles.groupName}>{ws}</span>
+              <div
+                style={styles.groupHeader}
+                onClick={() => renamingWs === ws ? null : toggleWorkspace(ws)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setWsMenu({ workspace: ws, x: e.clientX, y: e.clientY })
+                }}
+              >
+                <span style={styles.chevron}>{collapsed ? '📁︎' : '📂︎'}</span>
+                {renamingWs === ws ? (
+                  <input
+                    autoFocus
+                    value={wsRenameValue}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={e => setWsRenameValue(e.target.value)}
+                    onBlur={commitRenameWs}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                      else if (e.key === 'Escape') { setRenamingWs(null) }
+                    }}
+                    style={styles.renameInput}
+                  />
+                ) : (
+                  <span style={styles.groupName}>{ws}</span>
+                )}
                 {ws === gatewayWorkspace && (
                   <span style={styles.gatewayBadge} title="Gateway default workspace — receives messages from chat platforms"/>
                 )}
@@ -139,6 +258,12 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
                       e.stopPropagation()
                       setRenamingId(chat.id)
                       setRenameValue(chat.title)
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setChatMenuView('main')
+                      setChatMenu({ chat, x: e.clientX, y: e.clientY })
                     }}
                   >
                     {isRenaming ? (
@@ -192,8 +317,102 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
           disabled={addingWorkspace}
           title="Pick a folder and create a new workspace + chat"
         >{addingWorkspace ? 'Picking…' : '+ Add Workspace'}</button>
-        <button style={styles.settingsBtn} onClick={onOpenSettings}>⚙ Settings</button>
+        <button style={styles.settingsBtn} onClick={() => onOpenSettings()}>⚙ Settings</button>
       </div>
+      {wsMenu && (
+        <div
+          style={{ ...styles.menu, top: wsMenu.y, left: wsMenu.x }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={styles.menuHeader}>{wsMenu.workspace}</div>
+          <button style={styles.menuItem} onClick={() => handleNewChat(wsMenu.workspace).then(closeWsMenu)}>＋ New chat</button>
+          <button
+            style={{ ...styles.menuItem, opacity: wsMenu.workspace === 'default' ? 0.4 : 1 }}
+            disabled={wsMenu.workspace === 'default'}
+            onClick={() => beginRenameWs(wsMenu.workspace)}
+          >✎ Rename…</button>
+          <button
+            style={styles.menuItem}
+            onClick={() => setAsGateway(wsMenu.workspace)}
+            disabled={wsMenu.workspace === gatewayWorkspace}
+          >★ Set as Gateway default</button>
+          <button style={styles.menuItem} onClick={() => revealWs(wsMenu.workspace)}>↗ Reveal in Finder</button>
+          <button style={styles.menuItem} onClick={() => editMemoryWs(wsMenu.workspace)}>✦ Edit memory…</button>
+          <div style={styles.menuSep} />
+          <button
+            style={{ ...styles.menuItem, color: C.red, opacity: wsMenu.workspace === 'default' ? 0.4 : 1 }}
+            disabled={wsMenu.workspace === 'default'}
+            onClick={() => deleteWs(wsMenu.workspace)}
+          >✕ Delete workspace</button>
+        </div>
+      )}
+      {chatMenu && (
+        <div
+          style={{ ...styles.menu, top: chatMenu.y, left: chatMenu.x }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={styles.menuHeader}>{chatMenu.chat.title}</div>
+          {chatMenuView === 'main' ? (
+            <>
+              <button
+                style={styles.menuItem}
+                onClick={() => setChatMenuView('connect')}
+              >🔗 Connect to channel ▸</button>
+              <button
+                style={styles.menuItem}
+                onClick={() => {
+                  const c = chatMenu.chat
+                  setChatMenu(null)
+                  setRenamingId(c.id)
+                  setRenameValue(c.title)
+                }}
+              >✎ Rename…</button>
+              <button
+                style={styles.menuItem}
+                onClick={() => { handleNewChat(chatMenu.chat.workspaceName); setChatMenu(null) }}
+              >＋ New chat in {chatMenu.chat.workspaceName}</button>
+              <button
+                style={styles.menuItem}
+                onClick={async () => {
+                  try { await navigator.clipboard.writeText(chatMenu.chat.id) } catch {}
+                  setChatMenu(null)
+                }}
+              >⧉ Copy chat ID</button>
+              <div style={styles.menuSep} />
+              <button
+                style={{ ...styles.menuItem, color: C.red }}
+                onClick={async () => {
+                  const c = chatMenu.chat
+                  setChatMenu(null)
+                  if (confirm(`Delete chat "${c.title}"?`)) {
+                    await deleteChat(c.id)
+                  }
+                }}
+              >✕ Delete chat</button>
+            </>
+          ) : (
+            <>
+              <button style={styles.menuItem} onClick={() => setChatMenuView('main')}>◂ Back</button>
+              {(['telegram', 'discord', 'imessage'] as const).map(ch => (
+                <button
+                  key={ch}
+                  style={styles.menuItem}
+                  onClick={() => {
+                    const c = chatMenu.chat
+                    setChatMenu(null)
+                    selectChat(c.id)
+                    window.dispatchEvent(new CustomEvent('codey:open-pairing', {
+                      detail: { chatId: c.id, channel: ch },
+                    }))
+                  }}
+                >{ch === 'telegram' ? '✈ Telegram' : ch === 'discord' ? '◈ Discord' : '◐ iMessage'}</button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
       <style>{`
         @keyframes codey-pulse-dot {
           0%, 100% { opacity: 1; transform: scale(1); }
@@ -263,4 +482,24 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent', color: C.fg2, cursor: 'pointer',
     textAlign: 'left', borderRadius: 6, fontSize: 13,
   },
+  menu: {
+    position: 'fixed', zIndex: 1000,
+    minWidth: 180, padding: 4,
+    background: C.surface2 ?? C.surface,
+    border: `1px solid ${C.border2}`,
+    borderRadius: 8,
+    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+    display: 'flex', flexDirection: 'column',
+  },
+  menuHeader: {
+    padding: '4px 10px 6px', fontSize: 11, color: C.fg3,
+    borderBottom: `1px solid ${C.border}`, marginBottom: 4,
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  menuItem: {
+    background: 'transparent', border: 'none', textAlign: 'left',
+    padding: '6px 10px', borderRadius: 4, color: C.fg2,
+    fontSize: 12, cursor: 'pointer',
+  },
+  menuSep: { height: 1, background: C.border, margin: '4px 0' },
 }

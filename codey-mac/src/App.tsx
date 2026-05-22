@@ -19,6 +19,7 @@ const Shell: React.FC = () => {
   const { isRunning } = useGateway()
   const { state, createChat, selectChat, refreshWorkspaces } = useChats()
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
 
   const activeChat = state.selectedChatId ? state.chats[state.selectedChatId] : null
 
@@ -77,7 +78,7 @@ const Shell: React.FC = () => {
       </div>
       <div style={styles.body}>
         <ChatListPanel
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={(tab) => { setSettingsTab(tab); setSettingsOpen(true) }}
           activeChatId={state.selectedChatId}
         />
         <div style={styles.content}>
@@ -97,7 +98,7 @@ const Shell: React.FC = () => {
             </div>
           )}
         </div>
-        {settingsOpen && <SettingsOverlay onClose={() => { setSettingsOpen(false); refreshWorkspaces() }} />}
+        {settingsOpen && <SettingsOverlay initialTab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); refreshWorkspaces() }} />}
         <VoiceRecorder />
       </div>
       <style>{`
