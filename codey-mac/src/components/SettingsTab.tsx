@@ -8,11 +8,11 @@ interface SettingsTabProps {
 }
 
 type ApiType = 'anthropic' | 'openai'
+interface ApiEntry { name: string; apiType: ApiType; baseUrl?: string; apiKey: string }
 interface ModelEntry {
   apiType: ApiType
   model: string
-  baseUrl?: string
-  apiKey?: string
+  apiRef?: string
   provider?: string
 }
 interface AgentSlot { enabled?: boolean }
@@ -107,11 +107,12 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on,
 
 const ModelRow: React.FC<{
   entry: ModelEntry
+  apis: ApiEntry[]
   isNew?: boolean
   onSave: (draft: ModelEntry, previousId: string) => Promise<void>
   onDelete?: (modelId: string) => Promise<void>
   onCancel?: () => void
-}> = ({ entry, isNew, onSave, onDelete, onCancel }) => {
+}> = ({ entry, apis, isNew, onSave, onDelete, onCancel }) => {
   const [editing, setEditing] = useState(!!isNew)
   const [draft, setDraft] = useState<ModelEntry>(entry)
   const [busy, setBusy] = useState(false)
@@ -143,8 +144,11 @@ const ModelRow: React.FC<{
           <div style={{ fontWeight: 600, fontSize: 13 }}>
             {entry.model} <span style={{ color: C.fg3, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>[{entry.apiType}]</span>
           </div>
-          <div style={{ color: C.fg3, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {entry.baseUrl || '(default url)'}{entry.apiKey ? ' · 🔑' : ''}
+          <div style={{
+            color: entry.apiRef ? C.fg3 : C.warningFg,
+            fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {entry.apiRef ? `→ ${entry.apiRef}` : '(no API bound)'}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -170,12 +174,26 @@ const ModelRow: React.FC<{
           <option value="anthropic">anthropic (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN)</option>
           <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
         </select>
-        <label style={{ color: C.fg3, fontSize: 12 }}>Base URL</label>
-        <input value={draft.baseUrl ?? ''} onChange={e => setDraft({ ...draft, baseUrl: e.target.value || undefined })}
-          placeholder="(optional) override endpoint" style={{ ...inputStyle, width: '100%' }}/>
-        <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
-        <input type="password" value={draft.apiKey ?? ''} onChange={e => setDraft({ ...draft, apiKey: e.target.value || undefined })}
-          placeholder="(optional) credentials" style={{ ...inputStyle, width: '100%' }}/>
+        <label style={{ color: C.fg3, fontSize: 12 }}>API</label>
+        <select
+          value={draft.apiRef ?? ''}
+          onChange={e => setDraft({ ...draft, apiRef: e.target.value || undefined })}
+          style={{ ...selectStyle, width: '100%' }}
+        >
+          <option value="">Select an API…</option>
+          {apis
+            .filter(a => a.apiType === draft.apiType)
+            .map(a => (
+              <option key={a.name} value={a.name}>
+                {a.name}{a.baseUrl ? ` (${a.baseUrl})` : ''}
+              </option>
+            ))}
+        </select>
+        {apis.filter(a => a.apiType === draft.apiType).length === 0 && (
+          <div style={{ gridColumn: '1 / span 2', color: C.fg3, fontSize: 11, marginTop: -4 }}>
+            No {draft.apiType} APIs yet — add one in the APIs tab.
+          </div>
+        )}
       </div>
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
@@ -327,6 +345,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const [models, setModels] = useState<ModelEntry[]>([])
   const [fallback, setFallback] = useState<FallbackCfg>({ enabled: true, order: [] })
   const [advisor, setAdvisor] = useState<{ agent: string; model: string }>({ agent: '', model: '' })
+  const [apis, setApis] = useState<ApiEntry[]>([])
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Probe runs async after the rest of the panel paints — the chip flips from
@@ -347,13 +366,15 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const reload = useCallback(async () => {
     setError(null)
     try {
-      const [m, f, d] = await Promise.all([
+      const [m, f, d, a] = await Promise.all([
         unwrap(await window.codey.models.list()),
         unwrap(await window.codey.fallback.get()),
         unwrap(await window.codey.dispatcher.get()),
+        unwrap(await window.codey.apis.list()),
       ])
       setModels(m); setFallback(f as FallbackCfg)
       setAdvisor({ agent: d.agent ?? '', model: d.model ?? '' })
+      setApis(a as ApiEntry[])
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
@@ -421,7 +442,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       }/>
       {creating && (
         <ModelRow
-          entry={{ apiType: 'anthropic', model: '', baseUrl: '', apiKey: '' }}
+          entry={{ apiType: 'anthropic', model: '' }}
+          apis={apis}
           isNew
           onSave={saveModel}
           onCancel={() => setCreating(false)}
@@ -432,7 +454,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       )}
       {[...models]
         .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
-        .map(m => <ModelRow key={m.model} entry={m} onSave={saveModel} onDelete={deleteModel}/>)}
+        .map(m => <ModelRow key={m.model} entry={m} apis={apis} onSave={saveModel} onDelete={deleteModel}/>)}
 
       <Section title="Agents" right={
         <button onClick={refreshInstallStatus} style={pillButton('ghost')} disabled={checkingInstalls} title="Re-check whether each agent's CLI is installed">
