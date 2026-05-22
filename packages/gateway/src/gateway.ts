@@ -2566,7 +2566,16 @@ Example: /model gpt-4.1 write a Python script`;
       // Agents are now considered "enabled" iff they appear in fallback.order,
       // and `rawOrder` is sourced from fallback.order — so every entry here is
       // by definition enabled. No additional skip needed.
-      const resolvedModel = this.resolveFallbackModel(entry);
+      let resolvedModel: ModelConfig | undefined;
+      try {
+        resolvedModel = this.resolveFallbackModel(entry);
+      } catch (err) {
+        // getModelConfig may throw for misconfigured catalog entries (no API
+        // bound, apiType mismatch). Don't let one bad fallback entry abort
+        // the whole chain — log it and try the next.
+        this.logger.warn(`Skipping fallback ${entry.agent}${entry.model ? `(${entry.model})` : ''}: ${(err as Error).message}`);
+        continue;
+      }
       if (!resolvedModel) {
         this.logger.warn(`Skipping fallback ${entry.agent}${entry.model ? `(${entry.model})` : ''}: no usable model config`);
         continue;
