@@ -647,10 +647,10 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                         {label}
                       </span>
                       <span style={{
-                        fontSize: 11, fontWeight: 600,
+                        fontSize: 14, fontWeight: 600,
                         color: linked ? C.red : C.accent,
                       }}>
-                        {linked ? '✕ Disconnect' : '+ Connect'}
+                        {linked ? '✕' : '+'}
                       </span>
                     </button>
                   )
