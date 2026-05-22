@@ -1,0 +1,152 @@
+import React, { useCallback, useEffect, useState } from 'react'
+import { C } from '../theme'
+import {
+  inputStyle, selectStyle, pillButton, Section, unwrap,
+} from './settingsAtoms'
+
+type ApiType = 'anthropic' | 'openai'
+interface ApiEntry { name: string; apiType: ApiType; baseUrl?: string; apiKey: string }
+
+interface Props { isGatewayRunning: boolean }
+
+const ApiRow: React.FC<{
+  entry: ApiEntry
+  isNew?: boolean
+  onSave: (draft: ApiEntry, previousName: string) => Promise<void>
+  onDelete?: (name: string) => Promise<void>
+  onCancel?: () => void
+}> = ({ entry, isNew, onSave, onDelete, onCancel }) => {
+  const [editing, setEditing] = useState(!!isNew)
+  const [draft, setDraft] = useState<ApiEntry>(entry)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => { if (!editing) setDraft(entry) }, [entry.name, editing])
+
+  const save = async () => {
+    if (!draft.name.trim() || !draft.apiKey.trim()) return
+    setBusy(true); setErr(null)
+    try { await onSave(draft, entry.name); setEditing(false) }
+    catch (e: any) { setErr(e?.message ?? String(e)) }
+    finally { setBusy(false) }
+  }
+
+  if (!editing) {
+    return (
+      <div style={{
+        padding: '12px 14px', borderRadius: 10, border: `1px solid ${C.border}`,
+        background: C.surface2, marginBottom: 8,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+      }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>
+            {entry.name}
+            <span style={{ color: C.fg3, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>[{entry.apiType}]</span>
+          </div>
+          <div style={{ color: C.fg3, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {entry.baseUrl || '(default url)'} · 🔑
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button onClick={() => setEditing(true)} style={pillButton('ghost')}>Edit</button>
+          {onDelete && <button onClick={() => onDelete(entry.name)} style={pillButton('danger')}>Delete</button>}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      padding: 12, borderRadius: 10, border: `1px solid ${C.border2}`,
+      background: C.surface2, marginBottom: 8,
+    }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: 8, alignItems: 'center' }}>
+        <label style={{ color: C.fg3, fontSize: 12 }}>Name</label>
+        <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}
+          placeholder="e.g. anthropic-personal" style={{ ...inputStyle, width: '100%' }} />
+        <label style={{ color: C.fg3, fontSize: 12 }}>API Type</label>
+        <select value={draft.apiType} onChange={e => setDraft({ ...draft, apiType: e.target.value as ApiType })}
+          style={{ ...selectStyle, width: '100%' }}>
+          <option value="anthropic">anthropic (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN)</option>
+          <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
+        </select>
+        <label style={{ color: C.fg3, fontSize: 12 }}>Base URL</label>
+        <input value={draft.baseUrl ?? ''} onChange={e => setDraft({ ...draft, baseUrl: e.target.value || undefined })}
+          placeholder="(optional) override endpoint" style={{ ...inputStyle, width: '100%' }} />
+        <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
+        <input type="password" value={draft.apiKey} onChange={e => setDraft({ ...draft, apiKey: e.target.value })}
+          placeholder="credentials" style={{ ...inputStyle, width: '100%' }} />
+      </div>
+      {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
+      <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
+        <button onClick={() => { setEditing(false); setDraft(entry); setErr(null); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
+        <button onClick={save} style={pillButton('primary')} disabled={busy || !draft.name.trim() || !draft.apiKey.trim()}>
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export const ApisTab: React.FC<Props> = ({ isGatewayRunning }) => {
+  const [apis, setApis] = useState<ApiEntry[]>([])
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const reload = useCallback(async () => {
+    setError(null)
+    try { setApis(unwrap(await window.codey.apis.list())) }
+    catch (e: any) { setError(e?.message ?? String(e)) }
+  }, [])
+
+  useEffect(() => { if (isGatewayRunning) reload() }, [isGatewayRunning, reload])
+
+  if (!isGatewayRunning) {
+    return (
+      <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
+        <div style={{ marginTop: 40, textAlign: 'center', color: C.fg3, fontSize: 13 }}>Gateway not available</div>
+      </div>
+    )
+  }
+
+  const saveApi = async (entry: ApiEntry, previousName: string) => {
+    if (previousName && previousName !== entry.name) {
+      await unwrap(await window.codey.apis.rename(previousName, entry.name))
+    }
+    await unwrap(await window.codey.apis.save(entry))
+    await reload()
+    setCreating(false)
+  }
+  const deleteApi = async (name: string) => {
+    if (!confirm(`Delete API "${name}"?`)) return
+    try { await unwrap(await window.codey.apis.delete(name)); await reload() }
+    catch (e: any) { setError(e?.message ?? String(e)) }
+  }
+
+  return (
+    <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
+      {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
+
+      <Section title="APIs" right={
+        <button onClick={() => setCreating(true)} style={pillButton('primary')} disabled={creating}>+ Add</button>
+      } />
+      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
+        Saved credentials &amp; endpoints. A single API can be bound from many models in the AI Models tab.
+      </div>
+      {creating && (
+        <ApiRow
+          entry={{ name: '', apiType: 'anthropic', baseUrl: '', apiKey: '' }}
+          isNew
+          onSave={saveApi}
+          onCancel={() => setCreating(false)}
+        />
+      )}
+      {apis.length === 0 && !creating && (
+        <div style={{ color: C.fg3, fontSize: 12, padding: '16px 0' }}>No APIs yet. Click + Add to create one.</div>
+      )}
+      {[...apis]
+        .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.name.localeCompare(b.name))
+        .map(a => <ApiRow key={a.name} entry={a} onSave={saveApi} onDelete={deleteApi} />)}
+    </div>
+  )
+}
