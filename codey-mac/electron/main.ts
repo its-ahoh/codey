@@ -756,6 +756,32 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('workspaces:rename', async (_e, oldName: string, newName: string) =>
+    wrap(async () => {
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      await workspaceManager.renameWorkspace(oldName, newName)
+      inProcessGateway?.getChatManager().cascadeRenameWorkspace(oldName, newName.trim())
+    })
+  )
+
+  ipcMain.handle('workspaces:reveal', async (_e, name: string) =>
+    wrap(async () => {
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const root = workspaceManager.getWorkspacesRoot()
+      const wsDir = pathMod.join(root, name)
+      let target = wsDir
+      try {
+        const cfg = JSON.parse(fsMod.readFileSync(pathMod.join(wsDir, 'workspace.json'), 'utf8'))
+        if (cfg && typeof cfg.workingDir === 'string' && fsMod.existsSync(cfg.workingDir)) {
+          target = cfg.workingDir
+        }
+      } catch {}
+      shell.showItemInFolder(target)
+    })
+  )
+
   ipcMain.handle('dialog:pickDirectory', async () =>
     wrap(async () => {
       const result = await dialog.showOpenDialog(mainWindow ?? undefined as any, {

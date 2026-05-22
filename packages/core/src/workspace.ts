@@ -232,6 +232,33 @@ export class WorkspaceManager {
     return fs.existsSync(memoryPath) ? fs.readFileSync(memoryPath, 'utf-8') : '';
   }
 
+  async renameWorkspace(oldName: string, newName: string): Promise<void> {
+    if (oldName === 'default') {
+      throw new Error('The "default" workspace is protected and cannot be renamed.');
+    }
+    const trimmed = newName.trim();
+    if (!trimmed) throw new Error('New workspace name is required');
+    if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+      throw new Error('Workspace name may only contain letters, numbers, dot, underscore and hyphen');
+    }
+    if (trimmed === oldName) return;
+    const src = path.join(this.workspacesDir, oldName);
+    const dst = path.join(this.workspacesDir, trimmed);
+    if (!fs.existsSync(src)) throw new Error(`Workspace "${oldName}" does not exist`);
+    if (fs.existsSync(dst)) throw new Error(`Workspace "${trimmed}" already exists`);
+    const root = path.resolve(this.workspacesDir);
+    if (!path.resolve(src).startsWith(root + path.sep) ||
+        !path.resolve(dst).startsWith(root + path.sep)) {
+      throw new Error('Refusing to rename outside of workspaces root');
+    }
+    await fs.promises.rename(src, dst);
+    this.logger.info(`[Workspace] Renamed workspace: ${oldName} -> ${trimmed}`);
+    if (this.currentWorkspace === oldName) {
+      this.currentWorkspace = trimmed;
+      this.memoryStore = new MemoryStore(this.getWorkspacePath());
+    }
+  }
+
   async deleteWorkspace(name: string): Promise<void> {
     if (name === 'default') {
       throw new Error('The "default" workspace is protected and cannot be deleted.');

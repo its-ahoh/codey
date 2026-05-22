@@ -20,10 +20,12 @@ const TABS: { key: Tab; label: string; icon: string; description: string }[] = [
   { key: 'status',     label: 'Gateway',    icon: '◉', description: 'Server status & logs' },
 ]
 
-interface Props { onClose: () => void }
+interface Props { onClose: () => void; initialTab?: string }
 
-export const SettingsOverlay: React.FC<Props> = ({ onClose }) => {
-  const [tab, setTab] = useState<Tab>('settings')
+export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
+  const [tab, setTab] = useState<Tab>(
+    (initialTab && TABS.some(t => t.key === initialTab)) ? (initialTab as Tab) : 'settings'
+  )
   const { isRunning, status, logs } = useGateway()
 
   useEffect(() => {
