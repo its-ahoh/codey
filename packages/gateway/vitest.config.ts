@@ -2,11 +2,11 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    // Explicit allowlist of files that use vitest (describe/it/expect).
-    // Other .test.ts files in this package are legacy `npx ts-node` scripts
-    // that use node:assert with no describe/it blocks — they crash vitest's
-    // discovery. Compiled dist/ artifacts are also excluded.
-    // To add a new vitest test, append its path here.
+    // Explicit allowlist of vitest test files. The other `*.test.ts` files in
+    // src/ (chats, pairings, turn-queue) are legacy scripts run via
+    // `npx ts-node ...` — some use node:test, some use top-level IIFE patterns
+    // — and they crash vitest's collection phase. New vitest tests must be
+    // added to this list.
     include: [
       'src/config.test.ts',
       'src/digit-mapping.test.ts',

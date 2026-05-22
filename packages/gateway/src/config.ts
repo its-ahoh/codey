@@ -249,6 +249,12 @@ export class ConfigManager extends EventEmitter {
     return this.config.apis?.find(a => a.name === name);
   }
 
+  /**
+   * Upsert an API entry **by name** — `name` is the identity key. To change
+   * the name of an existing entry, call `renameApi` instead, otherwise the
+   * old entry is left in place and every `ModelEntry.apiRef` that pointed
+   * at it is silently orphaned.
+   */
   saveApi(entry: ApiEntry): void {
     if (!entry.name?.trim()) throw new Error('API name is required');
     if (!entry.apiKey?.trim()) throw new Error('API key is required');
