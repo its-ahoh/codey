@@ -38,13 +38,10 @@ export default function GlobalTeamsSection() {
   const [savedAt, setSavedAt] = useState<number>(0)
   const [error, setError] = useState<string | null>(null)
   const saveTimer = useRef<number | null>(null)
-  const [dispatcherConfigured, setDispatcherConfigured] = useState(false)
 
   const reload = useCallback(async () => {
     setTeams(normalizeAll(await apiService.getGlobalTeams()))
     setWorkers(await apiService.listWorkers())
-    const r = await window.codey.dispatcher.get()
-    if (r.ok) setDispatcherConfigured(!!(r.data.agent || r.data.model))
   }, [])
 
   useEffect(() => { reload() }, [reload])
@@ -134,18 +131,14 @@ export default function GlobalTeamsSection() {
             <select
               value={team.dispatch}
               onChange={e => setDispatch(name, e.target.value as DispatchMode)}
-              title={dispatcherConfigured
-                ? 'Sequential: members run in order, output passed forward. Auto: a dispatcher picks the relevant subset.'
-                : 'Configure a dispatcher in Settings → Dispatcher (Auto Mode) to enable Auto.'}
+              title="Sequential: members run in order, output passed forward. Auto: the advisor picks the relevant subset."
               style={{
                 background: C.surface2, color: C.fg, border: `1px solid ${C.border}`,
                 borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer',
               }}
             >
               <option value="all">Sequential</option>
-              <option value="auto" disabled={!dispatcherConfigured && team.dispatch !== 'auto'}>
-                Auto{!dispatcherConfigured ? ' (configure dispatcher first)' : ''}
-              </option>
+              <option value="auto">Auto</option>
               <option value="parallel" disabled>Parallel (coming soon)</option>
             </select>
             <button onClick={() => removeTeam(name)} style={{ background: 'transparent', color: C.dangerFg, border: 'none', cursor: 'pointer', fontSize: 12 }}>Delete</button>

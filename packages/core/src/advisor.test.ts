@@ -1,9 +1,9 @@
 // Run: npx ts-node packages/core/src/manager.test.ts
 import * as assert from 'assert';
-import { runManager, ManagerInput, ManagerTurn, ManagerRunner } from './manager';
+import { runAdvisor, AdvisorInput, AdvisorTurn, AdvisorRunner } from './advisor';
 import { AgentRequest, AgentResponse } from './types';
 
-function makeRunner(replies: string[]): ManagerRunner {
+function makeRunner(replies: string[]): AdvisorRunner {
   let i = 0;
   return async (_req: AgentRequest): Promise<AgentResponse> => {
     const output = replies[Math.min(i, replies.length - 1)];
@@ -12,11 +12,11 @@ function makeRunner(replies: string[]): ManagerRunner {
   };
 }
 
-function failingRunner(error: string): ManagerRunner {
+function failingRunner(error: string): AdvisorRunner {
   return async () => ({ success: false, output: '', error, agent: 'claude-code' } as AgentResponse);
 }
 
-const baseInput: ManagerInput = {
+const baseInput: AdvisorInput = {
   task: 'Audit and improve the auth flow',
   members: [
     { name: 'architect', hint: 'Designs systems' },
@@ -35,7 +35,7 @@ async function testFirstTurnPicksWorker() {
     reason: 'Architect should start',
     done: false,
   })]);
-  const turn = await runManager(baseInput, { agent: 'claude-code', runner });
+  const turn = await runAdvisor(baseInput, { agent: 'claude-code', runner });
   assert.strictEqual(turn.fallback, false, 'should not fallback on valid response');
   assert.strictEqual(turn.next, 'architect');
   assert.strictEqual(turn.done, false);
@@ -44,7 +44,7 @@ async function testFirstTurnPicksWorker() {
 }
 
 async function testMidRunWithHistory() {
-  const input: ManagerInput = {
+  const input: AdvisorInput = {
     ...baseInput,
     history: [{ worker: 'architect', summary: 'Drafted v1 of auth flow' }],
     lastWorker: 'architect',
@@ -57,7 +57,7 @@ async function testMidRunWithHistory() {
     reason: 'Need a review pass',
     done: false,
   })]);
-  const turn = await runManager(input, { agent: 'claude-code', runner });
+  const turn = await runAdvisor(input, { agent: 'claude-code', runner });
   assert.strictEqual(turn.next, 'reviewer');
   assert.strictEqual(turn.summary_of_last, 'Architect drafted v1.');
   assert.strictEqual(turn.done, false);
@@ -72,7 +72,7 @@ async function testDoneTermination() {
     done: true,
     final_summary: 'Architect drafted, reviewer approved.',
   })]);
-  const turn = await runManager(baseInput, { agent: 'claude-code', runner });
+  const turn = await runAdvisor(baseInput, { agent: 'claude-code', runner });
   assert.strictEqual(turn.done, true);
   assert.strictEqual(turn.next, null);
   assert.strictEqual(turn.final_summary, 'Architect drafted, reviewer approved.');
@@ -87,7 +87,7 @@ async function testFinalizeMode() {
     done: true,
     final_summary: 'Final wrap-up.',
   })]);
-  const turn = await runManager({ ...baseInput, finalize: true }, { agent: 'claude-code', runner });
+  const turn = await runAdvisor({ ...baseInput, finalize: true }, { agent: 'claude-code', runner });
   assert.strictEqual(turn.done, true);
   assert.strictEqual(turn.final_summary, 'Final wrap-up.');
 }
@@ -100,19 +100,19 @@ async function testUnknownWorkerFallsBack() {
     reason: 'r',
     done: false,
   })]);
-  const turn = await runManager(baseInput, { agent: 'claude-code', runner });
+  const turn = await runAdvisor(baseInput, { agent: 'claude-code', runner });
   assert.strictEqual(turn.fallback, true, 'unknown worker should fallback');
 }
 
 async function testMalformedJsonFallsBack() {
   const runner = makeRunner(['not json at all']);
-  const turn = await runManager(baseInput, { agent: 'claude-code', runner });
+  const turn = await runAdvisor(baseInput, { agent: 'claude-code', runner });
   assert.strictEqual(turn.fallback, true);
   assert.ok(turn.fallbackReason && turn.fallbackReason.length > 0);
 }
 
 async function testRunnerErrorFallsBack() {
-  const turn = await runManager(baseInput, {
+  const turn = await runAdvisor(baseInput, {
     agent: 'claude-code',
     runner: failingRunner('boom'),
   });
@@ -121,7 +121,7 @@ async function testRunnerErrorFallsBack() {
 }
 
 async function testEmptyMembersReturnsDone() {
-  const turn = await runManager(
+  const turn = await runAdvisor(
     { ...baseInput, members: [] },
     { agent: 'claude-code', runner: makeRunner(['{}']) },
   );
@@ -139,7 +139,7 @@ async function testNullNextWithoutDoneFallsBack() {
     reason: 'r',
     done: false,
   })]);
-  const turn = await runManager(baseInput, { agent: 'claude-code', runner });
+  const turn = await runAdvisor(baseInput, { agent: 'claude-code', runner });
   assert.strictEqual(turn.fallback, true);
 }
 

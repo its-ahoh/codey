@@ -232,10 +232,10 @@ function buildRuntimeConfig(json: any): any {
         : undefined,
       imessage: json?.channels?.imessage?.enabled ? { enabled: true } : undefined,
     },
-    planner: json?.planner,
     context: json?.context,
     memory: json?.memory,
-    dispatcher: json?.dispatcher,
+    // Back-compat: old `dispatcher` block becomes `advisor`.
+    advisor: json?.advisor ?? json?.dispatcher,
   }
 }
 
@@ -1154,13 +1154,15 @@ app.whenReady().then(async () => {
     })
   )
 
-  // ── Dispatcher IPC ────────────────────────────────────────────────
-  // The dispatcher block selects the agent + model that decides which workers
-  // a `dispatch: 'auto'` team uses. Empty values mean "use gateway default".
+  // ── Advisor (formerly Dispatcher) IPC ─────────────────────────────
+  // The advisor block selects the agent + model that decides which workers
+  // a `dispatch: 'auto'` team uses, and runs the /team manager. Empty values
+  // mean "use gateway default". IPC channel kept as `dispatcher:*` for
+  // back-compat with the renderer; underlying field is `advisor`.
   ipcMain.handle('dispatcher:get', async () =>
     wrap(async () => {
       const cfg = coreConfigManager?.get()
-      return { agent: cfg?.dispatcher?.agent, model: cfg?.dispatcher?.model }
+      return { agent: cfg?.advisor?.agent, model: cfg?.advisor?.model }
     })
   )
 
@@ -1169,10 +1171,7 @@ app.whenReady().then(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       const agent = updates?.agent || undefined
       const model = updates?.model || undefined
-      // ConfigManager.update() skips dispatcher when partial.dispatcher === undefined,
-      // so we always pass an explicit object. Both fields undefined keeps the slot
-      // present-but-empty, which the gateway reads identically to "no override".
-      coreConfigManager.update({ dispatcher: { agent: agent as any, model } })
+      coreConfigManager.update({ advisor: { agent: agent as any, model } })
     })
   )
 

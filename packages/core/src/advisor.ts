@@ -1,20 +1,20 @@
 import { AgentRequest, AgentResponse, CodingAgent, ModelConfig } from './types';
-import { MANAGER_PERSONALITY } from './manager-personality';
+import { ADVISOR_PERSONALITY } from './advisor-personality';
 
-export interface ManagerMember {
+export interface AdvisorMember {
   name: string;
   hint: string;
 }
 
-export interface ManagerHistoryEntry {
+export interface AdvisorHistoryEntry {
   worker: string;
   summary: string;
 }
 
-export interface ManagerInput {
+export interface AdvisorInput {
   task: string;
-  members: ManagerMember[];
-  history: ManagerHistoryEntry[];
+  members: AdvisorMember[];
+  history: AdvisorHistoryEntry[];
   lastWorker: string | null;
   lastOutput: string | null;
   /** When true, return only done:true with a final_summary; do not pick next. */
@@ -28,7 +28,7 @@ export interface ManagerInput {
   pendingQuestion?: { worker: string; question: string };
 }
 
-export interface ManagerTurn {
+export interface AdvisorTurn {
   summary_of_last: string;
   next: string | null;
   instruction: string;
@@ -41,12 +41,12 @@ export interface ManagerTurn {
   escalateToUser?: boolean;
 }
 
-export type ManagerRunner = (req: AgentRequest) => Promise<AgentResponse>;
+export type AdvisorRunner = (req: AgentRequest) => Promise<AgentResponse>;
 
-export interface ManagerOptions {
+export interface AdvisorOptions {
   agent: CodingAgent;
   model?: ModelConfig;
-  runner: ManagerRunner;
+  runner: AdvisorRunner;
   /** Hard timeout in ms. Default 30_000. */
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -54,13 +54,13 @@ export interface ManagerOptions {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-export function buildManagerPrompt(input: ManagerInput): string {
+export function buildAdvisorPrompt(input: AdvisorInput): string {
   const lines: string[] = [];
   lines.push('# Manager');
   lines.push('## Role');
-  lines.push(MANAGER_PERSONALITY.role);
+  lines.push(ADVISOR_PERSONALITY.role);
   lines.push('## Instructions');
-  lines.push(MANAGER_PERSONALITY.instructions);
+  lines.push(ADVISOR_PERSONALITY.instructions);
   lines.push('## Task');
   lines.push(input.task);
   lines.push('## Roster');
@@ -136,7 +136,7 @@ export function extractJsonObject(text: string): unknown | null {
   return null;
 }
 
-function fallback(reason: string): ManagerTurn {
+function fallback(reason: string): AdvisorTurn {
   return {
     summary_of_last: '',
     next: null,
@@ -148,10 +148,10 @@ function fallback(reason: string): ManagerTurn {
   };
 }
 
-export async function runManager(
-  input: ManagerInput,
-  opts: ManagerOptions,
-): Promise<ManagerTurn> {
+export async function runAdvisor(
+  input: AdvisorInput,
+  opts: AdvisorOptions,
+): Promise<AdvisorTurn> {
   if (input.members.length === 0) {
     return {
       summary_of_last: '',
@@ -164,7 +164,7 @@ export async function runManager(
     };
   }
 
-  const prompt = buildManagerPrompt(input);
+  const prompt = buildAdvisorPrompt(input);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const ac = new AbortController();

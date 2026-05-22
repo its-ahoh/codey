@@ -1,4 +1,4 @@
-import { ManagerHistoryEntry } from '../manager';
+import { AdvisorHistoryEntry } from '../advisor';
 
 /** Recorded part of a Manager-driven run, kept while the team is paused. */
 export interface PendingPart {
@@ -26,7 +26,7 @@ export type PendingTeamState =
       teamName: string;
       task: string;
       mode: 'auto';
-      history: ManagerHistoryEntry[];
+      history: AdvisorHistoryEntry[];
       lastWorker: string;
       lastOutput: string;
       partsSoFar: PendingPart[];
