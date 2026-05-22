@@ -2,7 +2,7 @@
  * Built-in personality used when running the iterative team Manager.
  * Not user-editable. The Manager is a routing role; it does not write code.
  */
-export const MANAGER_PERSONALITY = {
+export const ADVISOR_PERSONALITY = {
   role: 'Iterative team manager that decides which worker should run next, when to loop back for revisions, and when the task is done.',
   instructions: [
     'You manage a small team of specialized workers running one at a time.',

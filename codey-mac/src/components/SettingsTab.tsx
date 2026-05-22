@@ -354,7 +354,7 @@ type InstallStatus = { installed: boolean; path?: string }
 export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) => {
   const [models, setModels] = useState<ModelEntry[]>([])
   const [fallback, setFallback] = useState<FallbackCfg>({ enabled: true, order: [] })
-  const [dispatcher, setDispatcher] = useState<{ agent: string; model: string }>({ agent: '', model: '' })
+  const [advisor, setAdvisor] = useState<{ agent: string; model: string }>({ agent: '', model: '' })
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Probe runs async after the rest of the panel paints — the chip flips from
@@ -381,7 +381,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         unwrap(await window.codey.dispatcher.get()),
       ])
       setModels(m); setFallback(f as FallbackCfg)
-      setDispatcher({ agent: d.agent ?? '', model: d.model ?? '' })
+      setAdvisor({ agent: d.agent ?? '', model: d.model ?? '' })
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
@@ -416,8 +416,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
     await unwrap(await window.codey.fallback.set(fb))
   }
 
-  const updateDispatcher = async (next: { agent: string; model: string }) => {
-    setDispatcher(next)
+  const updateAdvisor = async (next: { agent: string; model: string }) => {
+    setAdvisor(next)
     await unwrap(await window.codey.dispatcher.set({
       agent: next.agent || undefined,
       model: next.model || undefined,
@@ -426,8 +426,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
 
   // Mirror the fallback editor's filter: when an agent is picked, only show
   // models compatible with its apiType. When no agent is picked, show all.
-  const dispatcherModels = (() => {
-    const want = dispatcher.agent ? AGENT_API_TYPE[dispatcher.agent] : undefined
+  const advisorModels = (() => {
+    const want = advisor.agent ? AGENT_API_TYPE[advisor.agent] : undefined
     return [...models]
       .filter(m => !want || m.apiType === want)
       .sort((a, b) => a.model.localeCompare(b.model))
@@ -505,9 +505,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         </div>
       )}
 
-      <Section title="Dispatcher (Auto Mode)"/>
+      <Section title="Advisor"/>
       <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        When a team's mode is set to <strong>Auto</strong>, this agent + model picks the relevant subset of workers for each task. Leave both as <em>Use default</em> to fall back to the gateway default agent + model.
+        The advisor is the routing/orchestration model: it runs the <code>/team</code> manager and picks workers for Auto-mode teams. Set a stronger model (e.g. Opus) here for better routing decisions. Leave both as <em>Use default</em> to fall back to the gateway default agent + model.
       </div>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
@@ -519,14 +519,14 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
           width: 56, letterSpacing: 0.3,
         }}>ROUTER</span>
         <select
-          value={dispatcher.agent}
+          value={advisor.agent}
           onChange={e => {
             const nextAgent = e.target.value
             // Drop the pinned model if it's not compatible with the new agent.
             const want = nextAgent ? AGENT_API_TYPE[nextAgent] : undefined
-            const m = models.find(mm => mm.model === dispatcher.model)
-            const keepModel = !dispatcher.model || !want || (m && m.apiType === want)
-            updateDispatcher({ agent: nextAgent, model: keepModel ? dispatcher.model : '' })
+            const m = models.find(mm => mm.model === advisor.model)
+            const keepModel = !advisor.model || !want || (m && m.apiType === want)
+            updateAdvisor({ agent: nextAgent, model: keepModel ? advisor.model : '' })
           }}
           style={{ ...selectStyle, width: 130 }}
         >
@@ -536,12 +536,12 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
           ))}
         </select>
         <select
-          value={dispatcher.model}
-          onChange={e => updateDispatcher({ agent: dispatcher.agent, model: e.target.value })}
+          value={advisor.model}
+          onChange={e => updateAdvisor({ agent: advisor.agent, model: e.target.value })}
           style={{ ...selectStyle, flex: 1, minWidth: 0 }}
         >
           <option value="">Select Model</option>
-          {dispatcherModels.map(m => (
+          {advisorModels.map(m => (
             <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
           ))}
         </select>

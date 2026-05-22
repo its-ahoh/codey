@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { buildManagerPrompt, runManager } from './manager';
+import { buildAdvisorPrompt, runAdvisor } from './advisor';
 import { AgentRequest, AgentResponse } from './types';
 
-describe('buildManagerPrompt userClarification', () => {
+describe('buildAdvisorPrompt userClarification', () => {
   it('omits the section when not provided', () => {
-    const out = buildManagerPrompt({
+    const out = buildAdvisorPrompt({
       task: 'do thing',
       members: [{ name: 'a', hint: 'hint' }],
       history: [],
@@ -15,7 +15,7 @@ describe('buildManagerPrompt userClarification', () => {
   });
 
   it('renders the section when provided', () => {
-    const out = buildManagerPrompt({
+    const out = buildAdvisorPrompt({
       task: 'do thing',
       members: [{ name: 'a', hint: 'hint' }],
       history: [],
@@ -29,9 +29,9 @@ describe('buildManagerPrompt userClarification', () => {
   });
 });
 
-describe('buildManagerPrompt pendingQuestion', () => {
+describe('buildAdvisorPrompt pendingQuestion', () => {
   it('renders Pending Question section when provided', () => {
-    const out = buildManagerPrompt({
+    const out = buildAdvisorPrompt({
       task: 'do thing',
       members: [{ name: 'a', hint: 'hint' }, { name: 'b', hint: 'reviewer' }],
       history: [],
@@ -45,14 +45,14 @@ describe('buildManagerPrompt pendingQuestion', () => {
   });
 });
 
-describe('runManager escalation', () => {
+describe('runAdvisor escalation', () => {
   function makeRunner(reply: string) {
     return async (_req: AgentRequest): Promise<AgentResponse> =>
       ({ success: true, output: reply, agent: 'claude-code' } as AgentResponse);
   }
 
   it('returns escalateToUser when arbitrating and Manager sets escalate_to_user', async () => {
-    const turn = await runManager(
+    const turn = await runAdvisor(
       {
         task: 't',
         members: [{ name: 'a', hint: 'h' }],
@@ -81,7 +81,7 @@ describe('runManager escalation', () => {
   });
 
   it('routes to a teammate when arbitrating and Manager sets next', async () => {
-    const turn = await runManager(
+    const turn = await runAdvisor(
       {
         task: 't',
         members: [{ name: 'a', hint: 'h' }, { name: 'b', hint: 'reviewer' }],

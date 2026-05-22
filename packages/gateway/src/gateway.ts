@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, ChannelKind, Chat, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runManager, ManagerTurn, ManagerHistoryEntry, parseAskUser, parseAsk, PendingTeamState } from '@codey/core';
+import { AgentRequest, AgentResponse, ChannelKind, Chat, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -8,7 +8,6 @@ import { AgentFactory } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
-import { TaskPlanner, TaskPlan, PlanStep } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
@@ -41,7 +40,6 @@ export class Codey {
   private processingMessages: Set<string> = new Set();
   private logger: Logger;
   private contextManager: ContextManager;
-  private planner: TaskPlanner;
   private workspaceManager: WorkspaceManager;
   private chatManager: ChatManager;
   private pairingStore: PairingStore;
@@ -117,15 +115,15 @@ export class Codey {
     return this.getModelConfig(agent, modelName);
   }
 
-  private getDispatcherAgentAndModel(): { agent: CodingAgent; model?: ModelConfig } {
-    const cfg = this.config.dispatcher;
+  private getAdvisorAgentAndModel(): { agent: CodingAgent; model?: ModelConfig } {
+    const cfg = this.config.advisor;
     const agent = (cfg?.agent as CodingAgent | undefined) ?? this.getDefaultAgent();
     const modelName = cfg?.model;
     const model = modelName ? this.getModelConfig(agent, modelName) : this.getDefaultModelConfig(agent);
     return { agent, model };
   }
 
-  private dispatcherRunner = (req: AgentRequest): Promise<AgentResponse> => {
+  private advisorRunner = (req: AgentRequest): Promise<AgentResponse> => {
     return this.runWithFallback(req.agent, req);
   };
 
@@ -146,17 +144,6 @@ export class Codey {
     if (restored > 0) {
       this.logger.info(`Restored ${restored} archived conversation(s) from disk`);
     }
-    // Planner uses its own Anthropic key: prefer an anthropic-apiType model
-    // in the catalog that has an apiKey set, else fall back to env.
-    const anthropicEntry = this.configManager?.listModels().find(m => m.apiType === 'anthropic' && !!m.apiKey);
-    const plannerApiKey = anthropicEntry?.apiKey || process.env.ANTHROPIC_API_KEY;
-    this.planner = new TaskPlanner({
-      enabled: config.planner?.enabled !== false,
-      plannerModel: config.planner?.model || 'claude-sonnet-4-20250514',
-      maxPlanTokens: config.planner?.maxTokens || 1500,
-      minPromptLength: config.planner?.minPromptLength || 80,
-      apiKey: plannerApiKey,
-    });
     const wm = workerManager || new WorkerManager('./workers');
     this.workspaceManager = new WorkspaceManager(wm, workspaceDir || './workspaces', this.logger);
     this.chatManager = new ChatManager(this.workspaceManager.getWorkspacesRoot());
@@ -697,15 +684,6 @@ export class Codey {
 
     const agent = parsed.agent || this.getDefaultAgent();
 
-    // ── Task planning ─────────────────────────────────────────
-    const plan = await this.planner.plan(parsed.prompt, memoryContext);
-
-    if (plan && plan.needsPlanning && plan.steps.length > 0) {
-      // Execute as a planned multi-step task
-      await this.executePlannedTask(message, parsed, plan, ctxWindow.id, agent);
-      return;
-    }
-
     // ── Single-step execution (default path) ──────────────────
     const handler = this.handlers.get(channel);
     const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
@@ -867,102 +845,6 @@ export class Codey {
     }
   }
 
-  /**
-   * Execute a task that the planner has decomposed into multiple steps.
-   * Reports progress to the user after each step completes.
-   */
-  private async executePlannedTask(
-    message: UserMessage,
-    parsed: ParsedCommand,
-    plan: TaskPlan,
-    ctxWindowId: string,
-    agent: CodingAgent,
-  ): Promise<void> {
-    const { chatId, channel, id: messageId } = message;
-    const handler = this.handlers.get(channel);
-    const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
-
-    // Notify user of the plan
-    await this.sendResponse({
-      chatId,
-      channel,
-      text: `\ud83d\udcdd **Task Plan**\n${TaskPlanner.formatPlanSummary(plan)}`,
-    });
-
-    // Record user turn in context
-    await this.contextManager.addUserTurn(ctxWindowId, parsed.prompt);
-
-    // Build the agent runner function
-    const runAgent = async (stepPrompt: string): Promise<AgentResponse> => {
-      // Get current memory context for each step
-      const memoryStore = this.workspaceManager.getMemoryStore();
-      const memoryContext = (this.config.memory?.enabled !== false)
-        ? memoryStore.buildContext(stepPrompt)
-        : undefined;
-
-      // Build context-aware prompt for this step
-      const fullPrompt = this.contextManager.buildPrompt(ctxWindowId, stepPrompt, memoryContext);
-
-      return this.runWithFallback(agent, {
-        prompt: fullPrompt,
-        agent,
-        model: parsed.model || this.getDefaultModelConfig(agent),
-        timeout: this.tuiMode ? 1800000 : undefined,
-        interactive: this.tuiMode,
-        onStream,
-        context: {
-          workingDir: this.workingDir,
-        },
-      });
-    };
-
-    // Progress callback
-    const onProgress = async (step: PlanStep, stepIndex: number, totalSteps: number): Promise<void> => {
-      const progressText = TaskPlanner.formatStepProgress(step, stepIndex, totalSteps);
-      await this.sendResponse({
-        chatId,
-        channel,
-        text: progressText,
-      });
-
-      // Record completed steps in context
-      if (step.status === 'done' && step.output) {
-        const meta = ContextManager.extractMeta({
-          states: [], // Individual step states are not available here
-          duration: step.duration,
-        }, agent);
-        await this.contextManager.addAssistantTurn(
-          ctxWindowId,
-          `[Step ${step.id}: ${step.title}] ${step.output.substring(0, 500)}`,
-          meta,
-        );
-      }
-    };
-
-    // Execute the plan
-    const result = await this.planner.executePlan(plan, runAgent, onProgress);
-
-    const summaryOutput = result.outputs.join('\n\n---\n\n');
-
-    // Auto-extract memories
-    const memoryStore = this.workspaceManager.getMemoryStore();
-    if (this.config.memory?.autoExtract !== false && result.success) {
-      memoryStore.extractFromInteraction({
-        userPrompt: parsed.prompt,
-        agentOutput: summaryOutput.substring(0, 2000),
-      });
-    }
-
-    // Send final summary
-    const finalSummary = TaskPlanner.formatPlanSummary(result.plan);
-    await this.sendResponse({
-      chatId,
-      channel,
-      text: `\ud83c\udfc1 **Task Complete**\n${finalSummary}`,
-      replyTo: messageId,
-    });
-  }
-
   private formatAgentResponse(response: AgentResponse): string {
     if (!response.success) {
       return `❌ Error: ${response.error}`;
@@ -1066,9 +948,6 @@ export class Codey {
       case 'memory':
       case 'mem':
         await this.cmdMemory(args, message);
-        break;
-      case 'plan':
-        await this.cmdPlan(args, chatId, channel);
         break;
       case 'remember':
         await this.cmdRemember(args, message);
@@ -1530,34 +1409,6 @@ export class Codey {
     await this.sendResponse({ chatId, channel, text: `Switched to "${target.title}".` });
   }
 
-  private async cmdPlan(args: string[], chatId: string, channel: ChannelType): Promise<void> {
-    if (args.length === 0) {
-      const enabled = this.config.planner?.enabled !== false;
-      await this.sendResponse({
-        chatId,
-        channel,
-        text: `\ud83d\udcdd Task Planner: ${enabled ? 'enabled' : 'disabled'}\n\n` +
-          `The planner automatically decomposes complex tasks into steps.\n` +
-          `Use /plan on to enable, /plan off to disable.`,
-      });
-      return;
-    }
-
-    if (args[0] === 'on') {
-      this.planner.updateConfig({ enabled: true });
-      await this.sendResponse({ chatId, channel, text: '\u2705 Task planner enabled.' });
-    } else if (args[0] === 'off') {
-      this.planner.updateConfig({ enabled: false });
-      await this.sendResponse({ chatId, channel, text: '\u274c Task planner disabled.' });
-    } else {
-      await this.sendResponse({
-        chatId,
-        channel,
-        text: 'Usage: /plan [on|off]',
-      });
-    }
-  }
-
   private getHelpText(): string {
     return `\ud83e\udd16 Codey Commands
 
@@ -1577,10 +1428,6 @@ export class Codey {
 /memory search <query> - Search memories
 /memory clear - Clear all memories
 /remember <text> - Save a memory
-
-\ud83d\udcdd Planning
-/plan - Show planner status
-/plan on/off - Enable/disable task decomposition
 
 \u2699\ufe0f Settings
 /help - Show this message
@@ -1733,7 +1580,7 @@ Example: /model gpt-4.1 write a Python script`;
    * collected so far are returned with `fallbackMidRun` set so the caller
    * can annotate the user-visible header.
    */
-  private async runManagerLoop(
+  private async runAdvisorLoop(
     team: { members: string[] },
     task: string,
     signal: AbortSignal | undefined,
@@ -1753,7 +1600,7 @@ Example: /model gpt-4.1 write a Python script`;
     | {
         fallback: false;
         paused: {
-          history: ManagerHistoryEntry[];
+          history: AdvisorHistoryEntry[];
           lastWorker: string;
           lastOutput: string;
           parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>;
@@ -1770,14 +1617,14 @@ Example: /model gpt-4.1 write a Python script`;
     const cap = Math.max(Math.min(2 * members.length, 12), 4);
     const FORWARD_HOP_CAP = 2;
 
-    const history: ManagerHistoryEntry[] = [];
+    const history: AdvisorHistoryEntry[] = [];
     let lastWorker: string | null = null;
     let lastOutput: string | null = null;
     const parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }> = [];
     let finalSummary = '';
     let fallbackMidRun: { reason: string } | undefined;
 
-    const { agent: mAgent, model: mModel } = this.getDispatcherAgentAndModel();
+    const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
     const seenWorkers = new Set<string>();
 
     // When set, skip the next Manager call and run this worker directly
@@ -1804,7 +1651,7 @@ Example: /model gpt-4.1 write a Python script`;
         isRevision = seenWorkers.has(turnNext);
         directNext = null;
       } else {
-        const turn: ManagerTurn = await runManager(
+        const turn: AdvisorTurn = await runAdvisor(
           {
             task,
             members: members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
@@ -1813,7 +1660,7 @@ Example: /model gpt-4.1 write a Python script`;
             lastOutput,
             pendingQuestion: pendingArbitration ?? undefined,
           },
-          { agent: mAgent, model: mModel, runner: this.dispatcherRunner, signal },
+          { agent: mAgent, model: mModel, runner: this.advisorRunner, signal },
         );
         if (turn.fallback) {
           if (parts.length === 0) {
@@ -1924,7 +1771,7 @@ Example: /model gpt-4.1 write a Python script`;
     // Skip when the user aborted: the inner runner will fail anyway and we
     // shouldn't send a fresh request after cancellation.
     if (!finalSummary && parts.length > 0 && !fallbackMidRun && !signal?.aborted) {
-      const closing = await runManager(
+      const closing = await runAdvisor(
         {
           task,
           members: members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
@@ -1933,7 +1780,7 @@ Example: /model gpt-4.1 write a Python script`;
           lastOutput,
           finalize: true,
         },
-        { agent: mAgent, model: mModel, runner: this.dispatcherRunner, signal },
+        { agent: mAgent, model: mModel, runner: this.advisorRunner, signal },
       );
       if (!closing.fallback) finalSummary = closing.final_summary ?? '';
     }
@@ -2035,7 +1882,7 @@ Example: /model gpt-4.1 write a Python script`;
         text: `🧭 Manager running team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
       });
 
-      const result = await this.runManagerLoop(
+      const result = await this.runAdvisorLoop(
         team,
         task,
         undefined,
@@ -2242,9 +2089,9 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // mode === 'auto'
-    const { agent: mAgent, model: mModel } = this.getDispatcherAgentAndModel();
+    const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
     const wm = this.workspaceManager.getWorkerManager();
-    const turn = await runManager(
+    const turn = await runAdvisor(
       {
         task: pending.task,
         members: team.members.map(n => ({ name: n, hint: wm.getDispatchHint(n) })),
@@ -2257,7 +2104,7 @@ Example: /model gpt-4.1 write a Python script`;
           answer,
         },
       },
-      { agent: mAgent, model: mModel, runner: this.dispatcherRunner },
+      { agent: mAgent, model: mModel, runner: this.advisorRunner },
     );
     if (turn.fallback) {
       await this.sendResponse({
@@ -2267,7 +2114,7 @@ Example: /model gpt-4.1 write a Python script`;
       });
       return;
     }
-    const seededHistory: ManagerHistoryEntry[] = [
+    const seededHistory: AdvisorHistoryEntry[] = [
       ...pending.history,
       { worker: pending.askingWorker, summary: `User clarified: ${pending.question} → ${answer}` },
     ];
@@ -2332,7 +2179,7 @@ Example: /model gpt-4.1 write a Python script`;
       });
       return;
     }
-    const closing = await runManager(
+    const closing = await runAdvisor(
       {
         task: pending.task,
         members: team.members.map(n => ({ name: n, hint: wm.getDispatchHint(n) })),
@@ -2341,7 +2188,7 @@ Example: /model gpt-4.1 write a Python script`;
         lastOutput: response.output,
         finalize: true,
       },
-      { agent: mAgent, model: mModel, runner: this.dispatcherRunner },
+      { agent: mAgent, model: mModel, runner: this.advisorRunner },
     );
     const finalSummary = closing.fallback ? '' : (closing.final_summary ?? '');
     await this.sendResponse({
@@ -2475,7 +2322,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     if (useManager) {
       let isFirstStep = true;
-      const result = await this.runManagerLoop(
+      const result = await this.runAdvisorLoop(
         team,
         prompt,
         signal,
@@ -2900,47 +2747,6 @@ Example: /model gpt-4.1 write a Python script`;
 
     const onStream = sse ? (text: string) => sse('stream', text) : undefined;
     const onStatus = sse ? (update: any) => sse('status', update) : undefined;
-
-    // ── Task planning ─────────────────────────────────────────
-    const plan = await this.planner.plan(prompt, memoryContext);
-
-    if (plan && plan.needsPlanning && plan.steps.length > 0) {
-      const planSummary = TaskPlanner.formatPlanSummary(plan);
-      sse?.('plan', planSummary);
-
-      await this.contextManager.addUserTurn(ctxWindow.id, prompt);
-
-      const runAgent = async (stepPrompt: string): Promise<AgentResponse> => {
-        const stepMemory = memoryStore.buildContext(stepPrompt);
-        const stepFullPrompt = this.contextManager.buildPrompt(ctxWindow.id, stepPrompt, stepMemory);
-        return this.runWithFallback(agent, {
-          prompt: stepFullPrompt,
-          agent,
-          model,
-          context: { workingDir: this.workingDir },
-          onStream,
-          onStatus,
-        });
-      };
-
-      const onProgress = async (step: PlanStep, stepIndex: number, totalSteps: number): Promise<void> => {
-        sse?.('status', JSON.stringify({
-          type: step.status === 'running' ? 'info' : 'info',
-          message: TaskPlanner.formatStepProgress(step, stepIndex, totalSteps),
-        }));
-        if (step.status === 'done' && step.output) {
-          await this.contextManager.addAssistantTurn(ctxWindow.id, `[Step ${step.id}: ${step.title}] ${step.output.substring(0, 500)}`);
-        }
-      };
-
-      const result = await this.planner.executePlan(plan, runAgent, onProgress);
-      const summary = result.outputs.join('\n\n---\n\n');
-      if (result.success) {
-        memoryStore.extractFromInteraction({ userPrompt: prompt, agentOutput: summary.substring(0, 2000) });
-      }
-      sse?.('done', TaskPlanner.formatPlanSummary(result.plan));
-      return { response: summary, conversationId: ctxId };
-    }
 
     // ── Single-step execution ─────────────────────────────────
     let prep = this.prepareAgentTurn(ctxWindow, agent, prompt, memoryContext);
