@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { apiService } from '../services/api'
 import { C } from '../theme'
+import { sectionStyle, fieldStyle, inputStyle, selectStyle, pillButton, Section, unwrap } from './settingsAtoms'
 
 interface SettingsTabProps {
   isGatewayRunning: boolean
@@ -35,36 +36,7 @@ const AGENT_INSTALL_URL: Record<string, string> = {
   'codex':       'https://github.com/openai/codex',
 }
 
-// ── Shared style atoms ───────────────────────────────────────────────
-
-const sectionStyle: React.CSSProperties = {
-  color: C.fg3, fontSize: 11, fontWeight: 600, letterSpacing: 0.5,
-  textTransform: 'uppercase', marginTop: 22, marginBottom: 8,
-}
-const fieldStyle: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  padding: '10px 0', borderBottom: `1px solid ${C.border}`,
-}
-const inputStyle: React.CSSProperties = {
-  background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 7,
-  color: C.fg, fontSize: 13, padding: '6px 10px', outline: 'none', width: 180,
-}
-const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' }
-const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSProperties => ({
-  padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600,
-  border: 'none', cursor: 'pointer',
-  background: variant === 'primary' ? C.accent : variant === 'danger' ? C.red + '22' : C.surface3,
-  color: variant === 'primary' ? '#fff' : variant === 'danger' ? C.red : C.fg2,
-})
-
 // ── Small helpers ────────────────────────────────────────────────────
-
-const Section: React.FC<{ title: string; right?: React.ReactNode }> = ({ title, right }) => (
-  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...sectionStyle }}>
-    <span>{title}</span>
-    {right}
-  </div>
-)
 
 // One of three states: probe in flight, installed, not installed. We render
 // the green pill with the resolved path as a tooltip so power users can see
@@ -548,9 +520,4 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       </div>
     </div>
   )
-}
-
-function unwrap<T>(r: { ok: true; data: T } | { ok: false; error: string }): T {
-  if (r.ok) return r.data
-  throw new Error(r.error)
 }
