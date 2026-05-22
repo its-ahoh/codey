@@ -218,6 +218,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [pairings, setPairings] = useState<Array<{ channel: 'telegram'|'discord'|'imessage'; channelUserId: string }>>([])
   const [pairingModal, setPairingModal] = useState<null | 'telegram' | 'discord' | 'imessage'>(null)
+  const [linkMenuOpen, setLinkMenuOpen] = useState(false)
   const [followLatest, setFollowLatest] = useState(true)
   const [selectedTurnIdState, setSelectedTurnIdState] = useState<string | null>(null)
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
@@ -319,6 +320,17 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [chat?.id, chat?.contextPanelOpen])
+
+  useEffect(() => {
+    const onOpenPairing = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { chatId?: string; channel?: 'telegram'|'discord'|'imessage' } | undefined
+      if (!detail?.channel) return
+      if (detail.chatId && detail.chatId !== chatId) return
+      setPairingModal(detail.channel)
+    }
+    window.addEventListener('codey:open-pairing', onOpenPairing as EventListener)
+    return () => window.removeEventListener('codey:open-pairing', onOpenPairing as EventListener)
+  }, [chatId])
 
   if (!chat) return null
 
@@ -585,13 +597,68 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           <PanelRightIcon color={C.fg} filled={panelOpen} />
         </button>
         <RouteIcons routes={chat.routes} />
-        <button
-          onClick={onLinkButton}
-          style={styles.linkBtn}
-          title={chat.routes?.length ? 'Manage channel links' : 'Link to a channel'}
-        >
-          {chat.routes?.length ? '🔗' : '🔗+'}
-        </button>
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={() => setLinkMenuOpen(o => !o)}
+            style={styles.linkBtn}
+            title={chat.routes?.length ? 'Manage channel links' : 'Link to a channel'}
+          >
+            {chat.routes?.length ? '🔗' : '🔗+'}
+          </button>
+          {linkMenuOpen && (
+            <>
+              <div
+                onClick={() => setLinkMenuOpen(false)}
+                style={{ position: 'fixed', inset: 0, zIndex: 999 }}
+              />
+              <div style={styles.linkMenu} onClick={e => e.stopPropagation()}>
+                {(['telegram', 'discord', 'imessage'] as const).map(ch => {
+                  const linked = chat.routes?.find(r => r.channel === ch)
+                  const label = ch === 'telegram' ? '✈ Telegram' : ch === 'discord' ? '◈ Discord' : '◐ iMessage'
+                  return (
+                    <button
+                      key={ch}
+                      style={{
+                        ...styles.linkMenuItem,
+                        background: linked ? C.red + '22' : 'transparent',
+                        border: linked ? `1px solid ${C.red}55` : '1px solid transparent',
+                        color: linked ? C.red : C.fg2,
+                      }}
+                      onClick={async () => {
+                        setLinkMenuOpen(false)
+                        if (linked) {
+                          await unlinkChannel(chat.id, linked.channel, linked.channelUserId)
+                        } else {
+                          setPairingModal(ch)
+                        }
+                      }}
+                      title={linked
+                        ? `Disconnect ${ch} (${linked.channelUserId})`
+                        : `Connect ${ch}`}
+                    >
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span
+                          style={{
+                            width: 6, height: 6, borderRadius: '50%',
+                            background: linked ? C.green : C.fg3,
+                            boxShadow: linked ? `0 0 6px ${C.green}` : 'none',
+                          }}
+                        />
+                        {label}
+                      </span>
+                      <span style={{
+                        fontSize: 11, fontWeight: 600,
+                        color: linked ? C.red : C.accent,
+                      }}>
+                        {linked ? '✕ Disconnect' : '+ Connect'}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <div
@@ -1018,6 +1085,21 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 12,
     color: C.fg,
+  },
+  linkMenu: {
+    position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 1000,
+    minWidth: 180, padding: 4,
+    background: C.surface2 ?? C.surface,
+    border: `1px solid ${C.border2}`,
+    borderRadius: 8,
+    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+    display: 'flex', flexDirection: 'column',
+  },
+  linkMenuItem: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    gap: 12, background: 'transparent', border: 'none',
+    padding: '6px 10px', borderRadius: 4, color: C.fg2,
+    fontSize: 12, cursor: 'pointer', textAlign: 'left',
   },
   teamSummary: {
     fontSize: 13, fontWeight: 600, color: C.accent,
