@@ -38,8 +38,8 @@ export interface GatewayConfigJson {
     logLevel: 'debug' | 'info' | 'warn' | 'error';
     logFile?: string;
   };
-  /** See GatewayConfig.dispatcher in @codey/core types. Optional. */
-  dispatcher?: {
+  /** Advisor (team manager / auto-dispatcher) configuration. Optional. */
+  advisor?: {
     agent?: CodingAgent;
     model?: string;
   };
@@ -155,7 +155,7 @@ export class ConfigManager extends EventEmitter {
     if (partial.dev) Object.assign(this.config.dev, partial.dev);
     if (partial.models !== undefined) this.config.models = partial.models;
     if (partial.fallback !== undefined) this.config.fallback = partial.fallback;
-    if (partial.dispatcher !== undefined) this.config.dispatcher = partial.dispatcher;
+    if (partial.advisor !== undefined) this.config.advisor = partial.advisor;
     if (partial.teams !== undefined) this.config.teams = partial.teams;
     if (partial.voice !== undefined) this.config.voice = partial.voice;
     this.save();
@@ -428,7 +428,7 @@ function getDefaultConfig(): GatewayConfigJson {
 }
 
 /** Fill in any missing top-level fields with defaults so downstream code can assume shape. */
-function normalize(raw: Partial<GatewayConfigJson>): GatewayConfigJson {
+function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: CodingAgent; model?: string }; planner?: { model?: string } }): GatewayConfigJson {
   const defaults = getDefaultConfig();
   const out: GatewayConfigJson = {
     gateway: { ...defaults.gateway, ...(raw.gateway ?? {}) },
@@ -438,11 +438,22 @@ function normalize(raw: Partial<GatewayConfigJson>): GatewayConfigJson {
     fallback: normalizeFallback(raw.fallback, defaults.fallback),
     dev: raw.dev ?? defaults.dev,
   };
-  if (raw.dispatcher && typeof raw.dispatcher === 'object') {
-    out.dispatcher = {
+  if (raw.advisor && typeof raw.advisor === 'object') {
+    out.advisor = {
+      agent: raw.advisor.agent,
+      model: raw.advisor.model,
+    };
+  } else if (raw.dispatcher && typeof raw.dispatcher === 'object') {
+    // Back-compat: old `dispatcher` field maps into `advisor`.
+    console.warn('[config] `dispatcher` is deprecated; rename to `advisor` in gateway.json');
+    out.advisor = {
       agent: raw.dispatcher.agent,
       model: raw.dispatcher.model,
     };
+  } else if (raw.planner && typeof raw.planner === 'object' && raw.planner.model) {
+    // Back-compat: old `planner.model` becomes advisor model.
+    console.warn('[config] `planner` is deprecated; the planner has been removed. Use `advisor` instead.');
+    out.advisor = { model: raw.planner.model };
   }
   if (raw.teams && typeof raw.teams === 'object') {
     out.teams = raw.teams as Record<string, TeamConfigRaw>;

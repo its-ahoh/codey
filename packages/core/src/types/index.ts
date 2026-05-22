@@ -177,12 +177,13 @@ export interface AgentModelConfig {
   models?: string[];  // model names only, provider determined by agent.provider
 }
 
-// Planner configuration
-export interface PlannerSettings {
-  enabled?: boolean;
+// Advisor configuration — routing/orchestration LLM used by /team and
+// dispatch:auto. Replaces the old `dispatcher` and `planner` blocks.
+export interface AdvisorSettings {
+  /** Coding agent to use for advisor decisions. Defaults to gateway default. */
+  agent?: CodingAgent;
+  /** Model name (must exist in the global model catalog). Defaults to default agent's default model. */
   model?: string;
-  maxTokens?: number;
-  minPromptLength?: number;
 }
 
 // Context configuration
@@ -214,16 +215,10 @@ export interface GatewayConfig {
   /** Fallback config — mirrors GatewayConfigJson.fallback. */
   fallback?: FallbackConfig;
   rateLimitMs?: number; // Rate limit in ms (default: 3000)
-  planner?: PlannerSettings;
   context?: ContextSettings;
   memory?: MemorySettings;
-  /** Optional auto-dispatcher settings used when a team has dispatch: 'auto'. */
-  dispatcher?: {
-    /** Coding agent to use for the dispatch decision. Defaults to gateway default. */
-    agent?: CodingAgent;
-    /** Model name (must exist in the global model catalog). Defaults to default agent's default model. */
-    model?: string;
-  };
+  /** Advisor (team manager / auto-dispatcher) settings. */
+  advisor?: AdvisorSettings;
 }
 
 export * from './chat';
