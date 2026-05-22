@@ -1,6 +1,7 @@
 import type { Chat, ChatSelection } from '../../packages/core/src/types/chat'
 import type { ChatStreamEvent } from '../../packages/gateway/src/chat-runner'
 import type { TeamConfigRaw } from '../../packages/core/src/workspace'
+import type { ApiEntry } from '../../packages/core/src/types/index'
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
@@ -61,6 +62,12 @@ declare global {
       models: {
         list: () => Promise<IpcResult<ModelEntry[]>>
         save: (entry: ModelEntry) => Promise<IpcResult<void>>
+        delete: (name: string) => Promise<IpcResult<void>>
+        rename: (oldName: string, newName: string) => Promise<IpcResult<void>>
+      }
+      apis: {
+        list: () => Promise<IpcResult<ApiEntry[]>>
+        save: (entry: ApiEntry) => Promise<IpcResult<void>>
         delete: (name: string) => Promise<IpcResult<void>>
         rename: (oldName: string, newName: string) => Promise<IpcResult<void>>
       }

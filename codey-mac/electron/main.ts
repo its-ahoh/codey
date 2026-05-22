@@ -1180,6 +1180,37 @@ app.whenReady().then(async () => {
     })
   )
 
+  // ── APIs IPC ──────────────────────────────────────────────────────
+  ipcMain.handle('apis:list', async () =>
+    wrap(async () => coreConfigManager?.listApis() ?? [])
+  )
+
+  ipcMain.handle('apis:save', async (_e, entry: any) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      if (!entry?.name?.trim()) throw new Error('API name is required')
+      if (entry.apiType !== 'anthropic' && entry.apiType !== 'openai') {
+        throw new Error('API apiType must be "anthropic" or "openai"')
+      }
+      if (!entry.apiKey?.trim()) throw new Error('API key is required')
+      coreConfigManager.saveApi(entry)
+    })
+  )
+
+  ipcMain.handle('apis:delete', async (_e, name: string) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.deleteApi(name)
+    })
+  )
+
+  ipcMain.handle('apis:rename', async (_e, oldName: string, newName: string) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.renameApi(oldName, newName)
+    })
+  )
+
   // ── Advisor (formerly Dispatcher) IPC ─────────────────────────────
   // The advisor block selects the agent + model that decides which workers
   // a `dispatch: 'auto'` team uses, and runs the /team manager. Empty values
