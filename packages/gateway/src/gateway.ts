@@ -2609,14 +2609,28 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   getModelConfig(agent: CodingAgent, modelName: string): ModelConfig | undefined {
-    // 1. Check the global model catalog (has credentials + full config)
+    // 1. Check the global model catalog. Credentials live on the referenced
+    //    ApiEntry, not on the model itself — walk apiRef to load them.
     const catalogEntry = this.configManager?.getModel(modelName);
     if (catalogEntry) {
+      const api = catalogEntry.apiRef
+        ? this.configManager?.getApi(catalogEntry.apiRef)
+        : undefined;
+      if (!api) {
+        throw new Error(
+          `Model "${catalogEntry.model}" has no API bound. Open Settings → APIs to add one, then bind it from the Models tab.`
+        );
+      }
+      if (api.apiType !== catalogEntry.apiType) {
+        throw new Error(
+          `Model "${catalogEntry.model}" expects apiType "${catalogEntry.apiType}" but API "${api.name}" is "${api.apiType}".`
+        );
+      }
       return {
         provider: catalogEntry.provider ?? (catalogEntry.apiType === 'anthropic' ? 'anthropic' : 'openai'),
         model: catalogEntry.model,
-        apiKey: catalogEntry.apiKey,
-        baseUrl: catalogEntry.baseUrl,
+        apiKey: api.apiKey,
+        baseUrl: api.baseUrl,
         apiType: catalogEntry.apiType,
       };
     }
