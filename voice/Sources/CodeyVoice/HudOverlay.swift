@@ -42,7 +42,7 @@ final class HudOverlay {
     private let meterBarCount = 5
     private let meterBarWidth: CGFloat = 3
     private let meterBarGap: CGFloat = 3
-    private let meterMaxHeight: CGFloat = 32
+    private let meterMaxHeight: CGFloat = 18
     private let meterMinHeight: CGFloat = 3
 
     func show(_ mode: Mode) {

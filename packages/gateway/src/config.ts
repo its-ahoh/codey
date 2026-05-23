@@ -70,8 +70,15 @@ export interface GatewayConfigJson {
   };
 }
 
-/** Reserved for future per-agent settings. Currently empty. */
-export type AgentSlot = Record<string, never>;
+/**
+ * Per-agent settings. `env` lets users inject extra environment variables
+ * into the spawned CLI (e.g. CLAUDE_CONFIG_DIR, OPENAI_ORG, custom proxies)
+ * without modifying the adapter. Values pass through verbatim and override
+ * credentials applied by applyModelEnv.
+ */
+export interface AgentSlot {
+  env?: Record<string, string>;
+}
 
 // ── ConfigManager ────────────────────────────────────────────────────
 
