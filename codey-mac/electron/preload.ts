@@ -115,6 +115,11 @@ contextBridge.exposeInMainWorld('codey', {
   pairing: {
     start: (channel: 'telegram' | 'discord' | 'imessage') => ipcRenderer.invoke('pairing:start', channel),
     list: () => ipcRenderer.invoke('pairing:list'),
+    onEvent: (handler: (ev: { type: 'completed'; channel: 'telegram' | 'discord' | 'imessage'; channelUserId: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: any) => handler(ev)
+      ipcRenderer.on('pairing:event', listener)
+      return () => ipcRenderer.removeListener('pairing:event', listener)
+    },
   },
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
@@ -153,6 +158,9 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.on('voice:warmError', listener)
       return () => ipcRenderer.removeListener('voice:warmError', listener)
     },
+  },
+  app: {
+    version: () => ipcRenderer.invoke('app:version'),
   },
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),

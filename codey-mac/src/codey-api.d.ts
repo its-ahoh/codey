@@ -79,8 +79,8 @@ declare global {
         set: (updates: { agent?: string; model?: string }) => Promise<IpcResult<void>>
       }
       agents: {
-        get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string }>>>
-        set: (updates: Record<string, { enabled?: boolean; defaultModel?: string }>) => Promise<IpcResult<void>>
+        get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>>>
+        set: (updates: Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>) => Promise<IpcResult<void>>
         checkInstalled: () => Promise<IpcResult<Record<string, { installed: boolean; path?: string }>>>
       }
       chats: {
@@ -109,6 +109,7 @@ declare global {
           currentChatId?: string
           createdAt: number
         }>>>
+        onEvent: (handler: (ev: { type: 'completed'; channel: 'telegram' | 'discord' | 'imessage'; channelUserId: string }) => void) => () => void
       }
       gateway: {
         status: () => Promise<IpcResult<{
@@ -132,6 +133,9 @@ declare global {
         onWarmStart: (handler: (msg: { model: string }) => void) => () => void
         onWarmDone: (handler: (msg: { model: string; loadSeconds: number }) => void) => () => void
         onWarmError: (handler: (msg: { model: string; error: string }) => void) => () => void
+      }
+      app: {
+        version: () => Promise<string>
       }
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<string>
