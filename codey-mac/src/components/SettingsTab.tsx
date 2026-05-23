@@ -144,12 +144,14 @@ const ModelRow: React.FC<{
           <div style={{ fontWeight: 600, fontSize: 13 }}>
             {entry.model} <span style={{ color: C.fg3, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>[{entry.apiType}]</span>
           </div>
-          <div style={{
-            color: C.fg3,
-            fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          }}>
-            {entry.apiKeyRef ? `🔑 ${entry.apiKeyRef}` : '(default key)'}
-          </div>
+          {entry.apiKeyRef && (
+            <div style={{
+              color: C.fg3,
+              fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              🔑 {entry.apiKeyRef}
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button onClick={() => setEditing(true)} style={pillButton('ghost')}>Edit</button>
