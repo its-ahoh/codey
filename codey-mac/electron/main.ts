@@ -1180,6 +1180,34 @@ app.whenReady().then(async () => {
     })
   )
 
+  // ── API Keys IPC ──────────────────────────────────────────────────
+  ipcMain.handle('apiKeys:list', async () =>
+    wrap(async () => coreConfigManager?.listApiKeys() ?? [])
+  )
+
+  ipcMain.handle('apiKeys:save', async (_e, entry: any) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      if (!entry?.name?.trim()) throw new Error('API name is required')
+      if (!entry.apiKey?.trim()) throw new Error('API key is required')
+      coreConfigManager.saveApiKey(entry)
+    })
+  )
+
+  ipcMain.handle('apiKeys:delete', async (_e, name: string) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.deleteApiKey(name)
+    })
+  )
+
+  ipcMain.handle('apiKeys:rename', async (_e, oldName: string, newName: string) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.renameApiKey(oldName, newName)
+    })
+  )
+
   // ── Advisor (formerly Dispatcher) IPC ─────────────────────────────
   // The advisor block selects the agent + model that decides which workers
   // a `dispatch: 'auto'` team uses, and runs the /team manager. Empty values

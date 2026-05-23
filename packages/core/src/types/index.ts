@@ -37,6 +37,24 @@ export type CodingAgent = 'claude-code' | 'opencode' | 'codex';
 // Model configuration for agents
 export type ApiType = 'anthropic' | 'openai';
 
+/**
+ * A reusable API key entry — credentials + endpoints stored once and
+ * referenced from any number of ModelEntry rows by name. Lets a single
+ * key power multiple models without duplication.
+ *
+ * A single entry can hold both an Anthropic-style and an OpenAI-style
+ * endpoint with the same bearer token (useful for proxy services and
+ * hybrid setups that expose both protocol variants). The resolver picks
+ * `anthropicBaseUrl` or `openaiBaseUrl` based on the *model's* apiType,
+ * so one key can service any model regardless of its protocol.
+ */
+export interface ApiKeyEntry {
+  name: string;                  // unique id, surfaced in the model dropdown
+  apiKey: string;                // required — shared bearer token
+  anthropicBaseUrl?: string;     // optional override for anthropic-typed models
+  openaiBaseUrl?: string;        // optional override for openai-typed models
+}
+
 export interface ModelConfig {
   provider: string;
   model: string;
@@ -54,14 +72,15 @@ export interface ModelConfig {
 /**
  * A reusable model definition the user manages in Settings.
  * The `model` field is both the identifier agent.defaultModel points
- * at and the string passed to the CLI as --model.
+ * at and the string passed to the CLI as --model. `apiKeyRef` names an
+ * ApiKeyEntry that supplies the credentials at run time. When unset, the
+ * adapter falls back to its default environment variables.
  */
 export interface ModelEntry {
   apiType: ApiType;
   model: string;
-  baseUrl?: string;       // optional endpoint override
-  apiKey?: string;        // credential for this model
-  provider?: string;      // optional human label (anthropic, minimax, openai, …)
+  apiKeyRef?: string;   // name of an ApiKeyEntry in the gateway's apiKeys catalog
+  provider?: string;    // optional human label (anthropic, minimax, openai, …)
 }
 
 export interface FallbackEntry {
