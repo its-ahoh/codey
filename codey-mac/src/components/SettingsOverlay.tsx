@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { StatusTab } from './StatusTab'
 import { SettingsTab } from './SettingsTab'
+import { AgentsTab } from './AgentsTab'
 import { WorkspacesTab } from './WorkspacesTab'
 import WorkersTab from './WorkersTab'
 import { TeamsTab } from './TeamsTab'
@@ -10,11 +11,12 @@ import { AppearanceTab } from './AppearanceTab'
 import { WhisperTab } from './WhisperTab'
 import { ApiKeysTab } from './ApiKeysTab'
 
-type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings' | 'whisper' | 'apiKeys'
+type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings' | 'agents' | 'whisper' | 'apiKeys'
 const TABS: { key: Tab; label: string; icon: string; description: string }[] = [
   { key: 'general',    label: 'General',    icon: '⚙', description: 'Theme & visual options' },
   { key: 'apiKeys',    label: 'API Keys',   icon: '⚿', description: 'Shared API keys' },
   { key: 'settings',   label: 'AI Models',  icon: '✦', description: 'Default agent & model' },
+  { key: 'agents',     label: 'Agents',     icon: '✺', description: 'CLI install & env vars' },
   { key: 'whisper',    label: 'Whisper',    icon: '◐', description: 'Voice input & hotkey' },
   { key: 'workspaces', label: 'Workspaces', icon: '◫', description: 'Project directories' },
   { key: 'workers',    label: 'Workers',    icon: '☰', description: 'Personalities' },
@@ -81,6 +83,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
               {tab === 'workers'    && <WorkersTab />}
               {tab === 'teams'      && <TeamsTab />}
               {tab === 'settings'   && <SettingsTab isGatewayRunning={isRunning} />}
+              {tab === 'agents'     && <AgentsTab isGatewayRunning={isRunning} />}
               {tab === 'whisper'    && <WhisperTab isGatewayRunning={isRunning} />}
             </div>
           </main>

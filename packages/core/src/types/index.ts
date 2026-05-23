@@ -130,6 +130,13 @@ export interface AgentRequest {
    * the cancellation to the user.
    */
   signal?: AbortSignal;
+  /**
+   * Extra environment variables to pass through to the spawned CLI. Populated
+   * by AgentFactory from per-agent settings; adapters merge these on top of
+   * applyModelEnv so users can override credentials or inject CLI-specific
+   * vars (e.g. CLAUDE_CONFIG_DIR, OPENAI_ORG) without touching the agent code.
+   */
+  extraEnv?: Record<string, string>;
 }
 
 export interface StatusUpdate {
