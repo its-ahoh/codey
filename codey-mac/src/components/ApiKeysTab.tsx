@@ -33,25 +33,39 @@ const ApiRow: React.FC<{
   if (!editing) {
     const hasAnthropicUrl = !!entry.anthropicBaseUrl
     const hasOpenaiUrl = !!entry.openaiBaseUrl
-    const urlSummary = hasAnthropicUrl || hasOpenaiUrl
-      ? [
-          hasAnthropicUrl ? `anthropic: ${entry.anthropicBaseUrl}` : null,
-          hasOpenaiUrl    ? `openai: ${entry.openaiBaseUrl}`       : null,
-        ].filter(Boolean).join(' · ')
-      : 'default endpoints'
+    const hasAnyUrl = hasAnthropicUrl || hasOpenaiUrl
+    const urlLineStyle: React.CSSProperties = {
+      color: C.fg3, fontSize: 11,
+      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    }
+    const labelStyle: React.CSSProperties = { color: C.fg3, opacity: 0.7, marginRight: 4 }
     return (
       <div style={{
         padding: '12px 14px', borderRadius: 10, border: `1px solid ${C.border}`,
         background: C.surface2, marginBottom: 8,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10,
       }}>
-        <div style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>
             {entry.name}
           </div>
-          <div style={{ color: C.fg3, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            🔑 · {urlSummary}
-          </div>
+          <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>🔑</div>
+          {hasAnyUrl ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginTop: 2 }}>
+              {hasAnthropicUrl && (
+                <div style={urlLineStyle} title={entry.anthropicBaseUrl}>
+                  <span style={labelStyle}>anthropic:</span>{entry.anthropicBaseUrl}
+                </div>
+              )}
+              {hasOpenaiUrl && (
+                <div style={urlLineStyle} title={entry.openaiBaseUrl}>
+                  <span style={labelStyle}>openai:</span>{entry.openaiBaseUrl}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ ...urlLineStyle, marginTop: 2 }}>default endpoints</div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button onClick={() => setEditing(true)} style={pillButton('ghost')}>Edit</button>
