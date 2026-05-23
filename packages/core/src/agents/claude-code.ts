@@ -92,6 +92,9 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // Route credentials by apiType (defaults to anthropic for claude-code)
       const { applyModelEnv } = require('./env') as typeof import('./env');
       applyModelEnv(env, request.model, 'anthropic');
+      // User-configured per-agent env wins over credentials — lets power users
+      // pin CLAUDE_CONFIG_DIR / ANTHROPIC_AUTH_TOKEN explicitly when needed.
+      if (request.extraEnv) Object.assign(env, request.extraEnv);
 
       // Ensure common bin paths are available (Electron apps may have minimal PATH)
       const homedir = process.env.HOME || '';

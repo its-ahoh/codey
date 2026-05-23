@@ -62,6 +62,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       const { applyModelEnv } = require('./env') as typeof import('./env');
       // OpenCode is provider-agnostic; default to openai if apiType unset.
       const env = applyModelEnv({ ...process.env }, request.model, 'openai');
+      if (request.extraEnv) Object.assign(env, request.extraEnv);
       const childProcess: ChildProcess = spawn('opencode', args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: request.context?.workingDir || undefined,

@@ -11,6 +11,11 @@ const OPTIONS: { value: ThemeMode; label: string }[] = [
 export const AppearanceTab: React.FC = () => {
   const [mode, setMode] = useThemeMode()
   const effective = useEffectiveTheme()
+  const [version, setVersion] = React.useState<string>('')
+
+  React.useEffect(() => {
+    window.codey?.app?.version?.().then(setVersion).catch(() => { /* ignore */ })
+  }, [])
 
   return (
     <div style={styles.wrap}>
@@ -42,6 +47,10 @@ export const AppearanceTab: React.FC = () => {
           Currently following system: {effective === 'dark' ? 'Dark' : 'Light'}
         </div>
       )}
+      <div style={styles.row}>
+        <div style={styles.label}>Version</div>
+        <div style={styles.value}>{version || '—'}</div>
+      </div>
     </div>
   )
 }
@@ -67,4 +76,5 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
   },
   hint: { fontSize: 11, color: C.fg3, marginLeft: 96 },
+  value: { fontSize: 13, color: C.fg2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
 }

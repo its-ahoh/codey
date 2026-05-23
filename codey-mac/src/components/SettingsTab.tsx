@@ -20,17 +20,17 @@ interface FallbackEntry { agent: string; model?: string }
 interface FallbackCfg { enabled: boolean; order: FallbackEntry[] }
 // Each agent expects a specific apiType — surfacing this in the UI keeps users
 // from picking a model the agent's CLI cannot actually authenticate against.
-const AGENT_API_TYPE: Record<string, ApiType> = {
+export const AGENT_API_TYPE: Record<string, ApiType> = {
   'claude-code': 'anthropic',
   'opencode': 'openai',
   'codex': 'openai',
 }
-const AGENT_NAMES = ['claude-code', 'opencode', 'codex'] as const
+export const AGENT_NAMES = ['claude-code', 'opencode', 'codex'] as const
 
 // Where the user goes to install each agent's CLI when it isn't on PATH.
 // Picked to land on the official quickstart / install page rather than a
 // generic homepage so the next click is "run this command".
-const AGENT_INSTALL_URL: Record<string, string> = {
+export const AGENT_INSTALL_URL: Record<string, string> = {
   'claude-code': 'https://docs.claude.com/en/docs/claude-code/quickstart',
   'opencode':    'https://opencode.ai',
   'codex':       'https://github.com/openai/codex',
@@ -42,7 +42,7 @@ const AGENT_INSTALL_URL: Record<string, string> = {
 // the green pill with the resolved path as a tooltip so power users can see
 // *which* binary the gateway will spawn (helpful when a stale node version
 // is on PATH).
-const AgentInstallChip: React.FC<{
+export const AgentInstallChip: React.FC<{
   status?: { installed: boolean; path?: string }
   checking: boolean
   onInstall: () => void
@@ -85,6 +85,90 @@ const AgentInstallChip: React.FC<{
     >
       Install ↗
     </button>
+  )
+}
+
+// ── Per-agent env-var editor ─────────────────────────────────────────
+// Renders a tiny KEY=VALUE list with add/remove. Edits are debounced upward
+// via `onChange(nextRecord)` so the parent can persist with a single IPC call.
+// Empty key rows are filtered out before save — lets the user clear a row.
+export const EnvEditor: React.FC<{
+  env: Record<string, string>
+  onChange: (next: Record<string, string>) => void | Promise<void>
+}> = ({ env, onChange }) => {
+  // Local draft state preserves row order while the user is editing — using
+  // the parent's record directly would re-sort on every keystroke because
+  // object key order isn't stable across rebuilds.
+  const [draft, setDraft] = React.useState<Array<{ k: string; v: string }>>(() =>
+    Object.entries(env).map(([k, v]) => ({ k, v }))
+  )
+  // Resync when the parent's env actually changes (e.g. on reload), without
+  // wiping in-flight edits when our own commit echoes back.
+  React.useEffect(() => {
+    const current = Object.fromEntries(
+      draft.filter(r => r.k.trim().length > 0).map(r => [r.k.trim(), r.v])
+    )
+    const isSame = JSON.stringify(current) === JSON.stringify(env)
+    if (!isSame) setDraft(Object.entries(env).map(([k, v]) => ({ k, v })))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(env)])
+
+  const commit = (rows: Array<{ k: string; v: string }>) => {
+    const next: Record<string, string> = {}
+    for (const r of rows) {
+      const k = r.k.trim()
+      if (k) next[k] = r.v
+    }
+    void onChange(next)
+  }
+
+  const updateRow = (idx: number, patch: Partial<{ k: string; v: string }>) => {
+    const next = draft.map((r, i) => i === idx ? { ...r, ...patch } : r)
+    setDraft(next)
+    commit(next)
+  }
+  const removeRow = (idx: number) => {
+    const next = draft.filter((_, i) => i !== idx)
+    setDraft(next)
+    commit(next)
+  }
+  const addRow = () => setDraft([...draft, { k: '', v: '' }])
+
+  return (
+    <div style={{ marginTop: 8, paddingLeft: 0 }}>
+      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 4 }}>
+        Environment variables (passed to the spawned CLI)
+      </div>
+      {draft.length === 0 && (
+        <div style={{ color: C.fg3, fontSize: 11, fontStyle: 'italic', marginBottom: 6 }}>
+          No custom env vars.
+        </div>
+      )}
+      {draft.map((row, idx) => (
+        <div key={idx} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+          <input
+            value={row.k}
+            onChange={e => updateRow(idx, { k: e.target.value })}
+            placeholder="KEY"
+            spellCheck={false}
+            style={{ ...inputStyle, flex: '0 0 180px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+          />
+          <input
+            value={row.v}
+            onChange={e => updateRow(idx, { v: e.target.value })}
+            placeholder="value"
+            spellCheck={false}
+            style={{ ...inputStyle, flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+          />
+          <button
+            onClick={() => removeRow(idx)}
+            style={{ ...pillButton('ghost'), color: C.red }}
+            title="Remove"
+          >✕</button>
+        </div>
+      ))}
+      <button onClick={addRow} style={pillButton('ghost')}>+ Add variable</button>
+    </div>
   )
 }
 
@@ -334,7 +418,7 @@ const FallbackList: React.FC<{
 
 // ── Main Settings tab ────────────────────────────────────────────────
 
-type InstallStatus = { installed: boolean; path?: string }
+export type InstallStatus = { installed: boolean; path?: string }
 
 export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) => {
   const [models, setModels] = useState<ModelEntry[]>([])
@@ -343,20 +427,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const [apis, setApis] = useState<ApiKeyEntry[]>([])
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Probe runs async after the rest of the panel paints — the chip flips from
-  // a neutral "checking…" to green/install once the result lands.
-  const [installStatus, setInstallStatus] = useState<Record<string, InstallStatus>>({})
-  const [checkingInstalls, setCheckingInstalls] = useState(false)
-  const refreshInstallStatus = useCallback(async () => {
-    setCheckingInstalls(true)
-    try {
-      const r = await window.codey.agents.checkInstalled()
-      if (r.ok) setInstallStatus(r.data)
-    } catch { /* leave previous status as-is */ }
-    finally { setCheckingInstalls(false) }
-  }, [])
-
-  useEffect(() => { if (isGatewayRunning) void refreshInstallStatus() }, [isGatewayRunning, refreshInstallStatus])
 
   const reload = useCallback(async () => {
     setError(null)
@@ -450,28 +520,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       {[...models]
         .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
         .map(m => <ModelRow key={m.model} entry={m} apis={apis} onSave={saveModel} onDelete={deleteModel}/>)}
-
-      <Section title="Agents" right={
-        <button onClick={refreshInstallStatus} style={pillButton('ghost')} disabled={checkingInstalls} title="Re-check whether each agent's CLI is installed">
-          {checkingInstalls ? 'Checking…' : '↻ Recheck'}
-        </button>
-      }/>
-      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 4 }}>
-        Each agent shows whether its CLI is installed locally. To stop using an agent, remove it from the priority list below.
-      </div>
-      {AGENT_NAMES.map(a => {
-        const status = installStatus[a]
-        return (
-          <div key={a} style={fieldStyle}>
-            <span style={{ color: C.fg, fontSize: 13 }}>{a}</span>
-            <AgentInstallChip
-              status={status}
-              checking={checkingInstalls && !status}
-              onInstall={() => window.codey.openExternal(AGENT_INSTALL_URL[a])}
-            />
-          </div>
-        )
-      })}
 
       <Section title="Agent priority" right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
