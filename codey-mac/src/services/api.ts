@@ -202,4 +202,7 @@ export const apiService = {
     currentChatId?: string
     createdAt: number
   }>> => unwrap(await window.codey.pairing.list()),
+
+  onPairingEvent: (handler: (ev: { type: 'completed'; channel: 'telegram' | 'discord' | 'imessage'; channelUserId: string }) => void): (() => void) =>
+    window.codey.pairing.onEvent(handler),
 }

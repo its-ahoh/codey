@@ -4,6 +4,7 @@ import { apiService } from '../services/api'
 import type { Chat } from '../types'
 import { C } from '../theme'
 import { RouteIcons } from './RouteIcons'
+import { setPendingPairing } from './pendingPairing'
 
 interface Props {
   onOpenSettings: (tab?: string) => void
@@ -191,16 +192,6 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
 
   return (
     <div style={{ ...styles.root, width: narrow ? 180 : 240 }}>
-      <div style={styles.header}>
-        <button
-          style={styles.newBtn}
-          onClick={() => handleNewChat()}
-          disabled={!lastWorkspace}
-          title={lastWorkspace ? `Create a new chat in "${lastWorkspace}"` : 'No workspace available'}
-        >
-          {lastWorkspace ? `+ New Chat in ${lastWorkspace}` : '+ New Chat'}
-        </button>
-      </div>
       <div style={styles.scroll}>
         {groupNames.length === 0 && (
           <div style={styles.empty}>No chats yet. Click "New Chat".</div>
@@ -371,10 +362,6 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
               >✎ Rename…</button>
               <button
                 style={styles.menuItem}
-                onClick={() => { handleNewChat(chatMenu.chat.workspaceName); setChatMenu(null) }}
-              >＋ New chat in {chatMenu.chat.workspaceName}</button>
-              <button
-                style={styles.menuItem}
                 onClick={async () => {
                   try { await navigator.clipboard.writeText(chatMenu.chat.id) } catch {}
                   setChatMenu(null)
@@ -402,10 +389,12 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
                   onClick={() => {
                     const c = chatMenu.chat
                     setChatMenu(null)
+                    // Queue the intent BEFORE selecting the chat. The new
+                    // ChatTab drains the queue on mount; a synchronous window
+                    // event would be lost (old ChatTab ignores it, new one
+                    // hasn't mounted its listener yet).
+                    setPendingPairing(c.id, ch)
                     selectChat(c.id)
-                    window.dispatchEvent(new CustomEvent('codey:open-pairing', {
-                      detail: { chatId: c.id, channel: ch },
-                    }))
                   }}
                 >{ch === 'telegram' ? '✈ Telegram' : ch === 'discord' ? '◈ Discord' : '◐ iMessage'}</button>
               ))}

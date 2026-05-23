@@ -48,6 +48,7 @@ export class Codey {
   private chatAborts: Map<string, AbortController> = new Map();
   private turnQueue: TurnQueue;
   private chatEventListener: ((ev: any) => void) | undefined;
+  private pairingEventListener: ((ev: { type: 'completed'; channel: ChannelKind; channelUserId: string }) => void) | undefined;
 
   // Rate limiting: userId -> last request timestamp
   private userCooldowns: Map<string, number> = new Map();
@@ -133,6 +134,12 @@ export class Codey {
     this.config = config;
     this.configManager = configManager;
     this.agentFactory = new AgentFactory();
+    // Plumb per-agent env vars from the live config into every adapter spawn.
+    // Read via configManager so renderer edits take effect on the next request.
+    this.agentFactory.setAgentEnvProvider((a) => {
+      const slot = this.configManager?.getAgentConfig(a);
+      return slot?.env;
+    });
     this.logger = logger || Logger.getInstance();
     this.contextManager = new ContextManager({
       maxTokenBudget: config.context?.maxTokenBudget ?? 12000,
@@ -221,6 +228,12 @@ export class Codey {
 
   public setChatEventListener(fn: (ev: any) => void): void {
     this.chatEventListener = fn;
+  }
+
+  public setPairingEventListener(
+    fn: (ev: { type: 'completed'; channel: ChannelKind; channelUserId: string }) => void,
+  ): void {
+    this.pairingEventListener = fn;
   }
 
   /** Mac calls this to start a pairing flow. Returns a 6-digit code shown in the UI. */
@@ -420,7 +433,47 @@ export class Codey {
     await this.sendStartupNotification();
   }
 
+  private resolveChatWorkingDir(chat: Chat): string {
+    const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
+    const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
+    if (fs.existsSync(wsConfigPath)) {
+      try {
+        const wsConfig = JSON.parse(fs.readFileSync(wsConfigPath, 'utf-8'));
+        if (wsConfig.workingDir) return wsConfig.workingDir;
+      } catch { /* fall through */ }
+    }
+    return this.workingDir;
+  }
+
   private async sendStartupNotification(): Promise<void> {
+    const linkedChats = this.chatManager.list().filter(c => c.routes && c.routes.length > 0);
+
+    if (linkedChats.length > 0) {
+      for (const chat of linkedChats) {
+        const workingDir = this.resolveChatWorkingDir(chat);
+        const text = [
+          `Codey is online`,
+          ``,
+          `Chat: ${chat.title}`,
+          `Workspace: ${chat.workspaceName}`,
+          `Working dir: ${workingDir}`,
+        ].join('\n');
+
+        for (const route of chat.routes!) {
+          const handler = this.handlers.get(route.channel);
+          if (!handler?.sendToRoute) continue;
+          try {
+            await handler.sendToRoute(route, text);
+          } catch (error) {
+            this.logger.error(`Error sending startup notification to ${route.channel}:${route.channelChatId}: ${error}`);
+          }
+        }
+      }
+      return;
+    }
+
+    // Fallback: no chats have routes yet — preserve the global summary
+    // so a configured notifyChatId still receives a heartbeat.
     const channels = [...this.handlers.keys()].join(', ') || 'none';
     const agents = this.getEnabledAgents().join(', ');
     const defaultAgent = this.getDefaultAgent();
@@ -442,7 +495,6 @@ export class Codey {
       try {
         await handler.sendStartupMessage?.(text);
       } catch (error) {
-        // Ignore errors on startup notification
         this.logger.error(`Error sending startup notification to ${handler.name}: ${error}`);
       }
     }
@@ -1323,6 +1375,11 @@ export class Codey {
         ? '✅ Paired. Use /new to start a chat, or link an existing chat from the Mac app.'
         : '❌ Invalid or expired code.',
     });
+    if (ok && this.pairingEventListener) {
+      try {
+        this.pairingEventListener({ type: 'completed', channel, channelUserId: userId });
+      } catch { /* swallow */ }
+    }
   }
 
   private async cmdNewChat(args: string[], message: UserMessage): Promise<void> {

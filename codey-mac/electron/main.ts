@@ -32,8 +32,8 @@ process.on('unhandledRejection', (reason: any) => {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 820,
-    height: 580,
+    width: 1280,
+    height: 820,
     minWidth: 600,
     minHeight: 400,
     show: false,
@@ -47,8 +47,10 @@ function createWindow() {
     }
   })
 
-  // Hide the window initially (menu bar app style)
-  mainWindow.hide()
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show()
+    mainWindow?.focus()
+  })
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
@@ -314,6 +316,9 @@ async function bootInProcessCore() {
     // messages on paired surfaces) to the renderer so the Mac UI stays in sync.
     inProcessGateway.setChatEventListener((ev: any) => {
       sendToRenderer('chats:event', ev)
+    })
+    inProcessGateway.setPairingEventListener((ev: any) => {
+      sendToRenderer('pairing:event', ev)
     })
   } catch (err: any) {
     sendToRenderer('gateway-log', `[core] Boot failed: ${err?.message ?? err}`)
@@ -1478,6 +1483,8 @@ app.on('before-quit', () => {
   try { globalShortcut.unregisterAll() } catch { /* nothing to unregister */ }
   stopVoiceHelper()
 })
+
+ipcMain.handle('app:version', () => app.getVersion())
 
 // IPC handlers
 ipcMain.handle('show-window', () => {
