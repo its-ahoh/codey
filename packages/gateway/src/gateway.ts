@@ -2566,7 +2566,16 @@ Example: /model gpt-4.1 write a Python script`;
       // Agents are now considered "enabled" iff they appear in fallback.order,
       // and `rawOrder` is sourced from fallback.order — so every entry here is
       // by definition enabled. No additional skip needed.
-      const resolvedModel = this.resolveFallbackModel(entry);
+      let resolvedModel: ModelConfig | undefined;
+      try {
+        resolvedModel = this.resolveFallbackModel(entry);
+      } catch (err) {
+        // getModelConfig may throw for misconfigured catalog entries (no API
+        // bound, apiType mismatch). Don't let one bad fallback entry abort
+        // the whole chain — log it and try the next.
+        this.logger.warn(`Skipping fallback ${entry.agent}${entry.model ? `(${entry.model})` : ''}: ${(err as Error).message}`);
+        continue;
+      }
       if (!resolvedModel) {
         this.logger.warn(`Skipping fallback ${entry.agent}${entry.model ? `(${entry.model})` : ''}: no usable model config`);
         continue;
@@ -2609,14 +2618,30 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   getModelConfig(agent: CodingAgent, modelName: string): ModelConfig | undefined {
-    // 1. Check the global model catalog (has credentials + full config)
+    // 1. Check the global model catalog. Credentials live on the referenced
+    //    ApiKeyEntry, not on the model itself — walk apiKeyRef to load them.
+    //    apiKeyRef is optional; when unset, the adapter falls back to its
+    //    default environment variables (ANTHROPIC_API_KEY / OPENAI_API_KEY).
     const catalogEntry = this.configManager?.getModel(modelName);
     if (catalogEntry) {
+      const apiKey = catalogEntry.apiKeyRef
+        ? this.configManager?.getApiKey(catalogEntry.apiKeyRef)
+        : undefined;
+      // apiKeyRef set but the referenced key is gone: surface the broken
+      // binding so the user can fix it instead of silently falling back.
+      if (catalogEntry.apiKeyRef && !apiKey) {
+        throw new Error(
+          `Model "${catalogEntry.model}" references API key "${catalogEntry.apiKeyRef}" which no longer exists. Open Settings → API Keys to add it, or rebind the model.`
+        );
+      }
+      const baseUrl = apiKey
+        ? (catalogEntry.apiType === 'anthropic' ? apiKey.anthropicBaseUrl : apiKey.openaiBaseUrl)
+        : undefined;
       return {
         provider: catalogEntry.provider ?? (catalogEntry.apiType === 'anthropic' ? 'anthropic' : 'openai'),
         model: catalogEntry.model,
-        apiKey: catalogEntry.apiKey,
-        baseUrl: catalogEntry.baseUrl,
+        apiKey: apiKey?.apiKey,
+        baseUrl,
         apiType: catalogEntry.apiType,
       };
     }
@@ -2877,9 +2902,19 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Per-chat override takes precedence over the gateway default.
     const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
-    const model = chat.model
-      ? this.getModelConfig(agent, chat.model)
-      : this.getDefaultModelConfig(agent);
+    let model: ModelConfig | undefined;
+    try {
+      model = chat.model
+        ? this.getModelConfig(agent, chat.model)
+        : this.getDefaultModelConfig(agent);
+    } catch (err) {
+      // getModelConfig throws when a model's apiKeyRef references a missing key
+      // or an apiType mismatch — surface that as a chat error rather than leaking the semaphore.
+      this.chatSemaphore.release();
+      const msg = (err as Error).message;
+      sink({ type: 'error', chatId, message: msg });
+      throw err;
+    }
 
     // Decide whether this turn resumes a warm CLI session or bootstraps a
     // new one. Resume mode skips the full history dump and uses the agent's

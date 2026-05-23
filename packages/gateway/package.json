@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "test": "vitest run",
     "start": "cd ../.. && node packages/gateway/dist/index.js",
     "dev": "cd ../.. && ts-node packages/gateway/src/index.ts",
     "watch": "tsc --watch",

@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
-import { CodingAgent, FallbackConfig, FallbackEntry, ModelEntry, TeamConfigRaw } from '@codey/core';
+import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, ModelEntry, TeamConfigRaw } from '@codey/core';
 
 // ── Configuration types ─────────────────────────────────────────────
 
@@ -27,6 +27,8 @@ export interface GatewayConfigJson {
   };
   /** Global, reusable model catalog. Each agent references an entry by name. */
   models: ModelEntry[];
+  /** Shared API key entries referenced by ModelEntry.apiKeyRef. */
+  apiKeys: ApiKeyEntry[];
   /**
    * Ordered priority list. `order[0]` is the canonical default agent+model;
    * subsequent entries are tried only when an earlier one fails (and only if
@@ -154,6 +156,7 @@ export class ConfigManager extends EventEmitter {
     if (partial.agents) Object.assign(this.config.agents, partial.agents);
     if (partial.dev) Object.assign(this.config.dev, partial.dev);
     if (partial.models !== undefined) this.config.models = partial.models;
+    if (partial.apiKeys !== undefined) this.config.apiKeys = partial.apiKeys;
     if (partial.fallback !== undefined) this.config.fallback = partial.fallback;
     if (partial.advisor !== undefined) this.config.advisor = partial.advisor;
     if (partial.teams !== undefined) this.config.teams = partial.teams;
@@ -209,7 +212,7 @@ export class ConfigManager extends EventEmitter {
 
   /**
    * Change a model entry's identifier and rewrite every fallback entry that
-   * pointed at it. Content (apiType, baseUrl, apiKey) is preserved.
+   * pointed at it. Content (apiType, apiKeyRef, provider) is preserved.
    */
   renameModel(oldId: string, newId: string): boolean {
     if (!newId.trim() || oldId === newId) return false;
@@ -233,6 +236,58 @@ export class ConfigManager extends EventEmitter {
       if (entry.model === modelId) entry.model = undefined;
     }
     if (this.config.models.length !== before) {
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  // ── API Keys ───────────────────────────────────────────────────────
+  listApiKeys(): ApiKeyEntry[] { return this.config.apiKeys ?? []; }
+
+  getApiKey(name: string): ApiKeyEntry | undefined {
+    return this.config.apiKeys?.find(a => a.name === name);
+  }
+
+  /**
+   * Upsert an API key entry **by name** — `name` is the identity key. To change
+   * the name of an existing entry, call `renameApiKey` instead, otherwise the
+   * old entry is left in place and every `ModelEntry.apiKeyRef` that pointed
+   * at it is silently orphaned.
+   */
+  saveApiKey(entry: ApiKeyEntry): void {
+    if (!entry.name?.trim()) throw new Error('API name is required');
+    if (!entry.apiKey?.trim()) throw new Error('API key is required');
+    const idx = this.config.apiKeys.findIndex(a => a.name === entry.name);
+    if (idx >= 0) this.config.apiKeys[idx] = entry;
+    else this.config.apiKeys.push(entry);
+    this.save();
+  }
+
+  renameApiKey(oldName: string, newName: string): boolean {
+    if (!newName.trim() || oldName === newName) return false;
+    if (this.config.apiKeys.some(a => a.name === newName)) {
+      throw new Error(`An API key with name "${newName}" already exists`);
+    }
+    const idx = this.config.apiKeys.findIndex(a => a.name === oldName);
+    if (idx < 0) return false;
+    this.config.apiKeys[idx] = { ...this.config.apiKeys[idx], name: newName };
+    // Rewrite every model that referenced the old name so apiKeyRef stays valid.
+    for (const m of this.config.models) {
+      if (m.apiKeyRef === oldName) m.apiKeyRef = newName;
+    }
+    this.save();
+    return true;
+  }
+
+  deleteApiKey(name: string): boolean {
+    const dependents = this.config.models.filter(m => m.apiKeyRef === name).map(m => m.model);
+    if (dependents.length > 0) {
+      throw new Error(`API key "${name}" is referenced by: ${dependents.join(', ')}`);
+    }
+    const before = this.config.apiKeys.length;
+    this.config.apiKeys = this.config.apiKeys.filter(a => a.name !== name);
+    if (this.config.apiKeys.length !== before) {
       this.save();
       return true;
     }
@@ -345,9 +400,8 @@ export class ConfigManager extends EventEmitter {
     console.log(`  iMessage: ${this.config.channels.imessage?.enabled ? '✅' : '❌'}`);
     console.log(`\nModels (${this.config.models.length}):`);
     for (const m of this.config.models) {
-      const keyHint = m.apiKey ? ' 🔑' : '';
-      const urlHint = m.baseUrl ? ` @ ${m.baseUrl}` : '';
-      console.log(`  • ${m.model} [${m.apiType}]${urlHint}${keyHint}`);
+      const keyHint = m.apiKeyRef ? ` 🔑 ${m.apiKeyRef}` : ' (default)';
+      console.log(`  • ${m.model} [${m.apiType}]${keyHint}`);
     }
     console.log(`\nAgents:`);
     const inOrder = new Set(this.config.fallback.order.map(e => e.agent));
@@ -415,6 +469,7 @@ function getDefaultConfig(): GatewayConfigJson {
       { apiType: 'anthropic', model: 'claude-haiku-4-5',  provider: 'anthropic' },
       { apiType: 'openai',    model: 'gpt-5',             provider: 'openai' },
     ],
+    apiKeys: [],
     fallback: {
       enabled: true,
       order: [
@@ -430,11 +485,24 @@ function getDefaultConfig(): GatewayConfigJson {
 /** Fill in any missing top-level fields with defaults so downstream code can assume shape. */
 function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: CodingAgent; model?: string }; planner?: { model?: string } }): GatewayConfigJson {
   const defaults = getDefaultConfig();
+  const rawModels = Array.isArray(raw.models) ? raw.models : defaults.models;
+  // Clean break: drop inline apiKey/baseUrl from any pre-existing model entries.
+  // Users re-bind via the API Keys tab. apiKeyRef is left unset until they do.
+  const models: ModelEntry[] = rawModels.map(m => ({
+    apiType: m.apiType,
+    model: m.model,
+    apiKeyRef: (m as any).apiKeyRef,
+    provider: m.provider,
+  }));
+  const apiKeys: ApiKeyEntry[] = Array.isArray(raw.apiKeys)
+    ? raw.apiKeys.filter((a: any) => a && typeof a.name === 'string' && a.name.trim() && typeof a.apiKey === 'string' && a.apiKey.trim())
+    : [];
   const out: GatewayConfigJson = {
     gateway: { ...defaults.gateway, ...(raw.gateway ?? {}) },
     channels: raw.channels ?? defaults.channels,
     agents: { ...defaults.agents, ...(raw.agents ?? {}) },
-    models: Array.isArray(raw.models) ? raw.models : defaults.models,
+    models,
+    apiKeys,
     fallback: normalizeFallback(raw.fallback, defaults.fallback),
     dev: raw.dev ?? defaults.dev,
   };

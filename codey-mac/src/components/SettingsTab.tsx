@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { apiService } from '../services/api'
 import { C } from '../theme'
+import { sectionStyle, fieldStyle, inputStyle, selectStyle, pillButton, Section, unwrap } from './settingsAtoms'
 
 interface SettingsTabProps {
   isGatewayRunning: boolean
 }
 
 type ApiType = 'anthropic' | 'openai'
+interface ApiKeyEntry { name: string; apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string }
 interface ModelEntry {
   apiType: ApiType
   model: string
-  baseUrl?: string
-  apiKey?: string
+  apiKeyRef?: string
   provider?: string
 }
 interface AgentSlot { enabled?: boolean }
@@ -35,36 +36,7 @@ const AGENT_INSTALL_URL: Record<string, string> = {
   'codex':       'https://github.com/openai/codex',
 }
 
-// ── Shared style atoms ───────────────────────────────────────────────
-
-const sectionStyle: React.CSSProperties = {
-  color: C.fg3, fontSize: 11, fontWeight: 600, letterSpacing: 0.5,
-  textTransform: 'uppercase', marginTop: 22, marginBottom: 8,
-}
-const fieldStyle: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  padding: '10px 0', borderBottom: `1px solid ${C.border}`,
-}
-const inputStyle: React.CSSProperties = {
-  background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 7,
-  color: C.fg, fontSize: 13, padding: '6px 10px', outline: 'none', width: 180,
-}
-const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' }
-const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSProperties => ({
-  padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600,
-  border: 'none', cursor: 'pointer',
-  background: variant === 'primary' ? C.accent : variant === 'danger' ? C.red + '22' : C.surface3,
-  color: variant === 'primary' ? '#fff' : variant === 'danger' ? C.red : C.fg2,
-})
-
 // ── Small helpers ────────────────────────────────────────────────────
-
-const Section: React.FC<{ title: string; right?: React.ReactNode }> = ({ title, right }) => (
-  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...sectionStyle }}>
-    <span>{title}</span>
-    {right}
-  </div>
-)
 
 // One of three states: probe in flight, installed, not installed. We render
 // the green pill with the resolved path as a tooltip so power users can see
@@ -135,11 +107,12 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on,
 
 const ModelRow: React.FC<{
   entry: ModelEntry
+  apis: ApiKeyEntry[]
   isNew?: boolean
   onSave: (draft: ModelEntry, previousId: string) => Promise<void>
   onDelete?: (modelId: string) => Promise<void>
   onCancel?: () => void
-}> = ({ entry, isNew, onSave, onDelete, onCancel }) => {
+}> = ({ entry, apis, isNew, onSave, onDelete, onCancel }) => {
   const [editing, setEditing] = useState(!!isNew)
   const [draft, setDraft] = useState<ModelEntry>(entry)
   const [busy, setBusy] = useState(false)
@@ -171,9 +144,14 @@ const ModelRow: React.FC<{
           <div style={{ fontWeight: 600, fontSize: 13 }}>
             {entry.model} <span style={{ color: C.fg3, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>[{entry.apiType}]</span>
           </div>
-          <div style={{ color: C.fg3, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {entry.baseUrl || '(default url)'}{entry.apiKey ? ' · 🔑' : ''}
-          </div>
+          {entry.apiKeyRef && (
+            <div style={{
+              color: C.fg3,
+              fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              🔑 {entry.apiKeyRef}
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button onClick={() => setEditing(true)} style={pillButton('ghost')}>Edit</button>
@@ -193,17 +171,24 @@ const ModelRow: React.FC<{
         <input value={draft.model} onChange={e => setDraft({ ...draft, model: e.target.value })}
           placeholder="e.g. claude-sonnet-4-5" style={{ ...inputStyle, width: '100%' }}/>
         <label style={{ color: C.fg3, fontSize: 12 }}>API Type</label>
-        <select value={draft.apiType} onChange={e => setDraft({ ...draft, apiType: e.target.value as ApiType })}
+        <select value={draft.apiType} onChange={e => {
+          setDraft({ ...draft, apiType: e.target.value as ApiType })
+        }}
           style={{ ...selectStyle, width: '100%' }}>
           <option value="anthropic">anthropic (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN)</option>
           <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
         </select>
-        <label style={{ color: C.fg3, fontSize: 12 }}>Base URL</label>
-        <input value={draft.baseUrl ?? ''} onChange={e => setDraft({ ...draft, baseUrl: e.target.value || undefined })}
-          placeholder="(optional) override endpoint" style={{ ...inputStyle, width: '100%' }}/>
         <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
-        <input type="password" value={draft.apiKey ?? ''} onChange={e => setDraft({ ...draft, apiKey: e.target.value || undefined })}
-          placeholder="(optional) credentials" style={{ ...inputStyle, width: '100%' }}/>
+        <select
+          value={draft.apiKeyRef ?? ''}
+          onChange={e => setDraft({ ...draft, apiKeyRef: e.target.value || undefined })}
+          style={{ ...selectStyle, width: '100%' }}
+        >
+          <option value="">(use default — env vars)</option>
+          {[...apis].sort((a, b) => a.name.localeCompare(b.name)).map(a => (
+            <option key={a.name} value={a.name}>{a.name}</option>
+          ))}
+        </select>
       </div>
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
@@ -355,6 +340,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const [models, setModels] = useState<ModelEntry[]>([])
   const [fallback, setFallback] = useState<FallbackCfg>({ enabled: true, order: [] })
   const [advisor, setAdvisor] = useState<{ agent: string; model: string }>({ agent: '', model: '' })
+  const [apis, setApis] = useState<ApiKeyEntry[]>([])
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Probe runs async after the rest of the panel paints — the chip flips from
@@ -375,13 +361,15 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const reload = useCallback(async () => {
     setError(null)
     try {
-      const [m, f, d] = await Promise.all([
+      const [m, f, d, a] = await Promise.all([
         unwrap(await window.codey.models.list()),
         unwrap(await window.codey.fallback.get()),
         unwrap(await window.codey.dispatcher.get()),
+        unwrap(await window.codey.apiKeys.list()),
       ])
       setModels(m); setFallback(f as FallbackCfg)
       setAdvisor({ agent: d.agent ?? '', model: d.model ?? '' })
+      setApis(a as ApiKeyEntry[])
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
@@ -449,7 +437,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       }/>
       {creating && (
         <ModelRow
-          entry={{ apiType: 'anthropic', model: '', baseUrl: '', apiKey: '' }}
+          entry={{ apiType: 'anthropic', model: '' }}
+          apis={apis}
           isNew
           onSave={saveModel}
           onCancel={() => setCreating(false)}
@@ -460,7 +449,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       )}
       {[...models]
         .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
-        .map(m => <ModelRow key={m.model} entry={m} onSave={saveModel} onDelete={deleteModel}/>)}
+        .map(m => <ModelRow key={m.model} entry={m} apis={apis} onSave={saveModel} onDelete={deleteModel}/>)}
 
       <Section title="Agents" right={
         <button onClick={refreshInstallStatus} style={pillButton('ghost')} disabled={checkingInstalls} title="Re-check whether each agent's CLI is installed">
@@ -548,9 +537,4 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       </div>
     </div>
   )
-}
-
-function unwrap<T>(r: { ok: true; data: T } | { ok: false; error: string }): T {
-  if (r.ok) return r.data
-  throw new Error(r.error)
 }
