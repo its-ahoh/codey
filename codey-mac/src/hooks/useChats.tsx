@@ -360,8 +360,12 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try { await apiService.chats.updateContextPanelOpen(chatId, open) } catch { /* swallow */ }
     },
     async linkChannel(chatId, channel, channelUserId) {
-      const chat = await apiService.linkChat(chatId, channel, channelUserId)
-      dispatch({ type: 'upsert', chat })
+      await apiService.linkChat(chatId, channel, channelUserId)
+      // Re-pull all chats: addRoute on the gateway is exclusive and strips
+      // the route from any previously-linked chat, so a single upsert would
+      // leave stale link icons on the displaced chat.
+      const chats = await apiService.chats.list()
+      dispatch({ type: 'loaded', chats })
     },
     async unlinkChannel(chatId, channel, channelUserId) {
       const chat = await apiService.unlinkChat(chatId, channel, channelUserId)

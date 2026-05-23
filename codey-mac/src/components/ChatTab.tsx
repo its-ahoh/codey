@@ -6,6 +6,7 @@ import { C } from '../theme'
 import { Markdown } from './Markdown'
 import { RouteIcons } from './RouteIcons'
 import { PairingModal } from './PairingModal'
+import { consumePendingPairing } from './pendingPairing'
 import { ChatContextPanel } from './ChatContextPanel'
 import { parseTeamMessage } from './teamMessageFormat'
 import { formatHeadline, normalizeTool } from './toolFormat'
@@ -218,6 +219,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [pairings, setPairings] = useState<Array<{ channel: 'telegram'|'discord'|'imessage'; channelUserId: string }>>([])
   const [pairingModal, setPairingModal] = useState<null | 'telegram' | 'discord' | 'imessage'>(null)
+  // Channel the user clicked "Connect" for in the link menu. If the pairing
+  // didn't exist yet we open the modal; once it does, auto-link this chat.
+  const pendingLinkChannelRef = useRef<null | 'telegram' | 'discord' | 'imessage'>(null)
   const [linkMenuOpen, setLinkMenuOpen] = useState(false)
   const [followLatest, setFollowLatest] = useState(true)
   const [selectedTurnIdState, setSelectedTurnIdState] = useState<string | null>(null)
@@ -233,11 +237,36 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const taRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => { apiService.listWorkers().then(setWorkers) }, [])
+  const refreshPairings = async () => {
+    try {
+      const p = await apiService.listPairings()
+      setPairings(p as any)
+      return p as Array<{ channel: 'telegram'|'discord'|'imessage'; channelUserId: string }>
+    } catch {
+      return [] as Array<{ channel: 'telegram'|'discord'|'imessage'; channelUserId: string }>
+    }
+  }
+  useEffect(() => { refreshPairings() }, [])
   useEffect(() => {
-    apiService.listPairings()
-      .then(p => setPairings(p as any))
-      .catch(() => {})
-  }, [])
+    // Push event from the gateway when a user completes /pair on a channel.
+    // Refresh pairings, dismiss any open pairing modal, and auto-link this
+    // chat if the user had clicked "Connect" for the same channel.
+    const off = apiService.onPairingEvent(async (ev) => {
+      if (ev.type !== 'completed') return
+      const fresh = await refreshPairings()
+      if (pairingModal === ev.channel) setPairingModal(null)
+      const pending = pendingLinkChannelRef.current
+      if (pending && pending === ev.channel) {
+        pendingLinkChannelRef.current = null
+        const newly = fresh.find(p => p.channel === ev.channel) ?? { channel: ev.channel, channelUserId: ev.channelUserId }
+        const alreadyOnChat = chat.routes?.some(r => r.channel === ev.channel && r.channelUserId === newly.channelUserId)
+        if (!alreadyOnChat) {
+          try { await linkChannel(chat.id, ev.channel, newly.channelUserId) } catch { /* noop */ }
+        }
+      }
+    })
+    return off
+  }, [chat.id, chat.routes, pairingModal, linkChannel])
   useEffect(() => {
     if (!chat?.workspaceName) return
     apiService.getTeams(chat.workspaceName).then(names => setTeamNames(names)).catch(() => setTeamNames([]))
@@ -322,14 +351,22 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   }, [chat?.id, chat?.contextPanelOpen])
 
   useEffect(() => {
-    const onOpenPairing = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { chatId?: string; channel?: 'telegram'|'discord'|'imessage' } | undefined
-      if (!detail?.channel) return
-      if (detail.chatId && detail.chatId !== chatId) return
-      setPairingModal(detail.channel)
-    }
-    window.addEventListener('codey:open-pairing', onOpenPairing as EventListener)
-    return () => window.removeEventListener('codey:open-pairing', onOpenPairing as EventListener)
+    // Drain any pairing intent queued by the chat list's right-click menu.
+    // Runs whenever this ChatTab mounts or chatId changes; same UX as the
+    // inline link-menu: existing pairing → link directly, else open modal.
+    const ch = consumePendingPairing(chatId)
+    if (!ch) return
+    ;(async () => {
+      const fresh = await refreshPairings()
+      const existing = fresh.find(p => p.channel === ch)
+      const alreadyOnChat = chat?.routes?.some(r => r.channel === ch)
+      if (existing && !alreadyOnChat) {
+        try { await linkChannel(chatId, ch, existing.channelUserId) } catch { /* noop */ }
+        return
+      }
+      pendingLinkChannelRef.current = ch
+      setPairingModal(ch)
+    })()
   }, [chatId])
 
   if (!chat) return null
@@ -628,9 +665,15 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                         setLinkMenuOpen(false)
                         if (linked) {
                           await unlinkChannel(chat.id, linked.channel, linked.channelUserId)
-                        } else {
-                          setPairingModal(ch)
+                          return
                         }
+                        const existing = pairings.find(p => p.channel === ch)
+                        if (existing) {
+                          await linkChannel(chat.id, ch, existing.channelUserId)
+                          return
+                        }
+                        pendingLinkChannelRef.current = ch
+                        setPairingModal(ch)
                       }}
                       title={linked
                         ? `Disconnect ${ch} (${linked.channelUserId})`
@@ -892,7 +935,23 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         </div>
       </div>
       {pairingModal && (
-        <PairingModal channel={pairingModal} onClose={() => setPairingModal(null)} />
+        <PairingModal
+          channel={pairingModal}
+          onClose={async () => {
+            const ch = pairingModal
+            setPairingModal(null)
+            const fresh = await refreshPairings()
+            const pending = pendingLinkChannelRef.current
+            pendingLinkChannelRef.current = null
+            if (pending && pending === ch) {
+              const newly = fresh.find(p => p.channel === pending)
+              const alreadyOnChat = chat.routes?.some(r => r.channel === pending)
+              if (newly && !alreadyOnChat) {
+                try { await linkChannel(chat.id, pending, newly.channelUserId) } catch { /* noop */ }
+              }
+            }
+          }}
+        />
       )}
       </div>
       {/* The context panel only renders when there's room for both the chat

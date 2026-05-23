@@ -20,8 +20,19 @@ const Shell: React.FC = () => {
   const { state, createChat, selectChat, refreshWorkspaces } = useChats()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
+  const [leftCollapsed, setLeftCollapsed] = useState<boolean>(
+    () => localStorage.getItem('codey.leftPanelCollapsed') === '1'
+  )
 
   const activeChat = state.selectedChatId ? state.chats[state.selectedChatId] : null
+
+  const toggleLeftPanel = () => {
+    setLeftCollapsed((prev) => {
+      const next = !prev
+      localStorage.setItem('codey.leftPanelCollapsed', next ? '1' : '0')
+      return next
+    })
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -34,6 +45,9 @@ const Shell: React.FC = () => {
       } else if (e.key === ',') {
         e.preventDefault()
         setSettingsOpen(true)
+      } else if (e.key === '\\') {
+        e.preventDefault()
+        toggleLeftPanel()
       } else if (/^[1-9]$/.test(e.key)) {
         const idx = parseInt(e.key, 10) - 1
         const id = state.order[idx]
@@ -61,6 +75,18 @@ const Shell: React.FC = () => {
       <div style={styles.titleBar}>
         <div style={styles.titleBarDragArea}>
           <div style={{ width: 76 }} />
+          <button
+            type="button"
+            onClick={toggleLeftPanel}
+            title={leftCollapsed ? 'Show sidebar (⌘\\)' : 'Hide sidebar (⌘\\)'}
+            aria-label={leftCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+            style={styles.sidebarToggle}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+              <line x1="6" y1="2.5" x2="6" y2="13.5" />
+            </svg>
+          </button>
           <div style={styles.titleCenter}>
             <span style={styles.appName}>Codey</span>
             {activeChat && <span style={styles.workspaceLabel}>· {activeChat.workspaceName}</span>}
@@ -77,10 +103,12 @@ const Shell: React.FC = () => {
         </div>
       </div>
       <div style={styles.body}>
-        <ChatListPanel
-          onOpenSettings={(tab) => { setSettingsTab(tab); setSettingsOpen(true) }}
-          activeChatId={state.selectedChatId}
-        />
+        {!leftCollapsed && (
+          <ChatListPanel
+            onOpenSettings={(tab) => { setSettingsTab(tab); setSettingsOpen(true) }}
+            activeChatId={state.selectedChatId}
+          />
+        )}
         <div style={styles.content}>
           {activeChat && (
             <div
@@ -145,6 +173,13 @@ const styles: Record<string, React.CSSProperties> = {
   titleBarDragArea: { flex: 1, display: 'flex', alignItems: 'center', height: '100%' },
   titleCenter: { flex: 1, textAlign: 'center', paddingRight: 76 },
   appName: { color: C.fg2, fontSize: 13, fontWeight: 500 },
+  sidebarToggle: {
+    background: 'transparent', border: 'none', cursor: 'pointer',
+    color: C.fg3, padding: 4, marginLeft: 4, borderRadius: 4,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    // @ts-ignore Electron
+    WebkitAppRegion: 'no-drag',
+  },
   workspaceLabel: { color: C.fg3, fontSize: 11, marginLeft: 6 },
   statusPill: {
     display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',

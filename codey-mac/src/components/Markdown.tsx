@@ -10,14 +10,46 @@ interface MarkdownProps {
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace'
 
+// Add markdown hard breaks ("  \n") only inside prose paragraphs, so the
+// author's single line breaks survive rendering. Leave block-level
+// constructs alone — fenced code, indented code, tables, lists, headings,
+// blockquotes, HRs — otherwise GFM stops recognizing them as blocks (e.g.
+// a hard-break on the line above a table glues it into the prose paragraph
+// and the table is rendered as plain text).
 function preserveLineBreaks(src: string): string {
-  const parts = src.split(/(```[\s\S]*?```)/g)
-  return parts
-    .map((p, i) => {
-      if (i % 2 === 1) return p
-      return p.replace(/(?<!\n)\n(?!\n)/g, '  \n')
-    })
-    .join('')
+  const lines = src.split('\n')
+  const out: string[] = []
+  let inFence = false
+  const isBlockish = (line: string): boolean => {
+    const t = line.trim()
+    return (
+      t === '' ||
+      /^\|/.test(t) ||                      // table row
+      /^[-*+]\s/.test(t) ||                 // unordered list
+      /^\d+[.)]\s/.test(t) ||               // ordered list
+      /^#{1,6}\s/.test(t) ||                // heading
+      /^>/.test(t) ||                       // blockquote
+      /^(-{3,}|_{3,}|\*{3,})$/.test(t) ||   // hr
+      /^(```|~~~)/.test(t) ||               // fence delimiter
+      /^ {4,}\S/.test(line)                 // indented code
+    )
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (/^(```|~~~)/.test(line.trim())) {
+      inFence = !inFence
+      out.push(line)
+      continue
+    }
+    if (inFence || isBlockish(line)) { out.push(line); continue }
+    const next = lines[i + 1]
+    if (next === undefined || next.trim() === '' || isBlockish(next)) {
+      out.push(line)
+      continue
+    }
+    out.push(/  $/.test(line) ? line : line + '  ')
+  }
+  return out.join('\n')
 }
 
 const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant' }) => {
@@ -75,12 +107,14 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
             </blockquote>
           ),
           table: ({ children }) => (
-            <div style={{ overflowX: 'auto', margin: '0 0 8px 0' }}>
+            <div style={{ overflowX: 'auto', margin: '6px 0 10px', maxWidth: '100%' }}>
               <table
                 style={{
                   borderCollapse: 'collapse',
                   fontSize: 12,
                   border: `1px solid ${tableBorder}`,
+                  width: 'max-content',
+                  minWidth: '100%',
                 }}
               >
                 {children}
@@ -88,20 +122,30 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
             </div>
           ),
           thead: ({ children }) => <thead style={{ background: tableHeadBg }}>{children}</thead>,
+          tr: ({ children }) => <tr>{children}</tr>,
           th: ({ children }) => (
             <th
               style={{
                 textAlign: 'left',
                 padding: '6px 10px',
                 borderBottom: `1px solid ${tableBorder}`,
+                borderRight: `1px solid ${tableBorder}`,
                 fontWeight: 600,
+                whiteSpace: 'nowrap',
               }}
             >
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td style={{ padding: '6px 10px', borderTop: `1px solid ${tableBorder}` }}>
+            <td
+              style={{
+                padding: '6px 10px',
+                borderTop: `1px solid ${tableBorder}`,
+                borderRight: `1px solid ${tableBorder}`,
+                verticalAlign: 'top',
+              }}
+            >
               {children}
             </td>
           ),
@@ -109,45 +153,82 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
             const child: any = React.Children.toArray(children)[0]
             const className: string = child?.props?.className ?? ''
             const lang = /language-(\w+)/.exec(className)?.[1]
+            // Pull the raw code text so we can render it inside a <pre>
+            // (whitespace-preserving) and offer a Copy button. Rendering as
+            // <div> + <code> here would let the browser collapse newlines
+            // because <div>'s default white-space is `normal`.
+            const codeText: string = typeof child?.props?.children === 'string'
+              ? child.props.children
+              : Array.isArray(child?.props?.children)
+                ? child.props.children.join('')
+                : String(child?.props?.children ?? '')
+            const onCopy = () => {
+              try { navigator.clipboard?.writeText(codeText.replace(/\n$/, '')) } catch { /* noop */ }
+            }
             return (
               <div
                 style={{
                   background: codeBlockBg,
                   border: `1px solid ${codeBlockBorder}`,
                   borderRadius: 8,
-                  padding: '10px 12px',
                   margin: '6px 0 8px',
-                  overflowX: 'auto',
-                  fontSize: 12,
-                  lineHeight: 1.5,
-                  fontFamily: MONO,
-                  color: C.codeFg,
                   position: 'relative',
+                  overflow: 'hidden',
                 }}
               >
-                {lang && (
-                  <div
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '4px 10px',
+                    fontSize: 10,
+                    color: C.fg3,
+                    fontFamily: MONO,
+                    borderBottom: `1px solid ${codeBlockBorder}`,
+                    background: 'rgba(0,0,0,0.08)',
+                  }}
+                >
+                  <span style={{ textTransform: 'lowercase' }}>{lang ?? 'text'}</span>
+                  <button
+                    onClick={onCopy}
                     style={{
-                      position: 'absolute',
-                      top: 4,
-                      right: 8,
-                      fontSize: 10,
+                      background: 'transparent',
+                      border: `1px solid ${codeBlockBorder}`,
                       color: C.fg3,
-                      fontFamily: MONO,
-                      textTransform: 'lowercase',
+                      borderRadius: 4,
+                      padding: '1px 6px',
+                      fontSize: 10,
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
                     }}
+                    title="Copy"
                   >
-                    {lang}
-                  </div>
-                )}
-                {children}
+                    Copy
+                  </button>
+                </div>
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: '10px 12px',
+                    overflowX: 'auto',
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    fontFamily: MONO,
+                    color: C.codeFg,
+                    whiteSpace: 'pre',
+                    tabSize: 2,
+                  }}
+                >
+                  {children}
+                </pre>
               </div>
             )
           },
           code: ({ className, children, ...props }: any) => {
             const isBlock = /language-/.test(className || '')
             if (isBlock) {
-              return <code className={className} style={{ fontFamily: MONO }}>{children}</code>
+              return <code className={className} style={{ fontFamily: MONO, background: 'transparent', padding: 0 }}>{children}</code>
             }
             return (
               <code
@@ -159,6 +240,7 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
                   borderRadius: 4,
                   fontSize: 12,
                   fontFamily: MONO,
+                  whiteSpace: 'pre-wrap',
                 }}
               >
                 {children}
