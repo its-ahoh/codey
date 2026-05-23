@@ -5,19 +5,19 @@ import {
 } from './settingsAtoms'
 
 type ApiType = 'anthropic' | 'openai'
-interface ApiEntry { name: string; apiType: ApiType; baseUrl?: string; apiKey: string }
+interface ApiKeyEntry { name: string; apiType: ApiType; baseUrl?: string; apiKey: string }
 
 interface Props { isGatewayRunning: boolean }
 
 const ApiRow: React.FC<{
-  entry: ApiEntry
+  entry: ApiKeyEntry
   isNew?: boolean
-  onSave: (draft: ApiEntry, previousName: string) => Promise<void>
+  onSave: (draft: ApiKeyEntry, previousName: string) => Promise<void>
   onDelete?: (name: string) => Promise<void>
   onCancel?: () => void
 }> = ({ entry, isNew, onSave, onDelete, onCancel }) => {
   const [editing, setEditing] = useState(!!isNew)
-  const [draft, setDraft] = useState<ApiEntry>(entry)
+  const [draft, setDraft] = useState<ApiKeyEntry>(entry)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -75,7 +75,7 @@ const ApiRow: React.FC<{
           placeholder="(optional) override endpoint" style={{ ...inputStyle, width: '100%' }} />
         <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
         <input type="password" value={draft.apiKey} onChange={e => setDraft({ ...draft, apiKey: e.target.value })}
-          placeholder="credentials" style={{ ...inputStyle, width: '100%' }} />
+          placeholder="API key" style={{ ...inputStyle, width: '100%' }} />
       </div>
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
@@ -88,14 +88,14 @@ const ApiRow: React.FC<{
   )
 }
 
-export const ApisTab: React.FC<Props> = ({ isGatewayRunning }) => {
-  const [apis, setApis] = useState<ApiEntry[]>([])
+export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning }) => {
+  const [apiKeys, setApiKeys] = useState<ApiKeyEntry[]>([])
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     setError(null)
-    try { setApis(unwrap(await window.codey.apis.list())) }
+    try { setApiKeys(unwrap(await window.codey.apiKeys.list())) }
     catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
@@ -109,17 +109,17 @@ export const ApisTab: React.FC<Props> = ({ isGatewayRunning }) => {
     )
   }
 
-  const saveApi = async (entry: ApiEntry, previousName: string) => {
+  const saveApiKey = async (entry: ApiKeyEntry, previousName: string) => {
     if (previousName && previousName !== entry.name) {
-      await unwrap(await window.codey.apis.rename(previousName, entry.name))
+      await unwrap(await window.codey.apiKeys.rename(previousName, entry.name))
     }
-    await unwrap(await window.codey.apis.save(entry))
+    await unwrap(await window.codey.apiKeys.save(entry))
     await reload()
     setCreating(false)
   }
-  const deleteApi = async (name: string) => {
-    if (!confirm(`Delete API "${name}"?`)) return
-    try { await unwrap(await window.codey.apis.delete(name)); await reload() }
+  const deleteApiKey = async (name: string) => {
+    if (!confirm(`Delete API key "${name}"?`)) return
+    try { await unwrap(await window.codey.apiKeys.delete(name)); await reload() }
     catch (e: any) { setError(e?.message ?? String(e)) }
   }
 
@@ -127,26 +127,26 @@ export const ApisTab: React.FC<Props> = ({ isGatewayRunning }) => {
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      <Section title="APIs" right={
+      <Section title="API Keys" right={
         <button onClick={() => setCreating(true)} style={pillButton('primary')} disabled={creating}>+ Add</button>
       } />
       <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        Saved credentials &amp; endpoints. A single API can be bound from many models in the AI Models tab.
+        Saved API keys &amp; endpoints. A single key can be bound from many models in the AI Models tab.
       </div>
       {creating && (
         <ApiRow
           entry={{ name: '', apiType: 'anthropic', baseUrl: '', apiKey: '' }}
           isNew
-          onSave={saveApi}
+          onSave={saveApiKey}
           onCancel={() => setCreating(false)}
         />
       )}
-      {apis.length === 0 && !creating && (
-        <div style={{ color: C.fg3, fontSize: 12, padding: '16px 0' }}>No APIs yet. Click + Add to create one.</div>
+      {apiKeys.length === 0 && !creating && (
+        <div style={{ color: C.fg3, fontSize: 12, padding: '16px 0' }}>No API keys yet. Click + Add to create one.</div>
       )}
-      {[...apis]
+      {[...apiKeys]
         .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.name.localeCompare(b.name))
-        .map(a => <ApiRow key={a.name} entry={a} onSave={saveApi} onDelete={deleteApi} />)}
+        .map(a => <ApiRow key={a.name} entry={a} onSave={saveApiKey} onDelete={deleteApiKey} />)}
     </div>
   )
 }

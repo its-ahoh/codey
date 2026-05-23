@@ -8,11 +8,11 @@ interface SettingsTabProps {
 }
 
 type ApiType = 'anthropic' | 'openai'
-interface ApiEntry { name: string; apiType: ApiType; baseUrl?: string; apiKey: string }
+interface ApiKeyEntry { name: string; apiType: ApiType; baseUrl?: string; apiKey: string }
 interface ModelEntry {
   apiType: ApiType
   model: string
-  apiRef?: string
+  apiKeyRef?: string
   provider?: string
 }
 interface AgentSlot { enabled?: boolean }
@@ -107,7 +107,7 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on,
 
 const ModelRow: React.FC<{
   entry: ModelEntry
-  apis: ApiEntry[]
+  apis: ApiKeyEntry[]
   isNew?: boolean
   onSave: (draft: ModelEntry, previousId: string) => Promise<void>
   onDelete?: (modelId: string) => Promise<void>
@@ -125,7 +125,7 @@ const ModelRow: React.FC<{
   useEffect(() => { if (!editing) setDraft(entry) }, [entry.model, editing])
 
   const save = async () => {
-    if (!draft.model.trim() || !draft.apiRef) return
+    if (!draft.model.trim()) return
     setBusy(true)
     setErr(null)
     try { await onSave(draft, entry.model); setEditing(false) }
@@ -145,10 +145,10 @@ const ModelRow: React.FC<{
             {entry.model} <span style={{ color: C.fg3, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>[{entry.apiType}]</span>
           </div>
           <div style={{
-            color: entry.apiRef ? C.fg3 : C.warningFg,
+            color: C.fg3,
             fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>
-            {entry.apiRef ? `→ ${entry.apiRef}` : '(no API bound)'}
+            {entry.apiKeyRef ? `🔑 ${entry.apiKeyRef}` : '(default key)'}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -174,22 +174,22 @@ const ModelRow: React.FC<{
         <label style={{ color: C.fg3, fontSize: 12 }}>API Type</label>
         <select value={draft.apiType} onChange={e => {
           const nextType = e.target.value as ApiType
-          // If the currently-bound API isn't of the new apiType, drop the binding
-          // so we don't save a model pointing at an incompatible API.
-          const stillValid = apis.some(a => a.name === draft.apiRef && a.apiType === nextType)
-          setDraft({ ...draft, apiType: nextType, apiRef: stillValid ? draft.apiRef : undefined })
+          // If the currently-bound API key isn't of the new apiType, drop the binding
+          // so we don't save a model pointing at an incompatible API key.
+          const stillValid = apis.some(a => a.name === draft.apiKeyRef && a.apiType === nextType)
+          setDraft({ ...draft, apiType: nextType, apiKeyRef: stillValid ? draft.apiKeyRef : undefined })
         }}
           style={{ ...selectStyle, width: '100%' }}>
           <option value="anthropic">anthropic (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN)</option>
           <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
         </select>
-        <label style={{ color: C.fg3, fontSize: 12 }}>API</label>
+        <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
         <select
-          value={draft.apiRef ?? ''}
-          onChange={e => setDraft({ ...draft, apiRef: e.target.value || undefined })}
+          value={draft.apiKeyRef ?? ''}
+          onChange={e => setDraft({ ...draft, apiKeyRef: e.target.value || undefined })}
           style={{ ...selectStyle, width: '100%' }}
         >
-          <option value="">Select an API…</option>
+          <option value="">(use default — env vars)</option>
           {matchingApis.map(a => (
               <option key={a.name} value={a.name}>
                 {a.name}{a.baseUrl ? ` (${a.baseUrl})` : ''}
@@ -198,14 +198,14 @@ const ModelRow: React.FC<{
         </select>
         {matchingApis.length === 0 && (
           <div style={{ gridColumn: '1 / span 2', color: C.fg3, fontSize: 11, marginTop: -4 }}>
-            No {draft.apiType} APIs yet — add one in the APIs tab.
+            No {draft.apiType} API keys yet — add one in the API Keys tab.
           </div>
         )}
       </div>
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
         <button onClick={() => { setEditing(false); setDraft(entry); setErr(null); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
-        <button onClick={save} style={pillButton('primary')} disabled={busy || !draft.model.trim() || !draft.apiRef}>
+        <button onClick={save} style={pillButton('primary')} disabled={busy || !draft.model.trim()}>
           {busy ? 'Saving…' : 'Save'}
         </button>
       </div>
@@ -352,7 +352,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const [models, setModels] = useState<ModelEntry[]>([])
   const [fallback, setFallback] = useState<FallbackCfg>({ enabled: true, order: [] })
   const [advisor, setAdvisor] = useState<{ agent: string; model: string }>({ agent: '', model: '' })
-  const [apis, setApis] = useState<ApiEntry[]>([])
+  const [apis, setApis] = useState<ApiKeyEntry[]>([])
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Probe runs async after the rest of the panel paints — the chip flips from
@@ -377,11 +377,11 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         unwrap(await window.codey.models.list()),
         unwrap(await window.codey.fallback.get()),
         unwrap(await window.codey.dispatcher.get()),
-        unwrap(await window.codey.apis.list()),
+        unwrap(await window.codey.apiKeys.list()),
       ])
       setModels(m); setFallback(f as FallbackCfg)
       setAdvisor({ agent: d.agent ?? '', model: d.model ?? '' })
-      setApis(a as ApiEntry[])
+      setApis(a as ApiKeyEntry[])
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 

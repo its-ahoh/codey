@@ -38,11 +38,11 @@ export type CodingAgent = 'claude-code' | 'opencode' | 'codex';
 export type ApiType = 'anthropic' | 'openai';
 
 /**
- * A reusable API connection — credentials + endpoint stored once and
+ * A reusable API key entry — credentials + endpoint stored once and
  * referenced from any number of ModelEntry rows by name. Lets a single
  * key power multiple models without duplication.
  */
-export interface ApiEntry {
+export interface ApiKeyEntry {
   name: string;        // unique id, surfaced in the model dropdown
   apiType: ApiType;
   baseUrl?: string;    // optional endpoint override
@@ -66,13 +66,14 @@ export interface ModelConfig {
 /**
  * A reusable model definition the user manages in Settings.
  * The `model` field is both the identifier agent.defaultModel points
- * at and the string passed to the CLI as --model. `apiRef` names an
- * ApiEntry that supplies the credentials at run time.
+ * at and the string passed to the CLI as --model. `apiKeyRef` names an
+ * ApiKeyEntry that supplies the credentials at run time. When unset, the
+ * adapter falls back to its default environment variables.
  */
 export interface ModelEntry {
   apiType: ApiType;
   model: string;
-  apiRef?: string;      // name of an ApiEntry in the gateway's apis catalog
+  apiKeyRef?: string;   // name of an ApiKeyEntry in the gateway's apiKeys catalog
   provider?: string;    // optional human label (anthropic, minimax, openai, …)
 }
 

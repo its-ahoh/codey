@@ -2619,27 +2619,31 @@ Example: /model gpt-4.1 write a Python script`;
 
   getModelConfig(agent: CodingAgent, modelName: string): ModelConfig | undefined {
     // 1. Check the global model catalog. Credentials live on the referenced
-    //    ApiEntry, not on the model itself — walk apiRef to load them.
+    //    ApiKeyEntry, not on the model itself — walk apiKeyRef to load them.
+    //    apiKeyRef is optional; when unset, the adapter falls back to its
+    //    default environment variables (ANTHROPIC_API_KEY / OPENAI_API_KEY).
     const catalogEntry = this.configManager?.getModel(modelName);
     if (catalogEntry) {
-      const api = catalogEntry.apiRef
-        ? this.configManager?.getApi(catalogEntry.apiRef)
+      const apiKey = catalogEntry.apiKeyRef
+        ? this.configManager?.getApiKey(catalogEntry.apiKeyRef)
         : undefined;
-      if (!api) {
+      // apiKeyRef set but the referenced key is gone: surface the broken
+      // binding so the user can fix it instead of silently falling back.
+      if (catalogEntry.apiKeyRef && !apiKey) {
         throw new Error(
-          `Model "${catalogEntry.model}" has no API bound. Open Settings → APIs to add one, then bind it from the Models tab.`
+          `Model "${catalogEntry.model}" references API key "${catalogEntry.apiKeyRef}" which no longer exists. Open Settings → API Keys to add it, or rebind the model.`
         );
       }
-      if (api.apiType !== catalogEntry.apiType) {
+      if (apiKey && apiKey.apiType !== catalogEntry.apiType) {
         throw new Error(
-          `Model "${catalogEntry.model}" expects apiType "${catalogEntry.apiType}" but API "${api.name}" is "${api.apiType}".`
+          `Model "${catalogEntry.model}" expects apiType "${catalogEntry.apiType}" but API key "${apiKey.name}" is "${apiKey.apiType}".`
         );
       }
       return {
         provider: catalogEntry.provider ?? (catalogEntry.apiType === 'anthropic' ? 'anthropic' : 'openai'),
         model: catalogEntry.model,
-        apiKey: api.apiKey,
-        baseUrl: api.baseUrl,
+        apiKey: apiKey?.apiKey,
+        baseUrl: apiKey?.baseUrl,
         apiType: catalogEntry.apiType,
       };
     }
@@ -2906,8 +2910,8 @@ Example: /model gpt-4.1 write a Python script`;
         ? this.getModelConfig(agent, chat.model)
         : this.getDefaultModelConfig(agent);
     } catch (err) {
-      // getModelConfig throws when a model's apiRef is missing or its API isn't
-      // bound — surface that as a chat error rather than leaking the semaphore.
+      // getModelConfig throws when a model's apiKeyRef references a missing key
+      // or an apiType mismatch — surface that as a chat error rather than leaking the semaphore.
       this.chatSemaphore.release();
       const msg = (err as Error).message;
       sink({ type: 'error', chatId, message: msg });

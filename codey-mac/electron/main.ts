@@ -1180,12 +1180,12 @@ app.whenReady().then(async () => {
     })
   )
 
-  // ── APIs IPC ──────────────────────────────────────────────────────
-  ipcMain.handle('apis:list', async () =>
-    wrap(async () => coreConfigManager?.listApis() ?? [])
+  // ── API Keys IPC ──────────────────────────────────────────────────
+  ipcMain.handle('apiKeys:list', async () =>
+    wrap(async () => coreConfigManager?.listApiKeys() ?? [])
   )
 
-  ipcMain.handle('apis:save', async (_e, entry: any) =>
+  ipcMain.handle('apiKeys:save', async (_e, entry: any) =>
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       if (!entry?.name?.trim()) throw new Error('API name is required')
@@ -1193,21 +1193,21 @@ app.whenReady().then(async () => {
         throw new Error('API apiType must be "anthropic" or "openai"')
       }
       if (!entry.apiKey?.trim()) throw new Error('API key is required')
-      coreConfigManager.saveApi(entry)
+      coreConfigManager.saveApiKey(entry)
     })
   )
 
-  ipcMain.handle('apis:delete', async (_e, name: string) =>
+  ipcMain.handle('apiKeys:delete', async (_e, name: string) =>
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
-      coreConfigManager.deleteApi(name)
+      coreConfigManager.deleteApiKey(name)
     })
   )
 
-  ipcMain.handle('apis:rename', async (_e, oldName: string, newName: string) =>
+  ipcMain.handle('apiKeys:rename', async (_e, oldName: string, newName: string) =>
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
-      coreConfigManager.renameApi(oldName, newName)
+      coreConfigManager.renameApiKey(oldName, newName)
     })
   )
 

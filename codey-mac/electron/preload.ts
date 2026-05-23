@@ -65,11 +65,11 @@ contextBridge.exposeInMainWorld('codey', {
     delete: (name: string) => ipcRenderer.invoke('models:delete', name),
     rename: (oldName: string, newName: string) => ipcRenderer.invoke('models:rename', oldName, newName),
   },
-  apis: {
-    list: () => ipcRenderer.invoke('apis:list'),
-    save: (entry: any) => ipcRenderer.invoke('apis:save', entry),
-    delete: (name: string) => ipcRenderer.invoke('apis:delete', name),
-    rename: (oldName: string, newName: string) => ipcRenderer.invoke('apis:rename', oldName, newName),
+  apiKeys: {
+    list: () => ipcRenderer.invoke('apiKeys:list'),
+    save: (entry: any) => ipcRenderer.invoke('apiKeys:save', entry),
+    delete: (name: string) => ipcRenderer.invoke('apiKeys:delete', name),
+    rename: (oldName: string, newName: string) => ipcRenderer.invoke('apiKeys:rename', oldName, newName),
   },
   fallback: {
     get: () => ipcRenderer.invoke('fallback:get'),
