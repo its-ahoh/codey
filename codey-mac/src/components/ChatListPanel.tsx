@@ -359,7 +359,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
               <button
                 style={styles.menuItem}
                 onClick={() => setChatMenuView('connect')}
-              >🔗 Connect to channel ▸</button>
+              >🔗 Connect to channel...</button>
               <button
                 style={styles.menuItem}
                 onClick={() => {
@@ -394,7 +394,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
             </>
           ) : (
             <>
-              <button style={styles.menuItem} onClick={() => setChatMenuView('main')}>◂ Back</button>
+              <button style={styles.menuItem} onClick={() => setChatMenuView('main')}>⬅ Back</button>
               {(['telegram', 'discord', 'imessage'] as const).map(ch => (
                 <button
                   key={ch}
