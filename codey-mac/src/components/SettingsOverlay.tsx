@@ -13,7 +13,7 @@ import { ApiKeysTab } from './ApiKeysTab'
 type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings' | 'whisper' | 'apiKeys'
 const TABS: { key: Tab; label: string; icon: string; description: string }[] = [
   { key: 'general',    label: 'General',    icon: '⚙', description: 'Theme & visual options' },
-  { key: 'apiKeys',    label: 'API Keys',   icon: '🔑', description: 'Shared API keys' },
+  { key: 'apiKeys',    label: 'API Keys',   icon: '⚿', description: 'Shared API keys' },
   { key: 'settings',   label: 'AI Models',  icon: '✦', description: 'Default agent & model' },
   { key: 'whisper',    label: 'Whisper',    icon: '◐', description: 'Voice input & hotkey' },
   { key: 'workspaces', label: 'Workspaces', icon: '◫', description: 'Project directories' },
