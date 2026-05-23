@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import {
-  inputStyle, pillButton, Section, unwrap,
+  inputStyle, pillButton, unwrap,
 } from './settingsAtoms'
 
 interface ApiKeyEntry { name: string; apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string }
@@ -144,11 +144,11 @@ export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning }) => {
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      <Section title="API Keys" right={
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+        <div style={{ color: C.fg3, fontSize: 11, flex: 1 }}>
+          Saved API keys &amp; endpoints. A single key can be bound from many models in the AI Models tab. Each key can carry separate base URL overrides for anthropic-typed and openai-typed models.
+        </div>
         <button onClick={() => setCreating(true)} style={pillButton('primary')} disabled={creating}>+ Add</button>
-      } />
-      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        Saved API keys &amp; endpoints. A single key can be bound from many models in the AI Models tab. Each key can carry separate base URL overrides for anthropic-typed and openai-typed models.
       </div>
       {creating && (
         <ApiRow
