@@ -2634,16 +2634,14 @@ Example: /model gpt-4.1 write a Python script`;
           `Model "${catalogEntry.model}" references API key "${catalogEntry.apiKeyRef}" which no longer exists. Open Settings → API Keys to add it, or rebind the model.`
         );
       }
-      if (apiKey && apiKey.apiType !== catalogEntry.apiType) {
-        throw new Error(
-          `Model "${catalogEntry.model}" expects apiType "${catalogEntry.apiType}" but API key "${apiKey.name}" is "${apiKey.apiType}".`
-        );
-      }
+      const baseUrl = apiKey
+        ? (catalogEntry.apiType === 'anthropic' ? apiKey.anthropicBaseUrl : apiKey.openaiBaseUrl)
+        : undefined;
       return {
         provider: catalogEntry.provider ?? (catalogEntry.apiType === 'anthropic' ? 'anthropic' : 'openai'),
         model: catalogEntry.model,
         apiKey: apiKey?.apiKey,
-        baseUrl: apiKey?.baseUrl,
+        baseUrl,
         apiType: catalogEntry.apiType,
       };
     }

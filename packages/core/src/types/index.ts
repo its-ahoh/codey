@@ -38,15 +38,21 @@ export type CodingAgent = 'claude-code' | 'opencode' | 'codex';
 export type ApiType = 'anthropic' | 'openai';
 
 /**
- * A reusable API key entry — credentials + endpoint stored once and
+ * A reusable API key entry — credentials + endpoints stored once and
  * referenced from any number of ModelEntry rows by name. Lets a single
  * key power multiple models without duplication.
+ *
+ * A single entry can hold both an Anthropic-style and an OpenAI-style
+ * endpoint with the same bearer token (useful for proxy services and
+ * hybrid setups that expose both protocol variants). The resolver picks
+ * `anthropicBaseUrl` or `openaiBaseUrl` based on the *model's* apiType,
+ * so one key can service any model regardless of its protocol.
  */
 export interface ApiKeyEntry {
-  name: string;        // unique id, surfaced in the model dropdown
-  apiType: ApiType;
-  baseUrl?: string;    // optional endpoint override
-  apiKey: string;      // required
+  name: string;                  // unique id, surfaced in the model dropdown
+  apiKey: string;                // required — shared bearer token
+  anthropicBaseUrl?: string;     // optional override for anthropic-typed models
+  openaiBaseUrl?: string;        // optional override for openai-typed models
 }
 
 export interface ModelConfig {

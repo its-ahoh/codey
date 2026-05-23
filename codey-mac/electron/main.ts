@@ -1189,9 +1189,6 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       if (!entry?.name?.trim()) throw new Error('API name is required')
-      if (entry.apiType !== 'anthropic' && entry.apiType !== 'openai') {
-        throw new Error('API apiType must be "anthropic" or "openai"')
-      }
       if (!entry.apiKey?.trim()) throw new Error('API key is required')
       coreConfigManager.saveApiKey(entry)
     })

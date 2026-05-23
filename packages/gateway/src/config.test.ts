@@ -27,9 +27,9 @@ describe('config normalize', () => {
   it('parses apiKeys array and preserves valid entries', () => {
     withTempConfig({
       apiKeys: [
-        { name: 'main', apiType: 'anthropic', baseUrl: 'https://api', apiKey: 'sk-1' },
-        { name: '', apiType: 'anthropic', apiKey: 'sk-bad' },
-        { name: 'noKey', apiType: 'openai' },
+        { name: 'main', apiKey: 'sk-1', anthropicBaseUrl: 'https://anthropic.example', openaiBaseUrl: 'https://openai.example' },
+        { name: '', apiKey: 'sk-bad' },
+        { name: 'noKey' },
       ],
     }, cm => {
       const apiKeys = cm.listApiKeys();
@@ -48,14 +48,28 @@ describe('config normalize', () => {
 describe('api key CRUD', () => {
   it('saveApiKey rejects missing name or key', () => {
     withTempConfig({}, cm => {
-      expect(() => cm.saveApiKey({ name: '', apiType: 'openai', apiKey: 'k' } as any)).toThrow();
-      expect(() => cm.saveApiKey({ name: 'x', apiType: 'openai', apiKey: '' } as any)).toThrow();
+      expect(() => cm.saveApiKey({ name: '', apiKey: 'k' })).toThrow();
+      expect(() => cm.saveApiKey({ name: 'x', apiKey: '' })).toThrow();
+    });
+  });
+
+  it('saveApiKey round-trips both base URLs', () => {
+    withTempConfig({}, cm => {
+      cm.saveApiKey({
+        name: 'proxy',
+        apiKey: 'sk-proxy',
+        anthropicBaseUrl: 'https://proxy.example/anthropic',
+        openaiBaseUrl: 'https://proxy.example/openai',
+      });
+      const saved = cm.getApiKey('proxy');
+      expect(saved?.anthropicBaseUrl).toBe('https://proxy.example/anthropic');
+      expect(saved?.openaiBaseUrl).toBe('https://proxy.example/openai');
     });
   });
 
   it('renameApiKey rewrites apiKeyRef on dependent models', () => {
     withTempConfig({
-      apiKeys: [{ name: 'old', apiType: 'anthropic', apiKey: 'sk' }],
+      apiKeys: [{ name: 'old', apiKey: 'sk' }],
       models: [{ model: 'm1', apiType: 'anthropic', apiKeyRef: 'old' }],
     }, cm => {
       expect(cm.renameApiKey('old', 'new')).toBe(true);
@@ -66,7 +80,7 @@ describe('api key CRUD', () => {
 
   it('deleteApiKey refuses when models still reference it', () => {
     withTempConfig({
-      apiKeys: [{ name: 'a', apiType: 'anthropic', apiKey: 'sk' }],
+      apiKeys: [{ name: 'a', apiKey: 'sk' }],
       models: [{ model: 'm1', apiType: 'anthropic', apiKeyRef: 'a' }],
     }, cm => {
       expect(() => cm.deleteApiKey('a')).toThrow(/m1/);
@@ -75,7 +89,7 @@ describe('api key CRUD', () => {
 
   it('deleteApiKey succeeds with no dependents', () => {
     withTempConfig({
-      apiKeys: [{ name: 'a', apiType: 'anthropic', apiKey: 'sk' }],
+      apiKeys: [{ name: 'a', apiKey: 'sk' }],
     }, cm => {
       expect(cm.deleteApiKey('a')).toBe(true);
       expect(cm.listApiKeys()).toHaveLength(0);

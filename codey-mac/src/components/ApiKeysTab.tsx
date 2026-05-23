@@ -1,11 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import {
-  inputStyle, selectStyle, pillButton, Section, unwrap,
+  inputStyle, pillButton, Section, unwrap,
 } from './settingsAtoms'
 
-type ApiType = 'anthropic' | 'openai'
-interface ApiKeyEntry { name: string; apiType: ApiType; baseUrl?: string; apiKey: string }
+interface ApiKeyEntry { name: string; apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string }
 
 interface Props { isGatewayRunning: boolean }
 
@@ -32,6 +31,14 @@ const ApiRow: React.FC<{
   }
 
   if (!editing) {
+    const hasAnthropicUrl = !!entry.anthropicBaseUrl
+    const hasOpenaiUrl = !!entry.openaiBaseUrl
+    const urlSummary = hasAnthropicUrl || hasOpenaiUrl
+      ? [
+          hasAnthropicUrl ? `anthropic: ${entry.anthropicBaseUrl}` : null,
+          hasOpenaiUrl    ? `openai: ${entry.openaiBaseUrl}`       : null,
+        ].filter(Boolean).join(' · ')
+      : 'default endpoints'
     return (
       <div style={{
         padding: '12px 14px', borderRadius: 10, border: `1px solid ${C.border}`,
@@ -41,10 +48,9 @@ const ApiRow: React.FC<{
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>
             {entry.name}
-            <span style={{ color: C.fg3, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>[{entry.apiType}]</span>
           </div>
           <div style={{ color: C.fg3, fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {entry.baseUrl || '(default url)'} · 🔑
+            🔑 · {urlSummary}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -60,22 +66,19 @@ const ApiRow: React.FC<{
       padding: 12, borderRadius: 10, border: `1px solid ${C.border2}`,
       background: C.surface2, marginBottom: 8,
     }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: 8, alignItems: 'center' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, alignItems: 'center' }}>
         <label style={{ color: C.fg3, fontSize: 12 }}>Name</label>
         <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}
-          placeholder="e.g. anthropic-personal" style={{ ...inputStyle, width: '100%' }} />
-        <label style={{ color: C.fg3, fontSize: 12 }}>API Type</label>
-        <select value={draft.apiType} onChange={e => setDraft({ ...draft, apiType: e.target.value as ApiType })}
-          style={{ ...selectStyle, width: '100%' }}>
-          <option value="anthropic">anthropic (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN)</option>
-          <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
-        </select>
-        <label style={{ color: C.fg3, fontSize: 12 }}>Base URL</label>
-        <input value={draft.baseUrl ?? ''} onChange={e => setDraft({ ...draft, baseUrl: e.target.value || undefined })}
-          placeholder="(optional) override endpoint" style={{ ...inputStyle, width: '100%' }} />
+          placeholder="e.g. my-proxy" style={{ ...inputStyle, width: '100%' }} />
         <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
         <input type="password" value={draft.apiKey} onChange={e => setDraft({ ...draft, apiKey: e.target.value })}
           placeholder="API key" style={{ ...inputStyle, width: '100%' }} />
+        <label style={{ color: C.fg3, fontSize: 12 }}>Anthropic Base URL</label>
+        <input value={draft.anthropicBaseUrl ?? ''} onChange={e => setDraft({ ...draft, anthropicBaseUrl: e.target.value || undefined })}
+          placeholder="(optional) override anthropic endpoint" style={{ ...inputStyle, width: '100%' }} />
+        <label style={{ color: C.fg3, fontSize: 12 }}>OpenAI Base URL</label>
+        <input value={draft.openaiBaseUrl ?? ''} onChange={e => setDraft({ ...draft, openaiBaseUrl: e.target.value || undefined })}
+          placeholder="(optional) override openai endpoint" style={{ ...inputStyle, width: '100%' }} />
       </div>
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
@@ -131,11 +134,11 @@ export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning }) => {
         <button onClick={() => setCreating(true)} style={pillButton('primary')} disabled={creating}>+ Add</button>
       } />
       <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        Saved API keys &amp; endpoints. A single key can be bound from many models in the AI Models tab.
+        Saved API keys &amp; endpoints. A single key can be bound from many models in the AI Models tab. Each key can carry separate base URL overrides for anthropic-typed and openai-typed models.
       </div>
       {creating && (
         <ApiRow
-          entry={{ name: '', apiType: 'anthropic', baseUrl: '', apiKey: '' }}
+          entry={{ name: '', apiKey: '', anthropicBaseUrl: '', openaiBaseUrl: '' }}
           isNew
           onSave={saveApiKey}
           onCancel={() => setCreating(false)}
@@ -145,7 +148,7 @@ export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning }) => {
         <div style={{ color: C.fg3, fontSize: 12, padding: '16px 0' }}>No API keys yet. Click + Add to create one.</div>
       )}
       {[...apiKeys]
-        .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.name.localeCompare(b.name))
+        .sort((a, b) => a.name.localeCompare(b.name))
         .map(a => <ApiRow key={a.name} entry={a} onSave={saveApiKey} onDelete={deleteApiKey} />)}
     </div>
   )
