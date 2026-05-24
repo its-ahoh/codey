@@ -212,6 +212,17 @@ export interface AdvisorSettings {
   model?: string;
 }
 
+// Aide configuration — lightweight global LLM for housekeeping tasks
+// (chat summarization, title generation, classification). Recommend a small
+// fast model (e.g. Haiku) here. Falls back to the gateway default agent +
+// model when either field is unset.
+export interface AideSettings {
+  /** Coding agent to use for Aide calls. Defaults to gateway default. */
+  agent?: CodingAgent;
+  /** Model name (must exist in the global model catalog). Defaults to default agent's default model. */
+  model?: string;
+}
+
 // Context configuration
 export interface ContextSettings {
   maxTokenBudget?: number;
@@ -245,6 +256,8 @@ export interface GatewayConfig {
   memory?: MemorySettings;
   /** Advisor (team manager / auto-dispatcher) settings. */
   advisor?: AdvisorSettings;
+  /** Aide (lightweight housekeeping LLM) settings. */
+  aide?: AideSettings;
 }
 
 export * from './chat';
