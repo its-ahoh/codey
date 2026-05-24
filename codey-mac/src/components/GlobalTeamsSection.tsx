@@ -6,18 +6,20 @@ import { C } from '../theme'
 // Mirrors TeamsSection's editor, but operates on the global team library
 // stored in gateway.json. Workspaces opt into these teams by name.
 
-type DispatchMode = 'all' | 'auto'
+type DispatchMode = 'all' | 'auto' | 'parallel'
 interface TeamState { members: string[]; dispatch: DispatchMode }
 type TeamsState = Record<string, TeamState>
 
 function fromRaw(raw: TeamConfigRaw): TeamState {
   if (Array.isArray(raw)) return { members: raw, dispatch: 'all' }
-  const dispatch: DispatchMode = raw?.dispatch === 'auto' ? 'auto' : 'all'
+  const d = raw?.dispatch
+  const dispatch: DispatchMode = d === 'auto' ? 'auto' : d === 'parallel' ? 'parallel' : 'all'
   return { members: Array.isArray(raw?.members) ? raw.members : [], dispatch }
 }
 
 function toRaw(t: TeamState): TeamConfigRaw {
-  return t.dispatch === 'all' ? t.members : { members: t.members, dispatch: 'auto' }
+  if (t.dispatch === 'all') return t.members
+  return { members: t.members, dispatch: t.dispatch }
 }
 
 function normalizeAll(raw: Record<string, TeamConfigRaw>): TeamsState {
@@ -131,7 +133,7 @@ export default function GlobalTeamsSection() {
             <select
               value={team.dispatch}
               onChange={e => setDispatch(name, e.target.value as DispatchMode)}
-              title="Sequential: members run in order, output passed forward. Auto: the advisor picks the relevant subset."
+              title="Sequential: members run in order, output passed forward. Auto: the advisor picks the relevant subset. Parallel: all members discuss concurrently as a Manager-moderated roundtable."
               style={{
                 background: C.surface2, color: C.fg, border: `1px solid ${C.border}`,
                 borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer',
@@ -139,7 +141,7 @@ export default function GlobalTeamsSection() {
             >
               <option value="all">Sequential</option>
               <option value="auto">Auto</option>
-              <option value="parallel" disabled>Parallel (coming soon)</option>
+              <option value="parallel">Parallel</option>
             </select>
             <button onClick={() => removeTeam(name)} style={{ background: 'transparent', color: C.dangerFg, border: 'none', cursor: 'pointer', fontSize: 12 }}>Delete</button>
           </div>
