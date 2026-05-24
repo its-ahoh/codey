@@ -94,7 +94,27 @@ export class ParallelTeamRunner {
   }
 
   // Worker loops, manager loop, supervisors, emitFinal — added in subsequent tasks.
-  private spawnWorkers(): void { /* Task 9 */ }
+  private spawnWorkers(): void {
+    for (const w of this.opts.members) {
+      const ac = new AbortController();
+      this.workerAborts.push(ac);
+      const req: AgentRequest = {
+        prompt: this.opts.buildWorkerPrompt(w),
+        signal: ac.signal,
+      } as AgentRequest;
+      void this.opts.workerRunner(req)
+        .then(async res => {
+          await appendTranscript(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId, {
+            actor: w, kind: res.success ? 'worker_done' : 'worker_failed', note: res.error,
+          });
+        })
+        .catch(async err => {
+          await appendTranscript(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId, {
+            actor: w, kind: 'worker_error', note: (err as Error).message,
+          });
+        });
+    }
+  }
   private async runManagerLoop(): Promise<void> { /* Task 10 */ }
   private armSupervisors(): void { /* Task 11 */ }
   private async emitFinal(reason: DiscussionTerminatedReason, message: string): Promise<void> {

@@ -36,6 +36,16 @@ describe('ParallelTeamRunner', () => {
     await r.stop('user_cancel');
   });
 
+  it('dispatches each member exactly once via workerRunner with its built prompt', async () => {
+    const workerRunner = vi.fn().mockResolvedValue({ success: true, output: '' });
+    const buildWorkerPrompt = vi.fn((w: string) => `PROMPT-${w}`);
+    const r = makeRunner({ workerRunner, buildWorkerPrompt });
+    await r.start();
+    await r.stop('user_cancel');
+    const calls = workerRunner.mock.calls.map(c => c[0].prompt);
+    expect(calls.sort()).toEqual(['PROMPT-a', 'PROMPT-b']);
+  });
+
   it('emits onFinal with reason after stop()', async () => {
     const onFinal = vi.fn();
     const r = makeRunner({ onFinal });
