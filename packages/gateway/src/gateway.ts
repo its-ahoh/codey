@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, ChannelKind, Chat, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -128,6 +128,55 @@ export class Codey {
     return this.runWithFallback(req.agent, req);
   };
 
+  /** Resolve the agent + model for Aide (housekeeping) calls. Falls back to defaults. */
+  private getAideAgentAndModel(): { agent: CodingAgent; model?: ModelConfig } {
+    const cfg = this.config.aide;
+    const agent = (cfg?.agent as CodingAgent | undefined) ?? this.getDefaultAgent();
+    const modelName = cfg?.model;
+    const model = modelName ? this.getModelConfig(agent, modelName) : this.getDefaultModelConfig(agent);
+    return { agent, model };
+  }
+
+  private aideRunner = (req: AgentRequest): Promise<AgentResponse> => {
+    return this.runWithFallback(req.agent, req);
+  };
+
+  /**
+   * Build AideOptions for an outside caller (e.g. ChatManager triggering an
+   * async summarization). Reads `aide` config live so user edits take effect
+   * without a gateway restart.
+   */
+  public getAideOptions(signal?: AbortSignal): AideOptions {
+    const { agent, model } = this.getAideAgentAndModel();
+    return { agent, model, runner: this.aideRunner, signal };
+  }
+
+  /**
+   * Compaction job invoked by ChatManager when a chat's unsummarized tail
+   * grows past the trigger. Folds the head of `chat.messages` into a rolling
+   * summary via the Aide, leaving a recent tail untouched so the next turn
+   * still has fresh transcript to anchor on.
+   */
+  private async runChatCompaction(chat: Chat): Promise<ChatCompaction | null> {
+    const KEEP_TAIL = 40;
+    const already = chat.compaction?.summarizedUpTo ?? 0;
+    const cutoff = chat.messages.length - KEEP_TAIL;
+    if (cutoff <= already) return null;
+    const toFold = chat.messages.slice(already, cutoff);
+    if (toFold.length === 0) return null;
+
+    const opts = this.getAideOptions();
+    const summary = await summarizeChatMessages(toFold, chat.compaction?.summary, opts);
+    if (!summary.trim()) return null;
+
+    return {
+      summary,
+      summarizedUpTo: cutoff,
+      model: opts.model?.model ?? '(default)',
+      updatedAt: Date.now(),
+    };
+  }
+
   private conversationCleanupInterval?: NodeJS.Timeout;
 
   constructor(config: GatewayConfig, logger?: Logger, workspaceDir?: string, configManager?: ConfigManager, workerManager?: WorkerManager) {
@@ -154,6 +203,7 @@ export class Codey {
     const wm = workerManager || new WorkerManager('./workers');
     this.workspaceManager = new WorkspaceManager(wm, workspaceDir || './workspaces', this.logger);
     this.chatManager = new ChatManager(this.workspaceManager.getWorkspacesRoot());
+    this.chatManager.setCompactionRunner((chat) => this.runChatCompaction(chat));
     // Anchor pairings.json to the data root (parent of the workspaces dir),
     // not process.cwd(). In the packaged Mac app cwd can be `/`, which is
     // read-only and produces EROFS on first write.

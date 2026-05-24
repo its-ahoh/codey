@@ -70,4 +70,21 @@ export interface Chat {
    * or when a resume attempt fails.
    */
   sessionAnchor?: { agent: 'claude-code' | 'opencode' | 'codex'; sessionId: string };
+  /**
+   * Rolling LLM-generated summary of older messages. When set, the bootstrap
+   * prompt prepends `summary` and only renders the transcript tail starting at
+   * `summarizedUpTo`. Produced asynchronously by the Aide after appendMessage
+   * crosses a threshold; never blocks a user-visible turn.
+   */
+  compaction?: ChatCompaction;
+}
+
+export interface ChatCompaction {
+  /** Summary text covering messages[0 .. summarizedUpTo - 1]. */
+  summary: string;
+  /** Exclusive end index — everything strictly before this is folded into `summary`. */
+  summarizedUpTo: number;
+  /** Model id used to produce the summary (for telemetry / future invalidation). */
+  model: string;
+  updatedAt: number;
 }

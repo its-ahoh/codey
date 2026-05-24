@@ -46,6 +46,16 @@ export interface GatewayConfigJson {
     model?: string;
   };
   /**
+   * Aide configuration — lightweight global LLM for housekeeping tasks
+   * (chat summarization, title generation, classification). Recommend a
+   * small fast model. Falls back to gateway default agent + model when
+   * either field is unset.
+   */
+  aide?: {
+    agent?: CodingAgent;
+    model?: string;
+  };
+  /**
    * Global team library. Each entry maps a team name to its members + dispatch
    * mode. Workspaces opt into teams by listing their names in workspace.json's
    * `teams: string[]` field.
@@ -166,6 +176,7 @@ export class ConfigManager extends EventEmitter {
     if (partial.apiKeys !== undefined) this.config.apiKeys = partial.apiKeys;
     if (partial.fallback !== undefined) this.config.fallback = partial.fallback;
     if (partial.advisor !== undefined) this.config.advisor = partial.advisor;
+    if (partial.aide !== undefined) this.config.aide = partial.aide;
     if (partial.teams !== undefined) this.config.teams = partial.teams;
     if (partial.voice !== undefined) this.config.voice = partial.voice;
     this.save();
@@ -513,6 +524,12 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
     fallback: normalizeFallback(raw.fallback, defaults.fallback),
     dev: raw.dev ?? defaults.dev,
   };
+  if (raw.aide && typeof raw.aide === 'object') {
+    out.aide = {
+      agent: raw.aide.agent,
+      model: raw.aide.model,
+    };
+  }
   if (raw.advisor && typeof raw.advisor === 'object') {
     out.advisor = {
       agent: raw.advisor.agent,

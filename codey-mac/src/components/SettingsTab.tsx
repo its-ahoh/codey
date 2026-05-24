@@ -424,6 +424,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const [models, setModels] = useState<ModelEntry[]>([])
   const [fallback, setFallback] = useState<FallbackCfg>({ enabled: true, order: [] })
   const [advisor, setAdvisor] = useState<{ agent: string; model: string }>({ agent: '', model: '' })
+  const [aide, setAide] = useState<{ agent: string; model: string }>({ agent: '', model: '' })
   const [apis, setApis] = useState<ApiKeyEntry[]>([])
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -431,14 +432,16 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const reload = useCallback(async () => {
     setError(null)
     try {
-      const [m, f, d, a] = await Promise.all([
+      const [m, f, d, ai, a] = await Promise.all([
         unwrap(await window.codey.models.list()),
         unwrap(await window.codey.fallback.get()),
         unwrap(await window.codey.dispatcher.get()),
+        unwrap(await window.codey.aide.get()),
         unwrap(await window.codey.apiKeys.list()),
       ])
       setModels(m); setFallback(f as FallbackCfg)
       setAdvisor({ agent: d.agent ?? '', model: d.model ?? '' })
+      setAide({ agent: ai.agent ?? '', model: ai.model ?? '' })
       setApis(a as ApiKeyEntry[])
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
@@ -482,10 +485,25 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
     }))
   }
 
+  const updateAide = async (next: { agent: string; model: string }) => {
+    setAide(next)
+    await unwrap(await window.codey.aide.set({
+      agent: next.agent || undefined,
+      model: next.model || undefined,
+    }))
+  }
+
   // Mirror the fallback editor's filter: when an agent is picked, only show
   // models compatible with its apiType. When no agent is picked, show all.
   const advisorModels = (() => {
     const want = advisor.agent ? AGENT_API_TYPE[advisor.agent] : undefined
+    return [...models]
+      .filter(m => !want || m.apiType === want)
+      .sort((a, b) => a.model.localeCompare(b.model))
+  })()
+
+  const aideModels = (() => {
+    const want = aide.agent ? AGENT_API_TYPE[aide.agent] : undefined
     return [...models]
       .filter(m => !want || m.apiType === want)
       .sort((a, b) => a.model.localeCompare(b.model))
@@ -579,6 +597,47 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         >
           <option value="">Select Model</option>
           {advisorModels.map(m => (
+            <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
+          ))}
+        </select>
+      </div>
+
+      <Section title="Aide"/>
+      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
+        The Aide is a lightweight background model for housekeeping tasks like chat summarization and title generation — it never talks to you directly. Pin a small, fast model here (e.g. Haiku) to keep these tasks cheap. Leave both as <em>Use default</em> to fall back to the gateway default.
+      </div>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
+        padding: '8px 12px',
+      }}>
+        <span style={{
+          color: C.fg3, fontSize: 11, fontWeight: 400,
+          width: 56, letterSpacing: 0.3,
+        }}>AIDE</span>
+        <select
+          value={aide.agent}
+          onChange={e => {
+            const nextAgent = e.target.value
+            const want = nextAgent ? AGENT_API_TYPE[nextAgent] : undefined
+            const m = models.find(mm => mm.model === aide.model)
+            const keepModel = !aide.model || !want || (m && m.apiType === want)
+            updateAide({ agent: nextAgent, model: keepModel ? aide.model : '' })
+          }}
+          style={{ ...selectStyle, width: 130 }}
+        >
+          <option value="">Select Agent</option>
+          {AGENT_NAMES.map(a => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+        <select
+          value={aide.model}
+          onChange={e => updateAide({ agent: aide.agent, model: e.target.value })}
+          style={{ ...selectStyle, flex: 1, minWidth: 0 }}
+        >
+          <option value="">Select Model</option>
+          {aideModels.map(m => (
             <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
           ))}
         </select>

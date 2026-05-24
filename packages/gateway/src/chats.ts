@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { Chat, ChatMessage, ChatSelection, ChatRoute, ChannelKind } from '@codey/core';
+import { Chat, ChatCompaction, ChatMessage, ChatSelection, ChatRoute, ChannelKind } from '@codey/core';
 import { Logger } from './logger';
 
 const log = Logger.getInstance();
@@ -12,11 +12,33 @@ export interface CreateChatInput {
   title?: string;
 }
 
+/**
+ * Async hook that produces a new ChatCompaction for `chat`. Called from
+ * appendMessage when the unsummarized tail crosses the threshold. Implementor
+ * (gateway) decides which messages to fold and runs the Aide. Returning null
+ * signals "not enough new material yet" or "skip".
+ */
+export type CompactionRunner = (chat: Chat) => Promise<ChatCompaction | null>;
+
+/** Append at least this many uncompacted messages before triggering. */
+const COMPACTION_TRIGGER_UNSUMMARIZED = 80;
+
 export class ChatManager {
   private cache = new Map<string, Chat>();
   private loaded = false;
+  private compactionRunner?: CompactionRunner;
+  private compactingChats = new Set<string>();
 
   constructor(private readonly workspacesRoot: string) {}
+
+  /**
+   * Wire the Aide-backed compaction job. The gateway calls this once at boot.
+   * Without a runner, appendMessage just skips compaction entirely — safe
+   * default for tests and tooling that don't need a live LLM.
+   */
+  setCompactionRunner(runner: CompactionRunner | undefined): void {
+    this.compactionRunner = runner;
+  }
 
   private chatsDir(workspaceName: string): string {
     return path.join(this.workspacesRoot, workspaceName, 'chats');
@@ -233,7 +255,41 @@ export class ChatManager {
       chat.title = deriveTitle(message.content);
     }
     this.persist(chat);
+    this.maybeScheduleCompaction(chat);
     return chat;
+  }
+
+  /**
+   * Kick off a background compaction job if the unsummarized tail has grown
+   * past the threshold and one isn't already running for this chat. Errors
+   * are logged and swallowed — compaction is best-effort and never blocks a
+   * user-visible turn. The next turn after success picks up the new summary
+   * via `buildChatBootstrapPrompt`.
+   */
+  private maybeScheduleCompaction(chat: Chat): void {
+    if (!this.compactionRunner) return;
+    const already = chat.compaction?.summarizedUpTo ?? 0;
+    const unsummarized = chat.messages.length - already;
+    if (unsummarized < COMPACTION_TRIGGER_UNSUMMARIZED) return;
+    if (this.compactingChats.has(chat.id)) return;
+    this.compactingChats.add(chat.id);
+    // Run in a microtask so the caller (turn completion) returns immediately.
+    queueMicrotask(async () => {
+      try {
+        const next = await this.compactionRunner!(chat);
+        if (next) {
+          const current = this.cache.get(chat.id);
+          if (current) {
+            current.compaction = next;
+            this.persist(current);
+          }
+        }
+      } catch (err) {
+        log.warn(`ChatManager: compaction failed for ${chat.id}: ${(err as Error).message}`);
+      } finally {
+        this.compactingChats.delete(chat.id);
+      }
+    });
   }
 
   /**

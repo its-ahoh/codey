@@ -79,6 +79,10 @@ contextBridge.exposeInMainWorld('codey', {
     get: () => ipcRenderer.invoke('dispatcher:get'),
     set: (updates: { agent?: string; model?: string }) => ipcRenderer.invoke('dispatcher:set', updates),
   },
+  aide: {
+    get: () => ipcRenderer.invoke('aide:get'),
+    set: (updates: { agent?: string; model?: string }) => ipcRenderer.invoke('aide:set', updates),
+  },
   agents: {
     get: () => ipcRenderer.invoke('agents:get'),
     set: (updates: any) => ipcRenderer.invoke('agents:set', updates),
