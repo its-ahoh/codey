@@ -8,6 +8,7 @@ export default defineConfig({
     include: [
       'src/workspace.test.ts',
       'src/discussion/files.test.ts',
+      'src/discussion/control.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },
