@@ -243,6 +243,10 @@ export class ChatManager {
     if (!chat) return;
     const file = this.chatFile(chat.workspaceName, chat.id);
     if (fs.existsSync(file)) fs.unlinkSync(file);
+    const chatDir = path.join(this.workspacesRoot, chat.workspaceName, 'chats', chatId);
+    if (fs.existsSync(chatDir)) {
+      fs.rmSync(chatDir, { recursive: true, force: true });
+    }
     this.cache.delete(chatId);
   }
 

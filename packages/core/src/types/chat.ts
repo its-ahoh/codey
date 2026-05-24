@@ -40,6 +40,22 @@ export type ChatSelection =
   /** `name` identifies which team to run. Optional only for backward compat with chats persisted before per-team selection landed; the UI always sets it. */
   | { type: 'team'; name?: string };
 
+export type DiscussionStatus = 'running' | 'paused' | 'done' | 'terminated';
+export type DiscussionTerminatedReason =
+  | 'consensus'
+  | 'drift'
+  | 'timeout'
+  | 'max_duration'
+  | 'user_cancel'
+  | 'manager_error';
+
+export interface DiscussionMeta {
+  teamName: string;
+  status: DiscussionStatus;
+  startedAt: number;
+  terminatedReason?: DiscussionTerminatedReason;
+}
+
 export interface Chat {
   id: string;
   title: string;
@@ -77,6 +93,8 @@ export interface Chat {
    * crosses a threshold; never blocks a user-visible turn.
    */
   compaction?: ChatCompaction;
+  /** Set when this chat is hosting a parallel-team (roundtable) discussion. */
+  discussion?: DiscussionMeta;
 }
 
 export interface ChatCompaction {

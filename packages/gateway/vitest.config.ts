@@ -11,6 +11,8 @@ export default defineConfig({
       'src/config.test.ts',
       'src/digit-mapping.test.ts',
       'src/team-pause.test.ts',
+      'src/chats.discussion.test.ts',
+      'src/parallel-team.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },

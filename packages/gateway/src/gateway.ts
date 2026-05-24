@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -8,7 +8,7 @@ import { AgentFactory } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
-import { WorkspaceManager, TeamConfigRaw } from '@codey/core';
+import { WorkspaceManager, TeamConfigRaw, TeamConfig } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
 import { PairingStore, ChannelBinding } from './pairings';
@@ -17,6 +17,7 @@ import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, assis
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
 import { resolveChoiceDigit } from './digit-mapping';
+import { ParallelTeamRunner, ParallelFinalEvent } from './parallel-team';
 
 interface ParsedCommand {
   command: string;
@@ -46,6 +47,8 @@ export class Codey {
   private configManager?: ConfigManager;
   private chatSemaphore = new RunSemaphore();
   private chatAborts: Map<string, AbortController> = new Map();
+  private parallelResumes = new Map<string, (answer: string) => Promise<void>>();
+  private activeParallelRuns = new Map<string, ParallelTeamRunner>();
   private turnQueue: TurnQueue;
   private chatEventListener: ((ev: any) => void) | undefined;
   private pairingEventListener: ((ev: { type: 'completed'; channel: ChannelKind; channelUserId: string }) => void) | undefined;
@@ -2390,11 +2393,12 @@ Example: /model gpt-4.1 write a Python script`;
 
   private async runTeamForChat(
     teamName: string,
-    team: { members: string[]; dispatch: 'all' | 'auto' },
+    team: TeamConfig,
     prompt: string,
     workingDir: string,
     sink: ChatStreamSink,
     chatId: string,
+    chat: Chat,
     signal?: AbortSignal,
     opts: { forceAll?: boolean } = {},
     chatAgent?: CodingAgent,
@@ -2426,6 +2430,97 @@ Example: /model gpt-4.1 write a Python script`;
     };
 
     const useManager = team.dispatch === 'auto' && !opts.forceAll;
+
+    // === parallel dispatch branch ===
+    // Check if user is answering a pending question from a paused parallel discussion
+    if (this.parallelResumes.has(chat.id)) {
+      const resume = this.parallelResumes.get(chat.id)!;
+      this.parallelResumes.delete(chat.id);
+      await resume(prompt);
+      return { response: '' };
+    }
+
+    if (team.dispatch === 'parallel') {
+      const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
+      // Resume detection: if this chat has a completed/terminated discussion,
+      // re-activate it instead of starting fresh. initDiscussionDir will
+      // append a Continuation header to topic.md and reset control.md.
+      if (chat.discussion && (chat.discussion.status === 'done' || chat.discussion.status === 'terminated')) {
+        await initDiscussionDir(workspacesRoot, chat.workspaceName, chat.id, prompt, team.members);
+      }
+      if (!team.parallel) {
+        // defensive — normalizer always populates this for parallel teams
+        await sink({ type: 'stream', chatId, token: '⚠️ parallel team is missing settings' });
+        return { response: '' };
+      }
+      const runner = new ParallelTeamRunner({
+        workspacesRoot,
+        workspace: chat.workspaceName,
+        chatId: chat.id,
+        teamName: teamName,
+        members: team.members,
+        topic: prompt,
+        settings: team.parallel,
+        workerRunner: async req => this.runWithFallback(chatAgent ?? this.getDefaultAgent() as CodingAgent, {
+          prompt: req.prompt,
+          agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
+          model: chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent),
+          context: { workingDir },
+          onStream: (text: string) => sink({ type: 'stream', chatId, token: text }),
+          onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
+          signal: req.signal,
+        }),
+        managerRunner: async req => {
+          const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
+          const advisorResult = await this.runWithFallback(mAgent, {
+            prompt: req.prompt,
+            agent: mAgent,
+            model: mModel,
+            context: { workingDir },
+            onStream: () => {},
+            onStatus: () => {},
+            signal: req.signal,
+          });
+          return advisorResult;
+        },
+        buildWorkerPrompt: (workerName: string) => {
+          const wm = this.workspaceManager.getWorkerManager();
+          return wm.buildParallelWorkerPrompt(workerName, {
+            topic: prompt,
+            controlPath: controlPath(workspacesRoot, chat.workspaceName, chat.id),
+            summaryPath: summaryPath(workspacesRoot, chat.workspaceName, chat.id),
+            ownOpinionPath: opinionPath(workspacesRoot, chat.workspaceName, chat.id, workerName),
+            peerOpinions: team.members
+              .filter(m => m !== workerName)
+              .map(m => ({ name: m, path: opinionPath(workspacesRoot, chat.workspaceName, chat.id, m) })),
+          });
+        },
+        onUserQuestion: q => {
+          this.parallelResumes.set(chat.id, q.resume);
+          const rendered = renderQuestion('Manager', '', q.question, q.choices);
+          sink({ type: 'stream', chatId, token: rendered.text });
+        },
+        onFinal: ev => {
+          this.parallelResumes.delete(chat.id);
+          this.activeParallelRuns.delete(chat.id);
+          const c = this.chatManager.get(chat.id);
+          if (c) {
+            c.discussion = { teamName, status: 'done', startedAt: c.discussion?.startedAt ?? Date.now(), terminatedReason: ev.reason };
+            (c as any).updatedAt = Date.now();
+          }
+          void sink({ type: 'stream', chatId, token: this.formatParallelFinal(ev, teamName) });
+        },
+      });
+      const c0 = this.chatManager.get(chat.id);
+      if (c0) {
+        c0.discussion = { teamName, status: 'running', startedAt: Date.now() };
+        (c0 as any).updatedAt = Date.now();
+      }
+      this.activeParallelRuns.set(chat.id, runner);
+      await runner.start();
+      return { response: '' };
+    }
+    // === end parallel dispatch branch ===
 
     if (useManager) {
       let isFirstStep = true;
@@ -2546,6 +2641,21 @@ Example: /model gpt-4.1 write a Python script`;
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
     return `${h}h ${m}m ${s}s`;
+  }
+
+  private formatParallelFinal(ev: ParallelFinalEvent, team: string): string {
+    return [
+      `🪑 Roundtable: ${team}`,
+      `终止原因: ${ev.reason}`,
+      '',
+      '【Manager 总结】',
+      ev.summary.trim() || '(empty)',
+      '',
+      '【各方观点】',
+      ...ev.perWorker.map(p => `• ${p.name}: ${p.excerpt || '(empty)'}`),
+      '',
+      ev.message,
+    ].join('\n');
   }
 
   private parseCommand(text: string): ParsedCommand {
@@ -3112,11 +3222,11 @@ Example: /model gpt-4.1 write a Python script`;
         // Prefer the active workspace's normalized team (which carries dispatch mode);
         // fall back to building a TeamConfig inline from the chat's raw config.
         const wsTeam = this.workspaceManager.getTeam(teamName);
-        const team = wsTeam ?? {
+        const team: TeamConfig = wsTeam ?? {
           members: rawMembers,
-          dispatch: (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as 'all' | 'auto',
+          dispatch: (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as TeamConfig['dispatch'],
         };
-        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, abortController.signal, {}, agent, model);
+        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, chat, abortController.signal, {}, agent, model);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
@@ -3246,6 +3356,11 @@ Example: /model gpt-4.1 write a Python script`;
    * Cancel an in-flight chat turn. Returns true if a run was aborted.
    */
   stopChat(chatId: string): boolean {
+    const runner = this.activeParallelRuns.get(chatId);
+    if (runner) {
+      void runner.stop('user_cancel', 'user cancelled the discussion');
+      return true;
+    }
     const controller = this.chatAborts.get(chatId);
     if (!controller) return false;
     controller.abort();
