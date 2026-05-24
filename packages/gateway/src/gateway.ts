@@ -2390,7 +2390,7 @@ Example: /model gpt-4.1 write a Python script`;
 
   private async runTeamForChat(
     teamName: string,
-    team: { members: string[]; dispatch: 'all' | 'auto' },
+    team: { members: string[]; dispatch: 'all' | 'auto' | 'parallel'; parallel?: any },
     prompt: string,
     workingDir: string,
     sink: ChatStreamSink,

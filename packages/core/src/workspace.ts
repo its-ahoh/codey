@@ -10,15 +10,35 @@ const defaultLogger: CoreLogger = {
   error: (msg: string) => console.error(msg),
 };
 
-export type TeamDispatchMode = 'all' | 'auto';
+export type TeamDispatchMode = 'all' | 'auto' | 'parallel';
+
+export interface ParallelSettings {
+  maxDurationMs: number;
+  idleTimeoutMs: number;
+  managerPollMs: number;
+}
+
+const DEFAULT_PARALLEL_SETTINGS: ParallelSettings = {
+  maxDurationMs: 600_000,
+  idleTimeoutMs: 60_000,
+  managerPollMs: 30_000,
+};
 
 /** Raw team value as it can appear in workspace.json. */
-export type TeamConfigRaw = string[] | { members: string[]; dispatch?: TeamDispatchMode };
+export type TeamConfigRaw =
+  | string[]
+  | {
+      members: string[];
+      dispatch?: TeamDispatchMode;
+      parallel?: Partial<ParallelSettings>;
+    };
 
 /** Normalized team value used at runtime. */
 export interface TeamConfig {
   members: string[];
   dispatch: TeamDispatchMode;
+  /** Only populated when dispatch === 'parallel'. */
+  parallel?: ParallelSettings;
 }
 
 export interface WorkspaceJson {
@@ -154,15 +174,18 @@ export class WorkspaceManager {
   private normalizeTeam(name: string, raw: TeamConfigRaw): TeamConfig | null {
     let members: string[];
     let dispatch: TeamDispatchMode = 'all';
+    let parallel: Partial<ParallelSettings> | undefined;
 
     if (Array.isArray(raw)) {
       members = raw;
     } else if (raw && typeof raw === 'object' && Array.isArray(raw.members)) {
       members = raw.members;
-      if (raw.dispatch === 'auto' || raw.dispatch === 'all') dispatch = raw.dispatch;
-      else if (raw.dispatch !== undefined) {
+      if (raw.dispatch === 'auto' || raw.dispatch === 'all' || raw.dispatch === 'parallel') {
+        dispatch = raw.dispatch;
+      } else if (raw.dispatch !== undefined) {
         this.logger.warn(`[Workspace] Team "${name}" has invalid dispatch="${raw.dispatch}" — defaulting to "all"`);
       }
+      parallel = raw.parallel;
     } else {
       this.logger.error(`[Workspace] Team "${name}" has invalid shape — skipping`);
       return null;
@@ -173,7 +196,12 @@ export class WorkspaceManager {
       this.logger.error(`[Workspace] Team "${name}" references unknown workers: ${unknown.join(', ')} — skipping`);
       return null;
     }
-    return { members, dispatch };
+
+    const result: TeamConfig = { members, dispatch };
+    if (dispatch === 'parallel') {
+      result.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...(parallel ?? {}) };
+    }
+    return result;
   }
 
   async switchWorkspace(workspaceId: string): Promise<boolean> {
