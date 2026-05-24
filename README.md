@@ -6,7 +6,17 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-A local gateway that routes prompts from chat platforms (Telegram, Discord, iMessage) to coding agents with support for multi-workspace and worker teams. Ships with a native macOS menu-bar app for managing chats, workspaces, and agents locally — including a system-wide push-to-talk **voice input** that types into whatever app you're focused on.
+**A multi-agent workbench for coding agents.** Codey is one place to organize, switch between, and orchestrate Claude Code, OpenCode, Codex (and more) across your projects — give each project its own workspace, build worker teams with different agents/models per role, run several agents in parallel on the same task to compare, and reach all of it from a native macOS app, chat platforms (Telegram / Discord / iMessage), or system-wide push-to-talk voice.
+
+Think of it less as a chat bridge and more as **the control plane for the coding agents you already use**.
+
+## Why Codey
+
+- **One project, the right agent for each job.** Per-workspace defaults plus per-worker overrides — Architect on Opus, Executor on Codex, Reviewer on local OpenCode, etc.
+- **Run multiple agents in parallel on the same prompt.** Compare Claude Code vs. Codex vs. OpenCode side by side instead of guessing which one fits.
+- **Worker teams instead of single prompts.** Define roles, personalities, tools, and let them run sequentially or be auto-dispatched to the subset that's actually relevant.
+- **Use them from anywhere.** Native macOS menu-bar app for daily driving, chat platforms for delegating from your phone, voice input for hands-free dictation into any focused app.
+- **Local and yours.** Runs on your machine, talks to your accounts, no proxy server in the middle.
 
 ## Download
 
@@ -19,13 +29,20 @@ Builds are currently unsigned — on first launch, right-click the app → **Ope
 
 ## Features
 
-- **macOS menu-bar app** with multi-chat tabs, workspace switcher, and inline settings
-- **Multi-channel support**: Telegram, Discord, iMessage
+**Agent management**
 - **Multiple coding agents**: Claude Code, OpenCode, Codex (with session resume)
+- **Parallel execution**: Run multiple agents on the same prompt simultaneously to compare
+- **Per-workspace defaults**: Each project picks its own default agent + model
+- **Auto-dispatcher**: Optional built-in dispatcher routes a task to the right subset of a team
+
+**Workspaces & workers**
 - **Multi-workspace**: Each workspace has its own working directory, memory, and workers
-- **Worker teams**: Define workers with roles, personalities, and relationships
-- **Parallel execution**: Run multiple agents or workers simultaneously
+- **Worker teams**: Define workers with roles, personalities, tools, and per-worker agent/model
 - **Conversation context**: Remembers previous messages within a session
+
+**Interfaces**
+- **macOS menu-bar app** with multi-chat tabs, workspace switcher, and inline settings
+- **Chat platforms**: Telegram, Discord, iMessage
 - **Voice input (macOS)**: Hotkey-triggered dictation with on-device WhisperKit (CoreML / ANE) or OpenAI-compatible APIs — pastes directly into whichever app you're focused on
 - **Health endpoints**: Built-in health check and metrics
 
@@ -187,7 +204,7 @@ When prompted, analyze requirements and provide...
 | `/workspaces` | List all workspaces |
 | `/workspace <name>` | Switch to a workspace |
 
-### Agents (legacy)
+### Agents
 | Command | Description |
 |---------|-------------|
 | `/parallel <prompt>` | Run all agents in parallel |

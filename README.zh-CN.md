@@ -6,7 +6,17 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-一个本地网关，将聊天平台（Telegram、Discord、iMessage）的提示路由到编码代理，支持多工作区和工作者团队。附带原生 macOS 菜单栏应用，可在本地管理对话、工作区与代理 — 还包含一个全局热键触发的**语音输入**，可以直接把识别结果粘贴到任何前台应用的输入框。
+**面向编码 Agent 的多 Agent 工作台。** Codey 把 Claude Code、OpenCode、Codex 等编码 Agent 统一管起来：给每个项目独立的 workspace，按角色为 worker 配不同的 Agent / 模型，在同一个任务上并行跑多个 Agent 做对比；从原生 macOS 应用、聊天平台（Telegram / Discord / iMessage）或者全局语音输入都能用。
+
+与其说它是"聊天平台到 Agent 的桥"，不如说它是**你已经在用的那些编码 Agent 的控制台**。
+
+## 为什么用 Codey
+
+- **一个项目里，不同任务用不同 Agent。** 每个 workspace 有默认 Agent / 模型，每个 worker 还能单独覆盖 —— Architect 用 Opus、Executor 用 Codex、Reviewer 用本地 OpenCode，都没问题。
+- **同一个 prompt 让多个 Agent 并行跑。** 直接把 Claude Code / Codex / OpenCode 的结果摆在一起对比，不用靠猜。
+- **用 worker 团队代替单条 prompt。** 给每个 worker 配角色、性格、工具，按顺序执行，或者让 dispatcher 自动挑选真正相关的子集。
+- **多入口，随时调用。** 桌面用 macOS 菜单栏应用，在手机上用聊天平台派活，免手输直接用语音粘到任何前台应用。
+- **完全本地，自己掌控。** 跑在你自己机器上，连你自己的账号，中间没有代理服务器。
 
 ## 下载
 
@@ -19,13 +29,20 @@
 
 ## 功能特性
 
-- **macOS 菜单栏应用**：多对话标签、工作区切换器、内嵌设置面板
-- **多渠道支持**：Telegram、Discord、iMessage
-- **多种编码代理**：Claude Code、OpenCode、Codex（支持会话恢复)
+**Agent 管理**
+- **多种编码代理**：Claude Code、OpenCode、Codex（支持会话恢复）
+- **并行执行**：同一个 prompt 让多个 Agent 同时跑，方便对比
+- **每个 workspace 独立默认**：每个项目挑自己的默认 Agent + 模型
+- **自动 Dispatcher**：内置 dispatcher 可选，按任务自动路由到 team 的相关子集
+
+**工作区与 Worker**
 - **多工作区**：每个工作区拥有独立的工作目录、记忆与工作者
-- **工作者团队**：定义具有角色、个性和关系的工作者
-- **并行执行**：同时运行多个代理或工作者
+- **工作者团队**：每个 worker 可定义角色、个性、工具，以及自己的 Agent / 模型
 - **对话上下文**：在会话中记忆之前的消息
+
+**接入方式**
+- **macOS 菜单栏应用**：多对话标签、工作区切换器、内嵌设置面板
+- **聊天平台**：Telegram、Discord、iMessage
 - **语音输入 (macOS)**：热键触发的语音转录，支持本地 WhisperKit（CoreML / Neural Engine）和 OpenAI 兼容 API — 识别结果直接粘贴到当前光标所在的输入框
 - **健康检查端点**：内置健康检查和指标监控
 
@@ -185,7 +202,7 @@ file-system, git, web-search
 | `/workspaces` | 列出所有工作区 |
 | `/workspace <名称>` | 切换到指定工作区 |
 
-### 代理（旧版）
+### 代理
 | 命令 | 描述 |
 |------|------|
 | `/parallel <提示>` | 并行运行所有代理 |
