@@ -6,7 +6,7 @@ import { ParallelTeamRunner } from './parallel-team';
 
 const stubRunner = vi.fn().mockResolvedValue({ success: true, output: '' });
 
-function makeRunner(overrides: Partial<ConstructorParameters<typeof ParallelTeamRunner>[0]> = {}) {
+function makeRunner(overrides: Partial<ConstructorParameters<typeof ParallelTeamRunner>[0]> = {}, settingsOverrides: Partial<{ maxDurationMs: number; idleTimeoutMs: number; managerPollMs: number }> = {}) {
   const workspacesRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-'));
   fs.mkdirSync(path.join(workspacesRoot, 'demo', 'chats', 'c1'), { recursive: true });
   return new ParallelTeamRunner({
@@ -16,7 +16,7 @@ function makeRunner(overrides: Partial<ConstructorParameters<typeof ParallelTeam
     teamName: 'rt',
     members: ['a', 'b'],
     topic: 'Decide X',
-    settings: { maxDurationMs: 1000, idleTimeoutMs: 500, managerPollMs: 200 },
+    settings: { maxDurationMs: 1000, idleTimeoutMs: 500, managerPollMs: 200, ...settingsOverrides },
     workerRunner: stubRunner,
     managerRunner: vi.fn().mockResolvedValue({ success: true, output: '{"action":"terminate","final_message":"end","reason":"drift"}' }),
     buildWorkerPrompt: () => 'WORKER',
@@ -52,5 +52,48 @@ describe('ParallelTeamRunner', () => {
     await r.start();
     await r.stop('user_cancel', 'stopped');
     expect(onFinal).toHaveBeenCalledWith(expect.objectContaining({ reason: 'user_cancel', message: 'stopped' }));
+  });
+
+  it('terminates when managerRunner returns action=terminate', async () => {
+    const managerRunner = vi.fn().mockResolvedValue({
+      success: true,
+      output: '{"action":"terminate","final_message":"off topic","reason":"drift"}',
+    });
+    const onFinal = vi.fn();
+    const r = makeRunner({ managerRunner, onFinal }, { managerPollMs: 50 });
+    await r.start();
+    await r.waitDone();
+    expect(onFinal).toHaveBeenCalledWith(expect.objectContaining({ reason: 'drift', message: 'off topic' }));
+  });
+
+  it('on ask_user, calls onUserQuestion with a resume function', async () => {
+    const responses = [
+      '{"action":"ask_user","user_question":"Color?","reason":"pending_question"}',
+      '{"action":"terminate","final_message":"done","reason":"consensus"}',
+    ];
+    const managerRunner = vi.fn().mockImplementation(() => Promise.resolve({ success: true, output: responses.shift()! }));
+    const onUserQuestion = vi.fn();
+    const r = makeRunner({ managerRunner, onUserQuestion }, { managerPollMs: 50 });
+    await r.start();
+    // Wait for the ask
+    await new Promise(res => setTimeout(res, 400));
+    expect(onUserQuestion).toHaveBeenCalled();
+    const q = onUserQuestion.mock.calls[0][0];
+    expect(q.question).toBe('Color?');
+    await q.resume('blue');
+    await r.waitDone();
+  });
+
+  it('writes summary_update to summary.md on continue', async () => {
+    let i = 0;
+    const managerRunner = vi.fn().mockImplementation(() => {
+      i++;
+      if (i === 1) return Promise.resolve({ success: true, output: '{"action":"continue","summary_update":"new sum","directive":"focus","reason":"continuing"}' });
+      return Promise.resolve({ success: true, output: '{"action":"terminate","final_message":"end","reason":"consensus"}' });
+    });
+    const r = makeRunner({ managerRunner }, { managerPollMs: 50 });
+    await r.start();
+    await r.waitDone();
+    expect(fs.readFileSync(path.join(r.discussionDir, 'summary.md'), 'utf-8')).toContain('new sum');
   });
 });

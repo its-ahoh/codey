@@ -115,7 +115,118 @@ export class ParallelTeamRunner {
         });
     }
   }
-  private async runManagerLoop(): Promise<void> { /* Task 10 */ }
+  private async runManagerLoop(): Promise<void> {
+    const dir = this.discussionDir;
+    const wsRoot = this.opts.workspacesRoot;
+    const ws = this.opts.workspace;
+    const chat = this.opts.chatId;
+    const ctrlPath = controlPath(wsRoot, ws, chat);
+    const sumPath = summaryPath(wsRoot, ws, chat);
+    const topPath = topicPath(wsRoot, ws, chat);
+
+    let watcher: fs.FSWatcher | undefined;
+    let debounce: NodeJS.Timeout | null = null;
+    const tickSignal = (() => {
+      let resolveTick: (() => void) | null = null;
+      return {
+        wait: () => new Promise<void>(res => { resolveTick = res; }),
+        poke: () => { if (resolveTick) { const r = resolveTick!; resolveTick = null; r(); } },
+      };
+    })();
+
+    try {
+      watcher = fs.watch(dir, { recursive: false }, () => {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(() => tickSignal.poke(), 2000);
+      });
+    } catch { /* watch may fail on some FS; poll covers it */ }
+
+    let pendingUserAnswer: { question: string; answer: string } | undefined;
+
+    while (!this.done) {
+      await new Promise<void>(res => setTimeout(res, this.opts.settings.managerPollMs));
+      if (this.done) break;
+
+      const topic = safeRead(topPath);
+      const summary = safeRead(sumPath);
+      const opinions = (await listOpinionFiles(wsRoot, ws, chat)).map(name => ({
+        name,
+        text: safeRead(opinionPath(wsRoot, ws, chat, name)),
+      }));
+      const pendingAsks = extractPendingAsks(opinions);
+      const ctrl = await readControl(ctrlPath);
+      this.idleSince = Date.now();
+
+      const prompt = buildParallelManagerPrompt({
+        topic, summary, opinions, pendingAsks, idleMs: 0,
+        revision: ctrl?.revision ?? 0,
+        userAnswer: pendingUserAnswer,
+      });
+      pendingUserAnswer = undefined;
+
+      let resp: AgentResponse;
+      try {
+        resp = await this.opts.managerRunner({ prompt, signal: this.abort.signal } as AgentRequest);
+      } catch (err) {
+        await appendTranscript(wsRoot, ws, chat, { actor: 'manager', kind: 'error', note: (err as Error).message });
+        continue;
+      }
+      if (!resp.success) {
+        await appendTranscript(wsRoot, ws, chat, { actor: 'manager', kind: 'error', note: resp.error });
+        continue;
+      }
+      const turn = parseParallelManagerTurn(resp.output);
+      if (!turn) {
+        await appendTranscript(wsRoot, ws, chat, { actor: 'manager', kind: 'parse_error' });
+        continue;
+      }
+
+      if (turn.summary_update) {
+        await fs.promises.writeFile(sumPath, `# Summary\n\n${turn.summary_update}\n`, 'utf-8');
+      }
+      if (turn.directive) {
+        await writeControl(ctrlPath, prev => ({ ...prev, status: prev.status, directive: turn.directive! })).catch(() => undefined);
+      }
+
+      if (turn.action === 'continue') {
+        await appendTranscript(wsRoot, ws, chat, { actor: 'manager', kind: 'continue', note: turn.reason });
+        continue;
+      }
+      if (turn.action === 'ask_user') {
+        await writeControl(ctrlPath, prev => ({
+          ...prev,
+          status: 'paused',
+          userQuestion: turn.user_question,
+          userQuestionChoices: turn.user_question_choices,
+        })).catch(() => undefined);
+        const answerPromise = new Promise<string>(res => { this.pendingResume = res; });
+        this.opts.onUserQuestion({
+          question: turn.user_question!,
+          choices: turn.user_question_choices,
+          resume: async (answer: string) => {
+            if (this.pendingResume) { this.pendingResume(answer); this.pendingResume = null; }
+          },
+        });
+        const answer = await answerPromise;
+        pendingUserAnswer = { question: turn.user_question!, answer };
+        await writeControl(ctrlPath, prev => ({
+          ...prev,
+          status: 'running',
+          resumeNote: `User answered: ${answer}`,
+          userQuestion: undefined,
+          userQuestionChoices: undefined,
+        })).catch(() => undefined);
+        continue;
+      }
+      if (turn.action === 'finalize' || turn.action === 'terminate') {
+        const reason: DiscussionTerminatedReason = turn.action === 'finalize' ? 'consensus' : (turn.reason === 'drift' ? 'drift' : 'consensus');
+        await this.stop(reason, turn.final_message || '');
+        break;
+      }
+    }
+    if (watcher) watcher.close();
+    if (debounce) clearTimeout(debounce);
+  }
   private armSupervisors(): void { /* Task 11 */ }
   private async emitFinal(reason: DiscussionTerminatedReason, message: string): Promise<void> {
     const summary = safeRead(summaryPath(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId));
@@ -131,4 +242,16 @@ export class ParallelTeamRunner {
 
 function safeRead(p: string): string {
   try { return fs.readFileSync(p, 'utf-8'); } catch { return ''; }
+}
+
+function extractPendingAsks(opinions: Array<{ name: string; text: string }>): Array<{ worker: string; question: string }> {
+  const out: Array<{ worker: string; question: string }> = [];
+  for (const o of opinions) {
+    const lines = o.text.split('\n');
+    for (const line of lines) {
+      const m = /^\[ASK_MANAGER\]:\s*(.+)$/.exec(line.trim());
+      if (m) out.push({ worker: o.name, question: m[1] });
+    }
+  }
+  return out;
 }
