@@ -26,6 +26,14 @@ export interface Worker {
   config: WorkerConfig;
 }
 
+export interface ParallelPromptInputs {
+  topic: string;
+  controlPath: string;
+  summaryPath: string;
+  ownOpinionPath: string;
+  peerOpinions: Array<{ name: string; path: string }>;
+}
+
 const VALID_CODING_AGENTS: readonly WorkerConfig['codingAgent'][] = ['claude-code', 'opencode', 'codex'];
 
 export class WorkerManager {
@@ -289,6 +297,47 @@ export class WorkerManager {
       ].join('\n'),
       `## Task`,
       task,
+    ].join('\n\n');
+  }
+
+  buildParallelWorkerPrompt(name: string, inputs: ParallelPromptInputs): string {
+    const worker = this.getWorker(name);
+    if (!worker) return inputs.topic;
+    const peerLines = inputs.peerOpinions.length > 0
+      ? inputs.peerOpinions.map(p => `- ${p.name}'s opinion (read-only): ${p.path}`).join('\n')
+      : '(no peers)';
+    return [
+      `# Worker: ${worker.name} (Parallel/Roundtable Mode)`,
+      `## Role`,
+      worker.personality.role,
+      `## Personality`,
+      worker.personality.soul,
+      `## Instructions`,
+      worker.personality.instructions,
+      `## Topic`,
+      inputs.topic,
+      `## Files (use your Read/Write tools)`,
+      [
+        `- Your opinion file (write): ${inputs.ownOpinionPath}`,
+        `- Shared summary (read-only): ${inputs.summaryPath}`,
+        `- Control file (read-only, check before EVERY write): ${inputs.controlPath}`,
+        peerLines,
+      ].join('\n'),
+      `## Loop Protocol`,
+      [
+        '1. Read control.md. If status is "terminated", exit immediately. If "finalizing", write one consolidating final entry to your opinion file then exit. If "paused", wait and re-read every ~5 seconds until status changes.',
+        '2. Read summary.md and each peer opinion file.',
+        '3. Update YOUR opinion file (append a timestamped section; do not overwrite past entries) with your current position, what you agree/disagree with, and any open question.',
+        '4. If you need information you do not have, append a single line `[ASK_MANAGER]: <question>` at the end of your opinion file. The Manager will route or escalate.',
+        '5. If you have nothing new to add after the most recent peer/summary update, write a short "no further input" note and exit.',
+        '6. Otherwise sleep briefly (the agent may simply continue) and repeat from step 1.',
+      ].join('\n'),
+      `## Important`,
+      [
+        '- Do not touch other workers\' opinion files, the summary, or control.md — those are owned by the Manager and peers.',
+        '- Keep each appended entry concise (a few short paragraphs) so peers can absorb it quickly.',
+        '- Re-read control.md before every write — the Manager may have flipped status to terminated/finalizing/paused since your last check.',
+      ].join('\n'),
     ].join('\n\n');
   }
 

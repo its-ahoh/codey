@@ -10,14 +10,15 @@ import { C } from '../theme'
 interface TeamSummary {
   name: string
   members: string[]
-  dispatch: 'all' | 'auto'
+  dispatch: 'all' | 'auto' | 'parallel'
 }
 
 function summarize(raw: Record<string, TeamConfigRaw>): TeamSummary[] {
   return Object.entries(raw).map(([name, v]) => {
     if (Array.isArray(v)) return { name, members: v, dispatch: 'all' as const }
     const members = Array.isArray(v?.members) ? v.members : []
-    const dispatch: 'all' | 'auto' = v?.dispatch === 'auto' ? 'auto' : 'all'
+    const d = v?.dispatch
+    const dispatch: TeamSummary['dispatch'] = d === 'auto' ? 'auto' : d === 'parallel' ? 'parallel' : 'all'
     return { name, members, dispatch }
   })
 }
@@ -92,7 +93,7 @@ export default function TeamsSection({ workspace }: { workspace: string }) {
               <div style={{ fontSize: 13, fontWeight: 600 }}>
                 {t.name}
                 <span style={{ marginLeft: 8, color: C.fg3, fontWeight: 400, fontSize: 11 }}>
-                  {t.dispatch === 'auto' ? '[auto]' : '[sequential]'}
+                  {t.dispatch === 'parallel' ? '[parallel]' : t.dispatch === 'auto' ? '[auto]' : '[sequential]'}
                 </span>
               </div>
               <div style={{ fontSize: 11, color: C.fg3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

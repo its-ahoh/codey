@@ -197,6 +197,12 @@ When prompted, analyze requirements and provide...
   - Optional `dispatchHint` on each worker's `config.json` improves routing accuracy.
   - The dispatcher's agent/model is configured under `gateway.json` `dispatcher.{agent, model}`,
     defaulting to the gateway's default agent/model.
+  - Teams configured with `dispatch: 'parallel'` run as a **Manager-moderated roundtable**:
+    all workers run concurrently as long-lived agent sessions, sharing opinion files in
+    `chats/<chatId>/discussion/`. A Manager loop evaluates progress, maintains a summary,
+    and decides when to ask the user, continue, or terminate.
+    Optional settings under `parallel: { maxDurationMs, idleTimeoutMs, managerPollMs }`.
+    See [design spec](docs/superpowers/specs/2026-05-24-team-parallel-mode-design.md).
 
 ### Workspaces
 | Command | Description |
