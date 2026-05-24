@@ -227,7 +227,35 @@ export class ParallelTeamRunner {
     if (watcher) watcher.close();
     if (debounce) clearTimeout(debounce);
   }
-  private armSupervisors(): void { /* Task 11 */ }
+  private armSupervisors(): void {
+    const start = Date.now();
+    const checkMs = Math.min(500, Math.max(50, this.opts.settings.idleTimeoutMs / 4));
+    const interval = setInterval(async () => {
+      if (this.done) { clearInterval(interval); return; }
+      if (Date.now() - start >= this.opts.settings.maxDurationMs) {
+        clearInterval(interval);
+        await this.stop('max_duration', 'discussion exceeded maximum duration');
+        return;
+      }
+      // idle timeout: latest mtime across opinions + summary
+      let latest = 0;
+      try {
+        const files = [summaryPath(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId)];
+        const wnames = await listOpinionFiles(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId);
+        for (const w of wnames) files.push(opinionPath(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId, w));
+        for (const f of files) {
+          try { latest = Math.max(latest, (await fs.promises.stat(f)).mtimeMs); } catch { /* ignore */ }
+        }
+      } catch { /* ignore */ }
+      if (latest > this.lastMtimeMs) {
+        this.lastMtimeMs = latest;
+        this.idleSince = Date.now();
+      } else if (Date.now() - this.idleSince >= this.opts.settings.idleTimeoutMs) {
+        clearInterval(interval);
+        await this.stop('timeout', 'no activity within idle window');
+      }
+    }, checkMs);
+  }
   private async emitFinal(reason: DiscussionTerminatedReason, message: string): Promise<void> {
     const summary = safeRead(summaryPath(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId));
     const perWorker: Array<{ name: string; excerpt: string }> = [];

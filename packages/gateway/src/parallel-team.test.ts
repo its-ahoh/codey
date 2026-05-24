@@ -96,4 +96,32 @@ describe('ParallelTeamRunner', () => {
     await r.waitDone();
     expect(fs.readFileSync(path.join(r.discussionDir, 'summary.md'), 'utf-8')).toContain('new sum');
   });
+
+  it('terminates on max_duration when settings.maxDurationMs elapses', async () => {
+    const managerRunner = vi.fn().mockImplementation(() => new Promise(() => {/* never resolves */}));
+    const workerRunner = vi.fn().mockImplementation(() => new Promise(() => {/* never resolves */}));
+    const onFinal = vi.fn();
+    const r = makeRunner({
+      managerRunner,
+      workerRunner,
+      onFinal,
+    }, { maxDurationMs: 200, idleTimeoutMs: 10_000, managerPollMs: 10_000 });
+    await r.start();
+    await r.waitDone();
+    expect(onFinal).toHaveBeenCalledWith(expect.objectContaining({ reason: 'max_duration' }));
+  });
+
+  it('terminates on timeout when idleTimeoutMs elapses with no file mtime change', async () => {
+    const managerRunner = vi.fn().mockImplementation(() => new Promise(() => {/* never resolves */}));
+    const workerRunner = vi.fn().mockImplementation(() => new Promise(() => {/* never resolves */}));
+    const onFinal = vi.fn();
+    const r = makeRunner({
+      managerRunner,
+      workerRunner,
+      onFinal,
+    }, { maxDurationMs: 10_000, idleTimeoutMs: 250, managerPollMs: 10_000 });
+    await r.start();
+    await r.waitDone();
+    expect(onFinal).toHaveBeenCalledWith(expect.objectContaining({ reason: 'timeout' }));
+  });
 });
