@@ -45,4 +45,17 @@ describe('Chat.discussion metadata', () => {
 
     fs.rmSync(root, { recursive: true, force: true });
   });
+
+  it('deletes the discussion directory when the chat is deleted', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chats-del-'));
+    fs.mkdirSync(path.join(root, 'demo'), { recursive: true });
+    const mgr = new ChatManager(root);
+    const chat = mgr.create({ workspaceName: 'demo', title: 't' });
+    const discDir = path.join(root, 'demo', 'chats', chat.id, 'discussion');
+    fs.mkdirSync(discDir, { recursive: true });
+    fs.writeFileSync(path.join(discDir, 'topic.md'), 'x');
+    mgr.delete(chat.id);
+    expect(fs.existsSync(discDir)).toBe(false);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
 });

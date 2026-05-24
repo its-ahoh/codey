@@ -131,4 +131,30 @@ describe('ParallelTeamRunner', () => {
     const r = makeRunner();
     expect(r.discussionDir).toBeDefined();
   });
+
+  it('resume: new message into done discussion preserves opinions and appends Continuation', async () => {
+    const { initDiscussionDir, readControl } = await import('@codey/core');
+    const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-resume-'));
+    fs.mkdirSync(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'opinions'), { recursive: true });
+    // Seed a prior "done" discussion
+    fs.writeFileSync(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'topic.md'), '# Topic\n\nfirst round\n');
+    fs.writeFileSync(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'control.md'),
+      `---\nstatus: terminated\nrevision: 9\nupdated_at: 2026-05-24T00:00:00.000Z\n---\n\n## Directive\nended\n`);
+    fs.writeFileSync(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'summary.md'), '# Summary\nprior\n');
+    fs.writeFileSync(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'opinions', 'a.md'), 'prior a opinion');
+
+    // Simulate resume invocation: gateway calls initDiscussionDir with the new topic
+    await initDiscussionDir(wsRoot, 'demo', 'c1', 'second round', ['a', 'b']);
+
+    const topic = fs.readFileSync(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'topic.md'), 'utf-8');
+    expect(topic).toContain('first round');
+    expect(topic).toMatch(/## Continuation/);
+    expect(topic).toContain('second round');
+    expect(fs.readFileSync(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'opinions', 'a.md'), 'utf-8')).toContain('prior a opinion');
+    // New worker b gets a fresh opinion file
+    expect(fs.existsSync(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'opinions', 'b.md'))).toBe(true);
+    // Control reset to running with bumped revision
+    const ctrl = await readControl(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'control.md'));
+    expect(ctrl?.status).toBe('running');
+  });
 });

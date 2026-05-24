@@ -2432,13 +2432,27 @@ Example: /model gpt-4.1 write a Python script`;
     const useManager = team.dispatch === 'auto' && !opts.forceAll;
 
     // === parallel dispatch branch ===
+    // Check if user is answering a pending question from a paused parallel discussion
+    if (this.parallelResumes.has(chat.id)) {
+      const resume = this.parallelResumes.get(chat.id)!;
+      this.parallelResumes.delete(chat.id);
+      await resume(prompt);
+      return { response: '' };
+    }
+
     if (team.dispatch === 'parallel') {
+      const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
+      // Resume detection: if this chat has a completed/terminated discussion,
+      // re-activate it instead of starting fresh. initDiscussionDir will
+      // append a Continuation header to topic.md and reset control.md.
+      if (chat.discussion && (chat.discussion.status === 'done' || chat.discussion.status === 'terminated')) {
+        await initDiscussionDir(workspacesRoot, chat.workspaceName, chat.id, prompt, team.members);
+      }
       if (!team.parallel) {
         // defensive — normalizer always populates this for parallel teams
         await sink({ type: 'stream', chatId, token: '⚠️ parallel team is missing settings' });
         return { response: '' };
       }
-      const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
       const runner = new ParallelTeamRunner({
         workspacesRoot,
         workspace: chat.workspaceName,
@@ -3342,6 +3356,11 @@ Example: /model gpt-4.1 write a Python script`;
    * Cancel an in-flight chat turn. Returns true if a run was aborted.
    */
   stopChat(chatId: string): boolean {
+    const runner = this.activeParallelRuns.get(chatId);
+    if (runner) {
+      void runner.stop('user_cancel', 'user cancelled the discussion');
+      return true;
+    }
     const controller = this.chatAborts.get(chatId);
     if (!controller) return false;
     controller.abort();
