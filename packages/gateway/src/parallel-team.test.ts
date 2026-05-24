@@ -124,4 +124,11 @@ describe('ParallelTeamRunner', () => {
     await r.waitDone();
     expect(onFinal).toHaveBeenCalledWith(expect.objectContaining({ reason: 'timeout' }));
   });
+
+  it('smoke: ParallelTeamRunner can be imported and constructed', () => {
+    // Verify the class is importable and has expected interface
+    expect(ParallelTeamRunner).toBeDefined();
+    const r = makeRunner();
+    expect(r.discussionDir).toBeDefined();
+  });
 });
