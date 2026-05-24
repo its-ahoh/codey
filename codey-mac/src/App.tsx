@@ -82,9 +82,10 @@ const Shell: React.FC = () => {
             aria-label={leftCollapsed ? 'Show sidebar' : 'Hide sidebar'}
             style={styles.sidebarToggle}
           >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
-              <line x1="6" y1="2.5" x2="6" y2="13.5" />
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <line x1="9" y1="3" x2="9" y2="21" />
+              {!leftCollapsed && <rect x="3" y="3" width="6" height="18" rx="0" fill="currentColor" stroke="none" />}
             </svg>
           </button>
           <div style={styles.titleCenter}>
