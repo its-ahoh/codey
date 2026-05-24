@@ -7,6 +7,7 @@ export default defineConfig({
     // crash vitest's collection phase. New vitest tests must be added here.
     include: [
       'src/workspace.test.ts',
+      'src/discussion/files.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },
