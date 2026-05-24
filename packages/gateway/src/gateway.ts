@@ -8,7 +8,7 @@ import { AgentFactory } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
-import { WorkspaceManager, TeamConfigRaw } from '@codey/core';
+import { WorkspaceManager, TeamConfigRaw, TeamConfig } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
 import { PairingStore, ChannelBinding } from './pairings';
@@ -2390,7 +2390,7 @@ Example: /model gpt-4.1 write a Python script`;
 
   private async runTeamForChat(
     teamName: string,
-    team: { members: string[]; dispatch: 'all' | 'auto' | 'parallel'; parallel?: any },
+    team: TeamConfig,
     prompt: string,
     workingDir: string,
     sink: ChatStreamSink,
@@ -3112,9 +3112,9 @@ Example: /model gpt-4.1 write a Python script`;
         // Prefer the active workspace's normalized team (which carries dispatch mode);
         // fall back to building a TeamConfig inline from the chat's raw config.
         const wsTeam = this.workspaceManager.getTeam(teamName);
-        const team = wsTeam ?? {
+        const team: TeamConfig = wsTeam ?? {
           members: rawMembers,
-          dispatch: (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as 'all' | 'auto',
+          dispatch: (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as TeamConfig['dispatch'],
         };
         const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, abortController.signal, {}, agent, model);
         output = r.response;
