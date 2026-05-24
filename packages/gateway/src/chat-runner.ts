@@ -52,13 +52,24 @@ export function buildChatPrompt(
   attachments?: FileAttachment[],
   windowSize = CHAT_CONTEXT_WINDOW,
 ): string {
-  const tail = chat.messages.slice(-windowSize);
   const sections: string[] = [];
 
   if (attachments && attachments.length > 0) {
     sections.push(formatAttachmentList(attachments));
   }
 
+  // If the Aide has folded older messages into a rolling summary, prepend it
+  // and only render the transcript newer than `summarizedUpTo` (still capped
+  // by windowSize so even a long unsummarized tail can't blow the prompt).
+  const summarizedUpTo = chat.compaction?.summarizedUpTo ?? 0;
+  if (chat.compaction?.summary) {
+    sections.push(
+      `[Earlier conversation summary — covers messages before this point]\n${chat.compaction.summary}`,
+    );
+  }
+
+  const start = Math.max(summarizedUpTo, chat.messages.length - windowSize);
+  const tail = chat.messages.slice(start);
   if (tail.length > 0) {
     const transcript = tail.map(m => {
       const tag = m.role === 'user' ? '[user]' : '[assistant]';

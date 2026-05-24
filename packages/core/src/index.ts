@@ -11,3 +11,5 @@ export * from './errors';
 export * from './context';
 export * from './advisor';
 export * from './advisor-personality';
+export * from './aide';
+export * from './aide-tasks';

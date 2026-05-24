@@ -238,6 +238,7 @@ function buildRuntimeConfig(json: any): any {
     memory: json?.memory,
     // Back-compat: old `dispatcher` block becomes `advisor`.
     advisor: json?.advisor ?? json?.dispatcher,
+    aide: json?.aide,
   }
 }
 
@@ -1231,6 +1232,25 @@ app.whenReady().then(async () => {
       const agent = updates?.agent || undefined
       const model = updates?.model || undefined
       coreConfigManager.update({ advisor: { agent: agent as any, model } })
+    })
+  )
+
+  // ── Aide IPC ──────────────────────────────────────────────────────
+  // Lightweight global model used for housekeeping tasks (chat summarization,
+  // title generation, classification). Empty values mean "use gateway default".
+  ipcMain.handle('aide:get', async () =>
+    wrap(async () => {
+      const cfg = coreConfigManager?.get()
+      return { agent: cfg?.aide?.agent, model: cfg?.aide?.model }
+    })
+  )
+
+  ipcMain.handle('aide:set', async (_e, updates: { agent?: string; model?: string } | null | undefined) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      const agent = updates?.agent || undefined
+      const model = updates?.model || undefined
+      coreConfigManager.update({ aide: { agent: agent as any, model } })
     })
   )
 

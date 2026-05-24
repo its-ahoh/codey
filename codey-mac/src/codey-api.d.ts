@@ -78,6 +78,10 @@ declare global {
         get: () => Promise<IpcResult<{ agent?: string; model?: string }>>
         set: (updates: { agent?: string; model?: string }) => Promise<IpcResult<void>>
       }
+      aide: {
+        get: () => Promise<IpcResult<{ agent?: string; model?: string }>>
+        set: (updates: { agent?: string; model?: string }) => Promise<IpcResult<void>>
+      }
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>>>
         set: (updates: Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>) => Promise<IpcResult<void>>
