@@ -2,6 +2,7 @@ import React from 'react'
 import type { Chat, ChatMessage } from '../types'
 import { C } from '../theme'
 import { parseTeamMessage } from './teamMessageFormat'
+import { ToolDetail } from './toolFormat'
 
 interface Props {
   chat: Chat
@@ -352,18 +353,7 @@ const ToolTimeline: React.FC<{ toolCalls: import('../types').ToolCallEntry[] }> 
               </div>
               {hasDetail && isOpen && (
                 <div style={timelineStyles.detail}>
-                  {r.input && (
-                    <>
-                      <div style={timelineStyles.detailLabel}>input</div>
-                      <pre style={timelineStyles.code}>{JSON.stringify(r.input, null, 2)}</pre>
-                    </>
-                  )}
-                  {r.output && (
-                    <>
-                      <div style={timelineStyles.detailLabel}>output</div>
-                      <pre style={timelineStyles.code}>{truncate(r.output, 2048)}</pre>
-                    </>
-                  )}
+                  <ToolDetail rawTool={r.tool} input={r.input ?? {}} output={r.output} />
                   {!r.done && !r.output && (
                     <div style={timelineStyles.detailLabel}>(no result yet)</div>
                   )}
@@ -378,11 +368,6 @@ const ToolTimeline: React.FC<{ toolCalls: import('../types').ToolCallEntry[] }> 
       </div>
     </Section>
   )
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s
-  return s.slice(0, max) + `\n… (${s.length - max} more chars)`
 }
 
 const timelineStyles: Record<string, React.CSSProperties> = {
@@ -408,10 +393,6 @@ const timelineStyles: Record<string, React.CSSProperties> = {
     maxHeight: 280, overflowY: 'auto',
   },
   detailLabel: { color: C.fg3, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
-  code: {
-    color: C.fg, fontSize: 11, fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    margin: '4px 0 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-  },
 }
 
 const AttachmentsSection: React.FC<{ attachments: import('../types').FileAttachment[] }> = ({ attachments }) => {

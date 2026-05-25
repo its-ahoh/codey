@@ -256,7 +256,10 @@ export class Codey {
       try { await existing.stop(); }
       catch (e) { this.logger.error(`Failed to stop ${name} handler: ${e}`); }
       this.handlers.delete(name);
-      this.logger.info(`${name} handler stopped`);
+
+      const removedRoutes = this.chatManager.clearRoutesForChannel(name);
+      const removedPairings = this.pairingStore.clearChannel(name);
+      this.logger.info(`${name} handler stopped — cleared ${removedRoutes} route(s), ${removedPairings} pairing(s)`);
     }
 
     if (next) {
@@ -311,27 +314,18 @@ export class Codey {
     const binding = this.pairingStore.findByChannelUser(channel, channelUserId);
     if (!binding) throw new Error(`No pairing for ${channel}:${channelUserId}`);
 
-    // 1:1 DM model — channelChatId equals channelUserId. See spec §Identity.
-    const channelChatId = channelUserId;
-    const route: ChatRoute = { channel, channelUserId, channelChatId, attachedAt: Date.now() };
+    const route: ChatRoute = { channel, channelUserId, channelChatId: binding.channelChatId, attachedAt: Date.now() };
 
-    // Detect "already linked" before mutating, so we can skip the summary push
-    // on repeat clicks. addRoute is idempotent but unconditionally re-sending
-    // the summary would spam the channel every time the user clicks the link
-    // button while the route is already attached.
     const existing = this.chatManager.get(chatId);
     const alreadyLinked = !!existing?.routes?.some(r =>
       r.channel === channel &&
-      r.channelUserId === channelUserId &&
-      r.channelChatId === channelChatId
+      r.channelUserId === channelUserId
     );
 
     const updated = this.chatManager.addRoute(chatId, route);
     this.pairingStore.setCurrentChat(channel, channelUserId, chatId);
 
     if (!alreadyLinked) {
-      // Resolve the chat's effective agent/model — same logic as sendToChat —
-      // so the summary reflects the actual runtime config, not just gateway defaults.
       const effectiveAgent = (updated.agent ?? this.getDefaultAgent()) as CodingAgent;
       const effectiveModel = updated.model
         ?? this.getDefaultModelConfig(effectiveAgent)?.model
@@ -353,8 +347,7 @@ export class Codey {
   }
 
   public unlinkChat(chatId: string, channel: ChannelKind, channelUserId: string): Chat {
-    const channelChatId = channelUserId;
-    return this.chatManager.removeRoute(chatId, channel, channelUserId, channelChatId);
+    return this.chatManager.removeRoute(chatId, channel, channelUserId);
   }
 
   getAgentFactory(): AgentFactory { return this.agentFactory; }
@@ -689,14 +682,21 @@ export class Codey {
     return false;
   }
 
+  /** Resolve which Codey Chat this channel message belongs to. */
+  private resolveChatId(channel: ChannelType, userId: string): string | undefined {
+    if (!this.isPairableChannel(channel)) return undefined;
+    const byRoute = this.chatManager.findByRoute(channel, userId);
+    if (byRoute) return byRoute.id;
+    // 2. Per-user pairing `currentChatId` — multi-Chat /switch shortcut.
+    const binding = this.pairingStore.findByChannelUser(channel, userId);
+    if (binding?.currentChatId) return binding.currentChatId;
+    return undefined;
+  }
+
   private async processPrompt(message: UserMessage, parsed: ParsedCommand): Promise<void> {
     const { userId, chatId, channel } = message;
 
-    let codeyChatId: string | undefined;
-    if (this.isPairableChannel(channel)) {
-      const binding = this.pairingStore.findByChannelUser(channel, userId);
-      if (binding?.currentChatId) codeyChatId = binding.currentChatId;
-    }
+    const codeyChatId = this.resolveChatId(channel as ChannelType, userId);
 
     // Queue key: prefer the Codey chat id; fall back to the channel-derived id
     // so non-paired channels and Mac users still get per-conversation serialization.
@@ -715,25 +715,13 @@ export class Codey {
   private async runOneTurn(message: UserMessage, parsed: ParsedCommand): Promise<void> {
     const { userId, chatId, channel, id: messageId } = message;
 
+    const codeyChatId = this.resolveChatId(channel as ChannelType, userId);
+
     // Channel-side with a linked Codey chat → route through sendToChat so the
     // Codey Chat record is updated and the Mac app sees the events.
-    if (this.isPairableChannel(channel)) {
-      const binding = this.pairingStore.findByChannelUser(channel, userId);
-      if (binding?.currentChatId) {
-        await this.runChannelTurnViaChat(message, parsed, binding.currentChatId);
-        return;
-      }
-    }
-
-    // Channel-side: if this user has a paired binding with a current chat,
-    // use it for Codey-side state (context window, fan-out lookup). Replies
-    // continue to use `chatId` (the channel-side chat id) for routing.
-    let codeyChatId: string | undefined;
-    if (this.isPairableChannel(channel)) {
-      const binding = this.pairingStore.findByChannelUser(channel, userId);
-      if (binding?.currentChatId) {
-        codeyChatId = binding.currentChatId;
-      }
+    if (codeyChatId) {
+      await this.runChannelTurnViaChat(message, parsed, codeyChatId);
+      return;
     }
 
     // Get or create structured context window keyed by conversationId
@@ -1390,7 +1378,7 @@ export class Codey {
       await this.sendResponse({ chatId, channel, text: 'Usage: /pair <6-digit code from the Mac app>' });
       return;
     }
-    const ok = this.pairingStore.completePairing(code, { channel, channelUserId: userId });
+    const ok = this.pairingStore.completePairing(code, { channel, channelUserId: userId, channelChatId: chatId });
     await this.sendResponse({
       chatId,
       channel,
@@ -1425,7 +1413,7 @@ export class Codey {
     this.chatManager.addRoute(chat.id, {
       channel,
       channelUserId: userId,
-      channelChatId: userId,
+      channelChatId: binding.channelChatId,
       attachedAt: Date.now(),
     });
     this.pairingStore.setCurrentChat(channel, userId, chat.id);

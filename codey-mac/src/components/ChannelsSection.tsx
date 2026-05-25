@@ -38,7 +38,7 @@ interface ChannelField {
   label: string
   value: string
   secret?: boolean
-  onChange: (next: string) => void
+  onChange: (next: string) => boolean | void
 }
 
 const ChannelEditor: React.FC<{
@@ -96,7 +96,12 @@ const ChannelEditor: React.FC<{
                 type={f.secret ? 'password' : 'text'}
                 value={drafts[i] ?? ''}
                 onChange={e => setDrafts(d => { const n = d.slice(); n[i] = e.target.value; return n })}
-                onBlur={() => { if (drafts[i] !== f.value) f.onChange(drafts[i] ?? '') }}
+                onBlur={() => {
+                  if (drafts[i] !== f.value) {
+                    const result = f.onChange(drafts[i] ?? '')
+                    if (result === false) setDrafts(d => { const n = d.slice(); n[i] = f.value; return n })
+                  }
+                }}
                 style={{ ...inputStyle, width: '100%' }}
               />
             </div>
@@ -174,7 +179,12 @@ export const ChannelsSection: React.FC<ChannelsSectionProps> = ({ liveStatus, is
         }}
         fields={[
           { label: 'Bot Token', value: channels.telegram?.botToken ?? '', secret: true,
-            onChange: v => setTelegram({ botToken: v }) },
+            onChange: v => {
+              if (channels.telegram?.botToken && v !== channels.telegram.botToken) {
+                if (!window.confirm('Changing the Bot Token will disconnect all linked Telegram channels. Users will need to re-pair.\n\nContinue?')) return false
+              }
+              setTelegram({ botToken: v })
+            } },
         ]}
         note={!channels.telegram?.botToken ? 'A Bot Token is required to enable Telegram.' : undefined}
       />
@@ -185,7 +195,12 @@ export const ChannelsSection: React.FC<ChannelsSectionProps> = ({ liveStatus, is
         onToggle={enabled => setDiscord({ enabled })}
         fields={[
           { label: 'Bot Token', value: channels.discord?.botToken ?? '', secret: true,
-            onChange: v => setDiscord({ botToken: v }) },
+            onChange: v => {
+              if (channels.discord?.botToken && v !== channels.discord.botToken) {
+                if (!window.confirm('Changing the Bot Token will disconnect all linked Discord channels. Users will need to re-pair.\n\nContinue?')) return false
+              }
+              setDiscord({ botToken: v })
+            } },
         ]}
       />
       <ChannelEditor
