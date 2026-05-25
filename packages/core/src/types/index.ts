@@ -184,7 +184,6 @@ export interface AgentResponse {
 export interface ChannelConfig {
   telegram?: {
     botToken: string;
-    notifyChatId?: string;
   };
   discord?: {
     botToken: string;

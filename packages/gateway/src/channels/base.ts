@@ -7,7 +7,6 @@ export interface ChannelHandler {
   sendMessage(response: GatewayResponse): Promise<void>;
   onMessage(callback: (message: UserMessage) => Promise<void>): void;
   streamText?(text: string): void;
-  sendStartupMessage?(text: string): Promise<void>;
   sendToRoute?(route: ChatRoute, text: string): Promise<void>;
 }
 
