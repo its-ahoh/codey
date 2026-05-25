@@ -14,13 +14,14 @@ async function run() {
   assert.match(code, /^\d{6}$/);
   assert.strictEqual(store.findByChannelUser('telegram', 'u1'), undefined);
 
-  const ok = store.completePairing(code, { channel: 'telegram', channelUserId: 'u1' });
+  const ok = store.completePairing(code, { channel: 'telegram', channelUserId: 'u1', channelChatId: 'c1' });
   assert.strictEqual(ok, true);
   const binding = store.findByChannelUser('telegram', 'u1');
   assert.ok(binding);
   assert.strictEqual(binding!.channelUserId, 'u1');
+  assert.strictEqual(binding!.channelChatId, 'c1');
 
-  const second = store.completePairing(code, { channel: 'telegram', channelUserId: 'u2' });
+  const second = store.completePairing(code, { channel: 'telegram', channelUserId: 'u2', channelChatId: 'c2' });
   assert.strictEqual(second, false);
 
   store.updatePrefs('telegram', 'u1', { workspace: 'main', agent: 'claude-code', model: 'sonnet-4-6' });
@@ -30,13 +31,13 @@ async function run() {
   assert.strictEqual(b2?.prefs?.agent, 'claude-code');
 
   store.startPairing({ channel: 'telegram' });
-  store.completePairing(store.startPairing({ channel: 'discord' }), { channel: 'discord', channelUserId: 'd1' });
+  store.completePairing(store.startPairing({ channel: 'discord' }), { channel: 'discord', channelUserId: 'd1', channelChatId: 'dc1' });
   const tg = reloaded.listForChannel('telegram');
   assert.strictEqual(tg.length, 1);
 
   const c2 = store.startPairing({ channel: 'telegram', ttlMs: 0 });
   await new Promise(r => setTimeout(r, 5));
-  assert.strictEqual(store.completePairing(c2, { channel: 'telegram', channelUserId: 'u3' }), false);
+  assert.strictEqual(store.completePairing(c2, { channel: 'telegram', channelUserId: 'u3', channelChatId: 'c3' }), false);
 
   fs.rmSync(dir, { recursive: true, force: true });
   console.log('pairings.test ok');

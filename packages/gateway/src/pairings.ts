@@ -11,6 +11,8 @@ export interface PairingPrefs {
 export interface ChannelBinding {
   channel: ChannelKind;
   channelUserId: string;
+  /** Platform conversation id (e.g. Telegram chat.id, Discord channelId). */
+  channelChatId: string;
   prefs?: PairingPrefs;
   /** Per-binding "current chat" id used for the implicit-routing rule. */
   currentChatId?: string;
@@ -66,7 +68,7 @@ export class PairingStore {
     return code;
   }
 
-  completePairing(code: string, input: { channel: ChannelKind; channelUserId: string }): boolean {
+  completePairing(code: string, input: { channel: ChannelKind; channelUserId: string; channelChatId: string }): boolean {
     const entry = this.pending.get(code);
     if (!entry) return false;
     this.pending.delete(code);
@@ -79,6 +81,7 @@ export class PairingStore {
     this.bindings.push({
       channel: input.channel,
       channelUserId: input.channelUserId,
+      channelChatId: input.channelChatId,
       createdAt: Date.now(),
     });
     this.persist();
@@ -118,5 +121,13 @@ export class PairingStore {
       !(b.channel === channel && b.channelUserId === channelUserId)
     );
     if (this.bindings.length !== before) this.persist();
+  }
+
+  clearChannel(channel: ChannelKind): number {
+    const before = this.bindings.length;
+    this.bindings = this.bindings.filter(b => b.channel !== channel);
+    const removed = before - this.bindings.length;
+    if (removed > 0) this.persist();
+    return removed;
   }
 }

@@ -15,37 +15,38 @@ async function run() {
   const r = mgr.addRoute(chat.id, {
     channel: 'telegram',
     channelUserId: 'u1',
-    channelChatId: 'u1',
+    channelChatId: 'c1',
     attachedAt: 1,
   });
   assert.strictEqual(r.routes?.length, 1);
   assert.strictEqual(r.routes?.[0].channel, 'telegram');
+  assert.strictEqual(r.routes?.[0].channelChatId, 'c1');
 
   mgr.addRoute(chat.id, {
     channel: 'telegram',
     channelUserId: 'u1',
-    channelChatId: 'u1',
+    channelChatId: 'c1',
     attachedAt: 2,
   });
   assert.strictEqual(mgr.get(chat.id)?.routes?.length, 1);
 
-  const found = mgr.findByRoute('telegram', 'u1', 'u1');
+  const found = mgr.findByRoute('telegram', 'u1');
   assert.strictEqual(found?.id, chat.id);
-  assert.strictEqual(mgr.findByRoute('telegram', 'u1', 'other'), undefined);
+  assert.strictEqual(mgr.findByRoute('telegram', 'other'), undefined);
 
-  const after = mgr.removeRoute(chat.id, 'telegram', 'u1', 'u1');
+  const after = mgr.removeRoute(chat.id, 'telegram', 'u1');
   assert.strictEqual(after.routes?.length ?? 0, 0);
-  assert.strictEqual(mgr.findByRoute('telegram', 'u1', 'u1'), undefined);
+  assert.strictEqual(mgr.findByRoute('telegram', 'u1'), undefined);
 
   const r2 = mgr.addRoute(chat.id, {
     channel: 'discord',
     channelUserId: 'd1',
-    channelChatId: 'd1',
+    channelChatId: 'dc1',
     attachedAt: 3,
   });
   assert.strictEqual(r2.routes?.length, 1);
   const reloaded = new ChatManager(root);
-  assert.strictEqual(reloaded.findByRoute('discord', 'd1', 'd1')?.id, chat.id);
+  assert.strictEqual(reloaded.findByRoute('discord', 'd1')?.id, chat.id);
 
   // pendingTeam round-trip
   const pending = {
