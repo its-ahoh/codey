@@ -63,8 +63,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         '--include-partial-messages',
       ];
 
-      // Only skip permissions for non-interactive (chat platform) usage
-      if (!request.interactive) {
+      if (request.skipPermissions) {
         args.push('--dangerously-skip-permissions');
       }
 

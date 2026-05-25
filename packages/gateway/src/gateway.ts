@@ -90,6 +90,10 @@ export class Codey {
     return (fromFallback ?? this.config.defaultAgent ?? 'claude-code') as CodingAgent;
   }
 
+  private getSkipPermissions(): boolean {
+    return this.configManager?.getSkipPermissions() ?? true;
+  }
+
   /**
    * Per-agent default model name. Looks up the first fallback entry for the
    * agent that pins a model. Used to resolve `getDefaultModelConfig` without
@@ -759,6 +763,7 @@ export class Codey {
       model: parsed.model || this.getDefaultModelConfig(agent),
       timeout: this.tuiMode ? 1800000 : undefined, // 30 min for TUI
       interactive: this.tuiMode,
+      skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       onStream: onStream ? (text: string) => { streamed.active = true; onStream(text); } : undefined,
       context: { workingDir: this.workingDir },
       resumeSessionId: p.resumeSessionId,
@@ -1624,6 +1629,7 @@ Example: /model gpt-4.1 write a Python script`;
       agent: codingAgent,
       model: modelConfig,
       interactive: this.tuiMode,
+      skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       onStream,
       context: { workingDir: this.workingDir },
     });
@@ -1933,6 +1939,7 @@ Example: /model gpt-4.1 write a Python script`;
         agent: codingAgent,
         model: modelConfig,
         interactive: this.tuiMode,
+        skipPermissions: !this.tuiMode && this.getSkipPermissions(),
         onStream,
         context: { workingDir: this.workingDir },
       });
@@ -2083,6 +2090,7 @@ Example: /model gpt-4.1 write a Python script`;
         agent: codingAgent,
         model: modelConfig,
         interactive: this.tuiMode,
+        skipPermissions: !this.tuiMode && this.getSkipPermissions(),
         onStream,
         context: { workingDir: this.workingDir },
       });
@@ -3245,8 +3253,13 @@ Example: /model gpt-4.1 write a Python script`;
           }
         }
       }
-      if (abortController.signal.aborted && !output) {
-        output = 'Stopped';
+      if (abortController.signal.aborted) {
+        // User-initiated stop: roll the prompt back so the client can restore
+        // it into the input box. Don't append a "Stopped" assistant message
+        // and don't fan out to other routes.
+        this.chatManager.removeMessage(chatId, userMessage.id);
+        sink({ type: 'stopped', chatId, userMessageId: userMessage.id, text: userText });
+        return { response: '', chatId };
       }
 
       const durationSec = Math.round((Date.now() - started) / 1000);
@@ -3304,6 +3317,13 @@ Example: /model gpt-4.1 write a Python script`;
 
       return { response: output, chatId, tokens, durationSec };
     } catch (err) {
+      if (abortController.signal.aborted) {
+        // Same rollback as the abort branch above — agent runners surface
+        // aborts as thrown errors, but we still want to restore the prompt.
+        this.chatManager.removeMessage(chatId, userMessage.id);
+        sink({ type: 'stopped', chatId, userMessageId: userMessage.id, text: userText });
+        return { response: '', chatId };
+      }
       const message = `Error: ${(err as Error).message}`;
       const assistantMessage: ChatMessage = {
         id: randomUUID(),
@@ -3331,6 +3351,10 @@ Example: /model gpt-4.1 write a Python script`;
     const runner = this.activeParallelRuns.get(chatId);
     if (runner) {
       void runner.stop('user_cancel', 'user cancelled the discussion');
+      // Also abort the surrounding chat turn so the prompt is rolled back
+      // and the 'stopped' event fires from runChatTurn's abort branch.
+      const c = this.chatAborts.get(chatId);
+      if (c) c.abort();
       return true;
     }
     const controller = this.chatAborts.get(chatId);
