@@ -8,11 +8,12 @@ import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, ModelEntry, Te
 export interface GatewayConfigJson {
   gateway: {
     port: number;
+    skipPermissions?: boolean;
   };
   channels: {
     telegram?: { enabled: boolean; botToken: string };
     discord?: { enabled: boolean; botToken: string };
-    imessage?: { enabled: boolean };
+    imessage?: { enabled: boolean; allowedSenders?: string[]; pollIntervalMs?: number };
   };
   /**
    * Reserved per-agent settings slot. Currently empty — enablement is derived
@@ -186,6 +187,8 @@ export class ConfigManager extends EventEmitter {
 
   // ── Gateway settings ───────────────────────────────────────────────
   getPort(): number { return this.config.gateway.port; }
+  getSkipPermissions(): boolean { return this.config.gateway.skipPermissions ?? true; }
+  setSkipPermissions(v: boolean): void { this.config.gateway.skipPermissions = v; this.save(); }
 
   /** Canonical default = first entry in fallback.order. */
   getDefaultAgent(): CodingAgent {
@@ -383,10 +386,19 @@ export class ConfigManager extends EventEmitter {
     this.save();
   }
 
+  setIMessageSenders(senders: string[]): void {
+    if (!this.config.channels.imessage) this.config.channels.imessage = { enabled: false, allowedSenders: [] };
+    this.config.channels.imessage.allowedSenders = senders;
+    this.save();
+  }
+
   enableChannel(channel: 'telegram' | 'discord' | 'imessage'): void {
     if (channel === 'telegram' && this.config.channels.telegram) this.config.channels.telegram.enabled = true;
     else if (channel === 'discord' && this.config.channels.discord) this.config.channels.discord.enabled = true;
-    else if (channel === 'imessage') this.config.channels.imessage = { enabled: true };
+    else if (channel === 'imessage') {
+      if (this.config.channels.imessage) this.config.channels.imessage.enabled = true;
+      else this.config.channels.imessage = { enabled: true };
+    }
     this.save();
   }
 
@@ -470,11 +482,11 @@ function normalizeFallback(raw: any, defaults: FallbackConfig): FallbackConfig {
 
 function getDefaultConfig(): GatewayConfigJson {
   return {
-    gateway: { port: 3000 },
+    gateway: { port: 3000, skipPermissions: true },
     channels: {
       telegram: { enabled: false, botToken: '' },
       discord: { enabled: false, botToken: '' },
-      imessage: { enabled: false },
+      imessage: { enabled: false, allowedSenders: [] },
     },
     agents: {
       'claude-code': {},
