@@ -6,8 +6,7 @@
   "channels": {
     "telegram": {
       "enabled": false,
-      "botToken": "",
-      "notifyChatId": ""
+      "botToken": ""
     },
     "discord": {
       "enabled": false,

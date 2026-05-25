@@ -69,10 +69,7 @@ export class TelegramHandler extends BaseChannelHandler {
   private typingIntervals: Map<string, NodeJS.Timeout> = new Map();
   private lastChoiceMessageByChat = new Map<string, number>(); // chatId → message_id
 
-  private notifyChatId?: string;
-
-  async start(config: { botToken: string; notifyChatId?: string }): Promise<void> {
-    this.notifyChatId = config.notifyChatId;
+  async start(config: { botToken: string }): Promise<void> {
     this.bot = new TelegramBot(config.botToken, {
       polling: {
         autoStart: true,
@@ -249,10 +246,4 @@ export class TelegramHandler extends BaseChannelHandler {
     }
   }
 
-  async sendStartupMessage(text: string): Promise<void> {
-    if (!this.bot || !this.notifyChatId) return;
-    await this.bot.sendMessage(this.notifyChatId, markdownToTelegramHtml(text), {
-      parse_mode: 'HTML',
-    });
-  }
 }

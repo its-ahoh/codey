@@ -8,7 +8,7 @@ import { AgentFactory } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
-import { WorkspaceManager, TeamConfigRaw, TeamConfig } from '@codey/core';
+import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
 import { PairingStore, ChannelBinding } from './pairings';
@@ -501,54 +501,24 @@ export class Codey {
   private async sendStartupNotification(): Promise<void> {
     const linkedChats = this.chatManager.list().filter(c => c.routes && c.routes.length > 0);
 
-    if (linkedChats.length > 0) {
-      for (const chat of linkedChats) {
-        const workingDir = this.resolveChatWorkingDir(chat);
-        const text = [
-          `Codey is online`,
-          ``,
-          `Chat: ${chat.title}`,
-          `Workspace: ${chat.workspaceName}`,
-          `Working dir: ${workingDir}`,
-        ].join('\n');
+    for (const chat of linkedChats) {
+      const workingDir = this.resolveChatWorkingDir(chat);
+      const text = [
+        `Codey is online`,
+        ``,
+        `Chat: ${chat.title}`,
+        `Workspace: ${chat.workspaceName}`,
+        `Working dir: ${workingDir}`,
+      ].join('\n');
 
-        for (const route of chat.routes!) {
-          const handler = this.handlers.get(route.channel);
-          if (!handler?.sendToRoute) continue;
-          try {
-            await handler.sendToRoute(route, text);
-          } catch (error) {
-            this.logger.error(`Error sending startup notification to ${route.channel}:${route.channelChatId}: ${error}`);
-          }
+      for (const route of chat.routes!) {
+        const handler = this.handlers.get(route.channel);
+        if (!handler?.sendToRoute) continue;
+        try {
+          await handler.sendToRoute(route, text);
+        } catch (error) {
+          this.logger.error(`Error sending startup notification to ${route.channel}:${route.channelChatId}: ${error}`);
         }
-      }
-      return;
-    }
-
-    // Fallback: no chats have routes yet — preserve the global summary
-    // so a configured notifyChatId still receives a heartbeat.
-    const channels = [...this.handlers.keys()].join(', ') || 'none';
-    const agents = this.getEnabledAgents().join(', ');
-    const defaultAgent = this.getDefaultAgent();
-    const workspace = this.workspaceManager.getCurrentWorkspace();
-    const workingDir = this.workingDir;
-
-    const text = [
-      `Codey is online`,
-      ``,
-      `Agent: ${defaultAgent}`,
-      `Active agents: ${agents}`,
-      `Channels: ${channels}`,
-      `Workspace: ${workspace}`,
-      `Working dir: ${workingDir}`,
-      `Port: ${this.config.port}`,
-    ].join('\n');
-
-    for (const [, handler] of this.handlers) {
-      try {
-        await handler.sendStartupMessage?.(text);
-      } catch (error) {
-        this.logger.error(`Error sending startup notification to ${handler.name}: ${error}`);
       }
     }
   }
@@ -2440,7 +2410,9 @@ Example: /model gpt-4.1 write a Python script`;
       return { response: '' };
     }
 
+    this.logger.info(`[parallel-debug] runTeamForChat: dispatch=${team.dispatch} parallel=${JSON.stringify(team.parallel)} members=${team.members.join(',')}`);
     if (team.dispatch === 'parallel') {
+      this.logger.info(`[parallel-debug] entering parallel branch`);
       const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
       // Resume detection: if this chat has a completed/terminated discussion,
       // re-activate it instead of starting fresh. initDiscussionDir will
@@ -2517,8 +2489,15 @@ Example: /model gpt-4.1 write a Python script`;
         (c0 as any).updatedAt = Date.now();
       }
       this.activeParallelRuns.set(chat.id, runner);
+      let finalResponse = '';
+      const origOnFinal = runner['opts'].onFinal;
+      runner['opts'].onFinal = (ev: ParallelFinalEvent) => {
+        finalResponse = this.formatParallelFinal(ev, teamName);
+        origOnFinal(ev);
+      };
       await runner.start();
-      return { response: '' };
+      await runner.waitDone();
+      return { response: finalResponse };
     }
     // === end parallel dispatch branch ===
 
@@ -2644,15 +2623,16 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   private formatParallelFinal(ev: ParallelFinalEvent, team: string): string {
+    const summaryBody = ev.summary.replace(/^#\s+Summary\s*/i, '').trim();
     return [
-      `🪑 Roundtable: ${team}`,
+      `🪑 Roundtable: **${team}**`,
       `终止原因: ${ev.reason}`,
       '',
-      '【Manager 总结】',
-      ev.summary.trim() || '(empty)',
+      '## Manager 总结',
+      summaryBody || '(empty)',
       '',
-      '【各方观点】',
-      ...ev.perWorker.map(p => `• ${p.name}: ${p.excerpt || '(empty)'}`),
+      '## 各方观点',
+      ...ev.perWorker.map(p => `**${p.name}**: ${p.excerpt || '(empty)'}`),
       '',
       ev.message,
     ].join('\n');
@@ -3222,10 +3202,14 @@ Example: /model gpt-4.1 write a Python script`;
         // Prefer the active workspace's normalized team (which carries dispatch mode);
         // fall back to building a TeamConfig inline from the chat's raw config.
         const wsTeam = this.workspaceManager.getTeam(teamName);
-        const team: TeamConfig = wsTeam ?? {
-          members: rawMembers,
-          dispatch: (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as TeamConfig['dispatch'],
-        };
+        const fallbackDispatch = (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as TeamConfig['dispatch'];
+        const fallbackTeam: TeamConfig = { members: rawMembers, dispatch: fallbackDispatch };
+        if (fallbackDispatch === 'parallel') {
+          const rawParallel = (!Array.isArray(rawTeam) && rawTeam?.parallel) || {};
+          fallbackTeam.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...rawParallel };
+        }
+        const team: TeamConfig = wsTeam ?? fallbackTeam;
+        this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasParallel=${!!team.parallel} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
         const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, chat, abortController.signal, {}, agent, model);
         output = r.response;
         tokens = r.tokens;

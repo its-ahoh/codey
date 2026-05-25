@@ -10,7 +10,7 @@ export interface GatewayConfigJson {
     port: number;
   };
   channels: {
-    telegram?: { enabled: boolean; botToken: string; notifyChatId?: string };
+    telegram?: { enabled: boolean; botToken: string };
     discord?: { enabled: boolean; botToken: string };
     imessage?: { enabled: boolean };
   };

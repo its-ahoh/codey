@@ -18,10 +18,10 @@ export interface ParallelSettings {
   managerPollMs: number;
 }
 
-const DEFAULT_PARALLEL_SETTINGS: ParallelSettings = {
+export const DEFAULT_PARALLEL_SETTINGS: ParallelSettings = {
   maxDurationMs: 600_000,
   idleTimeoutMs: 60_000,
-  managerPollMs: 30_000,
+  managerPollMs: 15_000,
 };
 
 /** Raw team value as it can appear in workspace.json. */
