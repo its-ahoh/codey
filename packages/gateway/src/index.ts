@@ -47,7 +47,7 @@ function startGateway(): void {
         botToken: config.channels.telegram.botToken,
       } : undefined,
       discord: config.channels.discord?.enabled ? { botToken: config.channels.discord.botToken } : undefined,
-      imessage: config.channels.imessage?.enabled ? { enabled: true } : undefined,
+      imessage: config.channels.imessage?.enabled ? config.channels.imessage : undefined,
     },
   };
 

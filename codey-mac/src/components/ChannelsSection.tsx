@@ -6,7 +6,7 @@ import { C } from '../theme'
 interface ChannelsCfg {
   telegram?: { enabled: boolean; botToken: string }
   discord?:  { enabled: boolean; botToken: string }
-  imessage?: { enabled: boolean }
+  imessage?: { enabled: boolean; allowedSenders?: string[]; pollIntervalMs?: number }
 }
 
 const inputStyle: React.CSSProperties = {
@@ -155,7 +155,7 @@ export const ChannelsSection: React.FC<ChannelsSectionProps> = ({ liveStatus, is
     return persist({ ...channels, discord: { ...cur, ...patch } }, 'discord')
   }
   const setIMessage = (patch: Partial<NonNullable<ChannelsCfg['imessage']>>) => {
-    const cur = channels.imessage ?? { enabled: false }
+    const cur = channels.imessage ?? { enabled: false, allowedSenders: [] }
     return persist({ ...channels, imessage: { ...cur, ...patch } }, 'imessage')
   }
 
@@ -207,9 +207,23 @@ export const ChannelsSection: React.FC<ChannelsSectionProps> = ({ liveStatus, is
         label="iMessage"
         enabled={!!channels.imessage?.enabled}
         liveStatus={liveLabel(liveStatus?.imessage)}
-        onToggle={enabled => setIMessage({ enabled })}
-        fields={[]}
-        note="Requires macOS Messages.app and Full Disk Access for the Codey app."
+        onToggle={enabled => {
+          const senders = channels.imessage?.allowedSenders ?? []
+          if (enabled && senders.length === 0) {
+            setError('Add at least one Allowed Sender before enabling iMessage.')
+            return
+          }
+          setError(null)
+          return setIMessage({ enabled })
+        }}
+        fields={[
+          { label: 'Allowed Senders', value: (channels.imessage?.allowedSenders ?? []).join(', '),
+            onChange: v => {
+              const senders = v.split(',').map(s => s.trim()).filter(Boolean)
+              setIMessage({ allowedSenders: senders })
+            } },
+        ]}
+        note="Phone numbers or Apple IDs that can send messages to Codey (comma-separated). Requires Full Disk Access."
       />
     </div>
   )
