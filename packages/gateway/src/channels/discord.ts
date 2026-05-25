@@ -106,7 +106,7 @@ export class DiscordHandler extends BaseChannelHandler {
   }
 
   async sendToRoute(route: ChatRoute, text: string): Promise<void> {
-    if (route.channel !== 'discord' || !this.client) return;
+    if (route.channel !== 'discord' || !this.client || !route.channelChatId) return;
     const channel = await this.client.channels.fetch(route.channelChatId).catch(() => null);
     if (channel && channel instanceof TextChannel) {
       await channel.send(text);

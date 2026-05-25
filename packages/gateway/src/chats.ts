@@ -344,8 +344,7 @@ export class ChatManager {
     chat.routes ??= [];
     const exists = chat.routes.some(r =>
       r.channel === route.channel &&
-      r.channelUserId === route.channelUserId &&
-      r.channelChatId === route.channelChatId
+      r.channelUserId === route.channelUserId
     );
     if (!exists) {
       chat.routes.push(route);
@@ -355,12 +354,12 @@ export class ChatManager {
     return chat;
   }
 
-  removeRoute(chatId: string, channel: ChannelKind, channelUserId: string, channelChatId: string): Chat {
+  removeRoute(chatId: string, channel: ChannelKind, channelUserId: string): Chat {
     const chat = this.requireChat(chatId);
     if (!chat.routes) return chat;
     const before = chat.routes.length;
     chat.routes = chat.routes.filter(r =>
-      !(r.channel === channel && r.channelUserId === channelUserId && r.channelChatId === channelChatId)
+      !(r.channel === channel && r.channelUserId === channelUserId)
     );
     if (chat.routes.length !== before) {
       chat.updatedAt = Date.now();
@@ -369,15 +368,28 @@ export class ChatManager {
     return chat;
   }
 
-  findByRoute(channel: ChannelKind, channelUserId: string, channelChatId: string): Chat | undefined {
+  clearRoutesForChannel(channel: ChannelKind): number {
+    this.ensureLoaded();
+    let removed = 0;
+    for (const chat of this.cache.values()) {
+      if (!chat.routes?.length) continue;
+      const before = chat.routes.length;
+      chat.routes = chat.routes.filter(r => r.channel !== channel);
+      if (chat.routes.length !== before) {
+        removed += before - chat.routes.length;
+        chat.updatedAt = Date.now();
+        this.persist(chat);
+      }
+    }
+    return removed;
+  }
+
+  findByRoute(channel: ChannelKind, channelUserId: string): Chat | undefined {
     this.ensureLoaded();
     for (const chat of this.cache.values()) {
-      if (chat.routes?.some(r =>
-        r.channel === channel &&
-        r.channelUserId === channelUserId &&
-        r.channelChatId === channelChatId
-      )) {
-        return chat;
+      if (!chat.routes?.length) continue;
+      for (const r of chat.routes) {
+        if (r.channel === channel && r.channelUserId === channelUserId) return chat;
       }
     }
     return undefined;

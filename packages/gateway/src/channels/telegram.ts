@@ -92,6 +92,10 @@ export class TelegramHandler extends BaseChannelHandler {
       { command: 'workspace', description: 'Switch workspace' },
       { command: 'worker', description: 'Run a specific worker' },
       { command: 'team', description: 'Run workers in sequence' },
+      { command: 'pair', description: 'Pair with Mac app using 6-digit code' },
+      { command: 'new', description: 'Start a new chat' },
+      { command: 'list', description: 'List linked chats' },
+      { command: 'switch', description: 'Switch to a different chat' },
       { command: 'clear', description: 'Clear conversation history' },
       { command: 'reset', description: 'Start new conversation' },
       { command: 'model', description: 'Show or set model' },
@@ -222,7 +226,7 @@ export class TelegramHandler extends BaseChannelHandler {
   }
 
   async sendToRoute(route: ChatRoute, text: string): Promise<void> {
-    if (route.channel !== 'telegram' || !this.bot) return;
+    if (route.channel !== 'telegram' || !this.bot || !route.channelChatId) return;
     await this.bot.sendMessage(route.channelChatId, text);
   }
 
