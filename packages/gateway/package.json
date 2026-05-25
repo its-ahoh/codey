@@ -1,6 +1,6 @@
 {
   "name": "@codey/gateway",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@codey/core": "*",
+    "better-sqlite3": "^12.10.0",
     "discord.js": "^14.0.0",
     "dotenv": "^16.0.0",
     "marked": "^15.0.12",
@@ -29,6 +30,7 @@
     "undici": "^5.28.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node-telegram-bot-api": "^0.64.13",
     "typescript": "^5.9.0"
   }

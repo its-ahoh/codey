@@ -245,6 +245,18 @@ export async function handleCommand(args: string[], config: ConfigManager, logge
       }
       break;
 
+    case 'set-imessage':
+      if (args[1]) {
+        const senders = args.slice(1).join(' ').split(',').map(s => s.trim()).filter(Boolean);
+        config.setIMessageSenders(senders);
+        config.enableChannel('imessage');
+        logger.info(`iMessage configured with ${senders.length} allowed sender(s): ${senders.join(', ')}`);
+      } else {
+        logger.error('Usage: set-imessage <phone-or-email>[,<phone-or-email>,...]');
+        logger.error('Example: set-imessage +8613800138000,someone@icloud.com');
+      }
+      break;
+
     case 'set-loglevel':
       if (args[1]) {
         config.setLogLevel(args[1] as 'debug' | 'info' | 'warn' | 'error');
@@ -295,6 +307,7 @@ function showHelp(): void {
 ║  set-model <name>           Set default model               ║
 ║  set-telegram <token>      Set Telegram bot token          ║
 ║  set-discord <token>       Set Discord bot token           ║
+║  set-imessage <senders>    Set iMessage allowed senders    ║
 ║  set-loglevel <level>      Set log level                   ║
 ║  enable <channel>          Enable a channel                 ║
 ║  disable <channel>         Disable a channel               ║
