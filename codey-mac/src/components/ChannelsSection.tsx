@@ -4,7 +4,7 @@ import { C } from '../theme'
 // Mirrors the renderer-side channel config shape. Kept local since this is
 // the only consumer.
 interface ChannelsCfg {
-  telegram?: { enabled: boolean; botToken: string; notifyChatId?: string }
+  telegram?: { enabled: boolean; botToken: string }
   discord?:  { enabled: boolean; botToken: string }
   imessage?: { enabled: boolean }
 }
@@ -164,13 +164,19 @@ export const ChannelsSection: React.FC<ChannelsSectionProps> = ({ liveStatus, is
         label="Telegram"
         enabled={!!channels.telegram?.enabled}
         liveStatus={liveLabel(liveStatus?.telegram)}
-        onToggle={enabled => setTelegram({ enabled })}
+        onToggle={enabled => {
+          if (enabled && !channels.telegram?.botToken) {
+            setError('Add a Bot Token before enabling Telegram.')
+            return
+          }
+          setError(null)
+          return setTelegram({ enabled })
+        }}
         fields={[
           { label: 'Bot Token', value: channels.telegram?.botToken ?? '', secret: true,
             onChange: v => setTelegram({ botToken: v }) },
-          { label: 'Notify Chat ID', value: channels.telegram?.notifyChatId ?? '',
-            onChange: v => setTelegram({ notifyChatId: v || undefined }) },
         ]}
+        note={!channels.telegram?.botToken ? 'A Bot Token is required to enable Telegram.' : undefined}
       />
       <ChannelEditor
         label="Discord"

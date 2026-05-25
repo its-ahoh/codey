@@ -227,7 +227,7 @@ function buildRuntimeConfig(json: any): any {
     fallback: json?.fallback,
     channels: {
       telegram: json?.channels?.telegram?.enabled
-        ? { botToken: json.channels.telegram.botToken, notifyChatId: json.channels.telegram.notifyChatId }
+        ? { botToken: json.channels.telegram.botToken }
         : undefined,
       discord: json?.channels?.discord?.enabled
         ? { botToken: json.channels.discord.botToken }

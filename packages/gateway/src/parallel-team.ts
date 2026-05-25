@@ -68,13 +68,16 @@ export class ParallelTeamRunner {
   }
 
   async start(): Promise<void> {
+    console.log(`[parallel-runner] start() called. members=${this.opts.members.join(',')} topic=${this.opts.topic.substring(0, 80)}`);
     await initDiscussionDir(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId, this.opts.topic, this.opts.members);
+    console.log(`[parallel-runner] discussion dir initialized: ${this.discussionDir}`);
     this.startedAt = Date.now();
     this.idleSince = this.startedAt;
     await appendTranscript(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId, { actor: 'system', kind: 'started' });
     void this.runManagerLoop();
     this.spawnWorkers();
     this.armSupervisors();
+    console.log(`[parallel-runner] all workers spawned, manager loop running, supervisors armed`);
   }
 
   waitDone(): Promise<void> { return this.donePromise; }
@@ -82,6 +85,8 @@ export class ParallelTeamRunner {
   async stop(reason: DiscussionTerminatedReason, finalMessage = ''): Promise<void> {
     if (this.done) return;
     this.done = true;
+    console.log(`[parallel-runner] stop() called. reason=${reason} message=${finalMessage.substring(0, 100)}`);
+    console.trace('[parallel-runner] stop() call stack');
     try {
       await writeControl(controlPath(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId),
         prev => ({ ...prev, status: 'terminated', directive: 'discussion ended' })).catch(() => undefined);
@@ -93,26 +98,59 @@ export class ParallelTeamRunner {
     }
   }
 
-  // Worker loops, manager loop, supervisors, emitFinal — added in subsequent tasks.
   private spawnWorkers(): void {
     for (const w of this.opts.members) {
       const ac = new AbortController();
       this.workerAborts.push(ac);
-      const req: AgentRequest = {
-        prompt: this.opts.buildWorkerPrompt(w),
-        signal: ac.signal,
-      } as AgentRequest;
-      void this.opts.workerRunner(req)
-        .then(async res => {
-          await appendTranscript(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId, {
-            actor: w, kind: res.success ? 'worker_done' : 'worker_failed', note: res.error,
-          });
-        })
-        .catch(async err => {
-          await appendTranscript(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId, {
-            actor: w, kind: 'worker_error', note: (err as Error).message,
-          });
+      void this.runWorkerLoop(w, ac);
+    }
+  }
+
+  private async runWorkerLoop(worker: string, ac: AbortController): Promise<void> {
+    const wsRoot = this.opts.workspacesRoot;
+    const ws = this.opts.workspace;
+    const chat = this.opts.chatId;
+    const ctrlPath = controlPath(wsRoot, ws, chat);
+    let round = 0;
+
+    while (!this.done && !ac.signal.aborted) {
+      round++;
+      console.log(`[parallel-runner] worker "${worker}" starting round ${round}`);
+      const prompt = this.opts.buildWorkerPrompt(worker);
+      console.log(`[parallel-runner] worker "${worker}" prompt length: ${prompt.length}`);
+      const req: AgentRequest = { prompt, signal: ac.signal } as AgentRequest;
+
+      try {
+        const res = await this.opts.workerRunner(req);
+        console.log(`[parallel-runner] worker "${worker}" round ${round} done. success=${res.success} output=${(res.output || '').substring(0, 100)}`);
+        await appendTranscript(wsRoot, ws, chat, {
+          actor: worker, kind: res.success ? 'worker_done' : 'worker_failed',
+          note: res.error || `round ${round}`,
         });
+        if (!res.success) break;
+      } catch (err) {
+        await appendTranscript(wsRoot, ws, chat, {
+          actor: worker, kind: 'worker_error', note: (err as Error).message,
+        });
+        break;
+      }
+
+      if (this.done || ac.signal.aborted) break;
+
+      const ctrl = await readControl(ctrlPath);
+      const status = ctrl?.status ?? 'running';
+      if (status === 'terminated') break;
+      if (status === 'finalizing') {
+        await appendTranscript(wsRoot, ws, chat, { actor: worker, kind: 'worker_done', note: 'finalizing exit' });
+        break;
+      }
+      if (status === 'paused') {
+        while (!this.done && !ac.signal.aborted) {
+          await new Promise(r => setTimeout(r, 5000));
+          const c = await readControl(ctrlPath);
+          if (!c || c.status !== 'paused') break;
+        }
+      }
     }
   }
   private async runManagerLoop(): Promise<void> {
@@ -164,18 +202,22 @@ export class ParallelTeamRunner {
       });
       pendingUserAnswer = undefined;
 
+      console.log(`[parallel-runner] manager poll: opinions=${opinions.map(o => o.name).join(',')}, revision=${ctrl?.revision ?? 0}`);
       let resp: AgentResponse;
       try {
         resp = await this.opts.managerRunner({ prompt, signal: this.abort.signal } as AgentRequest);
       } catch (err) {
+        console.log(`[parallel-runner] manager runner threw: ${(err as Error).message}`);
         await appendTranscript(wsRoot, ws, chat, { actor: 'manager', kind: 'error', note: (err as Error).message });
         continue;
       }
+      console.log(`[parallel-runner] manager response: success=${resp.success} output=${(resp.output || '').substring(0, 200)}`);
       if (!resp.success) {
         await appendTranscript(wsRoot, ws, chat, { actor: 'manager', kind: 'error', note: resp.error });
         continue;
       }
       const turn = parseParallelManagerTurn(resp.output);
+      console.log(`[parallel-runner] manager parsed: action=${turn?.action} reason=${turn?.reason}`);
       if (!turn) {
         await appendTranscript(wsRoot, ws, chat, { actor: 'manager', kind: 'parse_error' });
         continue;
@@ -229,7 +271,8 @@ export class ParallelTeamRunner {
   }
   private armSupervisors(): void {
     const start = Date.now();
-    const checkMs = Math.min(500, Math.max(50, this.opts.settings.idleTimeoutMs / 4));
+    const checkMs = Math.min(5000, Math.max(500, this.opts.settings.idleTimeoutMs / 4));
+    let firstWriteSeen = false;
     const interval = setInterval(async () => {
       if (this.done) { clearInterval(interval); return; }
       if (Date.now() - start >= this.opts.settings.maxDurationMs) {
@@ -237,7 +280,6 @@ export class ParallelTeamRunner {
         await this.stop('max_duration', 'discussion exceeded maximum duration');
         return;
       }
-      // idle timeout: latest mtime across opinions + summary
       let latest = 0;
       try {
         const files = [summaryPath(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId)];
@@ -250,7 +292,8 @@ export class ParallelTeamRunner {
       if (latest > this.lastMtimeMs) {
         this.lastMtimeMs = latest;
         this.idleSince = Date.now();
-      } else if (Date.now() - this.idleSince >= this.opts.settings.idleTimeoutMs) {
+        firstWriteSeen = true;
+      } else if (firstWriteSeen && Date.now() - this.idleSince >= this.opts.settings.idleTimeoutMs) {
         clearInterval(interval);
         await this.stop('timeout', 'no activity within idle window');
       }
@@ -261,8 +304,12 @@ export class ParallelTeamRunner {
     const perWorker: Array<{ name: string; excerpt: string }> = [];
     for (const w of this.opts.members) {
       const text = safeRead(opinionPath(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId, w));
-      const firstLine = text.split('\n').find(l => l.trim().length > 0) || '';
-      perWorker.push({ name: w, excerpt: firstLine.slice(0, 200) });
+      const contentLines = text.split('\n').filter(l => {
+        const t = l.trim();
+        return t.length > 0 && !t.startsWith('#') && !t.startsWith('(not started');
+      });
+      const excerpt = contentLines.slice(0, 3).join(' ').slice(0, 300);
+      perWorker.push({ name: w, excerpt: excerpt || '(no content)' });
     }
     this.opts.onFinal({ reason, message, summary, perWorker });
   }
