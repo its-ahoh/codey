@@ -634,6 +634,28 @@ app.whenReady().then(async () => {
   createTray()
   await bootInProcessCore()
 
+  // Check Full Disk Access by probing the iMessage database.
+  // macOS shows a system dialog the first time; on subsequent launches
+  // we surface a reminder if access is still denied.
+  {
+    const fsMod = await import('fs')
+    const osMod = await import('os')
+    const pathMod = await import('path')
+    const chatDbPath = pathMod.join(osMod.homedir(), 'Library', 'Messages', 'chat.db')
+    try {
+      fsMod.accessSync(chatDbPath, fsMod.constants.R_OK)
+    } catch {
+      const { dialog: dlg } = await import('electron')
+      dlg.showMessageBox({
+        type: 'info',
+        title: 'Full Disk Access recommended',
+        message: 'Codey needs Full Disk Access to read iMessage conversations.',
+        detail: 'Go to System Settings → Privacy & Security → Full Disk Access and add Codey.',
+        buttons: ['OK'],
+      })
+    }
+  }
+
   // ── Gateway status IPC ────────────────────────────────────────────
   ipcMain.handle('gateway:status', async () =>
     wrap(async () => inProcessGateway?.getHealthStatus() ?? null)
@@ -1466,6 +1488,36 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       return inProcessGateway.unlinkChat(chatId, channel, channelUserId)
+    })
+  )
+
+  // ── Permissions IPC ──────────────────────────────────────────────
+  ipcMain.handle('permissions:addAllowed', async (_e, toolNames: string[]) =>
+    wrap(async () => {
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      const root = workspaceManager.getWorkspacesRoot()
+      const settingsDir = pathMod.join(pathMod.dirname(root), '.claude')
+      const settingsFile = pathMod.join(settingsDir, 'settings.local.json')
+      let cfg: any = { permissions: { allow: [] } }
+      if (fsMod.existsSync(settingsFile)) {
+        try { cfg = JSON.parse(fsMod.readFileSync(settingsFile, 'utf-8')) } catch { /* fresh */ }
+      }
+      if (!cfg.permissions) cfg.permissions = {}
+      if (!Array.isArray(cfg.permissions.allow)) cfg.permissions.allow = []
+      let added = 0
+      for (const name of toolNames) {
+        if (!cfg.permissions.allow.includes(name)) {
+          cfg.permissions.allow.push(name)
+          added++
+        }
+      }
+      if (added > 0) {
+        fsMod.mkdirSync(settingsDir, { recursive: true })
+        fsMod.writeFileSync(settingsFile, JSON.stringify(cfg, null, 2), 'utf-8')
+      }
+      return { added }
     })
   )
 

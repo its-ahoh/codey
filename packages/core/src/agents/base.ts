@@ -19,7 +19,8 @@ export abstract class BaseAgentAdapter implements CodingAgentAdapter {
     tokens?: AgentResponse['tokens'],
     duration?: number,
     statusUpdates?: string[],
-    states?: AgentResponse['states']
+    states?: AgentResponse['states'],
+    permissionDenials?: AgentResponse['permissionDenials']
   ): AgentResponse {
     return {
       success,
@@ -29,6 +30,7 @@ export abstract class BaseAgentAdapter implements CodingAgentAdapter {
       states,
       tokens,
       duration,
+      permissionDenials: permissionDenials && permissionDenials.length > 0 ? permissionDenials : undefined,
     };
   }
 }
