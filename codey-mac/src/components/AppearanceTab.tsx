@@ -80,7 +80,7 @@ export const AppearanceTab: React.FC = () => {
           <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
             <div>Skip permissions</div>
             <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
-              Auto-approve agent actions (--dangerously-skip-permissions)
+              When enabled, agents run shell commands, edit files, and make network requests without asking for confirmation. Disable to review every action before execution.
             </div>
           </div>
           <Toggle on={skipPerms} onChange={toggleSkipPerms}/>
