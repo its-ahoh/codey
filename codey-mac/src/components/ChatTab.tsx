@@ -233,6 +233,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [titleDraft, setTitleDraft] = useState('')
   const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [slashCommands, setSlashCommands] = useState<Array<{ name: string; description: string; source: 'agent' | 'gateway' }>>([])
+  const [slashIdx, setSlashIdx] = useState(0)
+  const slashMenuRef = useRef<HTMLDivElement>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [pairings, setPairings] = useState<Array<{ channel: 'telegram'|'discord'|'imessage'; channelUserId: string }>>([])
   const [pairingModal, setPairingModal] = useState<null | 'telegram' | 'discord' | 'imessage'>(null)
@@ -458,6 +461,27 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const apiTypeForAgent = AGENT_API_TYPE[effectiveAgent]
   const modelsForAgent = models.filter(m => m.apiType === apiTypeForAgent)
 
+  useEffect(() => {
+    let stale = false
+    window.codey.agents.slashCommands(effectiveAgent).then(r => {
+      if (stale) return
+      if (r.ok) setSlashCommands(r.data)
+    })
+    return () => { stale = true }
+  }, [effectiveAgent])
+
+  useEffect(() => { setSlashIdx(0) }, [input])
+  useEffect(() => {
+    const el = slashMenuRef.current?.children[slashIdx] as HTMLElement | undefined
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [slashIdx])
+  const slashQuery = input.match(/^\/(\S*)$/)?.[1]?.toLowerCase() ?? null
+  const filteredSlash = slashQuery !== null
+    ? slashCommands.filter(c => c.name.toLowerCase().includes(slashQuery)).slice(0, 12)
+    : []
+  const slashLoading = slashQuery !== null && slashCommands.length === 0
+  const showSlashMenu = filteredSlash.length > 0 || slashLoading
+
   const onAgentChange = async (v: string) => {
     const nextAgent = v === '' ? null : v
     // Clear the model override when switching agents — the previous model id
@@ -556,6 +580,29 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   }
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlashMenu) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSlashIdx(i => Math.min(i + 1, filteredSlash.length - 1))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSlashIdx(i => Math.max(i - 1, 0))
+        return
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault()
+        const cmd = filteredSlash[slashIdx]
+        if (cmd) setInput(`/${cmd.name} `)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setInput('')
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       send()
@@ -893,7 +940,24 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           Workspace "{chat.workspaceName}" no longer exists. Sending is disabled.
         </div>
       )}
-      <div style={styles.inputContainer}>
+      <div style={{ ...styles.inputContainer, position: 'relative' as const }}>
+        {showSlashMenu && (
+          <div ref={slashMenuRef} style={styles.slashMenu}>
+            {slashLoading ? (
+              <div style={{ ...styles.slashMenuItem, color: C.fg3 }}>Loading commands…</div>
+            ) : filteredSlash.map((cmd, i) => (
+              <div
+                key={cmd.name}
+                style={{ ...styles.slashMenuItem, ...(i === slashIdx ? styles.slashMenuItemActive : {}) }}
+                onMouseDown={e => { e.preventDefault(); setInput(`/${cmd.name} `) }}
+                onMouseEnter={() => setSlashIdx(i)}
+              >
+                <span style={styles.slashCmdName}>/{cmd.name}</span>
+                <span style={styles.slashCmdDesc}>{cmd.description}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {uploadError && (
           <div style={styles.uploadError}>{uploadError}</div>
         )}
@@ -1257,5 +1321,28 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 4, marginBottom: 6,
     padding: 8, background: 'rgba(0,0,0,0.25)', borderRadius: 4,
     border: `1px solid ${C.border}`,
+  },
+  slashMenu: {
+    position: 'absolute' as const, bottom: '100%', left: 0, right: 0,
+    maxHeight: 260, overflowY: 'auto' as const, zIndex: 100,
+    background: C.surface2, border: `1px solid ${C.border2}`,
+    borderRadius: 10, padding: 4, marginBottom: 4,
+    boxShadow: '0 -4px 20px rgba(0,0,0,0.35)',
+  },
+  slashMenuItem: {
+    display: 'flex', alignItems: 'center', gap: 10,
+    padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
+    fontSize: 12,
+  },
+  slashMenuItemActive: {
+    background: 'rgba(106,176,243,0.15)',
+  },
+  slashCmdName: {
+    color: C.accent, fontWeight: 600, flexShrink: 0,
+    fontFamily: 'SF Mono, Menlo, monospace', fontSize: 12,
+  },
+  slashCmdDesc: {
+    color: C.fg3, overflow: 'hidden' as const,
+    textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
   },
 }

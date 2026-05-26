@@ -212,6 +212,73 @@ async function detectInstalledAgents(): Promise<Record<string, { installed: bool
   return result
 }
 
+interface SlashCommand {
+  name: string
+  description: string
+  source: 'agent' | 'gateway'
+}
+
+const slashCommandCache = new Map<string, { commands: SlashCommand[]; ts: number }>()
+const SLASH_CACHE_TTL = 5 * 60_000
+
+async function discoverSlashCommands(agent: string): Promise<SlashCommand[]> {
+  const cached = slashCommandCache.get(agent)
+  if (cached && Date.now() - cached.ts < SLASH_CACHE_TTL) return cached.commands
+
+  const { spawn } = await import('child_process')
+  const shell = process.env.SHELL || '/bin/zsh'
+  const binaries: Record<string, string> = {
+    'claude-code': 'claude',
+    'opencode': 'opencode',
+    'codex': 'codex',
+  }
+  const bin = binaries[agent]
+  if (!bin) return []
+
+  const commands: SlashCommand[] = []
+
+  const run = (cmd: string) => new Promise<string>(resolve => {
+    const p = spawn(shell, ['-i', '-c', cmd], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    })
+    let out = ''
+    p.stdout.on('data', (d: Buffer) => { out += d.toString() })
+    const timer = setTimeout(() => { try { p.kill() } catch {} resolve('') }, 15_000)
+    p.on('close', () => { clearTimeout(timer); resolve(out) })
+    p.on('error', () => { clearTimeout(timer); resolve('') })
+  })
+
+  if (agent === 'claude-code') {
+    const raw = await run(`${bin} -p "List every slash command available to you. Output ONLY lines in this exact format, one per line: /name — description. No headers, no grouping, no extra text." --output-format json --max-budget-usd 0.05 2>/dev/null`)
+    try {
+      const parsed = JSON.parse(raw)
+      const text: string = parsed.result || ''
+      for (const line of text.split('\n')) {
+        const m = line.match(/^\s*[-*]?\s*`?\/?(\w[\w-]*)(?:\s+<[^>]*>)?`?\s*[—–-]+\s*(.+)/)
+        if (m) commands.push({ name: m[1], description: m[2].trim(), source: 'agent' })
+      }
+    } catch { /* parse failed */ }
+  } else if (agent === 'opencode') {
+    const raw = await run(`${bin} --help 2>&1`)
+    for (const line of raw.split('\n')) {
+      const m = line.match(/^\s+opencode\s+(\w[\w-]*)\s+(.+)/)
+      if (m) commands.push({ name: m[1], description: m[2].trim(), source: 'agent' })
+    }
+  } else if (agent === 'codex') {
+    const raw = await run(`${bin} --help 2>&1`)
+    for (const line of raw.split('\n')) {
+      const m = line.match(/^\s+(\w[\w-]*)\s{2,}(.+)/)
+      if (m && !['help', 'Options:'].includes(m[1])) {
+        commands.push({ name: m[1], description: m[2].trim(), source: 'agent' })
+      }
+    }
+  }
+
+  slashCommandCache.set(agent, { commands, ts: Date.now() })
+  return commands
+}
+
 function buildRuntimeConfig(json: any): any {
   // Flatten the on-disk GatewayConfigJson into the runtime GatewayConfig
   // the Codey class expects. Default agent + per-agent default model now
@@ -1305,6 +1372,10 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('agents:checkInstalled', async () =>
     wrap(async () => detectInstalledAgents())
+  )
+
+  ipcMain.handle('agents:slashCommands', async (_e, agent: string) =>
+    wrap(async () => discoverSlashCommands(agent))
   )
 
   // ── Conversations IPC ─────────────────────────────────────────────

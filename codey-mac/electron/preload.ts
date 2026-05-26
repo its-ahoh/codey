@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('codey', {
     get: () => ipcRenderer.invoke('agents:get'),
     set: (updates: any) => ipcRenderer.invoke('agents:set', updates),
     checkInstalled: () => ipcRenderer.invoke('agents:checkInstalled'),
+    slashCommands: (agent: string) => ipcRenderer.invoke('agents:slashCommands', agent),
   },
   chats: {
     upload: (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer) =>
