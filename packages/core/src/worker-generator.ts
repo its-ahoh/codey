@@ -90,6 +90,7 @@ export async function generateWorker(
       agent: deps.activeAgent,
       model: deps.activeModel,
       interactive: false,
+      skipPermissions: true,
       context: { workingDir: deps.workingDir },
     });
 

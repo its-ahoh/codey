@@ -60,9 +60,11 @@ export class CodexAdapter extends BaseAgentAdapter {
       args.push(
         '--json',
         '--skip-git-repo-check',
-        '--dangerously-bypass-approvals-and-sandbox',
-        '-o', outFile,
       );
+      if (request.skipPermissions) {
+        args.push('--dangerously-bypass-approvals-and-sandbox');
+      }
+      args.push('-o', outFile);
       if (request.model?.model) {
         args.push('--model', request.model.model);
       }
