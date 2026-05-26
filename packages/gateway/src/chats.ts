@@ -250,6 +250,21 @@ export class ChatManager {
     this.cache.delete(chatId);
   }
 
+  /**
+   * Remove a message by id and persist. Used when a turn is aborted and we
+   * want to roll the conversation back so the user can re-edit the prompt.
+   */
+  removeMessage(chatId: string, messageId: string): Chat | undefined {
+    const chat = this.cache.get(chatId);
+    if (!chat) return undefined;
+    const idx = chat.messages.findIndex(m => m.id === messageId);
+    if (idx < 0) return chat;
+    chat.messages.splice(idx, 1);
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
   /** Append a message and persist. Called at message completion. */
   appendMessage(chatId: string, message: ChatMessage): Chat {
     const chat = this.requireChat(chatId);
