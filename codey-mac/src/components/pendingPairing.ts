@@ -6,7 +6,6 @@
 type Channel = 'telegram' | 'discord' | 'imessage'
 
 let pending: { chatId: string; channel: Channel } | null = null
-
 export function setPendingPairing(chatId: string, channel: Channel): void {
   pending = { chatId, channel }
 }
