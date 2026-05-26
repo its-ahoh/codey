@@ -116,19 +116,24 @@ const LiveActivity: React.FC<{ toolCalls?: import('../types').ToolCallEntry[] }>
   const target = active ?? lastDone
   if (!target) return null
   const headline = formatHeadline(target.tool, target.input ?? {})
-  const canExpand = !!lastDone && hasDetail(lastDone.tool, lastDone.input ?? {}, lastDone.output)
+  const detailTarget = active
+    ? { tool: active.tool, input: active.input ?? {}, output: undefined as string | undefined }
+    : lastDone
+      ? { tool: lastDone.tool, input: lastDone.input ?? {}, output: lastDone.output }
+      : null
+  const canExpand = !!detailTarget && hasDetail(detailTarget.tool, detailTarget.input, detailTarget.output)
   return (
     <div>
       <div
         style={{ ...styles.liveActivity, cursor: canExpand ? 'pointer' : 'default' }}
         onClick={canExpand ? () => setExpanded(v => !v) : undefined}
       >
-        <span style={styles.liveActivityDot}>{active ? '●' : canExpand ? (expanded ? '▾' : '▸') : '○'}</span>
+        <span style={styles.liveActivityDot}>{active ? (expanded ? '▾' : '●') : canExpand ? (expanded ? '▾' : '▸') : '○'}</span>
         <span>{headline}</span>
       </div>
-      {expanded && canExpand && lastDone && (
+      {expanded && canExpand && detailTarget && (
         <div style={styles.liveActivityDetail}>
-          <ToolDetail rawTool={lastDone.tool} input={lastDone.input ?? {}} output={lastDone.output} />
+          <ToolDetail rawTool={detailTarget.tool} input={detailTarget.input} output={detailTarget.output} />
         </div>
       )}
     </div>
