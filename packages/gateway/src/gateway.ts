@@ -3254,6 +3254,10 @@ Example: /model gpt-4.1 write a Python script`;
             this.chatManager.setSessionAnchor(chatId, { agent, sessionId: anchorId });
           }
         }
+        // Surface permission denials so the UI can offer to add them to the allow list.
+        if (response?.permissionDenials && response.permissionDenials.length > 0) {
+          sink({ type: 'permission_denials', chatId, denials: response.permissionDenials });
+        }
       }
       if (abortController.signal.aborted) {
         // User-initiated stop: roll the prompt back so the client can restore

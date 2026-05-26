@@ -104,6 +104,9 @@ declare global {
         unlink: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<IpcResult<Chat>>
         updateContextPanelOpen: (id: string, open: boolean | null) => Promise<IpcResult<Chat>>
       }
+      permissions: {
+        addAllowed: (toolNames: string[]) => Promise<IpcResult<{ added: number }>>
+      }
       pairing: {
         start: (channel: 'telegram' | 'discord' | 'imessage') => Promise<IpcResult<string>>
         list: () => Promise<IpcResult<Array<{

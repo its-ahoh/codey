@@ -373,6 +373,16 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
           break
         }
+        case 'permission_denials': {
+          const toolNames = [...new Set(ev.denials.map(d => d.toolName))]
+          const ok = window.confirm(
+            `Claude needs permission to use: ${toolNames.join(', ')}\n\nAdd to allowed tools so future tasks can use them?`
+          )
+          if (ok) {
+            window.codey?.permissions?.addAllowed?.(toolNames).catch(() => {})
+          }
+          break
+        }
       }
     })
     return off
