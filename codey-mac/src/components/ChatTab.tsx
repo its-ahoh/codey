@@ -951,7 +951,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 el.style.height = Math.min(el.scrollHeight, 120) + 'px'
               }}
               placeholder={isGatewayRunning ? (isSending ? 'Sending…' : 'Message Codey… (↵ to send)') : 'Start gateway to chat'}
-              disabled={!isGatewayRunning || isSending}
+              disabled={!isGatewayRunning}
               rows={1}
               style={styles.input}
             />
