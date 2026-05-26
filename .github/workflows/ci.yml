@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: build & test (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # Headers for better-sqlite3 in case its prebuilt binary doesn't match
+      # the runner's Node ABI and it has to compile from source.
+      - name: Install native build deps
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - run: npm ci
+
+      # Build the two TS packages. This invokes `tsc` which both type-checks
+      # and emits; codey-mac is skipped here because its `build` script runs
+      # electron-builder, which is heavy and only meaningful on macOS.
+      - name: Build core
+        run: npm run build -w @codey/core
+
+      - name: Build gateway
+        run: npm run build -w @codey/gateway
+
+      # Type-check codey-mac without running electron-builder.
+      - name: Type-check codey-mac
+        working-directory: codey-mac
+        run: npx tsc --noEmit
+
+      - name: Test core
+        run: npm test -w @codey/core
+
+      - name: Test gateway
+        run: npm test -w @codey/gateway
+
+      - name: Test codey-mac
+        run: npm test -w codey-mac
