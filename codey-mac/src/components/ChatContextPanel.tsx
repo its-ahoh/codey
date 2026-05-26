@@ -340,7 +340,7 @@ const ToolTimeline: React.FC<{ toolCalls: import('../types').ToolCallEntry[] }> 
             next.has(r.id) ? next.delete(r.id) : next.add(r.id)
             return next
           })
-          const icon = !r.done ? '▶' : '✓'
+          const icon = isOpen ? '▾' : '▶'
           return (
             <div key={r.id}>
               <div
