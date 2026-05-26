@@ -391,12 +391,12 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
                   onClick={() => {
                     const c = chatMenu.chat
                     setChatMenu(null)
-                    // Queue the intent BEFORE selecting the chat. The new
-                    // ChatTab drains the queue on mount; a synchronous window
-                    // event would be lost (old ChatTab ignores it, new one
-                    // hasn't mounted its listener yet).
                     setPendingPairing(c.id, ch)
                     selectChat(c.id)
+                    // If the chat is already selected, chatId doesn't change
+                    // and the useEffect won't re-fire. Dispatch a DOM event
+                    // so the mounted ChatTab drains the queue immediately.
+                    window.dispatchEvent(new Event('pendingPairing'))
                   }}
                 >{ch === 'telegram' ? '✈ Telegram' : ch === 'discord' ? '◈ Discord' : '◐ iMessage'}</button>
               ))}
