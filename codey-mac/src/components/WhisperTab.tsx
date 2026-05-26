@@ -32,14 +32,14 @@ const VOICE_DEFAULT: VoiceCfg = {
 // Values must match real folder names in argmaxinc/whisperkit-coreml on HF.
 // The helper strips the `openai_whisper-` prefix before passing to WhisperKit.
 const LOCAL_MODELS: Array<{ value: string; label: string; note: string }> = [
-  { value: 'openai_whisper-large-v3_turbo_954MB', label: 'large-v3 turbo · 954MB (recommended)', note: '量化版, 速度=small, 质量≈large, 多语言' },
-  { value: 'openai_whisper-large-v3_turbo', label: 'large-v3 turbo · ~1.6GB', note: '全精度 turbo, 质量最佳' },
-  { value: 'openai_whisper-large-v3', label: 'large-v3 · ~3GB (full precision)', note: '原版 large-v3, 最准但最慢, 不是 turbo' },
-  { value: 'openai_whisper-large-v3-v20240930_turbo_632MB', label: 'large-v3 turbo · Sep 2024 · 632MB', note: '更小的量化 turbo, 中文略弱' },
-  { value: 'openai_whisper-small_216MB', label: 'small · 216MB', note: '量化版, 中等质量, 中文一般' },
-  { value: 'openai_whisper-small', label: 'small · ~480MB', note: '全精度 small' },
-  { value: 'openai_whisper-base', label: 'base · ~150MB', note: '低质量, 仅作 quick test' },
-  { value: 'openai_whisper-tiny', label: 'tiny · ~75MB', note: '最小, 中文几乎不可用' },
+  { value: 'openai_whisper-large-v3_turbo_954MB', label: 'large-v3 turbo · 954MB (recommended)', note: 'Quantized — near large-v3 quality at small-model speed. Best balance for most users.' },
+  { value: 'openai_whisper-large-v3_turbo', label: 'large-v3 turbo · ~1.6GB', note: 'Full-precision turbo. Highest accuracy, but larger download and slower inference.' },
+  { value: 'openai_whisper-large-v3', label: 'large-v3 · ~3GB (full precision)', note: 'Original large-v3 (non-turbo). Maximum accuracy at the cost of speed and disk space.' },
+  { value: 'openai_whisper-large-v3-v20240930_turbo_632MB', label: 'large-v3 turbo · Sep 2024 · 632MB', note: 'Compact quantized turbo. Lower disk usage but slightly weaker on non-English languages.' },
+  { value: 'openai_whisper-small_216MB', label: 'small · 216MB', note: 'Quantized small. Moderate quality, acceptable for English; weaker on other languages.' },
+  { value: 'openai_whisper-small', label: 'small · ~480MB', note: 'Full-precision small. Mid-range accuracy and speed.' },
+  { value: 'openai_whisper-base', label: 'base · ~150MB', note: 'Minimal footprint. Low accuracy — useful only for quick testing.' },
+  { value: 'openai_whisper-tiny', label: 'tiny · ~75MB', note: 'Smallest model. Very fast but accuracy is poor; not recommended for real use.' },
 ]
 
 const VOICE_LANGUAGES: Array<{ value: string; label: string }> = [
