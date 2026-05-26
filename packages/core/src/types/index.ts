@@ -179,6 +179,8 @@ export interface AgentResponse {
    * the gateway already knows the id it sent.
    */
   sessionId?: string;
+  /** Tools that were denied due to permission settings (only when skipPermissions is false). */
+  permissionDenials?: Array<{ toolName: string; toolInput?: Record<string, unknown> }>;
 }
 
 // Channel configuration

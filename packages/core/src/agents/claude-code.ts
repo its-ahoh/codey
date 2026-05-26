@@ -42,6 +42,8 @@ interface StreamEvent {
     type: string;
     delta?: { type?: string; text?: string };
   };
+  // permission_denials in result event
+  permission_denials?: Array<{ tool_name: string; tool_input?: Record<string, unknown> }>;
 }
 
 export class ClaudeCodeAdapter extends BaseAgentAdapter {
@@ -139,6 +141,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       const states: AgentStateEntry[] = [];
       // Track pending tool_use calls by id so we can pair them with tool_result
       const pendingTools = new Map<string, { name: string; input?: Record<string, unknown> }>();
+      let permissionDenials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> = [];
 
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
@@ -248,6 +251,12 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           if (event.duration_ms != null) {
             durationSec = Math.round(event.duration_ms / 1000);
           }
+          if (event.permission_denials && event.permission_denials.length > 0) {
+            permissionDenials = event.permission_denials.map(d => ({
+              toolName: d.tool_name,
+              toolInput: d.tool_input,
+            }));
+          }
         }
       };
 
@@ -288,7 +297,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         const finalDuration = durationSec ?? Math.round((Date.now() - startTime) / 1000);
 
         if (code === 0 && output) {
-          safeResolve(this.createResponse(output, true, tokens, finalDuration, statusUpdates, states));
+          safeResolve(this.createResponse(output, true, tokens, finalDuration, statusUpdates, states, permissionDenials));
         } else {
           // Clear session on failure to avoid "session already in use" errors
           this.sessionId = undefined;

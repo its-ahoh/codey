@@ -3216,6 +3216,7 @@ Example: /model gpt-4.1 write a Python script`;
           agent,
           model,
           context: { workingDir },
+          skipPermissions: this.getSkipPermissions(),
           onStream,
           onStatus,
           signal: abortController.signal,
@@ -3236,6 +3237,7 @@ Example: /model gpt-4.1 write a Python script`;
             agent,
             model,
             context: { workingDir },
+            skipPermissions: this.getSkipPermissions(),
             onStream,
             onStatus,
             signal: abortController.signal,
@@ -3251,6 +3253,10 @@ Example: /model gpt-4.1 write a Python script`;
           if (anchorId) {
             this.chatManager.setSessionAnchor(chatId, { agent, sessionId: anchorId });
           }
+        }
+        // Surface permission denials so the UI can offer to add them to the allow list.
+        if (response?.permissionDenials && response.permissionDenials.length > 0) {
+          sink({ type: 'permission_denials', chatId, denials: response.permissionDenials });
         }
       }
       if (abortController.signal.aborted) {

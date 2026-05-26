@@ -27,8 +27,17 @@ export function PairingModal({ channel, onClose }: PairingModalProps) {
         {!error && !code && <p style={styles.hint}>Generating code…</p>}
         {code && (
           <>
-            <p>On your {channel} app, send this command to the bot:</p>
+            {channel === 'imessage' ? (
+              <p>From another Apple device, send an iMessage to this Mac's Apple&nbsp;ID with the command:</p>
+            ) : (
+              <p>On your {channel} app, send this command to the bot:</p>
+            )}
             <pre style={styles.code}>/pair {code}</pre>
+            {channel === 'imessage' && (
+              <p style={styles.hint}>
+                Make sure your phone number or Apple&nbsp;ID is listed in Allowed Senders (Settings → Channels → iMessage → Configure).
+              </p>
+            )}
             <p style={styles.hint}>Code expires in 5 minutes.</p>
           </>
         )}
