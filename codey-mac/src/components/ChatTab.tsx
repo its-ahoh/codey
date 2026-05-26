@@ -116,7 +116,7 @@ const LiveActivity: React.FC<{ toolCalls?: import('../types').ToolCallEntry[] }>
   const target = active ?? lastDone
   if (!target) return null
   const headline = formatHeadline(target.tool, target.input ?? {})
-  const canExpand = !active && lastDone && hasDetail(lastDone.tool, lastDone.input ?? {}, lastDone.output)
+  const canExpand = !!lastDone && hasDetail(lastDone.tool, lastDone.input ?? {}, lastDone.output)
   return (
     <div>
       <div
