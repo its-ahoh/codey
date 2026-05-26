@@ -20,6 +20,7 @@ interface State {
   // When a turn is interrupted, the prompt text is stashed here so ChatTab
   // can repopulate the input box for the matching chat.
   pendingRestores: Record<string, string>
+  unreadChats: Record<string, true>
 }
 
 type Action =
@@ -88,8 +89,11 @@ function reducer(state: State, action: Action): State {
       delete inFlight[action.chatId]
       return { ...state, chats, order, selectedChatId, inFlight }
     }
-    case 'select':
-      return { ...state, selectedChatId: action.chatId }
+    case 'select': {
+      const unreadChats = { ...state.unreadChats }
+      if (action.chatId) delete unreadChats[action.chatId]
+      return { ...state, selectedChatId: action.chatId, unreadChats }
+    }
     case 'toggleWorkspace': {
       const collapsed = { ...state.collapsedWorkspaces }
       if (collapsed[action.workspaceName]) delete collapsed[action.workspaceName]
@@ -174,11 +178,15 @@ function reducer(state: State, action: Action): State {
       if (action.title) updatedChat.title = action.title
       const inFlight = { ...state.inFlight }
       delete inFlight[action.chatId]
+      const unreadChats = state.selectedChatId !== action.chatId
+        ? { ...state.unreadChats, [action.chatId]: true as const }
+        : state.unreadChats
       return {
         ...state,
         chats: { ...state.chats, [chat.id]: updatedChat },
         order: reorder(state.order, chat.id),
         inFlight,
+        unreadChats,
       }
     }
     case 'stoppedSend': {
@@ -261,6 +269,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     })(),
     workspaces: [],
     pendingRestores: {},
+    unreadChats: {},
   })
 
   const pendingAssistantId = useRef<Record<string, string>>({})
