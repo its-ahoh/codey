@@ -237,6 +237,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
               {!collapsed && groups[ws].map(chat => {
                 const active = chat.id === activeChatId
                 const flight = state.inFlight[chat.id]
+                const unread = !!state.unreadChats[chat.id]
                 const isRenaming = renamingId === chat.id
                 const orphaned = workspaces.length > 0 && !workspaces.includes(chat.workspaceName)
                 return (
@@ -281,6 +282,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
                       <span style={styles.title}>{chat.title}</span>
                     )}
                     <RouteIcons routes={chat.routes} />
+                    {unread && !active && <span style={styles.unreadDot} />}
                     {flight && <span style={styles.dot} />}
                     {!isRenaming && (
                       <button
@@ -461,6 +463,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4, padding: '2px 6px', color: C.fg, fontSize: 12, outline: 'none',
   },
   dot: { width: 6, height: 6, borderRadius: '50%', background: C.accent, animation: 'codey-pulse-dot 1.2s infinite' },
+  unreadDot: { width: 6, height: 6, borderRadius: '50%', background: C.accent, flexShrink: 0 },
   xBtn: {
     background: 'transparent', border: 'none', color: C.fg3,
     cursor: 'pointer', fontSize: 14, padding: '0 4px',

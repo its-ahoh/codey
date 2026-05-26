@@ -9,7 +9,7 @@ import { PairingModal } from './PairingModal'
 import { consumePendingPairing } from './pendingPairing'
 import { ChatContextPanel } from './ChatContextPanel'
 import { parseTeamMessage } from './teamMessageFormat'
-import { formatHeadline, normalizeTool } from './toolFormat'
+import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 
 interface Props {
   chatId: string
@@ -98,27 +98,44 @@ const splitParagraphs = (text: string): string[] =>
   text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
 
 const LiveActivity: React.FC<{ toolCalls?: import('../types').ToolCallEntry[] }> = ({ toolCalls }) => {
+  const [expanded, setExpanded] = useState(false)
   if (!toolCalls || toolCalls.length === 0) return null
   const pending = new Map<string, { id: string; tool?: string; input?: Record<string, unknown> }>()
-  let lastDone: { tool?: string; input?: Record<string, unknown> } | null = null
+  let lastDone: { tool?: string; input?: Record<string, unknown>; output?: string } | null = null
   for (const tc of toolCalls) {
     if (tc.type === 'tool_start') {
       pending.set(normalizeTool(tc.tool), { id: tc.id, tool: tc.tool, input: tc.input })
     } else if (tc.type === 'tool_end') {
       const key = normalizeTool(tc.tool)
       const p = pending.get(key)
-      if (p) { lastDone = { tool: p.tool, input: p.input }; pending.delete(key) }
-      else { lastDone = { tool: tc.tool } }
+      if (p) { lastDone = { tool: p.tool, input: p.input, output: tc.output }; pending.delete(key) }
+      else { lastDone = { tool: tc.tool, output: tc.output } }
     }
   }
   const active = pending.size > 0 ? Array.from(pending.values()).pop()! : null
   const target = active ?? lastDone
   if (!target) return null
   const headline = formatHeadline(target.tool, target.input ?? {})
+  const detailTarget = active
+    ? { tool: active.tool, input: active.input ?? {}, output: undefined as string | undefined }
+    : lastDone
+      ? { tool: lastDone.tool, input: lastDone.input ?? {}, output: lastDone.output }
+      : null
+  const canExpand = !!detailTarget && hasDetail(detailTarget.tool, detailTarget.input, detailTarget.output)
   return (
-    <div style={styles.liveActivity}>
-      <span style={styles.liveActivityDot}>{active ? '●' : '○'}</span>
-      <span>{headline}</span>
+    <div>
+      <div
+        style={{ ...styles.liveActivity, cursor: canExpand ? 'pointer' : 'default' }}
+        onClick={canExpand ? () => setExpanded(v => !v) : undefined}
+      >
+        <span style={styles.liveActivityDot}>{active ? (expanded ? '▾' : '●') : canExpand ? (expanded ? '▾' : '▸') : '○'}</span>
+        <span>{headline}</span>
+      </div>
+      {expanded && canExpand && detailTarget && (
+        <div style={styles.liveActivityDetail}>
+          <ToolDetail rawTool={detailTarget.tool} input={detailTarget.input} output={detailTarget.output} />
+        </div>
+      )}
     </div>
   )
 }
@@ -201,7 +218,7 @@ const TeamMessage: React.FC<{
 }
 
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
-  const { state, sendMessage, stopChat, setSelection, setAgentModel, renameChat, setContextPanelOpen, linkChannel, unlinkChannel } = useChats()
+  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, renameChat, setContextPanelOpen, linkChannel, unlinkChannel } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -319,6 +336,21 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [flight, chatId])
+  // When a turn is interrupted, lift the original prompt back into the input
+  // and focus the textarea so the user can edit/resend without retyping.
+  const restoreText = state.pendingRestores[chatId]
+  useEffect(() => {
+    if (restoreText === undefined) return
+    setInput(restoreText)
+    clearRestore(chatId)
+    requestAnimationFrame(() => {
+      const ta = taRef.current
+      if (!ta) return
+      ta.focus()
+      const len = ta.value.length
+      try { ta.setSelectionRange(len, len) } catch { /* not supported */ }
+    })
+  }, [restoreText, chatId])
   useEffect(() => { localStorage.setItem('codey.contextPanelWidth', String(panelWidth)) }, [panelWidth])
   // Track window width so the context panel can shrink (or be hidden) when
   // the user resizes Codey down — at small widths the middle column was
@@ -1216,4 +1248,9 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4, border: `1px solid ${C.border2}`,
   },
   liveActivityDot: { color: '#6ab0f3', fontSize: 9 },
+  liveActivityDetail: {
+    marginTop: 4, marginBottom: 6,
+    padding: 8, background: 'rgba(0,0,0,0.25)', borderRadius: 4,
+    border: `1px solid ${C.border}`,
+  },
 }
