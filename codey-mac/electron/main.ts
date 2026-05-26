@@ -218,13 +218,36 @@ interface SlashCommand {
   source: 'agent' | 'gateway'
 }
 
-const slashCommandCache = new Map<string, { commands: SlashCommand[]; ts: number }>()
-const SLASH_CACHE_TTL = 5 * 60_000
+const SLASH_CACHE_TTL = 60 * 60_000 // 1 hour
+const slashRefreshing = new Set<string>()
 
-async function discoverSlashCommands(agent: string): Promise<SlashCommand[]> {
-  const cached = slashCommandCache.get(agent)
-  if (cached && Date.now() - cached.ts < SLASH_CACHE_TTL) return cached.commands
+function slashCachePath(agent: string): string {
+  const os = require('os') as typeof import('os')
+  const path = require('path') as typeof import('path')
+  return path.join(os.homedir(), '.codey', `slash-commands-${agent}.json`)
+}
 
+function readSlashCache(agent: string): { commands: SlashCommand[]; ts: number } | null {
+  const fs = require('fs') as typeof import('fs')
+  try {
+    const raw = fs.readFileSync(slashCachePath(agent), 'utf-8')
+    const data = JSON.parse(raw)
+    if (Array.isArray(data.commands) && typeof data.ts === 'number') return data
+  } catch { /* missing or corrupt */ }
+  return null
+}
+
+function writeSlashCache(agent: string, commands: SlashCommand[]): void {
+  const fs = require('fs') as typeof import('fs')
+  const path = require('path') as typeof import('path')
+  const p = slashCachePath(agent)
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true })
+    fs.writeFileSync(p, JSON.stringify({ commands, ts: Date.now() }, null, 2))
+  } catch { /* best-effort */ }
+}
+
+async function fetchSlashCommands(agent: string): Promise<SlashCommand[]> {
   const { spawn } = await import('child_process')
   const shell = process.env.SHELL || '/bin/zsh'
   const binaries: Record<string, string> = {
@@ -275,7 +298,26 @@ async function discoverSlashCommands(agent: string): Promise<SlashCommand[]> {
     }
   }
 
-  slashCommandCache.set(agent, { commands, ts: Date.now() })
+  return commands
+}
+
+async function discoverSlashCommands(agent: string): Promise<SlashCommand[]> {
+  const cached = readSlashCache(agent)
+
+  if (cached && cached.commands.length > 0) {
+    // Return cached immediately; refresh in background if stale
+    if (Date.now() - cached.ts > SLASH_CACHE_TTL && !slashRefreshing.has(agent)) {
+      slashRefreshing.add(agent)
+      fetchSlashCommands(agent).then(cmds => {
+        if (cmds.length > 0) writeSlashCache(agent, cmds)
+      }).finally(() => slashRefreshing.delete(agent))
+    }
+    return cached.commands
+  }
+
+  // No cache — fetch synchronously (first time only)
+  const commands = await fetchSlashCommands(agent)
+  if (commands.length > 0) writeSlashCache(agent, commands)
   return commands
 }
 
