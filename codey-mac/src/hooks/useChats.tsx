@@ -5,6 +5,7 @@ import type { ChatStreamEvent } from '../../../packages/gateway/src/chat-runner'
 
 interface InFlight {
   assistantMessageId: string
+  userMessageId: string
   agentStatus: 'idle' | 'thinking' | 'working' | 'writing'
   queuedPosition?: number
 }
@@ -16,6 +17,10 @@ interface State {
   inFlight: Record<string, InFlight>
   collapsedWorkspaces: Record<string, true>
   workspaces: string[]
+  // When a turn is interrupted, the prompt text is stashed here so ChatTab
+  // can repopulate the input box for the matching chat.
+  pendingRestores: Record<string, string>
+  unreadChats: Record<string, true>
 }
 
 type Action =
@@ -31,6 +36,8 @@ type Action =
   | { type: 'queued'; chatId: string; position: number }
   | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string; choices?: string[] }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
+  | { type: 'stoppedSend'; chatId: string; text: string }
+  | { type: 'clearRestore'; chatId: string }
   | { type: 'patchContextPanelOpen'; chatId: string; open: boolean | null }
 
 function reorder(order: string[], chatId: string): string[] {
@@ -82,8 +89,11 @@ function reducer(state: State, action: Action): State {
       delete inFlight[action.chatId]
       return { ...state, chats, order, selectedChatId, inFlight }
     }
-    case 'select':
-      return { ...state, selectedChatId: action.chatId }
+    case 'select': {
+      const unreadChats = { ...state.unreadChats }
+      if (action.chatId) delete unreadChats[action.chatId]
+      return { ...state, selectedChatId: action.chatId, unreadChats }
+    }
     case 'toggleWorkspace': {
       const collapsed = { ...state.collapsedWorkspaces }
       if (collapsed[action.workspaceName]) delete collapsed[action.workspaceName]
@@ -112,7 +122,11 @@ function reducer(state: State, action: Action): State {
         order: reorder(state.order, chat.id),
         inFlight: {
           ...state.inFlight,
-          [chat.id]: { assistantMessageId: action.assistantMessageId, agentStatus: 'thinking' },
+          [chat.id]: {
+            assistantMessageId: action.assistantMessageId,
+            userMessageId: action.userMessage.id,
+            agentStatus: 'thinking',
+          },
         },
       }
     }
@@ -164,12 +178,41 @@ function reducer(state: State, action: Action): State {
       if (action.title) updatedChat.title = action.title
       const inFlight = { ...state.inFlight }
       delete inFlight[action.chatId]
+      const unreadChats = state.selectedChatId !== action.chatId
+        ? { ...state.unreadChats, [action.chatId]: true as const }
+        : state.unreadChats
       return {
         ...state,
         chats: { ...state.chats, [chat.id]: updatedChat },
         order: reorder(state.order, chat.id),
         inFlight,
+        unreadChats,
       }
+    }
+    case 'stoppedSend': {
+      const chat = state.chats[action.chatId]
+      const fl = state.inFlight[action.chatId]
+      if (!chat || !fl) return state
+      // Drop both the user prompt and the assistant placeholder for this turn.
+      // The prompt text is stashed in pendingRestores so ChatTab can lift it
+      // back into the input box.
+      const messages = chat.messages.filter(m =>
+        m.id !== fl.userMessageId && m.id !== fl.assistantMessageId
+      )
+      const inFlight = { ...state.inFlight }
+      delete inFlight[action.chatId]
+      return {
+        ...state,
+        chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } },
+        inFlight,
+        pendingRestores: { ...state.pendingRestores, [action.chatId]: action.text },
+      }
+    }
+    case 'clearRestore': {
+      if (!(action.chatId in state.pendingRestores)) return state
+      const pendingRestores = { ...state.pendingRestores }
+      delete pendingRestores[action.chatId]
+      return { ...state, pendingRestores }
     }
     case 'errorSend': {
       const chat = state.chats[action.chatId]
@@ -205,6 +248,7 @@ interface ChatsContextValue {
   unlinkChannel: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<void>
   sendMessage: (chatId: string, text: string, attachments?: FileAttachment[]) => Promise<void>
   stopChat: (chatId: string) => Promise<void>
+  clearRestore: (chatId: string) => void
   toggleWorkspace: (workspaceName: string) => void
   refreshWorkspaces: () => Promise<void>
 }
@@ -224,6 +268,8 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try { return JSON.parse(localStorage.getItem(LS_COLLAPSED) ?? '{}') } catch { return {} }
     })(),
     workspaces: [],
+    pendingRestores: {},
+    unreadChats: {},
   })
 
   const pendingAssistantId = useRef<Record<string, string>>({})
@@ -310,6 +356,11 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
           break
         }
+        case 'stopped': {
+          dispatch({ type: 'stoppedSend', chatId: ev.chatId, text: ev.text })
+          delete pendingAssistantId.current[ev.chatId]
+          break
+        }
         case 'error': {
           const asstId = pendingAssistantId.current[ev.chatId]
           if (asstId) {
@@ -393,6 +444,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     async stopChat(chatId) {
       try { await apiService.chats.stop(chatId) } catch { /* nothing in flight */ }
     },
+    clearRestore(chatId) { dispatch({ type: 'clearRestore', chatId }) },
     toggleWorkspace(workspaceName) { dispatch({ type: 'toggleWorkspace', workspaceName }) },
     async refreshWorkspaces() {
       const workspaces = await apiService.getWorkspaces()

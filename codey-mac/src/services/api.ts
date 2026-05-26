@@ -11,6 +11,7 @@ export type ChatStreamEvent =
   | { type: 'info'; chatId: string; message: string }
   | { type: 'stream'; chatId: string; token: string }
   | { type: 'done'; chatId: string; response: string; tokens?: number; durationSec?: number; title?: string; choices?: string[] }
+  | { type: 'stopped'; chatId: string; userMessageId: string; text: string }
   | { type: 'error'; chatId: string; message: string };
 
 function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
