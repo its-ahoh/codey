@@ -137,7 +137,12 @@ export class ParallelTeamRunner {
 
       if (this.done || ac.signal.aborted) break;
 
-      const ctrl = await readControl(ctrlPath);
+      let ctrl;
+      try {
+        ctrl = await readControl(ctrlPath);
+      } catch {
+        break;
+      }
       const status = ctrl?.status ?? 'running';
       if (status === 'terminated') break;
       if (status === 'finalizing') {
@@ -147,7 +152,8 @@ export class ParallelTeamRunner {
       if (status === 'paused') {
         while (!this.done && !ac.signal.aborted) {
           await new Promise(r => setTimeout(r, 5000));
-          const c = await readControl(ctrlPath);
+          let c;
+          try { c = await readControl(ctrlPath); } catch { break; }
           if (!c || c.status !== 'paused') break;
         }
       }
