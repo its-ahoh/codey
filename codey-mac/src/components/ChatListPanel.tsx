@@ -18,7 +18,7 @@ interface WsMenuState {
 }
 
 export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId }) => {
-  const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces } = useChats()
+  const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces, linkChannel, unlinkChannel } = useChats()
   const [addingWorkspace, setAddingWorkspace] = useState(false)
   const [workspaces, setWorkspaces] = useState<string[]>([])
   const [lastWorkspace, setLastWorkspace] = useState<string>('')
@@ -384,22 +384,30 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
           ) : (
             <>
               <button style={styles.menuItem} onClick={() => setChatMenuView('main')}>⬅ Back</button>
-              {(['telegram', 'discord', 'imessage'] as const).map(ch => (
-                <button
-                  key={ch}
-                  style={styles.menuItem}
-                  onClick={() => {
-                    const c = chatMenu.chat
-                    setChatMenu(null)
-                    // Queue the intent BEFORE selecting the chat. The new
-                    // ChatTab drains the queue on mount; a synchronous window
-                    // event would be lost (old ChatTab ignores it, new one
-                    // hasn't mounted its listener yet).
-                    setPendingPairing(c.id, ch)
-                    selectChat(c.id)
-                  }}
-                >{ch === 'telegram' ? '✈ Telegram' : ch === 'discord' ? '◈ Discord' : '◐ iMessage'}</button>
-              ))}
+              {(['telegram', 'discord', 'imessage'] as const).map(ch => {
+                const linked = chatMenu.chat.routes?.find(r => r.channel === ch)
+                const label = ch === 'telegram' ? '✈ Telegram' : ch === 'discord' ? '◈ Discord' : '◐ iMessage'
+                return (
+                  <button
+                    key={ch}
+                    style={{
+                      ...styles.menuItem,
+                      ...(linked ? { color: C.red } : {}),
+                    }}
+                    onClick={async () => {
+                      const c = chatMenu.chat
+                      setChatMenu(null)
+                      if (linked) {
+                        await unlinkChannel(c.id, linked.channel, linked.channelUserId)
+                        return
+                      }
+                      setPendingPairing(c.id, ch)
+                      selectChat(c.id)
+                      window.dispatchEvent(new Event('pendingPairing'))
+                    }}
+                  >{linked ? `✕ Disconnect ${label}` : label}</button>
+                )
+              })}
             </>
           )}
         </div>

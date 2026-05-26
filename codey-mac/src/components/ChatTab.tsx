@@ -386,10 +386,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     return () => window.removeEventListener('keydown', h)
   }, [chat?.id, chat?.contextPanelOpen])
 
-  useEffect(() => {
-    // Drain any pairing intent queued by the chat list's right-click menu.
-    // Runs whenever this ChatTab mounts or chatId changes; same UX as the
-    // inline link-menu: existing pairing → link directly, else open modal.
+  const drainPendingPairing = React.useCallback(() => {
     const ch = consumePendingPairing(chatId)
     if (!ch) return
     ;(async () => {
@@ -403,7 +400,15 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
       pendingLinkChannelRef.current = ch
       setPairingModal(ch)
     })()
-  }, [chatId])
+  }, [chatId, chat?.routes, linkChannel])
+
+  useEffect(() => { drainPendingPairing() }, [chatId])
+
+  useEffect(() => {
+    const handler = () => drainPendingPairing()
+    window.addEventListener('pendingPairing', handler)
+    return () => window.removeEventListener('pendingPairing', handler)
+  }, [drainPendingPairing])
 
   if (!chat) return null
 
