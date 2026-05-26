@@ -235,8 +235,8 @@ export const ChannelsSection: React.FC<ChannelsSectionProps> = ({ liveStatus, is
               setIMessage({ allowedSenders: senders })
             } },
         ]}
-        confirmMessage="Save iMessage configuration? Make sure Codey has Full Disk Access (System Settings → Privacy & Security → Full Disk Access)."
-        note="Phone numbers or Apple IDs (comma-separated, e.g. +8613800138000). Requires Full Disk Access for this app."
+        confirmMessage="Save iMessage configuration?"
+        note="Phone numbers or Apple IDs (comma-separated, e.g. +8613800138000)."
       />
     </div>
   )

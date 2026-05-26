@@ -35,7 +35,7 @@ export function PairingModal({ channel, onClose }: PairingModalProps) {
             <pre style={styles.code}>/pair {code}</pre>
             {channel === 'imessage' && (
               <p style={styles.hint}>
-                Make sure your phone number or Apple&nbsp;ID is listed in Allowed Senders, and that Codey has Full Disk Access (System Settings → Privacy &amp; Security → Full Disk Access).
+                Make sure your phone number or Apple&nbsp;ID is listed in Allowed Senders (Settings → Channels → iMessage → Configure).
               </p>
             )}
             <p style={styles.hint}>Code expires in 5 minutes.</p>
