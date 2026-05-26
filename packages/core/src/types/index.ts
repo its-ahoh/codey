@@ -105,6 +105,7 @@ export interface AgentRequest {
   model?: ModelConfig;
   timeout?: number;
   interactive?: boolean;
+  skipPermissions?: boolean;
   onStream?: (text: string) => void;
   onStatus?: (update: StatusUpdate) => void;
   context?: {

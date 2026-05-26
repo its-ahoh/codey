@@ -42,6 +42,9 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
   async run(request: AgentRequest): Promise<AgentResponse> {
     return new Promise((resolve) => {
       const args = ['run', '--format', 'json'];
+      if (request.skipPermissions) {
+        args.push('--dangerously-skip-permissions');
+      }
 
       // Resume an existing session when the gateway has a warm anchor for
       // this conversation. OpenCode generates the session id itself on
