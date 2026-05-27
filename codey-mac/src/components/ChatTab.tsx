@@ -479,8 +479,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const filteredSlash = slashQuery !== null
     ? slashCommands.filter(c => c.name.toLowerCase().includes(slashQuery)).slice(0, 12)
     : []
-  const slashLoading = slashQuery !== null && slashCommands.length === 0
-  const showSlashMenu = filteredSlash.length > 0 || slashLoading
+  const showSlashMenu = filteredSlash.length > 0
 
   const onAgentChange = async (v: string) => {
     const nextAgent = v === '' ? null : v
@@ -943,9 +942,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
       <div style={{ ...styles.inputContainer, position: 'relative' as const }}>
         {showSlashMenu && (
           <div ref={slashMenuRef} style={styles.slashMenu}>
-            {slashLoading ? (
-              <div style={{ ...styles.slashMenuItem, color: C.fg3 }}>Loading commands…</div>
-            ) : filteredSlash.map((cmd, i) => (
+            {filteredSlash.map((cmd, i) => (
               <div
                 key={cmd.name}
                 style={{ ...styles.slashMenuItem, ...(i === slashIdx ? styles.slashMenuItemActive : {}) }}
