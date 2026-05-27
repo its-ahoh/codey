@@ -142,6 +142,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // Track pending tool_use calls by id so we can pair them with tool_result
       const pendingTools = new Map<string, { name: string; input?: Record<string, unknown> }>();
       let permissionDenials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> = [];
+      let userQuestion: AgentResponse['userQuestion'];
 
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
@@ -181,6 +182,24 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
               if (block.id) {
                 pendingTools.set(block.id, { name: toolName, input: block.input });
               }
+
+              if (toolName === 'AskUserQuestion' && block.input) {
+                const inp = block.input as any;
+                const questions = Array.isArray(inp.questions) ? inp.questions : [];
+                const q = questions[0];
+                if (q?.question && Array.isArray(q.options)) {
+                  userQuestion = {
+                    question: q.question,
+                    options: q.options
+                      .filter((o: any) => o && typeof o.label === 'string')
+                      .map((o: any) => ({ label: o.label, description: o.description })),
+                  };
+                  // Kill the process — it's waiting for interactive input we can't provide.
+                  // The gateway will resume the session with the user's answer on the next turn.
+                  childProcess.kill('SIGTERM');
+                }
+              }
+
               const inputSummary = block.input
                 ? Object.entries(block.input).map(([k, v]) => {
                     const val = typeof v === 'string' ? v : JSON.stringify(v);
@@ -296,7 +315,11 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         // Fall back to wall-clock duration if the result event didn't include one
         const finalDuration = durationSec ?? Math.round((Date.now() - startTime) / 1000);
 
-        if (code === 0 && output) {
+        if (userQuestion) {
+          const resp = this.createResponse(output || '', true, tokens, finalDuration, statusUpdates, states);
+          resp.userQuestion = userQuestion;
+          safeResolve(resp);
+        } else if (code === 0 && output) {
           safeResolve(this.createResponse(output, true, tokens, finalDuration, statusUpdates, states, permissionDenials));
         } else {
           // Clear session on failure to avoid "session already in use" errors

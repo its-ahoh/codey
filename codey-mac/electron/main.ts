@@ -1664,13 +1664,34 @@ app.whenReady().then(async () => {
   )
 
   // ── Permissions IPC ──────────────────────────────────────────────
-  ipcMain.handle('permissions:addAllowed', async (_e, toolNames: string[]) =>
+  ipcMain.handle('permissions:addAllowed', async (_e, toolNames: string[], chatId?: string) =>
     wrap(async () => {
       const fsMod = await import('fs')
       const pathMod = await import('path')
       if (!workspaceManager) throw new Error('Workspace manager not ready')
-      const root = workspaceManager.getWorkspacesRoot()
-      const settingsDir = pathMod.join(pathMod.dirname(root), '.claude')
+
+      // Resolve the project workingDir from the chat so we write to the
+      // correct .claude/settings.local.json that Claude Code actually reads.
+      let workingDir: string | undefined
+      if (chatId && inProcessGateway) {
+        try {
+          const chat = inProcessGateway.getChatManager().get(chatId)
+          if (!chat) throw new Error('Chat not found')
+          const wsConfigPath = pathMod.join(
+            workspaceManager.getWorkspacesRoot(),
+            chat.workspaceName,
+            'workspace.json',
+          )
+          if (fsMod.existsSync(wsConfigPath)) {
+            const wsConfig = JSON.parse(fsMod.readFileSync(wsConfigPath, 'utf-8'))
+            if (wsConfig.workingDir) workingDir = wsConfig.workingDir
+          }
+        } catch { /* fall through to default */ }
+      }
+
+      const settingsDir = workingDir
+        ? pathMod.join(workingDir, '.claude')
+        : pathMod.join(pathMod.dirname(workspaceManager.getWorkspacesRoot()), '.claude')
       const settingsFile = pathMod.join(settingsDir, 'settings.local.json')
       let cfg: any = { permissions: { allow: [] } }
       if (fsMod.existsSync(settingsFile)) {
