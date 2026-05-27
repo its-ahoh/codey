@@ -41,6 +41,7 @@ interface StreamEvent {
   event?: {
     type: string;
     delta?: { type?: string; text?: string };
+    content_block?: { type?: string; name?: string; id?: string };
   };
   // permission_denials in result event
   permission_denials?: Array<{ tool_name: string; tool_input?: Record<string, unknown> }>;
@@ -143,6 +144,8 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       const pendingTools = new Map<string, { name: string; input?: Record<string, unknown> }>();
       let permissionDenials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> = [];
       let userQuestion: AgentResponse['userQuestion'];
+      let askUserInputJson = '';
+      let collectingAskUser = false;
 
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
@@ -162,12 +165,38 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
 
         if (event.type === 'system' && event.session_id) {
           this.sessionId = event.session_id;
+        } else if (event.type === 'stream_event' && event.event?.type === 'content_block_start') {
+          const cb = event.event.content_block;
+          if (cb?.type === 'tool_use' && cb.name === 'AskUserQuestion') {
+            collectingAskUser = true;
+            askUserInputJson = '';
+          }
         } else if (event.type === 'stream_event' && event.event?.type === 'content_block_delta') {
           const delta = event.event.delta;
           if (delta?.type === 'text_delta' && delta.text) {
             streamedText += delta.text;
             request.onStream?.(delta.text);
             streamedFromDeltas = true;
+          } else if (collectingAskUser && delta?.type === 'input_json_delta') {
+            askUserInputJson += (delta as any).partial_json ?? (delta as any).text ?? '';
+          }
+        } else if (event.type === 'stream_event' && event.event?.type === 'content_block_stop') {
+          if (collectingAskUser && askUserInputJson) {
+            collectingAskUser = false;
+            try {
+              const inp = JSON.parse(askUserInputJson);
+              const questions = Array.isArray(inp.questions) ? inp.questions : [];
+              const q = questions[0];
+              if (q?.question && Array.isArray(q.options) && q.options.length >= 2) {
+                userQuestion = {
+                  question: q.question,
+                  options: q.options
+                    .filter((o: any) => o && typeof o.label === 'string')
+                    .map((o: any) => ({ label: o.label, description: o.description })),
+                };
+                childProcess.kill('SIGTERM');
+              }
+            } catch { /* ignore parse failure */ }
           }
         } else if (event.type === 'assistant' && event.message?.content) {
           for (const block of event.message.content) {
@@ -315,6 +344,14 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         // Fall back to wall-clock duration if the result event didn't include one
         const finalDuration = durationSec ?? Math.round((Date.now() - startTime) / 1000);
 
+        // Fallback: parse AskUserQuestion JSON from streamed text if the
+        // tool_use block detection didn't fire (e.g. assistant event never
+        // arrived because CLI blocked on interactive input).
+        if (!userQuestion && output) {
+          const parsed = ClaudeCodeAdapter.parseAskUserQuestionFromText(output);
+          if (parsed) userQuestion = parsed;
+        }
+
         if (userQuestion) {
           const resp = this.createResponse(output || '', true, tokens, finalDuration, statusUpdates, states);
           resp.userQuestion = userQuestion;
@@ -372,5 +409,32 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       this.activeProcess.kill('SIGTERM');
       this.activeProcess = undefined;
     }
+  }
+
+  static parseAskUserQuestionFromText(text: string): AgentResponse['userQuestion'] | null {
+    // Match a JSON object containing "questions" with "options" arrays.
+    // The JSON may be embedded in surrounding text.
+    const idx = text.indexOf('"questions"');
+    if (idx === -1) return null;
+    // Walk backwards to find the opening brace
+    let braceStart = text.lastIndexOf('{', idx);
+    if (braceStart === -1) return null;
+    // Try progressively larger substrings to find valid JSON
+    for (let end = text.indexOf('}', idx); end !== -1; end = text.indexOf('}', end + 1)) {
+      try {
+        const obj = JSON.parse(text.substring(braceStart, end + 1));
+        const questions = Array.isArray(obj.questions) ? obj.questions : [];
+        const q = questions[0];
+        if (q?.question && Array.isArray(q.options) && q.options.length >= 2) {
+          return {
+            question: q.question,
+            options: q.options
+              .filter((o: any) => o && typeof o.label === 'string')
+              .map((o: any) => ({ label: o.label, description: o.description })),
+          };
+        }
+      } catch { /* keep searching */ }
+    }
+    return null;
   }
 }
