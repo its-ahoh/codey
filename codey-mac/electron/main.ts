@@ -218,6 +218,61 @@ interface SlashCommand {
   source: 'agent' | 'gateway'
 }
 
+const BUILTIN_SLASH: Record<string, SlashCommand[]> = {
+  'claude-code': [
+    { name: 'help', description: 'Get help with using Claude Code', source: 'agent' },
+    { name: 'clear', description: 'Clear conversation history', source: 'agent' },
+    { name: 'compact', description: 'Compact conversation to save context', source: 'agent' },
+    { name: 'config', description: 'Configure settings', source: 'agent' },
+    { name: 'cost', description: 'Show token usage and cost for this session', source: 'agent' },
+    { name: 'doctor', description: 'Check the health of your Claude Code setup', source: 'agent' },
+    { name: 'init', description: 'Initialize a new CLAUDE.md file', source: 'agent' },
+    { name: 'login', description: 'Switch Anthropic accounts', source: 'agent' },
+    { name: 'logout', description: 'Sign out from your Anthropic account', source: 'agent' },
+    { name: 'model', description: 'Switch or view the current AI model', source: 'agent' },
+    { name: 'resume', description: 'Resume a previous conversation', source: 'agent' },
+    { name: 'review', description: 'Review a pull request', source: 'agent' },
+    { name: 'run', description: 'Launch the app to see a change working', source: 'agent' },
+    { name: 'security-review', description: 'Security review of pending changes', source: 'agent' },
+    { name: 'code-review', description: 'Review current diff for correctness bugs', source: 'agent' },
+    { name: 'verify', description: 'Verify a code change works by running the app', source: 'agent' },
+    { name: 'fast', description: 'Toggle fast mode', source: 'agent' },
+  ],
+  'opencode': [
+    { name: 'run', description: 'Run opencode with a message', source: 'agent' },
+    { name: 'attach', description: 'Attach to a running opencode server', source: 'agent' },
+    { name: 'serve', description: 'Start a headless opencode server', source: 'agent' },
+    { name: 'web', description: 'Start opencode server and open web interface', source: 'agent' },
+    { name: 'models', description: 'List all available models', source: 'agent' },
+    { name: 'stats', description: 'Show token usage and cost statistics', source: 'agent' },
+    { name: 'providers', description: 'Manage AI providers and credentials', source: 'agent' },
+    { name: 'agent', description: 'Manage agents', source: 'agent' },
+    { name: 'session', description: 'Manage sessions', source: 'agent' },
+    { name: 'mcp', description: 'Manage MCP servers', source: 'agent' },
+    { name: 'plugin', description: 'Install plugin and update config', source: 'agent' },
+    { name: 'export', description: 'Export session data as JSON', source: 'agent' },
+    { name: 'import', description: 'Import session data from JSON file or URL', source: 'agent' },
+    { name: 'pr', description: 'Fetch and checkout a GitHub PR branch', source: 'agent' },
+    { name: 'upgrade', description: 'Upgrade opencode to the latest version', source: 'agent' },
+    { name: 'debug', description: 'Debugging and troubleshooting tools', source: 'agent' },
+  ],
+  'codex': [
+    { name: 'exec', description: 'Run Codex non-interactively', source: 'agent' },
+    { name: 'review', description: 'Run a code review non-interactively', source: 'agent' },
+    { name: 'resume', description: 'Resume a previous interactive session', source: 'agent' },
+    { name: 'fork', description: 'Fork a previous interactive session', source: 'agent' },
+    { name: 'login', description: 'Manage login', source: 'agent' },
+    { name: 'logout', description: 'Remove stored authentication credentials', source: 'agent' },
+    { name: 'mcp', description: 'Manage external MCP servers', source: 'agent' },
+    { name: 'plugin', description: 'Manage Codex plugins', source: 'agent' },
+    { name: 'sandbox', description: 'Run commands within a Codex-provided sandbox', source: 'agent' },
+    { name: 'apply', description: 'Apply the latest diff produced by Codex agent', source: 'agent' },
+    { name: 'cloud', description: 'Browse tasks from Codex Cloud', source: 'agent' },
+    { name: 'debug', description: 'Debugging tools', source: 'agent' },
+    { name: 'features', description: 'Inspect feature flags', source: 'agent' },
+  ],
+}
+
 const SLASH_CACHE_TTL = 60 * 60_000 // 1 hour
 const slashRefreshing = new Set<string>()
 
@@ -302,10 +357,9 @@ async function fetchSlashCommands(agent: string): Promise<SlashCommand[]> {
 }
 
 async function discoverSlashCommands(agent: string): Promise<SlashCommand[]> {
+  // 1. Try disk cache first (instant)
   const cached = readSlashCache(agent)
-
   if (cached && cached.commands.length > 0) {
-    // Return cached immediately; refresh in background if stale
     if (Date.now() - cached.ts > SLASH_CACHE_TTL && !slashRefreshing.has(agent)) {
       slashRefreshing.add(agent)
       fetchSlashCommands(agent).then(cmds => {
@@ -315,10 +369,15 @@ async function discoverSlashCommands(agent: string): Promise<SlashCommand[]> {
     return cached.commands
   }
 
-  // No cache — fetch synchronously (first time only)
-  const commands = await fetchSlashCommands(agent)
-  if (commands.length > 0) writeSlashCache(agent, commands)
-  return commands
+  // 2. Return built-in static list immediately; kick off background fetch
+  const builtin = BUILTIN_SLASH[agent] ?? []
+  if (!slashRefreshing.has(agent)) {
+    slashRefreshing.add(agent)
+    fetchSlashCommands(agent).then(cmds => {
+      if (cmds.length > 0) writeSlashCache(agent, cmds)
+    }).finally(() => slashRefreshing.delete(agent))
+  }
+  return builtin
 }
 
 function buildRuntimeConfig(json: any): any {
