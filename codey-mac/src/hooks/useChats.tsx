@@ -21,6 +21,7 @@ interface State {
   // can repopulate the input box for the matching chat.
   pendingRestores: Record<string, string>
   unreadChats: Record<string, true>
+  pendingPermissions: Record<string, string[]>
 }
 
 type Action =
@@ -34,11 +35,13 @@ type Action =
   | { type: 'streamToken'; chatId: string; token: string }
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: 'working' | 'writing' }
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string; choices?: string[] }
+  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion'] }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
   | { type: 'patchContextPanelOpen'; chatId: string; open: boolean | null }
+  | { type: 'permissionRequest'; chatId: string; toolNames: string[] }
+  | { type: 'dismissPermission'; chatId: string }
 
 function reorder(order: string[], chatId: string): string[] {
   return [chatId, ...order.filter(id => id !== chatId)]
@@ -79,6 +82,14 @@ function reducer(state: State, action: Action): State {
       if (!chat) return state
       const updated: Chat = { ...chat, contextPanelOpen: action.open ?? undefined }
       return { ...state, chats: { ...state.chats, [chat.id]: updated } }
+    }
+    case 'permissionRequest': {
+      return { ...state, pendingPermissions: { ...state.pendingPermissions, [action.chatId]: action.toolNames } }
+    }
+    case 'dismissPermission': {
+      const pp = { ...state.pendingPermissions }
+      delete pp[action.chatId]
+      return { ...state, pendingPermissions: pp }
     }
     case 'remove': {
       const chats = { ...state.chats }
@@ -171,7 +182,7 @@ function reducer(state: State, action: Action): State {
       if (!chat) return state
       const messages = chat.messages.map(m =>
         m.id === action.assistantMessageId
-          ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, isComplete: true, choices: action.choices }
+          ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, isComplete: true, choices: action.choices, userQuestion: action.userQuestion }
           : m
       )
       const updatedChat: Chat = { ...chat, messages, updatedAt: Date.now() }
@@ -248,6 +259,7 @@ interface ChatsContextValue {
   unlinkChannel: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<void>
   sendMessage: (chatId: string, text: string, attachments?: FileAttachment[]) => Promise<void>
   stopChat: (chatId: string) => Promise<void>
+  resolvePermission: (chatId: string, allow: boolean) => void
   clearRestore: (chatId: string) => void
   toggleWorkspace: (workspaceName: string) => void
   refreshWorkspaces: () => Promise<void>
@@ -270,6 +282,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     workspaces: [],
     pendingRestores: {},
     unreadChats: {},
+    pendingPermissions: {},
   })
 
   const pendingAssistantId = useRef<Record<string, string>>({})
@@ -345,6 +358,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               durationSec: ev.durationSec,
               title: ev.title,
               choices: ev.choices,
+              userQuestion: ev.userQuestion,
             })
             delete pendingAssistantId.current[ev.chatId]
           } else {
@@ -375,12 +389,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
         case 'permission_denials': {
           const toolNames = [...new Set(ev.denials.map(d => d.toolName))]
-          const ok = window.confirm(
-            `Claude needs permission to use: ${toolNames.join(', ')}\n\nAdd to allowed tools so future tasks can use them?`
-          )
-          if (ok) {
-            window.codey?.permissions?.addAllowed?.(toolNames).catch(() => {})
-          }
+          dispatch({ type: 'permissionRequest', chatId: ev.chatId, toolNames })
           break
         }
       }
@@ -453,6 +462,13 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     async stopChat(chatId) {
       try { await apiService.chats.stop(chatId) } catch { /* nothing in flight */ }
+    },
+    resolvePermission(chatId, allow) {
+      if (allow) {
+        const toolNames = state.pendingPermissions[chatId]
+        if (toolNames) window.codey?.permissions?.addAllowed?.(toolNames, chatId).catch(() => {})
+      }
+      dispatch({ type: 'dismissPermission', chatId })
     },
     clearRestore(chatId) { dispatch({ type: 'clearRestore', chatId }) },
     toggleWorkspace(workspaceName) { dispatch({ type: 'toggleWorkspace', workspaceName }) },

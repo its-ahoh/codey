@@ -218,7 +218,7 @@ const TeamMessage: React.FC<{
 }
 
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
-  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, renameChat, setContextPanelOpen, linkChannel, unlinkChannel } = useChats()
+  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, renameChat, setContextPanelOpen, linkChannel, unlinkChannel, resolvePermission } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -888,6 +888,28 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 )}
               </div>
               {msg.role === 'assistant'
+                && idx === chat.messages.length - 1
+                && chat.messages[chat.messages.length - 1]?.role !== 'user'
+                && msg.userQuestion
+                && msg.userQuestion.options.length > 0
+                && (
+                  <div style={styles.choiceRow}>
+                    {msg.userQuestion.options.map((opt, i) => (
+                      <button
+                        key={i}
+                        style={styles.choiceButton}
+                        disabled={isSending || !!flight}
+                        onClick={() => { void sendMessage(chat.id, opt.label) }}
+                      >
+                        <span style={styles.choiceLabel}>{opt.label}</span>
+                        {opt.description && <span style={styles.choiceDesc}>{opt.description}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )
+              }
+              {msg.role === 'assistant'
+                && !msg.userQuestion
                 && msg.choices
                 && msg.choices.length > 0
                 && idx === chat.messages.length - 1
@@ -904,6 +926,21 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                         {label}
                       </button>
                     ))}
+                  </div>
+                )
+              }
+              {msg.role === 'assistant'
+                && idx === chat.messages.length - 1
+                && state.pendingPermissions[chatId]
+                && (
+                  <div style={styles.permissionBanner}>
+                    <span style={styles.permissionText}>
+                      Needs permission: {state.pendingPermissions[chatId].join(', ')}
+                    </span>
+                    <div style={styles.permissionActions}>
+                      <button style={styles.permissionAllow} onClick={() => resolvePermission(chatId, true)}>Allow</button>
+                      <button style={styles.permissionDeny} onClick={() => resolvePermission(chatId, false)}>Deny</button>
+                    </div>
                   </div>
                 )
               }
@@ -1230,6 +1267,55 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 13,
     textAlign: 'left' as const,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 2,
+  },
+  choiceLabel: {
+    fontWeight: 500 as const,
+  },
+  choiceDesc: {
+    fontSize: 11,
+    color: C.fg2,
+    lineHeight: '1.3',
+  },
+  permissionBanner: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 6,
+    marginTop: 8,
+    marginLeft: 12,
+    padding: '8px 12px',
+    borderRadius: 6,
+    border: `1px solid ${C.border2}`,
+    background: C.surface3,
+  },
+  permissionText: {
+    fontSize: 12,
+    color: C.fg2,
+  },
+  permissionActions: {
+    display: 'flex',
+    gap: 8,
+  },
+  permissionAllow: {
+    padding: '4px 12px',
+    borderRadius: 4,
+    border: 'none',
+    background: C.accent,
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: 12,
+    fontWeight: 500 as const,
+  },
+  permissionDeny: {
+    padding: '4px 12px',
+    borderRadius: 4,
+    border: `1px solid ${C.border2}`,
+    background: 'transparent',
+    color: C.fg2,
+    cursor: 'pointer',
+    fontSize: 12,
   },
   attachButton: {
     width: 32, height: 32, borderRadius: 8, border: 'none',

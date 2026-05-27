@@ -32,6 +32,11 @@ export interface ChatMessage {
   durationSec?: number;
   /** Option labels when this assistant message ended in [ASK_USER:choice]. */
   choices?: string[];
+  /** Structured question from AskUserQuestion tool call, with option descriptions. */
+  userQuestion?: {
+    question: string;
+    options: Array<{ label: string; description?: string }>;
+  };
 }
 
 export type ChatSelection =

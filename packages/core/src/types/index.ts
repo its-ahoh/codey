@@ -181,6 +181,11 @@ export interface AgentResponse {
   sessionId?: string;
   /** Tools that were denied due to permission settings (only when skipPermissions is false). */
   permissionDenials?: Array<{ toolName: string; toolInput?: Record<string, unknown> }>;
+  /** Structured question extracted from an AskUserQuestion tool call. */
+  userQuestion?: {
+    question: string;
+    options: Array<{ label: string; description?: string }>;
+  };
 }
 
 // Channel configuration

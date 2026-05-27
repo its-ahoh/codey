@@ -106,7 +106,7 @@ declare global {
         updateContextPanelOpen: (id: string, open: boolean | null) => Promise<IpcResult<Chat>>
       }
       permissions: {
-        addAllowed: (toolNames: string[]) => Promise<IpcResult<{ added: number }>>
+        addAllowed: (toolNames: string[], chatId?: string) => Promise<IpcResult<{ added: number }>>
       }
       pairing: {
         start: (channel: 'telegram' | 'discord' | 'imessage') => Promise<IpcResult<string>>
