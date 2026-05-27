@@ -118,7 +118,7 @@ contextBridge.exposeInMainWorld('codey', {
     },
   },
   permissions: {
-    addAllowed: (toolNames: string[]) => ipcRenderer.invoke('permissions:addAllowed', toolNames),
+    addAllowed: (toolNames: string[], chatId?: string) => ipcRenderer.invoke('permissions:addAllowed', toolNames, chatId),
   },
   pairing: {
     start: (channel: 'telegram' | 'discord' | 'imessage') => ipcRenderer.invoke('pairing:start', channel),

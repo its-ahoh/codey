@@ -3178,6 +3178,7 @@ Example: /model gpt-4.1 write a Python script`;
       let output = '';
       let tokens: number | undefined;
       let teamChoices: string[] | undefined;
+      let agentUserQuestion: AgentResponse['userQuestion'];
       if (chat.selection.type === 'team') {
         // Resolve the team from the chat's workspace.json (read above), not from
         // the active workspace, so a chat in workspace B uses B's team config
@@ -3258,6 +3259,11 @@ Example: /model gpt-4.1 write a Python script`;
         if (response?.permissionDenials && response.permissionDenials.length > 0) {
           sink({ type: 'permission_denials', chatId, denials: response.permissionDenials });
         }
+        // Capture structured AskUserQuestion from the agent so the UI can
+        // render interactive choices instead of raw JSON.
+        if (response?.userQuestion) {
+          agentUserQuestion = response.userQuestion;
+        }
       }
       if (abortController.signal.aborted) {
         // User-initiated stop: roll the prompt back so the client can restore
@@ -3273,9 +3279,12 @@ Example: /model gpt-4.1 write a Python script`;
       // ASK_USER:choice detection. Team flows already stripped the marker into
       // a rendered question via runTeamForChat, so reuse the choices it
       // returned. For non-team chats, parse the worker output for the marker.
+      // Also check for structured AskUserQuestion from the agent adapter.
       let surfacedChoices: string[] | undefined;
       let plainAskOptions: string[] | undefined;
-      if (teamChoices && teamChoices.length >= 2) {
+      if (agentUserQuestion && agentUserQuestion.options.length >= 2) {
+        surfacedChoices = agentUserQuestion.options.map(o => o.label);
+      } else if (teamChoices && teamChoices.length >= 2) {
         surfacedChoices = teamChoices;
       } else {
         const plainAsk = parseAskUser(output);
@@ -3295,6 +3304,7 @@ Example: /model gpt-4.1 write a Python script`;
         tokens,
         durationSec,
         ...(surfacedChoices ? { choices: surfacedChoices } : {}),
+        ...(agentUserQuestion ? { userQuestion: agentUserQuestion } : {}),
       };
       const updated = this.chatManager.appendMessage(chatId, assistantMessage);
 
@@ -3304,7 +3314,7 @@ Example: /model gpt-4.1 write a Python script`;
         this.chatManager.setLastAskedOptions(chatId, assistantMessage.id, plainAskOptions);
       }
 
-      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title, choices: surfacedChoices });
+      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title, choices: surfacedChoices, userQuestion: agentUserQuestion });
 
       // Mirror this turn to every attached route except the originating one.
       // Mac-origin uses a synthetic '__mac__' channel that matches no real
