@@ -842,10 +842,11 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 {!isUser && !!flight && msg === lastMsg && (
                   <LiveActivity toolCalls={msg.toolCalls} />
                 )}
-                {msg.content && (() => {
+                {(msg.content || (!isUser && msg.userQuestion?.question)) && (() => {
                   if (isUser) return <Markdown variant="user">{msg.content}</Markdown>
-                  const parsed = parseTeamMessage(msg.content)
-                  if (!parsed) return <Markdown variant="assistant">{msg.content}</Markdown>
+                  const text = msg.content || msg.userQuestion?.question || ''
+                  const parsed = parseTeamMessage(text)
+                  if (!parsed) return <Markdown variant="assistant">{text}</Markdown>
                   const isStreaming = !!flight && msg === lastMsg
                   return (
                     <TeamMessage
