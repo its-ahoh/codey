@@ -353,7 +353,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         }
 
         if (userQuestion) {
-          const resp = this.createResponse(output || '', true, tokens, finalDuration, statusUpdates, states);
+          const resp = this.createResponse(output || userQuestion.question, true, tokens, finalDuration, statusUpdates, states);
           resp.userQuestion = userQuestion;
           safeResolve(resp);
         } else if (code === 0 && output) {
