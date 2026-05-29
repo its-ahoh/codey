@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -92,6 +92,117 @@ export class Codey {
 
   private getSkipPermissions(): boolean {
     return this.configManager?.getSkipPermissions() ?? true;
+  }
+
+  /**
+   * Prefix a worker / team prompt with the workspace memory context relevant
+   * to the given query. Used everywhere workers run so they get the same
+   * `## Project Memory` block the main chat path already gets.
+   */
+  /**
+   * Build the combined memory context block (user-global first, then
+   * workspace-scoped). Returns empty string when memory is disabled or
+   * neither store has anything relevant.
+   */
+  private buildMergedMemoryContext(query: string, forWorker?: string): string {
+    if (this.config.memory?.enabled === false) return '';
+    const sections: string[] = [];
+    const globalCtx = this.workspaceManager.getGlobalMemoryStore().buildContext(
+      query, undefined, undefined, forWorker,
+    );
+    if (globalCtx) {
+      // Re-label so the agent can distinguish global vs workspace facts.
+      sections.push(globalCtx.replace(/^## Project Memory/, '## User-Global Memory'));
+    }
+    const workspaceCtx = this.workspaceManager.getMemoryStore().buildContext(
+      query, undefined, undefined, forWorker,
+    );
+    if (workspaceCtx) sections.push(workspaceCtx);
+    return sections.join('\n\n');
+  }
+
+  private wrapPromptWithMemory(prompt: string, query: string, forWorker?: string): string {
+    const ctx = this.buildMergedMemoryContext(query, forWorker);
+    return ctx ? `${ctx}\n\n${prompt}` : prompt;
+  }
+
+  /**
+   * Run the auto-extract heuristic on a worker step's response so insights
+   * from worker runs flow into the same memory store the main chat uses.
+   * Tagged with the worker name so they can be distinguished from chat
+   * extractions later.
+   */
+  /**
+   * Persist a team's accumulated `[DECISION]` markers to the workspace
+   * memory store so future runs can recall what was decided. Skipped when
+   * memory is disabled. Idempotent thanks to MemoryStore dedup.
+   */
+  /**
+   * Persist the Manager's final summary from a parallel discussion as a
+   * `decision` memory entry so future runs on the same topic can recall
+   * what was concluded. Best-effort — skipped when summary is empty.
+   */
+  private persistDiscussionSummary(
+    teamName: string,
+    topic: string,
+    ev: ParallelFinalEvent,
+  ): void {
+    if (this.config.memory?.autoExtract === false) return;
+    const summary = (ev.summary ?? '').replace(/^#\s+Summary\s*/i, '').trim();
+    if (!summary) return;
+    const oneLineTopic = topic.replace(/\s+/g, ' ').trim().slice(0, 80);
+    this.workspaceManager.getMemoryStore().add({
+      type: 'decision',
+      content: summary,
+      label: `Discussion (${teamName}): ${oneLineTopic}`,
+      tags: ['discussion', teamName, `reason:${ev.reason}`],
+      source: 'team',
+    });
+  }
+
+  private persistBlackboardDecisions(
+    blackboard: TeamBlackboard,
+    teamName: string,
+  ): void {
+    if (this.config.memory?.autoExtract === false) return;
+    if (blackboard.decisions.length === 0) return;
+    const store = this.workspaceManager.getMemoryStore();
+    for (const d of blackboard.decisions) {
+      store.add({
+        type: 'decision',
+        content: d.text,
+        label: `Team ${teamName} / ${d.worker}`,
+        tags: ['team', teamName, `worker:${d.worker}`],
+        source: 'team',
+        // Decisions are intentionally workspace-wide: other workers should be
+        // able to see what's been decided. If we ever want per-worker scoping
+        // for decisions, surface it as an opt-in marker.
+      });
+    }
+  }
+
+  private extractWorkerMemories(
+    workerName: string,
+    task: string,
+    agent: CodingAgent,
+    response: AgentResponse,
+  ): void {
+    if (this.config.memory?.autoExtract === false || !response.success) return;
+    const meta = ContextManager.extractMeta(response, agent);
+    this.workspaceManager.getMemoryStore().extractFromInteraction({
+      userPrompt: `[worker:${workerName}] ${task}`,
+      agentOutput: response.output,
+      toolCalls: meta.toolCalls?.map(tc => ({
+        tool: tc.tool,
+        input: tc.input,
+        output: tc.output,
+        status: tc.status,
+      })),
+      filesChanged: meta.filesChanged?.map(fc => ({
+        path: fc.path,
+        action: fc.action,
+      })),
+    });
   }
 
   /**
@@ -733,11 +844,9 @@ export class Codey {
       ?? (codeyChatId ? `chat-${codeyChatId}` : `${message.channel}-${message.chatId}`);
     const ctxWindow = await this.contextManager.getOrCreate(conversationId);
 
-    // Build memory context from workspace memory store
+    // Build memory context — merges user-global + workspace stores.
     const memoryStore = this.workspaceManager.getMemoryStore();
-    const memoryContext = (this.config.memory?.enabled !== false)
-      ? memoryStore.buildContext(parsed.prompt)
-      : undefined;
+    const memoryContext = this.buildMergedMemoryContext(parsed.prompt) || undefined;
 
     // Skip empty prompts
     if (!parsed.prompt.trim()) {
@@ -1298,12 +1407,20 @@ export class Codey {
 
   private async cmdMemory(args: string[], message: UserMessage): Promise<void> {
     const { chatId, channel } = message;
-    const memoryStore = this.workspaceManager.getMemoryStore();
+    // Optional `--global` flag selects the user-global store instead of
+    // the current workspace's store.
+    let useGlobal = false;
+    const rest = [...args];
+    if (rest[0] === '--global') { useGlobal = true; rest.shift(); }
+    const memoryStore = useGlobal
+      ? this.workspaceManager.getGlobalMemoryStore()
+      : this.workspaceManager.getMemoryStore();
+    const scopeLabel = useGlobal ? 'Global' : 'Workspace';
 
-    if (args.length === 0 || args[0] === 'list') {
+    if (rest.length === 0 || rest[0] === 'list') {
       const memories = memoryStore.getRecent(10);
       if (memories.length === 0) {
-        await this.sendResponse({ chatId, channel, text: 'No memories stored for this workspace.' });
+        await this.sendResponse({ chatId, channel, text: `No ${scopeLabel.toLowerCase()} memories stored.` });
         return;
       }
       const lines = memories.map(m =>
@@ -1312,30 +1429,30 @@ export class Codey {
       await this.sendResponse({
         chatId,
         channel,
-        text: `\ud83e\udde0 Workspace Memories (${memories.length})\n\n${lines.join('\n')}`,
+        text: `\ud83e\udde0 ${scopeLabel} Memories (${memories.length})\n\n${lines.join('\n')}`,
       });
-    } else if (args[0] === 'search' && args.length > 1) {
-      const query = args.slice(1).join(' ');
+    } else if (rest[0] === 'search' && rest.length > 1) {
+      const query = rest.slice(1).join(' ');
       const results = memoryStore.search(query);
       if (results.length === 0) {
-        await this.sendResponse({ chatId, channel, text: `No memories matching "${query}".` });
+        await this.sendResponse({ chatId, channel, text: `No ${scopeLabel.toLowerCase()} memories matching "${query}".` });
         return;
       }
       const lines = results.map(m => `- [${m.type}] **${m.label}**: ${m.content.substring(0, 100)}`);
       await this.sendResponse({
         chatId,
         channel,
-        text: `\ud83d\udd0d Memory search: "${query}"\n\n${lines.join('\n')}`,
+        text: `\ud83d\udd0d ${scopeLabel} memory search: "${query}"\n\n${lines.join('\n')}`,
       });
-    } else if (args[0] === 'clear') {
+    } else if (rest[0] === 'clear') {
       const all = memoryStore.getAll();
       for (const m of all) memoryStore.remove(m.id);
-      await this.sendResponse({ chatId, channel, text: '\ud83d\uddd1\ufe0f All workspace memories cleared.' });
+      await this.sendResponse({ chatId, channel, text: `\ud83d\uddd1\ufe0f All ${scopeLabel.toLowerCase()} memories cleared.` });
     } else {
       await this.sendResponse({
         chatId,
         channel,
-        text: 'Usage:\n/memory - List recent memories\n/memory search <query> - Search memories\n/memory clear - Clear all memories\n/remember <text> - Add a memory',
+        text: 'Usage:\n/memory [--global] - List recent memories (workspace or global)\n/memory [--global] search <query> - Search memories\n/memory [--global] clear - Clear all memories in that store\n/remember [--global] [--worker <name>] <text> - Add a memory',
       });
     }
   }
@@ -1346,25 +1463,69 @@ export class Codey {
       await this.sendResponse({
         chatId,
         channel,
-        text: 'Usage: /remember <something to remember>\n\nExample: /remember This project uses PostgreSQL 15 with pgvector',
+        text: 'Usage: /remember [--global] [--worker <name>] <something to remember>\n\nExamples:\n/remember This project uses PostgreSQL 15 with pgvector\n/remember --global prefer pnpm over npm in every workspace\n/remember --worker reviewer prefer explicit error chaining over swallowed exceptions',
       });
       return;
     }
 
-    const content = args.join(' ');
-    const memoryStore = this.workspaceManager.getMemoryStore();
-    const entry = memoryStore.add({
+    // Parse leading flags (--global, --worker NAME, --workers a,b,c). Any
+    // order; consumed from the head until a non-flag token appears.
+    let scope: import('@codey/core').MemoryScope | undefined;
+    let global = false;
+    const rest = [...args];
+    while (rest.length > 0) {
+      if (rest[0] === '--global') {
+        global = true;
+        rest.splice(0, 1);
+        continue;
+      }
+      if (rest[0] === '--worker' && rest[1]) {
+        scope = { worker: rest[1] };
+        rest.splice(0, 2);
+        continue;
+      }
+      if (rest[0] === '--workers' && rest[1]) {
+        const list = rest[1].split(',').map(s => s.trim()).filter(Boolean);
+        if (list.length > 0) scope = { workers: list };
+        rest.splice(0, 2);
+        continue;
+      }
+      break;
+    }
+
+    if (rest.length === 0) {
+      await this.sendResponse({ chatId, channel, text: 'Missing memory text after flag.' });
+      return;
+    }
+
+    const content = rest.join(' ');
+    const tags = ['user'];
+    if (scope && typeof scope === 'object') {
+      if ('worker' in scope) tags.push(`worker:${scope.worker}`);
+      else if ('workers' in scope) for (const w of scope.workers) tags.push(`worker:${w}`);
+    }
+    if (global) tags.push('global');
+
+    const store = global
+      ? this.workspaceManager.getGlobalMemoryStore()
+      : this.workspaceManager.getMemoryStore();
+    const entry = store.add({
       type: 'fact',
       content,
       label: content.substring(0, 60),
-      tags: ['user'],
-      source: 'user',
+      tags,
+      source: global ? 'user-global' : 'user',
+      scope,
     });
 
+    const where = global ? ' (global)' : '';
+    const scopeNote = scope && typeof scope === 'object'
+      ? ('worker' in scope ? ` (worker: ${scope.worker})` : ` (workers: ${scope.workers.join(', ')})`)
+      : '';
     await this.sendResponse({
       chatId,
       channel,
-      text: `\ud83e\udde0 Remembered: ${entry.content}`,
+      text: `\ud83e\udde0 Remembered${where}${scopeNote}: ${entry.content}`,
     });
   }
 
@@ -1615,8 +1776,9 @@ Example: /model gpt-4.1 write a Python script`;
       text: `👷 Running worker: **${worker.name}** (${worker.personality.role})\n\nAgent: ${codingAgent}\nModel: ${model}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
 
-    // Build prompt with worker context
-    const prompt = this.workspaceManager.getWorkerManager().buildWorkerPrompt(workerName, task);
+    // Build prompt with worker context + project memory
+    const basePrompt = this.workspaceManager.getWorkerManager().buildWorkerPrompt(workerName, task);
+    const prompt = this.wrapPromptWithMemory(basePrompt, task, workerName);
 
     // Run with worker's coding agent and model
     const modelConfig = this.getModelConfig(codingAgent, model);
@@ -1633,6 +1795,8 @@ Example: /model gpt-4.1 write a Python script`;
       onStream,
       context: { workingDir: this.workingDir },
     });
+
+    this.extractWorkerMemories(workerName, task, codingAgent, response);
 
     const replyText = response.success
       ? `✅ **${worker.name}** completed:\n\n${response.output}`
@@ -1660,7 +1824,10 @@ Example: /model gpt-4.1 write a Python script`;
     signal: AbortSignal | undefined,
     chatAgent: CodingAgent | undefined,
     chatModel: ModelConfig | undefined,
-    perStep: (msg: { kind: 'route'; step: number; worker: string; reason: string; isRevision: boolean }) => void | Promise<void>,
+    perStep: (msg:
+      | { kind: 'route'; step: number; worker: string; reason: string; isRevision: boolean }
+      | { kind: 'blackboard'; step: number; worker: string; summary: string }
+    ) => void | Promise<void>,
     runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined) => Promise<{ success: boolean; output: string; error?: string }>,
   ): Promise<
     | { fallback: true; fallbackReason: string }
@@ -1670,6 +1837,7 @@ Example: /model gpt-4.1 write a Python script`;
         parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>;
         finalSummary: string;
         fallbackMidRun?: { reason: string };
+        blackboard: TeamBlackboard;
       }
     | {
         fallback: false;
@@ -1684,6 +1852,7 @@ Example: /model gpt-4.1 write a Python script`;
           question: string;
           options?: string[];
         };
+        blackboard: TeamBlackboard;
       }
   > {
     const workerManager = this.workspaceManager.getWorkerManager();
@@ -1697,6 +1866,7 @@ Example: /model gpt-4.1 write a Python script`;
     const parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }> = [];
     let finalSummary = '';
     let fallbackMidRun: { reason: string } | undefined;
+    const blackboard = new TeamBlackboard();
 
     const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
     const seenWorkers = new Set<string>();
@@ -1769,6 +1939,7 @@ Example: /model gpt-4.1 write a Python script`;
               question: pendingArbitration.question,
               options: pendingArbitration.options,
             },
+            blackboard,
           };
         }
         if (turn.done || !turn.next) {
@@ -1802,19 +1973,31 @@ Example: /model gpt-4.1 write a Python script`;
           hint: workerManager.getDispatchHint(n),
           lastDid: lastDidByWorker.get(n),
         }));
-      const prompt = workerManager.buildTeamWorkerPrompt(turnNext, stepTaskBody, teamRoster);
+      const prompt = workerManager.buildTeamWorkerPrompt(
+        turnNext,
+        stepTaskBody,
+        teamRoster,
+        blackboard.renderForWorker(turnNext),
+      );
 
       const response = await runWorker(turnNext, prompt, codingAgent, modelConfig);
       if (!response.success) {
         fallbackMidRun = { reason: `worker ${turnNext} failed: ${response.error ?? 'unknown'}` };
         break;
       }
-      parts.push({ step, worker: turnNext, output: response.output, isRevision });
+      // Pull structured markers out before anything downstream sees the
+      // output — users get clean prose, blackboard collects the structure.
+      const ingested = blackboard.ingest(turnNext, step, response.output);
+      const cleanOutput = ingested.stripped;
+      const deltaSummary = blackboard.summarizeDelta(ingested.added);
+      if (deltaSummary) await perStep({ kind: 'blackboard', step, worker: turnNext, summary: deltaSummary });
+
+      parts.push({ step, worker: turnNext, output: cleanOutput, isRevision });
       seenWorkers.add(turnNext);
       lastWorker = turnNext;
-      lastOutput = response.output;
+      lastOutput = cleanOutput;
 
-      const ask = parseAsk(response.output);
+      const ask = parseAsk(cleanOutput);
       if (!ask) continue;
 
       if (ask.kind === 'team') {
@@ -1859,7 +2042,7 @@ Example: /model gpt-4.1 write a Python script`;
       if (!closing.fallback) finalSummary = closing.final_summary ?? '';
     }
 
-    return { fallback: false, parts, finalSummary, fallbackMidRun };
+    return { fallback: false, parts, finalSummary, fallbackMidRun, blackboard };
   }
 
   private composeStepTask(
@@ -1928,14 +2111,14 @@ Example: /model gpt-4.1 write a Python script`;
     // Helper to run one worker once, used by both the Manager loop and the
     // legacy "all members in input order" fallback.
     const runOneWorker = async (
-      _workerName: string,
+      workerName: string,
       prompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
     ): Promise<{ success: boolean; output: string; error?: string }> => {
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
       const response = await this.runWithFallback(codingAgent, {
-        prompt,
+        prompt: this.wrapPromptWithMemory(prompt, task, workerName),
         agent: codingAgent,
         model: modelConfig,
         interactive: this.tuiMode,
@@ -1943,6 +2126,7 @@ Example: /model gpt-4.1 write a Python script`;
         onStream,
         context: { workingDir: this.workingDir },
       });
+      this.extractWorkerMemories(workerName, task, codingAgent, response);
       return response.success
         ? { success: true, output: response.output }
         : { success: false, output: '', error: response.error };
@@ -1963,12 +2147,16 @@ Example: /model gpt-4.1 write a Python script`;
         undefined,
         undefined,
         undefined,
-        async ({ step, worker, reason, isRevision }) => {
-          await this.sendResponse({
-            chatId,
-            channel,
-            text: `🔄 Step ${step}: **${worker}**${isRevision ? ' (revision)' : ''} — ${reason}`,
-          });
+        async (msg) => {
+          if (msg.kind === 'route') {
+            await this.sendResponse({
+              chatId,
+              channel,
+              text: `🔄 Step ${msg.step}: **${msg.worker}**${msg.isRevision ? ' (revision)' : ''} — ${msg.reason}`,
+            });
+          } else {
+            await this.sendResponse({ chatId, channel, text: msg.summary });
+          }
         },
         runOneWorker,
       );
@@ -2001,6 +2189,7 @@ Example: /model gpt-4.1 write a Python script`;
           question: p.question,
           options: p.options,
           askedAt: Date.now(),
+          blackboard: result.blackboard.toJSON(),
         });
         const rendered1 = renderQuestion(askWorkerName, '', p.question, p.options);
         await this.sendResponse({
@@ -2021,11 +2210,14 @@ Example: /model gpt-4.1 write a Python script`;
       }
 
       const text = this.formatManagerParts(result.parts, result.finalSummary, /*truncatePerStep*/ 500);
+      const bbBlock = result.blackboard.renderForUser();
+      const body = `📊 Team **${teamName}** results\n\n${text}`;
       await this.sendResponse({
         chatId,
         channel,
-        text: `📊 Team **${teamName}** results\n\n${text}`,
+        text: bbBlock ? `${body}\n\n${bbBlock}` : body,
       });
+      this.persistBlackboardDecisions(result.blackboard, teamName);
       return;
     }
 
@@ -2079,14 +2271,14 @@ Example: /model gpt-4.1 write a Python script`;
     }
     const handler = this.handlers.get(message.channel);
     const runOneWorker = async (
-      _workerName: string,
+      workerName: string,
       prompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
     ): Promise<{ success: boolean; output: string; error?: string }> => {
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
       const response = await this.runWithFallback(codingAgent, {
-        prompt,
+        prompt: this.wrapPromptWithMemory(prompt, pending.task, workerName),
         agent: codingAgent,
         model: modelConfig,
         interactive: this.tuiMode,
@@ -2094,6 +2286,7 @@ Example: /model gpt-4.1 write a Python script`;
         onStream,
         context: { workingDir: this.workingDir },
       });
+      this.extractWorkerMemories(workerName, pending.task, codingAgent, response);
       return response.success
         ? { success: true, output: response.output }
         : { success: false, output: '', error: response.error };
@@ -2109,11 +2302,13 @@ Example: /model gpt-4.1 write a Python script`;
       const seqNextWorker = seqNextName
         ? { name: seqNextName, hint: wm.getDispatchHint(seqNextName) }
         : null;
+      const blackboard = TeamBlackboard.fromJSON(pending.blackboard);
       const reprompt = wm.buildSequentialWorkerPrompt(
         memberName,
         `${pending.carry}\n\n[User answer to your question "${pending.question}"]:\n${answer}`,
         seqRoster,
         seqNextWorker,
+        blackboard.renderForWorker(memberName),
       );
       await this.sendResponse({
         chatId: message.chatId,
@@ -2129,6 +2324,12 @@ Example: /model gpt-4.1 write a Python script`;
         });
         return;
       }
+      const ingested = blackboard.ingest(memberName, pending.memberIndex + 1, response.output);
+      response.output = ingested.stripped;
+      const deltaSummary = blackboard.summarizeDelta(ingested.added);
+      if (deltaSummary) {
+        await this.sendResponse({ chatId: message.chatId, channel: message.channel, text: deltaSummary });
+      }
       const ask = parseAskUser(response.output);
       if (ask) {
         this.persistPendingTeam(message.chatId, {
@@ -2141,6 +2342,7 @@ Example: /model gpt-4.1 write a Python script`;
           question: ask.question,
           options: ask.options,
           askedAt: Date.now(),
+          blackboard: blackboard.toJSON(),
         });
         const rendered2 = renderQuestion(memberName, ask.preamble, ask.question, ask.options);
         await this.sendResponse({
@@ -2159,7 +2361,7 @@ Example: /model gpt-4.1 write a Python script`;
         team.members,
         pending.task,
         runOneWorker,
-        { startIndex: pending.memberIndex + 1, startCarry: carryForNext, priorResults },
+        { startIndex: pending.memberIndex + 1, startCarry: carryForNext, priorResults, blackboard },
       );
       return;
     }
@@ -2214,7 +2416,18 @@ Example: /model gpt-4.1 write a Python script`;
       ? this.getModelConfig(codingAgent, workerModelName)
       : this.getDefaultModelConfig(codingAgent);
     const stepTaskBody = this.composeStepTask(pending.task, turn.instruction, pending.lastWorker, pending.lastOutput);
-    const stepPrompt = wm.buildWorkerPrompt(turn.next, stepTaskBody);
+    // Use the team-aware builder so the resumed worker also sees the blackboard
+    // and the marker protocol — keeps post-pause steps consistent with pre-pause.
+    const resumeRoster = team.members
+      .filter(n => n !== turn.next)
+      .map(n => ({ name: n, hint: wm.getDispatchHint(n) }));
+    const resumeBoardForPrompt = TeamBlackboard.fromJSON(pending.blackboard);
+    const stepPrompt = wm.buildTeamWorkerPrompt(
+      turn.next,
+      stepTaskBody,
+      resumeRoster,
+      resumeBoardForPrompt.renderForWorker(turn.next),
+    );
     const response = await runOneWorker(turn.next, stepPrompt, codingAgent, modelConfig);
     if (!response.success) {
       await this.sendResponse({
@@ -2224,6 +2437,11 @@ Example: /model gpt-4.1 write a Python script`;
       });
       return;
     }
+    // Restore the blackboard captured at pause time so resumed step + future
+    // pauses keep accumulating against the same shared state.
+    const resumeBoard = TeamBlackboard.fromJSON(pending.blackboard);
+    const resumeIngest = resumeBoard.ingest(turn.next, pending.step, response.output);
+    response.output = resumeIngest.stripped;
     const ask = parseAskUser(response.output);
     const newParts = [...pending.partsSoFar, { step: pending.step, worker: turn.next, output: response.output, isRevision }];
     const newSeen = Array.from(new Set([...pending.seenWorkers, turn.next]));
@@ -2244,6 +2462,7 @@ Example: /model gpt-4.1 write a Python script`;
         askingWorker: turn.next,
         question: ask.question,
         options: ask.options,
+        blackboard: resumeBoard.toJSON(),
         askedAt: Date.now(),
       });
       const rendered3 = renderQuestion(turn.next, ask.preamble, ask.question, ask.options);
@@ -2267,10 +2486,13 @@ Example: /model gpt-4.1 write a Python script`;
       { agent: mAgent, model: mModel, runner: this.advisorRunner },
     );
     const finalSummary = closing.fallback ? '' : (closing.final_summary ?? '');
+    const resumeBlock = resumeBoard.renderForUser();
+    const resumeFormatted = this.formatManagerParts(newParts, finalSummary, 500);
+    this.persistBlackboardDecisions(resumeBoard, pending.teamName);
     await this.sendResponse({
       chatId: message.chatId,
       channel: message.channel,
-      text: this.formatManagerParts(newParts, finalSummary, 500),
+      text: resumeBlock ? `${resumeFormatted}\n\n${resumeBlock}` : resumeFormatted,
     });
   }
 
@@ -2285,12 +2507,13 @@ Example: /model gpt-4.1 write a Python script`;
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
     ) => Promise<{ success: boolean; output: string; error?: string }>,
-    opts: { startIndex?: number; startCarry?: string; priorResults?: string[] } = {},
+    opts: { startIndex?: number; startCarry?: string; priorResults?: string[]; blackboard?: TeamBlackboard } = {},
   ): Promise<void> {
     const { chatId, channel } = message;
     const workerManager = this.workspaceManager.getWorkerManager();
     const results: string[] = opts.priorResults ? [...opts.priorResults] : [];
     let currentTask = opts.startCarry ?? task;
+    const blackboard = opts.blackboard ?? new TeamBlackboard();
 
     for (let i = opts.startIndex ?? 0; i < members.length; i++) {
       const memberName = members[i];
@@ -2316,6 +2539,7 @@ Example: /model gpt-4.1 write a Python script`;
         currentTask,
         roster,
         nextWorker,
+        blackboard.renderForWorker(memberName),
       );
       const modelConfig = this.getModelConfig(codingAgent, model);
       const response = await runOneWorker(memberName, prompt, codingAgent, modelConfig);
@@ -2323,7 +2547,13 @@ Example: /model gpt-4.1 write a Python script`;
         results.push(`**${worker.name}**: ❌ Failed - ${response.error}`);
         break;
       }
-      const ask = parseAskUser(response.output);
+      const ingested = blackboard.ingest(memberName, i + 1, response.output);
+      const cleanOutput = ingested.stripped;
+      const deltaSummary = blackboard.summarizeDelta(ingested.added);
+      if (deltaSummary) {
+        await this.sendResponse({ chatId, channel, text: deltaSummary });
+      }
+      const ask = parseAskUser(cleanOutput);
       if (ask) {
         const pending: PendingTeamState = {
           mode: 'sequential',
@@ -2335,6 +2565,7 @@ Example: /model gpt-4.1 write a Python script`;
           question: ask.question,
           options: ask.options,
           askedAt: Date.now(),
+          blackboard: blackboard.toJSON(),
         };
         this.persistPendingTeam(chatId, pending);
         const rendered4 = renderQuestion(worker.name, ask.preamble, ask.question, ask.options);
@@ -2346,15 +2577,18 @@ Example: /model gpt-4.1 write a Python script`;
         });
         return;
       }
-      results.push(`**${worker.name}**: ${response.output.substring(0, 500)}`);
-      currentTask = `Previous worker output:\n${response.output}\n\nYour task: ${task}`;
+      results.push(`**${worker.name}**: ${cleanOutput.substring(0, 500)}`);
+      currentTask = `Previous worker output:\n${cleanOutput}\n\nYour task: ${task}`;
     }
 
+    const bbBlock = blackboard.renderForUser();
+    const body = `📊 Team **${teamName}** results\n\n${results.join('\n\n')}`;
     await this.sendResponse({
       chatId,
       channel,
-      text: `📊 Team **${teamName}** results\n\n${results.join('\n\n')}`,
+      text: bbBlock ? `${body}\n\n${bbBlock}` : body,
     });
+    this.persistBlackboardDecisions(blackboard, teamName);
   }
 
   private async runTeamForChat(
@@ -2376,13 +2610,13 @@ Example: /model gpt-4.1 write a Python script`;
     const workerManager = this.workspaceManager.getWorkerManager();
 
     const runOneWorker = async (
-      _workerName: string,
+      workerName: string,
       workerPrompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
     ): Promise<{ success: boolean; output: string; error?: string }> => {
       const response = await this.runWithFallback(codingAgent, {
-        prompt: workerPrompt,
+        prompt: this.wrapPromptWithMemory(workerPrompt, prompt, workerName),
         agent: codingAgent,
         model: modelConfig,
         context: { workingDir },
@@ -2390,6 +2624,7 @@ Example: /model gpt-4.1 write a Python script`;
         onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
         signal,
       });
+      if (response) this.extractWorkerMemories(workerName, prompt, codingAgent, response);
       return response?.success
         ? { success: true, output: this.formatAgentResponse(response) }
         : { success: false, output: '', error: response?.error };
@@ -2476,6 +2711,7 @@ Example: /model gpt-4.1 write a Python script`;
             c.discussion = { teamName, status: 'done', startedAt: c.discussion?.startedAt ?? Date.now(), terminatedReason: ev.reason };
             (c as any).updatedAt = Date.now();
           }
+          this.persistDiscussionSummary(teamName, prompt, ev);
           void sink({ type: 'stream', chatId, token: this.formatParallelFinal(ev, teamName) });
         },
       });
@@ -2505,16 +2741,20 @@ Example: /model gpt-4.1 write a Python script`;
         signal,
         chatAgent,
         chatModel,
-        ({ step, worker, reason, isRevision }) => {
-          sink({
-            type: 'info',
-            chatId,
-            message: `Step ${step}: ${worker}${isRevision ? ' (revision)' : ''} — ${reason}`,
-          });
-          const label = isRevision ? `${worker} (revision)` : worker;
-          const sep = isFirstStep ? '' : '\n\n---\n\n';
-          sink({ type: 'stream', chatId, token: `${sep}### Step ${step}: ${label}\n\n` });
-          isFirstStep = false;
+        (msg) => {
+          if (msg.kind === 'route') {
+            sink({
+              type: 'info',
+              chatId,
+              message: `Step ${msg.step}: ${msg.worker}${msg.isRevision ? ' (revision)' : ''} — ${msg.reason}`,
+            });
+            const label = msg.isRevision ? `${msg.worker} (revision)` : msg.worker;
+            const sep = isFirstStep ? '' : '\n\n---\n\n';
+            sink({ type: 'stream', chatId, token: `${sep}### Step ${msg.step}: ${label}\n\n` });
+            isFirstStep = false;
+          } else {
+            sink({ type: 'info', chatId, message: msg.summary });
+          }
         },
         runOneWorker,
       );
@@ -2542,6 +2782,7 @@ Example: /model gpt-4.1 write a Python script`;
           askingWorker: p.askingWorker,
           question: p.question,
           options: p.options,
+          blackboard: result.blackboard.toJSON(),
           askedAt: Date.now(),
         });
         const rendered5 = renderQuestion(askWorkerName, '', p.question, p.options);
@@ -2554,13 +2795,17 @@ Example: /model gpt-4.1 write a Python script`;
         if (result.fallbackMidRun) {
           sink({ type: 'info', chatId, message: `Manager halted mid-run: ${result.fallbackMidRun.reason}` });
         }
-        return { response: this.formatManagerParts(result.parts, result.finalSummary) };
+        const bbBlock = result.blackboard.renderForUser();
+        const formatted = this.formatManagerParts(result.parts, result.finalSummary);
+        this.persistBlackboardDecisions(result.blackboard, teamName);
+        return { response: bbBlock ? `${formatted}\n\n${bbBlock}` : formatted };
       }
     }
 
     // dispatch === 'all', forceAll, or auto-routing fallback
     let carry = prompt;
     const parts: string[] = [];
+    const blackboard = new TeamBlackboard();
     for (let i = 0; i < team.members.length; i++) {
       if (signal?.aborted) break;
       const memberName = team.members[i];
@@ -2578,6 +2823,7 @@ Example: /model gpt-4.1 write a Python script`;
         carry,
         seqRoster,
         seqNextWorker,
+        blackboard.renderForWorker(memberName),
       );
       const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
       const workerModel = workerManager.getWorkerModel(memberName);
@@ -2587,7 +2833,11 @@ Example: /model gpt-4.1 write a Python script`;
         parts.push(`### Step ${stepNum}: ${memberName}\n\n`);
         break;
       }
-      const ask = parseAskUser(response.output);
+      const ingested = blackboard.ingest(memberName, stepNum, response.output);
+      const cleanOutput = ingested.stripped;
+      const deltaSummary = blackboard.summarizeDelta(ingested.added);
+      if (deltaSummary) sink({ type: 'info', chatId, message: deltaSummary });
+      const ask = parseAskUser(cleanOutput);
       if (ask) {
         const askWorkerName = workerManager.getWorker(memberName)?.name ?? memberName;
         this.persistPendingTeam(chatId, {
@@ -2600,15 +2850,19 @@ Example: /model gpt-4.1 write a Python script`;
           question: ask.question,
           options: ask.options,
           askedAt: Date.now(),
+          blackboard: blackboard.toJSON(),
         });
         const rendered6 = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
         sink({ type: 'stream', chatId, token: rendered6.text });
         return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + rendered6.text : rendered6.text, choices: rendered6.choices };
       }
-      parts.push(`### Step ${stepNum}: ${memberName}\n\n${response.output}`);
-      carry = response.output;
+      parts.push(`### Step ${stepNum}: ${memberName}\n\n${cleanOutput}`);
+      carry = cleanOutput;
     }
-    return { response: parts.join('\n\n---\n\n') };
+    const bbBlock = blackboard.renderForUser();
+    this.persistBlackboardDecisions(blackboard, teamName);
+    const body = parts.join('\n\n---\n\n');
+    return { response: bbBlock ? `${body}\n\n${bbBlock}` : body };
   }
 
   private formatUptime(seconds: number): string {
@@ -2957,11 +3211,9 @@ Example: /model gpt-4.1 write a Python script`;
       sse('conversationId', ctxId);
     }
 
-    // Build memory context
+    // Build memory context — merges user-global + workspace stores.
     const memoryStore = this.workspaceManager.getMemoryStore();
-    const memoryContext = (this.config.memory?.enabled !== false)
-      ? memoryStore.buildContext(prompt)
-      : undefined;
+    const memoryContext = this.buildMergedMemoryContext(prompt) || undefined;
 
     const onStream = sse ? (text: string) => sse('stream', text) : undefined;
     const onStatus = sse ? (update: any) => sse('status', update) : undefined;
