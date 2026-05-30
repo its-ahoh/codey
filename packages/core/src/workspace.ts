@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { CoreLogger } from './types';
 import { WorkerManager } from './workers';
@@ -57,12 +58,20 @@ export interface WorkspaceJson {
 /** Returns the global team library. Injected so core stays independent of gateway config storage. */
 export type GlobalTeamsProvider = () => Record<string, TeamConfigRaw>;
 
+/** Resolve the on-disk root of the user-global memory store. Overridable via env for tests. */
+export function globalMemoryDir(): string {
+  return process.env.CODEY_GLOBAL_MEMORY_DIR
+    ?? path.join(os.homedir(), '.codey');
+}
+
 export class WorkspaceManager {
   private workspacesDir: string;
   private currentWorkspace: string = '';
   private config: WorkspaceJson | null = null;
   private workerManager: WorkerManager;
   private memoryStore: MemoryStore;
+  /** User-global memory shared across workspaces. Lazily loaded. */
+  private globalMemory: MemoryStore | null = null;
   private teams: Map<string, TeamConfig> = new Map();
   private enabledTeamNames: string[] = [];
   private globalTeamsProvider: GlobalTeamsProvider;
@@ -254,6 +263,21 @@ export class WorkspaceManager {
   getWorkspacesRoot(): string { return this.workspacesDir; }
   getWorkerManager(): WorkerManager { return this.workerManager; }
   getMemoryStore(): MemoryStore { return this.memoryStore; }
+
+  /**
+   * User-global memory store, rooted at `~/.codey/` (override via
+   * `CODEY_GLOBAL_MEMORY_DIR`). Lazily instantiated and survives workspace
+   * switches. Use for cross-workspace preferences ("use pnpm not npm"),
+   * coding conventions, persistent user facts.
+   */
+  getGlobalMemoryStore(): MemoryStore {
+    if (!this.globalMemory) {
+      this.globalMemory = new MemoryStore(globalMemoryDir());
+      // Best-effort eager load so the first buildContext doesn't read empty.
+      void this.globalMemory.load().catch(() => { /* swallow — store is best-effort */ });
+    }
+    return this.globalMemory;
+  }
 
   getMemory(): string {
     const memoryPath = this.getMemoryPath();

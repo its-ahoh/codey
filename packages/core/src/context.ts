@@ -7,6 +7,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { estimateTokens } from './utils/tokens';
 
 // ── Structured turn types ──────────────────────────────────────────
 
@@ -86,13 +87,6 @@ const DEFAULT_CONFIG: ContextConfig = {
   maxTurns: 30,
   ttlMs: 60 * 60 * 1000,
 };
-
-// ── Rough token estimator ──────────────────────────────────────────
-
-function estimateTokens(text: string): number {
-  // ~4 chars per token is a reasonable approximation
-  return Math.ceil(text.length / 4);
-}
 
 // ── Context Manager ────────────────────────────────────────────────
 

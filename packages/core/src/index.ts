@@ -16,3 +16,4 @@ export * from './aide-tasks';
 export * from './discussion/files';
 export * from './discussion/control';
 export * from './discussion/parallel-advisor';
+export * from './team-blackboard';

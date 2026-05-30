@@ -1,4 +1,5 @@
 import { AdvisorHistoryEntry } from '../advisor';
+import type { BlackboardSnapshot } from '../team-blackboard';
 
 /** Recorded part of a Manager-driven run, kept while the team is paused. */
 export interface PendingPart {
@@ -21,6 +22,7 @@ export type PendingTeamState =
       /** Options when worker emitted [ASK_USER:choice]; absent for free-text questions. */
       options?: string[];
       askedAt: number;
+      blackboard?: BlackboardSnapshot;
     }
   | {
       teamName: string;
@@ -36,4 +38,5 @@ export type PendingTeamState =
       question: string;
       options?: string[];
       askedAt: number;
+      blackboard?: BlackboardSnapshot;
     };
