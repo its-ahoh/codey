@@ -1,5 +1,6 @@
 import { AdvisorHistoryEntry } from '../advisor';
 import type { BlackboardSnapshot } from '../team-blackboard';
+import type { WorkerAnchor } from '../context';
 
 /** Recorded part of a Manager-driven run, kept while the team is paused. */
 export interface PendingPart {
@@ -23,6 +24,9 @@ export type PendingTeamState =
       options?: string[];
       askedAt: number;
       blackboard?: BlackboardSnapshot;
+      /** Warm worker sessions captured at pause; rehydrated on resume so the
+       *  next step's prompt continues `--resume`-ing instead of re-bootstrapping. */
+      workerAnchors?: Record<string, WorkerAnchor>;
     }
   | {
       teamName: string;
@@ -39,4 +43,7 @@ export type PendingTeamState =
       options?: string[];
       askedAt: number;
       blackboard?: BlackboardSnapshot;
+      /** Warm worker sessions captured at pause; rehydrated on resume so the
+       *  next step's prompt continues `--resume`-ing instead of re-bootstrapping. */
+      workerAnchors?: Record<string, WorkerAnchor>;
     };

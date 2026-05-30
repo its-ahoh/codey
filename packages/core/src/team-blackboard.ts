@@ -137,6 +137,68 @@ export class TeamBlackboard {
   }
 
   /**
+   * Total entries across all marker kinds. Used by resume callers to
+   * snapshot "everything this session has seen so far" and request only
+   * the delta on the next turn.
+   */
+  totalCount(): number {
+    return this.facts.length + this.decisions.length + this.handoffs.length + this.open.length;
+  }
+
+  /**
+   * Render only the entries appended AFTER `sinceCount` total entries.
+   * Each kind is sliced from its current position back to where it was
+   * when sinceCount was recorded — see `renderForWorker` for the full
+   * render. Returns empty string when nothing is new for this worker.
+   *
+   * Note: `sinceCount` is the snapshot of `totalCount()` at the previous
+   * call, so the slice indices are recomputed from the running totals
+   * each kind contributes — order matters: facts → decisions → handoffs
+   * → open, matching `totalCount()`.
+   */
+  renderDeltaForWorker(workerName: string, sinceCount: number): string {
+    if (sinceCount >= this.totalCount()) return '';
+
+    // Walk the kinds in the same order totalCount() sums them. For each
+    // kind we know how many entries existed at `sinceCount` and how many
+    // exist now; the difference is the slice we want.
+    let remaining = Math.max(0, sinceCount);
+    const sliceTail = <T>(arr: T[]): T[] => {
+      const skip = Math.min(remaining, arr.length);
+      remaining -= skip;
+      return arr.slice(skip);
+    };
+    const newFacts = sliceTail(this.facts);
+    const newDecisions = sliceTail(this.decisions);
+    const newHandoffsAll = sliceTail(this.handoffs);
+    const newOpen = sliceTail(this.open);
+
+    const newHandoffs = newHandoffsAll.filter(h => h.to === workerName || h.to === null);
+
+    if (newFacts.length === 0 && newDecisions.length === 0 && newHandoffs.length === 0 && newOpen.length === 0) {
+      return '';
+    }
+    const lines: string[] = ['## Blackboard updates since your last turn'];
+    if (newFacts.length > 0) {
+      lines.push('', '### New facts');
+      for (const f of newFacts) lines.push(`- (${f.worker}) ${f.text}`);
+    }
+    if (newDecisions.length > 0) {
+      lines.push('', '### New decisions');
+      for (const d of newDecisions) lines.push(`- (${d.worker}) ${d.text}`);
+    }
+    if (newHandoffs.length > 0) {
+      lines.push('', '### New handoffs to you');
+      for (const h of newHandoffs) lines.push(`- from ${h.worker}: ${h.text}`);
+    }
+    if (newOpen.length > 0) {
+      lines.push('', '### New open questions');
+      for (const o of newOpen) lines.push(`- (${o.worker}) ${o.text}`);
+    }
+    return lines.join('\n');
+  }
+
+  /**
    * Compact markdown block to inject into the NEXT worker's prompt.
    * Handoffs filter to those addressed to this worker (or to anyone).
    */

@@ -851,12 +851,16 @@ app.whenReady().then(async () => {
   ipcMain.handle('workers:save', async (_e, name: string, personality: any, config: any) =>
     wrap(async () => {
       await workerManager?.saveWorker(name, personality, config)
+      // Invalidate any warm `--resume` sessions bootstrapped under the
+      // previous personality; next run rebuilds with the new definition.
+      inProcessGateway?.invalidateWorkerSessions(name)
     })
   )
 
   ipcMain.handle('workers:delete', async (_e, name: string) =>
     wrap(async () => {
       await workerManager?.deleteWorker(name)
+      inProcessGateway?.invalidateWorkerSessions(name)
       // Cascade: remove the worker from every global team that referenced it.
       // Teams are now defined globally, so we no longer walk per-workspace.
       if (coreConfigManager) {

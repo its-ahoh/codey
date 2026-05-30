@@ -59,14 +59,32 @@ export interface SessionAnchor {
   sessionId: string;
 }
 
+/**
+ * Per-worker warm CLI session. Lets team / worker steps `--resume` an
+ * existing session instead of re-sending personality + memory + blackboard
+ * every turn. Keyed by worker name within a ContextWindow.
+ */
+export interface WorkerAnchor extends SessionAnchor {
+  workerName: string;
+  /** Index up to which this session has already seen blackboard entries.
+   *  Next resume only sends the delta. */
+  blackboardSeenCount: number;
+  /** Wall-clock timestamp of when the session was bootstrapped — used by
+   *  the gateway to TTL-invalidate stale sessions whose injected memory
+   *  snapshot has likely drifted. */
+  bootstrappedAt: number;
+}
+
 export interface ContextWindow {
   id: string;
   turns: ContextTurn[];
   lastActive: number;
   /** Running estimate of total tokens in the window */
   totalTokens: number;
-  /** Warm CLI session, if any. */
+  /** Warm CLI session for the main chat, if any. */
   sessionAnchor?: SessionAnchor;
+  /** Warm CLI sessions for workers running in this conversation, by name. */
+  workerAnchors?: Record<string, WorkerAnchor>;
 }
 
 // ── Configuration ──────────────────────────────────────────────────
@@ -190,6 +208,50 @@ export class ContextManager {
   clearAllSessionAnchors(): void {
     for (const window of this.windows.values()) {
       window.sessionAnchor = undefined;
+      window.workerAnchors = undefined;
+    }
+  }
+
+  // ── Worker session anchors ─────────────────────────────────────
+
+  getWorkerAnchor(windowId: string, workerName: string): WorkerAnchor | undefined {
+    return this.windows.get(windowId)?.workerAnchors?.[workerName];
+  }
+
+  async setWorkerAnchor(windowId: string, workerName: string, anchor: WorkerAnchor): Promise<void> {
+    return this.withLock(windowId, () => {
+      let window = this.windows.get(windowId);
+      if (!window) {
+        window = { id: windowId, turns: [], lastActive: Date.now(), totalTokens: 0 };
+        this.windows.set(windowId, window);
+      }
+      if (!window.workerAnchors) window.workerAnchors = {};
+      window.workerAnchors[workerName] = anchor;
+      window.lastActive = Date.now();
+    });
+  }
+
+  async clearWorkerAnchor(windowId: string, workerName: string): Promise<void> {
+    return this.withLock(windowId, () => {
+      const window = this.windows.get(windowId);
+      if (!window?.workerAnchors) return;
+      delete window.workerAnchors[workerName];
+    });
+  }
+
+  async clearAllWorkerAnchorsForWindow(windowId: string): Promise<void> {
+    return this.withLock(windowId, () => {
+      const window = this.windows.get(windowId);
+      if (!window) return;
+      window.workerAnchors = undefined;
+    });
+  }
+
+  /** Drop a worker's anchors from every window. Use when the worker's
+   *  personality or config changes and existing warm sessions are stale. */
+  clearWorkerAnchorEverywhere(workerName: string): void {
+    for (const window of this.windows.values()) {
+      if (window.workerAnchors) delete window.workerAnchors[workerName];
     }
   }
 
