@@ -28,10 +28,12 @@ export class IMessageHandler extends BaseChannelHandler {
 
   async start(config: IMessageConfig): Promise<void> {
     const senders = config.allowedSenders ?? [];
-    if (senders.length === 0) {
+    this.allowedSenders = new Set(senders.map(s => s.trim().toLowerCase()).filter(Boolean));
+
+    if (this.allowedSenders.size === 0) {
       console.log('[iMessage] No allowedSenders configured — receive disabled, send-only mode');
+      return;
     }
-    this.allowedSenders = new Set(senders.map(s => s.toLowerCase()));
 
     try {
       this.db = new Database(CHAT_DB_PATH, { readonly: true, fileMustExist: true });
@@ -55,7 +57,7 @@ export class IMessageHandler extends BaseChannelHandler {
     const intervalMs = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.pollInterval = setInterval(() => this.poll(), intervalMs);
 
-    console.log(`[iMessage] Handler started — polling every ${intervalMs}ms, ${senders.length} allowed sender(s)`);
+    console.log(`[iMessage] Handler started — polling every ${intervalMs}ms, ${this.allowedSenders.size} allowed sender(s)`);
   }
 
   async stop(): Promise<void> {
@@ -84,7 +86,8 @@ export class IMessageHandler extends BaseChannelHandler {
       for (const row of rows) {
         this.lastSeenRowId = row.ROWID;
 
-        if (this.allowedSenders.size > 0 && !this.allowedSenders.has(row.handle.toLowerCase())) {
+        if (!this.allowedSenders.has(row.handle.trim().toLowerCase())) {
+          console.log(`[iMessage] Dropped message from non-allowed sender: ${row.handle}`);
           continue;
         }
 
