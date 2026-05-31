@@ -307,6 +307,30 @@ export class WorkerManager {
     return sections.join('\n\n');
   }
 
+  /**
+   * Lean prompt for resuming a worker's warm CLI session via `--resume`.
+   *
+   * Assumes the CLI session already has the personality, roster, marker
+   * protocol, ASK markers, and the previously-injected project memory in
+   * its context — so we only send the delta: optional blackboard updates
+   * since this session's last turn, an optional marker-protocol reminder,
+   * and the new task body.
+   */
+  buildResumeWorkerPrompt(
+    task: string,
+    blackboardDelta?: string,
+    options?: { remindMarkers?: boolean; preface?: string },
+  ): string {
+    const sections: string[] = [];
+    if (options?.preface) sections.push(options.preface);
+    if (blackboardDelta && blackboardDelta.trim()) sections.push(blackboardDelta);
+    if (options?.remindMarkers) {
+      sections.push('Reminder: use `[FACT]:` / `[DECISION]:` / `[HANDOFF: name]:` / `[OPEN]:` markers on their own line for structured handoffs. They are stripped from user-visible output.');
+    }
+    sections.push(`## Task\n${task}`);
+    return sections.join('\n\n');
+  }
+
   buildParallelWorkerPrompt(name: string, inputs: ParallelPromptInputs): string {
     const worker = this.getWorker(name);
     if (!worker) return inputs.topic;
