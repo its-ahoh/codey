@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -92,6 +92,123 @@ export class Codey {
 
   private getSkipPermissions(): boolean {
     return this.configManager?.getSkipPermissions() ?? true;
+  }
+
+  /** Worker session TTL — after this, the next call re-bootstraps so a
+   *  long-warm session doesn't drift from the latest workspace memory. */
+  private static WORKER_SESSION_TTL_MS = 30 * 60 * 1000;
+
+  /**
+   * Stable conversationId used for worker session anchors. Distinct from
+   * the chat's own conversationId so a `/team` run doesn't clobber the
+   * chat anchor; suffixed with the team or worker name so different teams
+   * keep their own session caches.
+   */
+  private workerConversationId(
+    baseConvId: string,
+    scope: { team?: string; worker?: string },
+  ): string {
+    if (scope.team) return `${baseConvId}-team-${scope.team}`;
+    if (scope.worker) return `${baseConvId}-worker-${scope.worker}`;
+    return baseConvId;
+  }
+
+  /**
+   * Run one worker step, transparently using a warm `--resume` session
+   * when available. Falls back to a cold bootstrap (sending the full
+   * personality+memory+blackboard prompt) on the first call, when the
+   * agent changes, when the session is past its TTL, or when a resume
+   * attempt fails.
+   *
+   * Caller supplies a `buildBootstrapPrompt` closure that returns the
+   * full cold-start prompt (personality + memory + blackboard + task).
+   * For the warm path we send a much smaller resume prompt containing
+   * only the blackboard delta since this session's last turn + the new
+   * task body.
+   */
+  private async runWorkerStep(opts: {
+    conversationId: string;
+    workerName: string;
+    task: string;
+    blackboard: TeamBlackboard;
+    codingAgent: CodingAgent;
+    modelConfig: ModelConfig | undefined;
+    buildBootstrapPrompt: () => string;
+    onStream?: (text: string) => void;
+    onStatus?: (update: any) => void;
+    signal?: AbortSignal;
+    workingDir?: string;
+    interactive?: boolean;
+    skipPermissions?: boolean;
+  }): Promise<{ response: AgentResponse; usedResume: boolean }> {
+    const ctxWindow = await this.contextManager.getOrCreate(opts.conversationId);
+    const existing = this.contextManager.getWorkerAnchor(ctxWindow.id, opts.workerName);
+    const ttlElapsed = existing
+      ? Date.now() - existing.bootstrappedAt > Codey.WORKER_SESSION_TTL_MS
+      : false;
+
+    const wm = this.workspaceManager.getWorkerManager();
+    const baseReq = {
+      agent: opts.codingAgent,
+      model: opts.modelConfig,
+      context: { workingDir: opts.workingDir ?? this.workingDir },
+      onStream: opts.onStream,
+      onStatus: opts.onStatus,
+      signal: opts.signal,
+      interactive: opts.interactive,
+      skipPermissions: opts.skipPermissions,
+    } as const;
+
+    // ── Warm path: anchor exists, same agent, within TTL ─────────
+    if (existing && existing.agent === opts.codingAgent && !ttlElapsed) {
+      const delta = opts.blackboard.renderDeltaForWorker(opts.workerName, existing.blackboardSeenCount);
+      const resumePrompt = wm.buildResumeWorkerPrompt(opts.task, delta || undefined);
+      const resp = await this.runWithFallback(opts.codingAgent, {
+        ...baseReq,
+        prompt: resumePrompt,
+        resumeSessionId: existing.sessionId,
+      });
+      if (resp.success) {
+        // Update the seen-count snapshot so the next turn's delta is correct.
+        await this.contextManager.setWorkerAnchor(ctxWindow.id, opts.workerName, {
+          ...existing,
+          blackboardSeenCount: opts.blackboard.totalCount(),
+        });
+        return { response: resp, usedResume: true };
+      }
+      // Resume failed — drop anchor and fall through to bootstrap.
+      this.logger.warn(`[worker:${opts.workerName}] resume of ${existing.sessionId} failed; bootstrapping fresh`);
+      await this.contextManager.clearWorkerAnchor(ctxWindow.id, opts.workerName);
+    } else if (existing && existing.agent !== opts.codingAgent) {
+      // Different agent now — old anchor is unusable; drop it.
+      await this.contextManager.clearWorkerAnchor(ctxWindow.id, opts.workerName);
+    } else if (existing && ttlElapsed) {
+      // TTL expired — drop and re-bootstrap to pick up newer memory.
+      this.logger.info(`[worker:${opts.workerName}] session TTL elapsed; bootstrapping fresh`);
+      await this.contextManager.clearWorkerAnchor(ctxWindow.id, opts.workerName);
+    }
+
+    // ── Cold path: bootstrap full prompt ─────────────────────────
+    const newSessionId = opts.codingAgent === 'claude-code' ? randomUUID() : undefined;
+    const resp = await this.runWithFallback(opts.codingAgent, {
+      ...baseReq,
+      prompt: opts.buildBootstrapPrompt(),
+      newSessionId,
+    });
+    if (resp.success) {
+      const sid = newSessionId ?? resp.sessionId;
+      if (sid) {
+        const anchor: WorkerAnchor = {
+          agent: opts.codingAgent,
+          sessionId: sid,
+          workerName: opts.workerName,
+          blackboardSeenCount: opts.blackboard.totalCount(),
+          bootstrappedAt: Date.now(),
+        };
+        await this.contextManager.setWorkerAnchor(ctxWindow.id, opts.workerName, anchor);
+      }
+    }
+    return { response: resp, usedResume: false };
   }
 
   /**
@@ -496,6 +613,46 @@ export class Codey {
   private resetSession(): void {
     this.agentFactory.resetSessions();
     this.contextManager.clearAllSessionAnchors();
+  }
+
+  /**
+   * Drop warm CLI sessions for a worker (or all workers when name omitted)
+   * across every conversation. Call after editing/deleting a worker's
+   * personality so the next run rebuilds with the latest definition rather
+   * than `--resume`-ing into a session bootstrapped with the old one.
+   */
+  /**
+   * Snapshot every warm worker anchor on a conversation. Used at team
+   * pause time so resume can re-warm without re-bootstrapping.
+   */
+  private snapshotWorkerAnchors(conversationId: string): Record<string, WorkerAnchor> | undefined {
+    const win = this.contextManager.getWindow(conversationId);
+    const anchors = win?.workerAnchors;
+    if (!anchors || Object.keys(anchors).length === 0) return undefined;
+    // Shallow clone to keep the snapshot immune to later in-memory mutation.
+    return Object.fromEntries(Object.entries(anchors).map(([k, v]) => [k, { ...v }]));
+  }
+
+  /** Restore previously snapshotted worker anchors onto a conversation. */
+  private async rehydrateWorkerAnchors(
+    conversationId: string,
+    snapshot: Record<string, WorkerAnchor> | undefined,
+  ): Promise<void> {
+    if (!snapshot) return;
+    for (const [name, anchor] of Object.entries(snapshot)) {
+      await this.contextManager.setWorkerAnchor(conversationId, name, anchor);
+    }
+  }
+
+  invalidateWorkerSessions(workerName?: string): void {
+    if (workerName) {
+      this.contextManager.clearWorkerAnchorEverywhere(workerName);
+    } else {
+      // No specific worker — drop all worker anchors on every window.
+      for (const id of this.contextManager.listConversationIds()) {
+        void this.contextManager.clearAllWorkerAnchorsForWindow(id);
+      }
+    }
   }
 
   /**
@@ -1776,24 +1933,32 @@ Example: /model gpt-4.1 write a Python script`;
       text: `👷 Running worker: **${worker.name}** (${worker.personality.role})\n\nAgent: ${codingAgent}\nModel: ${model}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
 
-    // Build prompt with worker context + project memory
-    const basePrompt = this.workspaceManager.getWorkerManager().buildWorkerPrompt(workerName, task);
-    const prompt = this.wrapPromptWithMemory(basePrompt, task, workerName);
+    // Build cold-start bootstrap prompt — runWorkerStep only invokes the
+    // closure when no warm session exists (or it expired / wrong agent).
+    const buildBootstrapPrompt = () => {
+      const basePrompt = this.workspaceManager.getWorkerManager().buildWorkerPrompt(workerName, task);
+      return this.wrapPromptWithMemory(basePrompt, task, workerName);
+    };
 
-    // Run with worker's coding agent and model
     const modelConfig = this.getModelConfig(codingAgent, model);
-
     const handler = this.handlers.get(channel);
     const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
+    const baseConv = `${channel}-${chatId}`;
+    const workerConv = this.workerConversationId(baseConv, { worker: workerName });
 
-    const response = await this.runWithFallback(codingAgent, {
-      prompt,
-      agent: codingAgent,
-      model: modelConfig,
+    // Single-worker invocation: blackboard is unused (no peers to hand off
+    // to) but runWorkerStep needs a value for delta tracking.
+    const { response } = await this.runWorkerStep({
+      conversationId: workerConv,
+      workerName,
+      task,
+      blackboard: new TeamBlackboard(),
+      codingAgent,
+      modelConfig,
+      buildBootstrapPrompt,
+      onStream,
       interactive: this.tuiMode,
       skipPermissions: !this.tuiMode && this.getSkipPermissions(),
-      onStream,
-      context: { workingDir: this.workingDir },
     });
 
     this.extractWorkerMemories(workerName, task, codingAgent, response);
@@ -1828,7 +1993,7 @@ Example: /model gpt-4.1 write a Python script`;
       | { kind: 'route'; step: number; worker: string; reason: string; isRevision: boolean }
       | { kind: 'blackboard'; step: number; worker: string; summary: string }
     ) => void | Promise<void>,
-    runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined) => Promise<{ success: boolean; output: string; error?: string }>,
+    runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string }>,
   ): Promise<
     | { fallback: true; fallbackReason: string }
     | {
@@ -1980,7 +2145,7 @@ Example: /model gpt-4.1 write a Python script`;
         blackboard.renderForWorker(turnNext),
       );
 
-      const response = await runWorker(turnNext, prompt, codingAgent, modelConfig);
+      const response = await runWorker(turnNext, prompt, codingAgent, modelConfig, blackboard);
       if (!response.success) {
         fallbackMidRun = { reason: `worker ${turnNext} failed: ${response.error ?? 'unknown'}` };
         break;
@@ -2107,24 +2272,32 @@ Example: /model gpt-4.1 write a Python script`;
 
     const handler = this.handlers.get(channel);
     const { members, dispatch } = team;
+    const baseConv = `${channel}-${chatId}`;
+    const teamConv = this.workerConversationId(baseConv, { team: teamName });
 
     // Helper to run one worker once, used by both the Manager loop and the
-    // legacy "all members in input order" fallback.
+    // legacy "all members in input order" fallback. Routes through
+    // runWorkerStep so subsequent invocations of the same worker reuse
+    // the warm CLI session via --resume.
     const runOneWorker = async (
       workerName: string,
       prompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
+      blackboard: TeamBlackboard,
     ): Promise<{ success: boolean; output: string; error?: string }> => {
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
-      const response = await this.runWithFallback(codingAgent, {
-        prompt: this.wrapPromptWithMemory(prompt, task, workerName),
-        agent: codingAgent,
-        model: modelConfig,
+      const { response } = await this.runWorkerStep({
+        conversationId: teamConv,
+        workerName,
+        task,
+        blackboard,
+        codingAgent,
+        modelConfig,
+        buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, task, workerName),
+        onStream,
         interactive: this.tuiMode,
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
-        onStream,
-        context: { workingDir: this.workingDir },
       });
       this.extractWorkerMemories(workerName, task, codingAgent, response);
       return response.success
@@ -2190,6 +2363,7 @@ Example: /model gpt-4.1 write a Python script`;
           options: p.options,
           askedAt: Date.now(),
           blackboard: result.blackboard.toJSON(),
+          workerAnchors: this.snapshotWorkerAnchors(teamConv),
         });
         const rendered1 = renderQuestion(askWorkerName, '', p.question, p.options);
         await this.sendResponse({
@@ -2270,21 +2444,30 @@ Example: /model gpt-4.1 write a Python script`;
       return;
     }
     const handler = this.handlers.get(message.channel);
+    const baseConv = `${message.channel}-${message.chatId}`;
+    const teamConv = this.workerConversationId(baseConv, { team: pending.teamName });
+    // Rehydrate any warm worker sessions captured at pause time so the
+    // resumed step continues `--resume`-ing instead of re-bootstrapping.
+    await this.rehydrateWorkerAnchors(teamConv, pending.workerAnchors);
     const runOneWorker = async (
       workerName: string,
       prompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
+      blackboard: TeamBlackboard,
     ): Promise<{ success: boolean; output: string; error?: string }> => {
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
-      const response = await this.runWithFallback(codingAgent, {
-        prompt: this.wrapPromptWithMemory(prompt, pending.task, workerName),
-        agent: codingAgent,
-        model: modelConfig,
+      const { response } = await this.runWorkerStep({
+        conversationId: teamConv,
+        workerName,
+        task: pending.task,
+        blackboard,
+        codingAgent,
+        modelConfig,
+        buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, pending.task, workerName),
+        onStream,
         interactive: this.tuiMode,
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
-        onStream,
-        context: { workingDir: this.workingDir },
       });
       this.extractWorkerMemories(workerName, pending.task, codingAgent, response);
       return response.success
@@ -2315,7 +2498,7 @@ Example: /model gpt-4.1 write a Python script`;
         channel: message.channel,
         text: `🔄 Resuming **${memberName}** with your answer…`,
       });
-      const response = await runOneWorker(memberName, reprompt, codingAgent, modelConfig);
+      const response = await runOneWorker(memberName, reprompt, codingAgent, modelConfig, blackboard);
       if (!response.success) {
         await this.sendResponse({
           chatId: message.chatId,
@@ -2343,6 +2526,7 @@ Example: /model gpt-4.1 write a Python script`;
           options: ask.options,
           askedAt: Date.now(),
           blackboard: blackboard.toJSON(),
+          workerAnchors: this.snapshotWorkerAnchors(teamConv),
         });
         const rendered2 = renderQuestion(memberName, ask.preamble, ask.question, ask.options);
         await this.sendResponse({
@@ -2361,7 +2545,7 @@ Example: /model gpt-4.1 write a Python script`;
         team.members,
         pending.task,
         runOneWorker,
-        { startIndex: pending.memberIndex + 1, startCarry: carryForNext, priorResults, blackboard },
+        { startIndex: pending.memberIndex + 1, startCarry: carryForNext, priorResults, blackboard, conversationId: teamConv },
       );
       return;
     }
@@ -2428,7 +2612,7 @@ Example: /model gpt-4.1 write a Python script`;
       resumeRoster,
       resumeBoardForPrompt.renderForWorker(turn.next),
     );
-    const response = await runOneWorker(turn.next, stepPrompt, codingAgent, modelConfig);
+    const response = await runOneWorker(turn.next, stepPrompt, codingAgent, modelConfig, resumeBoardForPrompt);
     if (!response.success) {
       await this.sendResponse({
         chatId: message.chatId,
@@ -2464,6 +2648,7 @@ Example: /model gpt-4.1 write a Python script`;
         options: ask.options,
         blackboard: resumeBoard.toJSON(),
         askedAt: Date.now(),
+        workerAnchors: this.snapshotWorkerAnchors(teamConv),
       });
       const rendered3 = renderQuestion(turn.next, ask.preamble, ask.question, ask.options);
       await this.sendResponse({
@@ -2506,14 +2691,17 @@ Example: /model gpt-4.1 write a Python script`;
       prompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
+      blackboard: TeamBlackboard,
     ) => Promise<{ success: boolean; output: string; error?: string }>,
-    opts: { startIndex?: number; startCarry?: string; priorResults?: string[]; blackboard?: TeamBlackboard } = {},
+    opts: { startIndex?: number; startCarry?: string; priorResults?: string[]; blackboard?: TeamBlackboard; conversationId?: string } = {},
   ): Promise<void> {
     const { chatId, channel } = message;
     const workerManager = this.workspaceManager.getWorkerManager();
     const results: string[] = opts.priorResults ? [...opts.priorResults] : [];
     let currentTask = opts.startCarry ?? task;
     const blackboard = opts.blackboard ?? new TeamBlackboard();
+    const teamConv = opts.conversationId
+      ?? this.workerConversationId(`${channel}-${chatId}`, { team: teamName });
 
     for (let i = opts.startIndex ?? 0; i < members.length; i++) {
       const memberName = members[i];
@@ -2542,7 +2730,7 @@ Example: /model gpt-4.1 write a Python script`;
         blackboard.renderForWorker(memberName),
       );
       const modelConfig = this.getModelConfig(codingAgent, model);
-      const response = await runOneWorker(memberName, prompt, codingAgent, modelConfig);
+      const response = await runOneWorker(memberName, prompt, codingAgent, modelConfig, blackboard);
       if (!response.success) {
         results.push(`**${worker.name}**: ❌ Failed - ${response.error}`);
         break;
@@ -2566,6 +2754,7 @@ Example: /model gpt-4.1 write a Python script`;
           options: ask.options,
           askedAt: Date.now(),
           blackboard: blackboard.toJSON(),
+          workerAnchors: this.snapshotWorkerAnchors(teamConv),
         };
         this.persistPendingTeam(chatId, pending);
         const rendered4 = renderQuestion(worker.name, ask.preamble, ask.question, ask.options);
@@ -2609,20 +2798,27 @@ Example: /model gpt-4.1 write a Python script`;
     }
     const workerManager = this.workspaceManager.getWorkerManager();
 
+    const baseConv = `chat-${chat.id}`;
+    const teamConv = this.workerConversationId(baseConv, { team: teamName });
     const runOneWorker = async (
       workerName: string,
       workerPrompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
+      blackboard: TeamBlackboard,
     ): Promise<{ success: boolean; output: string; error?: string }> => {
-      const response = await this.runWithFallback(codingAgent, {
-        prompt: this.wrapPromptWithMemory(workerPrompt, prompt, workerName),
-        agent: codingAgent,
-        model: modelConfig,
-        context: { workingDir },
+      const { response } = await this.runWorkerStep({
+        conversationId: teamConv,
+        workerName,
+        task: prompt,
+        blackboard,
+        codingAgent,
+        modelConfig,
+        buildBootstrapPrompt: () => this.wrapPromptWithMemory(workerPrompt, prompt, workerName),
         onStream: (text: string) => sink({ type: 'stream', chatId, token: text }),
         onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
         signal,
+        workingDir,
       });
       if (response) this.extractWorkerMemories(workerName, prompt, codingAgent, response);
       return response?.success
@@ -2784,6 +2980,7 @@ Example: /model gpt-4.1 write a Python script`;
           options: p.options,
           blackboard: result.blackboard.toJSON(),
           askedAt: Date.now(),
+          workerAnchors: this.snapshotWorkerAnchors(teamConv),
         });
         const rendered5 = renderQuestion(askWorkerName, '', p.question, p.options);
         sink({ type: 'stream', chatId, token: rendered5.text });
@@ -2828,7 +3025,7 @@ Example: /model gpt-4.1 write a Python script`;
       const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
       const workerModel = workerManager.getWorkerModel(memberName);
       const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
-      const response = await runOneWorker(memberName, stepPrompt, codingAgent, modelConfig);
+      const response = await runOneWorker(memberName, stepPrompt, codingAgent, modelConfig, blackboard);
       if (!response.success) {
         parts.push(`### Step ${stepNum}: ${memberName}\n\n`);
         break;
@@ -2851,6 +3048,7 @@ Example: /model gpt-4.1 write a Python script`;
           options: ask.options,
           askedAt: Date.now(),
           blackboard: blackboard.toJSON(),
+          workerAnchors: this.snapshotWorkerAnchors(teamConv),
         });
         const rendered6 = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
         sink({ type: 'stream', chatId, token: rendered6.text });
