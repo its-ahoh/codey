@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-30
+
+### Added
+- **Worker & team memory.** Workers and teams now read the workspace memory store on every run and write insights back; previously memory was chat-only.
+- **User-global memory layer** at `~/.codey/` (override via `CODEY_GLOBAL_MEMORY_DIR`), shared across workspaces and injected above workspace memory as `## User-Global Memory`.
+- **Team blackboard.** Workers emit `[FACT]` / `[DECISION]` / `[HANDOFF: name]` / `[OPEN]` markers that are stripped from user-visible output, accumulated across steps, surfaced to later workers, and shown in a final `🧠 Team blackboard` summary. `[DECISION]` markers persist to memory.
+- **Per-worker memory scope** via `/remember --worker <name>` / `--workers a,b,c`; global writes via `/remember --global`. `/memory [--global] list|search|clear` operates on the chosen store.
+- **Warm worker CLI sessions.** Team/worker steps reuse a `--resume` session per worker, sending only the blackboard delta instead of re-sending personality + memory each step; pause/resume preserves warm sessions and the blackboard.
+- Parallel discussions persist the Manager's final summary as a `decision` memory.
+
+### Changed
+- `MemoryStore` rewritten: async serialized + atomic writes, content-hash dedup, BM25 search (label/tags/content weighting + source weighting), read-side access tracking throttled and decoupled from `updatedAt`.
+
+[0.6.0]: https://github.com/its-ahoh/codey/releases/tag/v0.6.0
+
 ## [0.2.0] - 2026-04-28
 
 ### Added
