@@ -2,7 +2,7 @@ import React from 'react'
 import type { Chat, ChatMessage } from '../types'
 import { C } from '../theme'
 import { parseTeamMessage } from './teamMessageFormat'
-import { ToolDetail } from './toolFormat'
+import { ToolDetail, DiffView, normalizeTool } from './toolFormat'
 
 interface Props {
   chat: Chat
@@ -66,6 +66,8 @@ export const ChatContextPanel: React.FC<Props> = ({
     return null
   })()
 
+  const [tab, setTab] = React.useState<'current' | 'files'>('current')
+
   // Resize drag handler
   const onResizerMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -91,16 +93,22 @@ export const ChatContextPanel: React.FC<Props> = ({
         <div style={styles.headerMeta}>
           {turn ? (
             <>
-              <span style={styles.headerTitle}>Turn {selectedTurnIndex ?? '?'}</span>
-              <span style={styles.headerDot}>·</span>
-              <span style={styles.headerSub}>{fmtTime(turn.timestamp)}</span>
-              {turn.durationSec != null && Number.isFinite(turn.durationSec) && (
-                <><span style={styles.headerDot}>·</span><span style={styles.headerSub}>{turn.durationSec}s</span></>
-              )}
               {(() => {
-                const t = turn.tokens != null ? formatTokens(turn.tokens) : null
-                return t ? <><span style={styles.headerDot}>·</span><span style={styles.headerSub}>{t} tok</span></> : null
+                const prompt = (triggeringUserMsg?.content ?? '').replace(/\s+/g, ' ').trim()
+                const label = prompt ? (prompt.length > 60 ? prompt.slice(0, 59) + '…' : prompt) : `Turn ${selectedTurnIndex ?? '?'}`
+                return <span style={styles.headerTitle} title={prompt || undefined}>{label}</span>
               })()}
+              <div style={styles.headerSubLine}>
+                {selectedTurnIndex != null && <><span style={styles.headerSub}>Turn {selectedTurnIndex}</span><span style={styles.headerDot}>·</span></>}
+                <span style={styles.headerSub}>{fmtTime(turn.timestamp)}</span>
+                {turn.durationSec != null && Number.isFinite(turn.durationSec) && (
+                  <><span style={styles.headerDot}>·</span><span style={styles.headerSub}>{turn.durationSec}s</span></>
+                )}
+                {(() => {
+                  const t = turn.tokens != null ? formatTokens(turn.tokens) : null
+                  return t ? <><span style={styles.headerDot}>·</span><span style={styles.headerSub}>{t} tok</span></> : null
+                })()}
+              </div>
             </>
           ) : (
             <span style={styles.headerSub}>No turn selected</span>
@@ -112,38 +120,65 @@ export const ChatContextPanel: React.FC<Props> = ({
         <button style={styles.closeBtn} onClick={onClose} aria-label="Close panel">×</button>
       </div>
 
-      <div style={styles.body}>
-        {/* Run target */}
-        <Section title="Run target">
-          <div style={styles.runTargetRow}>
-            {teamName ? `Team: ${teamName}` : workerName ? `Worker: ${workerName}` : 'Direct chat'}
-          </div>
-          <div style={styles.runTargetSub}>
-            {effectiveAgent}{effectiveModel ? ` · ${effectiveModel}` : ''}
-          </div>
-        </Section>
+      {/* Tabs */}
+      <div style={styles.tabs} role="tablist">
+        <button
+          role="tab"
+          aria-selected={tab === 'current'}
+          style={{ ...styles.tab, ...(tab === 'current' ? styles.tabActive : null) }}
+          onClick={() => setTab('current')}
+        >Tools</button>
+        <button
+          role="tab"
+          aria-selected={tab === 'files'}
+          style={{ ...styles.tab, ...(tab === 'files' ? styles.tabActive : null) }}
+          onClick={() => setTab('files')}
+        >File changes</button>
+      </div>
 
-        {turn && (
-          <TeamFlow
-            turn={turn}
-            isStreaming={isTurnStreaming}
-            onScrollToStep={onScrollToStep}
+      <div style={styles.body}>
+        {tab === 'current' ? (
+          <>
+            {/* Run target */}
+            <Section title="Run target">
+              <div style={styles.runTargetRow}>
+                {teamName ? `Team: ${teamName}` : workerName ? `Worker: ${workerName}` : 'Direct chat'}
+              </div>
+              <div style={styles.runTargetSub}>
+                {effectiveAgent}{effectiveModel ? ` · ${effectiveModel}` : ''}
+              </div>
+            </Section>
+
+            {turn && (
+              <TeamFlow
+                turn={turn}
+                isStreaming={isTurnStreaming}
+                onScrollToStep={onScrollToStep}
+              />
+            )}
+            {turn && <ToolTimeline toolCalls={turn.toolCalls ?? []} />}
+            {turn && <FilesTouched toolCalls={turn.toolCalls ?? []} workingDir={workingDir} onReveal={onRevealFile} />}
+            {triggeringUserMsg?.attachments && triggeringUserMsg.attachments.length > 0 && (
+              <AttachmentsSection attachments={triggeringUserMsg.attachments} />
+            )}
+            {chat.pendingTeam && turn && turn.id === latestAssistantId && (
+              <PendingTeamSection pending={chat.pendingTeam} />
+            )}
+            {turn && (turn.toolCalls?.length ?? 0) === 0 && (
+              <Section title="Tool calls">
+                <div style={styles.emptyHint}>No tool activity for this turn.</div>
+              </Section>
+            )}
+            {!turn && <div style={styles.emptyHint}>Send a message to see run context.</div>}
+          </>
+        ) : (
+          <FileChangesView
+            chat={chat}
+            workingDir={workingDir}
+            selectedTurnId={selectedTurnId}
+            onReveal={onRevealFile}
           />
         )}
-        {turn && <ToolTimeline toolCalls={turn.toolCalls ?? []} />}
-        {turn && <FilesTouched toolCalls={turn.toolCalls ?? []} workingDir={workingDir} onReveal={onRevealFile} />}
-        {triggeringUserMsg?.attachments && triggeringUserMsg.attachments.length > 0 && (
-          <AttachmentsSection attachments={triggeringUserMsg.attachments} />
-        )}
-        {chat.pendingTeam && turn && turn.id === latestAssistantId && (
-          <PendingTeamSection pending={chat.pendingTeam} />
-        )}
-        {turn && (turn.toolCalls?.length ?? 0) === 0 && (
-          <Section title="Tool calls">
-            <div style={styles.emptyHint}>No tool activity for this turn.</div>
-          </Section>
-        )}
-        {!turn && <div style={styles.emptyHint}>Send a message to see run context.</div>}
       </div>
     </div>
   )
@@ -464,6 +499,229 @@ const pendStyles: Record<string, React.CSSProperties> = {
   hint: { color: C.fg3, fontSize: 10, fontStyle: 'italic' },
 }
 
+type FileChange = {
+  msgId: string
+  msgIdx: number
+  turnNum: number
+  ts: number
+  callId: string
+  tool: 'Edit' | 'Write' | 'Patch' | 'Notebook'
+  rawTool: string
+  path: string
+  oldText: string
+  newText: string
+  patchText?: string
+}
+
+const extractChanges = (chat: Chat): FileChange[] => {
+  const out: FileChange[] = []
+  let turnNum = 0
+  for (let idx = 0; idx < chat.messages.length; idx++) {
+    const m = chat.messages[idx]
+    if (m.role !== 'assistant') continue
+    turnNum++
+    for (const tc of m.toolCalls ?? []) {
+      if (tc.type !== 'tool_start') continue
+      const canonical = normalizeTool(tc.tool)
+      if (canonical !== 'Edit' && canonical !== 'Write' && canonical !== 'Patch' && canonical !== 'Notebook') continue
+      const i = (tc.input ?? {}) as Record<string, unknown>
+      const path = String(i.file_path ?? i.path ?? i.filename ?? i.notebook_path ?? '')
+      if (canonical === 'Edit') {
+        // MultiEdit case: edits[] array
+        const edits = i.edits as Array<{ old_string?: string; new_string?: string }> | undefined
+        if (Array.isArray(edits) && edits.length > 0) {
+          edits.forEach((e, ei) => {
+            out.push({
+              msgId: m.id, msgIdx: idx, turnNum, ts: m.timestamp,
+              callId: `${tc.id}#${ei}`, tool: 'Edit', rawTool: tc.tool ?? 'Edit', path,
+              oldText: String(e.old_string ?? ''),
+              newText: String(e.new_string ?? ''),
+            })
+          })
+        } else {
+          out.push({
+            msgId: m.id, msgIdx: idx, turnNum, ts: m.timestamp,
+            callId: tc.id, tool: 'Edit', rawTool: tc.tool ?? 'Edit', path,
+            oldText: String(i.old_string ?? i.oldText ?? ''),
+            newText: String(i.new_string ?? i.newText ?? ''),
+          })
+        }
+      } else if (canonical === 'Write') {
+        out.push({
+          msgId: m.id, msgIdx: idx, turnNum, ts: m.timestamp,
+          callId: tc.id, tool: 'Write', rawTool: tc.tool ?? 'Write', path,
+          oldText: '',
+          newText: String(i.content ?? i.text ?? ''),
+        })
+      } else if (canonical === 'Patch') {
+        out.push({
+          msgId: m.id, msgIdx: idx, turnNum, ts: m.timestamp,
+          callId: tc.id, tool: 'Patch', rawTool: tc.tool ?? 'Patch',
+          path: path || '(multi-file patch)',
+          oldText: '', newText: '',
+          patchText: String(i.patch ?? i.diff ?? i.input ?? ''),
+        })
+      } else if (canonical === 'Notebook') {
+        out.push({
+          msgId: m.id, msgIdx: idx, turnNum, ts: m.timestamp,
+          callId: tc.id, tool: 'Notebook', rawTool: tc.tool ?? 'NotebookEdit', path,
+          oldText: String(i.old_source ?? ''),
+          newText: String(i.new_source ?? ''),
+        })
+      }
+    }
+  }
+  return out
+}
+
+const displayPath = (abs: string, workingDir?: string): string => {
+  if (workingDir && abs.startsWith(workingDir)) {
+    const rel = abs.slice(workingDir.length).replace(/^\/+/, '')
+    return rel || abs
+  }
+  return abs
+}
+
+const FileChangesView: React.FC<{
+  chat: Chat
+  workingDir?: string
+  selectedTurnId: string | null
+  onReveal: (absPath: string) => void
+}> = ({ chat, workingDir, selectedTurnId, onReveal }) => {
+  const changes = React.useMemo(() => extractChanges(chat), [chat])
+  const [filter, setFilter] = React.useState<'all' | 'turn'>('all')
+  // Files default to expanded; this set tracks the ones the user collapsed.
+  const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set())
+
+  const visible = filter === 'turn' && selectedTurnId
+    ? changes.filter(c => c.msgId === selectedTurnId)
+    : changes
+
+  if (changes.length === 0) {
+    return <div style={styles.emptyHint}>No file changes in this chat yet.</div>
+  }
+
+  // Group changes by file path, preserve first-seen order.
+  const order: string[] = []
+  const byFile = new Map<string, FileChange[]>()
+  for (const c of visible) {
+    if (!byFile.has(c.path)) { byFile.set(c.path, []); order.push(c.path) }
+    byFile.get(c.path)!.push(c)
+  }
+
+  return (
+    <div>
+      <div style={fcStyles.toolbar}>
+        <div style={fcStyles.scopeGroup} role="tablist">
+          <button
+            style={{ ...fcStyles.scopeBtn, ...(filter === 'all' ? fcStyles.scopeBtnActive : null) }}
+            onClick={() => setFilter('all')}
+          >All ({changes.length})</button>
+          <button
+            style={{ ...fcStyles.scopeBtn, ...(filter === 'turn' ? fcStyles.scopeBtnActive : null) }}
+            onClick={() => setFilter('turn')}
+            disabled={!selectedTurnId}
+            title={selectedTurnId ? 'Show only this turn' : 'Select a turn to filter'}
+          >This turn</button>
+        </div>
+        <div style={fcStyles.summary}>
+          {order.length} file{order.length === 1 ? '' : 's'} · {visible.length} change{visible.length === 1 ? '' : 's'}
+        </div>
+      </div>
+
+      {visible.length === 0 && (
+        <div style={styles.emptyHint}>No file changes in the selected turn.</div>
+      )}
+
+      {order.map(path => {
+        const group = byFile.get(path)!
+        const isCollapsed = collapsed.has(path)
+        const toggle = () => setCollapsed(prev => {
+          const next = new Set(prev)
+          next.has(path) ? next.delete(path) : next.add(path)
+          return next
+        })
+        return (
+          <div key={path} style={fcStyles.fileGroup}>
+            <div style={fcStyles.fileHeader} title={path} onClick={toggle}>
+              <span style={fcStyles.chevron}>{isCollapsed ? '▶' : '▾'}</span>
+              <span style={fcStyles.filePath}>{displayPath(path, workingDir)}</span>
+              <span style={fcStyles.fileCount}>{group.length} edit{group.length === 1 ? '' : 's'}</span>
+              {path && path.startsWith('/') && (
+                <button
+                  style={fcStyles.iconBtn}
+                  onClick={(e) => { e.stopPropagation(); onReveal(path) }}
+                  title="Reveal in Finder"
+                >⤴</button>
+              )}
+            </div>
+            {!isCollapsed && (
+              <div style={fcStyles.changeBody}>
+                {group.map(c => (
+                  <div key={`${c.msgId}::${c.callId}`} style={fcStyles.changeItem}>
+                    {c.tool === 'Patch' ? (
+                      <pre style={fcStyles.patchPre}>{c.patchText || '(empty patch)'}</pre>
+                    ) : c.tool === 'Write' ? (
+                      <DiffView oldText="" newText={c.newText} />
+                    ) : (
+                      <DiffView oldText={c.oldText} newText={c.newText} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+const fcStyles: Record<string, React.CSSProperties> = {
+  toolbar: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    gap: 8, marginBottom: 10,
+  },
+  scopeGroup: { display: 'flex', gap: 4 },
+  scopeBtn: {
+    background: 'transparent', border: `1px solid ${C.border2}`,
+    color: C.fg3, fontSize: 10, fontWeight: 600,
+    padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
+    textTransform: 'uppercase', letterSpacing: 0.4,
+  },
+  scopeBtnActive: {
+    background: C.surface3, color: C.fg, borderColor: C.border,
+  },
+  summary: { color: C.fg3, fontSize: 10 },
+  fileGroup: {
+    marginBottom: 12, border: `1px solid ${C.border}`,
+    borderRadius: 6, overflow: 'hidden', background: C.surface3,
+  },
+  fileHeader: {
+    display: 'flex', alignItems: 'center', gap: 6,
+    padding: '6px 8px', borderBottom: `1px solid ${C.border}`,
+    background: 'rgba(0,0,0,0.15)', cursor: 'pointer',
+  },
+  chevron: { color: C.fg3, fontSize: 9, width: 10, flexShrink: 0, userSelect: 'none' },
+  filePath: {
+    flex: 1, color: C.fg, fontSize: 11.5, fontWeight: 600,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
+  },
+  fileCount: { color: C.fg3, fontSize: 10, flexShrink: 0 },
+  iconBtn: {
+    background: 'transparent', border: 'none', color: C.fg3,
+    cursor: 'pointer', fontSize: 12, padding: '0 4px', flexShrink: 0,
+  },
+  changeBody: { padding: 8, background: 'rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 6 },
+  changeItem: {},
+  patchPre: {
+    margin: 0, fontSize: 11.5, color: C.fg,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+  },
+}
+
 const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <div style={styles.section}>
     <div style={styles.sectionTitle}>{title}</div>
@@ -492,8 +750,28 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '10px 12px', borderBottom: `1px solid ${C.border}`,
     flexShrink: 0,
   },
-  headerMeta: { flex: 1, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' },
-  headerTitle: { color: C.fg, fontSize: 12, fontWeight: 600 },
+  tabs: {
+    display: 'flex', gap: 2,
+    padding: '6px 8px 0',
+    borderBottom: `1px solid ${C.border}`,
+    flexShrink: 0,
+  },
+  tab: {
+    background: 'transparent', border: 'none',
+    color: C.fg3, fontSize: 11, fontWeight: 600,
+    letterSpacing: 0.4, textTransform: 'uppercase',
+    padding: '6px 10px', cursor: 'pointer',
+    borderBottom: '2px solid transparent', marginBottom: -1,
+  },
+  tabActive: {
+    color: C.fg, borderBottomColor: C.accent,
+  },
+  headerMeta: { flex: 1, display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 },
+  headerSubLine: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  headerTitle: {
+    color: C.fg, fontSize: 12, fontWeight: 600,
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%',
+  },
   headerSub: { color: C.fg3, fontSize: 11, fontVariantNumeric: 'tabular-nums' },
   headerDot: { color: C.fg3, fontSize: 11, opacity: 0.5 },
   followPill: {
