@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Codey — the control plane for your coding agents</title>
+<meta name="description" content="Codey is a multi-agent workbench that orchestrates Claude Code, OpenCode, and Codex across your projects — from chat, a macOS app, or system-wide voice." />
+<meta name="color-scheme" content="light dark" />
+
+<!-- Social -->
+<meta property="og:title" content="Codey — the control plane for your coding agents" />
+<meta property="og:description" content="Orchestrate Claude Code, OpenCode, and Codex from Telegram, Discord, iMessage, a macOS app, or your voice." />
+<meta property="og:type" content="website" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+<style>
+  :root {
+    --paper: #FBF8F1;
+    --paper-2: #F3EEE3;
+    --card: #FFFFFF;
+    --ink: #1A1712;
+    --ink-soft: #5B554A;
+    --ink-faint: #8C8475;
+    --line: #E7E0D2;
+    --line-strong: #D8CFBC;
+    --accent: #0C9E70;
+    --accent-deep: #067A53;
+    --accent-soft: #D7F3E8;
+    --teal: #2563EB;
+    --teal-soft: #DEE9FF;
+    --shadow-sm: 0 1px 2px rgba(26,23,18,.06), 0 2px 8px rgba(26,23,18,.04);
+    --shadow-md: 0 4px 14px rgba(26,23,18,.07), 0 18px 40px rgba(26,23,18,.07);
+    --shadow-lg: 0 10px 30px rgba(26,23,18,.10), 0 40px 80px rgba(26,23,18,.10);
+    --radius: 18px;
+    --radius-sm: 12px;
+    --maxw: 1120px;
+    --font-display: "Bricolage Grotesque", Georgia, serif;
+    --font-body: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #141310;
+    --paper-2: #1C1A16;
+    --card: #1E1C17;
+    --ink: #F4EFE5;
+    --ink-soft: #B6AE9E;
+    --ink-faint: #837B6C;
+    --line: #2C2922;
+    --line-strong: #3A362D;
+    --accent: #2BE69B;
+    --accent-deep: #54F0B0;
+    --accent-soft: #0E2A20;
+    --teal: #5B9BFF;
+    --teal-soft: #15233E;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+    --shadow-md: 0 6px 20px rgba(0,0,0,.45);
+    --shadow-lg: 0 20px 60px rgba(0,0,0,.55);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--paper);
+    color: var(--ink);
+    line-height: 1.6;
+    font-size: 17px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+
+  /* Grain / atmosphere */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+    mix-blend-mode: multiply;
+  }
+  :root[data-theme="dark"] body::before { mix-blend-mode: screen; opacity: .5; }
+
+  a { color: inherit; text-decoration: none; }
+  ::selection { background: var(--accent); color: #fff; }
+
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 28px; position: relative; z-index: 1; }
+
+  h1, h2, h3 { font-family: var(--font-display); font-weight: 700; line-height: 1.05; letter-spacing: -0.02em; }
+  .mono { font-family: var(--font-mono); }
+
+  /* ---------- NAV ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: color-mix(in srgb, var(--paper) 80%, transparent);
+    backdrop-filter: saturate(160%) blur(14px);
+    -webkit-backdrop-filter: saturate(160%) blur(14px);
+    border-bottom: 1px solid transparent;
+    transition: border-color .3s ease, background .3s ease;
+  }
+  nav.scrolled { border-color: var(--line); }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 68px; }
+  .brand { display: flex; align-items: center; gap: 11px; font-family: var(--font-display); font-weight: 800; font-size: 21px; letter-spacing: -0.03em; }
+  .brand .glyph {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(145deg, var(--accent), var(--accent-deep));
+    display: grid; place-items: center; color: #fff; font-family: var(--font-mono); font-weight: 600; font-size: 15px;
+    box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 45%, transparent);
+    transform: rotate(-4deg);
+  }
+  .nav-links { display: flex; align-items: center; gap: 30px; }
+  .nav-links a.link { font-size: 15px; color: var(--ink-soft); font-weight: 500; transition: color .2s; }
+  .nav-links a.link:hover { color: var(--ink); }
+  @media (max-width: 760px) { .nav-links .link { display: none; } }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-family: var(--font-body); font-weight: 600; font-size: 15px;
+    padding: 10px 18px; border-radius: 11px; cursor: pointer;
+    border: 1px solid transparent; transition: transform .15s ease, box-shadow .2s ease, background .2s ease;
+    white-space: nowrap;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--ink); color: var(--paper); box-shadow: var(--shadow-sm); }
+  .btn-primary:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+  .btn-accent { background: linear-gradient(145deg, var(--accent), var(--accent-deep)); color: #fff; box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 40%, transparent); }
+  .btn-accent:hover { transform: translateY(-1px); box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 50%, transparent); }
+  .btn-ghost { background: var(--card); color: var(--ink); border-color: var(--line-strong); }
+  .btn-ghost:hover { border-color: var(--ink-faint); }
+
+  .theme-toggle {
+    width: 40px; height: 40px; border-radius: 11px; flex: 0 0 auto;
+    border: 1px solid var(--line-strong); background: var(--card); color: var(--ink-soft);
+    display: grid; place-items: center; cursor: pointer;
+    transition: color .2s, border-color .2s, transform .15s;
+  }
+  .theme-toggle:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .theme-toggle:active { transform: translateY(1px); }
+  .theme-toggle .ic-sun { display: none; }
+  .theme-toggle .ic-moon { display: block; }
+  :root[data-theme="dark"] .theme-toggle .ic-sun { display: block; }
+  :root[data-theme="dark"] .theme-toggle .ic-moon { display: none; }
+
+  /* ---------- HERO ---------- */
+  header.hero { position: relative; padding: 76px 0 40px; overflow: hidden; }
+  .hero-mesh {
+    position: absolute; z-index: 0; pointer-events: none;
+    top: -180px; right: -160px; width: 720px; height: 720px;
+    background:
+      radial-gradient(420px 420px at 70% 30%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 70%),
+      radial-gradient(380px 380px at 30% 70%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%);
+    filter: blur(14px); opacity: .55;
+  }
+  @media (max-width: 880px){ .hero-mesh{ width:520px; height:520px; right:-180px; } }
+
+  .hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 56px; align-items: center; position: relative; z-index: 1; }
+  @media (max-width: 940px) { .hero-grid { grid-template-columns: 1fr; gap: 40px; } }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--accent-deep); background: var(--accent-soft);
+    padding: 7px 14px; border-radius: 100px; margin-bottom: 22px;
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); }
+
+  h1.hero-title { font-size: clamp(40px, 6vw, 68px); font-weight: 800; margin-bottom: 22px; }
+  h1.hero-title .em { color: var(--accent); position: relative; }
+  h1.hero-title .em::after {
+    content:""; position:absolute; left:0; right:0; bottom:.06em; height:.12em;
+    background: color-mix(in srgb, var(--accent) 30%, transparent); border-radius: 4px; z-index:-1;
+  }
+  .hero-sub { font-size: 19px; color: var(--ink-soft); max-width: 540px; margin-bottom: 32px; }
+  .hero-cta { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .hero-cta .btn { padding: 13px 22px; font-size: 16px; border-radius: 12px; }
+
+  .hero-meta { display: flex; gap: 26px; margin-top: 34px; flex-wrap: wrap; }
+  .hero-meta .item { display: flex; flex-direction: column; }
+  .hero-meta .num { font-family: var(--font-display); font-weight: 700; font-size: 26px; line-height: 1; }
+  .hero-meta .lbl { font-size: 13px; color: var(--ink-faint); margin-top: 5px; }
+
+  /* ---------- Terminal mock ---------- */
+  .mock {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow-lg); overflow: hidden; transform: rotate(.6deg);
+    transition: transform .4s cubic-bezier(.2,.8,.2,1);
+  }
+  .mock:hover { transform: rotate(0deg) translateY(-3px); }
+  .mock-bar { display: flex; align-items: center; gap: 8px; padding: 13px 16px; background: var(--paper-2); border-bottom: 1px solid var(--line); }
+  .mock-bar .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .mock-bar .d1{ background:#ff5f57;} .mock-bar .d2{ background:#febc2e;} .mock-bar .d3{ background:#28c840;}
+  .mock-bar .title { margin-left: 10px; font-family: var(--font-mono); font-size: 12.5px; color: var(--ink-faint); }
+  .mock-body { padding: 20px; font-family: var(--font-mono); font-size: 13.5px; line-height: 1.7; }
+  .msg { display: flex; gap: 11px; margin-bottom: 16px; }
+  .msg .av { flex: 0 0 28px; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-size: 13px; font-weight: 600; }
+  .av.user { background: var(--ink); color: var(--paper); }
+  .av.bot { background: linear-gradient(145deg, var(--accent), var(--accent-deep)); color: #fff; }
+  .msg .body { flex: 1; }
+  .msg .who { font-size: 11px; color: var(--ink-faint); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .05em; }
+  .cmd { color: var(--accent-deep); font-weight: 600; }
+  .tag { display:inline-block; font-size:11px; padding:1px 7px; border-radius:6px; background:var(--accent-soft); color:var(--accent-deep); margin-left:6px; vertical-align:middle; }
+  .typing { display:inline-flex; gap:4px; padding:6px 0; }
+  .typing span{ width:6px; height:6px; border-radius:50%; background:var(--ink-faint); animation: blink 1.4s infinite both; }
+  .typing span:nth-child(2){ animation-delay:.2s; } .typing span:nth-child(3){ animation-delay:.4s; }
+  @keyframes blink { 0%,80%,100%{ opacity:.25; transform: translateY(0);} 40%{ opacity:1; transform: translateY(-3px);} }
+
+  /* ---------- Section scaffolding ---------- */
+  section { padding: 88px 0; position: relative; }
+  .sec-head { max-width: 660px; margin-bottom: 52px; }
+  .sec-tag { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--accent); letter-spacing: .05em; text-transform: uppercase; margin-bottom: 14px; display: block; }
+  .sec-head h2 { font-size: clamp(30px, 4vw, 44px); margin-bottom: 16px; }
+  .sec-head p { font-size: 18px; color: var(--ink-soft); }
+
+  .divider-soft { border: 0; border-top: 1px solid var(--line); }
+
+  /* ---------- What is ---------- */
+  .what { background: var(--paper-2); border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .what-grid { display:grid; grid-template-columns: 1.1fr 1fr; gap:48px; align-items:center; }
+  @media (max-width:860px){ .what-grid{ grid-template-columns:1fr; gap:36px; } }
+  .what p.lead { font-size: 20px; line-height:1.55; color: var(--ink); margin-bottom:18px; }
+  .what p.lead b { color: var(--accent-deep); }
+  .what p.sub { color: var(--ink-soft); }
+  .surfaces { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; }
+  .surface { background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); padding:18px; box-shadow:var(--shadow-sm); }
+  .surface .ic { width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent-deep);margin-bottom:12px; }
+  .surface h4 { font-family:var(--font-display); font-size:16px; margin-bottom:3px; }
+  .surface p { font-size:13.5px; color:var(--ink-faint); line-height:1.45; }
+
+  /* ---------- Features ---------- */
+  .feat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  @media (max-width: 940px) { .feat-grid { grid-template-columns: repeat(2,1fr); } }
+  @media (max-width: 600px) { .feat-grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 28px; box-shadow: var(--shadow-sm); position: relative; overflow: hidden;
+    transition: transform .25s ease, box-shadow .25s ease, border-color .25s ease;
+  }
+  .card:hover { transform: translateY(-4px); box-shadow: var(--shadow-md); border-color: var(--line-strong); }
+  .card .ic {
+    width: 48px; height: 48px; border-radius: 13px; display: grid; place-items: center; margin-bottom: 18px;
+    background: linear-gradient(145deg, var(--accent-soft), color-mix(in srgb, var(--accent-soft) 60%, var(--card)));
+    color: var(--accent-deep); border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  .card.teal .ic { background: linear-gradient(145deg, var(--teal-soft), color-mix(in srgb, var(--teal-soft) 60%, var(--card))); color: var(--teal); border-color: color-mix(in srgb, var(--teal) 18%, transparent); }
+  .card h3 { font-size: 20px; margin-bottom: 9px; }
+  .card p { font-size: 15px; color: var(--ink-soft); }
+  .card .ribbon { position:absolute; top:16px; right:-30px; transform:rotate(45deg); background:var(--teal); color:#fff; font-size:10.5px; font-weight:700; letter-spacing:.06em; padding:4px 36px; text-transform:uppercase; }
+
+  /* ---------- Commands ---------- */
+  .commands { background: var(--paper-2); border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .cmd-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  @media (max-width: 760px) { .cmd-grid { grid-template-columns: 1fr; } }
+  .cmd-row {
+    display: flex; align-items: baseline; gap: 16px; padding: 15px 18px;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    transition: border-color .2s, transform .2s;
+  }
+  .cmd-row:hover { border-color: var(--accent); transform: translateX(3px); }
+  .cmd-row code { font-family: var(--font-mono); font-size: 14px; font-weight: 600; color: var(--accent-deep); white-space: nowrap; }
+  .cmd-row span { font-size: 14px; color: var(--ink-soft); }
+
+  /* ---------- Quick start ---------- */
+  .qs-grid { display:grid; grid-template-columns: 0.85fr 1.15fr; gap:44px; align-items:center; }
+  @media (max-width:860px){ .qs-grid{ grid-template-columns:1fr; gap:32px; } }
+  .qs-steps { list-style:none; counter-reset: s; }
+  .qs-steps li { counter-increment: s; position: relative; padding-left: 44px; margin-bottom: 22px; }
+  .qs-steps li::before {
+    content: counter(s); position:absolute; left:0; top:-2px;
+    width:30px; height:30px; border-radius:9px; display:grid; place-items:center;
+    background:var(--ink); color:var(--paper); font-family:var(--font-mono); font-weight:600; font-size:14px;
+  }
+  .qs-steps li b { font-family: var(--font-display); font-size:16px; }
+  .qs-steps li p { font-size:14.5px; color:var(--ink-soft); margin-top:2px; }
+
+  .code-block {
+    background: #161310; border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-lg);
+    border: 1px solid #2a261f;
+  }
+  .code-head { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:#1d1a14; border-bottom:1px solid #2a261f; }
+  .code-head .label { font-family:var(--font-mono); font-size:12.5px; color:#9b9282; }
+  .copy-btn {
+    font-family:var(--font-mono); font-size:12px; font-weight:600; color:#cfc7b6;
+    background:#2a261f; border:1px solid #3a352b; border-radius:8px; padding:6px 11px; cursor:pointer;
+    display:inline-flex; align-items:center; gap:7px; transition: all .18s;
+  }
+  .copy-btn:hover { background:#3a352b; color:#fff; }
+  .copy-btn.done { color:#28c840; border-color:#28c840; }
+  pre.code { padding: 20px; overflow-x:auto; font-family:var(--font-mono); font-size:13.5px; line-height:1.85; color:#e8e2d4; }
+  pre.code .c { color:#7d7565; } /* comment */
+  pre.code .p { color:#54F0B0; } /* command */
+  pre.code .a { color:#8FC2FF; } /* arg */
+
+  /* ---------- Download ---------- */
+  .download { text-align:center; }
+  .dl-card {
+    max-width: 720px; margin: 0 auto; background: var(--card); border:1px solid var(--line);
+    border-radius: 24px; padding: 48px 40px; box-shadow: var(--shadow-lg); position:relative; overflow:hidden;
+  }
+  .dl-card::before {
+    content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
+    background: radial-gradient(420px 200px at 50% -10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%);
+  }
+  .dl-card > * { position: relative; z-index:1; }
+  .apple { width:46px;height:46px; margin:0 auto 18px; display:grid; place-items:center; color:var(--ink); }
+  .dl-card h2 { font-size: 34px; margin-bottom: 12px; }
+  .dl-card p { color: var(--ink-soft); margin-bottom: 28px; font-size:17px; }
+  .dl-btns { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+  .dl-note { margin-top:22px; font-size:13px; color:var(--ink-faint); }
+  .dl-note code { font-family:var(--font-mono); background:var(--paper-2); padding:1px 6px; border-radius:5px; }
+
+  /* ---------- Footer ---------- */
+  footer { padding: 50px 0 60px; border-top:1px solid var(--line); }
+  .foot-inner { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:18px; }
+  .foot-inner .left { display:flex; align-items:center; gap:16px; color:var(--ink-faint); font-size:14px; flex-wrap:wrap; }
+  .foot-inner .badge { font-family:var(--font-mono); font-size:12px; padding:3px 9px; border:1px solid var(--line-strong); border-radius:7px; }
+  .foot-links { display:flex; gap:22px; font-size:14px; color:var(--ink-soft); }
+  .foot-links a:hover { color:var(--accent); }
+
+  /* ---------- Reveal animation ---------- */
+  .reveal { opacity: 0; transform: translateY(22px); transition: opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1); }
+  .reveal.in { opacity: 1; transform: none; }
+  .reveal.d1 { transition-delay: .08s; } .reveal.d2 { transition-delay: .16s; }
+  .reveal.d3 { transition-delay: .24s; } .reveal.d4 { transition-delay: .32s; }
+  .reveal.d5 { transition-delay: .40s; }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { opacity:1; transform:none; transition:none; }
+    html { scroll-behavior:auto; }
+    .typing span { animation:none; }
+  }
+
+  /* Staggered hero load */
+  .load { opacity:0; transform: translateY(16px); animation: rise .8s cubic-bezier(.2,.7,.2,1) forwards; }
+  .load.l1{animation-delay:.05s} .load.l2{animation-delay:.15s} .load.l3{animation-delay:.25s}
+  .load.l4{animation-delay:.35s} .load.l5{animation-delay:.5s}
+  @keyframes rise { to { opacity:1; transform:none; } }
+</style>
+<script>
+  // Resolve theme before first paint: stored choice, else system preference.
+  (function () {
+    try {
+      var stored = localStorage.getItem('codey-theme');
+      var theme = stored || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+    } catch (e) {
+      document.documentElement.setAttribute('data-theme', 'light');
+    }
+  })();
+</script>
+</head>
+<body>
+
+<!-- NAV -->
+<nav id="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top">
+      <span class="glyph">&gt;_</span> Codey
+    </a>
+    <div class="nav-links">
+      <a class="link" href="#features">Features</a>
+      <a class="link" href="#commands">Commands</a>
+      <a class="link" href="#start">Quick Start</a>
+      <a class="link" href="#download">Download</a>
+      <button class="theme-toggle" id="themeToggle" aria-label="Toggle light and dark theme" title="Toggle theme">
+        <svg class="ic-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <svg class="ic-sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 1v2.5M12 20.5V23M4.2 4.2l1.8 1.8M18 18l1.8 1.8M1 12h2.5M20.5 12H23M4.2 19.8l1.8-1.8M18 6l1.8-1.8"/></svg>
+      </button>
+      <a class="btn btn-ghost" href="https://github.com/its-ahoh/codey" target="_blank" rel="noopener">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<header class="hero" id="top">
+  <div class="hero-mesh"></div>
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow load l1"><span class="dot"></span> Open source · MIT</span>
+      <h1 class="hero-title load l2">The <span class="em">control plane</span> for the coding agents you already use.</h1>
+      <p class="hero-sub load l3">Codey is a multi-agent workbench. Orchestrate Claude Code, OpenCode, and Codex across your projects — from a macOS app, your favorite chat platform, or system-wide voice. It's not a chat bridge. It's command central.</p>
+      <div class="hero-cta load l4">
+        <a class="btn btn-accent" href="#download">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M16.36 12.78c-.02-2.1 1.71-3.1 1.79-3.15-0.98-1.43-2.5-1.62-3.04-1.64-1.29-.13-2.52.76-3.18.76-.65 0-1.66-.74-2.73-.72-1.4.02-2.7.82-3.42 2.07-1.46 2.53-.37 6.27 1.05 8.32.7.99 1.53 2.1 2.62 2.06 1.05-.04 1.45-.68 2.72-.68 1.27 0 1.63.68 2.74.66 1.13-.02 1.85-1.01 2.54-2.01.8-1.15 1.13-2.27 1.15-2.32-.03-.01-2.2-.84-2.22-3.34zM14.28 6.66c.58-.7.97-1.67.86-2.66-.83.03-1.85.55-2.45 1.25-.53.62-1 1.61-.88 2.56.93.07 1.88-.47 2.47-1.15z"/></svg>
+          Download for macOS
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/its-ahoh/codey" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          Star on GitHub
+        </a>
+      </div>
+      <div class="hero-meta load l5">
+        <div class="item"><span class="num">3</span><span class="lbl">coding agents</span></div>
+        <div class="item"><span class="num">5</span><span class="lbl">surfaces to drive it</span></div>
+        <div class="item"><span class="num">100%</span><span class="lbl">your machine, your keys</span></div>
+      </div>
+    </div>
+
+    <!-- terminal / chat mock -->
+    <div class="mock load l4" aria-hidden="true">
+      <div class="mock-bar">
+        <span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span>
+        <span class="title">codey · #project-auth</span>
+      </div>
+      <div class="mock-body">
+        <div class="msg">
+          <div class="av user">JK</div>
+          <div class="body">
+            <div class="who">you</div>
+            <div><span class="cmd">/team</span> ship the password reset flow with tests</div>
+          </div>
+        </div>
+        <div class="msg">
+          <div class="av bot">C</div>
+          <div class="body">
+            <div class="who">codey</div>
+            <div>Dispatching to <b>3 workers</b><span class="tag">auto</span></div>
+            <div style="color:var(--ink-soft); margin-top:6px;">↳ <b style="color:var(--accent-deep)">architect</b> · claude-code<br>↳ <b style="color:var(--accent-deep)">builder</b> · codex<br>↳ <b style="color:var(--accent-deep)">reviewer</b> · opencode</div>
+          </div>
+        </div>
+        <div class="msg" style="margin-bottom:0;">
+          <div class="av bot">C</div>
+          <div class="body">
+            <div class="who">reviewer</div>
+            <div style="color:var(--ink-soft);">✓ 4 files changed · 6 tests passing</div>
+            <div class="typing"><span></span><span></span><span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- WHAT IS -->
+<section class="what" id="what">
+  <div class="wrap what-grid">
+    <div class="reveal">
+      <span class="sec-tag">What is Codey?</span>
+      <p class="lead">One place to point <b>every coding agent you own</b> at the work in front of you.</p>
+      <p class="sub">Most agent tools lock you into one CLI and one window. Codey sits above them — routing prompts to Claude Code, OpenCode, or Codex, isolating each project in its own workspace, and letting you spin up whole teams of agents that pass work between each other. Reach it from your phone, your menu bar, or just by holding a key and talking.</p>
+    </div>
+    <div class="surfaces reveal d2">
+      <div class="surface">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+        <h4>macOS app</h4>
+        <p>A native menu-bar app to drive it all.</p>
+      </div>
+      <div class="surface">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div>
+        <h4>Chat platforms</h4>
+        <p>Telegram, Discord &amp; iMessage.</p>
+      </div>
+      <div class="surface">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg></div>
+        <h4>Voice</h4>
+        <p>Hold a key, speak, done — on-device.</p>
+      </div>
+      <div class="surface">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></div>
+        <h4>Terminal UI</h4>
+        <p>A keyboard-first TUI for the shell.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="sec-tag">Features</span>
+      <h2>Everything you need to run agents like a team.</h2>
+      <p>Codey turns a pile of separate CLIs into a coordinated workbench — with isolation, memory, and orchestration built in.</p>
+    </div>
+    <div class="feat-grid">
+      <div class="card reveal">
+        <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M9.5 17l-2.5-3M14.5 17l2.5-3"/></svg></div>
+        <h3>Multi-agent routing</h3>
+        <p>Switch between Claude Code, OpenCode, and Codex per workspace — each with its own model, from Opus to GPT-5-Codex. One command moves the whole conversation.</p>
+      </div>
+      <div class="card reveal d1">
+        <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+        <h3>Worker teams</h3>
+        <p>Define workers in markdown — each with a role, tools, and agent. Run them solo, sequentially, or as a manager-moderated roundtable that talks to itself.</p>
+      </div>
+      <div class="card reveal d2">
+        <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="21"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="18" y1="3" x2="18" y2="21"/><circle cx="6" cy="8" r="2" fill="currentColor"/><circle cx="12" cy="14" r="2" fill="currentColor"/><circle cx="18" cy="7" r="2" fill="currentColor"/></svg></div>
+        <h3>Parallel execution</h3>
+        <p>Fire one prompt at every agent at once with <code class="mono">/parallel</code> and compare answers side by side. Pick the best, or let them race.</p>
+      </div>
+      <div class="card reveal">
+        <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
+        <h3>Workspaces &amp; memory</h3>
+        <p>Every project gets its own working directory, persistent <code class="mono">memory.md</code>, and worker roster. Switch context without losing your place.</p>
+      </div>
+      <div class="card reveal d1">
+        <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg></div>
+        <h3>On-device voice</h3>
+        <p>Hold a hotkey, speak, release. WhisperKit transcribes on the Neural Engine — no API key, no upload — and types straight into the focused app.</p>
+      </div>
+      <div class="card reveal d2">
+        <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+        <h3>Health &amp; monitoring</h3>
+        <p>Built-in <code class="mono">/health</code>, <code class="mono">/metrics</code>, and <code class="mono">/ready</code> endpoints, per-user rate limiting, and auto-chunked responses keep the gateway production-ready.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- COMMANDS -->
+<section class="commands" id="commands">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="sec-tag">Commands</span>
+      <h2>Slash commands, anywhere you type.</h2>
+      <p>The same vocabulary works in every channel — chat, app, or TUI.</p>
+    </div>
+    <div class="cmd-grid">
+      <div class="cmd-row reveal"><code>/team &lt;task&gt;</code><span>Run a team of workers, sequentially or auto-dispatched</span></div>
+      <div class="cmd-row reveal d1"><code>/worker &lt;name&gt; &lt;task&gt;</code><span>Run a single named worker on a task</span></div>
+      <div class="cmd-row reveal"><code>/parallel &lt;prompt&gt;</code><span>Run all agents at once and compare</span></div>
+      <div class="cmd-row reveal d1"><code>/agent &lt;name&gt;</code><span>Switch the active coding agent</span></div>
+      <div class="cmd-row reveal"><code>/workspace &lt;name&gt;</code><span>Switch to another project workspace</span></div>
+      <div class="cmd-row reveal d1"><code>/workspaces</code><span>List every workspace you've set up</span></div>
+      <div class="cmd-row reveal"><code>/model &lt;name&gt;</code><span>Show or set the model for the agent</span></div>
+      <div class="cmd-row reveal d1"><code>/status</code><span>Gateway status &amp; channel connectivity</span></div>
+      <div class="cmd-row reveal"><code>/clear</code><span>Clear the current conversation history</span></div>
+      <div class="cmd-row reveal d1"><code>/help</code><span>Show the full command reference</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- QUICK START -->
+<section id="start">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="sec-tag">Quick start</span>
+      <h2>Up and running in four commands.</h2>
+      <p>Clone the repo, configure your keys, and start the gateway. That's it.</p>
+    </div>
+    <div class="qs-grid">
+      <ol class="qs-steps reveal">
+        <li><b>Install</b><p>Pull dependencies across the monorepo.</p></li>
+        <li><b>Build</b><p>Compile TypeScript and the macOS app.</p></li>
+        <li><b>Configure</b><p>Add agents, models, and channel tokens interactively.</p></li>
+        <li><b>Start</b><p>Launch the gateway and connect your channels.</p></li>
+      </ol>
+      <div class="code-block reveal d2">
+        <div class="code-head">
+          <span class="label">~/codey</span>
+          <button class="copy-btn" id="copyBtn" aria-label="Copy commands">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <span class="copy-label">Copy</span>
+          </button>
+        </div>
+<pre class="code" id="codeText"><span class="c"># clone &amp; install</span>
+<span class="p">git</span> clone https://github.com/its-ahoh/codey.git
+<span class="p">cd</span> codey <span class="p">&amp;&amp; npm</span> install
+
+<span class="c"># build everything</span>
+<span class="p">npm</span> run build
+
+<span class="c"># set up agents, models &amp; channels</span>
+<span class="p">cp</span> gateway.json.example gateway.json
+<span class="p">npm</span> run configure
+
+<span class="c"># launch the gateway</span>
+<span class="p">npm</span> start</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DOWNLOAD -->
+<section class="download" id="download">
+  <div class="wrap">
+    <div class="dl-card reveal">
+      <div class="apple">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor"><path d="M16.36 12.78c-.02-2.1 1.71-3.1 1.79-3.15-.98-1.43-2.5-1.62-3.04-1.64-1.29-.13-2.52.76-3.18.76-.65 0-1.66-.74-2.73-.72-1.4.02-2.7.82-3.42 2.07-1.46 2.53-.37 6.27 1.05 8.32.7.99 1.53 2.1 2.62 2.06 1.05-.04 1.45-.68 2.72-.68 1.27 0 1.63.68 2.74.66 1.13-.02 1.85-1.01 2.54-2.01.8-1.15 1.13-2.27 1.15-2.32-.03-.01-2.2-.84-2.22-3.34zM14.28 6.66c.58-.7.97-1.67.86-2.66-.83.03-1.85.55-2.45 1.25-.53.62-1 1.61-.88 2.56.93.07 1.88-.47 2.47-1.15z"/></svg>
+      </div>
+      <h2>Get the macOS app</h2>
+      <p>Native menu-bar app with built-in voice. Grab the latest DMG for your chip.</p>
+      <div class="dl-btns">
+        <a class="btn btn-accent" href="https://github.com/its-ahoh/codey/releases/latest" target="_blank" rel="noopener">Apple Silicon (.dmg)</a>
+        <a class="btn btn-ghost" href="https://github.com/its-ahoh/codey/releases/latest" target="_blank" rel="noopener">Intel (.dmg)</a>
+      </div>
+      <p class="dl-note">Builds are unsigned — on first launch, right-click the app and choose <code>Open</code> to bypass Gatekeeper.</p>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap foot-inner">
+    <div class="left">
+      <span class="brand" style="font-size:17px;"><span class="glyph" style="width:24px;height:24px;font-size:12px;border-radius:7px;">&gt;_</span> Codey</span>
+      <span class="badge">v0.6.0</span>
+      <span>MIT License</span>
+    </div>
+    <div class="foot-links">
+      <a href="https://github.com/its-ahoh/codey" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/its-ahoh/codey/releases/latest" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/its-ahoh/codey#readme" target="_blank" rel="noopener">Docs</a>
+      <a href="#top">Back to top ↑</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // Theme toggle — persists the user's choice
+  const themeToggle = document.getElementById('themeToggle');
+  themeToggle.addEventListener('click', () => {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const next = isDark ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('codey-theme', next); } catch (e) {}
+  });
+
+  // Nav border on scroll
+  const nav = document.getElementById('nav');
+  const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8);
+  onScroll();
+  window.addEventListener('scroll', onScroll, { passive: true });
+
+  // Scroll reveals
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+  // Copy quick-start
+  const copyBtn = document.getElementById('copyBtn');
+  const codeText = document.getElementById('codeText');
+  copyBtn.addEventListener('click', async () => {
+    const text = codeText.innerText;
+    try {
+      await navigator.clipboard.writeText(text);
+      copyBtn.classList.add('done');
+      copyBtn.querySelector('.copy-label').textContent = 'Copied!';
+      setTimeout(() => {
+        copyBtn.classList.remove('done');
+        copyBtn.querySelector('.copy-label').textContent = 'Copy';
+      }, 1800);
+    } catch (_) {
+      copyBtn.querySelector('.copy-label').textContent = 'Press ⌘C';
+    }
+  });
+</script>
+</body>
+</html>
