@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-05-31
+
+### Added
+- **File changes panel** in the chat context sidebar. A new "File changes" tab aggregates every `Edit`, `Write`, `MultiEdit`, `Patch`, and `NotebookEdit` across the whole chat, grouped by file. Each file card is collapsible (expanded by default) and shows git-style red/green diffs.
+- **Line-number gutters** in diffs (old/new columns, unified-diff style). Gutters and `+`/`-` markers are non-selectable, so copying a diff yields only the code.
+- Scope toggle to view file changes for the whole chat ("All") or just the selected turn ("This turn").
+
+### Changed
+- Chat context panel header now leads with a snippet of the triggering user prompt instead of a bare "Turn N", making it clearer which message the turn belongs to.
+
+[0.6.1]: https://github.com/its-ahoh/codey/releases/tag/v0.6.1
+
 ## [0.6.0] - 2026-05-30
 
 ### Added

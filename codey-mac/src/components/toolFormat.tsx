@@ -127,24 +127,37 @@ const lineDiff = (a: string, b: string): DiffLine[] => {
 
 const diffStyles: Record<string, React.CSSProperties> = {
   wrap: { fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 11.5, lineHeight: 1.45, borderRadius: 4, overflow: 'hidden', border: `1px solid ${C.border}` },
-  row: { display: 'flex', whiteSpace: 'pre', padding: '0 6px' },
+  row: { display: 'flex', whiteSpace: 'pre' },
   add: { background: 'rgba(50,215,75,0.13)', color: C.green },
   del: { background: 'rgba(255,69,58,0.13)', color: C.dangerFg },
   eq:  { color: C.fg2 },
-  marker: { width: 14, color: C.fg3, flexShrink: 0 },
+  // Gutter + marker are not selectable, so line numbers stay out of copied text.
+  gutter: {
+    flexShrink: 0, textAlign: 'right', padding: '0 6px',
+    color: C.fg3, opacity: 0.7, userSelect: 'none', WebkitUserSelect: 'none',
+    minWidth: 30,
+  },
+  marker: { width: 16, flexShrink: 0, textAlign: 'center', userSelect: 'none', WebkitUserSelect: 'none' },
+  code: { flex: 1, paddingRight: 6 },
 }
 
-const DiffView: React.FC<{ oldText: string; newText: string }> = ({ oldText, newText }) => {
+export const DiffView: React.FC<{ oldText: string; newText: string }> = ({ oldText, newText }) => {
   const lines = lineDiff(oldText, newText)
+  let oldNo = 0
+  let newNo = 0
   return (
     <div style={diffStyles.wrap}>
       {lines.map((l, idx) => {
         const style = l.kind === 'add' ? diffStyles.add : l.kind === 'del' ? diffStyles.del : diffStyles.eq
         const marker = l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '
+        const oldLabel = l.kind === 'add' ? '' : String(++oldNo)
+        const newLabel = l.kind === 'del' ? '' : String(++newNo)
         return (
           <div key={idx} style={{ ...diffStyles.row, ...style }}>
+            <span style={diffStyles.gutter}>{oldLabel}</span>
+            <span style={diffStyles.gutter}>{newLabel}</span>
             <span style={diffStyles.marker}>{marker}</span>
-            <span>{l.text || ' '}</span>
+            <span style={diffStyles.code}>{l.text || ' '}</span>
           </div>
         )
       })}
