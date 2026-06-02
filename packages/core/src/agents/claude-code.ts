@@ -70,6 +70,10 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         args.push('--dangerously-skip-permissions');
       }
 
+      if (request.allowedTools && request.allowedTools.length > 0) {
+        args.push('--allowedTools', request.allowedTools.join(' '));
+      }
+
       // The gateway decides whether to resume a warm session or bootstrap
       // a fresh one with full history. `--resume` continues an existing
       // session; `--session-id` pins a pre-allocated UUID so the gateway
