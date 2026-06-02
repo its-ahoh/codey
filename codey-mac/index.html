@@ -13,9 +13,19 @@
             ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
             : m;
           document.documentElement.dataset.theme = eff;
-          // Match Task 2 default vars so initial paint isn't white-on-white or vice versa.
-          var bg = eff === 'light' ? '#ffffff' : '#141414';
-          var fg = eff === 'light' ? '#1d1d1f' : '#f0f0f0';
+          // Color theme (palette), independent of light/dark.
+          var p = localStorage.getItem('codey.palette');
+          if (p !== 'classic' && p !== 'terminal') p = 'classic';
+          document.documentElement.dataset.palette = p;
+          // Match the active palette's vars so the first paint isn't white-on-white.
+          var bg, fg;
+          if (p === 'terminal') {
+            bg = eff === 'light' ? '#FBF8F1' : '#141310';
+            fg = eff === 'light' ? '#1A1712' : '#F4EFE5';
+          } else {
+            bg = eff === 'light' ? '#ffffff' : '#141414';
+            fg = eff === 'light' ? '#1d1d1f' : '#f0f0f0';
+          }
           document.documentElement.style.background = bg;
           document.documentElement.style.color = fg;
         } catch (e) {}

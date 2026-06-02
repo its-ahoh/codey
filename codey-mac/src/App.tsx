@@ -8,11 +8,15 @@ import { useGateway } from './hooks/useGateway'
 import {
   C,
   applyTheme,
+  applyPalette,
   getStoredThemeMode,
+  getStoredPalette,
   resolveEffectiveTheme,
   paletteToCssVars,
-  darkPalette,
-  lightPalette,
+  classicLight,
+  classicDark,
+  terminalLight,
+  terminalDark,
 } from './theme'
 
 const Shell: React.FC = () => {
@@ -60,6 +64,7 @@ const Shell: React.FC = () => {
 
   useEffect(() => {
     applyTheme(getStoredThemeMode())
+    applyPalette(getStoredPalette())
     const mql = window.matchMedia('(prefers-color-scheme: dark)')
     const onChange = () => {
       if (getStoredThemeMode() === 'system') {
@@ -131,14 +136,29 @@ const Shell: React.FC = () => {
         <VoiceRecorder />
       </div>
       <style>{`
+  /* Fallback (classic) until data-theme / data-palette are set. */
   :root {
-${paletteToCssVars(darkPalette)}
+${paletteToCssVars(classicDark)}
   }
   :root[data-theme="light"] {
-${paletteToCssVars(lightPalette)}
+${paletteToCssVars(classicLight)}
   }
   :root[data-theme="dark"] {
-${paletteToCssVars(darkPalette)}
+${paletteToCssVars(classicDark)}
+  }
+  /* Classic theme */
+  :root[data-palette="classic"][data-theme="light"] {
+${paletteToCssVars(classicLight)}
+  }
+  :root[data-palette="classic"][data-theme="dark"] {
+${paletteToCssVars(classicDark)}
+  }
+  /* Terminal theme */
+  :root[data-palette="terminal"][data-theme="light"] {
+${paletteToCssVars(terminalLight)}
+  }
+  :root[data-palette="terminal"][data-theme="dark"] {
+${paletteToCssVars(terminalDark)}
   }
   html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }
   body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; color: ${C.fg}; }

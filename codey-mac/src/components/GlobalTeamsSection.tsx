@@ -208,7 +208,7 @@ export default function GlobalTeamsSection() {
               <button onClick={() => setCreatingFor(null)} disabled={createBusy}
                 style={{ padding: '6px 14px', background: 'transparent', color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>Cancel</button>
               <button onClick={submitCreate} disabled={createBusy || !createPrompt.trim()}
-                style={{ padding: '6px 14px', background: createBusy ? C.fg3 : C.accent, color: 'white', border: 'none', borderRadius: 6, cursor: createBusy ? 'wait' : 'pointer', fontSize: 12, fontWeight: 600 }}>
+                style={{ padding: '6px 14px', background: createBusy ? C.fg3 : C.accent, color: C.onAccent, border: 'none', borderRadius: 6, cursor: createBusy ? 'wait' : 'pointer', fontSize: 12, fontWeight: 600 }}>
                 {createBusy ? 'Generating…' : 'Create & Add'}
               </button>
             </div>

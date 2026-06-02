@@ -830,7 +830,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 maxWidth: '72%', padding: '10px 14px',
                 borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
                 background: isUser ? C.userBg : C.aiBg,
-                color: isUser ? '#ffffff' : C.fg, fontSize: 13, lineHeight: 1.55, wordBreak: 'break-word',
+                color: isUser ? C.onAccent : C.fg, fontSize: 13, lineHeight: 1.55, wordBreak: 'break-word',
                 boxShadow: isUser
                   ? 'none'
                   : (isSelected
@@ -1068,7 +1068,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 disabled={!canSend}
                 style={{ ...styles.sendButton, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
               >
-                <SendIcon color={canSend ? '#fff' : C.fg3} />
+                <SendIcon color={canSend ? C.onAccent : C.fg3} />
               </button>
             )}
           </div>
@@ -1304,7 +1304,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     border: 'none',
     background: C.accent,
-    color: '#fff',
+    color: C.onAccent,
     cursor: 'pointer',
     fontSize: 12,
     fontWeight: 500 as const,
@@ -1363,14 +1363,14 @@ const styles: Record<string, React.CSSProperties> = {
   teamStepCardActive: {
     border: `1px solid ${C.accent}`,
     boxShadow: `0 0 0 1px ${C.accentDim}`,
-    background: 'rgba(106,176,243,0.06)',
+    background: 'rgba(43,230,155,0.06)',
   },
   teamStepHeader: {
     display: 'flex', alignItems: 'baseline', cursor: 'pointer',
     fontSize: 12, color: C.fg2, padding: '2px 0', userSelect: 'none' as const,
   },
   teamStepRunning: {
-    marginLeft: 8, fontSize: 10, color: '#6ab0f3',
+    marginLeft: 8, fontSize: 10, color: C.accent,
     fontStyle: 'italic',
   },
   teamStepChevron: {
@@ -1397,10 +1397,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', gap: 6,
     fontSize: 11, color: C.fg3, fontStyle: 'italic',
     padding: '2px 6px', marginBottom: 6,
-    background: 'rgba(106,176,243,0.08)',
+    background: 'rgba(43,230,155,0.08)',
     borderRadius: 4, border: `1px solid ${C.border2}`,
   },
-  liveActivityDot: { color: '#6ab0f3', fontSize: 9 },
+  liveActivityDot: { color: C.accent, fontSize: 9 },
   liveActivityDetail: {
     marginTop: 4, marginBottom: 6,
     padding: 8, background: 'rgba(0,0,0,0.25)', borderRadius: 4,
@@ -1419,7 +1419,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
   },
   slashMenuItemActive: {
-    background: 'rgba(106,176,243,0.15)',
+    background: 'rgba(43,230,155,0.15)',
   },
   slashCmdName: {
     color: C.accent, fontWeight: 600, flexShrink: 0,

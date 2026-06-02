@@ -34,7 +34,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    backgroundColor: '#2d2d2d',
+    backgroundColor: '#1C1A16',
     borderRadius: '8px',
     padding: '8px',
     minWidth: '150px',
@@ -53,20 +53,20 @@ const styles: Record<string, React.CSSProperties> = {
     marginRight: '8px',
   },
   running: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: '#2BE69B',
   },
   stopped: {
-    backgroundColor: '#9E9E9E',
+    backgroundColor: '#837B6C',
   },
   iconText: {
-    color: '#fff',
+    color: '#F4EFE5',
     fontSize: '14px',
     fontWeight: '600',
   },
   menuItem: {
     padding: '8px',
-    borderTop: '1px solid #444',
+    borderTop: '1px solid #3A362D',
     cursor: 'pointer',
-    color: '#fff',
+    color: '#F4EFE5',
   },
 }

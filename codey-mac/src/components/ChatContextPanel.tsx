@@ -270,11 +270,11 @@ const flowStyles: Record<string, React.CSSProperties> = {
     borderBottom: `1px dashed ${C.border2}`,
   },
   dotRunning: {
-    color: '#6ab0f3', fontSize: 12, lineHeight: '16px',
+    color: C.accent, fontSize: 12, lineHeight: '16px',
     width: 14, flexShrink: 0, textAlign: 'center' as const,
   },
   dotDone: {
-    color: '#7ec97e', fontSize: 12, lineHeight: '16px',
+    color: C.green, fontSize: 12, lineHeight: '16px',
     width: 14, flexShrink: 0, textAlign: 'center' as const,
   },
   body: { flex: 1, minWidth: 0 },
@@ -381,10 +381,10 @@ const timelineStyles: Record<string, React.CSSProperties> = {
     fontSize: 12, fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     padding: '2px 0',
   },
-  tool: { color: '#9bbcd9', flexShrink: 0 },
+  tool: { color: C.fg2, flexShrink: 0 },
   callMsg: { color: C.fg2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  iconRunning: { color: '#6ab0f3', width: 12, flexShrink: 0 },
-  iconDone: { color: '#7ec97e', width: 12, flexShrink: 0 },
+  iconRunning: { color: C.accent, width: 12, flexShrink: 0 },
+  iconDone: { color: C.green, width: 12, flexShrink: 0 },
   iconInfo: { color: C.fg3, width: 12, flexShrink: 0 },
   detail: {
     marginLeft: 18, marginTop: 4, marginBottom: 6,
@@ -497,7 +497,7 @@ const styles: Record<string, React.CSSProperties> = {
   headerSub: { color: C.fg3, fontSize: 11, fontVariantNumeric: 'tabular-nums' },
   headerDot: { color: C.fg3, fontSize: 11, opacity: 0.5 },
   followPill: {
-    background: C.accent, color: '#fff', border: 'none',
+    background: C.accent, color: C.onAccent, border: 'none',
     borderRadius: 10, fontSize: 10, padding: '2px 8px', cursor: 'pointer',
   },
   closeBtn: {
