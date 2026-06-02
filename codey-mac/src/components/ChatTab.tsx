@@ -8,6 +8,8 @@ import { RouteIcons } from './RouteIcons'
 import { PairingModal } from './PairingModal'
 import { consumePendingPairing } from './pendingPairing'
 import { ChatContextPanel } from './ChatContextPanel'
+import type { ContextPanelTab } from './ChatContextPanel'
+import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 
@@ -236,6 +238,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [slashCommands, setSlashCommands] = useState<Array<{ name: string; description: string; source: 'agent' | 'gateway' }>>([])
   const [slashIdx, setSlashIdx] = useState(0)
   const slashMenuRef = useRef<HTMLDivElement>(null)
+  const [panelTab, setPanelTab] = useState<ContextPanelTab>('current')
+  const qqInputRef = useRef<HTMLTextAreaElement>(null)
+  const { ask: askQuickQuestion } = useQuickQuestion()
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [pairings, setPairings] = useState<Array<{ channel: 'telegram'|'discord'|'imessage'; channelUserId: string }>>([])
   const [pairingModal, setPairingModal] = useState<null | 'telegram' | 'discord' | 'imessage'>(null)
@@ -591,8 +596,36 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     }
   }
 
+  const openQuickQuestion = (initial?: string) => {
+    setContextPanelOpen(chat.id, true)
+    setPanelTab('qq')
+    if (initial && initial.trim()) {
+      void askQuickQuestion(chat.id, initial.trim())
+    } else {
+      // Focus the QQ composer on the next paint, once the panel has mounted.
+      setTimeout(() => qqInputRef.current?.focus(), 50)
+    }
+  }
+
   const send = async () => {
     if ((!input.trim() && pendingAttachments.length === 0) || !isGatewayRunning || !!flight) return
+
+    // Quick Question triggers — these never go to the main chat.
+    const trimmed = input.trim()
+    if (trimmed.toLowerCase() === 'qq') {
+      setInput('')
+      if (taRef.current && composerHeight == null) taRef.current.style.height = 'auto'
+      openQuickQuestion()
+      return
+    }
+    const qqMatch = trimmed.match(/^\/qq(?:\s+([\s\S]*))?$/i)
+    if (qqMatch) {
+      setInput('')
+      if (taRef.current && composerHeight == null) taRef.current.style.height = 'auto'
+      openQuickQuestion(qqMatch[1] ?? '')
+      return
+    }
+
     const text = input
     const atts = pendingAttachments.length > 0 ? [...pendingAttachments] : undefined
     setInput('')
@@ -1161,6 +1194,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
             document.getElementById(stepDomId(mid, step))?.scrollIntoView({ behavior: 'smooth', block: 'center' })
           }}
           isTurnStreaming={!!flight && selectedTurnId === lastMsg?.id}
+          activeTab={panelTab}
+          onTabChange={setPanelTab}
+          qqInputRef={qqInputRef}
         />
         )
       })()}
