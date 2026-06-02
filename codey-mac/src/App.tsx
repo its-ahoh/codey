@@ -3,7 +3,7 @@ import { ChatTab } from './components/ChatTab'
 import { ChatListPanel } from './components/ChatListPanel'
 import { SettingsOverlay } from './components/SettingsOverlay'
 import { VoiceRecorder } from './components/VoiceRecorder'
-import { NotificationCenter } from './components/NotificationCenter.tsx'
+import { NotificationCenter } from './components/NotificationCenter'
 import { ChatsProvider, useChats } from './hooks/useChats'
 import { useGateway } from './hooks/useGateway'
 import {

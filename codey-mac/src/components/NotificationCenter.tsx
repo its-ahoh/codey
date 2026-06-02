@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { C } from '../theme'
 import { useChats } from '../hooks/useChats'
-import { deriveNotifications, type InFlightLike } from './notificationCenter'
+import { deriveNotifications, type InFlightLike } from './notificationData'
 
 const STATUS_LABEL: Record<InFlightLike['agentStatus'], string> = {
   idle: 'Idle',
