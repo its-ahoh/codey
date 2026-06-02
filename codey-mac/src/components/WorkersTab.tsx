@@ -38,7 +38,7 @@ export default function WorkersTab() {
             </button>
           ))}
         </div>
-        <button onClick={() => setMode({ kind: 'create' })} style={{ margin: 12, padding: '8px 12px', background: C.accent, color: 'white', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>+ New Worker</button>
+        <button onClick={() => setMode({ kind: 'create' })} style={{ margin: 12, padding: '8px 12px', background: C.accent, color: C.onAccent, border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>+ New Worker</button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -80,7 +80,7 @@ function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: bo
         style={{ width: '100%', minHeight: 160, padding: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, fontFamily: 'inherit', fontSize: 14, resize: 'vertical' }} />
       <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
         <button onClick={submit} disabled={loading || !prompt.trim()}
-          style={{ padding: '8px 16px', background: loading ? C.fg3 : C.accent, color: 'white', border: 'none', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', fontWeight: 600 }}>
+          style={{ padding: '8px 16px', background: loading ? C.fg3 : C.accent, color: C.onAccent, border: 'none', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', fontWeight: 600 }}>
           {loading ? 'Generating\u2026' : 'Create'}
         </button>
         <button onClick={onCancel} disabled={loading}
@@ -187,7 +187,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
 
       <div style={{ marginTop: 20 }}>
         <button onClick={save} disabled={saving}
-          style={{ padding: '8px 20px', background: saved ? C.green : C.accent, color: 'white', border: 'none', borderRadius: 6, cursor: saving ? 'wait' : 'pointer', fontWeight: 600 }}>
+          style={{ padding: '8px 20px', background: saved ? C.green : C.accent, color: C.onAccent, border: 'none', borderRadius: 6, cursor: saving ? 'wait' : 'pointer', fontWeight: 600 }}>
           {saving ? 'Saving\u2026' : saved ? '\u2713 Saved' : 'Save'}
         </button>
       </div>

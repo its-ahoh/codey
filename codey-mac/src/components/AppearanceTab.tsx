@@ -1,11 +1,16 @@
 // codey-mac/src/components/AppearanceTab.tsx
 import React from 'react'
-import { C, ThemeMode, useThemeMode, useEffectiveTheme } from '../theme'
+import { C, ThemeMode, PaletteName, PALETTES, useThemeMode, useEffectiveTheme, usePaletteName } from '../theme'
 
 const OPTIONS: { value: ThemeMode; label: string }[] = [
   { value: 'light',  label: 'Light'  },
   { value: 'dark',   label: 'Dark'   },
   { value: 'system', label: 'System' },
+]
+
+const PALETTE_OPTIONS: { value: PaletteName; label: string }[] = [
+  { value: 'classic',  label: PALETTES.classic.label  },
+  { value: 'terminal', label: PALETTES.terminal.label },
 ]
 
 const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on, onChange }) => (
@@ -25,6 +30,7 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on,
 
 export const AppearanceTab: React.FC = () => {
   const [mode, setMode] = useThemeMode()
+  const [palette, setPalette] = usePaletteName()
   const effective = useEffectiveTheme()
   const [version, setVersion] = React.useState<string>('')
   const [skipPerms, setSkipPerms] = React.useState<boolean>(true)
@@ -47,8 +53,8 @@ export const AppearanceTab: React.FC = () => {
   return (
     <div style={styles.wrap}>
       <div style={styles.row}>
-        <div style={styles.label}>Theme</div>
-        <div role="radiogroup" aria-label="Theme" style={styles.segmented}>
+        <div style={styles.label}>Appearance</div>
+        <div role="radiogroup" aria-label="Appearance" style={styles.segmented}>
           {OPTIONS.map(opt => {
             const active = mode === opt.value
             return (
@@ -60,7 +66,7 @@ export const AppearanceTab: React.FC = () => {
                 style={{
                   ...styles.segBtn,
                   background: active ? C.accent : 'transparent',
-                  color: active ? '#ffffff' : C.fg2,
+                  color: active ? C.onAccent : C.fg2,
                 }}
               >
                 {opt.label}
@@ -74,6 +80,25 @@ export const AppearanceTab: React.FC = () => {
           Currently following system: {effective === 'dark' ? 'Dark' : 'Light'}
         </div>
       )}
+
+      <div style={styles.row}>
+        <div style={styles.label}>Theme</div>
+        <select
+          aria-label="Color theme"
+          value={palette}
+          onChange={(e) => setPalette(e.target.value as PaletteName)}
+          style={styles.select}
+        >
+          {PALETTE_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </div>
+      <div style={styles.hint}>
+        {palette === 'terminal'
+          ? 'Terminal — warm paper & terminal green, matching the Codey site.'
+          : 'Classic — the original macOS-style colors.'}
+      </div>
 
       {loaded && (
         <div style={styles.row}>
@@ -114,6 +139,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontWeight: 500,
     cursor: 'pointer',
+  },
+  select: {
+    background: C.surface2,
+    color: C.fg,
+    border: `1px solid ${C.border}`,
+    borderRadius: 6,
+    padding: '6px 10px',
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: 'pointer',
+    minWidth: 140,
   },
   hint: { fontSize: 11, color: C.fg3, marginLeft: 96 },
   value: { fontSize: 13, color: C.fg2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },

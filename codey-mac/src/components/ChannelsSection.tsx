@@ -119,7 +119,7 @@ const ChannelEditor: React.FC<{
                 padding: '6px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600,
                 border: 'none', cursor: isDirty ? 'pointer' : 'default',
                 background: isDirty ? C.accent : C.surface3,
-                color: isDirty ? '#fff' : C.fg3,
+                color: isDirty ? C.onAccent : C.fg3,
                 opacity: isDirty ? 1 : 0.5,
               }}
             >
