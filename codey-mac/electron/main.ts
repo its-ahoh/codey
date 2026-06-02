@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
+import { findAvailablePort } from './portUtils'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -18,6 +19,7 @@ let workerManager: WorkerManager | null = null
 let workspaceManager: WorkspaceManager | null = null
 let coreConfigManager: ConfigManager | null = null
 let apiServer: ApiServer | null = null
+let activeApiPort: number | null = null
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
@@ -471,7 +473,17 @@ async function bootInProcessCore() {
     // VoiceConfig defaults (provider=api, apiKey="") and ignores every change
     // made through the UI or on disk.
     try {
-      const apiPort = (coreConfigManager.get() as any)?.gateway?.port ?? 3001
+      const preferredPort = (coreConfigManager.get() as any)?.gateway?.port ?? 3000
+      let apiPort = preferredPort
+      try {
+        apiPort = await findAvailablePort(preferredPort, 4000)
+        if (apiPort !== preferredPort) {
+          sendToRenderer('gateway-log', `[core] port ${preferredPort} in use, using ${apiPort}`)
+        }
+      } catch (scanErr: any) {
+        sendToRenderer('gateway-log', `[core] port scan failed: ${scanErr?.message ?? scanErr}; falling back to ${preferredPort}`)
+      }
+      activeApiPort = apiPort
       apiServer = new ApiServer(apiPort, (): any => inProcessGateway!.getHealthStatus(), coreConfigManager)
       void apiServer.start().then(() => {
         sendToRenderer('gateway-log', `[core] API server listening on ${apiPort}`)
@@ -720,7 +732,7 @@ async function applyVoiceHelper(rawCfg: any) {
   }
   try {
     const { spawn } = require('child_process') as typeof import('child_process')
-    const port = (coreConfigManager?.get() as any)?.gateway?.port ?? 3001
+    const port = activeApiPort ?? (coreConfigManager?.get() as any)?.gateway?.port ?? 3000
     voiceHelperProc = spawn(bin, ['--gateway-port', String(port)], {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: false,
