@@ -264,6 +264,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     const n = v ? parseInt(v, 10) : NaN
     return Number.isFinite(n) ? n : null
   })
+  const [composerHandleHover, setComposerHandleHover] = useState(false)
+  const [composerResizing, setComposerResizing] = useState(false)
   const dragDepthRef = useRef(0)
   const composerResizeRef = useRef<{ y: number; h: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -278,6 +280,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     e.preventDefault()
     const startH = composerHeight ?? taRef.current?.offsetHeight ?? 40
     composerResizeRef.current = { y: e.clientY, h: startH }
+    setComposerResizing(true)
     const onMove = (ev: MouseEvent) => {
       const s = composerResizeRef.current
       if (!s) return
@@ -286,6 +289,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     }
     const onUp = () => {
       composerResizeRef.current = null
+      setComposerResizing(false)
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
@@ -1056,11 +1060,16 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
         <div style={styles.composer}>
           <div
             style={styles.composerResizeHandle}
+            onMouseEnter={() => setComposerHandleHover(true)}
+            onMouseLeave={() => setComposerHandleHover(false)}
             onMouseDown={startComposerResize}
             onDoubleClick={() => setComposerHeight(null)}
             title="Drag to resize · double-click to reset"
           >
-            <div style={styles.composerResizeGrip} />
+            <div style={{
+              ...styles.composerResizeGrip,
+              opacity: composerHandleHover || composerResizing ? 1 : 0,
+            }} />
           </div>
           {pendingAttachments.length > 0 && (
             <div style={styles.pendingRow}>
@@ -1228,13 +1237,18 @@ const styles: Record<string, React.CSSProperties> = {
   composer: {
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 12,
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    position: 'relative' as const,
   },
+  // Absolutely positioned over the composer's top edge so it adds no vertical
+  // space — the input stays compact and the grip only shows on hover.
   composerResizeHandle: {
-    height: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    cursor: 'ns-resize', flexShrink: 0,
+    position: 'absolute' as const, top: 0, left: 0, right: 0, height: 8,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'ns-resize', zIndex: 2,
   },
   composerResizeGrip: {
-    width: 28, height: 3, borderRadius: 2, background: C.border2,
+    width: 26, height: 3, borderRadius: 2, background: C.fg3,
+    transition: 'opacity 0.12s ease',
   },
   composerRow: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: 6 },
   input: {
