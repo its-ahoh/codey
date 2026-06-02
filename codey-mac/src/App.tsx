@@ -3,6 +3,7 @@ import { ChatTab } from './components/ChatTab'
 import { ChatListPanel } from './components/ChatListPanel'
 import { SettingsOverlay } from './components/SettingsOverlay'
 import { VoiceRecorder } from './components/VoiceRecorder'
+import { NotificationCenter } from './components/NotificationCenter.tsx'
 import { ChatsProvider, useChats } from './hooks/useChats'
 import { useGateway } from './hooks/useGateway'
 import {
@@ -98,15 +99,7 @@ const Shell: React.FC = () => {
             {activeChat && <span style={styles.workspaceLabel}>· {activeChat.workspaceName}</span>}
           </div>
         </div>
-        <div style={{
-          ...styles.statusPill,
-          borderColor: C.green + '55',
-          background: C.green + '11',
-          color: C.green,
-        }}>
-          <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green }} />
-          Running
-        </div>
+        <NotificationCenter />
       </div>
       <div style={styles.body}>
         {!leftCollapsed && (
@@ -202,12 +195,6 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitAppRegion: 'no-drag',
   },
   workspaceLabel: { color: C.fg3, fontSize: 11, marginLeft: 6 },
-  statusPill: {
-    display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px',
-    borderRadius: 6, border: '1px solid', fontSize: 11, fontWeight: 600,
-    // @ts-ignore Electron
-    WebkitAppRegion: 'no-drag',
-  },
   body: { flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' },
   content: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
   emptyMain: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.fg3 },
