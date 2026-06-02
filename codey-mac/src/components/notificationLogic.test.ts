@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveNotifications, type InFlightLike } from './notificationData'
+import { deriveNotifications, type InFlightLike } from './notificationLogic'
 import type { Chat } from '../types'
 
 function chat(id: string, over: Partial<Chat> = {}): Chat {
