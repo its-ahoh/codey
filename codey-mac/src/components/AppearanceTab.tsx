@@ -8,9 +8,9 @@ const OPTIONS: { value: ThemeMode; label: string }[] = [
   { value: 'system', label: 'System' },
 ]
 
-const PALETTE_OPTIONS: { value: PaletteName; label: string; swatch: string }[] = [
-  { value: 'classic',  label: PALETTES.classic.label,  swatch: PALETTES.classic.light.accent  },
-  { value: 'terminal', label: PALETTES.terminal.label, swatch: PALETTES.terminal.light.accent },
+const PALETTE_OPTIONS: { value: PaletteName; label: string }[] = [
+  { value: 'classic',  label: PALETTES.classic.label  },
+  { value: 'terminal', label: PALETTES.terminal.label },
 ]
 
 const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on, onChange }) => (
@@ -83,32 +83,16 @@ export const AppearanceTab: React.FC = () => {
 
       <div style={styles.row}>
         <div style={styles.label}>Theme</div>
-        <div role="radiogroup" aria-label="Color theme" style={styles.segmented}>
-          {PALETTE_OPTIONS.map(opt => {
-            const active = palette === opt.value
-            return (
-              <button
-                key={opt.value}
-                role="radio"
-                aria-checked={active}
-                onClick={() => setPalette(opt.value)}
-                style={{
-                  ...styles.segBtn,
-                  display: 'inline-flex', alignItems: 'center', gap: 7,
-                  background: active ? C.accent : 'transparent',
-                  color: active ? C.onAccent : C.fg2,
-                }}
-              >
-                <span style={{
-                  width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
-                  background: opt.swatch,
-                  boxShadow: active ? '0 0 0 1.5px rgba(255,255,255,0.6)' : `0 0 0 1px ${C.border2}`,
-                }}/>
-                {opt.label}
-              </button>
-            )
-          })}
-        </div>
+        <select
+          aria-label="Color theme"
+          value={palette}
+          onChange={(e) => setPalette(e.target.value as PaletteName)}
+          style={styles.select}
+        >
+          {PALETTE_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
       </div>
       <div style={styles.hint}>
         {palette === 'terminal'
@@ -155,6 +139,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontWeight: 500,
     cursor: 'pointer',
+  },
+  select: {
+    background: C.surface2,
+    color: C.fg,
+    border: `1px solid ${C.border}`,
+    borderRadius: 6,
+    padding: '6px 10px',
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: 'pointer',
+    minWidth: 140,
   },
   hint: { fontSize: 11, color: C.fg3, marginLeft: 96 },
   value: { fontSize: 13, color: C.fg2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
