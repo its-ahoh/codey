@@ -8,6 +8,9 @@ import { createServer } from 'net'
 export function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = createServer()
+    // Any bind error means "not available". EADDRINUSE is the common case;
+    // a privileged-port EACCES would also land here and be skipped, which is
+    // fine for the 3000–4000 range we search.
     server.once('error', () => resolve(false))
     server.once('listening', () => {
       server.close(() => resolve(true))

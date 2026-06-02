@@ -21,7 +21,17 @@ afterEach(async () => {
 
 describe('isPortAvailable', () => {
   it('returns true for a free port', async () => {
-    expect(await isPortAvailable(3999)).toBe(true)
+    // Discover a truly-free port via OS assignment (bind 0, read it back, close)
+    // rather than guessing a hardcoded number that another process might hold.
+    const assigned = await new Promise<number>((res, rej) => {
+      const s = createServer()
+      s.once('error', rej)
+      s.listen(0, '127.0.0.1', () => {
+        const port = (s.address() as { port: number }).port
+        s.close(() => res(port))
+      })
+    })
+    expect(await isPortAvailable(assigned)).toBe(true)
   })
 
   it('returns false for an occupied port', async () => {
@@ -32,7 +42,15 @@ describe('isPortAvailable', () => {
 
 describe('findAvailablePort', () => {
   it('returns the preferred port when it is free', async () => {
-    expect(await findAvailablePort(3995, 4000)).toBe(3995)
+    const assigned = await new Promise<number>((res, rej) => {
+      const s = createServer()
+      s.once('error', rej)
+      s.listen(0, '127.0.0.1', () => {
+        const port = (s.address() as { port: number }).port
+        s.close(() => res(port))
+      })
+    })
+    expect(await findAvailablePort(assigned, assigned)).toBe(assigned)
   })
 
   it('skips an occupied port and returns the next free one', async () => {
