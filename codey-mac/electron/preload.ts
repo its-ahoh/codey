@@ -118,7 +118,7 @@ contextBridge.exposeInMainWorld('codey', {
     },
   },
   qq: {
-    ask: (payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }> }) =>
+    ask: (payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }>; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) =>
       ipcRenderer.invoke('qq:ask', payload),
     stop: (chatId: string) => ipcRenderer.invoke('qq:stop', chatId),
     onEvent: (handler: (ev: any) => void) => {

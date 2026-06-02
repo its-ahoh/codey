@@ -106,7 +106,7 @@ declare global {
         updateContextPanelOpen: (id: string, open: boolean | null) => Promise<IpcResult<Chat>>
       }
       qq: {
-        ask: (payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }> }) => Promise<IpcResult<{ response: string; tokens?: number; durationSec?: number }>>
+        ask: (payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }>; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) => Promise<IpcResult<{ response: string; tokens?: number; durationSec?: number }>>
         stop: (chatId: string) => Promise<IpcResult<boolean>>
         onEvent: (handler: (ev: QQStreamEvent) => void) => () => void
       }

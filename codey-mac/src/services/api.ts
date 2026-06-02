@@ -50,8 +50,9 @@ export const apiService = {
       chatId: string,
       question: string,
       history: Array<{ role: 'user' | 'assistant'; content: string }>,
+      attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }>,
     ): Promise<{ response: string; tokens?: number; durationSec?: number }> =>
-      unwrap(await window.codey.qq.ask({ chatId, question, history })),
+      unwrap(await window.codey.qq.ask({ chatId, question, history, attachments })),
     stop: async (chatId: string): Promise<boolean> =>
       unwrap(await window.codey.qq.stop(chatId)),
     onEvent: (handler: (ev: QQStreamEvent) => void): (() => void) =>

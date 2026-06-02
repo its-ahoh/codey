@@ -1610,13 +1610,13 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('qq:ask', async (_e, payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }> }) =>
+  ipcMain.handle('qq:ask', async (_e, payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }>; attachments?: any[] }) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       // Stream events to the renderer on a dedicated channel so QQ never
       // collides with the main 'chats:event' stream.
       const sink = (ev: any) => sendToRenderer('qq:event', ev)
-      return inProcessGateway.runQuickQuestion(payload.chatId, payload.question, payload.history ?? [], sink)
+      return inProcessGateway.runQuickQuestion(payload.chatId, payload.question, payload.history ?? [], sink, payload.attachments)
     })
   )
 
