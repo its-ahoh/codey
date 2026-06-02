@@ -251,10 +251,42 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     const n = v ? parseInt(v, 10) : NaN
     return Number.isFinite(n) ? Math.max(260, Math.min(520, n)) : 340
   })
+  // Manual composer height (px). null = auto-grow up to 120px (default
+  // behavior). Once the user drags the handle we pin an explicit height so
+  // long, multi-line commands stay fully visible.
+  const [composerHeight, setComposerHeight] = useState<number | null>(() => {
+    const v = localStorage.getItem('codey.composerHeight')
+    const n = v ? parseInt(v, 10) : NaN
+    return Number.isFinite(n) ? n : null
+  })
   const dragDepthRef = useRef(0)
+  const composerResizeRef = useRef<{ y: number; h: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (composerHeight != null) localStorage.setItem('codey.composerHeight', String(composerHeight))
+  }, [composerHeight])
+
+  const startComposerResize = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startH = composerHeight ?? taRef.current?.offsetHeight ?? 40
+    composerResizeRef.current = { y: e.clientY, h: startH }
+    const onMove = (ev: MouseEvent) => {
+      const s = composerResizeRef.current
+      if (!s) return
+      const dy = s.y - ev.clientY // drag up => taller
+      setComposerHeight(Math.max(40, Math.min(window.innerHeight * 0.6, s.h + dy)))
+    }
+    const onUp = () => {
+      composerResizeRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   useEffect(() => { apiService.listWorkers().then(setWorkers) }, [])
   const refreshPairings = async () => {
@@ -368,14 +400,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     setFollowLatest(true)
     setSelectedTurnIdState(null)
   }, [chatId])
-  useEffect(() => {
-    if (!chat) return
-    if (chat.contextPanelOpen !== undefined) return
-    const hasToolActivity = chat.messages.some(
-      m => m.role === 'assistant' && (m.toolCalls?.length ?? 0) > 0
-    )
-    if (hasToolActivity) setContextPanelOpen(chat.id, true)
-  }, [chat?.id, chat?.contextPanelOpen, lastMsg?.toolCalls?.length])
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       // Cmd/Ctrl+Backslash mirrors VS Code's toggle-sidebar binding and avoids
@@ -573,7 +597,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     const atts = pendingAttachments.length > 0 ? [...pendingAttachments] : undefined
     setInput('')
     setPendingAttachments([])
-    if (taRef.current) taRef.current.style.height = 'auto'
+    if (taRef.current && composerHeight == null) taRef.current.style.height = 'auto'
     setFollowLatest(true)
     await sendMessage(chat.id, text, atts)
   }
@@ -997,6 +1021,14 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           <div style={styles.uploadError}>{uploadError}</div>
         )}
         <div style={styles.composer}>
+          <div
+            style={styles.composerResizeHandle}
+            onMouseDown={startComposerResize}
+            onDoubleClick={() => setComposerHeight(null)}
+            title="Drag to resize · double-click to reset"
+          >
+            <div style={styles.composerResizeGrip} />
+          </div>
           {pendingAttachments.length > 0 && (
             <div style={styles.pendingRow}>
               {pendingAttachments.map(att => {
@@ -1045,6 +1077,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKey}
               onInput={e => {
+                if (composerHeight != null) return // manual height pinned
                 const el = e.currentTarget
                 el.style.height = 'auto'
                 el.style.height = Math.min(el.scrollHeight, 120) + 'px'
@@ -1052,7 +1085,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
               placeholder={isGatewayRunning ? (isSending ? 'Sending…' : 'Message Codey… (↵ to send)') : 'Start gateway to chat'}
               disabled={!isGatewayRunning}
               rows={1}
-              style={styles.input}
+              style={composerHeight != null
+                ? { ...styles.input, height: composerHeight, maxHeight: 'none' }
+                : styles.input}
             />
             {isSending ? (
               <button
@@ -1157,6 +1192,13 @@ const styles: Record<string, React.CSSProperties> = {
   composer: {
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 12,
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
+  },
+  composerResizeHandle: {
+    height: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'ns-resize', flexShrink: 0,
+  },
+  composerResizeGrip: {
+    width: 28, height: 3, borderRadius: 2, background: C.border2,
   },
   composerRow: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: 6 },
   input: {
