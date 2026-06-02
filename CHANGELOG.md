@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-06-02
+
+### Added
+- **Quick Question** — a read-only side-thread in the macOS app that answers questions grounded in the current chat's content without affecting it. It has its own ephemeral history (in-memory, cleared on app restart) and never touches the main chat's messages, CLI session, or channel mirroring, so it can run alongside an active chat. Each turn sees the parent chat (read-only) plus the Quick Question thread's own prior turns. Open it from the new **Quick Question** tab in the right context panel, by typing `/qq <question>`, or by typing a bare `QQ`. Uses the Aide model when configured, otherwise the chat's model, and is restricted to read-only tools.
+
 ## [0.6.2] - 2026-06-01
 
 ### Added
