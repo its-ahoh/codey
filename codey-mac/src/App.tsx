@@ -5,6 +5,7 @@ import { SettingsOverlay } from './components/SettingsOverlay'
 import { VoiceRecorder } from './components/VoiceRecorder'
 import { NotificationCenter } from './components/NotificationCenter'
 import { ChatsProvider, useChats } from './hooks/useChats'
+import { QuickQuestionProvider } from './hooks/useQuickQuestion'
 import { useGateway } from './hooks/useGateway'
 import {
   C,
@@ -172,7 +173,9 @@ ${paletteToCssVars(terminalDark)}
 
 const App: React.FC = () => (
   <ChatsProvider>
-    <Shell />
+    <QuickQuestionProvider>
+      <Shell />
+    </QuickQuestionProvider>
   </ChatsProvider>
 )
 

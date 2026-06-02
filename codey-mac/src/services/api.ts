@@ -15,6 +15,13 @@ export type ChatStreamEvent =
   | { type: 'error'; chatId: string; message: string }
   | { type: 'permission_denials'; chatId: string; denials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> };
 
+export type QQStreamEvent =
+  | { type: 'stream'; chatId: string; token: string }
+  | { type: 'tool'; chatId: string; message: string }
+  | { type: 'done'; chatId: string; response: string; tokens?: number; durationSec?: number }
+  | { type: 'stopped'; chatId: string }
+  | { type: 'error'; chatId: string; message: string };
+
 function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
   if (result.ok) return result.data
   throw new Error(result.error)
@@ -38,6 +45,19 @@ export interface GatewayStatus {
 }
 
 export const apiService = {
+  qq: {
+    ask: async (
+      chatId: string,
+      question: string,
+      history: Array<{ role: 'user' | 'assistant'; content: string }>,
+    ): Promise<{ response: string; tokens?: number; durationSec?: number }> =>
+      unwrap(await window.codey.qq.ask({ chatId, question, history })),
+    stop: async (chatId: string): Promise<boolean> =>
+      unwrap(await window.codey.qq.stop(chatId)),
+    onEvent: (handler: (ev: QQStreamEvent) => void): (() => void) =>
+      window.codey.qq.onEvent(handler),
+  },
+
   // Workers
   listWorkers: async (): Promise<WorkerDto[]> =>
     unwrap(await window.codey.workers.list()),
