@@ -22,6 +22,7 @@ interface Palette {
   red: string
   yellow: string
   userBg: string
+  onAccent: string  // readable text/icon color on top of accent / userBg fills
   aiBg: string
   scrollbar: string
   // danger / error surfaces (used by error toasts in many components)
@@ -40,7 +41,13 @@ interface Palette {
   warningFg: string
 }
 
-export const darkPalette: Palette = {
+// ============================================================================
+// Color themes (palettes). Each theme has a light + dark variant. The active
+// theme is chosen independently of the light/dark mode, via `data-palette`.
+// ============================================================================
+
+// ---- Classic: the original macOS-style look (Apple blue + neutral grays) ----
+export const classicDark: Palette = {
   bg:        '#141414',
   surface:   '#1e1e1e',
   surface2:  '#252525',
@@ -56,6 +63,7 @@ export const darkPalette: Palette = {
   red:       '#FF453A',
   yellow:    '#FFD60A',
   userBg:    '#0A84FF',
+  onAccent:  '#ffffff',
   aiBg:      '#252525',
   scrollbar: '#3a3a3a',
   dangerBg:      '#3a1a1a',
@@ -71,7 +79,7 @@ export const darkPalette: Palette = {
   warningFg:     '#ffb84d',
 }
 
-export const lightPalette: Palette = {
+export const classicLight: Palette = {
   bg:        '#ffffff',
   surface:   '#f5f5f7',
   surface2:  '#ebebef',
@@ -87,6 +95,7 @@ export const lightPalette: Palette = {
   red:       '#FF3B30',
   yellow:    '#FFCC00',
   userBg:    '#0A84FF',
+  onAccent:  '#ffffff',
   aiBg:      '#f5f5f7',
   scrollbar: '#c7c7cc',
   dangerBg:      '#FFE5E5',
@@ -102,8 +111,83 @@ export const lightPalette: Palette = {
   warningFg:     '#A85D00',
 }
 
+// ---- Terminal: warm paper + terminal green; matches the Codey landing page ----
+export const terminalDark: Palette = {
+  bg:        '#141310',
+  surface:   '#1C1A16',
+  surface2:  '#232019',
+  surface3:  '#2B2820',
+  border:    '#2C2922',
+  border2:   '#3A362D',
+  fg:        '#F4EFE5',
+  fg2:       '#B6AE9E',
+  fg3:       '#837B6C',
+  accent:    '#2BE69B',
+  accentDim: '#2BE69B22',
+  green:     '#2BE69B',
+  red:       '#FF6B5E',
+  yellow:    '#F5C451',
+  userBg:    '#2BE69B',
+  onAccent:  '#0A1A12',
+  aiBg:      '#1E1C17',
+  scrollbar: '#3A362D',
+  dangerBg:      '#3A1A16',
+  dangerBorder:  '#6A2A22',
+  dangerFg:      '#FF8A7A',
+  codeBg:        '#100F0C',
+  codeFg:        '#E8E2D4',
+  inlineCodeBg:  '#232019',
+  inlineCodeFg:  '#54F0B0',
+  logBg:         '#0C0B09',
+  logFg:         '#2BE69B',
+  warningBg:     '#3A2E16',
+  warningFg:     '#F0B86B',
+}
+
+export const terminalLight: Palette = {
+  bg:        '#FBF8F1',
+  surface:   '#F3EEE3',
+  surface2:  '#EBE4D5',
+  surface3:  '#E2DAC8',
+  border:    '#E7E0D2',
+  border2:   '#D8CFBC',
+  fg:        '#1A1712',
+  fg2:       '#5B554A',
+  fg3:       '#8C8475',
+  accent:    '#0C9E70',
+  accentDim: '#0C9E7022',
+  green:     '#0C9E70',
+  red:       '#DC4438',
+  yellow:    '#B8841C',
+  userBg:    '#067A53',
+  onAccent:  '#FFFFFF',
+  aiBg:      '#FFFFFF',
+  scrollbar: '#D8CFBC',
+  dangerBg:      '#FBE4E0',
+  dangerBorder:  '#F0B9AE',
+  dangerFg:      '#B23A26',
+  codeBg:        '#211E18',
+  codeFg:        '#E8E2D4',
+  inlineCodeBg:  '#EDE6D7',
+  inlineCodeFg:  '#067A53',
+  logBg:         '#211E18',
+  logFg:         '#54F0B0',
+  warningBg:     '#F7EBCF',
+  warningFg:     '#8A5A14',
+}
+
+export type PaletteName = 'classic' | 'terminal'
+
+export const PALETTES: Record<PaletteName, { label: string; light: Palette; dark: Palette }> = {
+  classic:  { label: 'Classic',  light: classicLight,  dark: classicDark  },
+  terminal: { label: 'Terminal', light: terminalLight, dark: terminalDark },
+}
+
+export const DEFAULT_PALETTE: PaletteName = 'classic'
+const PALETTE_KEY = 'codey.palette'
+
 // Token names mirror Palette keys; `C.bg` etc. resolve to `var(--bg)` at render time.
-export const C = (Object.keys(darkPalette) as (keyof Palette)[]).reduce((acc, key) => {
+export const C = (Object.keys(classicDark) as (keyof Palette)[]).reduce((acc, key) => {
   acc[key] = `var(--${key})`
   return acc
 }, {} as Record<keyof Palette, string>)
@@ -159,4 +243,28 @@ export function useEffectiveTheme(): EffectiveTheme {
     }
   }, [])
   return eff
+}
+
+// ---- Color theme (palette) selection — independent of light/dark mode ----
+
+export function getStoredPalette(): PaletteName {
+  try {
+    const v = localStorage.getItem(PALETTE_KEY)
+    if (v === 'classic' || v === 'terminal') return v
+  } catch {}
+  return DEFAULT_PALETTE
+}
+
+export function applyPalette(name: PaletteName): void {
+  document.documentElement.dataset.palette = name
+  try { localStorage.setItem(PALETTE_KEY, name) } catch {}
+}
+
+export function usePaletteName(): [PaletteName, (n: PaletteName) => void] {
+  const [name, setNameState] = useState<PaletteName>(getStoredPalette)
+  const setName = (n: PaletteName) => {
+    applyPalette(n)
+    setNameState(n)
+  }
+  return [name, setName]
 }

@@ -19,7 +19,7 @@ export const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSPr
   padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600,
   border: 'none', cursor: 'pointer',
   background: variant === 'primary' ? C.accent : variant === 'danger' ? C.red + '22' : C.surface3,
-  color: variant === 'primary' ? '#fff' : variant === 'danger' ? C.red : C.fg2,
+  color: variant === 'primary' ? C.onAccent : variant === 'danger' ? C.red : C.fg2,
 })
 
 export const Section: React.FC<{ title: string; right?: React.ReactNode }> = ({ title, right }) => (

@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-06-01
+
+### Added
+- **Selectable color theme** in the macOS app (Settings → General). Choose **Classic** (the original macOS look) or **Terminal** (warm paper + terminal green, matching the Codey site). The theme is independent of the Light / Dark / System appearance mode and is remembered across launches. Default is Classic.
+
 ## [0.6.0] - 2026-05-30
 
 ### Added
