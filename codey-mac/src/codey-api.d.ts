@@ -1,5 +1,5 @@
 import type { Chat, ChatSelection } from '../../packages/core/src/types/chat'
-import type { ChatStreamEvent } from '../../packages/gateway/src/chat-runner'
+import type { ChatStreamEvent, QQStreamEvent } from '../../packages/gateway/src/chat-runner'
 import type { TeamConfigRaw } from '../../packages/core/src/workspace'
 import type { ApiKeyEntry } from '../../packages/core/src/types/index'
 
@@ -104,6 +104,11 @@ declare global {
         link: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<IpcResult<Chat>>
         unlink: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<IpcResult<Chat>>
         updateContextPanelOpen: (id: string, open: boolean | null) => Promise<IpcResult<Chat>>
+      }
+      qq: {
+        ask: (payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }> }) => Promise<IpcResult<{ response: string; tokens?: number; durationSec?: number }>>
+        stop: (chatId: string) => Promise<IpcResult<boolean>>
+        onEvent: (handler: (ev: QQStreamEvent) => void) => () => void
       }
       permissions: {
         addAllowed: (toolNames: string[], chatId?: string) => Promise<IpcResult<{ added: number }>>

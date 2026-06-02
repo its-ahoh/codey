@@ -117,6 +117,16 @@ contextBridge.exposeInMainWorld('codey', {
       return () => ipcRenderer.removeListener('chats:event', listener)
     },
   },
+  qq: {
+    ask: (payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }> }) =>
+      ipcRenderer.invoke('qq:ask', payload),
+    stop: (chatId: string) => ipcRenderer.invoke('qq:stop', chatId),
+    onEvent: (handler: (ev: any) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: any) => handler(ev)
+      ipcRenderer.on('qq:event', listener)
+      return () => ipcRenderer.removeListener('qq:event', listener)
+    },
+  },
   permissions: {
     addAllowed: (toolNames: string[], chatId?: string) => ipcRenderer.invoke('permissions:addAllowed', toolNames, chatId),
   },

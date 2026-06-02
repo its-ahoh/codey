@@ -3,6 +3,9 @@ import type { Chat, ChatMessage } from '../types'
 import { C } from '../theme'
 import { parseTeamMessage } from './teamMessageFormat'
 import { ToolDetail, DiffView, normalizeTool } from './toolFormat'
+import { QuickQuestionView } from './QuickQuestionView'
+
+export type ContextPanelTab = 'current' | 'files' | 'qq'
 
 interface Props {
   chat: Chat
@@ -28,6 +31,11 @@ interface Props {
   onScrollToStep: (messageId: string, stepNum: number) => void
   /** True when the selected turn is the last assistant message and the chat is currently in flight. */
   isTurnStreaming: boolean
+  /** Controlled active tab. When omitted the panel manages its own tab state. */
+  activeTab?: ContextPanelTab
+  onTabChange?: (tab: ContextPanelTab) => void
+  /** Focused when the QQ tab opens via a trigger. */
+  qqInputRef?: React.RefObject<HTMLTextAreaElement>
 }
 
 const fmtTime = (ts: number) =>
@@ -44,6 +52,7 @@ export const ChatContextPanel: React.FC<Props> = ({
   chat, selectedTurnId, followLatest, selectedTurnIndex,
   effectiveAgent, effectiveModel, workerName, teamName, workingDir,
   width, onFollowLatest, onClose, onResize, onRevealFile, onScrollToStep, isTurnStreaming,
+  activeTab, onTabChange, qqInputRef,
 }) => {
   const turn: ChatMessage | undefined = selectedTurnId
     ? chat.messages.find(m => m.id === selectedTurnId && m.role === 'assistant')
@@ -66,7 +75,9 @@ export const ChatContextPanel: React.FC<Props> = ({
     return null
   })()
 
-  const [tab, setTab] = React.useState<'current' | 'files'>('current')
+  const [localTab, setLocalTab] = React.useState<ContextPanelTab>('current')
+  const tab: ContextPanelTab = activeTab ?? localTab
+  const setTab = (t: ContextPanelTab) => { onTabChange ? onTabChange(t) : setLocalTab(t) }
 
   // Resize drag handler
   const onResizerMouseDown = (e: React.MouseEvent) => {
@@ -134,10 +145,18 @@ export const ChatContextPanel: React.FC<Props> = ({
           style={{ ...styles.tab, ...(tab === 'files' ? styles.tabActive : null) }}
           onClick={() => setTab('files')}
         >File changes</button>
+        <button
+          role="tab"
+          aria-selected={tab === 'qq'}
+          style={{ ...styles.tab, ...(tab === 'qq' ? styles.tabActive : null) }}
+          onClick={() => setTab('qq')}
+        >Quick Question</button>
       </div>
 
       <div style={styles.body}>
-        {tab === 'current' ? (
+        {tab === 'qq' ? (
+          <QuickQuestionView chatId={chat.id} inputRef={qqInputRef} />
+        ) : tab === 'current' ? (
           <>
             {/* Run target */}
             <Section title="Run target">

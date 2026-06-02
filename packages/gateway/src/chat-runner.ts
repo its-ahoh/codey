@@ -48,21 +48,14 @@ function formatAttachmentList(attachments: FileAttachment[]): string {
  * a script to continue (which previously caused it to fabricate further
  * "User:" turns and self-answer).
  */
-export function buildChatPrompt(
-  chat: Chat,
-  userText: string,
-  attachments?: FileAttachment[],
-  windowSize = CHAT_CONTEXT_WINDOW,
-): string {
+/**
+ * Render the chat's prior history as context sections (compaction summary +
+ * windowed transcript). Shared by buildChatPrompt and buildQuickQuestionPrompt
+ * so both window/compact identically.
+ */
+function renderChatContextSections(chat: Chat, windowSize: number): string[] {
   const sections: string[] = [];
 
-  if (attachments && attachments.length > 0) {
-    sections.push(formatAttachmentList(attachments));
-  }
-
-  // If the Aide has folded older messages into a rolling summary, prepend it
-  // and only render the transcript newer than `summarizedUpTo` (still capped
-  // by windowSize so even a long unsummarized tail can't blow the prompt).
   const summarizedUpTo = chat.compaction?.summarizedUpTo ?? 0;
   if (chat.compaction?.summary) {
     sections.push(
@@ -81,6 +74,23 @@ export function buildChatPrompt(
       `[Prior conversation — context only; do not continue or fabricate further turns]\n${transcript}`,
     );
   }
+
+  return sections;
+}
+
+export function buildChatPrompt(
+  chat: Chat,
+  userText: string,
+  attachments?: FileAttachment[],
+  windowSize = CHAT_CONTEXT_WINDOW,
+): string {
+  const sections: string[] = [];
+
+  if (attachments && attachments.length > 0) {
+    sections.push(formatAttachmentList(attachments));
+  }
+
+  sections.push(...renderChatContextSections(chat, windowSize));
 
   sections.push(`[Respond to this new user message]\n${userText}`);
   return sections.join('\n\n');
@@ -143,4 +153,58 @@ export class RunSemaphore {
   }
 
   get queueLength(): number { return this.queue.length; }
+}
+
+/** Tools Quick Question is allowed to use — strictly read/inspect only. */
+export const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'WebFetch', 'WebSearch'];
+
+export interface QQHistoryEntry {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/** Stream events for a Quick Question run. `chatId` is the parent chat it belongs to. */
+export type QQStreamEvent =
+  | { type: 'stream'; chatId: string; token: string }
+  | { type: 'tool'; chatId: string; message: string }
+  | { type: 'done'; chatId: string; response: string; tokens?: number; durationSec?: number }
+  | { type: 'stopped'; chatId: string }
+  | { type: 'error'; chatId: string; message: string };
+
+/**
+ * Build the ephemeral prompt for a Quick Question turn: the parent chat as
+ * read-only reference, then the QQ thread's own prior turns, then the new
+ * question with an explicit read-only instruction.
+ */
+export function buildQuickQuestionPrompt(
+  chat: Chat,
+  qqHistory: QQHistoryEntry[],
+  question: string,
+  windowSize = CHAT_CONTEXT_WINDOW,
+): string {
+  const sections: string[] = [];
+
+  const ctx = renderChatContextSections(chat, windowSize);
+  if (ctx.length > 0) {
+    sections.push(
+      '[Main chat — read-only reference. Do not continue or modify this conversation.]',
+      ...ctx,
+    );
+  }
+
+  if (qqHistory.length > 0) {
+    const transcript = qqHistory.map(m => {
+      const tag = m.role === 'user' ? '[user]' : '[assistant]';
+      return `${tag}\n${m.content}`;
+    }).join('\n\n');
+    sections.push(`[Quick Question thread so far]\n${transcript}`);
+  }
+
+  sections.push(
+    '[New quick question — answer using the reference above. You are READ-ONLY: ' +
+    'you may read files and search, but must NOT create, edit, delete, or run ' +
+    'commands that modify anything.]\n' + question,
+  );
+
+  return sections.join('\n\n');
 }

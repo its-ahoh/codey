@@ -138,6 +138,13 @@ export interface AgentRequest {
    * vars (e.g. CLAUDE_CONFIG_DIR, OPENAI_ORG) without touching the agent code.
    */
   extraEnv?: Record<string, string>;
+  /**
+   * Restrict the agent to this exact set of tool names. When set, the adapter
+   * passes it to the CLI's allow-list flag so the agent cannot use any other
+   * tool. Used by Quick Question to enforce a read-only turn. Only enforced by
+   * the claude-code adapter today; other adapters rely on prompt instructions.
+   */
+  allowedTools?: string[];
 }
 
 export interface StatusUpdate {

@@ -1492,7 +1492,16 @@ app.whenReady().then(async () => {
   )
 
   ipcMain.handle('agents:slashCommands', async (_e, agent: string) =>
-    wrap(async () => discoverSlashCommands(agent))
+    wrap(async () => {
+      const discovered = await discoverSlashCommands(agent)
+      const qq: SlashCommand = {
+        name: 'qq',
+        description: 'Quick Question — ask about this chat without affecting it',
+        source: 'gateway',
+      }
+      // Avoid a duplicate if a future discovery ever yields one.
+      return [qq, ...discovered.filter(c => c.name !== 'qq')]
+    })
   )
 
   // ── Conversations IPC ─────────────────────────────────────────────
@@ -1598,6 +1607,23 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       return inProcessGateway.stopChat(chatId)
+    })
+  )
+
+  ipcMain.handle('qq:ask', async (_e, payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }> }) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      // Stream events to the renderer on a dedicated channel so QQ never
+      // collides with the main 'chats:event' stream.
+      const sink = (ev: any) => sendToRenderer('qq:event', ev)
+      return inProcessGateway.runQuickQuestion(payload.chatId, payload.question, payload.history ?? [], sink)
+    })
+  )
+
+  ipcMain.handle('qq:stop', async (_e, chatId: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.stopQuickQuestion(chatId)
     })
   )
 
