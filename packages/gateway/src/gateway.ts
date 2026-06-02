@@ -13,7 +13,7 @@ import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
-import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink } from './chat-runner';
+import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
 import { resolveChoiceDigit } from './digit-mapping';
@@ -46,6 +46,8 @@ export class Codey {
   private pairingStore: PairingStore;
   private configManager?: ConfigManager;
   private chatSemaphore = new RunSemaphore();
+  /** In-flight Quick Question runs, keyed by parent chatId, for cancellation. */
+  private qqAborts = new Map<string, AbortController>();
   private chatAborts: Map<string, AbortController> = new Map();
   private parallelResumes = new Map<string, (answer: string) => Promise<void>>();
   private activeParallelRuns = new Map<string, ParallelTeamRunner>();
@@ -3468,6 +3470,128 @@ Example: /model gpt-4.1 write a Python script`;
       durationSec: response.duration,
       ...(httpAsk?.options && httpAsk.options.length >= 2 ? { choices: httpAsk.options } : {}),
     };
+  }
+
+  /**
+   * Run an ephemeral, read-only Quick Question turn against a chat's context.
+   * Does NOT append to the chat, set a session anchor, persist, or mirror to
+   * channels. Streams via the provided sink. Uses the Aide agent/model when
+   * configured, otherwise the chat's effective agent/model.
+   */
+  async runQuickQuestion(
+    chatId: string,
+    question: string,
+    qqHistory: QQHistoryEntry[],
+    sink: (e: QQStreamEvent) => void,
+  ): Promise<{ response: string; tokens?: number; durationSec?: number }> {
+    const chat = this.chatManager.get(chatId);
+    if (!chat) throw new Error(`Chat not found: ${chatId}`);
+
+    // Resolve workingDir from the chat's workspace.json (mirrors sendToChat).
+    const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
+    const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
+    let workingDir = this.workingDir;
+    if (fs.existsSync(wsConfigPath)) {
+      try {
+        const wsConfig = JSON.parse(fs.readFileSync(wsConfigPath, 'utf-8'));
+        if (wsConfig.workingDir) workingDir = wsConfig.workingDir;
+      } catch { /* use default */ }
+    } else {
+      const msg = `Workspace not found: ${chat.workspaceName}`;
+      sink({ type: 'error', chatId, message: msg });
+      throw new Error(msg);
+    }
+
+    // Aide agent/model if configured, else the chat's effective agent/model.
+    const aideCfg = this.config.aide;
+    let agent: CodingAgent;
+    let model: ModelConfig | undefined;
+    try {
+      if (aideCfg?.agent || aideCfg?.model) {
+        ({ agent, model } = this.getAideAgentAndModel());
+      } else {
+        agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
+        model = chat.model
+          ? this.getModelConfig(agent, chat.model)
+          : this.getDefaultModelConfig(agent);
+      }
+    } catch (err) {
+      const msg = (err as Error).message;
+      sink({ type: 'error', chatId, message: msg });
+      throw err;
+    }
+
+    // One in-flight QQ per chat: abort any prior run for this chat.
+    this.qqAborts.get(chatId)?.abort();
+    const abortController = new AbortController();
+    this.qqAborts.set(chatId, abortController);
+
+    const started = Date.now();
+    const prompt = buildQuickQuestionPrompt(chat, qqHistory, question);
+
+    let streamedText = '';
+    const onStream = (text: string) => {
+      streamedText += text;
+      sink({ type: 'stream', chatId, token: text });
+    };
+    const onStatus = (update: any) => {
+      try {
+        const parsed = typeof update === 'string' ? JSON.parse(update) : update;
+        if (parsed?.message) sink({ type: 'tool', chatId, message: String(parsed.message) });
+      } catch { /* non-JSON status */ }
+    };
+
+    try {
+      const response = await this.runWithFallback(agent, {
+        prompt,
+        agent,
+        model,
+        context: { workingDir },
+        skipPermissions: true,
+        allowedTools: READ_ONLY_TOOLS,
+        onStream,
+        onStatus,
+        signal: abortController.signal,
+      });
+
+      if (abortController.signal.aborted) {
+        sink({ type: 'stopped', chatId });
+        return { response: streamedText };
+      }
+
+      const output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
+      const tokens = (response as any)?.tokens?.total;
+      const durationSec = Math.round((Date.now() - started) / 1000);
+
+      if (!response?.success && !output) {
+        const msg = (response as any)?.error || 'Quick Question failed';
+        sink({ type: 'error', chatId, message: String(msg) });
+        return { response: '' };
+      }
+
+      sink({ type: 'done', chatId, response: output, tokens, durationSec });
+      return { response: output, tokens, durationSec };
+    } catch (err) {
+      if (abortController.signal.aborted) {
+        sink({ type: 'stopped', chatId });
+        return { response: streamedText };
+      }
+      const msg = (err as Error).message;
+      sink({ type: 'error', chatId, message: msg });
+      throw err;
+    } finally {
+      if (this.qqAborts.get(chatId) === abortController) {
+        this.qqAborts.delete(chatId);
+      }
+    }
+  }
+
+  /** Cancel an in-flight Quick Question run for a chat. Returns true if one was aborted. */
+  stopQuickQuestion(chatId: string): boolean {
+    const ac = this.qqAborts.get(chatId);
+    if (!ac) return false;
+    ac.abort();
+    return true;
   }
 
   async sendToChat(
