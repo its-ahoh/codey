@@ -3,6 +3,8 @@ import type { IpcMain } from 'electron'
 
 type Notify = (payload: Record<string, unknown>) => void
 type Log = (message: string) => void
+type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
+type Wrap = <T>(fn: () => Promise<T>) => Promise<IpcResult<T>>
 
 let started = false
 const FOUR_HOURS = 4 * 60 * 60 * 1000
@@ -36,12 +38,8 @@ export function initAutoUpdater(notify: Notify, isPackaged: boolean, log: Log): 
 }
 
 /** IPC handlers driven by the renderer button. */
-export function registerUpdaterIpc(ipcMain: IpcMain, log: Log): void {
-  ipcMain.handle('updater:check', () =>
-    autoUpdater.checkForUpdates().catch((e) => log(`[updater] check failed: ${e?.message ?? e}`)),
-  )
-  ipcMain.handle('updater:download', () =>
-    autoUpdater.downloadUpdate().catch((e) => log(`[updater] download failed: ${e?.message ?? e}`)),
-  )
-  ipcMain.handle('updater:install', () => autoUpdater.quitAndInstall())
+export function registerUpdaterIpc(ipcMain: IpcMain, wrap: Wrap): void {
+  ipcMain.handle('updater:check', () => wrap(async () => { await autoUpdater.checkForUpdates() }))
+  ipcMain.handle('updater:download', () => wrap(async () => { await autoUpdater.downloadUpdate() }))
+  ipcMain.handle('updater:install', () => wrap(async () => { autoUpdater.quitAndInstall() }))
 }

@@ -813,7 +813,7 @@ app.whenReady().then(async () => {
   createAppMenu()
   createWindow()
   createTray()
-  registerUpdaterIpc(ipcMain, (m) => sendToRenderer('gateway-log', m))
+  registerUpdaterIpc(ipcMain, wrap)
   initAutoUpdater(
     (payload) => sendToRenderer('updater:state', payload),
     app.isPackaged,
