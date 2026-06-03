@@ -1411,7 +1411,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
   },
   attachButton: {
-    width: 32, height: 32, borderRadius: 8, border: 'none',
+    width: 36, height: 36, borderRadius: 9, border: 'none',
     background: 'transparent', display: 'flex', alignItems: 'center',
     justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
     transition: 'background 0.15s',

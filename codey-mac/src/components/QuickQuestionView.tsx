@@ -314,7 +314,7 @@ const qqStyles: Record<string, React.CSSProperties> = {
   composerDragging: { borderColor: C.accent },
   composerRow: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: 6 },
   attachBtn: {
-    width: 32, height: 32, borderRadius: 8, border: 'none', background: 'transparent',
+    width: 36, height: 36, borderRadius: 9, border: 'none', background: 'transparent',
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
     transition: 'background 0.15s',
   },
