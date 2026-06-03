@@ -191,73 +191,75 @@ export const QuickQuestionView: React.FC<Props> = ({ chatId, inputRef }) => {
 
       {uploadError && <div style={qqStyles.uploadError}>{uploadError}</div>}
 
-      {pending.length > 0 && (
-        <div style={qqStyles.pendingRow}>
-          {pending.map(att => att.mimeType.startsWith('image/') ? (
-            <div key={att.id} style={qqStyles.pendingImageWrap} title={`${att.name} · ${formatBytes(att.size)}`}>
-              <img src={assetUrl(att.path)} alt={att.name} style={qqStyles.pendingImage} />
-              <button onClick={() => removeAttachment(att.id)} style={qqStyles.pendingRemoveBtn} aria-label="Remove">×</button>
-            </div>
-          ) : (
-            <div key={att.id} style={qqStyles.pendingFileChip} title={`${att.name} · ${formatBytes(att.size)}`}>
-              <FileIcon color={C.fg2} size={14} />
-              <span style={qqStyles.pendingFileName}>{att.name}</span>
-              <button onClick={() => removeAttachment(att.id)} style={qqStyles.pendingFileRemoveBtn} aria-label="Remove">×</button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div style={{ ...qqStyles.composerRow, ...(isDragging ? qqStyles.composerRowDragging : null) }}>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept={ACCEPT}
-          style={{ display: 'none' }}
-          onChange={handleFilePick}
-        />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={thread.inFlight}
-          style={qqStyles.attachBtn}
-          title="Attach file"
-        >
-          <PaperclipIcon color={thread.inFlight ? C.fg3 : C.fg2} />
-        </button>
-        <textarea
-          ref={inputRef}
-          style={qqStyles.textarea}
-          value={draft}
-          placeholder={isDragging ? 'Drop to attach…' : 'Ask a quick question… (↵ to send)'}
-          onChange={e => setDraft(e.target.value)}
-          onKeyDown={onKey}
-          onPaste={handlePaste}
-          onInput={e => {
-            const el = e.currentTarget
-            el.style.height = 'auto'
-            el.style.height = Math.min(el.scrollHeight, 120) + 'px'
-          }}
-          rows={1}
-        />
-        {thread.inFlight ? (
-          <button
-            style={{ ...qqStyles.sendBtn, background: C.red, cursor: 'pointer' }}
-            onClick={() => void stop(chatId)}
-            title="Stop"
-          >
-            <StopIcon color="#fff" />
-          </button>
-        ) : (
-          <button
-            style={{ ...qqStyles.sendBtn, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
-            onClick={submit}
-            disabled={!canSend}
-            title="Ask"
-          >
-            <SendIcon color={canSend ? C.onAccent : C.fg3} />
-          </button>
+      <div style={{ ...qqStyles.composer, ...(isDragging ? qqStyles.composerDragging : null) }}>
+        {pending.length > 0 && (
+          <div style={qqStyles.pendingRow}>
+            {pending.map(att => att.mimeType.startsWith('image/') ? (
+              <div key={att.id} style={qqStyles.pendingImageWrap} title={`${att.name} · ${formatBytes(att.size)}`}>
+                <img src={assetUrl(att.path)} alt={att.name} style={qqStyles.pendingImage} />
+                <button onClick={() => removeAttachment(att.id)} style={qqStyles.pendingRemoveBtn} aria-label="Remove">×</button>
+              </div>
+            ) : (
+              <div key={att.id} style={qqStyles.pendingFileChip} title={`${att.name} · ${formatBytes(att.size)}`}>
+                <FileIcon color={C.fg2} size={14} />
+                <span style={qqStyles.pendingFileName}>{att.name}</span>
+                <button onClick={() => removeAttachment(att.id)} style={qqStyles.pendingFileRemoveBtn} aria-label="Remove">×</button>
+              </div>
+            ))}
+          </div>
         )}
+
+        <div style={qqStyles.composerRow}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={ACCEPT}
+            style={{ display: 'none' }}
+            onChange={handleFilePick}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={thread.inFlight}
+            style={qqStyles.attachBtn}
+            title="Attach file"
+          >
+            <PaperclipIcon color={thread.inFlight ? C.fg3 : C.fg2} />
+          </button>
+          <textarea
+            ref={inputRef}
+            style={qqStyles.textarea}
+            value={draft}
+            placeholder={isDragging ? 'Drop to attach…' : 'Ask a quick question… (↵ to send)'}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={onKey}
+            onPaste={handlePaste}
+            onInput={e => {
+              const el = e.currentTarget
+              el.style.height = 'auto'
+              el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+            }}
+            rows={1}
+          />
+          {thread.inFlight ? (
+            <button
+              style={{ ...qqStyles.sendBtn, background: C.red, cursor: 'pointer' }}
+              onClick={() => void stop(chatId)}
+              title="Stop"
+            >
+              <StopIcon color="#fff" />
+            </button>
+          ) : (
+            <button
+              style={{ ...qqStyles.sendBtn, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
+              onClick={submit}
+              disabled={!canSend}
+              title="Ask"
+            >
+              <SendIcon color={canSend ? C.onAccent : C.fg3} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -283,9 +285,9 @@ const qqStyles: Record<string, React.CSSProperties> = {
   },
   msgAttName: { color: C.fg2, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 
-  uploadError: { color: C.dangerFg ?? '#e66', fontSize: 11, padding: '4px 2px 0' },
+  uploadError: { color: C.dangerFg ?? '#e66', fontSize: 11, padding: '4px 2px' },
 
-  pendingRow: { display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 0 4px' },
+  pendingRow: { display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 8px 4px' },
   pendingImageWrap: { position: 'relative', width: 48, height: 48, borderRadius: 8, overflow: 'hidden', border: `1px solid ${C.border2}` },
   pendingImage: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
   pendingRemoveBtn: {
@@ -303,23 +305,27 @@ const qqStyles: Record<string, React.CSSProperties> = {
     cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
 
-  composerRow: {
-    display: 'flex', gap: 6, alignItems: 'flex-end', paddingTop: 8,
-    borderTop: `1px solid ${C.border}`,
+  // Single bordered box wrapping the input row, mirroring ChatTab's composer so
+  // the attach button, textarea, and send button align on one baseline.
+  composer: {
+    marginTop: 8, background: C.surface3, border: `1px solid ${C.border2}`,
+    borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden',
   },
-  composerRowDragging: { borderTop: `1px solid ${C.accent}` },
+  composerDragging: { borderColor: C.accent },
+  composerRow: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: 6 },
   attachBtn: {
     width: 32, height: 32, borderRadius: 8, border: 'none', background: 'transparent',
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
+    transition: 'background 0.15s',
   },
   textarea: {
-    flex: 1, resize: 'none', background: C.surface3, color: C.fg,
-    border: `1px solid ${C.border2}`, borderRadius: 8, padding: '8px 8px',
-    fontSize: 12, fontFamily: 'inherit', lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
-    outline: 'none', boxSizing: 'border-box',
+    flex: 1, resize: 'none', background: 'transparent', color: C.fg,
+    border: 'none', borderRadius: 8, padding: '8px 6px', outline: 'none',
+    fontSize: 13, fontFamily: 'inherit', lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
+    boxSizing: 'border-box',
   },
   sendBtn: {
-    width: 32, height: 32, borderRadius: 8, border: 'none',
+    width: 36, height: 36, borderRadius: 9, border: 'none',
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'background 0.15s',
   },
 }
