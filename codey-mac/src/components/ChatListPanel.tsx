@@ -305,8 +305,8 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
         })}
       </div>
       <div style={styles.footer}>
-          <UpdateButton />
-          <button
+        <UpdateButton />
+        <button
           style={styles.settingsBtn}
           onClick={handleAddWorkspace}
           disabled={addingWorkspace}
