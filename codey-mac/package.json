@@ -56,6 +56,13 @@
             "arm64",
             "x64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ],
       "category": "public.app-category.developer-tools",
@@ -77,6 +84,11 @@
       "dist/**/*",
       "dist-electron/**/*"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "its-ahoh",
+      "repo": "codey"
+    },
     "extraResources": [
       {
         "from": "build/trayIconTemplate.png",
