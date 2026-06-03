@@ -31,4 +31,9 @@ describe('updaterReducer', () => {
     const state: UpdaterState = { phase: 'downloading', percent: 50 }
     expect(updaterReducer(state, { type: 'checking' })).toEqual(state)
   })
+
+  it('keeps a shown available button during a periodic re-check', () => {
+    const state: UpdaterState = { phase: 'available', version: '0.6.4' }
+    expect(updaterReducer(state, { type: 'checking' })).toEqual(state)
+  })
 })

@@ -184,6 +184,7 @@ contextBridge.exposeInMainWorld('codey', {
     check: () => ipcRenderer.invoke('updater:check'),
     download: () => ipcRenderer.invoke('updater:download'),
     install: () => ipcRenderer.invoke('updater:install'),
+    lastState: () => ipcRenderer.invoke('updater:lastState'),
     onState: (handler: (state: any) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, state: any) => handler(state)
       ipcRenderer.on('updater:state', listener)

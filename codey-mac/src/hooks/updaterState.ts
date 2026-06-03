@@ -17,8 +17,10 @@ export const initialUpdaterState: UpdaterState = { phase: 'idle' }
 export function updaterReducer(state: UpdaterState, event: UpdaterEvent): UpdaterState {
   switch (event.type) {
     case 'checking':
-      // Don't disturb an in-progress download/ready state on a periodic re-check.
-      return state.phase === 'downloading' || state.phase === 'ready' ? state : { phase: 'idle' }
+      // A periodic re-check must not disturb the current phase: the follow-up
+      // available/not-available/error event sets the correct state. Clearing to
+      // idle here would flicker (or permanently drop) a shown update button.
+      return state
     case 'available':
       return { phase: 'available', version: event.version }
     case 'not-available':
