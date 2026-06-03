@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, pr
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
+import { initAutoUpdater, registerUpdaterIpc } from './updater'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -812,6 +813,12 @@ app.whenReady().then(async () => {
   createAppMenu()
   createWindow()
   createTray()
+  registerUpdaterIpc(ipcMain, (m) => sendToRenderer('gateway-log', m))
+  initAutoUpdater(
+    (payload) => sendToRenderer('updater:state', payload),
+    app.isPackaged,
+    (m) => sendToRenderer('gateway-log', m),
+  )
   await bootInProcessCore()
 
   // Check Full Disk Access by probing the iMessage database.
