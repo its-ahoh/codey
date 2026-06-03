@@ -2,6 +2,7 @@ import type { Chat, ChatSelection } from '../../packages/core/src/types/chat'
 import type { ChatStreamEvent, QQStreamEvent } from '../../packages/gateway/src/chat-runner'
 import type { TeamConfigRaw } from '../../packages/core/src/workspace'
 import type { ApiKeyEntry } from '../../packages/core/src/types/index'
+import type { UpdaterEvent } from './hooks/updaterState'
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
@@ -149,6 +150,13 @@ declare global {
       }
       app: {
         version: () => Promise<string>
+      }
+      updater: {
+        check: () => Promise<IpcResult<void>>
+        download: () => Promise<IpcResult<void>>
+        install: () => Promise<IpcResult<void>>
+        lastState: () => Promise<IpcResult<UpdaterEvent | null>>
+        onState: (handler: (state: UpdaterEvent) => void) => () => void
       }
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<string>

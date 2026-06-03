@@ -24,6 +24,7 @@
   "dependencies": {
     "@codey/core": "*",
     "@codey/gateway": "*",
+    "electron-updater": "^6.8.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
@@ -55,6 +56,13 @@
             "arm64",
             "x64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ],
       "category": "public.app-category.developer-tools",
@@ -76,6 +84,11 @@
       "dist/**/*",
       "dist-electron/**/*"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "its-ahoh",
+      "repo": "codey"
+    },
     "extraResources": [
       {
         "from": "build/trayIconTemplate.png",
