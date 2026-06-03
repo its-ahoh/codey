@@ -24,6 +24,7 @@
   "dependencies": {
     "@codey/core": "*",
     "@codey/gateway": "*",
+    "electron-updater": "^6.8.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
