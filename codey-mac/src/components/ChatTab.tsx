@@ -1253,7 +1253,7 @@ const styles: Record<string, React.CSSProperties> = {
   composerRow: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: 6 },
   input: {
     flex: 1, background: 'transparent', border: 'none', borderRadius: 8,
-    color: C.fg, fontSize: 13, padding: '8px 6px', outline: 'none', resize: 'none',
+    color: C.fg, fontSize: 13, padding: '10px 6px 8px', outline: 'none', resize: 'none',
     lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
   },
   sendButton: {
