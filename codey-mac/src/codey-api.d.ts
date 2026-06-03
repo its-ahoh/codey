@@ -5,6 +5,14 @@ import type { ApiKeyEntry } from '../../packages/core/src/types/index'
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
+type UpdaterEvent =
+  | { type: 'checking' }
+  | { type: 'available'; version: string }
+  | { type: 'not-available' }
+  | { type: 'progress'; percent: number }
+  | { type: 'downloaded'; version: string }
+  | { type: 'error' }
+
 export interface ModelEntry {
   apiType: 'anthropic' | 'openai'
   model: string
@@ -149,6 +157,12 @@ declare global {
       }
       app: {
         version: () => Promise<string>
+      }
+      updater: {
+        check: () => Promise<IpcResult<void>>
+        download: () => Promise<IpcResult<void>>
+        install: () => Promise<IpcResult<void>>
+        onState: (handler: (state: UpdaterEvent) => void) => () => void
       }
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<string>
