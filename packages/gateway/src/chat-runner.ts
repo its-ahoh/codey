@@ -180,9 +180,14 @@ export function buildQuickQuestionPrompt(
   chat: Chat,
   qqHistory: QQHistoryEntry[],
   question: string,
+  attachments?: FileAttachment[],
   windowSize = CHAT_CONTEXT_WINDOW,
 ): string {
   const sections: string[] = [];
+
+  if (attachments && attachments.length > 0) {
+    sections.push(formatAttachmentList(attachments));
+  }
 
   const ctx = renderChatContextSections(chat, windowSize);
   if (ctx.length > 0) {

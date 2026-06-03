@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useReducer } from 'react'
 import { apiService } from '../services/api'
 import type { QQStreamEvent } from '../services/api'
+import type { FileAttachment } from '../types'
 
 export interface QQMessage {
   id: string
@@ -8,6 +9,7 @@ export interface QQMessage {
   content: string
   streaming?: boolean
   error?: boolean
+  attachments?: FileAttachment[]
 }
 
 export interface QQThread {
@@ -79,7 +81,7 @@ function reducer(state: State, action: Action): State {
 
 interface QuickQuestionContextValue {
   getThread: (chatId: string) => QQThread
-  ask: (chatId: string, question: string) => Promise<void>
+  ask: (chatId: string, question: string, attachments?: FileAttachment[]) => Promise<void>
   stop: (chatId: string) => Promise<void>
 }
 
@@ -113,9 +115,10 @@ export const QuickQuestionProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const value = useMemo<QuickQuestionContextValue>(() => ({
     getThread: (chatId) => state.threads[chatId] ?? EMPTY,
-    async ask(chatId, question) {
+    async ask(chatId, question, attachments) {
       const q = question.trim()
-      if (!q) return
+      const atts = attachments && attachments.length > 0 ? attachments : undefined
+      if (!q && !atts) return
       const thread = state.threads[chatId] ?? EMPTY
       if (thread.inFlight) return
       const history = thread.messages
@@ -125,11 +128,12 @@ export const QuickQuestionProvider: React.FC<{ children: React.ReactNode }> = ({
         id: `qq-u-${Date.now()}-${Math.random()}`,
         role: 'user',
         content: q,
+        attachments: atts,
       }
       const assistantId = `qq-a-${Date.now()}-${Math.random()}`
       dispatch({ type: 'startAsk', chatId, userMsg, assistantId })
       try {
-        await apiService.qq.ask(chatId, q, history)
+        await apiService.qq.ask(chatId, q, history, atts)
       } catch (err) {
         dispatch({ type: 'error', chatId, message: `Error: ${(err as Error).message}` })
       }

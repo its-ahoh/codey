@@ -3483,6 +3483,7 @@ Example: /model gpt-4.1 write a Python script`;
     question: string,
     qqHistory: QQHistoryEntry[],
     sink: (e: QQStreamEvent) => void,
+    attachments?: import('@codey/core').FileAttachment[],
   ): Promise<{ response: string; tokens?: number; durationSec?: number }> {
     const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
@@ -3527,7 +3528,7 @@ Example: /model gpt-4.1 write a Python script`;
     this.qqAborts.set(chatId, abortController);
 
     const started = Date.now();
-    const prompt = buildQuickQuestionPrompt(chat, qqHistory, question);
+    const prompt = buildQuickQuestionPrompt(chat, qqHistory, question, attachments);
 
     let streamedText = '';
     const onStream = (text: string) => {
