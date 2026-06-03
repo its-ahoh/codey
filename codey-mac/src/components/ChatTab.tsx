@@ -11,6 +11,7 @@ import { ChatContextPanel } from './ChatContextPanel'
 import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
+import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 
 interface Props {
@@ -329,8 +330,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     return off
   }, [chat.id, chat.routes, pairingModal, linkChannel])
   useEffect(() => {
-    if (!chat?.workspaceName) return
-    apiService.getTeams(chat.workspaceName).then(names => setTeamNames(names)).catch(() => setTeamNames([]))
+    const ws = chat?.workspaceName
+    if (!ws) return
+    const refresh = () => apiService.getTeams(ws).then(setTeamNames).catch(() => setTeamNames([]))
+    refresh()
+    // Re-fetch when teams are enabled/edited in the Settings overlay, which
+    // stays mounted alongside this tab so workspaceName never changes.
+    return onTeamsChanged(refresh)
   }, [chat?.workspaceName])
   const [workingDir, setWorkingDir] = useState<string | undefined>(undefined)
   useEffect(() => {

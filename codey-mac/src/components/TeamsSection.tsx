@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiService } from '../services/api'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 import { C } from '../theme'
+import { emitTeamsChanged } from './teamsChanged'
 
 // Per-workspace teams editor. Teams are defined globally in Settings →
 // Teams; this component just toggles which of those names are enabled for
@@ -45,7 +46,7 @@ export default function TeamsSection({ workspace }: { workspace: string }) {
     setEnabled(next); setError(null)
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(async () => {
-      try { await apiService.setTeams(workspace, [...next]); setSavedAt(Date.now()) }
+      try { await apiService.setTeams(workspace, [...next]); setSavedAt(Date.now()); emitTeamsChanged() }
       catch (err: any) { setError(err.message || String(err)) }
     }, 300)
   }
