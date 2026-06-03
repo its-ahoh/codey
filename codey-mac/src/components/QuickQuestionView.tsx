@@ -320,7 +320,7 @@ const qqStyles: Record<string, React.CSSProperties> = {
   },
   textarea: {
     flex: 1, resize: 'none', background: 'transparent', color: C.fg,
-    border: 'none', borderRadius: 8, padding: '8px 6px', outline: 'none',
+    border: 'none', borderRadius: 8, padding: '10px 6px 8px', outline: 'none',
     fontSize: 13, fontFamily: 'inherit', lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
     boxSizing: 'border-box',
   },
