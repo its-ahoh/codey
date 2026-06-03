@@ -315,3 +315,24 @@ workspaces/              # Per-workspace config, memory, and workers
 ## License
 
 [MIT](LICENSE)
+
+## Releasing (maintainers)
+
+codey-mac auto-updates via electron-updater from GitHub Releases.
+
+**Required repo secrets** (Settings → Secrets and variables → Actions):
+- `CSC_LINK` — base64 of the Apple Developer ID `.p12` certificate
+- `CSC_KEY_PASSWORD` — password for that `.p12`
+- `APPLE_ID` — Apple ID email used for notarization
+- `APPLE_APP_SPECIFIC_PASSWORD` — app-specific password for that Apple ID
+- `APPLE_TEAM_ID` — Apple developer team ID (`N59NN58KB2`)
+
+(`GITHUB_TOKEN` is provided automatically.)
+
+**To ship a release:**
+1. Bump the version in `package.json` and `codey-mac/package.json`.
+2. Commit, then tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. The `Release codey-mac` workflow builds, signs, notarizes, and publishes the
+   dmg + zip + `latest-mac.yml` to the GitHub Release.
+4. Installed apps detect the new version on next launch (or within ~4h) and show
+   the update button in the sidebar footer.
