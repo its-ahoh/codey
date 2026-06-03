@@ -180,6 +180,17 @@ contextBridge.exposeInMainWorld('codey', {
   app: {
     version: () => ipcRenderer.invoke('app:version'),
   },
+  updater: {
+    check: () => ipcRenderer.invoke('updater:check'),
+    download: () => ipcRenderer.invoke('updater:download'),
+    install: () => ipcRenderer.invoke('updater:install'),
+    lastState: () => ipcRenderer.invoke('updater:lastState'),
+    onState: (handler: (state: any) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: any) => handler(state)
+      ipcRenderer.on('updater:state', listener)
+      return () => ipcRenderer.removeListener('updater:state', listener)
+    },
+  },
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
   revealInFolder: (path: string) => ipcRenderer.invoke('shell:showItemInFolder', path),
