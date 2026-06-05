@@ -27,7 +27,10 @@ func normalizeVariant(_ raw: String) -> String {
 final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
     private var pipeline: WhisperKit?
     private var loadedModel: String?
-    private var config: VoiceConfig
+    /// Mutable config is behind a lock — detached tasks in startStreaming and
+    /// transcribe can read config concurrently with updateConfig (gateway poll).
+    private let configLock = NSLock()
+    private var _config: VoiceConfig
     /// Unused by WhisperKit (we don't surface partial decodes today); kept to
     /// satisfy the protocol. Wire up once we move to streaming decode.
     var onPartial: ((String) -> Void)?
@@ -70,7 +73,7 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
     }
 
     init(config: VoiceConfig) {
-        self.config = config
+        self._config = config
     }
 
     /// Start emitting partial transcripts while the user is still talking.
@@ -232,8 +235,8 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
     }
 
     func updateConfig(_ config: VoiceConfig) {
-        let modelChanged = config.localModel != self.config.localModel
-        self.config = config
+        let modelChanged = configLock.withLock { config.localModel != _config.localModel }
+        configLock.withLock { _config = config }
         if modelChanged {
             // Drop the pipeline; next transcribe will reload the new variant.
             loadQueue.sync { self.pipeline = nil; self.loadedModel = nil }
@@ -379,13 +382,14 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
     // MARK: - Internals
 
     private func ensurePipeline() async throws -> WhisperKit {
-        if let p = pipeline, loadedModel == config.localModel {
+        let currentModel = configLock.withLock { _config.localModel }
+        if let p = pipeline, loadedModel == currentModel {
             return p
         }
         // WhisperKit's HF glob is `*openai*<variant>/*`; the variant must be
         // the bare name (`large-v3-turbo`), not the full folder name
         // (`openai_whisper-large-v3-turbo`). UI/config may store either form.
-        let modelName = normalizeVariant(config.localModel)
+        let modelName = normalizeVariant(currentModel)
         let t0 = Date()
         print("WhisperKitEngine: loading model '\(modelName)'")
 

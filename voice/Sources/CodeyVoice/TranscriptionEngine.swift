@@ -9,12 +9,16 @@ import Foundation
 /// latency on multi-second clips. `whisper-1` and unknown models stay on the
 /// original non-streaming path since they don't honor `stream=true`.
 final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendable {
+    /// CRITICAL FIX #3: mutable state is behind a lock so `transcribe` (called
+    /// from arbitrary Task contexts) and `updateConfig` (called from gateway
+    /// polling timer) don't race.
     private let session: URLSession
-    private var config: VoiceConfig
+    private let configLock = NSLock()
+    private var _config: VoiceConfig
     var onPartial: ((String) -> Void)?
 
     init(config: VoiceConfig) {
-        self.config = config
+        self._config = config
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 30
         cfg.timeoutIntervalForResource = 60
@@ -22,7 +26,7 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
     }
 
     func updateConfig(_ config: VoiceConfig) {
-        self.config = config
+        configLock.withLock { _config = config }
     }
 
     func unloadIfIdle() {
@@ -31,19 +35,23 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
 
     /// Transcribe 16 kHz mono Float32 audio via the configured API.
     func transcribe(audio: [Float], language: String) async throws -> String {
-        let baseURL = config.apiUrl.hasSuffix("/")
-            ? String(config.apiUrl.dropLast())
-            : config.apiUrl
+        // Snapshot config under the lock so all reads see a consistent version.
+        let (apiUrl, apiKey, apiModel) = configLock.withLock {
+            (_config.apiUrl, _config.apiKey, _config.apiModel)
+        }
+        let baseURL = apiUrl.hasSuffix("/")
+            ? String(apiUrl.dropLast())
+            : apiUrl
         guard let url = URL(string: "\(baseURL)/audio/transcriptions") else {
             throw TranscriptionError.invalidURL(baseURL)
         }
-        guard !config.apiKey.isEmpty else {
+        guard !apiKey.isEmpty else {
             throw TranscriptionError.noAPIKey
         }
 
         let wavData = encodeWAV(samples: audio, sampleRate: 16000)
-        let streaming = modelSupportsStreaming(config.apiModel)
-        let request = buildRequest(url: url, wav: wavData, language: language, streaming: streaming)
+        let streaming = modelSupportsStreaming(apiModel)
+        let request = buildRequest(url: url, apiKey: apiKey, apiModel: apiModel, wav: wavData, language: language, streaming: streaming)
 
         return streaming
             ? try await runStreaming(request: request)
@@ -60,10 +68,10 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
         return m.contains("gpt-4o") && m.contains("transcribe")
     }
 
-    private func buildRequest(url: URL, wav: Data, language: String, streaming: Bool) -> URLRequest {
+    private func buildRequest(url: URL, apiKey: String, apiModel: String, wav: Data, language: String, streaming: Bool) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         if streaming {
             request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         }
@@ -86,7 +94,7 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
         body.append(wav)
         body.append("\r\n".data(using: .utf8)!)
 
-        field("model", config.apiModel)
+        field("model", apiModel)
         if !language.isEmpty && language != "auto" {
             field("language", language)
         }
@@ -217,6 +225,7 @@ enum TranscriptionError: LocalizedError {
     case noAPIKey
     case badResponse
     case apiError(Int, String)
+    case connectionFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -224,6 +233,7 @@ enum TranscriptionError: LocalizedError {
         case .noAPIKey: return "No API key configured"
         case .badResponse: return "Bad response from transcription API"
         case .apiError(let code, let msg): return "API error \(code): \(msg)"
+        case .connectionFailed(let reason): return "Connection failed: \(reason)"
         }
     }
 }

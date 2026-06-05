@@ -2,84 +2,179 @@ import Foundation
 
 /// Transcribes audio via the OpenAI Realtime WebSocket API (transcription-session).
 ///
-/// Owns its own `URLSessionWebSocketTask` per utterance. The streaming path
-/// forwards audio chunks as they arrive (`beginStreaming` → N×`appendChunk` →
-/// `finishStreaming`) and delivers the final transcript through `finishStreaming`.
-/// The single-shot protocol method `transcribe(audio:language:)` opens a socket,
-/// sends the entire buffer in one message, commits, and awaits the result —
-/// used as fallback when the full buffer is already available.
+/// ## Streaming flow
 ///
-/// Lifecycle: one socket per utterance. Closed on `cancelStreaming`, `finishStreaming`,
-/// idle timeout (>30s), or app termination.
-final class RealtimeTranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendable {
+///   `startRealtimeSession(language:)` → N×`appendAudioChunk(_:)` →
+///   `transcribe(audio:language:)` / `cancelSession()`
+///
+/// The coordinator opens a WebSocket session when recording starts, forwards
+/// audio chunks as they arrive, then finalizes via the protocol
+/// `transcribe(audio:language:)` which commits the buffer and awaits the final
+/// transcript. If the session failed to connect, `transcribe()` falls back
+/// to the batch HTTP API transparently.
+///
+/// ## Lifecycle
+///
+/// One socket per utterance. Opened in `startRealtimeSession`, closed on
+/// `cancelSession`, on idle timeout (>30 s), or on `deinit`.
+final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, @unchecked Sendable {
+    // MARK: - Configuration
+
     private let session: URLSession
-    private var config: VoiceConfig
-    private var webSocket: URLSessionWebSocketTask?
-    private var streamingContinuation: CheckedContinuation<String, Error>?
-    private var receiveTask: Task<Void, Never>?
-    private var lastUsed: Date = .distantPast
-    private var hasActiveUtterance = false
+    private let configLock = NSLock()
+    private var _config: VoiceConfig
+
+    private let stateLock = NSLock()
+    private var _webSocketTask: URLSessionWebSocketTask? {
+        didSet { oldValue?.cancel(with: .normalClosure, reason: nil) }
+    }
+    private var _connectContinuation: CheckedContinuation<Void, Error>?
+    private var _transcribeContinuation: CheckedContinuation<String, Error>?
+    private var _accumulatedText = ""
+    private var _finalTranscript: String?
+    /// True once `didOpenWithProtocol` fires (session is usable).
+    private var _isSessionActive = false
+    /// True once `didCompleteWithError` or an explicit disconnect fires.
+    private var _isDisconnected = false
+
+    private var _lastUsed = Date.distantPast
     private let idleUnloadAfter: TimeInterval = 30
 
     var onPartial: ((String) -> Void)?
 
+    // MARK: - Init / deinit
+
     init(config: VoiceConfig) {
-        self.config = config
-        self.session = URLSession(configuration: .ephemeral)
+        self._config = config
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 30
+        cfg.timeoutIntervalForResource = 60
+        self.session = URLSession(configuration: cfg)
     }
 
+    deinit {
+        disconnect()
+        // Drain any remaining continuations so nothing hangs forever.
+        stateLock.withLock {
+            _connectContinuation?.resume(throwing: CancellationError())
+            _connectContinuation = nil
+            _transcribeContinuation?.resume(throwing: CancellationError())
+            _transcribeContinuation = nil
+        }
+    }
+
+    // MARK: - TranscriptionEngineProtocol
+
     func updateConfig(_ config: VoiceConfig) {
-        self.config = config
+        configLock.withLock { _config = config }
+    }
+
+    func unloadIfIdle() {
+        let shouldClose = stateLock.withLock { () -> Bool in
+            guard _webSocketTask != nil, !_isSessionActive else { return false }
+            if Date().timeIntervalSince(_lastUsed) >= idleUnloadAfter {
+                _isDisconnected = true
+                _webSocketTask = nil
+                return true
+            }
+            return false
+        }
+        if shouldClose {
+            print("realtime: closed idle socket (>\(Int(idleUnloadAfter))s)")
+        }
+    }
+
+    /// Transcribe audio using either the active WebSocket session (commit +
+    /// await final transcript) or the batch HTTP API as a fallback when the
+    /// session never connected (or disconnected mid-utterance).
+    func transcribe(audio: [Float], language: String) async throws -> String {
+        // Check whether the WebSocket session is active. If not, fall through
+        // to the batch HTTP path.
+        let sessionWasActive = stateLock.withLock { _isSessionActive }
+
+        if sessionWasActive {
+            return try await commitAndRequest()
+        }
+
+        print("realtime: session not active — falling back to batch API")
+        return try await batchFallback(audio: audio, language: language)
     }
 
     // MARK: - Streaming API (called by VoiceCoordinator)
 
-    /// Open a WebSocket to the Realtime API and send `transcription_session.update`
-    /// to configure the session. Throws if connection fails or config is invalid.
-    func beginStreaming(language: String) throws {
-        guard !config.apiKey.isEmpty else { throw TranscriptionError.noAPIKey }
-        guard let url = URL(string: config.realtimeUrl) else {
-            throw TranscriptionError.invalidURL(config.realtimeUrl)
+    /// Open a WebSocket to the Realtime API and send `session.update` to
+    /// configure the session. Returns once the connection opens and the server
+    /// acknowledges the session configuration. Throws on failure.
+    func startRealtimeSession(language: String) async throws {
+        let (apiKey, realtimeUrl, realtimeModel) = configLock.withLock {
+            (_config.apiKey, _config.realtimeUrl, _config.realtimeModel)
+        }
+        guard !apiKey.isEmpty else { throw TranscriptionError.noAPIKey }
+        guard let url = URL(string: realtimeUrl) else {
+            throw TranscriptionError.invalidURL(realtimeUrl)
         }
 
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
+        // Create the WebSocket task with self as delegate so we get
+        // didOpenWithProtocol / didCompleteWithError callbacks.
         let ws = session.webSocketTask(with: request)
-        self.webSocket = ws
-        ws.resume()
-        lastUsed = Date()
-        hasActiveUtterance = true
+        stateLock.withLock {
+            _webSocketTask = ws
+            _isDisconnected = false
+            _isSessionActive = false
+            _lastUsed = Date()
+        }
 
-        // Start the receive loop in background
-        receiveTask = Task { [weak self] in await self?.receiveLoop() }
+        // Await connection confirmation (resumed in didOpenWithProtocol or
+        // didCompleteWithError).
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            stateLock.withLock {
+                if _isDisconnected {
+                    continuation.resume(throwing: TranscriptionError.connectionFailed("already disconnected"))
+                    return
+                }
+                _connectContinuation = continuation
+            }
+            ws.resume()
+        }
 
         // Send session configuration
-        let model = config.realtimeModel
-        let lang = language.isEmpty || language == "auto" ? "" : language
-        let sessionUpdate: [String: Any] = [
-            "type": "transcription_session.update",
-            "input_audio_format": "pcm16",
-            "input_audio_transcription": [
-                "model": model,
-                "language": lang,
-            ] as [String: Any],
-        ]
-        let msg = try JSONSerialization.data(withJSONObject: sessionUpdate)
-        ws.send(.data(msg)) { [weak self] error in
-            if let error = error {
-                print("realtime: session.update send error — \(error.localizedDescription)")
-                self?.failContinuation(TranscriptionError.apiError(0, "session.update: \(error.localizedDescription)"))
+        let updateData = try buildSessionUpdate(
+            language: language,
+            model: realtimeModel
+        )
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            ws.send(.data(updateData)) { error in
+                if let error = error {
+                    continuation.resume(throwing: TranscriptionError.apiError(0, "session.update: \(error.localizedDescription)"))
+                } else {
+                    continuation.resume()
+                }
             }
         }
+
+        // Start the background receive loop for delta/completed events.
+        let loopWs = ws
+        Task { [weak self] in
+            await self?.receiveLoop(ws: loopWs)
+        }
+
+        print("realtime: session started (model=\(realtimeModel))")
     }
 
     /// Encode `samples` as PCM16 base64 and send as `input_audio_buffer.append`.
-    /// Safe to call from any thread; the send is dispatched to the WebSocket's
-    /// delegate queue internally.
-    func appendChunk(_ samples: [Float]) {
-        guard let ws = webSocket, hasActiveUtterance else { return }
-        lastUsed = Date()
+    /// Safe to call from any thread (audio tap). Silently drops when no session
+    /// is open (fire-and-forget).
+    func appendAudioChunk(_ samples: [Float]) {
+        let ws = stateLock.withLock { () -> URLSessionWebSocketTask? in
+            guard _isSessionActive, !_isDisconnected else { return nil }
+            _lastUsed = Date()
+            return _webSocketTask
+        }
+        guard let ws = ws else { return }
+
         let pcmData = pcm16Data(from: samples)
         let base64 = pcmData.base64EncodedString()
         let event: [String: Any] = [
@@ -94,138 +189,82 @@ final class RealtimeTranscriptionEngine: TranscriptionEngineProtocol, @unchecked
         }
     }
 
-    /// Signal end of audio by sending `input_audio_buffer.commit`, then await
-    /// the final transcript from the WebSocket event stream. Returns the
-    /// recognized text.
-    func finishStreaming() async throws -> String {
-        guard let ws = webSocket, hasActiveUtterance else {
-            throw TranscriptionError.badResponse
+    /// Disconnect the current WebSocket session immediately without committing
+    /// the audio buffer (used on Esc-to-cancel or provider switch).
+    func cancelSession() {
+        disconnect()
+    }
+
+    // MARK: - WebSocket commit + await transcript
+
+    /// Send `input_audio_buffer.commit` followed by `response.create`, then
+    /// await the final transcript from the server event stream.
+    private func commitAndRequest() async throws -> String {
+        let ws = stateLock.withLock { () -> URLSessionWebSocketTask? in
+            // Reset accumulated state for a fresh utterance.
+            _accumulatedText = ""
+            _finalTranscript = nil
+            return _webSocketTask
         }
-        hasActiveUtterance = false
-        lastUsed = Date()
+        guard let ws = ws else {
+            throw TranscriptionError.connectionFailed("socket closed before commit")
+        }
 
         return try await withCheckedThrowingContinuation { continuation in
-            streamingContinuation = continuation
+            self.stateLock.withLock { self._transcribeContinuation = continuation }
+
+            // 1. Commit the audio buffer so the server starts transcribing.
             let commit: [String: Any] = ["type": "input_audio_buffer.commit"]
-            guard let data = try? JSONSerialization.data(withJSONObject: commit) else {
+            guard let commitData = try? JSONSerialization.data(withJSONObject: commit) else {
+                self.stateLock.withLock { self._transcribeContinuation = nil }
                 continuation.resume(throwing: TranscriptionError.badResponse)
                 return
             }
-            ws.send(.data(data)) { error in
+            ws.send(.data(commitData)) { [self] error in
                 if let error = error {
-                    print("realtime: commit send error — \(error.localizedDescription)")
-                    // Don't fail the continuation here — the response event
-                    // will carry the error if the commit was malformed.
-                }
-            }
-        }
-    }
-
-    /// Cancel the current utterance without consuming the result. Closes the
-    /// WebSocket immediately.
-    func cancelStreaming() {
-        hasActiveUtterance = false
-        streamingContinuation?.resume(throwing: TranscriptionError.badResponse)
-        streamingContinuation = nil
-        closeSocket()
-    }
-
-    // MARK: - TranscriptionEngineProtocol conformance
-
-    /// Single-shot fallback path: open a WebSocket, send the full audio buffer
-    /// in one `input_audio_buffer.append`, commit, and await the final transcript.
-    /// This lets the coordinator call `activeEngine.transcribe(audio:language:)`
-    /// uniformly when realtime streaming was not used (e.g. fallback after
-    /// connection failure).
-    func transcribe(audio: [Float], language: String) async throws -> String {
-        guard !config.apiKey.isEmpty else { throw TranscriptionError.noAPIKey }
-        guard let url = URL(string: config.realtimeUrl) else {
-            throw TranscriptionError.invalidURL(config.realtimeUrl)
-        }
-
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-
-        let ws = session.webSocketTask(with: request)
-        self.webSocket = ws
-        ws.resume()
-        lastUsed = Date()
-        hasActiveUtterance = true
-
-        // Start receive loop
-        receiveTask = Task { [weak self] in await self?.receiveLoop() }
-
-        // Session update
-        let model = config.realtimeModel
-        let lang = language.isEmpty || language == "auto" ? "" : language
-        let sessionUpdate: [String: Any] = [
-            "type": "transcription_session.update",
-            "input_audio_format": "pcm16",
-            "input_audio_transcription": [
-                "model": model,
-                "language": lang,
-            ] as [String: Any],
-        ]
-        let updateData = try JSONSerialization.data(withJSONObject: sessionUpdate)
-
-        return try await withCheckedThrowingContinuation { continuation in
-            streamingContinuation = continuation
-            ws.send(.data(updateData)) { error in
-                if let error = error {
-                    continuation.resume(throwing: TranscriptionError.apiError(0, "session.update: \(error.localizedDescription)"))
+                    stateLock.withLock { self._transcribeContinuation = nil }
+                    continuation.resume(throwing: TranscriptionError.apiError(0, "commit: \(error.localizedDescription)"))
                     return
                 }
-                // Send the full audio in one append
-                let pcmData = pcm16Data(from: audio)
-                let base64 = pcmData.base64EncodedString()
-                let appendEvent: [String: Any] = [
-                    "type": "input_audio_buffer.append",
-                    "audio": base64,
-                ]
-                guard let appendData = try? JSONSerialization.data(withJSONObject: appendEvent) else {
+
+                // 2. Request the response to get the transcript delivered.
+                let create: [String: Any] = ["type": "response.create"]
+                guard let createData = try? JSONSerialization.data(withJSONObject: create) else {
+                    stateLock.withLock { self._transcribeContinuation = nil }
                     continuation.resume(throwing: TranscriptionError.badResponse)
                     return
                 }
-                ws.send(.data(appendData)) { error in
+                ws.send(.data(createData)) { [self] error in
                     if let error = error {
-                        continuation.resume(throwing: TranscriptionError.apiError(0, "append: \(error.localizedDescription)"))
-                        return
+                        stateLock.withLock { self._transcribeContinuation = nil }
+                        continuation.resume(throwing: TranscriptionError.apiError(0, "response.create: \(error.localizedDescription)"))
                     }
-                    // Commit to finalize
-                    let commit: [String: Any] = ["type": "input_audio_buffer.commit"]
-                    guard let commitData = try? JSONSerialization.data(withJSONObject: commit) else {
-                        continuation.resume(throwing: TranscriptionError.badResponse)
-                        return
-                    }
-                    ws.send(.data(commitData)) { error in
-                        if let error = error {
-                            continuation.resume(throwing: TranscriptionError.apiError(0, "commit: \(error.localizedDescription)"))
-                        }
-                        // Success — continue waiting in receiveLoop for the result
-                    }
+                    // Success — the receive loop delivers the transcript events.
                 }
             }
         }
     }
 
-    func unloadIfIdle() {
-        guard webSocket != nil, !hasActiveUtterance else { return }
-        if Date().timeIntervalSince(lastUsed) >= idleUnloadAfter {
-            print("realtime: closing idle socket (>\(Int(idleUnloadAfter))s)")
-            closeSocket()
-        }
+    // MARK: - Batch HTTP fallback
+
+    /// One-shot batch transcription via the standard `/audio/transcriptions`
+    /// endpoint. Used when the WebSocket session never connected or
+    /// disconnected mid-utterance.
+    private func batchFallback(audio: [Float], language: String) async throws -> String {
+        let config = configLock.withLock { _config }
+        let httpEngine = TranscriptionEngine(config: config)
+        return try await httpEngine.transcribe(audio: audio, language: language)
     }
 
-    // MARK: - Internals
+    // MARK: - Internal: WebSocket receive loop
 
-    /// Background loop reading WebSocket messages. Dispatches by event `type`.
-    private func receiveLoop() async {
-        guard let ws = webSocket else { return }
-
+    /// Background loop reading WebSocket messages and dispatching by event type.
+    private func receiveLoop(ws: URLSessionWebSocketTask) async {
         while !Task.isCancelled {
             do {
                 let message = try await ws.receive()
-                lastUsed = Date()
+                stateLock.withLock { _lastUsed = Date() }
+
                 switch message {
                 case .data(let data):
                     handleEvent(data: data)
@@ -237,13 +276,18 @@ final class RealtimeTranscriptionEngine: TranscriptionEngineProtocol, @unchecked
                     break
                 }
             } catch {
-                // Socket closed or connection error
                 print("realtime: receive error — \(error.localizedDescription)")
-                failContinuation(TranscriptionError.apiError(0, "connection: \(error.localizedDescription)"))
-                break
+                if let nsError = error as NSError?,
+                   nsError.domain == NSURLErrorDomain,
+                   nsError.code == NSURLErrorNetworkConnectionLost {
+                    handleConnectionLost()
+                    break
+                }
             }
         }
     }
+
+    // MARK: - Internal: Event dispatch
 
     private func handleEvent(data: Data) {
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -253,8 +297,9 @@ final class RealtimeTranscriptionEngine: TranscriptionEngineProtocol, @unchecked
 
         switch type {
         case "conversation.item.input_audio_transcription.delta":
-            if let delta = obj["delta"] as? String, !delta.isEmpty {
-                let snapshot = delta
+            if let delta = obj["delta"] as? String {
+                stateLock.withLock { _accumulatedText.append(delta) }
+                let snapshot = stateLock.withLock { _accumulatedText }
                 if let cb = onPartial {
                     DispatchQueue.main.async { cb(snapshot) }
                 }
@@ -262,22 +307,43 @@ final class RealtimeTranscriptionEngine: TranscriptionEngineProtocol, @unchecked
 
         case "conversation.item.input_audio_transcription.completed":
             let transcript = (obj["transcript"] as? String) ?? ""
-            hasActiveUtterance = false
-            if let continuation = streamingContinuation {
-                streamingContinuation = nil
-                continuation.resume(returning: transcript.trimmingCharacters(in: .whitespacesAndNewlines))
+            stateLock.withLock {
+                _finalTranscript = transcript
             }
-            // Don't close the socket here — let the coordinator call
-            // finishStreaming or unloadIfIdle manage the lifecycle.
+
+        case "response.text.done":
+            if let text = obj["text"] as? String {
+                stateLock.withLock { _finalTranscript = text }
+            }
+
+        case "response.done":
+            let transcript = stateLock.withLock { () -> String in
+                let t = _finalTranscript ?? _accumulatedText
+                _isSessionActive = false
+                return t
+            }
+            let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            stateLock.withLock {
+                if let cont = _transcribeContinuation {
+                    _transcribeContinuation = nil
+                    cont.resume(returning: trimmed)
+                }
+            }
 
         case "error":
-            let message = (obj["error"] as? [String: Any])?["message"] as? String
+            let msg = (obj["error"] as? [String: Any])?["message"] as? String
                 ?? (obj["error"] as? String)
                 ?? "unknown error"
-            print("realtime: server error — \(message)")
-            failContinuation(TranscriptionError.apiError(0, message))
+            print("realtime: server error — \(msg)")
+            stateLock.withLock {
+                if let cont = _transcribeContinuation {
+                    _transcribeContinuation = nil
+                    cont.resume(throwing: TranscriptionError.apiError(0, msg))
+                }
+            }
 
-        case "transcription_session.created", "transcription_session.updated":
+        case "session.created", "session.updated":
             // Lifecycle acknowledgment — no action needed.
             break
 
@@ -286,20 +352,102 @@ final class RealtimeTranscriptionEngine: TranscriptionEngineProtocol, @unchecked
         }
     }
 
-    private func failContinuation(_ error: TranscriptionError) {
-        hasActiveUtterance = false
-        if let continuation = streamingContinuation {
-            streamingContinuation = nil
-            continuation.resume(throwing: error)
+    // MARK: - Internal: Connection management
+
+    private func handleConnectionLost() {
+        stateLock.withLock {
+            _isDisconnected = true
+            _isSessionActive = false
+            if let cont = _transcribeContinuation {
+                _transcribeContinuation = nil
+                cont.resume(throwing: TranscriptionError.connectionFailed("connection lost"))
+            }
         }
     }
 
-    private func closeSocket() {
-        webSocket?.cancel(with: .normalClosure, reason: nil)
-        webSocket = nil
-        receiveTask?.cancel()
-        receiveTask = nil
-        streamingContinuation = nil
-        hasActiveUtterance = false
+    private func disconnect() {
+        stateLock.withLock {
+            _isDisconnected = true
+            _isSessionActive = false
+            _connectContinuation?.resume(throwing: CancellationError())
+            _connectContinuation = nil
+            _webSocketTask = nil
+        }
+    }
+
+    // MARK: - Session update builder
+
+    /// Build the JSON data for `session.update` with the required `"session"`
+    /// wrapper key. Uses `NSNull()` to explicitly disable server VAD so the
+    /// manual commit model is the only commit source.
+    private func buildSessionUpdate(language: String, model: String) throws -> Data {
+        let lang = language.isEmpty || language == "auto" ? "" : language
+        var transcription: [String: Any] = [
+            "model": model,
+        ]
+        if !lang.isEmpty {
+            transcription["language"] = lang
+        }
+
+        let body: [String: Any] = [
+            "type": "session.update",
+            "session": [
+                "modalities": ["text"],
+                "input_audio_format": "pcm16",
+                "input_audio_transcription": transcription,
+                "turn_detection": NSNull(),  // disabled — we control start/stop
+            ] as [String: Any],
+        ]
+        return try JSONSerialization.data(withJSONObject: body)
+    }
+}
+
+// MARK: - URLSessionWebSocketDelegate conformance
+
+/// The session delegate receives connection lifecycle events that we use to
+/// resolve (or fail) the `startRealtimeSession` continuation.
+extension RealtimeTranscriptionEngine: URLSessionWebSocketDelegate {
+    func urlSession(
+        _ session: URLSession,
+        webSocketTask: URLSessionWebSocketTask,
+        didOpenWithProtocol protocol: String?
+    ) {
+        print("realtime: WebSocket connected")
+        stateLock.withLock {
+            _isSessionActive = true
+            _isDisconnected = false
+            if let cont = _connectContinuation {
+                _connectContinuation = nil
+                cont.resume()
+            }
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        if let error = error {
+            print("realtime: WebSocket disconnected with error — \(error.localizedDescription)")
+        } else {
+            print("realtime: WebSocket closed normally")
+        }
+        stateLock.withLock {
+            _isDisconnected = true
+            _isSessionActive = false
+            // If a connect continuation is still pending, fail it.
+            if let cont = _connectContinuation {
+                _connectContinuation = nil
+                cont.resume(throwing: error.map { TranscriptionError.connectionFailed($0.localizedDescription) }
+                    ?? TranscriptionError.connectionFailed("connection closed"))
+            }
+            // If a transcribe continuation is still pending, fail it.
+            if let cont = _transcribeContinuation {
+                _transcribeContinuation = nil
+                cont.resume(throwing: error.map { TranscriptionError.apiError(0, $0.localizedDescription) }
+                    ?? TranscriptionError.apiError(0, "connection closed before transcript"))
+            }
+        }
     }
 }
