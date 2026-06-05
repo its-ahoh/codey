@@ -27,6 +27,12 @@ final class AudioCapture {
     /// AppKit. Used by the HUD waveform indicator.
     var onLevel: ((Float) -> Void)?
 
+    /// Called from the audio tap thread with each freshly resampled 16 kHz mono
+    /// chunk (~20-50 ms). Receiver must hop off if it touches AppKit. Used by the
+    /// realtime transcription engine to forward audio over WebSocket as it arrives.
+    /// Nil = current batch-only behavior; the pcmBuffer accumulation is unchanged.
+    var onChunk: (([Float]) -> Void)?
+
     /// Pre-allocate the recording buffer so the audio tap thread never has to
     /// realloc while the user is talking. Previously this also called
     /// `engine.prepare()` to warm Core Audio, but installing the tap *after*
@@ -146,6 +152,11 @@ final class AudioCapture {
         } else {
             chunk = mono
         }
+
+        // Emit the resampled chunk for realtime consumers (e.g. WebSocket
+        // transcription engine) before accumulating into the full buffer.
+        // Always accumulate; additionally emit when a consumer is subscribed.
+        onChunk?(chunk)
 
         bufferLock.lock()
         pcmBuffer.append(contentsOf: chunk)

@@ -16,6 +16,11 @@ final class VoiceCoordinator {
     private let audioCapture: AudioCapture
     private let apiEngine: TranscriptionEngine
     private let localEngine: WhisperKitEngine
+    private let realtimeEngine: RealtimeTranscriptionEngine
+    /// Set when realtime WebSocket connect fails mid-utterance. The fallback
+    /// path uses `apiEngine.transcribe(buffer)` — the pcmBuffer is always
+    /// accumulating in parallel so the full audio is available.
+    private var realtimeFallbackActive = false
     private var textInjector: TextInjector
     private var hotkeyManager: HotkeyManager?
     private var statusItem: StatusItem?
@@ -43,6 +48,7 @@ final class VoiceCoordinator {
         self.audioCapture = AudioCapture()
         self.apiEngine = TranscriptionEngine(config: .default)
         self.localEngine = WhisperKitEngine(config: .default)
+        self.realtimeEngine = RealtimeTranscriptionEngine(config: .default)
         self.textInjector = TextInjector(mode: .paste)
     }
 
@@ -50,6 +56,7 @@ final class VoiceCoordinator {
         switch config.provider {
         case .local: return localEngine
         case .api: return apiEngine
+        case .realtime: return realtimeEngine
         }
     }
 
@@ -91,6 +98,7 @@ final class VoiceCoordinator {
         }
         apiEngine.onPartial = partialHandler
         localEngine.onPartial = partialHandler
+        realtimeEngine.onPartial = partialHandler
 
         // Stream mic RMS levels to the HUD waveform meter. Audio tap thread
         // → main hop here. The HUD itself no-ops when not in .recording.
@@ -104,10 +112,11 @@ final class VoiceCoordinator {
         // Start polling gateway
         startGatewayPolling()
 
-        // Idle-unload timer: every 15s check if the local pipeline can be released
+        // Idle-unload timer: every 15s check if the local pipeline or realtime socket can be released
         idleUnloadTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             guard let self = self, self.state == .idle else { return }
             self.localEngine.unloadIfIdle()
+            self.realtimeEngine.unloadIfIdle()
         }
 
         // Prewarm WhisperKit so the first hotkey press doesn't pay the model
@@ -149,6 +158,7 @@ final class VoiceCoordinator {
             statusItem?.updateState(.recording)
             hud.show(.recording)
             installEscMonitor()
+
             // Kick off WhisperKit's sliding-window streaming so the HUD can
             // show partial transcripts while the user is still speaking.
             // API streaming, by contrast, only kicks in after stop because
@@ -160,6 +170,24 @@ final class VoiceCoordinator {
                     language: config.language
                 )
             }
+
+            // For the realtime provider, open a WebSocket and wire the chunk
+            // callback so each resampled audio chunk is forwarded live.
+            if config.provider == .realtime {
+                realtimeFallbackActive = false
+                do {
+                    try realtimeEngine.beginStreaming(language: config.language)
+                    audioCapture.onChunk = { [weak self] chunk in
+                        self?.realtimeEngine.appendChunk(chunk)
+                    }
+                } catch {
+                    // Connection refused / no API key / etc — degrade gracefully.
+                    print("realtime: beginStreaming failed — \(error.localizedDescription). Falling back to batch API.")
+                    realtimeFallbackActive = true
+                    audioCapture.onChunk = nil
+                }
+            }
+
             print("startRecording: OK, audio engine running")
             Task { await gateway.reportStatus("recording") }
         } catch {
@@ -187,7 +215,10 @@ final class VoiceCoordinator {
         print("cancelRecording: Esc pressed — discarding buffer")
         removeEscMonitor()
         localEngine.stopStreaming()
+        audioCapture.onChunk = nil
+        realtimeEngine.cancelStreaming()
         audioCapture.cancelRecording()
+        realtimeFallbackActive = false
         state = .idle
         statusItem?.updateState(.idle)
         hud.hide()
@@ -246,20 +277,42 @@ final class VoiceCoordinator {
         hud.show(.transcribing)
         Task { await gateway.reportStatus("transcribing") }
 
+        // Determine the transcription path:
+        //   realtime + no fallback → finalize via WebSocket streaming
+        //   realtime + fallback active → one-shot batch via apiEngine (buffer already accumulated)
+        //   local/api → standard path
+        let shouldUseRealtimeFinalize = (config.provider == .realtime && !realtimeFallbackActive)
+
         Task {
             do {
-                let lang = config.language
-                let providerLabel = config.provider == .local ? "local(\(config.localModel))" : "api(\(config.apiModel))"
-                print("transcribe: starting (language=\(lang.isEmpty ? "auto" : lang), provider=\(providerLabel))")
-                let text = try await activeEngine.transcribe(audio: buffer, language: lang)
+                var text: String
+                if shouldUseRealtimeFinalize {
+                    print("transcribe: realtime finalize")
+                    text = try await realtimeEngine.finishStreaming()
+                } else {
+                    let lang = config.language
+                    let engine = realtimeFallbackActive ? apiEngine : activeEngine
+                    let fallbackLabel = realtimeFallbackActive ? " (realtime fallback to api)" : ""
+                    let providerLabel = config.provider == .local
+                        ? "local(\(config.localModel))"
+                        : "api(\(config.apiModel))"
+                    print("transcribe: starting (language=\(lang.isEmpty ? "auto" : lang), provider=\(providerLabel)\(fallbackLabel))")
+                    text = try await engine.transcribe(audio: buffer, language: lang)
+                }
+
+                // Reset per-utterance realtime state
+                realtimeFallbackActive = false
+                audioCapture.onChunk = nil
+
                 print("transcribe: result = \"\(text)\" (\(text.count) chars)")
 
                 let canInject = TextInjector.canInjectAtCurrentFocus()
-                if !text.isEmpty && canInject {
+                let finalText = text
+                if !finalText.isEmpty && canInject {
                     print("inject: mode=\(config.injection)")
-                    textInjector.inject(text)
+                    textInjector.inject(finalText)
                     print("inject: dispatched")
-                } else if !text.isEmpty {
+                } else if !finalText.isEmpty {
                     print("inject: no text-capable focus, surfacing in HUD")
                 } else {
                     print("inject: skipped (empty transcription)")
@@ -267,19 +320,21 @@ final class VoiceCoordinator {
                 state = .idle
                 statusItem?.updateState(.idle)
                 await MainActor.run {
-                    if text.isEmpty {
+                    if finalText.isEmpty {
                         self.hud.hide()
                     } else if canInject {
                         self.hud.show(.success)
                     } else {
                         // Nowhere to paste: show full text + auto-copy, wait
                         // for click to dismiss.
-                        self.hud.show(.dictation(text))
+                        self.hud.show(.dictation(finalText))
                     }
                 }
                 Task { await gateway.reportStatus("idle") }
             } catch {
                 print("transcribe FAILED: \(error.localizedDescription)")
+                realtimeFallbackActive = false
+                audioCapture.onChunk = nil
                 state = .idle
                 statusItem?.updateState(.error(error.localizedDescription))
                 let msg = error.localizedDescription
@@ -317,8 +372,12 @@ final class VoiceCoordinator {
         textInjector = TextInjector(mode: newConfig.injection)
         apiEngine.updateConfig(newConfig)
         localEngine.updateConfig(newConfig)
+        realtimeEngine.updateConfig(newConfig)
         if oldProvider == .local && newConfig.provider != .local {
             localEngine.forceUnload(reason: "provider switched to \(newConfig.provider.rawValue)")
+        }
+        if oldProvider == .realtime && newConfig.provider != .realtime {
+            realtimeEngine.cancelStreaming()
         }
         if oldProvider != .local && newConfig.provider == .local {
             // User just turned local on (or changed model) — start warming now
@@ -354,6 +413,7 @@ final class VoiceCoordinator {
         pollTimer?.invalidate()
         idleUnloadTimer?.invalidate()
         localEngine.forceUnload(reason: "app terminating")
+        realtimeEngine.cancelStreaming()
     }
 
     // MARK: - Settings

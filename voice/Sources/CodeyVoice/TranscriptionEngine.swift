@@ -164,9 +164,8 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
 
     /// Encode 16-bit PCM WAV from Float32 samples in `[-1, 1]`. Pre-allocates
     /// the full buffer (44-byte header + `samples.count * 2`) and writes the
-    /// Int16 payload in one pass via `withUnsafeMutableBytes` — the previous
-    /// per-sample `Data.append` loop reallocated repeatedly and dominated
-    /// `transcribe(...)` latency on long clips.
+    /// Int16 payload in one pass via `pcm16Data(from:)` so the same clamp+scale
+    /// logic is shared with the realtime WebSocket path.
     private func encodeWAV(samples: [Float], sampleRate: Int) -> Data {
         let numChannels: UInt16 = 1
         let bitsPerSample: UInt16 = 16
@@ -176,6 +175,7 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
         let fileSize = 36 + dataSize
         let totalBytes = 44 + Int(dataSize)
 
+        let payload = pcm16Data(from: samples)
         var data = Data(count: totalBytes)
         data.withUnsafeMutableBytes { raw in
             let base = raw.baseAddress!
@@ -196,12 +196,10 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
             memcpy(base.advanced(by: 36), "data", 4)
             writeLE(base, offset: 40, value: dataSize)
 
-            // PCM payload — one branchless clamp + scale per sample.
-            let pcm = base.advanced(by: 44).assumingMemoryBound(to: Int16.self)
-            for i in 0..<samples.count {
-                let s = samples[i]
-                let c = s < -1 ? -1 : (s > 1 ? 1 : s)
-                pcm[i] = Int16(c * 32767.0)
+            // PCM payload — use the shared helper's raw bytes
+            let dest = base.advanced(by: 44)
+            payload.withUnsafeBytes { src in
+                memcpy(dest, src.baseAddress!, payload.count)
             }
         }
         return data
