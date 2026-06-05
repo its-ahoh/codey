@@ -51,3 +51,48 @@ export async function summarizeChatMessages(
 
   return runAide(lines.join('\n'), opts);
 }
+
+/** Upper bound on a generated chat title. Matches the truncation fallback. */
+const MAX_TITLE_CHARS = 40;
+
+/**
+ * Generate a short, human-readable chat title from the opening user message.
+ * Used in place of blindly truncating the first message. Returns a sanitized
+ * single-line title (≤ MAX_TITLE_CHARS), or '' if the Aide produced nothing
+ * usable — the caller should fall back to truncation in that case.
+ */
+export async function generateChatTitle(
+  firstUserMessage: string,
+  opts: AideOptions,
+): Promise<string> {
+  const source = firstUserMessage.trim();
+  if (!source) return '';
+
+  const lines: string[] = [];
+  lines.push('You write concise titles for developer chat threads.');
+  lines.push('Summarize the user message below into a short title.');
+  lines.push('');
+  lines.push('## User message');
+  lines.push(source.length > MAX_MSG_CHARS ? source.slice(0, MAX_MSG_CHARS) + '… [truncated]' : source);
+  lines.push('');
+  lines.push('## Requirements');
+  lines.push('- A noun phrase capturing the topic or intent, not a greeting.');
+  lines.push('- At most 6 words and 40 characters.');
+  lines.push('- Same language as the user message.');
+  lines.push('- No surrounding quotes, no trailing punctuation, no preamble — output only the title.');
+
+  const raw = await runAide(lines.join('\n'), opts);
+  return sanitizeTitle(raw);
+}
+
+/** Collapse whitespace, strip wrapping quotes/markdown, and clamp length. */
+function sanitizeTitle(raw: string): string {
+  let t = raw.trim().split('\n')[0].trim();
+  // Drop a leading "Title:" style label some models prepend.
+  t = t.replace(/^(title|标题)\s*[:：]\s*/i, '');
+  // Strip a single layer of wrapping quotes or backticks.
+  t = t.replace(/^["'`“”]+|["'`“”]+$/g, '').trim();
+  t = t.replace(/\s+/g, ' ');
+  if (t.length > MAX_TITLE_CHARS) t = t.slice(0, MAX_TITLE_CHARS).trim() + '…';
+  return t;
+}
