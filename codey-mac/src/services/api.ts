@@ -1,6 +1,6 @@
 // IPC proxy — all calls go through window.codey.* (Electron preload)
 
-import type { Chat, ChatSelection } from '../types'
+import type { Chat, ChatSelection, TaskBrief } from '../types'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 
 // Inline ChatStreamEvent to avoid cross-package import
@@ -186,6 +186,8 @@ export const apiService = {
       unwrap(await window.codey.chats.create(input)),
     rename: async (id: string, title: string): Promise<Chat> =>
       unwrap(await window.codey.chats.rename(id, title)),
+    taskBrief: async (id: string): Promise<TaskBrief | null> =>
+      unwrap(await window.codey.chats.taskBrief(id)),
     delete: async (id: string): Promise<void> => {
       unwrap(await window.codey.chats.delete(id))
     },
