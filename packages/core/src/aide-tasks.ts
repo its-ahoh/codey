@@ -92,7 +92,7 @@ function sanitizeTitle(raw: string): string {
   // Drop a leading "Title:" style label some models prepend.
   t = t.replace(/^(title|标题)\s*[:：]\s*/i, '');
   // Strip a single layer of wrapping quotes or backticks.
-  t = t.replace(/^["'`""]+|["'`""]+$/g, '').trim();
+  t = t.replace(/^["'`“”]+|["'`“”]+$/g, '').trim();
   t = t.replace(/\s+/g, ' ');
   if (t.length > MAX_TITLE_CHARS) t = t.slice(0, MAX_TITLE_CHARS).trim() + '…';
   return t;

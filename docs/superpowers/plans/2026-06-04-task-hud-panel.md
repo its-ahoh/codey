@@ -261,11 +261,12 @@ git commit -m "feat(core): add coerceTaskBrief defensive parser"
 
 **Files:**
 - Modify: `packages/core/src/aide-tasks.ts`
-- Create: `packages/core/src/aide-tasks.test.ts` (if it does not already exist; otherwise append the `describe` block)
+- Create: `packages/core/src/aide-tasks.test.ts`
+- Modify: `packages/core/vitest.config.ts` (core uses an explicit test allowlist — new vitest files MUST be added)
 
 - [ ] **Step 1: Write the failing test**
 
-Create/append `packages/core/src/aide-tasks.test.ts`:
+Create `packages/core/src/aide-tasks.test.ts`:
 
 ```ts
 import { describe, it, expect, vi } from 'vitest';
@@ -394,15 +395,19 @@ export async function generateTaskBrief(chat: Chat, opts: AideOptions): Promise<
 
 Note: `runAide` stays imported because the existing tasks use it; only add what's missing.
 
-- [ ] **Step 4: Run the test to confirm it passes**
+- [ ] **Step 4: Register the test in the allowlist**
+
+In `packages/core/vitest.config.ts`, add `'src/aide-tasks.test.ts',` to the `include` array (next to `'src/task-brief.test.ts'`).
+
+- [ ] **Step 5: Run the test to confirm it passes**
 
 Run: `cd packages/core && npx vitest run src/aide-tasks.test.ts`
-Expected: PASS (2 new tests). Then `npx tsc --noEmit` → no errors.
+Expected: PASS (2 new tests). Then `npx tsc --noEmit` → no errors. Also run the full suite `npx vitest run` → all green.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add packages/core/src/aide-tasks.ts packages/core/src/aide-tasks.test.ts
+git add packages/core/src/aide-tasks.ts packages/core/src/aide-tasks.test.ts packages/core/vitest.config.ts
 git commit -m "feat(core): add generateTaskBrief Aide task"
 ```
 
@@ -412,11 +417,12 @@ git commit -m "feat(core): add generateTaskBrief Aide task"
 
 **Files:**
 - Modify: `packages/gateway/src/chats.ts`
-- Create: `packages/gateway/src/chats.test.ts` (if absent; else append)
+- Create: `packages/gateway/src/chats.taskBrief.test.ts` — **NOTE:** there is already a legacy `src/chats.test.ts` (a ts-node/node:test IIFE script that crashes vitest collection). Do NOT touch or reuse it. New vitest tests use a distinct name (the repo pattern is e.g. `chats.discussion.test.ts`).
+- Modify: `packages/gateway/vitest.config.ts` (gateway also uses an explicit allowlist — new vitest files MUST be added)
 
 - [ ] **Step 1: Write the failing test**
 
-Create/append `packages/gateway/src/chats.test.ts`:
+Create `packages/gateway/src/chats.taskBrief.test.ts`. Note `ChatManager.create` takes `{ workspaceName, title? }` (per the legacy `chats.test.ts`), and the workspace dir must exist on disk first:
 
 ```ts
 import { describe, it, expect } from 'vitest';
@@ -439,7 +445,7 @@ const brief: TaskBrief = {
 describe('ChatManager.setTaskBrief', () => {
   it('stores the brief without bumping updatedAt', () => {
     const { mgr } = tmpManager();
-    const chat = mgr.create({ workspaceName: 'ws', selection: { type: 'none' } });
+    const chat = mgr.create({ workspaceName: 'ws', title: 't' });
     const before = mgr.get(chat.id)!.updatedAt;
     mgr.setTaskBrief(chat.id, brief);
     const after = mgr.get(chat.id)!;
@@ -454,11 +460,12 @@ describe('ChatManager.setTaskBrief', () => {
 });
 ```
 
-(If `ChatManager.create` requires a different input shape, match the signature used elsewhere in `chats.ts` — the test only needs a persisted chat.)
+(If `ChatManager.create`'s real signature differs, match the call used in the existing `src/chats.test.ts` — the test only needs one persisted chat.)
 
 - [ ] **Step 2: Run it to confirm it fails**
 
-Run: `cd packages/gateway && npx vitest run src/chats.test.ts`
+First add `'src/chats.taskBrief.test.ts',` to the `include` array in `packages/gateway/vitest.config.ts`, then run:
+`cd packages/gateway && npx vitest run src/chats.taskBrief.test.ts`
 Expected: FAIL — `setTaskBrief` is not a function.
 
 - [ ] **Step 3: Implement `setTaskBrief`**
@@ -478,13 +485,13 @@ In `packages/gateway/src/chats.ts`, add `TaskBrief` to the `@codey/core` import,
 
 - [ ] **Step 4: Run the test to confirm it passes**
 
-Run: `cd packages/gateway && npx vitest run src/chats.test.ts`
-Expected: PASS (2 tests).
+Run: `cd packages/gateway && npx vitest run src/chats.taskBrief.test.ts`
+Expected: PASS (2 tests). Then full suite `npx vitest run` → all green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/gateway/src/chats.ts packages/gateway/src/chats.test.ts
+git add packages/gateway/src/chats.ts packages/gateway/src/chats.taskBrief.test.ts packages/gateway/vitest.config.ts
 git commit -m "feat(gateway): ChatManager.setTaskBrief (no updatedAt bump)"
 ```
 
