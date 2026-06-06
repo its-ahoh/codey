@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { Chat, ChatCompaction, ChatMessage, ChatSelection, ChatRoute, ChannelKind } from '@codey/core';
+import { Chat, ChatCompaction, ChatMessage, ChatSelection, ChatRoute, ChannelKind, TaskBrief } from '@codey/core';
 import { Logger } from './logger';
 
 const log = Logger.getInstance();
@@ -214,6 +214,15 @@ export class ChatManager {
     if (!chat) return;
     chat.lastAskedOptions = { messageId, options };
     chat.updatedAt = Date.now();
+    this.persist(chat);
+  }
+
+  /** Cache the on-demand Task HUD brief. Does NOT bump updatedAt so that
+   *  staleness can be detected via `chat.updatedAt > taskBrief.generatedAt`. */
+  setTaskBrief(chatId: string, brief: TaskBrief): void {
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    chat.taskBrief = brief;
     this.persist(chat);
   }
 

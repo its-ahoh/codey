@@ -11,6 +11,7 @@ import { ChatContextPanel } from './ChatContextPanel'
 import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
+import { isTaskBriefStale } from './taskHudView'
 import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 
@@ -221,7 +222,7 @@ const TeamMessage: React.FC<{
 }
 
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
-  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, renameChat, setContextPanelOpen, linkChannel, unlinkChannel, resolvePermission } = useChats()
+  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, renameChat, setContextPanelOpen, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -252,6 +253,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const [followLatest, setFollowLatest] = useState(true)
   const [selectedTurnIdState, setSelectedTurnIdState] = useState<string | null>(null)
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
+  const [taskBriefLoading, setTaskBriefLoading] = useState(false)
   const [panelWidth, setPanelWidth] = useState<number>(() => {
     const v = localStorage.getItem('codey.contextPanelWidth')
     const n = v ? parseInt(v, 10) : NaN
@@ -1212,6 +1214,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
           activeTab={panelTab}
           onTabChange={setPanelTab}
           qqInputRef={qqInputRef}
+          onAnswerNextAction={() => taRef.current?.focus()}
+          taskBriefLoading={taskBriefLoading}
+          onTaskTabShown={async () => {
+            if (!isTaskBriefStale(chat)) return
+            setTaskBriefLoading(true)
+            try { await generateTaskBrief(chat.id) } finally { setTaskBriefLoading(false) }
+          }}
         />
         )
       })()}

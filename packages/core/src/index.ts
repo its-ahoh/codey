@@ -13,6 +13,7 @@ export * from './advisor';
 export * from './advisor-personality';
 export * from './aide';
 export * from './aide-tasks';
+export * from './task-brief';
 export * from './discussion/files';
 export * from './discussion/control';
 export * from './discussion/parallel-advisor';
