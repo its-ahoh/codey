@@ -11,6 +11,7 @@ export default defineConfig({
       'src/discussion/files.test.ts',
       'src/discussion/control.test.ts',
       'src/discussion/parallel-advisor.test.ts',
+      'src/task-brief.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },
