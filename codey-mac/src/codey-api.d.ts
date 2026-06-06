@@ -1,5 +1,6 @@
 import type { Chat, ChatSelection } from '../../packages/core/src/types/chat'
 import type { ChatStreamEvent, QQStreamEvent } from '../../packages/gateway/src/chat-runner'
+import type { TaskBrief } from '../types'
 import type { TeamConfigRaw } from '../../packages/core/src/workspace'
 import type { ApiKeyEntry } from '../../packages/core/src/types/index'
 import type { UpdaterEvent } from './hooks/updaterState'
@@ -96,6 +97,7 @@ declare global {
         get: (id: string) => Promise<IpcResult<Chat>>
         create: (input: { workspaceName: string; selection?: ChatSelection; title?: string }) => Promise<IpcResult<Chat>>
         rename: (id: string, title: string) => Promise<IpcResult<Chat>>
+        taskBrief: (id: string) => Promise<IpcResult<TaskBrief | null>>
         delete: (id: string) => Promise<IpcResult<null>>
         updateSelection: (id: string, selection: ChatSelection) => Promise<IpcResult<Chat>>
         updateAgentModel: (id: string, agent: string | null, model: string | null) => Promise<IpcResult<Chat>>

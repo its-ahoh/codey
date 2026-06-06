@@ -1581,6 +1581,13 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('chats:taskBrief', async (_e, id: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.generateTaskBrief(id)
+    })
+  )
+
   ipcMain.handle('chats:delete', async (_e, id: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
