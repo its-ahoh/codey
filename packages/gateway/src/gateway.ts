@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -412,6 +412,25 @@ export class Codey {
       model: opts.model?.model ?? '(default)',
       updatedAt: Date.now(),
     };
+  }
+
+  /** True when the user has explicitly configured an Aide agent or model. */
+  private isAideConfigured(): boolean {
+    const cfg = this.config.aide;
+    return Boolean(cfg?.agent || cfg?.model);
+  }
+
+  /**
+   * Generate a chat title via the Aide, swallowing any error. Returns '' on
+   * failure so the caller keeps the truncated fallback title.
+   */
+  private async generateChatTitleSafe(firstUserMessage: string): Promise<string> {
+    try {
+      return await generateChatTitle(firstUserMessage, this.getAideOptions());
+    } catch (err) {
+      this.logger.warn(`Aide title generation failed: ${(err as Error).message}`);
+      return '';
+    }
   }
 
   private conversationCleanupInterval?: NodeJS.Timeout;
@@ -3719,7 +3738,17 @@ Example: /model gpt-4.1 write a Python script`;
       isComplete: true,
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
     };
-    this.chatManager.appendMessage(chatId, userMessage);
+    const afterUser = this.chatManager.appendMessage(chatId, userMessage);
+
+    // On the very first message, derive a real title via the Aide instead of
+    // blindly truncating the prompt. Kick it off now so it runs concurrently
+    // with the agent turn; we await it just before the 'done' event. The
+    // truncated title set by appendMessage stays visible until then, and acts
+    // as the fallback if the Aide fails or returns nothing.
+    const titlePromise: Promise<string> | undefined =
+      afterUser.messages.length === 1 && this.isAideConfigured()
+        ? this.generateChatTitleSafe(userText)
+        : undefined;
 
     let streamedText = '';
 
@@ -3889,7 +3918,18 @@ Example: /model gpt-4.1 write a Python script`;
         this.chatManager.setLastAskedOptions(chatId, assistantMessage.id, plainAskOptions);
       }
 
-      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: updated.title, choices: surfacedChoices, userQuestion: agentUserQuestion });
+      // Apply the Aide-generated title (first turn only) before announcing
+      // completion so the sidebar updates in the same 'done' event.
+      let finalTitle = updated.title;
+      if (titlePromise) {
+        const aiTitle = await titlePromise;
+        if (aiTitle && aiTitle !== finalTitle) {
+          this.chatManager.rename(chatId, aiTitle);
+          finalTitle = aiTitle;
+        }
+      }
+
+      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion });
 
       // Mirror this turn to every attached route except the originating one.
       // Mac-origin uses a synthetic '__mac__' channel that matches no real
