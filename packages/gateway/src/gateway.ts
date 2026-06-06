@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -430,6 +430,25 @@ export class Codey {
     } catch (err) {
       this.logger.warn(`Aide title generation failed: ${(err as Error).message}`);
       return '';
+    }
+  }
+
+  /**
+   * Generate (and cache) the Task HUD brief for a chat on demand. Returns null
+   * when the Aide is not configured, the chat is missing, or generation fails —
+   * callers keep showing whatever was cached.
+   */
+  public async generateTaskBrief(chatId: string): Promise<TaskBrief | null> {
+    if (!this.isAideConfigured()) return null;
+    const chat = this.chatManager.get(chatId);
+    if (!chat) return null;
+    try {
+      const brief = await generateTaskBrief(chat, this.getAideOptions());
+      this.chatManager.setTaskBrief(chatId, brief);
+      return brief;
+    } catch (err) {
+      this.logger.warn(`Aide task-brief generation failed: ${(err as Error).message}`);
+      return null;
     }
   }
 

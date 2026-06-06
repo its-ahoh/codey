@@ -97,6 +97,7 @@ contextBridge.exposeInMainWorld('codey', {
     create: (input: { workspaceName: string; selection?: any; title?: string }) =>
       ipcRenderer.invoke('chats:create', input),
     rename: (id: string, title: string) => ipcRenderer.invoke('chats:rename', id, title),
+    taskBrief: (id: string) => ipcRenderer.invoke('chats:taskBrief', id),
     delete: (id: string) => ipcRenderer.invoke('chats:delete', id),
     updateSelection: (id: string, selection: any) =>
       ipcRenderer.invoke('chats:updateSelection', id, selection),

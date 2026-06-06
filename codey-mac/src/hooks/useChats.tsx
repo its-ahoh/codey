@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef } from 'react'
 import { apiService } from '../services/api'
-import type { Chat, ChatSelection, ChatMessage, ToolCallEntry, FileAttachment } from '../types'
+import type { Chat, ChatSelection, ChatMessage, ToolCallEntry, FileAttachment, TaskBrief } from '../types'
 import type { ChatStreamEvent } from '../../../packages/gateway/src/chat-runner'
 
 interface InFlight {
@@ -40,6 +40,7 @@ type Action =
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
   | { type: 'patchContextPanelOpen'; chatId: string; open: boolean | null }
+  | { type: 'patchTaskBrief'; chatId: string; brief: TaskBrief }
   | { type: 'permissionRequest'; chatId: string; toolNames: string[] }
   | { type: 'dismissPermission'; chatId: string }
 
@@ -81,6 +82,12 @@ function reducer(state: State, action: Action): State {
       const chat = state.chats[action.chatId]
       if (!chat) return state
       const updated: Chat = { ...chat, contextPanelOpen: action.open ?? undefined }
+      return { ...state, chats: { ...state.chats, [chat.id]: updated } }
+    }
+    case 'patchTaskBrief': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      const updated: Chat = { ...chat, taskBrief: action.brief }
       return { ...state, chats: { ...state.chats, [chat.id]: updated } }
     }
     case 'permissionRequest': {
@@ -255,6 +262,7 @@ interface ChatsContextValue {
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
   setAgentModel: (chatId: string, agent: string | null, model: string | null) => Promise<void>
   setContextPanelOpen: (chatId: string, open: boolean | null) => Promise<void>
+  generateTaskBrief: (chatId: string) => Promise<TaskBrief | null>
   linkChannel: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<void>
   unlinkChannel: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<void>
   sendMessage: (chatId: string, text: string, attachments?: FileAttachment[]) => Promise<void>
@@ -428,6 +436,11 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // The server-side write happens in the background.
       dispatch({ type: 'patchContextPanelOpen', chatId, open })
       try { await apiService.chats.updateContextPanelOpen(chatId, open) } catch { /* swallow */ }
+    },
+    async generateTaskBrief(chatId) {
+      const brief = await apiService.chats.taskBrief(chatId)
+      if (brief) dispatch({ type: 'patchTaskBrief', chatId, brief })
+      return brief
     },
     async linkChannel(chatId, channel, channelUserId) {
       await apiService.linkChat(chatId, channel, channelUserId)
