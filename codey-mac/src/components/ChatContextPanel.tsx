@@ -4,8 +4,9 @@ import { C } from '../theme'
 import { parseTeamMessage } from './teamMessageFormat'
 import { ToolDetail, DiffView, normalizeTool } from './toolFormat'
 import { QuickQuestionView } from './QuickQuestionView'
+import { TaskHud } from './TaskHud'
 
-export type ContextPanelTab = 'current' | 'files' | 'qq'
+export type ContextPanelTab = 'current' | 'task' | 'files' | 'qq'
 
 interface Props {
   chat: Chat
@@ -36,6 +37,12 @@ interface Props {
   onTabChange?: (tab: ContextPanelTab) => void
   /** Focused when the QQ tab opens via a trigger. */
   qqInputRef?: React.RefObject<HTMLTextAreaElement>
+  /** Called after the user clicks "回答" in the Task HUD — should focus the composer. */
+  onAnswerNextAction: () => void
+  /** Whether the task brief is currently being generated. */
+  taskBriefLoading: boolean
+  /** Called when the task tab becomes visible — triggers brief generation. */
+  onTaskTabShown: () => void
 }
 
 const fmtTime = (ts: number) =>
@@ -53,6 +60,7 @@ export const ChatContextPanel: React.FC<Props> = ({
   effectiveAgent, effectiveModel, workerName, teamName, workingDir,
   width, onFollowLatest, onClose, onResize, onRevealFile, onScrollToStep, isTurnStreaming,
   activeTab, onTabChange, qqInputRef,
+  onAnswerNextAction, taskBriefLoading, onTaskTabShown,
 }) => {
   const turn: ChatMessage | undefined = selectedTurnId
     ? chat.messages.find(m => m.id === selectedTurnId && m.role === 'assistant')
@@ -78,6 +86,8 @@ export const ChatContextPanel: React.FC<Props> = ({
   const [localTab, setLocalTab] = React.useState<ContextPanelTab>('current')
   const tab: ContextPanelTab = activeTab ?? localTab
   const setTab = (t: ContextPanelTab) => { onTabChange ? onTabChange(t) : setLocalTab(t) }
+
+  React.useEffect(() => { if (tab === 'task') onTaskTabShown() }, [tab])
 
   // Resize drag handler
   const onResizerMouseDown = (e: React.MouseEvent) => {
@@ -147,6 +157,12 @@ export const ChatContextPanel: React.FC<Props> = ({
         >File changes</button>
         <button
           role="tab"
+          aria-selected={tab === 'task'}
+          style={{ ...styles.tab, ...(tab === 'task' ? styles.tabActive : null) }}
+          onClick={() => setTab('task')}
+        >任务</button>
+        <button
+          role="tab"
           aria-selected={tab === 'qq'}
           style={{ ...styles.tab, ...(tab === 'qq' ? styles.tabActive : null) }}
           onClick={() => setTab('qq')}
@@ -156,6 +172,15 @@ export const ChatContextPanel: React.FC<Props> = ({
       <div style={styles.body}>
         {tab === 'qq' ? (
           <QuickQuestionView chatId={chat.id} inputRef={qqInputRef} />
+        ) : tab === 'task' ? (
+          <TaskHud
+            brief={chat.taskBrief}
+            loading={taskBriefLoading}
+            onAnswer={(messageId) => {
+              if (messageId) onScrollToStep(messageId, 0)
+              onAnswerNextAction()
+            }}
+          />
         ) : tab === 'current' ? (
           <>
             {/* Run target */}
