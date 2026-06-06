@@ -1,5 +1,6 @@
-import { ChatMessage } from './types/chat';
-import { AideOptions, runAide } from './aide';
+import { ChatMessage, Chat, TaskBrief } from './types/chat';
+import { AideOptions, runAide, runAideJson } from './aide';
+import { coerceTaskBrief } from './task-brief';
 
 /** Hard cap on characters per message included in a summary prompt — guards against runaway prompts. */
 const MAX_MSG_CHARS = 4000;
@@ -91,8 +92,64 @@ function sanitizeTitle(raw: string): string {
   // Drop a leading "Title:" style label some models prepend.
   t = t.replace(/^(title|标题)\s*[:：]\s*/i, '');
   // Strip a single layer of wrapping quotes or backticks.
-  t = t.replace(/^["'`“”]+|["'`“”]+$/g, '').trim();
+  t = t.replace(/^["'`""]+|["'`""]+$/g, '').trim();
   t = t.replace(/\s+/g, ' ');
   if (t.length > MAX_TITLE_CHARS) t = t.slice(0, MAX_TITLE_CHARS).trim() + '…';
   return t;
+}
+
+/** Build a compact transcript (messages + key tool-call headlines) for the brief prompt. */
+function briefTranscript(chat: Chat): string {
+  return chat.messages
+    .map(m => {
+      const body = m.content.length > MAX_MSG_CHARS ? m.content.slice(0, MAX_MSG_CHARS) + '… [truncated]' : m.content;
+      const tools = (m.toolCalls ?? [])
+        .filter(t => t.type === 'tool_start' || t.type === 'tool_end')
+        .map(t => `  · ${t.tool ?? 'tool'}: ${t.message}`)
+        .slice(0, 20)
+        .join('\n');
+      return `[${m.role} @${m.timestamp}]\n${body}${tools ? '\n' + tools : ''}`;
+    })
+    .join('\n\n');
+}
+
+/**
+ * Produce a structured Task HUD brief (goal / state / next action / timeline)
+ * from a chat. Output is validated by coerceTaskBrief, so a malformed model
+ * response degrades to a minimal brief (goal = chat title) rather than throwing.
+ */
+export async function generateTaskBrief(chat: Chat, opts: AideOptions): Promise<TaskBrief> {
+  const fallbackGoal = chat.title?.trim() || 'Untitled task';
+
+  const lines: string[] = [];
+  lines.push('You summarize a developer chat into a compact task dashboard.');
+  lines.push('Output ONLY a JSON object (no markdown, no prose) with this exact shape:');
+  lines.push('{');
+  lines.push('  "goal": string,                       // the task in one line');
+  lines.push('  "state": { "progress": number,        // 0-100');
+  lines.push('             "stepLabel": string,        // e.g. "step 3 / 5" (optional)');
+  lines.push('             "status": "working"|"waiting"|"blocked"|"done" },');
+  lines.push('  "nextAction": { "text": string,       // single most useful next step or open question');
+  lines.push('                  "detail": string,      // one-line elaboration (optional)');
+  lines.push('                  "messageId": string }, // id of the assistant message that raised it (optional)');
+  lines.push('  "timeline": [ { "kind": "progress"|"action"|"decision"|"dropped",');
+  lines.push('                  "text": string, "why": string (optional),');
+  lines.push('                  "when": number (epoch ms, optional),');
+  lines.push('                  "detail": [string] } ]  // sub-bullets, ONLY on the first (newest) entry');
+  lines.push('}');
+  lines.push('');
+  lines.push('Rules:');
+  lines.push('- timeline is REVERSE-chronological: newest first. The first entry is the current/most-recent progress; give it 2-4 `detail` bullets summarizing what just happened. Older entries: no detail.');
+  lines.push('- "status" is "waiting" if the assistant is blocked on a user decision/answer, "done" if the task is finished, "blocked" if stuck on an external problem, else "working".');
+  lines.push('- Use the user\'s language. Keep every string short.');
+  lines.push('- messageId, when: only include if you can ground them in the transcript markers ([role @timestamp], message ids); otherwise omit.');
+  lines.push('');
+  lines.push('## Chat title');
+  lines.push(fallbackGoal);
+  lines.push('');
+  lines.push('## Transcript');
+  lines.push(briefTranscript(chat));
+
+  const raw = await runAideJson(lines.join('\n'), opts);
+  return coerceTaskBrief(raw, fallbackGoal);
 }
