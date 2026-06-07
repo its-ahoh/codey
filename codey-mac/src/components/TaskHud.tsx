@@ -22,7 +22,7 @@ const clamp = (lines: number): React.CSSProperties => ({
 })
 
 /** History entries shown before the "Show all" toggle kicks in. */
-const TIMELINE_COLLAPSED = 5
+const TIMELINE_COLLAPSED = 3
 
 export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
   const [timelineExpanded, setTimelineExpanded] = React.useState(false)
@@ -44,15 +44,13 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
     <div style={{ fontSize: 13, color: C.fg }}>
       {loading && <div style={{ padding: '6px 16px', fontSize: 11, color: C.fg3 }}>Updating…</div>}
 
-      {/* Goal */}
-      <div style={{ ...sect, borderTop: 'none' }}>
-        {label('Goal')}
+      {/* Goal (no title — the goal text is the panel's heading) */}
+      <div style={{ ...sect, borderTop: 'none', paddingBottom: 12 }}>
         <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.4, ...clamp(2) }}>{brief.goal}</div>
       </div>
 
-      {/* Current State */}
-      <div style={sect}>
-        {label('Current State')}
+      {/* Current State (no title — compact progress row) */}
+      <div style={{ ...sect, paddingTop: 10, paddingBottom: 10 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div><b style={{ fontSize: 15 }}>{brief.state.progress}%</b>{brief.state.stepLabel ? ` · ${brief.state.stepLabel}` : ''}</div>
           <span style={{ fontSize: 12, padding: '3px 9px', borderRadius: 6, color: toneColor(sm.tone),
@@ -65,16 +63,16 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
 
       {/* Next Action */}
       {brief.nextAction && (
-        <div style={{ ...sect, background: C.surface2 }}>
+        <div style={{ ...sect, background: C.surface2, padding: '18px 16px' }}>
           {label('Next Action')}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, ...clamp(2) }}>{brief.nextAction.text}</div>
-              {brief.nextAction.detail && <div style={{ fontSize: 11, color: C.fg2, marginTop: 3, ...clamp(1) }}>{brief.nextAction.detail}</div>}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, lineHeight: 1.45, ...clamp(3) }}>{brief.nextAction.text}</div>
+              {brief.nextAction.detail && <div style={{ fontSize: 11.5, color: C.fg2, marginTop: 5, lineHeight: 1.45, ...clamp(2) }}>{brief.nextAction.detail}</div>}
             </div>
             <button onClick={() => onAnswer(brief.nextAction?.messageId)}
               style={{ background: C.accent, color: C.onAccent, border: 'none', borderRadius: 7,
-                padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none' }}>
               Answer
             </button>
           </div>
@@ -85,16 +83,16 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
       <div style={sect}>
         {label('Timeline')}
         {head && (
-          <div style={{ background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 8, padding: '9px 10px', marginBottom: 8 }}>
+          <div style={{ background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 8, padding: '12px 13px', marginBottom: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <b>Latest</b>
+              <b style={{ fontSize: 13 }}>Latest</b>
               {head.when && <span style={{ fontSize: 10, color: C.accent }}>{formatAgo(head.when)}</span>}
             </div>
             {head.detail?.length ? (
-              <ul style={{ listStyle: 'none', margin: '7px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {head.detail.map((d, i) => <li key={i} style={{ fontSize: 12, color: C.fg2, ...clamp(2) }}>· {d}</li>)}
+              <ul style={{ listStyle: 'none', margin: '9px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {head.detail.map((d, i) => <li key={i} style={{ fontSize: 12.5, color: C.fg2, lineHeight: 1.45, ...clamp(3) }}>· {d}</li>)}
               </ul>
-            ) : <div style={{ fontSize: 12, color: C.fg2, marginTop: 4, ...clamp(2) }}>{head.text}</div>}
+            ) : <div style={{ fontSize: 12.5, color: C.fg2, marginTop: 6, lineHeight: 1.45, ...clamp(3) }}>{head.text}</div>}
           </div>
         )}
         {shownRest.map((e, i) => (
