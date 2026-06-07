@@ -8,6 +8,7 @@ export default defineConfig({
     include: [
       'src/workspace.test.ts',
       'src/workers.test.ts',
+      'src/team-display.test.ts',
       'src/discussion/files.test.ts',
       'src/discussion/control.test.ts',
       'src/discussion/parallel-advisor.test.ts',
