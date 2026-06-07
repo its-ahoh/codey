@@ -207,7 +207,7 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
             // PCM payload — use the shared helper's raw bytes
             let dest = base.advanced(by: 44)
             payload.withUnsafeBytes { src in
-                memcpy(dest, src.baseAddress!, payload.count)
+                _ = memcpy(dest, src.baseAddress!, payload.count)
             }
         }
         return data

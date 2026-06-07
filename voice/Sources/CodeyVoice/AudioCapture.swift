@@ -154,19 +154,15 @@ final class AudioCapture {
             chunk = mono
         }
 
-        // Emit the resampled chunk for realtime consumers (e.g. WebSocket
-        // transcription engine) before accumulating into the full buffer.
-        // Always accumulate; additionally emit when a consumer is subscribed.
-        onChunk?(chunk)
-
         bufferLock.lock()
         pcmBuffer.append(contentsOf: chunk)
         let totalCount = pcmBuffer.count
         bufferLock.unlock()
 
-        // Emit chunk for realtime streaming consumers (e.g. WebSocket engine).
-        // Fires outside the lock so the consumer can take its time without
-        // blocking the audio tap.
+        // Emit the resampled chunk for realtime streaming consumers (e.g. the
+        // WebSocket transcription engine). Always accumulate above; additionally
+        // emit exactly once here when a consumer is subscribed. Fires outside the
+        // lock so the consumer can take its time without blocking the audio tap.
         if let cb = onChunk {
             cb(chunk)
         }

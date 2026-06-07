@@ -93,7 +93,7 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
         let sessionWasActive = stateLock.withLock { _isSessionActive }
 
         if sessionWasActive {
-            return try await commitAndRequest()
+            return try await commitAndAwaitTranscript()
         }
 
         print("realtime: session not active — falling back to batch API")
@@ -197,9 +197,13 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
 
     // MARK: - WebSocket commit + await transcript
 
-    /// Send `input_audio_buffer.commit` followed by `response.create`, then
-    /// await the final transcript from the server event stream.
-    private func commitAndRequest() async throws -> String {
+    /// Send `input_audio_buffer.commit`, then await the final transcript from the
+    /// server event stream. For a transcription session (?intent=transcription)
+    /// the commit alone triggers transcription; the result is delivered via
+    /// `conversation.item.input_audio_transcription.{delta,completed}`. We do NOT
+    /// send `response.create` — transcription sessions reject it (and it would
+    /// surface as a server `error` event, failing the utterance).
+    private func commitAndAwaitTranscript() async throws -> String {
         let ws = stateLock.withLock { () -> URLSessionWebSocketTask? in
             // Reset accumulated state for a fresh utterance.
             _accumulatedText = ""
@@ -213,7 +217,9 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
         return try await withCheckedThrowingContinuation { continuation in
             self.stateLock.withLock { self._transcribeContinuation = continuation }
 
-            // 1. Commit the audio buffer so the server starts transcribing.
+            // Commit the audio buffer so the server starts transcribing. The
+            // receive loop resolves this continuation when the terminal
+            // transcription event (`.completed`) arrives.
             let commit: [String: Any] = ["type": "input_audio_buffer.commit"]
             guard let commitData = try? JSONSerialization.data(withJSONObject: commit) else {
                 self.stateLock.withLock { self._transcribeContinuation = nil }
@@ -224,23 +230,8 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
                 if let error = error {
                     stateLock.withLock { self._transcribeContinuation = nil }
                     continuation.resume(throwing: TranscriptionError.apiError(0, "commit: \(error.localizedDescription)"))
-                    return
                 }
-
-                // 2. Request the response to get the transcript delivered.
-                let create: [String: Any] = ["type": "response.create"]
-                guard let createData = try? JSONSerialization.data(withJSONObject: create) else {
-                    stateLock.withLock { self._transcribeContinuation = nil }
-                    continuation.resume(throwing: TranscriptionError.badResponse)
-                    return
-                }
-                ws.send(.data(createData)) { [self] error in
-                    if let error = error {
-                        stateLock.withLock { self._transcribeContinuation = nil }
-                        continuation.resume(throwing: TranscriptionError.apiError(0, "response.create: \(error.localizedDescription)"))
-                    }
-                    // Success — the receive loop delivers the transcript events.
-                }
+                // Success — the receive loop delivers the transcript events.
             }
         }
     }
@@ -306,10 +297,11 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
             }
 
         case "conversation.item.input_audio_transcription.completed":
+            // Terminal event for a transcription session (?intent=transcription):
+            // the final transcript is delivered here, so this is what resolves
+            // the pending transcribe() continuation.
             let transcript = (obj["transcript"] as? String) ?? ""
-            stateLock.withLock {
-                _finalTranscript = transcript
-            }
+            finishTranscript(explicit: transcript.isEmpty ? nil : transcript)
 
         case "response.text.done":
             if let text = obj["text"] as? String {
@@ -317,19 +309,10 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
             }
 
         case "response.done":
-            let transcript = stateLock.withLock { () -> String in
-                let t = _finalTranscript ?? _accumulatedText
-                _isSessionActive = false
-                return t
-            }
-            let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            stateLock.withLock {
-                if let cont = _transcribeContinuation {
-                    _transcribeContinuation = nil
-                    cont.resume(returning: trimmed)
-                }
-            }
+            // Terminal event for a full realtime (response) session — kept as a
+            // fallback for endpoints that drive the response API instead of the
+            // transcription intent.
+            finishTranscript(explicit: nil)
 
         case "error":
             let msg = (obj["error"] as? [String: Any])?["message"] as? String
@@ -350,6 +333,25 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
         default:
             print("realtime: unhandled event type=\(type)")
         }
+    }
+
+    /// Resolve the pending `transcribe()` continuation with the final transcript.
+    /// `explicit` is the transcript carried by a terminal event (transcription
+    /// `.completed`); when nil we fall back to the last `_finalTranscript`, then
+    /// the accumulated deltas. Marks the session inactive and resumes outside the
+    /// lock. No-ops if no transcribe is in flight (idempotent across terminal
+    /// events, e.g. both `.completed` and a later `response.done`).
+    private func finishTranscript(explicit: String?) {
+        let (cont, result) = stateLock.withLock { () -> (CheckedContinuation<String, Error>?, String) in
+            if let explicit = explicit { _finalTranscript = explicit }
+            let text = (_finalTranscript ?? _accumulatedText)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            _isSessionActive = false
+            let c = _transcribeContinuation
+            _transcribeContinuation = nil
+            return (c, text)
+        }
+        cont?.resume(returning: result)
     }
 
     // MARK: - Internal: Connection management
