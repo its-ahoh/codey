@@ -2,10 +2,15 @@ import type { Chat, TaskBrief, TaskEvent } from '../types';
 
 export type StatusTone = 'accent' | 'green' | 'yellow' | 'red';
 
-/** A brief is stale when missing, or when the chat changed after it was generated. */
+/**
+ * A brief is stale when missing, or when a new message arrived after it was
+ * generated. Keyed off the last message's timestamp (not chat.updatedAt) so
+ * unrelated chat mutations — e.g. toggling the panel — don't trigger a refresh.
+ */
 export function isTaskBriefStale(chat: Chat): boolean {
   if (!chat.taskBrief) return true;
-  return chat.updatedAt > chat.taskBrief.generatedAt;
+  const last = chat.messages[chat.messages.length - 1];
+  return !!last && last.timestamp > chat.taskBrief.generatedAt;
 }
 
 export function statusMeta(status: TaskBrief['state']['status']): { label: string; tone: StatusTone } {
