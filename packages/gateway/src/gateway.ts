@@ -3804,6 +3804,7 @@ Example: /model gpt-4.1 write a Python script`;
       let tokens: number | undefined;
       let teamChoices: string[] | undefined;
       let agentUserQuestion: AgentResponse['userQuestion'];
+      let singleAgentResponse: AgentResponse | null | undefined;
       if (chat.selection.type === 'team') {
         // Resolve the team from the chat's workspace.json (read above), not from
         // the active workspace, so a chat in workspace B uses B's team config
@@ -3844,6 +3845,7 @@ Example: /model gpt-4.1 write a Python script`;
           context: { workingDir },
           skipPermissions: this.getSkipPermissions(),
           onStream,
+          onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
           onStatus,
           signal: abortController.signal,
           resumeSessionId,
@@ -3865,12 +3867,14 @@ Example: /model gpt-4.1 write a Python script`;
             context: { workingDir },
             skipPermissions: this.getSkipPermissions(),
             onStream,
+            onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
             onStatus,
             signal: abortController.signal,
             resumeSessionId: undefined,
             newSessionId,
           });
         }
+        singleAgentResponse = response;
         output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
         tokens = (response as any)?.tokens?.total;
         // Persist the anchor on success for next-turn resume.
@@ -3923,6 +3927,7 @@ Example: /model gpt-4.1 write a Python script`;
         id: randomUUID(),
         role: 'assistant',
         content: output,
+        thinking: singleAgentResponse?.thinking,
         timestamp: Date.now(),
         toolCalls,
         isComplete: true,
@@ -3950,7 +3955,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
 
-      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion });
+      sink({ type: 'done', chatId, response: output, thinking: singleAgentResponse?.thinking, tokens, durationSec, title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion });
 
       // Mirror this turn to every attached route except the originating one.
       // Mac-origin uses a synthetic '__mac__' channel that matches no real
