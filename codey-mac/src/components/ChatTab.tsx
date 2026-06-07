@@ -251,6 +251,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
   const pendingLinkChannelRef = useRef<null | 'telegram' | 'discord' | 'imessage'>(null)
   const [linkMenuOpen, setLinkMenuOpen] = useState(false)
   const [followLatest, setFollowLatest] = useState(true)
+  // Selected option labels for the active multi-select AskUserQuestion. Reset
+  // whenever a new message arrives (the prompt is always the last message).
+  const [multiChoice, setMultiChoice] = useState<string[]>([])
   const [selectedTurnIdState, setSelectedTurnIdState] = useState<string | null>(null)
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
   const [taskBriefLoading, setTaskBriefLoading] = useState(false)
@@ -374,6 +377,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     })()
   }, [isGatewayRunning])
   const lastMsg = chat?.messages?.[chat.messages.length - 1]
+  // A fresh prompt clears any pending multi-select picks from a prior question.
+  useEffect(() => { setMultiChoice([]) }, [chatId, lastMsg?.id])
   const prevChatIdRef = useRef<string | null>(null)
   useEffect(() => {
     if (!followLatest) return
@@ -388,6 +393,21 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [flight, chatId])
+  // Refresh the Status task brief on each turn boundary — when a turn is sent
+  // and again when it completes — while the Status tab is open, so it reflects
+  // the live history. The tab-switch trigger alone misses these: nothing
+  // re-fires during a run, and a completed assistant message keeps its
+  // send-time timestamp so the staleness check can't see the finished turn.
+  // Key off the boolean (not `flight` itself, which churns every token).
+  const turnActive = !!flight
+  const prevTurnActiveRef = useRef(turnActive)
+  useEffect(() => {
+    const toggled = prevTurnActiveRef.current !== turnActive
+    prevTurnActiveRef.current = turnActive
+    if (!toggled || panelTab !== 'task' || !chat) return
+    setTaskBriefLoading(true)
+    generateTaskBrief(chat.id).finally(() => setTaskBriefLoading(false))
+  }, [turnActive, panelTab, chatId])
   // When a turn is interrupted, lift the original prompt back into the input
   // and focus the textarea so the user can edit/resend without retyping.
   const restoreText = state.pendingRestores[chatId]
@@ -963,19 +983,59 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 && msg.userQuestion
                 && msg.userQuestion.options.length > 0
                 && (
-                  <div style={styles.choiceRow}>
-                    {msg.userQuestion.options.map((opt, i) => (
+                  msg.userQuestion.multiSelect ? (
+                    <div style={styles.choiceRow}>
+                      {msg.userQuestion.options.map((opt, i) => {
+                        const picked = multiChoice.includes(opt.label)
+                        return (
+                          <button
+                            key={i}
+                            style={{
+                              ...styles.choiceButton,
+                              ...(picked ? styles.choiceButtonPicked : null),
+                            }}
+                            disabled={isSending || !!flight}
+                            onClick={() => setMultiChoice(prev =>
+                              prev.includes(opt.label)
+                                ? prev.filter(l => l !== opt.label)
+                                : [...prev, opt.label]
+                            )}
+                          >
+                            <span style={styles.choiceLabel}>
+                              <span style={styles.choiceCheck}>{picked ? '☑' : '☐'}</span>
+                              {opt.label}
+                            </span>
+                            {opt.description && <span style={styles.choiceDesc}>{opt.description}</span>}
+                          </button>
+                        )
+                      })}
                       <button
-                        key={i}
-                        style={styles.choiceButton}
-                        disabled={isSending || !!flight}
-                        onClick={() => { void sendMessage(chat.id, opt.label) }}
+                        style={{
+                          ...styles.choiceSubmit,
+                          opacity: multiChoice.length === 0 ? 0.5 : 1,
+                          cursor: multiChoice.length === 0 ? 'default' : 'pointer',
+                        }}
+                        disabled={isSending || !!flight || multiChoice.length === 0}
+                        onClick={() => { void sendMessage(chat.id, multiChoice.join(', ')) }}
                       >
-                        <span style={styles.choiceLabel}>{opt.label}</span>
-                        {opt.description && <span style={styles.choiceDesc}>{opt.description}</span>}
+                        Submit{multiChoice.length > 0 ? ` (${multiChoice.length})` : ''}
                       </button>
-                    ))}
-                  </div>
+                    </div>
+                  ) : (
+                    <div style={styles.choiceRow}>
+                      {msg.userQuestion.options.map((opt, i) => (
+                        <button
+                          key={i}
+                          style={styles.choiceButton}
+                          disabled={isSending || !!flight}
+                          onClick={() => { void sendMessage(chat.id, opt.label) }}
+                        >
+                          <span style={styles.choiceLabel}>{opt.label}</span>
+                          {opt.description && <span style={styles.choiceDesc}>{opt.description}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )
                 )
               }
               {msg.role === 'assistant'
@@ -1379,8 +1439,28 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column' as const,
     gap: 2,
   },
+  choiceButtonPicked: {
+    border: `1px solid ${C.accent}`,
+    background: C.accentDim,
+  },
+  choiceSubmit: {
+    alignSelf: 'flex-start' as const,
+    padding: '6px 16px',
+    borderRadius: 6,
+    border: 'none',
+    background: C.accent,
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: 600 as const,
+  },
   choiceLabel: {
     fontWeight: 500 as const,
+    display: 'flex',
+    alignItems: 'center' as const,
+    gap: 6,
+  },
+  choiceCheck: {
+    fontSize: 13,
   },
   choiceDesc: {
     fontSize: 11,

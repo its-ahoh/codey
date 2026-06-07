@@ -37,3 +37,5 @@ voice/*.bin
 
 # Stray compiled output that shouldn't sit at repo root
 /gateway.js
+
+.superpowers/
