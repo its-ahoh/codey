@@ -25,11 +25,11 @@ final class HudOverlay {
     private var label: NSTextField?
     private var spinner: NSProgressIndicator?
     private var hideWorkItem: DispatchWorkItem?
-    /// Bumped on every `show()`. A hide's fade-out completion captures the value
-    /// at hide time and only `orderOut`s if it still matches — so a `show()` that
-    /// interleaves with an in-flight fade cancels the stale teardown instead of
-    /// having the panel yanked out from under it.
-    private var showGeneration = 0
+    /// The currently desired visibility, set by `show()`/`hide()`. A hide's
+    /// fade-out completion checks this before calling `orderOut`: if a `show()`
+    /// ran during the ~0.18s fade it will have flipped this back to `true`, so the
+    /// stale teardown is skipped instead of yanking the panel out from under us.
+    private var wantVisible = false
 
     private let pillHeight: CGFloat = 44
     private let pillSidePadding: CGFloat = 16
@@ -56,9 +56,9 @@ final class HudOverlay {
 
         hideWorkItem?.cancel()
         hideWorkItem = nil
-        // Invalidate any in-flight hide fade-out so its completion won't orderOut
-        // the panel we're about to (re)show.
-        showGeneration &+= 1
+        // Mark the panel as wanted on-screen so an in-flight hide fade-out's
+        // completion won't orderOut the panel we're about to (re)show.
+        wantVisible = true
 
         switch mode {
         case .recording:
@@ -149,12 +149,13 @@ final class HudOverlay {
         hideWorkItem?.cancel()
         hideWorkItem = nil
         guard let panel = panel, panel.isVisible else { return }
-        let gen = showGeneration
+        wantVisible = false
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.18
             panel.animator().alphaValue = 0
         } completionHandler: { [weak self] in
-            guard let self = self, self.showGeneration == gen else { return }
+            // Skip the teardown if a show() re-asserted visibility mid-fade.
+            guard let self = self, !self.wantVisible else { return }
             self.panel?.orderOut(nil)
         }
     }
