@@ -36,7 +36,11 @@ export interface ParseResult {
   stripped: string;
 }
 
-const MARKER_RE = /^\s*\[(FACT|DECISION|OPEN|HANDOFF(?:\s*:\s*[^\]]+)?)\]\s*:\s*(.+?)\s*$/i;
+// Workers often emit markers as list items (`- [DECISION]: …`, `1. [FACT]: …`)
+// rather than at the start of the line. Tolerate an optional leading bullet so
+// the tag never leaks into the user-visible prose. The required `]: <body>`
+// shape excludes real markdown checkboxes like `- [ ]` / `- [x]`.
+const MARKER_RE = /^\s*(?:[-*•]\s+|\d+[.)]\s+)?\[(FACT|DECISION|OPEN|HANDOFF(?:\s*:\s*[^\]]+)?)\]\s*:\s*(.+?)\s*$/i;
 
 /**
  * Pull `[FACT]:`, `[DECISION]:`, `[OPEN]:`, `[HANDOFF: name]:` markers out

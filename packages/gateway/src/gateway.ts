@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -2268,13 +2268,15 @@ Example: /model gpt-4.1 write a Python script`;
   private formatManagerParts(
     parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>,
     finalSummary: string,
-    truncatePerStep?: number,
+    previewChars?: number,
   ): string {
     const head = finalSummary ? `🧭 Manager summary: ${finalSummary}\n\n` : '';
     const body = parts
       .map(p => {
         const label = p.isRevision ? `${p.worker} (revision)` : p.worker;
-        const out = truncatePerStep ? p.output.substring(0, truncatePerStep) : p.output;
+        // Condense each step to its last paragraph (~previewChars) so the run
+        // reads as a tight summary instead of a wall of per-step output.
+        const out = previewChars ? lastParagraphPreview(p.output, previewChars) : p.output;
         return `### Step ${p.step}: ${label}\n\n${out}`;
       })
       .join('\n\n---\n\n');
@@ -2423,7 +2425,7 @@ Example: /model gpt-4.1 write a Python script`;
         });
       }
 
-      const text = this.formatManagerParts(result.parts, result.finalSummary, /*truncatePerStep*/ 500);
+      const text = this.formatManagerParts(result.parts, result.finalSummary, /*previewChars*/ 200);
       const bbBlock = result.blackboard.renderForUser();
       const body = `📊 Team **${teamName}** results\n\n${text}`;
       await this.sendResponse({
@@ -2624,7 +2626,7 @@ Example: /model gpt-4.1 write a Python script`;
       await this.sendResponse({
         chatId: message.chatId,
         channel: message.channel,
-        text: this.formatManagerParts(pending.partsSoFar, turn.final_summary ?? '', 500),
+        text: this.formatManagerParts(pending.partsSoFar, turn.final_summary ?? '', 200),
       });
       return;
     }
@@ -2712,7 +2714,7 @@ Example: /model gpt-4.1 write a Python script`;
     );
     const finalSummary = closing.fallback ? '' : (closing.final_summary ?? '');
     const resumeBlock = resumeBoard.renderForUser();
-    const resumeFormatted = this.formatManagerParts(newParts, finalSummary, 500);
+    const resumeFormatted = this.formatManagerParts(newParts, finalSummary, 200);
     this.persistBlackboardDecisions(resumeBoard, pending.teamName);
     await this.sendResponse({
       chatId: message.chatId,
