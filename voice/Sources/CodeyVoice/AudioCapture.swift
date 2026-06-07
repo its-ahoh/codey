@@ -22,6 +22,13 @@ final class AudioCapture {
     /// Called with the full PCM buffer when recording stops.
     var onRecordingComplete: (([Float]) -> Void)?
 
+    /// Called from the audio tap thread with each freshly resampled 16 kHz mono
+    /// chunk (~20-50 ms). Receiver must hop to main if it touches AppKit. Used by
+    /// the realtime transcription engine to forward audio over WebSocket as it
+    /// arrives. Always-accumulate + additionally-emit: the full buffer snapshot
+    /// remains available via currentSamplesSnapshot(). Nil = batch-only behavior.
+    var onChunk: (([Float]) -> Void)?
+
     /// Called from the audio tap thread (~every buffer, ~20-50ms) with a 0..1
     /// RMS level of the latest input. Receiver must hop to main if it touches
     /// AppKit. Used by the HUD waveform indicator.
@@ -151,6 +158,14 @@ final class AudioCapture {
         pcmBuffer.append(contentsOf: chunk)
         let totalCount = pcmBuffer.count
         bufferLock.unlock()
+
+        // Emit the resampled chunk for realtime streaming consumers (e.g. the
+        // WebSocket transcription engine). Always accumulate above; additionally
+        // emit exactly once here when a consumer is subscribed. Fires outside the
+        // lock so the consumer can take its time without blocking the audio tap.
+        if let cb = onChunk {
+            cb(chunk)
+        }
 
         // Auto-stop at buffer cap
         if Double(totalCount) / sampleRate >= maxDurationSeconds {

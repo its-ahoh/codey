@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-06-07
+
+### Added
+- **Real-time voice transcription** — a new **Realtime (WebSocket)** voice provider that streams audio to the OpenAI Realtime transcription API as you speak, surfacing partial transcripts during recording and a final transcript shortly after you stop. Opt-in alongside the existing Cloud API and on-device (WhisperKit) providers, configured from the Whisper settings tab (shares the Cloud API key; WebSocket URL and model are configurable). If the WebSocket connection fails mid-utterance, transcription transparently falls back to the batch HTTP API.
+
 ## [0.6.3] - 2026-06-02
 
 ### Added
