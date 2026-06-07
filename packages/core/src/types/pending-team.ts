@@ -27,6 +27,8 @@ export type PendingTeamState =
       /** Warm worker sessions captured at pause; rehydrated on resume so the
        *  next step's prompt continues `--resume`-ing instead of re-bootstrapping. */
       workerAnchors?: Record<string, WorkerAnchor>;
+      /** Per-step extended-thinking captured before the pause. */
+      thinkingByStep?: Record<number, string>;
     }
   | {
       teamName: string;
@@ -46,4 +48,6 @@ export type PendingTeamState =
       /** Warm worker sessions captured at pause; rehydrated on resume so the
        *  next step's prompt continues `--resume`-ing instead of re-bootstrapping. */
       workerAnchors?: Record<string, WorkerAnchor>;
+      /** Per-step extended-thinking captured before the pause. */
+      thinkingByStep?: Record<number, string>;
     };

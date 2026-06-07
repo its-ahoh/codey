@@ -2035,7 +2035,7 @@ Example: /model gpt-4.1 write a Python script`;
       | { kind: 'route'; step: number; worker: string; reason: string; isRevision: boolean }
       | { kind: 'blackboard'; step: number; worker: string; summary: string }
     ) => void | Promise<void>,
-    runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string }>,
+    runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
   ): Promise<
     | { fallback: true; fallbackReason: string }
     | {
@@ -2045,6 +2045,7 @@ Example: /model gpt-4.1 write a Python script`;
         finalSummary: string;
         fallbackMidRun?: { reason: string };
         blackboard: TeamBlackboard;
+        thinkingByStep?: Record<number, string>;
       }
     | {
         fallback: false;
@@ -2060,6 +2061,7 @@ Example: /model gpt-4.1 write a Python script`;
           options?: string[];
         };
         blackboard: TeamBlackboard;
+        thinkingByStep?: Record<number, string>;
       }
   > {
     const workerManager = this.workspaceManager.getWorkerManager();
@@ -2074,6 +2076,7 @@ Example: /model gpt-4.1 write a Python script`;
     let finalSummary = '';
     let fallbackMidRun: { reason: string } | undefined;
     const blackboard = new TeamBlackboard();
+    const thinkingByStep: Record<number, string> = {};
 
     const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
     const seenWorkers = new Set<string>();
@@ -2147,6 +2150,7 @@ Example: /model gpt-4.1 write a Python script`;
               options: pendingArbitration.options,
             },
             blackboard,
+            thinkingByStep,
           };
         }
         if (turn.done || !turn.next) {
@@ -2192,6 +2196,7 @@ Example: /model gpt-4.1 write a Python script`;
         fallbackMidRun = { reason: `worker ${turnNext} failed: ${response.error ?? 'unknown'}` };
         break;
       }
+      if (response.thinking) thinkingByStep[step] = response.thinking;
       // Pull structured markers out before anything downstream sees the
       // output — users get clean prose, blackboard collects the structure.
       const ingested = blackboard.ingest(turnNext, step, response.output);
@@ -2249,7 +2254,7 @@ Example: /model gpt-4.1 write a Python script`;
       if (!closing.fallback) finalSummary = closing.final_summary ?? '';
     }
 
-    return { fallback: false, parts, finalSummary, fallbackMidRun, blackboard };
+    return { fallback: false, parts, finalSummary, fallbackMidRun, blackboard, thinkingByStep };
   }
 
   private composeStepTask(
@@ -2840,7 +2845,7 @@ Example: /model gpt-4.1 write a Python script`;
     opts: { forceAll?: boolean } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
-  ): Promise<{ response: string; tokens?: number; choices?: string[] }> {
+  ): Promise<{ response: string; tokens?: number; choices?: string[]; thinkingByStep?: Record<number, string> }> {
     if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
     }
@@ -3033,6 +3038,7 @@ Example: /model gpt-4.1 write a Python script`;
           blackboard: result.blackboard.toJSON(),
           askedAt: Date.now(),
           workerAnchors: this.snapshotWorkerAnchors(teamConv),
+          thinkingByStep: result.thinkingByStep,
         });
         const rendered5 = renderQuestion(askWorkerName, '', p.question, p.options);
         sink({ type: 'stream', chatId, token: rendered5.text });
@@ -3047,7 +3053,7 @@ Example: /model gpt-4.1 write a Python script`;
         const bbBlock = result.blackboard.renderForUser();
         const formatted = this.formatManagerParts(result.parts, result.finalSummary);
         this.persistBlackboardDecisions(result.blackboard, teamName);
-        return { response: bbBlock ? `${formatted}\n\n${bbBlock}` : formatted };
+        return { response: bbBlock ? `${formatted}\n\n${bbBlock}` : formatted, thinkingByStep: result.thinkingByStep };
       }
     }
 
@@ -3055,6 +3061,7 @@ Example: /model gpt-4.1 write a Python script`;
     let carry = prompt;
     const parts: string[] = [];
     const blackboard = new TeamBlackboard();
+    const thinkingByStep: Record<number, string> = {};
     for (let i = 0; i < team.members.length; i++) {
       if (signal?.aborted) break;
       const memberName = team.members[i];
@@ -3083,6 +3090,7 @@ Example: /model gpt-4.1 write a Python script`;
         parts.push(`### Step ${stepNum}: ${memberName}\n\n`);
         break;
       }
+      if (response.thinking) thinkingByStep[stepNum] = response.thinking;
       const ingested = blackboard.ingest(memberName, stepNum, response.output);
       const cleanOutput = ingested.stripped;
       const deltaSummary = blackboard.summarizeDelta(ingested.added);
@@ -3102,10 +3110,11 @@ Example: /model gpt-4.1 write a Python script`;
           askedAt: Date.now(),
           blackboard: blackboard.toJSON(),
           workerAnchors: this.snapshotWorkerAnchors(teamConv),
+          thinkingByStep,
         });
         const rendered6 = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
         sink({ type: 'stream', chatId, token: rendered6.text });
-        return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + rendered6.text : rendered6.text, choices: rendered6.choices };
+        return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + rendered6.text : rendered6.text, choices: rendered6.choices, thinkingByStep };
       }
       parts.push(`### Step ${stepNum}: ${memberName}\n\n${cleanOutput}`);
       carry = cleanOutput;
@@ -3113,7 +3122,7 @@ Example: /model gpt-4.1 write a Python script`;
     const bbBlock = blackboard.renderForUser();
     this.persistBlackboardDecisions(blackboard, teamName);
     const body = parts.join('\n\n---\n\n');
-    return { response: bbBlock ? `${body}\n\n${bbBlock}` : body };
+    return { response: bbBlock ? `${body}\n\n${bbBlock}` : body, thinkingByStep };
   }
 
   private formatUptime(seconds: number): string {
@@ -3814,6 +3823,7 @@ Example: /model gpt-4.1 write a Python script`;
       let output = '';
       let tokens: number | undefined;
       let teamChoices: string[] | undefined;
+      let teamThinkingByStep: Record<number, string> | undefined;
       let agentUserQuestion: AgentResponse['userQuestion'];
       let singleAgentResponse: AgentResponse | null | undefined;
       if (chat.selection.type === 'team') {
@@ -3848,6 +3858,7 @@ Example: /model gpt-4.1 write a Python script`;
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
+        teamThinkingByStep = r.thinkingByStep;
       } else {
         let response = await this.runWithFallback(agent, {
           prompt,
@@ -3939,6 +3950,7 @@ Example: /model gpt-4.1 write a Python script`;
         role: 'assistant',
         content: output,
         thinking: singleAgentResponse?.thinking,
+        thinkingByStep: teamThinkingByStep,
         timestamp: Date.now(),
         toolCalls,
         isComplete: true,
