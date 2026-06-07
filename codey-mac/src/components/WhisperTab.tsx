@@ -416,17 +416,54 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
     }
   }
 
+  // "API" groups the two cloud modes (batch Whisper + Realtime WebSocket); they
+  // share the same API key and only differ in transport. "Local" is on-device.
+  const isApi = voice.provider === 'api' || voice.provider === 'realtime'
+
   return (
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      <Section title="Voice input" right={
+      {/* Prominent enable card — makes on/off unmistakable (was a small
+          top-right toggle that was easy to overlook). */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '12px 14px', borderRadius: 10, marginBottom: 10,
+        background: voice.enabled ? C.accentDim : C.surface3,
+        border: `1px solid ${voice.enabled ? C.accent : C.border2}`,
+        transition: 'all 0.2s',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{
+            width: 9, height: 9, borderRadius: '50%', flexShrink: 0,
+            background: voice.enabled ? C.green : C.fg3,
+          }}/>
+          <div>
+            <div style={{ color: C.fg, fontSize: 14, fontWeight: 600 }}>
+              Voice input is {voice.enabled ? 'ON' : 'OFF'}
+            </div>
+            <div style={{ color: C.fg3, fontSize: 11, marginTop: 1 }}>
+              {voice.enabled
+                ? 'Press your hotkey anywhere to dictate at your cursor.'
+                : 'Turn on to enable system-wide dictation via the codey-voice helper.'}
+            </div>
+          </div>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {savedMsg && <span style={{ color: C.green, fontSize: 11 }}>{savedMsg}</span>}
-          <span style={{ color: C.fg3, fontSize: 11 }}>{voice.enabled ? 'Enabled' : 'Disabled'}</span>
           <Toggle on={voice.enabled} onChange={enabled => updateVoice({ enabled })}/>
         </div>
-      }/>
+      </div>
+
+      {!voice.enabled && (
+        <div style={{ color: C.fg3, fontSize: 11, marginBottom: 10 }}>
+          Settings below stay editable, but voice input won't run until it's turned on.
+        </div>
+      )}
+
+      {/* Everything below dims while disabled, but remains editable. */}
+      <div style={{ opacity: voice.enabled ? 1 : 0.45, transition: 'opacity 0.2s' }}>
+
       <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
         System-wide voice input via the native <code>codey-voice</code> helper (macOS). Press the hotkey anywhere to start/stop recording — transcribed text is injected at your cursor. Requires the helper app running with Microphone + Accessibility permissions.
       </div>
@@ -487,25 +524,36 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
           <span style={{ color: C.fg, fontSize: 13 }}>Provider</span>
           <div style={{ display: 'flex', gap: 6 }}>
             <button
-              onClick={() => updateVoice({ provider: 'api' })}
-              style={pillButton(voice.provider === 'api' ? 'primary' : 'ghost')}
-            >Cloud API</button>
-            <button
-              onClick={() => updateVoice({ provider: 'realtime' })}
-              style={pillButton(voice.provider === 'realtime' ? 'primary' : 'ghost')}
-            >Realtime (WebSocket)</button>
+              onClick={() => { if (!isApi) updateVoice({ provider: 'api' }) }}
+              style={pillButton(isApi ? 'primary' : 'ghost')}
+            >API</button>
             <button
               onClick={() => updateVoice({ provider: 'local' })}
               style={pillButton(voice.provider === 'local' ? 'primary' : 'ghost')}
-            >Local (WhisperKit)</button>
+            >Local</button>
           </div>
         </div>
+        {isApi && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 0 8px' }}>
+            <span style={{ color: C.fg3, fontSize: 12 }}>Mode</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => updateVoice({ provider: 'api' })}
+                style={{ ...pillButton(voice.provider === 'api' ? 'primary' : 'ghost'), fontSize: 11 }}
+              >Whisper</button>
+              <button
+                onClick={() => updateVoice({ provider: 'realtime' })}
+                style={{ ...pillButton(voice.provider === 'realtime' ? 'primary' : 'ghost'), fontSize: 11 }}
+              >Real-time</button>
+            </div>
+          </div>
+        )}
         <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 2 }}>
           {voice.provider === 'local'
             ? 'On-device transcription via WhisperKit (CoreML + Neural Engine). Model auto-downloads from HuggingFace on first use (~800MB for large-v3-turbo). Idle pipeline auto-releases after 30s.'
             : voice.provider === 'realtime'
-              ? 'Streams audio over WebSocket to an OpenAI Realtime transcription endpoint. Lower latency than batch API — transcript appears as you speak. Uses the same API key as Cloud API.'
-              : 'Sends audio to an OpenAI-compatible /audio/transcriptions endpoint. Works with OpenAI, Groq, or self-hosted Whisper servers.'}
+              ? 'Real-time mode: streams audio over WebSocket to an OpenAI Realtime transcription endpoint. Lower latency — the transcript appears as you speak.'
+              : 'Whisper mode: sends audio to an OpenAI-compatible /audio/transcriptions endpoint. Works with OpenAI, Groq, or self-hosted Whisper servers.'}
         </div>
       </div>
 
@@ -610,9 +658,9 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
       <>
       <Section title="Transcription API"/>
 
-      {/* API key — shared between Cloud API and Realtime providers */}
+      {/* API key — shared between the Whisper and Real-time modes */}
       <div style={{ ...fieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
-        <span style={{ color: C.fg, fontSize: 13 }}>API key {voice.provider === 'realtime' && <span style={{ color: C.fg3, fontSize: 11, fontWeight: 400 }}>(shared with Cloud API)</span>}</span>
+        <span style={{ color: C.fg, fontSize: 13 }}>API key</span>
         <input
           type="password"
           value={voice.apiKey}
@@ -683,6 +731,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
       )}
       </>
       )}
+      </div>{/* end dim wrapper */}
     </div>
   )
 }
