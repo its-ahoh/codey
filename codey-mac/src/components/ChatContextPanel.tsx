@@ -145,6 +145,12 @@ export const ChatContextPanel: React.FC<Props> = ({
       <div style={styles.tabs} role="tablist">
         <button
           role="tab"
+          aria-selected={tab === 'task'}
+          style={{ ...styles.tab, ...(tab === 'task' ? styles.tabActive : null) }}
+          onClick={() => setTab('task')}
+        >Status</button>
+        <button
+          role="tab"
           aria-selected={tab === 'current'}
           style={{ ...styles.tab, ...(tab === 'current' ? styles.tabActive : null) }}
           onClick={() => setTab('current')}
@@ -155,12 +161,6 @@ export const ChatContextPanel: React.FC<Props> = ({
           style={{ ...styles.tab, ...(tab === 'files' ? styles.tabActive : null) }}
           onClick={() => setTab('files')}
         >File changes</button>
-        <button
-          role="tab"
-          aria-selected={tab === 'task'}
-          style={{ ...styles.tab, ...(tab === 'task' ? styles.tabActive : null) }}
-          onClick={() => setTab('task')}
-        >Status</button>
         <button
           role="tab"
           aria-selected={tab === 'qq'}
@@ -806,7 +806,9 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg3, fontSize: 11, fontWeight: 600,
     letterSpacing: 0.4, textTransform: 'uppercase',
     padding: '6px 6px', cursor: 'pointer',
-    borderBottom: '2px solid transparent', marginBottom: -1,
+    // Persistent gray underline under every tab (visible from first open);
+    // the active tab overrides the color with the accent.
+    borderBottom: `2px solid ${C.border2}`, marginBottom: -1,
   },
   tabActive: {
     color: C.fg, borderBottomColor: C.accent,
