@@ -197,6 +197,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
                   options: q.options
                     .filter((o: any) => o && typeof o.label === 'string')
                     .map((o: any) => ({ label: o.label, description: o.description })),
+                  multiSelect: q.multiSelect === true,
                 };
                 childProcess.kill('SIGTERM');
               }
@@ -226,6 +227,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
                     options: q.options
                       .filter((o: any) => o && typeof o.label === 'string')
                       .map((o: any) => ({ label: o.label, description: o.description })),
+                    multiSelect: q.multiSelect === true,
                   };
                   // Kill the process — it's waiting for interactive input we can't provide.
                   // The gateway will resume the session with the user's answer on the next turn.
@@ -435,6 +437,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
             options: q.options
               .filter((o: any) => o && typeof o.label === 'string')
               .map((o: any) => ({ label: o.label, description: o.description })),
+            multiSelect: q.multiSelect === true,
           };
         }
       } catch { /* keep searching */ }

@@ -36,6 +36,8 @@ export interface ChatMessage {
   userQuestion?: {
     question: string;
     options: Array<{ label: string; description?: string }>;
+    /** When true, the question allows selecting multiple options at once. */
+    multiSelect?: boolean;
   };
 }
 
