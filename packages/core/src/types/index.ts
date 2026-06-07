@@ -107,6 +107,8 @@ export interface AgentRequest {
   interactive?: boolean;
   skipPermissions?: boolean;
   onStream?: (text: string) => void;
+  /** Streamed extended-thinking text (model reasoning), separate from the answer. */
+  onThinking?: (text: string) => void;
   onStatus?: (update: StatusUpdate) => void;
   context?: {
     files?: string[];
@@ -165,6 +167,8 @@ export interface AgentStateEntry {
 export interface AgentResponse {
   success: boolean;
   output: string;
+  /** Full extended-thinking text captured this run, if the model emitted any. */
+  thinking?: string;
   error?: string;
   tokens?: {
     total: number;
