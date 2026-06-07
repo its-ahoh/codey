@@ -37,7 +37,7 @@ interface Props {
   onTabChange?: (tab: ContextPanelTab) => void
   /** Focused when the QQ tab opens via a trigger. */
   qqInputRef?: React.RefObject<HTMLTextAreaElement>
-  /** Called after the user clicks "回答" in the Task HUD — should focus the composer. */
+  /** Called after the user clicks "Answer" in the Task HUD — should focus the composer. */
   onAnswerNextAction: () => void
   /** Whether the task brief is currently being generated. */
   taskBriefLoading: boolean
@@ -160,7 +160,7 @@ export const ChatContextPanel: React.FC<Props> = ({
           aria-selected={tab === 'task'}
           style={{ ...styles.tab, ...(tab === 'task' ? styles.tabActive : null) }}
           onClick={() => setTab('task')}
-        >任务</button>
+        >Task</button>
         <button
           role="tab"
           aria-selected={tab === 'qq'}
