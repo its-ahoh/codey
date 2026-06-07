@@ -25,6 +25,11 @@ final class HudOverlay {
     private var label: NSTextField?
     private var spinner: NSProgressIndicator?
     private var hideWorkItem: DispatchWorkItem?
+    /// The currently desired visibility, set by `show()`/`hide()`. A hide's
+    /// fade-out completion checks this before calling `orderOut`: if a `show()`
+    /// ran during the ~0.18s fade it will have flipped this back to `true`, so the
+    /// stale teardown is skipped instead of yanking the panel out from under us.
+    private var wantVisible = false
 
     private let pillHeight: CGFloat = 44
     private let pillSidePadding: CGFloat = 16
@@ -51,6 +56,9 @@ final class HudOverlay {
 
         hideWorkItem?.cancel()
         hideWorkItem = nil
+        // Mark the panel as wanted on-screen so an in-flight hide fade-out's
+        // completion won't orderOut the panel we're about to (re)show.
+        wantVisible = true
 
         switch mode {
         case .recording:
@@ -121,9 +129,15 @@ final class HudOverlay {
             // No scheduled hide — user dismisses by clicking.
         }
 
-        if !panel.isVisible {
-            panel.alphaValue = 0
-            panel.orderFrontRegardless()
+        // Robustly assert top-of-stack visibility. If a previous auto-hide left
+        // the panel mid-fade (visible but alpha < 1), we must cancel that fade by
+        // animating alpha back to 1 — gating only on `!isVisible` would skip that
+        // and let the fade complete, hiding an active HUD.
+        let wasVisible = panel.isVisible
+        let needsFadeIn = !wasVisible || panel.alphaValue < 1.0
+        if !wasVisible { panel.alphaValue = 0 }
+        panel.orderFrontRegardless()
+        if needsFadeIn {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.12
                 panel.animator().alphaValue = 1.0
@@ -135,11 +149,14 @@ final class HudOverlay {
         hideWorkItem?.cancel()
         hideWorkItem = nil
         guard let panel = panel, panel.isVisible else { return }
+        wantVisible = false
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.18
             panel.animator().alphaValue = 0
         } completionHandler: { [weak self] in
-            self?.panel?.orderOut(nil)
+            // Skip the teardown if a show() re-asserted visibility mid-fade.
+            guard let self = self, !self.wantVisible else { return }
+            self.panel?.orderOut(nil)
         }
     }
 
