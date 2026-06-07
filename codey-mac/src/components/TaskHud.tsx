@@ -22,7 +22,7 @@ const clamp = (lines: number): React.CSSProperties => ({
 })
 
 /** History entries shown before the "Show all" toggle kicks in. */
-const TIMELINE_COLLAPSED = 2
+const TIMELINE_COLLAPSED = 5
 
 export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
   const [timelineExpanded, setTimelineExpanded] = React.useState(false)
