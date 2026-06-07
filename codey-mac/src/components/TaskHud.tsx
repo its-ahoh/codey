@@ -16,7 +16,7 @@ const toneColor = (tone: StatusTone): string =>
 export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
   if (!brief) {
     return <div style={{ padding: 16, color: C.fg3, fontSize: 13 }}>
-      {loading ? '生成中…' : '这个对话还没有可总结的任务。'}
+      {loading ? 'Generating…' : 'No task to summarize yet.'}
     </div>
   }
 
@@ -28,17 +28,17 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
 
   return (
     <div style={{ fontSize: 13, color: C.fg }}>
-      {loading && <div style={{ padding: '6px 16px', fontSize: 11, color: C.fg3 }}>更新中…</div>}
+      {loading && <div style={{ padding: '6px 16px', fontSize: 11, color: C.fg3 }}>Updating…</div>}
 
       {/* Goal */}
       <div style={{ ...sect, borderTop: 'none' }}>
-        {label('目标')}
+        {label('Goal')}
         <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.4 }}>{brief.goal}</div>
       </div>
 
       {/* Current State */}
       <div style={sect}>
-        {label('当前状态')}
+        {label('Current State')}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div><b style={{ fontSize: 15 }}>{brief.state.progress}%</b>{brief.state.stepLabel ? ` · ${brief.state.stepLabel}` : ''}</div>
           <span style={{ fontSize: 12, padding: '3px 9px', borderRadius: 6, color: toneColor(sm.tone),
@@ -52,7 +52,7 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
       {/* Next Action */}
       {brief.nextAction && (
         <div style={{ ...sect, background: C.surface2 }}>
-          {label('下一步')}
+          {label('Next Action')}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 600 }}>{brief.nextAction.text}</div>
@@ -61,7 +61,7 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
             <button onClick={() => onAnswer(brief.nextAction?.messageId)}
               style={{ background: C.accent, color: C.onAccent, border: 'none', borderRadius: 7,
                 padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              回答
+              Answer
             </button>
           </div>
         </div>
@@ -69,11 +69,11 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
 
       {/* Timeline */}
       <div style={sect}>
-        {label('时间线')}
+        {label('Timeline')}
         {head && (
           <div style={{ background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 8, padding: '9px 10px', marginBottom: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <b>最新进展</b>
+              <b>Latest</b>
               {head.when && <span style={{ fontSize: 10, color: C.accent }}>{formatAgo(head.when)}</span>}
             </div>
             {head.detail?.length ? (
