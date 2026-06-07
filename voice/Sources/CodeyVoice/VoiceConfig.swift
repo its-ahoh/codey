@@ -14,6 +14,11 @@ struct VoiceConfig: Codable {
     var apiModel: String = "gpt-4o-mini-transcribe"
     /// WhisperKit model variant id (HuggingFace argmaxinc/whisperkit-coreml).
     var localModel: String = "openai_whisper-large-v3_turbo_954MB"
+    /// OpenAI Realtime API WebSocket URL. Uses the same apiKey as the batch API.
+    /// Requires `?intent=transcription` to open a transcription session.
+    var realtimeUrl: String = "wss://api.openai.com/v1/realtime?intent=transcription"
+    /// Realtime transcription model (e.g. "gpt-4o-mini-transcribe").
+    var realtimeModel: String = "gpt-4o-mini-transcribe"
 
     enum InjectionMode: String, Codable {
         case paste
@@ -23,6 +28,7 @@ struct VoiceConfig: Codable {
     enum Provider: String, Codable {
         case api
         case local
+        case realtime
     }
 
     static var `default`: VoiceConfig {

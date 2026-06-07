@@ -10,11 +10,13 @@ interface VoiceCfg {
   hotkey: string
   language: string
   injection: 'paste' | 'ax'
-  provider: 'api' | 'local'
+  provider: 'api' | 'local' | 'realtime'
   apiUrl: string
   apiKey: string
   apiModel: string
   localModel: string
+  realtimeUrl: string
+  realtimeModel: string
 }
 
 const VOICE_DEFAULT: VoiceCfg = {
@@ -27,6 +29,8 @@ const VOICE_DEFAULT: VoiceCfg = {
   apiKey: '',
   apiModel: 'gpt-4o-mini-transcribe',
   localModel: 'openai_whisper-large-v3_turbo_954MB',
+  realtimeUrl: 'wss://api.openai.com/v1/realtime?intent=transcription',
+  realtimeModel: 'gpt-4o-mini-transcribe',
 }
 
 // Values must match real folder names in argmaxinc/whisperkit-coreml on HF.
@@ -487,6 +491,10 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
               style={pillButton(voice.provider === 'api' ? 'primary' : 'ghost')}
             >Cloud API</button>
             <button
+              onClick={() => updateVoice({ provider: 'realtime' })}
+              style={pillButton(voice.provider === 'realtime' ? 'primary' : 'ghost')}
+            >Realtime (WebSocket)</button>
+            <button
               onClick={() => updateVoice({ provider: 'local' })}
               style={pillButton(voice.provider === 'local' ? 'primary' : 'ghost')}
             >Local (WhisperKit)</button>
@@ -495,7 +503,9 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
         <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 2 }}>
           {voice.provider === 'local'
             ? 'On-device transcription via WhisperKit (CoreML + Neural Engine). Model auto-downloads from HuggingFace on first use (~800MB for large-v3-turbo). Idle pipeline auto-releases after 30s.'
-            : 'Sends audio to an OpenAI-compatible /audio/transcriptions endpoint. Works with OpenAI, Groq, or self-hosted Whisper servers.'}
+            : voice.provider === 'realtime'
+              ? 'Streams audio over WebSocket to an OpenAI Realtime transcription endpoint. Lower latency than batch API — transcript appears as you speak. Uses the same API key as Cloud API.'
+              : 'Sends audio to an OpenAI-compatible /audio/transcriptions endpoint. Works with OpenAI, Groq, or self-hosted Whisper servers.'}
         </div>
       </div>
 
@@ -596,10 +606,25 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
         )
       })()}
 
-      {voice.provider === 'api' && (
+      {(voice.provider === 'api' || voice.provider === 'realtime') && (
       <>
       <Section title="Transcription API"/>
 
+      {/* API key — shared between Cloud API and Realtime providers */}
+      <div style={{ ...fieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
+        <span style={{ color: C.fg, fontSize: 13 }}>API key {voice.provider === 'realtime' && <span style={{ color: C.fg3, fontSize: 11, fontWeight: 400 }}>(shared with Cloud API)</span>}</span>
+        <input
+          type="password"
+          value={voice.apiKey}
+          onChange={e => setVoice({ ...voice, apiKey: e.target.value })}
+          onBlur={() => updateVoice({ apiKey: voice.apiKey })}
+          placeholder="sk-..."
+          style={{ ...inputStyle, width: '100%' }}
+        />
+      </div>
+
+      {voice.provider === 'api' && (
+      <>
       <div style={{ ...fieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
         <span style={{ color: C.fg, fontSize: 13 }}>API base URL</span>
         <input
@@ -613,17 +638,6 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
           POSTs to <code>{voice.apiUrl || '&lt;base&gt;'}/audio/transcriptions</code>. Works with OpenAI, Groq, or any OpenAI-compatible server.
         </span>
       </div>
-      <div style={{ ...fieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
-        <span style={{ color: C.fg, fontSize: 13 }}>API key</span>
-        <input
-          type="password"
-          value={voice.apiKey}
-          onChange={e => setVoice({ ...voice, apiKey: e.target.value })}
-          onBlur={() => updateVoice({ apiKey: voice.apiKey })}
-          placeholder="sk-..."
-          style={{ ...inputStyle, width: '100%' }}
-        />
-      </div>
       <div style={fieldStyle}>
         <span style={{ color: C.fg, fontSize: 13 }}>Model</span>
         <input
@@ -634,6 +648,39 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
           style={inputStyle}
         />
       </div>
+      </>
+      )}
+
+      {voice.provider === 'realtime' && (
+      <>
+      <div style={{ ...fieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
+        <span style={{ color: C.fg, fontSize: 13 }}>WebSocket URL</span>
+        <input
+          value={voice.realtimeUrl}
+          onChange={e => setVoice({ ...voice, realtimeUrl: e.target.value })}
+          onBlur={() => updateVoice({ realtimeUrl: voice.realtimeUrl })}
+          placeholder="wss://api.openai.com/v1/realtime?intent=transcription"
+          style={{ ...inputStyle, width: '100%' }}
+        />
+        <span style={{ color: C.fg3, fontSize: 11 }}>
+          Connects via WebSocket to an OpenAI Realtime transcription endpoint. Requires <code>?intent=transcription</code>.
+        </span>
+      </div>
+      <div style={fieldStyle}>
+        <span style={{ color: C.fg, fontSize: 13 }}>Realtime model</span>
+        <input
+          value={voice.realtimeModel}
+          onChange={e => setVoice({ ...voice, realtimeModel: e.target.value })}
+          onBlur={() => updateVoice({ realtimeModel: voice.realtimeModel })}
+          placeholder="gpt-4o-mini-transcribe"
+          style={inputStyle}
+        />
+      </div>
+      <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 8, padding: '8px 12px', background: C.surface3, borderRadius: 7 }}>
+        <strong style={{ color: C.fg2 }}>ℹ️ Cost notice:</strong> Realtime API is billed per minute of audio. See <a href="https://openai.com/pricing" target="_blank" rel="noopener noreferrer" style={{ color: C.accent }}>OpenAI pricing</a> for current rates. If the WebSocket connection fails mid-utterance, the helper falls back to batch API for that utterance.
+      </div>
+      </>
+      )}
       </>
       )}
     </div>
