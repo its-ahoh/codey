@@ -9,7 +9,8 @@ export type ChatStreamEvent =
   | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string }
   | { type: 'info'; chatId: string; message: string }
   | { type: 'stream'; chatId: string; token: string }
-  | { type: 'done'; chatId: string; response: string; tokens?: number; durationSec?: number; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> } }
+  | { type: 'thinking'; chatId: string; token: string; step?: number }
+  | { type: 'done'; chatId: string; response: string; thinking?: string; tokens?: number; durationSec?: number; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> } }
   | { type: 'stopped'; chatId: string; userMessageId: string; text: string }
   | { type: 'error'; chatId: string; message: string }
   | { type: 'permission_denials'; chatId: string; denials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> };
