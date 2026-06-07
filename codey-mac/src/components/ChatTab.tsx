@@ -14,6 +14,7 @@ import { parseTeamMessage } from './teamMessageFormat'
 import { isTaskBriefStale } from './taskHudView'
 import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
+import { defaultThinkingExpanded } from './thinkingState'
 
 interface Props {
   chatId: string
@@ -98,9 +99,6 @@ const AGENT_API_TYPE: Record<string, 'anthropic' | 'openai'> = {
 }
 type ModelEntry = { apiType: 'anthropic' | 'openai'; model: string }
 
-const splitParagraphs = (text: string): string[] =>
-  text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
-
 const LiveActivity: React.FC<{ toolCalls?: import('../types').ToolCallEntry[] }> = ({ toolCalls }) => {
   const [expanded, setExpanded] = useState(false)
   if (!toolCalls || toolCalls.length === 0) return null
@@ -144,37 +142,25 @@ const LiveActivity: React.FC<{ toolCalls?: import('../types').ToolCallEntry[] }>
   )
 }
 
-const StepBody: React.FC<{
-  output: string
-  bodyKey: string
-  expanded: Set<string>
-  setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
-}> = ({ output, bodyKey, expanded, setExpanded }) => {
-  const paragraphs = splitParagraphs(output)
-  const showAll = expanded.has(bodyKey)
-  if (paragraphs.length <= 1) {
-    return <Markdown variant="assistant">{output}</Markdown>
-  }
-  const last = paragraphs[paragraphs.length - 1]
-  const earlierCount = paragraphs.length - 1
-  const toggle = () => setExpanded(prev => {
-    const next = new Set(prev)
-    if (next.has(bodyKey)) next.delete(bodyKey)
-    else next.add(bodyKey)
-    return next
-  })
+const ThinkingBlock: React.FC<{
+  thinking: string
+  hasAnswer: boolean
+  isComplete: boolean
+}> = ({ thinking, hasAnswer, isComplete }) => {
+  const [userToggled, setUserToggled] = useState<boolean | null>(null)
+  if (!thinking.trim()) return null
+  const expanded = userToggled ?? defaultThinkingExpanded({ hasAnswer, isComplete })
   return (
     <div>
-      <div style={styles.thinkingToggle} onClick={toggle}>
-        <span style={{ ...styles.teamStepChevron, transform: showAll ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
-        <span>{showAll ? 'Hide thinking' : `Show thinking (${earlierCount} paragraph${earlierCount === 1 ? '' : 's'})`}</span>
+      <div style={styles.thinkingToggle} onClick={() => setUserToggled(!expanded)}>
+        <span style={{ ...styles.teamStepChevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+        <span>{expanded ? 'Hide thinking' : 'Show thinking'}</span>
       </div>
-      {showAll && (
+      {expanded && (
         <div style={styles.thinkingBody}>
-          <Markdown variant="assistant">{paragraphs.slice(0, -1).join('\n\n')}</Markdown>
+          <Markdown variant="assistant">{thinking}</Markdown>
         </div>
       )}
-      <Markdown variant="assistant">{last}</Markdown>
     </div>
   )
 }
@@ -185,9 +171,11 @@ const TeamMessage: React.FC<{
   messageId: string
   parsed: NonNullable<ReturnType<typeof parseTeamMessage>>
   isStreaming: boolean
+  isComplete: boolean
+  thinkingByStep?: Record<number, string>
   expanded: Set<string>
   setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
-}> = ({ messageId, parsed, isStreaming, expanded, setExpanded }) => {
+}> = ({ messageId, parsed, isStreaming, isComplete, thinkingByStep, expanded, setExpanded }) => {
   const lastIdx = parsed.steps.length - 1
   return (
     <div>
@@ -211,7 +199,16 @@ const TeamMessage: React.FC<{
               {isLastDuringStream ? (
                 <Markdown variant="assistant">{s.output || '…'}</Markdown>
               ) : (
-                <StepBody output={s.output} bodyKey={bodyKey} expanded={expanded} setExpanded={setExpanded} />
+                <div>
+                  {thinkingByStep?.[s.step] && (
+                    <ThinkingBlock
+                      thinking={thinkingByStep[s.step]}
+                      hasAnswer={!!s.output.trim()}
+                      isComplete={isComplete}
+                    />
+                  )}
+                  <Markdown variant="assistant">{s.output}</Markdown>
+                </div>
               )}
             </div>
           </div>
@@ -935,13 +932,26 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                   if (isUser) return <Markdown variant="user">{msg.content}</Markdown>
                   const text = msg.content || msg.userQuestion?.question || ''
                   const parsed = parseTeamMessage(text)
-                  if (!parsed) return <Markdown variant="assistant">{text}</Markdown>
                   const isStreaming = !!flight && msg === lastMsg
+                  if (!parsed) return (
+                    <div>
+                      {msg.thinking && (
+                        <ThinkingBlock
+                          thinking={msg.thinking}
+                          hasAnswer={!!text.trim()}
+                          isComplete={msg.isComplete ?? false}
+                        />
+                      )}
+                      <Markdown variant="assistant">{text}</Markdown>
+                    </div>
+                  )
                   return (
                     <TeamMessage
                       messageId={msg.id}
                       parsed={parsed}
                       isStreaming={isStreaming}
+                      isComplete={msg.isComplete ?? false}
+                      thinkingByStep={msg.thinkingByStep}
                       expanded={expandedSteps}
                       setExpanded={setExpandedSteps}
                     />
