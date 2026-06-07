@@ -13,7 +13,12 @@ interface Props {
 const toneColor = (tone: StatusTone): string =>
   tone === 'yellow' ? C.yellow : tone === 'red' ? C.red : tone === 'green' ? C.green : C.accent
 
+/** History entries shown before the "Show all" toggle kicks in. */
+const TIMELINE_COLLAPSED = 2
+
 export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
+  const [timelineExpanded, setTimelineExpanded] = React.useState(false)
+
   if (!brief) {
     return <div style={{ padding: 16, color: C.fg3, fontSize: 13 }}>
       {loading ? 'Generating…' : 'No task to summarize yet.'}
@@ -22,6 +27,7 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
 
   const sm = statusMeta(brief.state.status)
   const { head, rest } = splitTimeline(brief.timeline)
+  const shownRest = timelineExpanded ? rest : rest.slice(0, TIMELINE_COLLAPSED)
 
   const label = (t: string) => <div style={{ fontSize: 11, color: C.fg3, marginBottom: 8, fontWeight: 500 }}>{t}</div>
   const sect: React.CSSProperties = { padding: '14px 16px', borderTop: `1px solid ${C.border}` }
@@ -83,7 +89,7 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
             ) : <div style={{ fontSize: 12, color: C.fg2, marginTop: 4 }}>{head.text}</div>}
           </div>
         )}
-        {rest.map((e, i) => (
+        {shownRest.map((e, i) => (
           <div key={i} style={{ display: 'flex', gap: 9, padding: '6px 0', fontSize: 12.5, lineHeight: 1.5 }}>
             <span style={{ flex: 'none', width: 7, height: 7, borderRadius: '50%', marginTop: 6,
               background: e.kind === 'dropped' ? C.fg3 : e.kind === 'decision' ? C.accent : C.green }} />
@@ -97,6 +103,13 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
             </div>
           </div>
         ))}
+        {rest.length > TIMELINE_COLLAPSED && (
+          <button
+            onClick={() => setTimelineExpanded(v => !v)}
+            style={{ background: 'none', border: 'none', color: C.fg3, fontSize: 11, cursor: 'pointer',
+              padding: '4px 0', marginTop: 2 }}
+          >{timelineExpanded ? 'Show less' : `Show all (${rest.length})`}</button>
+        )}
       </div>
     </div>
   )

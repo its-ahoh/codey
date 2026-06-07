@@ -5,6 +5,7 @@ import type { Chat, TaskBrief } from '../types';
 const brief = (over: Partial<TaskBrief> = {}): TaskBrief => ({
   goal: 'g', state: { progress: 0, status: 'working' }, timeline: [], generatedAt: 100, ...over,
 });
+const msg = (timestamp: number): any => ({ id: 'm' + timestamp, role: 'assistant', content: 'x', timestamp });
 const chat = (over: Partial<Chat> = {}): Chat =>
   ({ id: 'c', title: 't', workspaceName: 'w', selection: {} as any, messages: [],
      createdAt: 0, updatedAt: 100, ...over } as Chat);
@@ -13,11 +14,14 @@ describe('isTaskBriefStale', () => {
   it('is stale when there is no brief', () => {
     expect(isTaskBriefStale(chat({ taskBrief: undefined }))).toBe(true);
   });
-  it('is stale when the chat changed after the brief was generated', () => {
-    expect(isTaskBriefStale(chat({ updatedAt: 200, taskBrief: brief({ generatedAt: 100 }) }))).toBe(true);
+  it('is stale when a new message arrived after the brief was generated', () => {
+    expect(isTaskBriefStale(chat({ messages: [msg(200)], taskBrief: brief({ generatedAt: 100 }) }))).toBe(true);
   });
-  it('is fresh when the brief is at least as new as the chat', () => {
-    expect(isTaskBriefStale(chat({ updatedAt: 100, taskBrief: brief({ generatedAt: 100 }) }))).toBe(false);
+  it('is fresh when no message is newer than the brief', () => {
+    expect(isTaskBriefStale(chat({ messages: [msg(100)], taskBrief: brief({ generatedAt: 100 }) }))).toBe(false);
+  });
+  it('is fresh when an unrelated mutation bumped updatedAt but no new message', () => {
+    expect(isTaskBriefStale(chat({ updatedAt: 999, messages: [msg(50)], taskBrief: brief({ generatedAt: 100 }) }))).toBe(false);
   });
 });
 
