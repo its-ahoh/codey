@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { AgentRequest, AgentResponse, AgentStateEntry, StatusUpdate } from '../types';
 import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
-import { thinkingDeltaFrom, isThinkingBlockStart } from './thinking-stream';
+import { thinkingDeltaFrom } from './thinking-stream';
 
 interface StreamEvent {
   type: string;
@@ -26,6 +26,7 @@ interface StreamEvent {
     content: Array<{
       type: string;
       text?: string;
+      thinking?: string;   // thinking block: reasoning text
       name?: string;       // tool_use block: tool name
       id?: string;         // tool_use block: call id
       input?: Record<string, unknown>; // tool_use block: input
@@ -178,8 +179,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
             collectingAskUser = true;
             askUserInputJson = '';
           }
-          // thinking blocks need no setup; isThinkingBlockStart kept for symmetry/future use
-          void isThinkingBlockStart;
+          // thinking blocks need no start-time setup; captured in the delta branch below
         } else if (event.type === 'stream_event' && event.event?.type === 'content_block_delta') {
           const thinking = thinkingDeltaFrom(event);
           if (thinking !== null) {
@@ -216,9 +216,9 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           }
         } else if (event.type === 'assistant' && event.message?.content) {
           for (const block of event.message.content) {
-            if (block.type === 'thinking' && (block as any).thinking) {
+            if (block.type === 'thinking' && block.thinking) {
               if (!streamedThinkingFromDeltas) {
-                thinkingText += (block as any).thinking;
+                thinkingText += block.thinking;
               }
             } else if (block.type === 'text' && block.text) {
               if (!streamedFromDeltas) {
