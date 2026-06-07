@@ -160,7 +160,7 @@ export const ChatContextPanel: React.FC<Props> = ({
           aria-selected={tab === 'task'}
           style={{ ...styles.tab, ...(tab === 'task' ? styles.tabActive : null) }}
           onClick={() => setTab('task')}
-        >Task</button>
+        >Status</button>
         <button
           role="tab"
           aria-selected={tab === 'qq'}
@@ -801,10 +801,11 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   tab: {
+    flex: 1, minWidth: 0, textAlign: 'center', whiteSpace: 'nowrap',
     background: 'transparent', border: 'none',
     color: C.fg3, fontSize: 11, fontWeight: 600,
     letterSpacing: 0.4, textTransform: 'uppercase',
-    padding: '6px 10px', cursor: 'pointer',
+    padding: '6px 6px', cursor: 'pointer',
     borderBottom: '2px solid transparent', marginBottom: -1,
   },
   tabActive: {
