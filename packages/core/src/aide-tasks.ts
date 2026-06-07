@@ -141,7 +141,7 @@ export async function generateTaskBrief(chat: Chat, opts: AideOptions): Promise<
   lines.push('Rules:');
   lines.push('- timeline is REVERSE-chronological: newest first. The first entry is the current/most-recent progress; give it 2-4 `detail` bullets summarizing what just happened. Older entries: no detail.');
   lines.push('- "status" is "waiting" if the assistant is blocked on a user decision/answer, "done" if the task is finished, "blocked" if stuck on an external problem, else "working".');
-  lines.push('- Use the user\'s language. Keep every string short.');
+  lines.push('- Write every string in English, regardless of the chat\'s language. Keep every string short.');
   lines.push('- messageId, when: only include if you can ground them in the transcript markers ([role @timestamp], message ids); otherwise omit.');
   lines.push('');
   lines.push('## Chat title');
