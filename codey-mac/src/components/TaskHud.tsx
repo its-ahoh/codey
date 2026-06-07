@@ -13,6 +13,14 @@ interface Props {
 const toneColor = (tone: StatusTone): string =>
   tone === 'yellow' ? C.yellow : tone === 'red' ? C.red : tone === 'green' ? C.green : C.accent
 
+/** Multiline ellipsis — a UI backstop so an over-long model string can't blow out the panel. */
+const clamp = (lines: number): React.CSSProperties => ({
+  display: '-webkit-box',
+  WebkitLineClamp: lines,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+})
+
 /** History entries shown before the "Show all" toggle kicks in. */
 const TIMELINE_COLLAPSED = 2
 
@@ -39,7 +47,7 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
       {/* Goal */}
       <div style={{ ...sect, borderTop: 'none' }}>
         {label('Goal')}
-        <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.4 }}>{brief.goal}</div>
+        <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.4, ...clamp(2) }}>{brief.goal}</div>
       </div>
 
       {/* Current State */}
@@ -61,8 +69,8 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
           {label('Next Action')}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600 }}>{brief.nextAction.text}</div>
-              {brief.nextAction.detail && <div style={{ fontSize: 11, color: C.fg2, marginTop: 3 }}>{brief.nextAction.detail}</div>}
+              <div style={{ fontWeight: 600, ...clamp(2) }}>{brief.nextAction.text}</div>
+              {brief.nextAction.detail && <div style={{ fontSize: 11, color: C.fg2, marginTop: 3, ...clamp(1) }}>{brief.nextAction.detail}</div>}
             </div>
             <button onClick={() => onAnswer(brief.nextAction?.messageId)}
               style={{ background: C.accent, color: C.onAccent, border: 'none', borderRadius: 7,
@@ -84,9 +92,9 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
             </div>
             {head.detail?.length ? (
               <ul style={{ listStyle: 'none', margin: '7px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {head.detail.map((d, i) => <li key={i} style={{ fontSize: 12, color: C.fg2 }}>· {d}</li>)}
+                {head.detail.map((d, i) => <li key={i} style={{ fontSize: 12, color: C.fg2, ...clamp(2) }}>· {d}</li>)}
               </ul>
-            ) : <div style={{ fontSize: 12, color: C.fg2, marginTop: 4 }}>{head.text}</div>}
+            ) : <div style={{ fontSize: 12, color: C.fg2, marginTop: 4, ...clamp(2) }}>{head.text}</div>}
           </div>
         )}
         {shownRest.map((e, i) => (
@@ -95,11 +103,11 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
               background: e.kind === 'dropped' ? C.fg3 : e.kind === 'decision' ? C.accent : C.green }} />
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                <span style={{ textDecoration: e.kind === 'dropped' ? 'line-through' : 'none',
-                  color: e.kind === 'dropped' ? C.fg2 : C.fg }}>{e.text}</span>
-                {e.when && <span style={{ color: C.fg3, fontSize: 10, whiteSpace: 'nowrap' }}>{formatAgo(e.when)}</span>}
+                <span style={{ flex: 1, minWidth: 0, textDecoration: e.kind === 'dropped' ? 'line-through' : 'none',
+                  color: e.kind === 'dropped' ? C.fg2 : C.fg, ...clamp(2) }}>{e.text}</span>
+                {e.when && <span style={{ color: C.fg3, fontSize: 10, whiteSpace: 'nowrap', flex: 'none' }}>{formatAgo(e.when)}</span>}
               </div>
-              {e.why && <div style={{ color: C.fg3, fontSize: 11.5, marginTop: 2 }}>{e.why}</div>}
+              {e.why && <div style={{ color: C.fg3, fontSize: 11.5, marginTop: 2, ...clamp(1) }}>{e.why}</div>}
             </div>
           </div>
         ))}
