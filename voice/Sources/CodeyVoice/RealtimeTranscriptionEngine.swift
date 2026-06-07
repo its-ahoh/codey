@@ -34,6 +34,14 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
     private var _finalTranscript: String?
     /// True once `didOpenWithProtocol` fires (session is usable).
     private var _isSessionActive = false
+    /// True once the server acks our `session.update` (`session.updated`). Until
+    /// then the server still has the default config (e.g. server VAD), so audio
+    /// chunks are queued in `_pendingChunks` rather than sent — appending before
+    /// config is applied risks the wrong format / premature auto-commit.
+    private var _isSessionConfigured = false
+    /// Audio chunks captured between socket-open and `session.updated`. Flushed
+    /// in order once configured so no leading speech is lost.
+    private var _pendingChunks: [[Float]] = []
     /// True once `didCompleteWithError` or an explicit disconnect fires.
     private var _isDisconnected = false
 
@@ -74,6 +82,8 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
             guard _webSocketTask != nil, !_isSessionActive else { return false }
             if Date().timeIntervalSince(_lastUsed) >= idleUnloadAfter {
                 _isDisconnected = true
+                _isSessionConfigured = false
+                _pendingChunks.removeAll()
                 _webSocketTask = nil
                 return true
             }
@@ -124,6 +134,8 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
             _webSocketTask = ws
             _isDisconnected = false
             _isSessionActive = false
+            _isSessionConfigured = false
+            _pendingChunks.removeAll()
             _lastUsed = Date()
         }
 
@@ -164,17 +176,45 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
         print("realtime: session started (model=\(realtimeModel))")
     }
 
-    /// Encode `samples` as PCM16 base64 and send as `input_audio_buffer.append`.
-    /// Safe to call from any thread (audio tap). Silently drops when no session
-    /// is open (fire-and-forget).
+    /// Forward an audio chunk to the session. Safe to call from any thread (audio
+    /// tap). Silently drops when no session is open. Chunks captured before the
+    /// server acks our config (`session.updated`) are queued and flushed in order
+    /// once configured, so no leading speech is lost to the open→config race.
     func appendAudioChunk(_ samples: [Float]) {
         let ws = stateLock.withLock { () -> URLSessionWebSocketTask? in
             guard _isSessionActive, !_isDisconnected else { return nil }
             _lastUsed = Date()
+            guard _isSessionConfigured else {
+                _pendingChunks.append(samples)
+                return nil
+            }
             return _webSocketTask
         }
         guard let ws = ws else { return }
+        sendAudioChunk(samples, on: ws)
+    }
 
+    /// Flush chunks queued during the open→config window, in capture order, and
+    /// mark the session configured so subsequent appends send directly.
+    private func flushPendingChunks() {
+        let (ws, chunks) = stateLock.withLock { () -> (URLSessionWebSocketTask?, [[Float]]) in
+            _isSessionConfigured = true
+            guard _isSessionActive, !_isDisconnected, let ws = _webSocketTask else {
+                _pendingChunks.removeAll()
+                return (nil, [])
+            }
+            let pending = _pendingChunks
+            _pendingChunks.removeAll()
+            return (ws, pending)
+        }
+        guard let ws = ws else { return }
+        for chunk in chunks {
+            sendAudioChunk(chunk, on: ws)
+        }
+    }
+
+    /// Encode `samples` as PCM16 base64 and send as `input_audio_buffer.append`.
+    private func sendAudioChunk(_ samples: [Float], on ws: URLSessionWebSocketTask) {
         let pcmData = pcm16Data(from: samples)
         let base64 = pcmData.base64EncodedString()
         let event: [String: Any] = [
@@ -204,6 +244,12 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
     /// send `response.create` — transcription sessions reject it (and it would
     /// surface as a server `error` event, failing the utterance).
     private func commitAndAwaitTranscript() async throws -> String {
+        // Safety net for very short utterances that end before `session.updated`
+        // arrives: flush whatever was queued (also marks the session configured)
+        // so the commit below operates on the full audio rather than an empty
+        // buffer.
+        flushPendingChunks()
+
         let ws = stateLock.withLock { () -> URLSessionWebSocketTask? in
             // Reset accumulated state for a fresh utterance.
             _accumulatedText = ""
@@ -326,9 +372,15 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
                 }
             }
 
-        case "session.created", "session.updated":
-            // Lifecycle acknowledgment — no action needed.
+        case "session.created":
+            // Server's initial session (default config) — no action; we wait
+            // for `session.updated` (the ack of our config) before streaming.
             break
+
+        case "session.updated":
+            // Our config is now applied — release any chunks queued during the
+            // open→config window, in capture order.
+            flushPendingChunks()
 
         default:
             print("realtime: unhandled event type=\(type)")
@@ -360,6 +412,8 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
         stateLock.withLock {
             _isDisconnected = true
             _isSessionActive = false
+            _isSessionConfigured = false
+            _pendingChunks.removeAll()
             if let cont = _transcribeContinuation {
                 _transcribeContinuation = nil
                 cont.resume(throwing: TranscriptionError.connectionFailed("connection lost"))
@@ -371,6 +425,8 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
         stateLock.withLock {
             _isDisconnected = true
             _isSessionActive = false
+            _isSessionConfigured = false
+            _pendingChunks.removeAll()
             _connectContinuation?.resume(throwing: CancellationError())
             _connectContinuation = nil
             _webSocketTask = nil
@@ -438,6 +494,8 @@ extension RealtimeTranscriptionEngine: URLSessionWebSocketDelegate {
         stateLock.withLock {
             _isDisconnected = true
             _isSessionActive = false
+            _isSessionConfigured = false
+            _pendingChunks.removeAll()
             // If a connect continuation is still pending, fail it.
             if let cont = _connectContinuation {
                 _connectContinuation = nil
