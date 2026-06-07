@@ -25,6 +25,11 @@ final class HudOverlay {
     private var label: NSTextField?
     private var spinner: NSProgressIndicator?
     private var hideWorkItem: DispatchWorkItem?
+    /// Bumped on every `show()`. A hide's fade-out completion captures the value
+    /// at hide time and only `orderOut`s if it still matches — so a `show()` that
+    /// interleaves with an in-flight fade cancels the stale teardown instead of
+    /// having the panel yanked out from under it.
+    private var showGeneration = 0
 
     private let pillHeight: CGFloat = 44
     private let pillSidePadding: CGFloat = 16
@@ -51,6 +56,9 @@ final class HudOverlay {
 
         hideWorkItem?.cancel()
         hideWorkItem = nil
+        // Invalidate any in-flight hide fade-out so its completion won't orderOut
+        // the panel we're about to (re)show.
+        showGeneration &+= 1
 
         switch mode {
         case .recording:
@@ -121,9 +129,15 @@ final class HudOverlay {
             // No scheduled hide — user dismisses by clicking.
         }
 
-        if !panel.isVisible {
-            panel.alphaValue = 0
-            panel.orderFrontRegardless()
+        // Robustly assert top-of-stack visibility. If a previous auto-hide left
+        // the panel mid-fade (visible but alpha < 1), we must cancel that fade by
+        // animating alpha back to 1 — gating only on `!isVisible` would skip that
+        // and let the fade complete, hiding an active HUD.
+        let wasVisible = panel.isVisible
+        let needsFadeIn = !wasVisible || panel.alphaValue < 1.0
+        if !wasVisible { panel.alphaValue = 0 }
+        panel.orderFrontRegardless()
+        if needsFadeIn {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.12
                 panel.animator().alphaValue = 1.0
@@ -135,11 +149,13 @@ final class HudOverlay {
         hideWorkItem?.cancel()
         hideWorkItem = nil
         guard let panel = panel, panel.isVisible else { return }
+        let gen = showGeneration
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.18
             panel.animator().alphaValue = 0
         } completionHandler: { [weak self] in
-            self?.panel?.orderOut(nil)
+            guard let self = self, self.showGeneration == gen else { return }
+            self.panel?.orderOut(nil)
         }
     }
 
