@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { AgentRequest, AgentResponse, AgentStateEntry, StatusUpdate } from '../types';
 import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
+import { thinkingDeltaFrom } from './thinking-stream';
 
 interface StreamEvent {
   type: string;
@@ -25,6 +26,7 @@ interface StreamEvent {
     content: Array<{
       type: string;
       text?: string;
+      thinking?: string;   // thinking block: reasoning text
       name?: string;       // tool_use block: tool name
       id?: string;         // tool_use block: call id
       input?: Record<string, unknown>; // tool_use block: input
@@ -40,7 +42,7 @@ interface StreamEvent {
   // stream_event (emitted with --include-partial-messages)
   event?: {
     type: string;
-    delta?: { type?: string; text?: string };
+    delta?: { type?: string; text?: string; thinking?: string };
     content_block?: { type?: string; name?: string; id?: string };
   };
   // permission_denials in result event
@@ -163,6 +165,8 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // UI updates token-by-token; the final assistant event then re-emits
       // the same text in one block — skip the onStream call there to avoid
       // double-rendering, but still record blocks (tool_use) and tally.
+      let thinkingText = '';
+      let streamedThinkingFromDeltas = false;
       let streamedFromDeltas = false;
       const processEvent = (event: StreamEvent) => {
         this.debug(`[claude-code] Event: ${event.type} ${event.subtype || ''}`);
@@ -175,7 +179,14 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
             collectingAskUser = true;
             askUserInputJson = '';
           }
+          // thinking blocks need no start-time setup; captured in the delta branch below
         } else if (event.type === 'stream_event' && event.event?.type === 'content_block_delta') {
+          const thinking = thinkingDeltaFrom(event);
+          if (thinking !== null) {
+            thinkingText += thinking;
+            request.onThinking?.(thinking);
+            streamedThinkingFromDeltas = true;
+          }
           const delta = event.event.delta;
           if (delta?.type === 'text_delta' && delta.text) {
             streamedText += delta.text;
@@ -205,7 +216,11 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           }
         } else if (event.type === 'assistant' && event.message?.content) {
           for (const block of event.message.content) {
-            if (block.type === 'text' && block.text) {
+            if (block.type === 'thinking' && block.thinking) {
+              if (!streamedThinkingFromDeltas) {
+                thinkingText += block.thinking;
+              }
+            } else if (block.type === 'text' && block.text) {
               if (!streamedFromDeltas) {
                 streamedText += block.text;
                 request.onStream?.(block.text);
@@ -363,7 +378,9 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           resp.userQuestion = userQuestion;
           safeResolve(resp);
         } else if (code === 0 && output) {
-          safeResolve(this.createResponse(output, true, tokens, finalDuration, statusUpdates, states, permissionDenials));
+          const successResp = this.createResponse(output, true, tokens, finalDuration, statusUpdates, states, permissionDenials);
+          successResp.thinking = thinkingText.trim() || undefined;
+          safeResolve(successResp);
         } else {
           // Clear session on failure to avoid "session already in use" errors
           this.sessionId = undefined;

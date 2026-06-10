@@ -137,6 +137,7 @@ export class Codey {
     modelConfig: ModelConfig | undefined;
     buildBootstrapPrompt: () => string;
     onStream?: (text: string) => void;
+    onThinking?: (text: string) => void;
     onStatus?: (update: any) => void;
     signal?: AbortSignal;
     workingDir?: string;
@@ -155,6 +156,7 @@ export class Codey {
       model: opts.modelConfig,
       context: { workingDir: opts.workingDir ?? this.workingDir },
       onStream: opts.onStream,
+      onThinking: opts.onThinking,
       onStatus: opts.onStatus,
       signal: opts.signal,
       interactive: opts.interactive,
@@ -2033,7 +2035,7 @@ Example: /model gpt-4.1 write a Python script`;
       | { kind: 'route'; step: number; worker: string; reason: string; isRevision: boolean }
       | { kind: 'blackboard'; step: number; worker: string; summary: string }
     ) => void | Promise<void>,
-    runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string }>,
+    runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
   ): Promise<
     | { fallback: true; fallbackReason: string }
     | {
@@ -2043,6 +2045,7 @@ Example: /model gpt-4.1 write a Python script`;
         finalSummary: string;
         fallbackMidRun?: { reason: string };
         blackboard: TeamBlackboard;
+        thinkingByStep?: Record<number, string>;
       }
     | {
         fallback: false;
@@ -2072,6 +2075,7 @@ Example: /model gpt-4.1 write a Python script`;
     let finalSummary = '';
     let fallbackMidRun: { reason: string } | undefined;
     const blackboard = new TeamBlackboard();
+    const thinkingByStep: Record<number, string> = {};
 
     const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
     const seenWorkers = new Set<string>();
@@ -2190,6 +2194,7 @@ Example: /model gpt-4.1 write a Python script`;
         fallbackMidRun = { reason: `worker ${turnNext} failed: ${response.error ?? 'unknown'}` };
         break;
       }
+      if (response.thinking) thinkingByStep[step] = response.thinking;
       // Pull structured markers out before anything downstream sees the
       // output — users get clean prose, blackboard collects the structure.
       const ingested = blackboard.ingest(turnNext, step, response.output);
@@ -2247,7 +2252,7 @@ Example: /model gpt-4.1 write a Python script`;
       if (!closing.fallback) finalSummary = closing.final_summary ?? '';
     }
 
-    return { fallback: false, parts, finalSummary, fallbackMidRun, blackboard };
+    return { fallback: false, parts, finalSummary, fallbackMidRun, blackboard, thinkingByStep };
   }
 
   private composeStepTask(
@@ -2327,7 +2332,8 @@ Example: /model gpt-4.1 write a Python script`;
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
-    ): Promise<{ success: boolean; output: string; error?: string }> => {
+      onThinking?: (text: string) => void,
+    ): Promise<{ success: boolean; output: string; error?: string; thinking?: string }> => {
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
       const { response } = await this.runWorkerStep({
         conversationId: teamConv,
@@ -2338,12 +2344,13 @@ Example: /model gpt-4.1 write a Python script`;
         modelConfig,
         buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, task, workerName),
         onStream,
+        onThinking,
         interactive: this.tuiMode,
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       });
       this.extractWorkerMemories(workerName, task, codingAgent, response);
       return response.success
-        ? { success: true, output: response.output }
+        ? { success: true, output: response.output, thinking: response.thinking || undefined }
         : { success: false, output: '', error: response.error };
     };
 
@@ -2476,6 +2483,12 @@ Example: /model gpt-4.1 write a Python script`;
     pending: PendingTeamState,
     answer: string,
   ): Promise<void> {
+    // NOTE: this resume path streams via sendResponse and emits the legacy
+    // "📊 Team results" format (not the `### Step` structure parsed by the mac
+    // UI), so extended-thinking is intentionally NOT surfaced here. Showing
+    // per-step thinking on resume requires first unifying this path onto the
+    // same sink + structured-message pipeline as runTeamForChat — tracked as a
+    // follow-up (see docs/superpowers/specs/...-resume-streaming-unification).
     const team = this.workspaceManager.getTeam(pending.teamName);
     if (!team) {
       await this.sendResponse({
@@ -2497,7 +2510,8 @@ Example: /model gpt-4.1 write a Python script`;
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
-    ): Promise<{ success: boolean; output: string; error?: string }> => {
+      onThinking?: (text: string) => void,
+    ): Promise<{ success: boolean; output: string; error?: string; thinking?: string }> => {
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
       const { response } = await this.runWorkerStep({
         conversationId: teamConv,
@@ -2508,12 +2522,13 @@ Example: /model gpt-4.1 write a Python script`;
         modelConfig,
         buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, pending.task, workerName),
         onStream,
+        onThinking,
         interactive: this.tuiMode,
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       });
       this.extractWorkerMemories(workerName, pending.task, codingAgent, response);
       return response.success
-        ? { success: true, output: response.output }
+        ? { success: true, output: response.output, thinking: response.thinking || undefined }
         : { success: false, output: '', error: response.error };
     };
 
@@ -2834,7 +2849,7 @@ Example: /model gpt-4.1 write a Python script`;
     opts: { forceAll?: boolean } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
-  ): Promise<{ response: string; tokens?: number; choices?: string[] }> {
+  ): Promise<{ response: string; tokens?: number; choices?: string[]; thinkingByStep?: Record<number, string> }> {
     if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
     }
@@ -2848,7 +2863,8 @@ Example: /model gpt-4.1 write a Python script`;
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
-    ): Promise<{ success: boolean; output: string; error?: string }> => {
+      onThinking?: (text: string) => void,
+    ): Promise<{ success: boolean; output: string; error?: string; thinking?: string }> => {
       const { response } = await this.runWorkerStep({
         conversationId: teamConv,
         workerName,
@@ -2858,13 +2874,14 @@ Example: /model gpt-4.1 write a Python script`;
         modelConfig,
         buildBootstrapPrompt: () => this.wrapPromptWithMemory(workerPrompt, prompt, workerName),
         onStream: (text: string) => sink({ type: 'stream', chatId, token: text }),
+        onThinking,
         onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
         signal,
         workingDir,
       });
       if (response) this.extractWorkerMemories(workerName, prompt, codingAgent, response);
       return response?.success
-        ? { success: true, output: this.formatAgentResponse(response) }
+        ? { success: true, output: this.formatAgentResponse(response), thinking: response.thinking || undefined }
         : { success: false, output: '', error: response?.error };
     };
 
@@ -2908,6 +2925,7 @@ Example: /model gpt-4.1 write a Python script`;
           model: chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent),
           context: { workingDir },
           onStream: (text: string) => sink({ type: 'stream', chatId, token: text }),
+          onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
           onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
           signal: req.signal,
         }),
@@ -2919,6 +2937,7 @@ Example: /model gpt-4.1 write a Python script`;
             model: mModel,
             context: { workingDir },
             onStream: () => {},
+            onThinking: () => {},
             onStatus: () => {},
             signal: req.signal,
           });
@@ -3037,7 +3056,7 @@ Example: /model gpt-4.1 write a Python script`;
         const bbBlock = result.blackboard.renderForUser();
         const formatted = this.formatManagerParts(result.parts, result.finalSummary);
         this.persistBlackboardDecisions(result.blackboard, teamName);
-        return { response: bbBlock ? `${formatted}\n\n${bbBlock}` : formatted };
+        return { response: bbBlock ? `${formatted}\n\n${bbBlock}` : formatted, thinkingByStep: result.thinkingByStep };
       }
     }
 
@@ -3045,6 +3064,7 @@ Example: /model gpt-4.1 write a Python script`;
     let carry = prompt;
     const parts: string[] = [];
     const blackboard = new TeamBlackboard();
+    const thinkingByStep: Record<number, string> = {};
     for (let i = 0; i < team.members.length; i++) {
       if (signal?.aborted) break;
       const memberName = team.members[i];
@@ -3067,11 +3087,13 @@ Example: /model gpt-4.1 write a Python script`;
       const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
       const workerModel = workerManager.getWorkerModel(memberName);
       const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
-      const response = await runOneWorker(memberName, stepPrompt, codingAgent, modelConfig, blackboard);
+      const response = await runOneWorker(memberName, stepPrompt, codingAgent, modelConfig, blackboard,
+        (text: string) => sink({ type: 'thinking', chatId, token: text, step: stepNum }));
       if (!response.success) {
         parts.push(`### Step ${stepNum}: ${memberName}\n\n`);
         break;
       }
+      if (response.thinking) thinkingByStep[stepNum] = response.thinking;
       const ingested = blackboard.ingest(memberName, stepNum, response.output);
       const cleanOutput = ingested.stripped;
       const deltaSummary = blackboard.summarizeDelta(ingested.added);
@@ -3102,7 +3124,7 @@ Example: /model gpt-4.1 write a Python script`;
     const bbBlock = blackboard.renderForUser();
     this.persistBlackboardDecisions(blackboard, teamName);
     const body = parts.join('\n\n---\n\n');
-    return { response: bbBlock ? `${body}\n\n${bbBlock}` : body };
+    return { response: bbBlock ? `${body}\n\n${bbBlock}` : body, thinkingByStep };
   }
 
   private formatUptime(seconds: number): string {
@@ -3803,7 +3825,9 @@ Example: /model gpt-4.1 write a Python script`;
       let output = '';
       let tokens: number | undefined;
       let teamChoices: string[] | undefined;
+      let teamThinkingByStep: Record<number, string> | undefined;
       let agentUserQuestion: AgentResponse['userQuestion'];
+      let singleAgentResponse: AgentResponse | null | undefined;
       if (chat.selection.type === 'team') {
         // Resolve the team from the chat's workspace.json (read above), not from
         // the active workspace, so a chat in workspace B uses B's team config
@@ -3836,6 +3860,7 @@ Example: /model gpt-4.1 write a Python script`;
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
+        teamThinkingByStep = r.thinkingByStep;
       } else {
         let response = await this.runWithFallback(agent, {
           prompt,
@@ -3844,6 +3869,7 @@ Example: /model gpt-4.1 write a Python script`;
           context: { workingDir },
           skipPermissions: this.getSkipPermissions(),
           onStream,
+          onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
           onStatus,
           signal: abortController.signal,
           resumeSessionId,
@@ -3865,12 +3891,14 @@ Example: /model gpt-4.1 write a Python script`;
             context: { workingDir },
             skipPermissions: this.getSkipPermissions(),
             onStream,
+            onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
             onStatus,
             signal: abortController.signal,
             resumeSessionId: undefined,
             newSessionId,
           });
         }
+        singleAgentResponse = response;
         output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
         tokens = (response as any)?.tokens?.total;
         // Persist the anchor on success for next-turn resume.
@@ -3923,6 +3951,8 @@ Example: /model gpt-4.1 write a Python script`;
         id: randomUUID(),
         role: 'assistant',
         content: output,
+        thinking: singleAgentResponse?.thinking,
+        thinkingByStep: teamThinkingByStep,
         timestamp: Date.now(),
         toolCalls,
         isComplete: true,
@@ -3950,7 +3980,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
 
-      sink({ type: 'done', chatId, response: output, tokens, durationSec, title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion });
+      sink({ type: 'done', chatId, response: output, thinking: singleAgentResponse?.thinking, tokens, durationSec, title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion });
 
       // Mirror this turn to every attached route except the originating one.
       // Mac-origin uses a synthetic '__mac__' channel that matches no real
