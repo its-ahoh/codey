@@ -30,6 +30,10 @@ export interface ChatMessage {
   tokens?: number;
   /** Wall-clock seconds the agent took to produce the response. */
   durationSec?: number;
+  /** Extended-thinking for a single-agent assistant message (collapsed in UI). */
+  thinking?: string;
+  /** Per-team-step extended-thinking, keyed by step number. */
+  thinkingByStep?: Record<number, string>;
   /** Option labels when this assistant message ended in [ASK_USER:choice]. */
   choices?: string[];
   /** Structured question from AskUserQuestion tool call, with option descriptions. */

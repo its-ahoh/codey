@@ -14,6 +14,7 @@ export default defineConfig({
       'src/discussion/parallel-advisor.test.ts',
       'src/task-brief.test.ts',
       'src/aide-tasks.test.ts',
+      'src/agents/thinking-stream.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },

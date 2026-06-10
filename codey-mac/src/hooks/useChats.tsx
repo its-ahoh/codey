@@ -8,6 +8,8 @@ interface InFlight {
   userMessageId: string
   agentStatus: 'idle' | 'thinking' | 'working' | 'writing'
   queuedPosition?: number
+  thinking?: string
+  thinkingByStep?: Record<number, string>
 }
 
 interface State {
@@ -33,6 +35,7 @@ type Action =
   | { type: 'toggleWorkspace'; workspaceName: string }
   | { type: 'startSend'; chatId: string; userMessage: ChatMessage; assistantMessageId: string }
   | { type: 'streamToken'; chatId: string; token: string }
+  | { type: 'thinkingToken'; chatId: string; token: string; step?: number }
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: 'working' | 'writing' }
   | { type: 'queued'; chatId: string; position: number }
   | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion'] }
@@ -146,6 +149,27 @@ function reducer(state: State, action: Action): State {
             agentStatus: 'thinking',
           },
         },
+      }
+    }
+    case 'thinkingToken': {
+      const chat = state.chats[action.chatId]
+      const fl = state.inFlight[action.chatId]
+      if (!chat || !fl) return state
+      const nextFl: InFlight = { ...fl, agentStatus: 'thinking' }
+      if (action.step === undefined) {
+        nextFl.thinking = (fl.thinking ?? '') + action.token
+      } else {
+        nextFl.thinkingByStep = { ...(fl.thinkingByStep ?? {}), [action.step]: (fl.thinkingByStep?.[action.step] ?? '') + action.token }
+      }
+      const messages = chat.messages.map(m =>
+        m.id === fl.assistantMessageId
+          ? { ...m, thinking: nextFl.thinking, thinkingByStep: nextFl.thinkingByStep }
+          : m
+      )
+      return {
+        ...state,
+        chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } },
+        inFlight: { ...state.inFlight, [chat.id]: nextFl },
       }
     }
     case 'streamToken': {
@@ -353,6 +377,9 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           break
         case 'stream':
           dispatch({ type: 'streamToken', chatId: ev.chatId, token: ev.token })
+          break
+        case 'thinking':
+          dispatch({ type: 'thinkingToken', chatId: ev.chatId, token: ev.token, step: ev.step })
           break
         case 'done': {
           const asstId = pendingAssistantId.current[ev.chatId]
