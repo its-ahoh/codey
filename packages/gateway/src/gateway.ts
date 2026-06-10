@@ -2061,7 +2061,6 @@ Example: /model gpt-4.1 write a Python script`;
           options?: string[];
         };
         blackboard: TeamBlackboard;
-        thinkingByStep?: Record<number, string>;
       }
   > {
     const workerManager = this.workspaceManager.getWorkerManager();
@@ -2150,7 +2149,6 @@ Example: /model gpt-4.1 write a Python script`;
               options: pendingArbitration.options,
             },
             blackboard,
-            thinkingByStep,
           };
         }
         if (turn.done || !turn.next) {
@@ -2485,6 +2483,12 @@ Example: /model gpt-4.1 write a Python script`;
     pending: PendingTeamState,
     answer: string,
   ): Promise<void> {
+    // NOTE: this resume path streams via sendResponse and emits the legacy
+    // "📊 Team results" format (not the `### Step` structure parsed by the mac
+    // UI), so extended-thinking is intentionally NOT surfaced here. Showing
+    // per-step thinking on resume requires first unifying this path onto the
+    // same sink + structured-message pipeline as runTeamForChat — tracked as a
+    // follow-up (see docs/superpowers/specs/...-resume-streaming-unification).
     const team = this.workspaceManager.getTeam(pending.teamName);
     if (!team) {
       await this.sendResponse({
@@ -3038,7 +3042,6 @@ Example: /model gpt-4.1 write a Python script`;
           blackboard: result.blackboard.toJSON(),
           askedAt: Date.now(),
           workerAnchors: this.snapshotWorkerAnchors(teamConv),
-          thinkingByStep: result.thinkingByStep,
         });
         const rendered5 = renderQuestion(askWorkerName, '', p.question, p.options);
         sink({ type: 'stream', chatId, token: rendered5.text });
@@ -3110,11 +3113,10 @@ Example: /model gpt-4.1 write a Python script`;
           askedAt: Date.now(),
           blackboard: blackboard.toJSON(),
           workerAnchors: this.snapshotWorkerAnchors(teamConv),
-          thinkingByStep,
         });
         const rendered6 = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
         sink({ type: 'stream', chatId, token: rendered6.text });
-        return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + rendered6.text : rendered6.text, choices: rendered6.choices, thinkingByStep };
+        return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + rendered6.text : rendered6.text, choices: rendered6.choices };
       }
       parts.push(`### Step ${stepNum}: ${memberName}\n\n${cleanOutput}`);
       carry = cleanOutput;
