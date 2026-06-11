@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { CoreState } from '../../electron/core-state'
 
 export interface GatewayStatus {
   status: 'healthy' | 'degraded' | 'stopped' | 'starting'
@@ -20,6 +21,7 @@ export const useGateway = () => {
   const [logs, setLogs] = useState<string[]>(['Gateway running in-process'])
   const [status, setStatus] = useState<GatewayStatus>(EMPTY_STATUS)
   const [isRunning, setIsRunning] = useState(false)
+  const [coreState, setCoreState] = useState<CoreState>({ phase: 'booting' })
 
   useEffect(() => {
     // The renderer subscribes after main has already emitted boot-time logs,
@@ -37,6 +39,17 @@ export const useGateway = () => {
     const off = window.codey.onLog(msg => {
       setLogs(prev => [...prev.slice(-99), msg])
     })
+    return () => { cancelled = true; off() }
+  }, [])
+
+  useEffect(() => {
+    // Same backfill-then-subscribe pattern: boot may have finished (or failed)
+    // before this component mounted.
+    let cancelled = false
+    window.codey.core.state().then(res => {
+      if (!cancelled && res.ok && res.data) setCoreState(res.data)
+    }).catch(() => {})
+    const off = window.codey.core.onState(s => setCoreState(s))
     return () => { cancelled = true; off() }
   }, [])
 
@@ -72,8 +85,7 @@ export const useGateway = () => {
     isRunning,
     status,
     logs,
-    start: async () => {},
-    stop: async () => {},
-    toggle: () => {},
+    coreState,
+    relaunchApp: () => { void window.codey.core.relaunch() },
   }
 }
