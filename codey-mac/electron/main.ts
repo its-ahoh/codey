@@ -3,6 +3,7 @@ import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
+import { createCoreStateStore } from './core-state'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -16,6 +17,7 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 let inProcessGateway: Codey | null = null
+const coreStateStore = createCoreStateStore((s) => sendToRenderer('core:state', s))
 let workerManager: WorkerManager | null = null
 let workspaceManager: WorkspaceManager | null = null
 let coreConfigManager: ConfigManager | null = null
@@ -414,6 +416,7 @@ function buildRuntimeConfig(json: any): any {
 }
 
 async function bootInProcessCore() {
+  coreStateStore.setBooting()
   const root = resolveDataRoot()
   try {
     coreConfigManager = new ConfigManager(join(root, 'gateway.json'))
@@ -502,8 +505,10 @@ async function bootInProcessCore() {
     inProcessGateway.setPairingEventListener((ev: any) => {
       sendToRenderer('pairing:event', ev)
     })
+    coreStateStore.setReady()
   } catch (err: any) {
     sendToRenderer('gateway-log', `[core] Boot failed: ${err?.message ?? err}`)
+    coreStateStore.setFailed(err?.message ?? String(err))
   }
 }
 
@@ -846,6 +851,12 @@ app.whenReady().then(async () => {
   // ── Gateway status IPC ────────────────────────────────────────────
   ipcMain.handle('gateway:status', async () =>
     wrap(async () => inProcessGateway?.getHealthStatus() ?? null)
+  )
+  ipcMain.handle('core:state', async () =>
+    wrap(async () => coreStateStore.get())
+  )
+  ipcMain.handle('app:relaunch', async () =>
+    wrap(async () => { app.relaunch(); app.quit() })
   )
 
   // Renderer mounts after did-finish-load fires, so any logs sent during

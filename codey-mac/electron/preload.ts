@@ -144,6 +144,15 @@ contextBridge.exposeInMainWorld('codey', {
     status: () => ipcRenderer.invoke('gateway:status'),
     recentLogs: () => ipcRenderer.invoke('gateway:recentLogs'),
   },
+  core: {
+    state: () => ipcRenderer.invoke('core:state'),
+    relaunch: () => ipcRenderer.invoke('app:relaunch'),
+    onState: (handler: (state: { phase: 'booting' | 'ready' | 'failed'; error?: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: any) => handler(state)
+      ipcRenderer.on('core:state', listener)
+      return () => ipcRenderer.removeListener('core:state', listener)
+    },
+  },
   voice: {
     onHotkey: (handler: () => void) => {
       const listener = () => handler()
