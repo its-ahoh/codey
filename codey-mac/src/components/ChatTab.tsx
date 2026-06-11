@@ -15,10 +15,12 @@ import { isTaskBriefStale } from './taskHudView'
 import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 import { defaultThinkingExpanded } from './thinkingState'
+import { composerPlaceholder } from './coreOfflineView'
 
 interface Props {
   chatId: string
   isGatewayRunning: boolean
+  coreFailed?: boolean
 }
 
 const SendIcon: React.FC<{ color: string }> = ({ color }) => (
@@ -218,7 +220,7 @@ const TeamMessage: React.FC<{
   )
 }
 
-export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
+export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed }) => {
   const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, renameChat, setContextPanelOpen, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
@@ -725,7 +727,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
 
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
-  const canSend = isGatewayRunning && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
+  const canSend = isGatewayRunning && !coreFailed && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
   const statusLabel = flight?.queuedPosition
     ? `Queued (#${flight.queuedPosition})`
     : flight?.agentStatus === 'thinking' ? 'Thinking…'
@@ -1185,7 +1187,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={!isGatewayRunning || isSending}
+              disabled={!isGatewayRunning || !!coreFailed || isSending}
               style={styles.attachButton}
               title="Attach file"
             >
@@ -1202,8 +1204,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning }) => {
                 el.style.height = 'auto'
                 el.style.height = Math.min(el.scrollHeight, 120) + 'px'
               }}
-              placeholder={isGatewayRunning ? (isSending ? 'Sending…' : 'Message Codey… (↵ to send)') : 'Start gateway to chat'}
-              disabled={!isGatewayRunning}
+              placeholder={composerPlaceholder({ coreFailed: !!coreFailed, isGatewayRunning, isSending })}
+              disabled={!isGatewayRunning || !!coreFailed}
               rows={1}
               style={composerHeight != null
                 ? { ...styles.input, height: composerHeight, maxHeight: 'none' }
