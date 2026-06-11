@@ -824,6 +824,14 @@ app.whenReady().then(async () => {
     app.isPackaged,
     (m) => sendToRenderer('gateway-log', m),
   )
+  // Must be registered before the boot await: the renderer can mount and
+  // query core state while bootInProcessCore() is still running.
+  ipcMain.handle('core:state', async () =>
+    wrap(async () => coreStateStore.get())
+  )
+  ipcMain.handle('app:relaunch', async () =>
+    wrap(async () => { app.relaunch(); app.quit() })
+  )
   await bootInProcessCore()
 
   // Check Full Disk Access by probing the iMessage database.
@@ -851,12 +859,6 @@ app.whenReady().then(async () => {
   // ── Gateway status IPC ────────────────────────────────────────────
   ipcMain.handle('gateway:status', async () =>
     wrap(async () => inProcessGateway?.getHealthStatus() ?? null)
-  )
-  ipcMain.handle('core:state', async () =>
-    wrap(async () => coreStateStore.get())
-  )
-  ipcMain.handle('app:relaunch', async () =>
-    wrap(async () => { app.relaunch(); app.quit() })
   )
 
   // Renderer mounts after did-finish-load fires, so any logs sent during

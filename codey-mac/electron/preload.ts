@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { CoreState } from './core-state'
 
 contextBridge.exposeInMainWorld('codey', {
   workers: {
@@ -147,7 +148,7 @@ contextBridge.exposeInMainWorld('codey', {
   core: {
     state: () => ipcRenderer.invoke('core:state'),
     relaunch: () => ipcRenderer.invoke('app:relaunch'),
-    onState: (handler: (state: { phase: 'booting' | 'ready' | 'failed'; error?: string }) => void) => {
+    onState: (handler: (state: CoreState) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, state: any) => handler(state)
       ipcRenderer.on('core:state', listener)
       return () => ipcRenderer.removeListener('core:state', listener)
