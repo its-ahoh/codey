@@ -34,6 +34,7 @@ export const AppearanceTab: React.FC = () => {
   const effective = useEffectiveTheme()
   const [version, setVersion] = React.useState<string>('')
   const [skipPerms, setSkipPerms] = React.useState<boolean>(true)
+  const [notifyEnabled, setNotifyEnabled] = React.useState<boolean>(true)
   const [loaded, setLoaded] = React.useState(false)
 
   React.useEffect(() => {
@@ -41,6 +42,7 @@ export const AppearanceTab: React.FC = () => {
     window.codey?.config?.get?.().then((res: any) => {
       const cfg = res?.ok ? res.data : res
       setSkipPerms(cfg?.gateway?.skipPermissions ?? true)
+      setNotifyEnabled(cfg?.notifications?.enabled ?? true)
       setLoaded(true)
     }).catch(() => { setLoaded(true) })
   }, [])
@@ -48,6 +50,11 @@ export const AppearanceTab: React.FC = () => {
   const toggleSkipPerms = (v: boolean) => {
     setSkipPerms(v)
     window.codey?.config?.set?.({ gateway: { skipPermissions: v } }).catch(() => { /* ignore */ })
+  }
+
+  const toggleNotify = (v: boolean) => {
+    setNotifyEnabled(v)
+    window.codey?.config?.set?.({ notifications: { enabled: v } }).catch(() => { /* ignore */ })
   }
 
   return (
@@ -101,15 +108,27 @@ export const AppearanceTab: React.FC = () => {
       </div>
 
       {loaded && (
-        <div style={styles.row}>
-          <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
-            <div>Skip permissions</div>
-            <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
-              When enabled, agents run shell commands, edit files, and make network requests without asking for confirmation. Disable to review every action before execution.
+        <>
+          <div style={styles.row}>
+            <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
+              <div>Skip permissions</div>
+              <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
+                When enabled, agents run shell commands, edit files, and make network requests without asking for confirmation. Disable to review every action before execution.
+              </div>
             </div>
+            <Toggle on={skipPerms} onChange={toggleSkipPerms}/>
           </div>
-          <Toggle on={skipPerms} onChange={toggleSkipPerms}/>
-        </div>
+
+          <div style={styles.row}>
+            <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
+              <div>Background notifications</div>
+              <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
+                Notify when Codey finishes, errors, or needs your input while the app is in the background.
+              </div>
+            </div>
+            <Toggle on={notifyEnabled} onChange={toggleNotify}/>
+          </div>
+        </>
       )}
 
       <div style={styles.row}>
