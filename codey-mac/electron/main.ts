@@ -4,6 +4,7 @@ import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { createCoreStateStore } from './core-state'
+import { decideNotification, createTurnTracker } from './chat-notifications'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -18,6 +19,7 @@ let tray: Tray | null = null
 let isQuitting = false
 let inProcessGateway: Codey | null = null
 const coreStateStore = createCoreStateStore((s) => sendToRenderer('core:state', s))
+const turnTracker = createTurnTracker()
 let workerManager: WorkerManager | null = null
 let workspaceManager: WorkspaceManager | null = null
 let coreConfigManager: ConfigManager | null = null
@@ -110,6 +112,50 @@ function sendToRenderer(channel: string, ...args: any[]) {
     if (pendingRendererMessages.length > 500) pendingRendererMessages.shift()
   }
 }
+// Native macOS notifications for background chats. Decisions are pure
+// (chat-notifications.ts); this is the impure shell: focus check, config
+// read, Notification construction, click/action routing.
+function maybeNotify(ev: any) {
+  try {
+    if (!ev || typeof ev.chatId !== 'string') return
+    const enabled = ((coreConfigManager?.get() as any)?.notifications?.enabled ?? true) as boolean
+    const focused = mainWindow?.isFocused() ?? false
+    const chatTitle = inProcessGateway?.getChatManager().get(ev.chatId)?.title
+    const decision = decideNotification(ev, { focused, enabled, chatTitle })
+    const isDuplicate = turnTracker.alreadyNotified(ev.chatId)
+    turnTracker.observe(ev)
+    if (!decision || isDuplicate) return
+    turnTracker.markNotified(decision.chatId)
+
+    const openChat = () => {
+      mainWindow?.show()
+      sendToRenderer('notify:openChat', { chatId: decision.chatId })
+    }
+    const notif = new Notification({
+      title: decision.title,
+      body: decision.body,
+      actions: decision.actions?.map(a => ({ type: 'button' as const, text: a.label })),
+    })
+    notif.on('click', openChat)
+    if (decision.actions?.length) {
+      notif.on('action', (_e, index) => {
+        const label = decision.actions?.[index]?.label
+        // Stale button (a new turn already started) or missing gateway:
+        // fall back to focusing the chat instead of sending.
+        if (!label || !inProcessGateway || turnTracker.isInFlight(decision.chatId)) { openChat(); return }
+        const sink = () => { /* no-op: global chatEventListener mirrors to renderer */ }
+        void inProcessGateway.sendToChat(decision.chatId, label, sink).catch((err: any) => {
+          sendToRenderer('gateway-log', `[notify] answer send failed: ${err?.message ?? err}`)
+          openChat()
+        })
+      })
+    }
+    notif.show()
+  } catch (err: any) {
+    try { sendToRenderer('gateway-log', `[notify] notification failed: ${err?.message ?? err}`) } catch { /* renderer gone */ }
+  }
+}
+
 function flushPendingRendererMessages() {
   rendererReady = true
   if (!mainWindow) return
@@ -501,6 +547,7 @@ async function bootInProcessCore() {
     // messages on paired surfaces) to the renderer so the Mac UI stays in sync.
     inProcessGateway.setChatEventListener((ev: any) => {
       sendToRenderer('chats:event', ev)
+      maybeNotify(ev)
     })
     inProcessGateway.setPairingEventListener((ev: any) => {
       sendToRenderer('pairing:event', ev)

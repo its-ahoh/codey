@@ -142,6 +142,9 @@ declare global {
         relaunch: () => Promise<IpcResult<void>>
         onState: (handler: (state: CoreState) => void) => () => void
       }
+      notify: {
+        onOpenChat: (handler: (msg: { chatId: string }) => void) => () => void
+      }
       voice: {
         onHotkey: (handler: () => void) => () => void
         notifyTranscribed: (text: string) => Promise<IpcResult<void>>
