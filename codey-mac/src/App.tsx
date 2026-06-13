@@ -66,6 +66,14 @@ const Shell: React.FC = () => {
   }, [state.order, state.workspaces, createChat, selectChat])
 
   useEffect(() => {
+    const off = window.codey.notify.onOpenSettings(() => {
+      setSettingsTab('general')
+      setSettingsOpen(true)
+    })
+    return off
+  }, [])
+
+  useEffect(() => {
     applyTheme(getStoredThemeMode())
     applyPalette(getStoredPalette())
     const mql = window.matchMedia('(prefers-color-scheme: dark)')

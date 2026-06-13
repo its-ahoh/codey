@@ -142,6 +142,15 @@ declare global {
         relaunch: () => Promise<IpcResult<void>>
         onState: (handler: (state: CoreState) => void) => () => void
       }
+      notify: {
+        onOpenChat: (handler: (msg: { chatId: string }) => void) => () => void
+        onOpenSettings: (handler: () => void) => () => void
+      }
+      capture: {
+        submit: (payload: { workspaceName?: string; text: string }) => Promise<IpcResult<{ chatId: string }>>
+        hide: () => Promise<IpcResult<void>>
+        onShown: (handler: () => void) => () => void
+      }
       voice: {
         onHotkey: (handler: () => void) => () => void
         notifyTranscribed: (text: string) => Promise<IpcResult<void>>

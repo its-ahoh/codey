@@ -154,6 +154,27 @@ contextBridge.exposeInMainWorld('codey', {
       return () => ipcRenderer.removeListener('core:state', listener)
     },
   },
+  notify: {
+    onOpenChat: (handler: (msg: { chatId: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, msg: any) => handler(msg)
+      ipcRenderer.on('notify:openChat', listener)
+      return () => ipcRenderer.removeListener('notify:openChat', listener)
+    },
+    onOpenSettings: (handler: () => void) => {
+      const listener = () => handler()
+      ipcRenderer.on('notify:openSettings', listener)
+      return () => ipcRenderer.removeListener('notify:openSettings', listener)
+    },
+  },
+  capture: {
+    submit: (payload: { workspaceName?: string; text: string }) => ipcRenderer.invoke('capture:submit', payload),
+    hide: () => ipcRenderer.invoke('capture:hide'),
+    onShown: (handler: () => void) => {
+      const listener = () => handler()
+      ipcRenderer.on('capture:shown', listener)
+      return () => ipcRenderer.removeListener('capture:shown', listener)
+    },
+  },
   voice: {
     onHotkey: (handler: () => void) => {
       const listener = () => handler()

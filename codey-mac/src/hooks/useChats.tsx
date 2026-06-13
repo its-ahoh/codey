@@ -266,10 +266,13 @@ function reducer(state: State, action: Action): State {
       )
       const inFlight = { ...state.inFlight }
       delete inFlight[action.chatId]
+      const unreadChats = { ...state.unreadChats }
+      if (state.selectedChatId !== action.chatId) unreadChats[action.chatId] = true
       return {
         ...state,
         chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } },
         inFlight,
+        unreadChats,
       }
     }
     default:
@@ -428,6 +431,13 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           break
         }
       }
+    })
+    return off
+  }, [])
+
+  useEffect(() => {
+    const off = window.codey.notify.onOpenChat(({ chatId }) => {
+      dispatch({ type: 'select', chatId })
     })
     return off
   }, [])
