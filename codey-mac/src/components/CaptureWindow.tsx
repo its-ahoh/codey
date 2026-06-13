@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   C, applyTheme, applyPalette, getStoredThemeMode, getStoredPalette,
   paletteToCssVars, classicLight, classicDark, terminalLight, terminalDark,
@@ -9,6 +9,19 @@ import {
 // window on success. Escape hides; main also hides on blur.
 type PickedFile = { path: string; name: string; size: number }
 
+// Icons mirrored from the chat composer (QuickQuestionView) so the capture
+// input reads like the main chat input: paperclip on the left, send on the right.
+const PaperclipIcon: React.FC<{ color: string }> = ({ color }) => (
+  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21.44 11.05L12.25 20.24a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 11-2.83-2.83l8.49-8.48" />
+  </svg>
+)
+const SendIcon: React.FC<{ color: string }> = ({ color }) => (
+  <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 2L11 13M22 2L15 22 11 13 2 9l20-7z" />
+  </svg>
+)
+
 export const CaptureWindow: React.FC = () => {
   const [text, setText] = useState('')
   const [workspaces, setWorkspaces] = useState<string[]>([])
@@ -17,6 +30,7 @@ export const CaptureWindow: React.FC = () => {
   const [sending, setSending] = useState(false)
   const [files, setFiles] = useState<PickedFile[]>([])
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
 
   const loadWorkspaces = async () => {
     try {
@@ -52,6 +66,21 @@ export const CaptureWindow: React.FC = () => {
       setTimeout(() => taRef.current?.focus(), 0)
     })
     return off
+  }, [])
+
+  // Report the real content height so main can size the (bottom-anchored)
+  // window to fit — short when empty, taller only when chips/text grow it.
+  useLayoutEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    const report = () => {
+      try { void window.codey.capture.setHeight?.(Math.ceil(el.getBoundingClientRect().height)) }
+      catch { /* main not ready */ }
+    }
+    report()
+    const ro = new ResizeObserver(report)
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [])
 
   const pickFiles = async () => {
@@ -104,27 +133,49 @@ export const CaptureWindow: React.FC = () => {
   }
 
   return (
-    <div style={styles.root}>
-      <div style={styles.row}>
-        <textarea
-          ref={taRef}
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="What should Codey do? (↵ to send, esc to dismiss)"
-          rows={2}
-          autoFocus
-          style={styles.input}
-        />
-        <div style={styles.rightCol}>
+    <div ref={rootRef} style={styles.root}>
+      {/* Single bordered composer box, mirroring the chat input: attach button
+          on the left, textarea, workspace picker, and a tall Send on the right. */}
+      <div style={styles.composer}>
+        {files.length > 0 && (
+          <div style={styles.chips}>
+            {files.map(f => (
+              <span key={f.path} style={styles.chip} title={f.name}>
+                <span style={styles.chipName}>{f.name}</span>
+                <button
+                  type="button"
+                  onClick={() => removeFile(f.path)}
+                  aria-label={`Remove ${f.name}`}
+                  style={styles.chipX}
+                >×</button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div style={styles.composerRow}>
           <button
             type="button"
             onClick={() => void pickFiles()}
             title="Attach files"
             style={styles.attachBtn}
           >
-            📎 Attach
+            <PaperclipIcon color={C.fg2} />
           </button>
+          <textarea
+            ref={taRef}
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={onKeyDown}
+            onInput={e => {
+              const el = e.currentTarget
+              el.style.height = 'auto'
+              el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+            }}
+            placeholder="What should Codey do? (↵ to send, esc to dismiss)"
+            rows={1}
+            autoFocus
+            style={styles.input}
+          />
           <select
             aria-label="Workspace"
             value={workspace}
@@ -137,27 +188,13 @@ export const CaptureWindow: React.FC = () => {
             type="button"
             onClick={() => void submit()}
             disabled={sending}
+            title="Send"
             style={{ ...styles.sendBtn, ...(sending ? styles.sendBtnDisabled : null) }}
           >
-            {sending ? 'Sending…' : 'Send'}
+            {sending ? '…' : <SendIcon color={C.onAccent} />}
           </button>
         </div>
       </div>
-      {files.length > 0 && (
-        <div style={styles.chips}>
-          {files.map(f => (
-            <span key={f.path} style={styles.chip} title={f.name}>
-              <span style={styles.chipName}>{f.name}</span>
-              <button
-                type="button"
-                onClick={() => removeFile(f.path)}
-                aria-label={`Remove ${f.name}`}
-                style={styles.chipX}
-              >×</button>
-            </span>
-          ))}
-        </div>
-      )}
       {error && <div style={styles.error}>{error}</div>}
       <style>{`
   /* Same theme matrix as App.tsx so applyTheme/applyPalette take effect. */
@@ -168,7 +205,7 @@ export const CaptureWindow: React.FC = () => {
   :root[data-palette="classic"][data-theme="dark"] { ${paletteToCssVars(classicDark)} }
   :root[data-palette="terminal"][data-theme="light"] { ${paletteToCssVars(terminalLight)} }
   :root[data-palette="terminal"][data-theme="dark"] { ${paletteToCssVars(terminalDark)} }
-  html, body, #root { height: 100%; margin: 0; background: transparent; }
+  html, body, #root { margin: 0; background: transparent; }
   body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
   * { box-sizing: border-box; }
 `}</style>
@@ -177,54 +214,52 @@ export const CaptureWindow: React.FC = () => {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  // No fixed height — the window follows this box's content via capture:setHeight.
   root: {
-    height: '100vh', display: 'flex', flexDirection: 'column', gap: 6,
-    padding: 12, background: C.bg, borderRadius: 10,
+    display: 'flex', flexDirection: 'column', gap: 6,
+    padding: 10, background: C.bg, borderRadius: 10,
     border: `1px solid ${C.border}`, overflow: 'hidden',
   },
-  row: { display: 'flex', gap: 8, flex: 1, minHeight: 0 },
-  input: {
-    flex: 1, resize: 'none', background: C.surface2, color: C.fg,
-    border: `1px solid ${C.border2}`, borderRadius: 8, padding: '10px 12px',
-    fontSize: 14, outline: 'none', fontFamily: 'inherit',
+  composer: {
+    background: C.surface2, border: `1px solid ${C.border2}`,
+    borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden',
   },
-  // Right-hand controls share one fixed-width column: attach, project picker,
-  // and the primary Send action stacked top-to-bottom.
-  rightCol: {
-    display: 'flex', flexDirection: 'column', gap: 6, width: 132, flexShrink: 0,
-  },
-  attachBtn: {
-    background: C.surface2, color: C.fg2, border: `1px solid ${C.border2}`,
-    borderRadius: 8, padding: '0 8px', height: 30, fontSize: 12,
-    cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
-  },
-  select: {
-    flex: 1, minHeight: 0, background: C.surface2, color: C.fg2,
-    border: `1px solid ${C.border2}`, borderRadius: 8, padding: '0 8px',
-    fontSize: 12, cursor: 'pointer',
-  },
-  sendBtn: {
-    background: C.accent, color: C.onAccent, border: 'none',
-    borderRadius: 8, height: 34, fontSize: 13, fontWeight: 600,
-    cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
-  },
-  sendBtnDisabled: { opacity: 0.6, cursor: 'default' },
-  // Attached-file chips, horizontally scrollable so a long list never grows
-  // the fixed-size capture window.
-  chips: {
-    display: 'flex', gap: 6, flexShrink: 0, overflowX: 'auto',
-    paddingBottom: 2,
-  },
+  // Attached-file chips above the input row; wrap so they never force a scroll.
+  chips: { display: 'flex', gap: 6, flexWrap: 'wrap', padding: '6px 6px 0' },
   chip: {
-    display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
-    maxWidth: 180, background: C.surface2, color: C.fg2,
-    border: `1px solid ${C.border2}`, borderRadius: 6,
-    padding: '2px 4px 2px 8px', fontSize: 11,
+    display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: 200,
+    background: C.surface3, color: C.fg2, border: `1px solid ${C.border2}`,
+    borderRadius: 6, padding: '2px 4px 2px 8px', fontSize: 11,
   },
   chipName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   chipX: {
     background: 'none', border: 'none', color: C.fg2, cursor: 'pointer',
     fontSize: 14, lineHeight: 1, padding: '0 2px',
   },
+  composerRow: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: 6 },
+  attachBtn: {
+    width: 34, height: 34, borderRadius: 9, border: 'none', background: 'transparent',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0, cursor: 'pointer',
+  },
+  input: {
+    flex: 1, resize: 'none', background: 'transparent', color: C.fg,
+    border: 'none', padding: '8px 4px', outline: 'none', fontSize: 14,
+    fontFamily: 'inherit', lineHeight: 1.4, minHeight: 34, maxHeight: 120, overflowY: 'auto',
+  },
+  // Shorter workspace picker so the input gets the room.
+  select: {
+    width: 96, height: 34, alignSelf: 'flex-end', background: C.surface3, color: C.fg2,
+    border: `1px solid ${C.border2}`, borderRadius: 8, padding: '0 6px',
+    fontSize: 12, cursor: 'pointer', flexShrink: 0,
+  },
+  // Taller, prominent primary action.
+  sendBtn: {
+    width: 56, height: 46, borderRadius: 9, border: 'none', background: C.accent,
+    color: C.onAccent, fontSize: 14, fontWeight: 600, cursor: 'pointer',
+    fontFamily: 'inherit', flexShrink: 0,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  },
+  sendBtnDisabled: { opacity: 0.6, cursor: 'default' },
   error: { color: C.dangerFg, fontSize: 11, paddingLeft: 2, flexShrink: 0 },
 }

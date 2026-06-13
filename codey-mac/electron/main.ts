@@ -136,7 +136,10 @@ function inferCaptureMimeType(name: string): string {
 function createCaptureWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 560,
-    height: 150,
+    // Initial height; the renderer reports its real content height via
+    // capture:setHeight (bottom-anchored resize) so the window hugs its
+    // contents — short when empty, taller only when attachments are staged.
+    height: 104,
     show: false,
     frame: false,
     resizable: false,
@@ -1228,6 +1231,18 @@ app.whenReady().then(async () => {
   )
   ipcMain.handle('capture:hide', async () =>
     wrap(async () => { captureWindow?.hide() })
+  )
+  // Renderer-driven height: keep the window pinned to its bottom edge (it is
+  // bottom-anchored on screen) while it grows/shrinks to fit content.
+  ipcMain.handle('capture:setHeight', async (_e, height: number) =>
+    wrap(async () => {
+      if (!captureWindow || captureWindow.isDestroyed()) return
+      const h = Math.max(60, Math.min(Math.round(height) || 0, 600))
+      const b = captureWindow.getBounds()
+      if (h === b.height) return
+      const bottom = b.y + b.height
+      captureWindow.setBounds({ x: b.x, y: bottom - h, width: b.width, height: h })
+    })
   )
   await bootInProcessCore()
 
