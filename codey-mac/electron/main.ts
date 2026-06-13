@@ -6,6 +6,7 @@ import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { createCoreStateStore } from './core-state'
 import { decideNotification, createTurnTracker } from './chat-notifications'
+import { applyEvent, clearAttention, summarize } from './tray-state'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -18,6 +19,8 @@ import { ApiServer } from '@codey/gateway/dist/health'
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
 let tray: Tray | null = null
+let trayState: import('./tray-state').TrayStateMap = {}
+let trayRebuildTimer: NodeJS.Timeout | null = null
 let isQuitting = false
 let inProcessGateway: Codey | null = null
 const coreStateStore = createCoreStateStore((s) => sendToRenderer('core:state', s))
@@ -241,6 +244,79 @@ function flushPendingRendererMessages() {
   pendingRendererMessages.length = 0
 }
 
+function scheduleTrayRebuild() {
+  if (trayRebuildTimer) return
+  trayRebuildTimer = setTimeout(() => {
+    trayRebuildTimer = null
+    rebuildTrayMenu()
+  }, 250)
+}
+
+function openChatFromTray(chatId: string) {
+  mainWindow?.show()
+  mainWindow?.focus()
+  trayState = clearAttention(trayState, chatId)
+  sendToRenderer('notify:openChat', { chatId })
+  scheduleTrayRebuild()
+}
+
+function chatLabel(chatId: string): string | null {
+  try {
+    const c = inProcessGateway?.getChatManager().get(chatId)
+    if (!c) return null
+    return `${c.title || 'Untitled'} — ${c.workspaceName}`
+  } catch { return null }
+}
+
+function rebuildTrayMenu() {
+  if (!tray) return
+  try {
+    const summary = summarize(trayState)
+    const items: Electron.MenuItemConstructorOptions[] = [
+      { label: summary.header, enabled: false },
+    ]
+    const shown = new Set<string>()
+    const addChat = (id: string, prefix = '') => {
+      const label = chatLabel(id)
+      if (!label) return
+      shown.add(id)
+      items.push({ label: prefix + label, click: () => openChatFromTray(id) })
+    }
+    if (summary.needsAttention.length) {
+      items.push({ type: 'separator' }, { label: 'Needs attention', enabled: false })
+      summary.needsAttention.forEach(id => addChat(id, '● '))
+    }
+    if (summary.running.length) {
+      items.push({ type: 'separator' }, { label: 'Running', enabled: false })
+      summary.running.forEach(id => addChat(id))
+    }
+    try {
+      const recent = (inProcessGateway?.getChatManager().list() ?? [])
+        .filter((c: any) => !shown.has(c.id))
+        .slice(0, 5)
+      if (recent.length) {
+        items.push({ type: 'separator' }, { label: 'Recent', enabled: false })
+        recent.forEach((c: any) => items.push({
+          label: `${c.title || 'Untitled'} — ${c.workspaceName}`,
+          click: () => openChatFromTray(c.id),
+        }))
+      }
+    } catch { /* list unavailable — skip recent section */ }
+    items.push(
+      { type: 'separator' },
+      { label: 'Open Codey', click: () => { mainWindow?.show(); mainWindow?.focus() } },
+      { label: 'Quick Capture', click: () => toggleCaptureWindow() },
+      { label: 'Settings', click: () => { mainWindow?.show(); mainWindow?.focus(); sendToRenderer('notify:openSettings') } },
+      { type: 'separator' },
+      { label: 'Quit', click: () => { isQuitting = true; app.quit() } },
+    )
+    tray.setContextMenu(Menu.buildFromTemplate(items))
+    tray.setToolTip(`Codey — ${summary.header}`)
+  } catch (err: any) {
+    sendToRenderer('gateway-log', `[tray] menu rebuild failed: ${err?.message ?? err}`)
+  }
+}
+
 function createTray() {
   const trayIconPath = app.isPackaged
     ? join(process.resourcesPath, 'trayIconTemplate.png')
@@ -249,25 +325,7 @@ function createTray() {
   icon.setTemplateImage(true)
   tray = new Tray(icon)
 
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Open Codey',
-      click: () => {
-        mainWindow?.show()
-        mainWindow?.focus()
-      }
-    },
-    {
-      label: 'Quit',
-      click: () => {
-        isQuitting = true
-        app.quit()
-      }
-    }
-  ])
-
-  tray.setToolTip('Codey - Gateway Control')
-  tray.setContextMenu(contextMenu)
+  rebuildTrayMenu()
 
   tray.on('click', () => {
     mainWindow?.show()
@@ -626,6 +684,8 @@ async function bootInProcessCore() {
     inProcessGateway.setChatEventListener((ev: any) => {
       sendToRenderer('chats:event', ev)
       maybeNotify(ev)
+      trayState = applyEvent(trayState, ev)
+      scheduleTrayRebuild()
     })
     inProcessGateway.setPairingEventListener((ev: any) => {
       sendToRenderer('pairing:event', ev)
