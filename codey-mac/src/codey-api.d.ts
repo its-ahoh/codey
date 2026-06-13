@@ -149,6 +149,7 @@ declare global {
       capture: {
         submit: (payload: { workspaceName?: string; text: string; filePaths?: string[] }) => Promise<IpcResult<{ chatId: string }>>
         pickFiles: () => Promise<IpcResult<{ files: Array<{ path: string; name: string; size: number }> }>>
+        thumbnail: (path: string) => Promise<IpcResult<{ dataUrl: string }>>
         hide: () => Promise<IpcResult<void>>
         setHeight: (height: number) => Promise<IpcResult<void>>
         onShown: (handler: (payload?: { files?: Array<{ path: string; name: string; size: number }> }) => void) => () => void

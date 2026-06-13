@@ -9,6 +9,11 @@ import {
 // window on success. Escape hides; main also hides on blur.
 type PickedFile = { path: string; name: string; size: number }
 
+// PickedFile carries no mimeType, so fall back to the extension. Screenshots
+// land here as .png and should preview as images, like the chat upload.
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|svg)$/i
+const isImageFile = (name: string): boolean => IMAGE_EXT.test(name)
+
 // Icons mirrored from the chat composer (QuickQuestionView) so the capture
 // input reads like the main chat input: paperclip on the left, send on the right.
 const PaperclipIcon: React.FC<{ color: string }> = ({ color }) => (
@@ -29,6 +34,9 @@ export const CaptureWindow: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [files, setFiles] = useState<PickedFile[]>([])
+  // Cache of path → base64 data URL for image previews. Built lazily as image
+  // files appear; the asset:// protocol can't reach tmpdir/picked paths.
+  const [thumbs, setThumbs] = useState<Record<string, string>>({})
   const taRef = useRef<HTMLTextAreaElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -96,6 +104,22 @@ export const CaptureWindow: React.FC = () => {
     taRef.current?.focus()
   }
 
+  // Load a base64 preview for each image attachment we haven't fetched yet.
+  useEffect(() => {
+    let cancelled = false
+    for (const f of files) {
+      if (!isImageFile(f.name) || thumbs[f.path]) continue
+      window.codey.capture.thumbnail(f.path)
+        .then(res => {
+          if (!cancelled && res.ok && res.data) {
+            setThumbs(prev => ({ ...prev, [f.path]: res.data!.dataUrl }))
+          }
+        })
+        .catch(() => { /* unreadable — falls back to the filename chip */ })
+    }
+    return () => { cancelled = true }
+  }, [files, thumbs])
+
   const removeFile = (path: string) => setFiles(prev => prev.filter(f => f.path !== path))
 
   const submit = async () => {
@@ -139,7 +163,17 @@ export const CaptureWindow: React.FC = () => {
       <div style={styles.composer}>
         {files.length > 0 && (
           <div style={styles.chips}>
-            {files.map(f => (
+            {files.map(f => isImageFile(f.name) && thumbs[f.path] ? (
+              <span key={f.path} style={styles.thumbWrap} title={f.name}>
+                <img src={thumbs[f.path]} alt={f.name} style={styles.thumbImg} />
+                <button
+                  type="button"
+                  onClick={() => removeFile(f.path)}
+                  aria-label={`Remove ${f.name}`}
+                  style={styles.thumbX}
+                >×</button>
+              </span>
+            ) : (
               <span key={f.path} style={styles.chip} title={f.name}>
                 <span style={styles.chipName}>{f.name}</span>
                 <button
@@ -235,6 +269,19 @@ const styles: Record<string, React.CSSProperties> = {
   chipX: {
     background: 'none', border: 'none', color: C.fg2, cursor: 'pointer',
     fontSize: 14, lineHeight: 1, padding: '0 2px',
+  },
+  // Image attachments preview as thumbnails (matching the chat composer) with
+  // an overlaid remove button, instead of a plain filename chip.
+  thumbWrap: {
+    position: 'relative', width: 48, height: 48, borderRadius: 8,
+    overflow: 'hidden', border: `1px solid ${C.border2}`, flexShrink: 0,
+  },
+  thumbImg: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' },
+  thumbX: {
+    position: 'absolute', top: 2, right: 2, width: 16, height: 16, borderRadius: 8,
+    border: 'none', background: 'rgba(0,0,0,0.7)', color: '#fff', cursor: 'pointer',
+    fontSize: 12, lineHeight: '14px', padding: 0,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   composerRow: { display: 'flex', gap: 6, alignItems: 'center', padding: 6 },
   attachBtn: {
