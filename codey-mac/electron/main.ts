@@ -1,9 +1,12 @@
-import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen } from 'electron'
 import { join } from 'path'
+import { captureAccelerator, resolveCaptureSubmit } from './capture'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { createCoreStateStore } from './core-state'
+import { decideNotification, createTurnTracker } from './chat-notifications'
+import { applyEvent, clearAttention, summarize } from './tray-state'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -14,10 +17,14 @@ import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
 
 let mainWindow: BrowserWindow | null = null
+let captureWindow: BrowserWindow | null = null
 let tray: Tray | null = null
+let trayState: import('./tray-state').TrayStateMap = {}
+let trayRebuildTimer: NodeJS.Timeout | null = null
 let isQuitting = false
 let inProcessGateway: Codey | null = null
 const coreStateStore = createCoreStateStore((s) => sendToRenderer('core:state', s))
+const turnTracker = createTurnTracker()
 let workerManager: WorkerManager | null = null
 let workspaceManager: WorkspaceManager | null = null
 let coreConfigManager: ConfigManager | null = null
@@ -25,6 +32,23 @@ let apiServer: ApiServer | null = null
 let activeApiPort: number | null = null
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+
+// Single-instance guard: a second launch (vite restart leaving a stale main
+// process alive, double `npm run dev`, app.relaunch races) must not boot a
+// second in-process core — the stale one already holds the API port and the
+// chat-platform connections. The loser quits; the winner gets told to come
+// to the foreground.
+const gotInstanceLock = app.requestSingleInstanceLock()
+if (!gotInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  })
+}
 
 process.on('uncaughtException', (err) => {
   try { sendToRenderer('gateway-log', `[main] uncaughtException: ${err?.stack || err?.message || err}`) } catch { /* renderer gone */ }
@@ -89,6 +113,73 @@ function createWindow() {
   })
 }
 
+// ── Quick capture window ─────────────────────────────────────────────
+function createCaptureWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 560,
+    height: 120,
+    show: false,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    fullscreenable: false,
+    backgroundColor: '#141414',
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  if (isDev) {
+    win.loadURL('http://localhost:5173/#/capture')
+  } else {
+    win.loadFile(join(__dirname, '../dist/index.html'), { hash: '/capture' })
+  }
+  win.on('blur', () => { win.hide() })
+  win.on('closed', () => { captureWindow = null })
+  return win
+}
+
+function toggleCaptureWindow() {
+  if (!captureWindow || captureWindow.isDestroyed()) captureWindow = createCaptureWindow()
+  if (captureWindow.isVisible()) { captureWindow.hide(); return }
+  // Center horizontally, upper third vertically, on the display under the cursor.
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const { x, y, width, height } = display.workArea
+  const [w] = captureWindow.getSize()
+  captureWindow.setPosition(Math.round(x + (width - w) / 2), Math.round(y + height * 0.25))
+  captureWindow.show()
+  captureWindow.focus()
+  captureWindow.webContents.send('capture:shown')
+}
+
+function applyUiPreferences(rawCfg: any) {
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!rawCfg?.ui?.launchAtLogin })
+  } catch (err: any) {
+    sendToRenderer('gateway-log', `[ui] setLoginItemSettings failed: ${err?.message ?? err}`)
+  }
+  if (rawCfg?.ui?.dockless) app.dock?.hide()
+  else app.dock?.show()
+}
+
+let currentCaptureAccelerator: string | null = null
+function applyCaptureHotkey(rawCfg: any) {
+  const desired = captureAccelerator(rawCfg?.capture?.hotkey)
+  if (currentCaptureAccelerator && currentCaptureAccelerator !== desired) {
+    try { globalShortcut.unregister(currentCaptureAccelerator) } catch { /* not registered */ }
+    currentCaptureAccelerator = null
+  }
+  if (!desired || currentCaptureAccelerator === desired) return
+  const ok = globalShortcut.register(desired, toggleCaptureWindow)
+  if (ok) {
+    currentCaptureAccelerator = desired
+  } else {
+    sendToRenderer('gateway-log', `[capture] hotkey registration failed (in use by another app?): ${desired}`)
+  }
+}
+
 // Buffer messages emitted before the renderer has finished loading so early
 // boot logs (gateway-log especially) aren't silently dropped. Flushed in
 // createWindow() on did-finish-load.
@@ -110,6 +201,50 @@ function sendToRenderer(channel: string, ...args: any[]) {
     if (pendingRendererMessages.length > 500) pendingRendererMessages.shift()
   }
 }
+// Native macOS notifications for background chats. Decisions are pure
+// (chat-notifications.ts); this is the impure shell: focus check, config
+// read, Notification construction, click/action routing.
+function maybeNotify(ev: any) {
+  try {
+    if (!ev || typeof ev.chatId !== 'string') return
+    const enabled = ((coreConfigManager?.get() as any)?.notifications?.enabled ?? true) as boolean
+    const focused = mainWindow?.isFocused() ?? false
+    const chatTitle = inProcessGateway?.getChatManager().get(ev.chatId)?.title
+    const decision = decideNotification(ev, { focused, enabled, chatTitle })
+    const isDuplicate = turnTracker.alreadyNotified(ev.chatId)
+    turnTracker.observe(ev)
+    if (!decision || isDuplicate) return
+    turnTracker.markNotified(decision.chatId)
+
+    const openChat = () => {
+      mainWindow?.show()
+      sendToRenderer('notify:openChat', { chatId: decision.chatId })
+    }
+    const notif = new Notification({
+      title: decision.title,
+      body: decision.body,
+      actions: decision.actions?.map(a => ({ type: 'button' as const, text: a.label })),
+    })
+    notif.on('click', openChat)
+    if (decision.actions?.length) {
+      notif.on('action', (_e, index) => {
+        const label = decision.actions?.[index]?.label
+        // Stale button (a new turn already started) or missing gateway:
+        // fall back to focusing the chat instead of sending.
+        if (!label || !inProcessGateway || turnTracker.isInFlight(decision.chatId)) { openChat(); return }
+        const sink = () => { /* no-op: global chatEventListener mirrors to renderer */ }
+        void inProcessGateway.sendToChat(decision.chatId, label, sink).catch((err: any) => {
+          sendToRenderer('gateway-log', `[notify] answer send failed: ${err?.message ?? err}`)
+          openChat()
+        })
+      })
+    }
+    notif.show()
+  } catch (err: any) {
+    try { sendToRenderer('gateway-log', `[notify] notification failed: ${err?.message ?? err}`) } catch { /* renderer gone */ }
+  }
+}
+
 function flushPendingRendererMessages() {
   rendererReady = true
   if (!mainWindow) return
@@ -117,6 +252,79 @@ function flushPendingRendererMessages() {
     try { mainWindow.webContents.send(m.channel, ...m.args) } catch { /* ignore */ }
   }
   pendingRendererMessages.length = 0
+}
+
+function scheduleTrayRebuild() {
+  if (trayRebuildTimer) return
+  trayRebuildTimer = setTimeout(() => {
+    trayRebuildTimer = null
+    rebuildTrayMenu()
+  }, 250)
+}
+
+function openChatFromTray(chatId: string) {
+  mainWindow?.show()
+  mainWindow?.focus()
+  trayState = clearAttention(trayState, chatId)
+  sendToRenderer('notify:openChat', { chatId })
+  scheduleTrayRebuild()
+}
+
+function chatLabel(chatId: string): string | null {
+  try {
+    const c = inProcessGateway?.getChatManager().get(chatId)
+    if (!c) return null
+    return `${c.title || 'Untitled'} — ${c.workspaceName}`
+  } catch { return null }
+}
+
+function rebuildTrayMenu() {
+  if (!tray) return
+  try {
+    const summary = summarize(trayState)
+    const items: Electron.MenuItemConstructorOptions[] = [
+      { label: summary.header, enabled: false },
+    ]
+    const shown = new Set<string>()
+    const addChat = (id: string, prefix = '') => {
+      const label = chatLabel(id)
+      if (!label) return
+      shown.add(id)
+      items.push({ label: prefix + label, click: () => openChatFromTray(id) })
+    }
+    if (summary.needsAttention.length) {
+      items.push({ type: 'separator' }, { label: 'Needs attention', enabled: false })
+      summary.needsAttention.forEach(id => addChat(id, '● '))
+    }
+    if (summary.running.length) {
+      items.push({ type: 'separator' }, { label: 'Running', enabled: false })
+      summary.running.forEach(id => addChat(id))
+    }
+    try {
+      const recent = (inProcessGateway?.getChatManager().list() ?? [])
+        .filter((c: any) => !shown.has(c.id))
+        .slice(0, 5)
+      if (recent.length) {
+        items.push({ type: 'separator' }, { label: 'Recent', enabled: false })
+        recent.forEach((c: any) => items.push({
+          label: `${c.title || 'Untitled'} — ${c.workspaceName}`,
+          click: () => openChatFromTray(c.id),
+        }))
+      }
+    } catch { /* list unavailable — skip recent section */ }
+    items.push(
+      { type: 'separator' },
+      { label: 'Open Codey', click: () => { mainWindow?.show(); mainWindow?.focus() } },
+      { label: 'Quick Capture', click: () => toggleCaptureWindow() },
+      { label: 'Settings', click: () => { mainWindow?.show(); mainWindow?.focus(); sendToRenderer('notify:openSettings') } },
+      { type: 'separator' },
+      { label: 'Quit', click: () => { isQuitting = true; app.quit() } },
+    )
+    tray.setContextMenu(Menu.buildFromTemplate(items))
+    tray.setToolTip(`Codey — ${summary.header}`)
+  } catch (err: any) {
+    sendToRenderer('gateway-log', `[tray] menu rebuild failed: ${err?.message ?? err}`)
+  }
 }
 
 function createTray() {
@@ -127,25 +335,7 @@ function createTray() {
   icon.setTemplateImage(true)
   tray = new Tray(icon)
 
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Open Codey',
-      click: () => {
-        mainWindow?.show()
-        mainWindow?.focus()
-      }
-    },
-    {
-      label: 'Quit',
-      click: () => {
-        isQuitting = true
-        app.quit()
-      }
-    }
-  ])
-
-  tray.setToolTip('Codey - Gateway Control')
-  tray.setContextMenu(contextMenu)
+  rebuildTrayMenu()
 
   tray.on('click', () => {
     mainWindow?.show()
@@ -458,12 +648,16 @@ async function bootInProcessCore() {
         sendToRenderer('gateway-log', `[core] applyConfig failed: ${err?.message ?? err}`)
       })
       applyVoiceHotkey(updated)
+      applyCaptureHotkey(updated)
+      applyUiPreferences(updated)
     })
     {
       const v = (coreConfigManager.get() as any)?.voice
       sendToRenderer('gateway-log', `[voice] config on boot: enabled=${!!v?.enabled} hotkey=${v?.hotkey ?? '(unset)'}`)
     }
     applyVoiceHotkey(coreConfigManager.get())
+    applyCaptureHotkey(coreConfigManager.get())
+    applyUiPreferences(coreConfigManager.get())
     sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length}, agent: ${runtimeCfg.defaultAgent})`)
     // Boot the gateway in the background so configured channels (telegram,
     // discord, imessage) connect. Done after returning so IPC handler
@@ -501,6 +695,9 @@ async function bootInProcessCore() {
     // messages on paired surfaces) to the renderer so the Mac UI stays in sync.
     inProcessGateway.setChatEventListener((ev: any) => {
       sendToRenderer('chats:event', ev)
+      maybeNotify(ev)
+      trayState = applyEvent(trayState, ev)
+      scheduleTrayRebuild()
     })
     inProcessGateway.setPairingEventListener((ev: any) => {
       sendToRenderer('pairing:event', ev)
@@ -831,6 +1028,40 @@ app.whenReady().then(async () => {
   )
   ipcMain.handle('app:relaunch', async () =>
     wrap(async () => { app.relaunch(); app.quit() })
+  )
+  ipcMain.handle('capture:submit', async (_e, payload: { workspaceName?: string; text: string }) =>
+    wrap(async () => {
+      if (!inProcessGateway || !workspaceManager) throw new Error('Core not ready — open Codey to check its status')
+      const known = workspaceManager.listWorkspaces()
+      const resolved = resolveCaptureSubmit(payload?.text ?? '', payload?.workspaceName, known)
+      if (!resolved.ok) throw new Error(resolved.error)
+      const chat = inProcessGateway.getChatManager().create({ workspaceName: resolved.workspaceName })
+      // Fire and forget: the global chatEventListener mirrors events to the
+      // main window, Aide auto-titles, and the notification pipeline reports
+      // completion/errors.
+      inProcessGateway.sendToChat(chat.id, resolved.text, () => { /* no-op sink */ }).catch((err: any) => {
+        // The sink tee already emitted the error event to the notification
+        // pipeline; this just keeps the rejection out of unhandledRejection.
+        sendToRenderer('gateway-log', `[capture] dispatch failed: ${err?.message ?? err}`)
+      })
+      captureWindow?.hide()
+      try {
+        const notif = new Notification({
+          title: `Task sent to ${resolved.workspaceName}`,
+          body: resolved.text.slice(0, 120),
+          silent: true,
+        })
+        notif.on('click', () => {
+          mainWindow?.show()
+          sendToRenderer('notify:openChat', { chatId: chat.id })
+        })
+        notif.show()
+      } catch { /* notification is best-effort */ }
+      return { chatId: chat.id }
+    })
+  )
+  ipcMain.handle('capture:hide', async () =>
+    wrap(async () => { captureWindow?.hide() })
   )
   await bootInProcessCore()
 
