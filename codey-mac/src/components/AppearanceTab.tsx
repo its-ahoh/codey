@@ -37,6 +37,8 @@ export const AppearanceTab: React.FC = () => {
   const [skipPerms, setSkipPerms] = React.useState<boolean>(true)
   const [notifyEnabled, setNotifyEnabled] = React.useState<boolean>(true)
   const [captureHotkey, setCaptureHotkey] = React.useState<string>('Alt+Space')
+  const [launchAtLogin, setLaunchAtLogin] = React.useState<boolean>(false)
+  const [dockless, setDockless] = React.useState<boolean>(false)
   const [loaded, setLoaded] = React.useState(false)
 
   React.useEffect(() => {
@@ -46,6 +48,8 @@ export const AppearanceTab: React.FC = () => {
       setSkipPerms(cfg?.gateway?.skipPermissions ?? true)
       setNotifyEnabled(cfg?.notifications?.enabled ?? true)
       setCaptureHotkey(cfg?.capture?.hotkey ?? 'Alt+Space')
+      setLaunchAtLogin(cfg?.ui?.launchAtLogin ?? false)
+      setDockless(cfg?.ui?.dockless ?? false)
       setLoaded(true)
     }).catch(() => { setLoaded(true) })
   }, [])
@@ -58,6 +62,16 @@ export const AppearanceTab: React.FC = () => {
   const toggleNotify = (v: boolean) => {
     setNotifyEnabled(v)
     window.codey?.config?.set?.({ notifications: { enabled: v } }).catch(() => { /* ignore */ })
+  }
+
+  const toggleLaunchAtLogin = (v: boolean) => {
+    setLaunchAtLogin(v)
+    window.codey?.config?.set?.({ ui: { launchAtLogin: v, dockless } }).catch(() => { /* ignore */ })
+  }
+
+  const toggleDockless = (v: boolean) => {
+    setDockless(v)
+    window.codey?.config?.set?.({ ui: { dockless: v, launchAtLogin } }).catch(() => { /* ignore */ })
   }
 
   const changeCaptureHotkey = (v: string) => {
@@ -145,6 +159,26 @@ export const AppearanceTab: React.FC = () => {
               </div>
             </div>
             <HotkeyRecorder value={captureHotkey} onChange={changeCaptureHotkey}/>
+          </div>
+
+          <div style={styles.row}>
+            <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
+              <div>Launch Codey at login</div>
+              <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
+                Start Codey automatically when you log in, so the gateway and menu bar are always available.
+              </div>
+            </div>
+            <Toggle on={launchAtLogin} onChange={toggleLaunchAtLogin}/>
+          </div>
+
+          <div style={styles.row}>
+            <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
+              <div>Hide Dock icon (menu bar only)</div>
+              <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
+                Run as a menu-bar app with no Dock icon. Codey stays reachable from the menu bar.
+              </div>
+            </div>
+            <Toggle on={dockless} onChange={toggleDockless}/>
           </div>
         </>
       )}

@@ -144,6 +144,7 @@ declare global {
       }
       notify: {
         onOpenChat: (handler: (msg: { chatId: string }) => void) => () => void
+        onOpenSettings: (handler: () => void) => () => void
       }
       capture: {
         submit: (payload: { workspaceName?: string; text: string }) => Promise<IpcResult<{ chatId: string }>>

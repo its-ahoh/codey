@@ -160,6 +160,11 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.on('notify:openChat', listener)
       return () => ipcRenderer.removeListener('notify:openChat', listener)
     },
+    onOpenSettings: (handler: () => void) => {
+      const listener = () => handler()
+      ipcRenderer.on('notify:openSettings', listener)
+      return () => ipcRenderer.removeListener('notify:openSettings', listener)
+    },
   },
   capture: {
     submit: (payload: { workspaceName?: string; text: string }) => ipcRenderer.invoke('capture:submit', payload),
