@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator, DEFAULT_CAPTURE_HOTKEY } from './capture'
+import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator, DEFAULT_CAPTURE_HOTKEY, DEFAULT_SCREENSHOT_HOTKEY } from './capture'
 
 describe('captureAccelerator', () => {
   it('defaults to Alt+Space when unset', () => {
@@ -26,8 +26,12 @@ describe('captureAccelerator', () => {
 })
 
 describe('screenshotAccelerator', () => {
-  it('is disabled by default (undefined and blank both off)', () => {
-    expect(screenshotAccelerator(undefined)).toBeNull()
+  it('defaults to Option+Control+Space when unset', () => {
+    expect(screenshotAccelerator(undefined)).toBe('Control+Alt+Space')
+    expect(DEFAULT_SCREENSHOT_HOTKEY).toBe('Control+Alt+Space')
+  })
+
+  it('blank string disables (clear-to-disable)', () => {
     expect(screenshotAccelerator('')).toBeNull()
     expect(screenshotAccelerator('   ')).toBeNull()
   })
