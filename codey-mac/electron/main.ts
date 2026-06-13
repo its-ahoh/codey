@@ -1,5 +1,6 @@
-import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen } from 'electron'
 import { join } from 'path'
+import { captureAccelerator, resolveCaptureSubmit } from './capture'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
@@ -15,6 +16,7 @@ import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
 
 let mainWindow: BrowserWindow | null = null
+let captureWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 let inProcessGateway: Codey | null = null
@@ -106,6 +108,63 @@ function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     flushPendingRendererMessages()
   })
+}
+
+// ── Quick capture window ─────────────────────────────────────────────
+function createCaptureWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 560,
+    height: 120,
+    show: false,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    fullscreenable: false,
+    backgroundColor: '#141414',
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  if (isDev) {
+    win.loadURL('http://localhost:5173/#/capture')
+  } else {
+    win.loadFile(join(__dirname, '../dist/index.html'), { hash: '/capture' })
+  }
+  win.on('blur', () => { win.hide() })
+  win.on('closed', () => { captureWindow = null })
+  return win
+}
+
+function toggleCaptureWindow() {
+  if (!captureWindow || captureWindow.isDestroyed()) captureWindow = createCaptureWindow()
+  if (captureWindow.isVisible()) { captureWindow.hide(); return }
+  // Center horizontally, upper third vertically, on the display under the cursor.
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const { x, y, width, height } = display.workArea
+  const [w] = captureWindow.getSize()
+  captureWindow.setPosition(Math.round(x + (width - w) / 2), Math.round(y + height * 0.25))
+  captureWindow.show()
+  captureWindow.focus()
+  captureWindow.webContents.send('capture:shown')
+}
+
+let currentCaptureAccelerator: string | null = null
+function applyCaptureHotkey(rawCfg: any) {
+  const desired = captureAccelerator(rawCfg?.capture?.hotkey)
+  if (currentCaptureAccelerator && currentCaptureAccelerator !== desired) {
+    try { globalShortcut.unregister(currentCaptureAccelerator) } catch { /* not registered */ }
+    currentCaptureAccelerator = null
+  }
+  if (!desired || currentCaptureAccelerator === desired) return
+  const ok = globalShortcut.register(desired, toggleCaptureWindow)
+  if (ok) {
+    currentCaptureAccelerator = desired
+  } else {
+    sendToRenderer('gateway-log', `[capture] hotkey registration failed (in use by another app?): ${desired}`)
+  }
 }
 
 // Buffer messages emitted before the renderer has finished loading so early
@@ -521,12 +580,14 @@ async function bootInProcessCore() {
         sendToRenderer('gateway-log', `[core] applyConfig failed: ${err?.message ?? err}`)
       })
       applyVoiceHotkey(updated)
+      applyCaptureHotkey(updated)
     })
     {
       const v = (coreConfigManager.get() as any)?.voice
       sendToRenderer('gateway-log', `[voice] config on boot: enabled=${!!v?.enabled} hotkey=${v?.hotkey ?? '(unset)'}`)
     }
     applyVoiceHotkey(coreConfigManager.get())
+    applyCaptureHotkey(coreConfigManager.get())
     sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length}, agent: ${runtimeCfg.defaultAgent})`)
     // Boot the gateway in the background so configured channels (telegram,
     // discord, imessage) connect. Done after returning so IPC handler
@@ -895,6 +956,40 @@ app.whenReady().then(async () => {
   )
   ipcMain.handle('app:relaunch', async () =>
     wrap(async () => { app.relaunch(); app.quit() })
+  )
+  ipcMain.handle('capture:submit', async (_e, payload: { workspaceName?: string; text: string }) =>
+    wrap(async () => {
+      if (!inProcessGateway || !workspaceManager) throw new Error('Core not ready — open Codey to check its status')
+      const known = workspaceManager.listWorkspaces()
+      const resolved = resolveCaptureSubmit(payload?.text ?? '', payload?.workspaceName, known)
+      if (!resolved.ok) throw new Error(resolved.error)
+      const chat = inProcessGateway.getChatManager().create({ workspaceName: resolved.workspaceName })
+      // Fire and forget: the global chatEventListener mirrors events to the
+      // main window, Aide auto-titles, and the notification pipeline reports
+      // completion/errors.
+      inProcessGateway.sendToChat(chat.id, resolved.text, () => { /* no-op sink */ }).catch((err: any) => {
+        // The sink tee already emitted the error event to the notification
+        // pipeline; this just keeps the rejection out of unhandledRejection.
+        sendToRenderer('gateway-log', `[capture] dispatch failed: ${err?.message ?? err}`)
+      })
+      captureWindow?.hide()
+      try {
+        const notif = new Notification({
+          title: `Task sent to ${resolved.workspaceName}`,
+          body: resolved.text.slice(0, 120),
+          silent: true,
+        })
+        notif.on('click', () => {
+          mainWindow?.show()
+          sendToRenderer('notify:openChat', { chatId: chat.id })
+        })
+        notif.show()
+      } catch { /* notification is best-effort */ }
+      return { chatId: chat.id }
+    })
+  )
+  ipcMain.handle('capture:hide', async () =>
+    wrap(async () => { captureWindow?.hide() })
   )
   await bootInProcessCore()
 
