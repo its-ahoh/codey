@@ -496,12 +496,12 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   })()
   const panelOpen: boolean = chat?.contextPanelOpen ?? false
 
-  // The Status sidecar shows in the right slot when the panel is closed and
-  // there's room for it (same width math as the panel block below). It needs
-  // at least one assistant turn to have something to summarize.
+  // The Status sidecar floats over the chat's top-right when the panel is
+  // closed (it's absolutely positioned, so it takes no layout space). Hidden on
+  // narrow windows where it would cover most of the conversation, and only when
+  // there's at least one assistant turn to summarize.
   const SIDECAR_W = 220
-  const sidecarChatListW = windowWidth < 600 ? 180 : 240
-  const sidecarFits = windowWidth - sidecarChatListW - 360 >= SIDECAR_W
+  const sidecarFits = windowWidth >= 720
   const hasAssistantMsg = (chat?.messages ?? []).some(m => m.role === 'assistant')
   const sidecarVisible = !panelOpen && sidecarFits && !!chat && hasAssistantMsg
 

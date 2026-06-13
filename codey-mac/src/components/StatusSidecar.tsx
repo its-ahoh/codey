@@ -71,9 +71,13 @@ export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, width })
 
 const styles: Record<string, React.CSSProperties> = {
   root: {
-    height: '100%', background: C.surface2, borderLeft: `1px solid ${C.border}`,
-    flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10,
-    padding: '12px 12px', overflowY: 'auto', cursor: 'pointer',
+    // Floats over the chat in the top-right corner — does not take layout space.
+    position: 'absolute', top: 52, right: 16, zIndex: 6,
+    maxHeight: 'calc(100% - 68px)',
+    background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12,
+    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+    display: 'flex', flexDirection: 'column', gap: 10,
+    padding: '12px 13px', overflowY: 'auto', cursor: 'pointer',
   },
   header: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' },
   headerLabel: { fontSize: 10, fontWeight: 600, letterSpacing: 0.6, textTransform: 'uppercase', color: C.fg3 },
@@ -92,5 +96,5 @@ const styles: Record<string, React.CSSProperties> = {
   dot: { flex: 'none', width: 6, height: 6, borderRadius: '50%', background: C.green, marginTop: 5 },
   recentText: { flex: 1, minWidth: 0, fontSize: 12, color: C.fg2, lineHeight: 1.4, ...clamp(2) },
   recentWhen: { flex: 'none', fontSize: 10, color: C.fg3, whiteSpace: 'nowrap' },
-  footer: { marginTop: 'auto', fontSize: 11, color: C.fg3, paddingTop: 8 },
+  footer: { fontSize: 11, color: C.fg3, paddingTop: 2 },
 }
