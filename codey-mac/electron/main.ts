@@ -18,6 +18,10 @@ import { ApiServer } from '@codey/gateway/dist/health'
 
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
+// True while a native file-picker spawned from the capture window is open.
+// The picker steals focus, which would otherwise trip the blur→hide handler
+// and discard the user's in-progress capture (text + chosen workspace).
+let capturePickingFiles = false
 let tray: Tray | null = null
 let trayState: import('./tray-state').TrayStateMap = {}
 let trayRebuildTimer: NodeJS.Timeout | null = null
@@ -114,10 +118,25 @@ function createWindow() {
 }
 
 // ── Quick capture window ─────────────────────────────────────────────
+// Best-effort MIME from a filename extension. Native file pickers hand back
+// paths (no browser File.type), so the capture flow infers it here to fill the
+// FileAttachment.mimeType the agent pipeline expects. Covers the common image /
+// document types; anything else falls back to a generic binary type.
+const CAPTURE_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+  webp: 'image/webp', svg: 'image/svg+xml', heic: 'image/heic',
+  pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown',
+  json: 'application/json', csv: 'text/csv',
+}
+function inferCaptureMimeType(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  return CAPTURE_MIME_BY_EXT[ext] ?? 'application/octet-stream'
+}
+
 function createCaptureWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 560,
-    height: 120,
+    height: 150,
     show: false,
     frame: false,
     resizable: false,
@@ -136,7 +155,7 @@ function createCaptureWindow(): BrowserWindow {
   } else {
     win.loadFile(join(__dirname, '../dist/index.html'), { hash: '/capture' })
   }
-  win.on('blur', () => { win.hide() })
+  win.on('blur', () => { if (!capturePickingFiles) win.hide() })
   win.on('closed', () => { captureWindow = null })
   return win
 }
@@ -144,11 +163,17 @@ function createCaptureWindow(): BrowserWindow {
 function toggleCaptureWindow() {
   if (!captureWindow || captureWindow.isDestroyed()) captureWindow = createCaptureWindow()
   if (captureWindow.isVisible()) { captureWindow.hide(); return }
-  // Center horizontally, upper third vertically, on the display under the cursor.
+  // Center horizontally, anchored near the bottom of the display under the
+  // cursor. workArea already excludes the Dock/menu bar, so a small margin
+  // keeps the window clear of the screen edge.
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   const { x, y, width, height } = display.workArea
-  const [w] = captureWindow.getSize()
-  captureWindow.setPosition(Math.round(x + (width - w) / 2), Math.round(y + height * 0.25))
+  const [w, h] = captureWindow.getSize()
+  const bottomMargin = 24
+  captureWindow.setPosition(
+    Math.round(x + (width - w) / 2),
+    Math.round(y + height - h - bottomMargin),
+  )
   captureWindow.show()
   captureWindow.focus()
   captureWindow.webContents.send('capture:shown')
@@ -1021,17 +1046,82 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:relaunch', async () =>
     wrap(async () => { app.relaunch(); app.quit() })
   )
-  ipcMain.handle('capture:submit', async (_e, payload: { workspaceName?: string; text: string }) =>
+  ipcMain.handle('capture:pickFiles', async () =>
+    wrap(async () => {
+      capturePickingFiles = true
+      try {
+        const result = await dialog.showOpenDialog(captureWindow ?? (undefined as any), {
+          properties: ['openFile', 'multiSelections'],
+        })
+        if (result.canceled) return { files: [] as Array<{ path: string; name: string; size: number }> }
+        const fsMod = await import('fs')
+        const pathMod = await import('path')
+        const files = result.filePaths.map(p => {
+          let size = 0
+          try { size = fsMod.statSync(p).size } catch { /* unreadable — size 0 */ }
+          return { path: p, name: pathMod.basename(p), size }
+        })
+        return { files }
+      } finally {
+        capturePickingFiles = false
+        // Closing the native dialog leaves the capture window unfocused; restore
+        // focus so typing and Escape keep working.
+        captureWindow?.focus()
+      }
+    })
+  )
+  ipcMain.handle('capture:submit', async (_e, payload: { workspaceName?: string; text: string; filePaths?: string[] }) =>
     wrap(async () => {
       if (!inProcessGateway || !workspaceManager) throw new Error('Core not ready — open Codey to check its status')
       const known = workspaceManager.listWorkspaces()
       const resolved = resolveCaptureSubmit(payload?.text ?? '', payload?.workspaceName, known)
       if (!resolved.ok) throw new Error(resolved.error)
       const chat = inProcessGateway.getChatManager().create({ workspaceName: resolved.workspaceName })
+
+      // Copy any picked files into the target workspace's .codey/uploads/ and
+      // build FileAttachments — mirrors the chats:upload handler so the agent
+      // sees attachments identically to a normal chat send.
+      const attachments: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> = []
+      const filePaths = payload?.filePaths ?? []
+      if (filePaths.length > 0) {
+        const fsMod = await import('fs')
+        const pathMod = await import('path')
+        const cryptoMod = await import('crypto')
+        const workspacesRoot = (inProcessGateway as any).workspaceManager.getWorkspacesRoot()
+        const wsConfigPath = pathMod.join(workspacesRoot, resolved.workspaceName, 'workspace.json')
+        let workingDir = (inProcessGateway as any).workingDir
+        if (fsMod.existsSync(wsConfigPath)) {
+          try {
+            const wsConfig = JSON.parse(fsMod.readFileSync(wsConfigPath, 'utf-8'))
+            if (wsConfig.workingDir) workingDir = wsConfig.workingDir
+          } catch { /* use default */ }
+        }
+        const uploadsDir = pathMod.join(pathMod.resolve(workingDir || process.cwd()), '.codey', 'uploads')
+        fsMod.mkdirSync(uploadsDir, { recursive: true })
+        for (const src of filePaths) {
+          try {
+            const name = pathMod.basename(src)
+            const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_')
+            const uniqueName = `${Date.now()}-${cryptoMod.randomBytes(4).toString('hex')}-${safeName}`
+            const dest = pathMod.join(uploadsDir, uniqueName)
+            fsMod.copyFileSync(src, dest)
+            attachments.push({
+              id: cryptoMod.randomUUID(),
+              name,
+              path: dest,
+              mimeType: inferCaptureMimeType(name),
+              size: fsMod.statSync(dest).size,
+            })
+          } catch (err: any) {
+            sendToRenderer('gateway-log', `[capture] attachment copy failed for ${src}: ${err?.message ?? err}`)
+          }
+        }
+      }
+
       // Fire and forget: the global chatEventListener mirrors events to the
       // main window, Aide auto-titles, and the notification pipeline reports
       // completion/errors.
-      inProcessGateway.sendToChat(chat.id, resolved.text, () => { /* no-op sink */ }).catch((err: any) => {
+      inProcessGateway.sendToChat(chat.id, resolved.text, () => { /* no-op sink */ }, attachments.length > 0 ? attachments : undefined).catch((err: any) => {
         // The sink tee already emitted the error event to the notification
         // pipeline; this just keeps the rejection out of unhandledRejection.
         sendToRenderer('gateway-log', `[capture] dispatch failed: ${err?.message ?? err}`)

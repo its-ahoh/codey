@@ -147,7 +147,8 @@ declare global {
         onOpenSettings: (handler: () => void) => () => void
       }
       capture: {
-        submit: (payload: { workspaceName?: string; text: string }) => Promise<IpcResult<{ chatId: string }>>
+        submit: (payload: { workspaceName?: string; text: string; filePaths?: string[] }) => Promise<IpcResult<{ chatId: string }>>
+        pickFiles: () => Promise<IpcResult<{ files: Array<{ path: string; name: string; size: number }> }>>
         hide: () => Promise<IpcResult<void>>
         onShown: (handler: () => void) => () => void
       }
