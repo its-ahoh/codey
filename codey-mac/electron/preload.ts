@@ -154,6 +154,13 @@ contextBridge.exposeInMainWorld('codey', {
       return () => ipcRenderer.removeListener('core:state', listener)
     },
   },
+  notify: {
+    onOpenChat: (handler: (msg: { chatId: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, msg: any) => handler(msg)
+      ipcRenderer.on('notify:openChat', listener)
+      return () => ipcRenderer.removeListener('notify:openChat', listener)
+    },
+  },
   voice: {
     onHotkey: (handler: () => void) => {
       const listener = () => handler()
