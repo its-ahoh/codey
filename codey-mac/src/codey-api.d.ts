@@ -4,6 +4,7 @@ import type { TaskBrief } from '../types'
 import type { TeamConfigRaw } from '../../packages/core/src/workspace'
 import type { ApiKeyEntry } from '../../packages/core/src/types/index'
 import type { UpdaterEvent } from './hooks/updaterState'
+import type { CoreState } from '../electron/core-state'
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
@@ -135,6 +136,11 @@ declare global {
           stats: { messagesProcessed: number; activeConversations: number; errors: number }
         } | null>>
         recentLogs: () => Promise<IpcResult<string[]>>
+      }
+      core: {
+        state: () => Promise<IpcResult<CoreState>>
+        relaunch: () => Promise<IpcResult<void>>
+        onState: (handler: (state: CoreState) => void) => () => void
       }
       voice: {
         onHotkey: (handler: () => void) => () => void

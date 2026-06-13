@@ -7,6 +7,7 @@ import { NotificationCenter } from './components/NotificationCenter'
 import { ChatsProvider, useChats } from './hooks/useChats'
 import { QuickQuestionProvider } from './hooks/useQuickQuestion'
 import { useGateway } from './hooks/useGateway'
+import { CoreOfflineBanner } from './components/CoreOfflineBanner'
 import {
   C,
   applyTheme,
@@ -22,7 +23,7 @@ import {
 } from './theme'
 
 const Shell: React.FC = () => {
-  const { isRunning } = useGateway()
+  const { isRunning, coreState, relaunchApp } = useGateway()
   const { state, createChat, selectChat, refreshWorkspaces } = useChats()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
@@ -110,12 +111,13 @@ const Shell: React.FC = () => {
           />
         )}
         <div style={styles.content}>
+          <CoreOfflineBanner state={coreState} onRelaunch={relaunchApp} />
           {activeChat && (
             <div
               key={activeChat.id}
               style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
             >
-              <ChatTab chatId={activeChat.id} isGatewayRunning={isRunning} />
+              <ChatTab chatId={activeChat.id} isGatewayRunning={isRunning} coreFailed={coreState.phase === 'failed'} />
             </div>
           )}
           {!activeChat && (

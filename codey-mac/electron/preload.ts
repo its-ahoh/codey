@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { CoreState } from './core-state'
 
 contextBridge.exposeInMainWorld('codey', {
   workers: {
@@ -143,6 +144,15 @@ contextBridge.exposeInMainWorld('codey', {
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
     recentLogs: () => ipcRenderer.invoke('gateway:recentLogs'),
+  },
+  core: {
+    state: () => ipcRenderer.invoke('core:state'),
+    relaunch: () => ipcRenderer.invoke('app:relaunch'),
+    onState: (handler: (state: CoreState) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: any) => handler(state)
+      ipcRenderer.on('core:state', listener)
+      return () => ipcRenderer.removeListener('core:state', listener)
+    },
   },
   voice: {
     onHotkey: (handler: () => void) => {
