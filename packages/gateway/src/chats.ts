@@ -65,7 +65,17 @@ export class ChatManager {
           const raw = fs.readFileSync(full, 'utf8');
           const chat = JSON.parse(raw) as Chat;
           if (chat.id && chat.workspaceName) {
-            this.cache.set(chat.id, chat);
+            // Heal titles persisted before the fallback banner was moved out of
+            // the response text: such titles are just the leaked "[Fallback: …]"
+            // line. Re-derive from the first user message and persist once.
+            if (chat.title && /^\[Fallback:/.test(chat.title)) {
+              const firstUser = chat.messages?.find(m => m.role === 'user');
+              chat.title = firstUser ? deriveTitle(firstUser.content) : 'New Chat';
+              this.cache.set(chat.id, chat);
+              this.persist(chat);
+            } else {
+              this.cache.set(chat.id, chat);
+            }
           }
         } catch (err) {
           log.warn(`ChatManager: skipped corrupt chat file ${full}: ${(err as Error).message}`);

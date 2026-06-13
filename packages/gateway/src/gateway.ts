@@ -3305,7 +3305,11 @@ Example: /model gpt-4.1 write a Python script`;
       });
       if (fallbackResponse.success) {
         const fromLabel = originalModel ? `${agent}(${originalModel})` : agent;
-        fallbackResponse.output = `[Fallback: ${fromLabel} → ${label}]\n\n${fallbackResponse.output}`;
+        // Carry the fallback as structured metadata rather than prepending a
+        // banner to the output text. The Aide reuses this same fallback-routed
+        // runner for housekeeping (title/summary/JSON), and a text banner would
+        // leak into those — e.g. a chat title becoming "[Fallback: …]".
+        fallbackResponse.fallback = { from: fromLabel, to: label };
         return fallbackResponse;
       }
       this.logger.error(`Fallback ${label} also failed: ${fallbackResponse.error || fallbackResponse.output}`);
@@ -3960,6 +3964,7 @@ Example: /model gpt-4.1 write a Python script`;
         durationSec,
         ...(surfacedChoices ? { choices: surfacedChoices } : {}),
         ...(agentUserQuestion ? { userQuestion: agentUserQuestion } : {}),
+        ...(singleAgentResponse?.fallback ? { fallback: singleAgentResponse.fallback } : {}),
       };
       const updated = this.chatManager.appendMessage(chatId, assistantMessage);
 
@@ -3980,7 +3985,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
 
-      sink({ type: 'done', chatId, response: output, thinking: singleAgentResponse?.thinking, tokens, durationSec, title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion });
+      sink({ type: 'done', chatId, response: output, thinking: singleAgentResponse?.thinking, tokens, durationSec, title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback });
 
       // Mirror this turn to every attached route except the originating one.
       // Mac-origin uses a synthetic '__mac__' channel that matches no real

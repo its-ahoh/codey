@@ -88,7 +88,11 @@ export async function generateChatTitle(
 
 /** Collapse whitespace, strip wrapping quotes/markdown, and clamp length. */
 function sanitizeTitle(raw: string): string {
-  let t = raw.trim().split('\n')[0].trim();
+  // Defensive: drop a leading "[Fallback: … → …]" banner line if one ever
+  // reaches here (the banner now travels as response metadata, not text, but
+  // a cached/older output could still carry it — never make it the title).
+  const cleaned = raw.replace(/^\s*\[Fallback:[^\]]*\]\s*/i, '');
+  let t = cleaned.trim().split('\n')[0].trim();
   // Drop a leading "Title:" style label some models prepend.
   t = t.replace(/^(title|标题)\s*[:：]\s*/i, '');
   // Strip a single layer of wrapping quotes or backticks.
