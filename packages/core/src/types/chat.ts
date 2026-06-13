@@ -30,6 +30,12 @@ export interface ChatMessage {
   tokens?: number;
   /** Wall-clock seconds the agent took to produce the response. */
   durationSec?: number;
+  /**
+   * Present when this turn was produced by a fallback agent after the primary
+   * failed. Rendered as a small badge in the message footer. `from`/`to` are
+   * display labels like "claude-code(opus)".
+   */
+  fallback?: { from: string; to: string };
   /** Extended-thinking for a single-agent assistant message (collapsed in UI). */
   thinking?: string;
   /** Per-team-step extended-thinking, keyed by step number. */

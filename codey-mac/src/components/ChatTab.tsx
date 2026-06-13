@@ -1088,18 +1088,28 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
               }
               <div style={styles.tsLabel}>
                 <span>{fmtTime(msg.timestamp)}</span>
-                {(() => {
-                  const tokStr = msg.tokens != null ? formatTokens(msg.tokens) : null
-                  const durStr = msg.durationSec != null && Number.isFinite(msg.durationSec) ? `${msg.durationSec}s` : null
-                  if (!tokStr && !durStr) return null
-                  return (
-                    <span style={styles.tsMeta}>
-                      {tokStr && `${tokStr} tok`}
-                      {tokStr && durStr && ' · '}
-                      {durStr}
+                <span style={styles.tsRight}>
+                  {msg.fallback && (
+                    <span
+                      style={styles.fallbackBadge}
+                      title={`Primary ${msg.fallback.from} failed — answered by fallback ${msg.fallback.to}`}
+                    >
+                      ⤷ {msg.fallback.to}
                     </span>
-                  )
-                })()}
+                  )}
+                  {(() => {
+                    const tokStr = msg.tokens != null ? formatTokens(msg.tokens) : null
+                    const durStr = msg.durationSec != null && Number.isFinite(msg.durationSec) ? `${msg.durationSec}s` : null
+                    if (!tokStr && !durStr) return null
+                    return (
+                      <span style={styles.tsMeta}>
+                        {tokStr && `${tokStr} tok`}
+                        {tokStr && durStr && ' · '}
+                        {durStr}
+                      </span>
+                    )
+                  })()}
+                </span>
               </div>
             </div>
           )
@@ -1320,6 +1330,12 @@ const styles: Record<string, React.CSSProperties> = {
   typingRow: { display: 'flex', alignItems: 'center', gap: 8, color: C.fg3, fontSize: 13, marginBottom: 12 },
   tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, paddingLeft: 4, paddingRight: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   tsMeta: { color: C.fg3, opacity: 0.55, fontVariantNumeric: 'tabular-nums' },
+  tsRight: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
+  fallbackBadge: {
+    color: C.warningFg, background: C.warningBg,
+    borderRadius: 6, padding: '1px 6px', fontSize: 10,
+    maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
   inputContainer: { padding: '10px 14px 12px', borderTop: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 },
   composer: {
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 12,

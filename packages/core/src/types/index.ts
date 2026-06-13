@@ -192,6 +192,13 @@ export interface AgentResponse {
   sessionId?: string;
   /** Tools that were denied due to permission settings (only when skipPermissions is false). */
   permissionDenials?: Array<{ toolName: string; toolInput?: Record<string, unknown> }>;
+  /**
+   * Set when the primary agent failed and a configured fallback produced this
+   * response. Carries the labels (e.g. "claude-code(opus)") so the UI can show
+   * a badge. Kept as structured metadata — never injected into `output` — so
+   * machine-consumed Aide calls (titles, summaries, JSON) stay clean.
+   */
+  fallback?: { from: string; to: string };
   /** Structured question extracted from an AskUserQuestion tool call. */
   userQuestion?: {
     question: string;
