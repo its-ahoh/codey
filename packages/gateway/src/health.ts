@@ -185,8 +185,18 @@ export class ApiServer {
       res.end(JSON.stringify({ error: 'Not found' }));
     });
 
-    return new Promise((resolve) => {
-      this.server!.listen(this.port, () => {
+    return new Promise((resolve, reject) => {
+      const server = this.server!;
+      // Without an 'error' listener, a bind failure (e.g. EADDRINUSE when a
+      // stale instance still holds the port) is thrown as an uncaughtException
+      // instead of rejecting this promise.
+      const onBindError = (err: Error) => reject(err);
+      server.once('error', onBindError);
+      server.listen(this.port, () => {
+        server.removeListener('error', onBindError);
+        server.on('error', (err: Error) => {
+          console.error(`[API] Server error: ${err.message}`);
+        });
         console.log(`[API] Server running on port ${this.port}`);
         resolve();
       });
