@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { captureAccelerator, resolveCaptureSubmit, normalizeAccelerator, DEFAULT_CAPTURE_HOTKEY } from './capture'
+import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator, DEFAULT_CAPTURE_HOTKEY } from './capture'
 
 describe('captureAccelerator', () => {
   it('defaults to Alt+Space when unset', () => {
@@ -22,6 +22,23 @@ describe('captureAccelerator', () => {
   it('rejects Fn (not bindable via globalShortcut)', () => {
     expect(captureAccelerator('Fn')).toBeNull()
     expect(captureAccelerator(' fn ')).toBeNull()
+  })
+})
+
+describe('screenshotAccelerator', () => {
+  it('is disabled by default (undefined and blank both off)', () => {
+    expect(screenshotAccelerator(undefined)).toBeNull()
+    expect(screenshotAccelerator('')).toBeNull()
+    expect(screenshotAccelerator('   ')).toBeNull()
+  })
+
+  it('normalizes an assigned binding like captureAccelerator', () => {
+    expect(screenshotAccelerator('Meta+Shift+2')).toBe('CommandOrControl+Shift+2')
+    expect(screenshotAccelerator('option+space')).toBe('Alt+Space')
+  })
+
+  it('rejects Fn', () => {
+    expect(screenshotAccelerator('Fn')).toBeNull()
   })
 })
 

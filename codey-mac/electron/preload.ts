@@ -170,8 +170,8 @@ contextBridge.exposeInMainWorld('codey', {
     submit: (payload: { workspaceName?: string; text: string; filePaths?: string[] }) => ipcRenderer.invoke('capture:submit', payload),
     pickFiles: () => ipcRenderer.invoke('capture:pickFiles'),
     hide: () => ipcRenderer.invoke('capture:hide'),
-    onShown: (handler: () => void) => {
-      const listener = () => handler()
+    onShown: (handler: (payload?: { files?: Array<{ path: string; name: string; size: number }> }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, payload?: any) => handler(payload)
       ipcRenderer.on('capture:shown', listener)
       return () => ipcRenderer.removeListener('capture:shown', listener)
     },

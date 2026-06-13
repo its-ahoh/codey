@@ -150,7 +150,7 @@ declare global {
         submit: (payload: { workspaceName?: string; text: string; filePaths?: string[] }) => Promise<IpcResult<{ chatId: string }>>
         pickFiles: () => Promise<IpcResult<{ files: Array<{ path: string; name: string; size: number }> }>>
         hide: () => Promise<IpcResult<void>>
-        onShown: (handler: () => void) => () => void
+        onShown: (handler: (payload?: { files?: Array<{ path: string; name: string; size: number }> }) => void) => () => void
       }
       voice: {
         onHotkey: (handler: () => void) => () => void

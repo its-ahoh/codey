@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen } from 'electron'
 import { join } from 'path'
-import { captureAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
+import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
@@ -160,12 +160,17 @@ function createCaptureWindow(): BrowserWindow {
   return win
 }
 
-function toggleCaptureWindow() {
+type CapturePrefillFile = { path: string; name: string; size: number }
+
+// Show (or re-show) the capture window, anchored near the bottom-center of the
+// display under the cursor, and notify the renderer via capture:shown. An
+// optional prefill (e.g. a just-taken screenshot) arrives in the same event so
+// the renderer can attach it as a chip. The screenshot flow always shows —
+// never toggles-to-hide — which is why this is split out from toggle.
+function showCaptureWindow(prefillFiles?: CapturePrefillFile[]) {
   if (!captureWindow || captureWindow.isDestroyed()) captureWindow = createCaptureWindow()
-  if (captureWindow.isVisible()) { captureWindow.hide(); return }
-  // Center horizontally, anchored near the bottom of the display under the
-  // cursor. workArea already excludes the Dock/menu bar, so a small margin
-  // keeps the window clear of the screen edge.
+  // workArea already excludes the Dock/menu bar, so a small margin keeps the
+  // window clear of the screen edge.
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   const { x, y, width, height } = display.workArea
   const [w, h] = captureWindow.getSize()
@@ -176,7 +181,68 @@ function toggleCaptureWindow() {
   )
   captureWindow.show()
   captureWindow.focus()
-  captureWindow.webContents.send('capture:shown')
+  sendCaptureShown(prefillFiles)
+}
+
+// capture:shown carries the prefill payload. A freshly-created window may still
+// be loading its bundle (renderer not yet subscribed), so defer the send until
+// did-finish-load — plus a tick for React to mount and attach the listener —
+// otherwise the prefill would be dropped on the very first hotkey press.
+function sendCaptureShown(prefillFiles?: CapturePrefillFile[]) {
+  const wc = captureWindow?.webContents
+  if (!wc) return
+  const payload = prefillFiles && prefillFiles.length > 0 ? { files: prefillFiles } : undefined
+  if (wc.isLoading()) {
+    wc.once('did-finish-load', () => setTimeout(() => wc.send('capture:shown', payload), 60))
+  } else {
+    wc.send('capture:shown', payload)
+  }
+}
+
+function toggleCaptureWindow() {
+  if (!captureWindow || captureWindow.isDestroyed()) captureWindow = createCaptureWindow()
+  if (captureWindow.isVisible()) { captureWindow.hide(); return }
+  showCaptureWindow()
+}
+
+// Grab a full-screen PNG (main display, silently) into a temp file. Returns the
+// attachment descriptor, or null if the file is missing/empty — which on macOS
+// usually means Screen Recording permission has not been granted.
+async function captureScreenshotToTemp(): Promise<CapturePrefillFile | null> {
+  const os = await import('os')
+  const pathMod = await import('path')
+  const fsMod = await import('fs')
+  const { execFile } = await import('child_process')
+  const name = `codey-screenshot-${Date.now()}.png`
+  const dest = pathMod.join(os.tmpdir(), name)
+  await new Promise<void>((resolve, reject) => {
+    // -x: no capture sound. Captures the main display to `dest`.
+    execFile('screencapture', ['-x', dest], err => (err ? reject(err) : resolve()))
+  })
+  let size = 0
+  try { size = fsMod.statSync(dest).size } catch { return null }
+  if (size === 0) return null
+  return { path: dest, name, size }
+}
+
+async function triggerScreenshotCapture() {
+  try {
+    const shot = await captureScreenshotToTemp()
+    if (!shot) {
+      sendToRenderer('gateway-log', '[capture] screenshot produced no image — check Screen Recording permission')
+      try {
+        new Notification({
+          title: 'Screenshot failed',
+          body: 'Codey may need Screen Recording permission (System Settings → Privacy & Security → Screen Recording).',
+          silent: true,
+        }).show()
+      } catch { /* best-effort */ }
+      return
+    }
+    showCaptureWindow([shot])
+  } catch (err: any) {
+    sendToRenderer('gateway-log', `[capture] screenshot failed: ${err?.message ?? err}`)
+  }
 }
 
 function applyUiPreferences(rawCfg: any) {
@@ -202,6 +268,22 @@ function applyCaptureHotkey(rawCfg: any) {
     currentCaptureAccelerator = desired
   } else {
     sendToRenderer('gateway-log', `[capture] hotkey registration failed (in use by another app?): ${desired}`)
+  }
+}
+
+let currentScreenshotAccelerator: string | null = null
+function applyScreenshotHotkey(rawCfg: any) {
+  const desired = screenshotAccelerator(rawCfg?.capture?.screenshotHotkey)
+  if (currentScreenshotAccelerator && currentScreenshotAccelerator !== desired) {
+    try { globalShortcut.unregister(currentScreenshotAccelerator) } catch { /* not registered */ }
+    currentScreenshotAccelerator = null
+  }
+  if (!desired || currentScreenshotAccelerator === desired) return
+  const ok = globalShortcut.register(desired, () => { void triggerScreenshotCapture() })
+  if (ok) {
+    currentScreenshotAccelerator = desired
+  } else {
+    sendToRenderer('gateway-log', `[capture] screenshot hotkey registration failed (in use by another app?): ${desired}`)
   }
 }
 
@@ -674,6 +756,7 @@ async function bootInProcessCore() {
       })
       applyVoiceHotkey(updated)
       applyCaptureHotkey(updated)
+      applyScreenshotHotkey(updated)
       applyUiPreferences(updated)
     })
     {
@@ -682,6 +765,7 @@ async function bootInProcessCore() {
     }
     applyVoiceHotkey(coreConfigManager.get())
     applyCaptureHotkey(coreConfigManager.get())
+    applyScreenshotHotkey(coreConfigManager.get())
     applyUiPreferences(coreConfigManager.get())
     sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length}, agent: ${runtimeCfg.defaultAgent})`)
     // Boot the gateway in the background so configured channels (telegram,

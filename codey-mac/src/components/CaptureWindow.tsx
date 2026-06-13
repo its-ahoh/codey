@@ -38,9 +38,16 @@ export const CaptureWindow: React.FC = () => {
     applyPalette(getStoredPalette())
     void loadWorkspaces()
     taRef.current?.focus()
-    const off = window.codey.capture.onShown(() => {
+    const off = window.codey.capture.onShown(payload => {
       setError(null)
-      setFiles([])
+      const incoming = payload?.files ?? []
+      // A plain summon (no payload) starts fresh; a screenshot/prefill summon
+      // adds its file(s) to whatever is already staged, deduped by path.
+      setFiles(prev => {
+        if (incoming.length === 0) return []
+        const seen = new Set(prev.map(f => f.path))
+        return [...prev, ...incoming.filter(f => !seen.has(f.path))]
+      })
       void loadWorkspaces()
       setTimeout(() => taRef.current?.focus(), 0)
     })
