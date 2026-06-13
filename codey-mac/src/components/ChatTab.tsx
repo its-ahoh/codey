@@ -11,7 +11,8 @@ import { ChatContextPanel } from './ChatContextPanel'
 import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
-import { isTaskBriefStale } from './taskHudView'
+import { StatusSidecar } from './StatusSidecar'
+import { isTaskBriefStale, extractSidecarBrief } from './taskHudView'
 import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 import { defaultThinkingExpanded } from './thinkingState'
@@ -494,6 +495,28 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
     return null
   })()
   const panelOpen: boolean = chat?.contextPanelOpen ?? false
+
+  // The Status sidecar shows in the right slot when the panel is closed and
+  // there's room for it (same width math as the panel block below). It needs
+  // at least one assistant turn to have something to summarize.
+  const SIDECAR_W = 220
+  const sidecarChatListW = windowWidth < 600 ? 180 : 240
+  const sidecarFits = windowWidth - sidecarChatListW - 360 >= SIDECAR_W
+  const hasAssistantMsg = (chat?.messages ?? []).some(m => m.role === 'assistant')
+  const sidecarVisible = !panelOpen && sidecarFits && !!chat && hasAssistantMsg
+
+  // Self-populate the Status sidecar's brief while the panel is closed. Mirrors
+  // the panel's turn-boundary refresh but gates on the sidecar being visible
+  // instead of the Status tab being open. One brief, two views. Waits for the
+  // turn to settle (!turnActive) so we never regenerate mid-stream, and skips
+  // when a generation is already running to avoid double-firing with the panel.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!sidecarVisible || turnActive || taskBriefLoading || !chat) return
+    if (!isTaskBriefStale(chat)) return
+    setTaskBriefLoading(true)
+    generateTaskBrief(chat.id).finally(() => setTaskBriefLoading(false))
+  }, [sidecarVisible, turnActive, chatId, chat?.messages.length, chat?.taskBrief?.generatedAt])
 
   const selectionValue: string = chat.selection.type === 'worker'
     ? `worker:${chat.selection.name}`
@@ -1272,44 +1295,58 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
           On very narrow windows we hide it entirely so the conversation
           doesn't get squeezed to a single character per line. */}
       {(() => {
-        if (!panelOpen) return null
         const CHAT_LIST_W = windowWidth < 600 ? 180 : 240
         const MIN_MIDDLE = 360
-        const MIN_PANEL = 260
-        const available = windowWidth - CHAT_LIST_W - MIN_MIDDLE
-        if (available < MIN_PANEL) return null
-        const effectiveWidth = Math.min(panelWidth, available)
+
+        if (panelOpen) {
+          const MIN_PANEL = 260
+          const available = windowWidth - CHAT_LIST_W - MIN_MIDDLE
+          if (available < MIN_PANEL) return null
+          const effectiveWidth = Math.min(panelWidth, available)
+          return (
+            <ChatContextPanel
+              chat={chat}
+              selectedTurnId={selectedTurnId}
+              followLatest={followLatest}
+              selectedTurnIndex={selectedTurnIndex}
+              effectiveAgent={effectiveAgent}
+              effectiveModel={effectiveModel}
+              workerName={panelWorkerName}
+              teamName={panelTeamName}
+              workingDir={workingDir}
+              width={effectiveWidth}
+              onFollowLatest={() => setFollowLatest(true)}
+              onClose={() => setContextPanelOpen(chat.id, false)}
+              onResize={setPanelWidth}
+              onRevealFile={(p) => apiService.revealInFolder(p)}
+              onScrollToStep={(mid, step) => {
+                document.getElementById(stepDomId(mid, step))?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              }}
+              isTurnStreaming={!!flight && selectedTurnId === lastMsg?.id}
+              activeTab={panelTab}
+              onTabChange={setPanelTab}
+              qqInputRef={qqInputRef}
+              onAnswerNextAction={() => taRef.current?.focus()}
+              taskBriefLoading={taskBriefLoading}
+              onTaskTabShown={async () => {
+                if (!isTaskBriefStale(chat)) return
+                setTaskBriefLoading(true)
+                try { await generateTaskBrief(chat.id) } finally { setTaskBriefLoading(false) }
+              }}
+            />
+          )
+        }
+
+        // Panel closed → light Status sidecar. Hidden until there's a brief to
+        // show (self-population kicks it off via the effect above).
+        if (!sidecarVisible || !chat?.taskBrief) return null
         return (
-        <ChatContextPanel
-          chat={chat}
-          selectedTurnId={selectedTurnId}
-          followLatest={followLatest}
-          selectedTurnIndex={selectedTurnIndex}
-          effectiveAgent={effectiveAgent}
-          effectiveModel={effectiveModel}
-          workerName={panelWorkerName}
-          teamName={panelTeamName}
-          workingDir={workingDir}
-          width={effectiveWidth}
-          onFollowLatest={() => setFollowLatest(true)}
-          onClose={() => setContextPanelOpen(chat.id, false)}
-          onResize={setPanelWidth}
-          onRevealFile={(p) => apiService.revealInFolder(p)}
-          onScrollToStep={(mid, step) => {
-            document.getElementById(stepDomId(mid, step))?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-          }}
-          isTurnStreaming={!!flight && selectedTurnId === lastMsg?.id}
-          activeTab={panelTab}
-          onTabChange={setPanelTab}
-          qqInputRef={qqInputRef}
-          onAnswerNextAction={() => taRef.current?.focus()}
-          taskBriefLoading={taskBriefLoading}
-          onTaskTabShown={async () => {
-            if (!isTaskBriefStale(chat)) return
-            setTaskBriefLoading(true)
-            try { await generateTaskBrief(chat.id) } finally { setTaskBriefLoading(false) }
-          }}
-        />
+          <StatusSidecar
+            view={extractSidecarBrief(chat.taskBrief)}
+            loading={taskBriefLoading}
+            width={SIDECAR_W}
+            onOpen={() => { setContextPanelOpen(chat.id, true); setPanelTab('task') }}
+          />
         )
       })()}
     </div>

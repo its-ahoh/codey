@@ -40,3 +40,24 @@ export function splitTimeline(timeline: TaskEvent[]): { head?: TaskEvent; rest: 
   if (!timeline.length) return { head: undefined, rest: [] };
   return { head: timeline[0], rest: timeline.slice(1) };
 }
+
+/** Condensed view of a TaskBrief for the collapsed-panel Status sidecar. */
+export interface SidecarView {
+  goal: string;
+  status: TaskBrief['state']['status'];
+  progress: number;
+  nextActionText?: string;
+  /** The 3 newest timeline entries (already newest-first in TaskBrief). */
+  recent: { text: string; when?: number }[];
+}
+
+/** Extract the light Status view from the same brief the panel renders. */
+export function extractSidecarBrief(brief: TaskBrief): SidecarView {
+  return {
+    goal: brief.goal,
+    status: brief.state.status,
+    progress: brief.state.progress,
+    nextActionText: brief.nextAction?.text,
+    recent: brief.timeline.slice(0, 3).map(e => ({ text: e.text, when: e.when })),
+  };
+}
