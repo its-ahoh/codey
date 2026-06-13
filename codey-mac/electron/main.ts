@@ -28,6 +28,23 @@ let activeApiPort: number | null = null
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
+// Single-instance guard: a second launch (vite restart leaving a stale main
+// process alive, double `npm run dev`, app.relaunch races) must not boot a
+// second in-process core — the stale one already holds the API port and the
+// chat-platform connections. The loser quits; the winner gets told to come
+// to the foreground.
+const gotInstanceLock = app.requestSingleInstanceLock()
+if (!gotInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  })
+}
+
 process.on('uncaughtException', (err) => {
   try { sendToRenderer('gateway-log', `[main] uncaughtException: ${err?.stack || err?.message || err}`) } catch { /* renderer gone */ }
   console.error('[main] uncaughtException:', err)
