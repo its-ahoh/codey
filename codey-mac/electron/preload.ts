@@ -169,6 +169,7 @@ contextBridge.exposeInMainWorld('codey', {
   capture: {
     submit: (payload: { workspaceName?: string; text: string; filePaths?: string[] }) => ipcRenderer.invoke('capture:submit', payload),
     pickFiles: () => ipcRenderer.invoke('capture:pickFiles'),
+    thumbnail: (path: string) => ipcRenderer.invoke('capture:thumbnail', path),
     hide: () => ipcRenderer.invoke('capture:hide'),
     setHeight: (height: number) => ipcRenderer.invoke('capture:setHeight', height),
     onShown: (handler: (payload?: { files?: Array<{ path: string; name: string; size: number }> }) => void) => {

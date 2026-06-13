@@ -138,67 +138,67 @@ export const AppearanceTab: React.FC = () => {
       </div>
 
       {loaded && (
-        <>
-          <div style={styles.row}>
+        <div style={styles.settingsGroup}>
+          <div style={{ ...styles.settingRow, borderTop: 'none' }}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Skip permissions</div>
-              <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
+              <div style={styles.settingDesc}>
                 When enabled, agents run shell commands, edit files, and make network requests without asking for confirmation. Disable to review every action before execution.
               </div>
             </div>
             <Toggle on={skipPerms} onChange={toggleSkipPerms}/>
           </div>
 
-          <div style={styles.row}>
+          <div style={styles.settingRow}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Background notifications</div>
-              <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
+              <div style={styles.settingDesc}>
                 Notify when Codey finishes, errors, or needs your input while the app is in the background.
               </div>
             </div>
             <Toggle on={notifyEnabled} onChange={toggleNotify}/>
           </div>
 
-          <div style={styles.row}>
+          <div style={styles.settingRow}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Quick capture hotkey</div>
-              <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
+              <div style={styles.settingDesc}>
                 Summon a floating composer from anywhere to send Codey a task. Clear to disable.
               </div>
             </div>
             <HotkeyRecorder value={captureHotkey} onChange={changeCaptureHotkey}/>
           </div>
 
-          <div style={styles.row}>
+          <div style={styles.settingRow}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Screenshot to Quick Capture</div>
-              <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
+              <div style={styles.settingDesc}>
                 Grab a full-screen screenshot and open Quick Capture with it attached. Clear to disable.
               </div>
             </div>
             <HotkeyRecorder value={screenshotHotkey} onChange={changeScreenshotHotkey}/>
           </div>
 
-          <div style={styles.row}>
+          <div style={styles.settingRow}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Launch Codey at login</div>
-              <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
+              <div style={styles.settingDesc}>
                 Start Codey automatically when you log in, so the gateway and menu bar are always available.
               </div>
             </div>
             <Toggle on={launchAtLogin} onChange={toggleLaunchAtLogin}/>
           </div>
 
-          <div style={styles.row}>
+          <div style={styles.settingRow}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Hide Dock icon (menu bar only)</div>
-              <div style={{ fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 2 }}>
+              <div style={styles.settingDesc}>
                 Run as a menu-bar app with no Dock icon. Codey stays reachable from the menu bar.
               </div>
             </div>
             <Toggle on={dockless} onChange={toggleDockless}/>
           </div>
-        </>
+        </div>
       )}
 
       <div style={styles.row}>
@@ -210,9 +210,21 @@ export const AppearanceTab: React.FC = () => {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  wrap:  { padding: '20px', display: 'flex', flexDirection: 'column', gap: 10 },
+  wrap:  { padding: '20px', display: 'flex', flexDirection: 'column', gap: 14 },
   row:   { display: 'flex', alignItems: 'center', gap: 16 },
   label: { fontSize: 13, color: C.fg, width: 80 },
+  // Toggle/hotkey settings stacked with dividers so each row's label and
+  // control read as a distinct line instead of a packed block.
+  settingsGroup: {
+    display: 'flex', flexDirection: 'column',
+    border: `1px solid ${C.border}`, borderRadius: 8,
+    background: C.surface2, overflow: 'hidden',
+  },
+  settingRow: {
+    display: 'flex', alignItems: 'center', gap: 16,
+    padding: '14px 14px', borderTop: `1px solid ${C.border}`,
+  },
+  settingDesc: { fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 3, lineHeight: 1.4 },
   segmented: {
     display: 'inline-flex',
     background: C.surface2,
