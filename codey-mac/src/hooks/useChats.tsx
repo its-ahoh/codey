@@ -12,7 +12,7 @@ interface InFlight {
   thinkingByStep?: Record<number, string>
 }
 
-interface State {
+export interface State {
   chats: Record<string, Chat>
   order: string[]
   selectedChatId: string | null
@@ -30,6 +30,10 @@ type Action =
   | { type: 'loaded'; chats: Chat[] }
   | { type: 'setWorkspaces'; workspaces: string[] }
   | { type: 'upsert'; chat: Chat }
+  // Adopt a turn that was started outside the renderer (quick-capture or a
+  // paired channel): insert the fetched chat, append an assistant stub, and
+  // open an inFlight entry so its live events render. See onEvent adoption.
+  | { type: 'adoptInFlight'; chat: Chat; assistantMessageId: string }
   | { type: 'remove'; chatId: string }
   | { type: 'select'; chatId: string | null }
   | { type: 'toggleWorkspace'; workspaceName: string }
@@ -51,7 +55,7 @@ function reorder(order: string[], chatId: string): string[] {
   return [chatId, ...order.filter(id => id !== chatId)]
 }
 
-function reducer(state: State, action: Action): State {
+export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'loaded': {
       const chats: Record<string, Chat> = {}
@@ -80,6 +84,38 @@ function reducer(state: State, action: Action): State {
       const chats = { ...state.chats, [action.chat.id]: next }
       const order = state.order.includes(action.chat.id) ? state.order : [action.chat.id, ...state.order]
       return { ...state, chats, order: reorder(order, action.chat.id) }
+    }
+    case 'adoptInFlight': {
+      // Externally-initiated turn (quick-capture / paired channel). The fetched
+      // chat already holds the persisted user message; append an empty assistant
+      // stub for the live turn and open an inFlight entry so streaming/tool
+      // events render and the "working" indicator shows. Idempotent: if a turn
+      // is already tracked for this chat, leave it untouched.
+      if (state.inFlight[action.chat.id]) return state
+      const assistantStub: ChatMessage = {
+        id: action.assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        toolCalls: [],
+        isComplete: false,
+      }
+      const userMessageId = [...action.chat.messages].reverse().find(m => m.role === 'user')?.id ?? ''
+      const adopted: Chat = {
+        ...action.chat,
+        messages: [...action.chat.messages, assistantStub],
+        updatedAt: Date.now(),
+      }
+      const order = state.order.includes(action.chat.id) ? state.order : [action.chat.id, ...state.order]
+      return {
+        ...state,
+        chats: { ...state.chats, [action.chat.id]: adopted },
+        order: reorder(order, action.chat.id),
+        inFlight: {
+          ...state.inFlight,
+          [action.chat.id]: { assistantMessageId: action.assistantMessageId, userMessageId, agentStatus: 'thinking' },
+        },
+      }
     }
     case 'patchContextPanelOpen': {
       const chat = state.chats[action.chatId]
@@ -321,6 +357,10 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   })
 
   const pendingAssistantId = useRef<Record<string, string>>({})
+  // Chats whose externally-initiated turn we are mid-adopting (chats.get in
+  // flight). Prevents duplicate fetches and lets a fast terminal event cancel
+  // a pending adoption (see onEvent).
+  const adopting = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     ;(async () => {
@@ -350,6 +390,29 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     const off = apiService.chats.onEvent((ev: ChatStreamEvent) => {
+      // Adopt turns started outside the renderer (quick-capture, paired
+      // channels). Such chats have no local inFlight entry, so every live event
+      // below would be dropped until 'done'. On the first live event, fetch the
+      // chat (its user message is already persisted) and open an inFlight entry
+      // so streaming/tool events render and the "working" indicator shows.
+      if (
+        (ev.type === 'tool_start' || ev.type === 'tool_end' || ev.type === 'info' ||
+         ev.type === 'stream' || ev.type === 'thinking') &&
+        !pendingAssistantId.current[ev.chatId] &&
+        !adopting.current.has(ev.chatId)
+      ) {
+        adopting.current.add(ev.chatId)
+        apiService.chats.get(ev.chatId)
+          .then(chat => {
+            // A terminal event may have won the race and cancelled adoption.
+            if (!adopting.current.has(ev.chatId)) return
+            const assistantMessageId = `asst-${Date.now()}-${Math.random()}`
+            pendingAssistantId.current[ev.chatId] = assistantMessageId
+            dispatch({ type: 'adoptInFlight', chat, assistantMessageId })
+          })
+          .catch(() => { adopting.current.delete(ev.chatId) })
+      }
+
       switch (ev.type) {
         case 'queued':
           dispatch({ type: 'queued', chatId: ev.chatId, position: ev.position })
@@ -385,6 +448,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           dispatch({ type: 'thinkingToken', chatId: ev.chatId, token: ev.token, step: ev.step })
           break
         case 'done': {
+          adopting.current.delete(ev.chatId)
           const asstId = pendingAssistantId.current[ev.chatId]
           if (asstId) {
             dispatch({
@@ -409,11 +473,13 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           break
         }
         case 'stopped': {
+          adopting.current.delete(ev.chatId)
           dispatch({ type: 'stoppedSend', chatId: ev.chatId, text: ev.text })
           delete pendingAssistantId.current[ev.chatId]
           break
         }
         case 'error': {
+          adopting.current.delete(ev.chatId)
           const asstId = pendingAssistantId.current[ev.chatId]
           if (asstId) {
             dispatch({ type: 'errorSend', chatId: ev.chatId, assistantMessageId: asstId, error: ev.message })
