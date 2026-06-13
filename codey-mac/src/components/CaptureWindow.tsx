@@ -171,7 +171,7 @@ export const CaptureWindow: React.FC = () => {
               el.style.height = 'auto'
               el.style.height = Math.min(el.scrollHeight, 120) + 'px'
             }}
-            placeholder="What should Codey do? (↵ to send, esc to dismiss)"
+            placeholder="What should Codey do?"
             rows={1}
             autoFocus
             style={styles.input}
@@ -236,7 +236,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'none', border: 'none', color: C.fg2, cursor: 'pointer',
     fontSize: 14, lineHeight: 1, padding: '0 2px',
   },
-  composerRow: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: 6 },
+  composerRow: { display: 'flex', gap: 6, alignItems: 'center', padding: 6 },
   attachBtn: {
     width: 34, height: 34, borderRadius: 9, border: 'none', background: 'transparent',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -249,7 +249,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   // Shorter workspace picker so the input gets the room.
   select: {
-    width: 96, height: 34, alignSelf: 'flex-end', background: C.surface3, color: C.fg2,
+    width: 96, height: 34, background: C.surface3, color: C.fg2,
     border: `1px solid ${C.border2}`, borderRadius: 8, padding: '0 6px',
     fontSize: 12, cursor: 'pointer', flexShrink: 0,
   },
