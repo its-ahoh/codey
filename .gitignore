@@ -23,8 +23,13 @@ codey-mac/release/
 # Intermediate iconset (icon.icns is committed)
 codey-mac/build/icon.iconset/
 
-# Private local docs (plans/specs)
-docs/
+# Private local docs — ignore everything under docs/ except the
+# superpowers specs/plans, which we keep in version control.
+docs/*
+!docs/superpowers/
+docs/superpowers/*
+!docs/superpowers/specs/
+!docs/superpowers/plans/
 
 .codey/
 

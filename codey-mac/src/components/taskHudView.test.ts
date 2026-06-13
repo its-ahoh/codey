@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isTaskBriefStale, statusMeta, formatAgo, splitTimeline } from './taskHudView';
+import { isTaskBriefStale, statusMeta, formatAgo, splitTimeline, extractSidecarBrief } from './taskHudView';
 import type { Chat, TaskBrief } from '../types';
 
 const brief = (over: Partial<TaskBrief> = {}): TaskBrief => ({
@@ -54,5 +54,39 @@ describe('splitTimeline', () => {
   });
   it('handles an empty timeline', () => {
     expect(splitTimeline([])).toEqual({ head: undefined, rest: [] });
+  });
+});
+
+describe('extractSidecarBrief', () => {
+  const tl = (text: string, when?: number) => ({ kind: 'progress' as const, text, when });
+
+  it('passes through goal, status, progress and next action text', () => {
+    const v = extractSidecarBrief(brief({
+      goal: 'Ship sidecar',
+      state: { progress: 42, status: 'waiting' },
+      nextAction: { text: 'Answer the question', detail: 'ignored', messageId: 'm1' },
+    }));
+    expect(v.goal).toBe('Ship sidecar');
+    expect(v.status).toBe('waiting');
+    expect(v.progress).toBe(42);
+    expect(v.nextActionText).toBe('Answer the question');
+  });
+
+  it('omits nextActionText when there is no next action', () => {
+    const v = extractSidecarBrief(brief({ nextAction: undefined }));
+    expect(v.nextActionText).toBeUndefined();
+  });
+
+  it('keeps the 3 newest timeline entries, newest first', () => {
+    const v = extractSidecarBrief(brief({
+      timeline: [tl('a', 5), tl('b', 4), tl('c', 3), tl('d', 2)],
+    }));
+    expect(v.recent.map(r => r.text)).toEqual(['a', 'b', 'c']);
+    expect(v.recent[0].when).toBe(5);
+  });
+
+  it('handles an empty timeline', () => {
+    const v = extractSidecarBrief(brief({ timeline: [] }));
+    expect(v.recent).toEqual([]);
   });
 });
