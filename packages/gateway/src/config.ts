@@ -79,6 +79,9 @@ export interface GatewayConfigJson {
     /** WhisperKit model variant for local mode (e.g. openai_whisper-large-v3-turbo). */
     localModel: string;
   };
+  notifications?: { enabled?: boolean };
+  capture?: { hotkey?: string };
+  ui?: { launchAtLogin?: boolean; dockless?: boolean };
 }
 
 /**
@@ -180,6 +183,15 @@ export class ConfigManager extends EventEmitter {
     if (partial.aide !== undefined) this.config.aide = partial.aide;
     if (partial.teams !== undefined) this.config.teams = partial.teams;
     if (partial.voice !== undefined) this.config.voice = partial.voice;
+    if (partial.notifications !== undefined) {
+      this.config.notifications = { ...this.config.notifications, ...partial.notifications };
+    }
+    if (partial.capture !== undefined) {
+      this.config.capture = { ...this.config.capture, ...partial.capture };
+    }
+    if (partial.ui !== undefined) {
+      this.config.ui = { ...this.config.ui, ...partial.ui };
+    }
     this.save();
   }
 
@@ -564,6 +576,15 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
   }
   if (raw.voice && typeof raw.voice === 'object') {
     out.voice = raw.voice;
+  }
+  if (raw.notifications && typeof raw.notifications === 'object') {
+    out.notifications = { enabled: raw.notifications.enabled };
+  }
+  if (raw.capture && typeof raw.capture === 'object') {
+    out.capture = { hotkey: raw.capture.hotkey };
+  }
+  if (raw.ui && typeof raw.ui === 'object') {
+    out.ui = { launchAtLogin: raw.ui.launchAtLogin, dockless: raw.ui.dockless };
   }
   return out;
 }
