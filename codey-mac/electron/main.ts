@@ -1157,6 +1157,28 @@ app.whenReady().then(async () => {
       }
     })
   )
+  // Preview helper for the capture window: read-only base64 data URL for an
+  // image at any path. Screenshots live in os.tmpdir() and picked files at
+  // their original location — both outside .codey/uploads/, so the codey-asset
+  // protocol can't serve them. Restricted to image extensions and capped so a
+  // stray huge file can't be slurped into the renderer.
+  ipcMain.handle('capture:thumbnail', async (_e, filePath: string) =>
+    wrap(async () => {
+      const pathMod = await import('path')
+      const fsMod = await import('fs')
+      const ext = pathMod.extname(String(filePath || '')).toLowerCase()
+      const mime: Record<string, string> = {
+        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+        '.heic': 'image/heic', '.heif': 'image/heif', '.svg': 'image/svg+xml',
+      }
+      if (!mime[ext]) throw new Error('not an image')
+      const stat = await fsMod.promises.stat(filePath)
+      if (stat.size > 25 * 1024 * 1024) throw new Error('image too large to preview')
+      const buf = await fsMod.promises.readFile(filePath)
+      return { dataUrl: `data:${mime[ext]};base64,${buf.toString('base64')}` }
+    })
+  )
   ipcMain.handle('capture:submit', async (_e, payload: { workspaceName?: string; text: string; filePaths?: string[] }) =>
     wrap(async () => {
       if (!inProcessGateway || !workspaceManager) throw new Error('Core not ready — open Codey to check its status')
