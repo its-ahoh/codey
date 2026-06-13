@@ -38,7 +38,7 @@ type Action =
   | { type: 'thinkingToken'; chatId: string; token: string; step?: number }
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: 'working' | 'writing' }
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion'] }
+  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback'] }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
@@ -213,7 +213,7 @@ function reducer(state: State, action: Action): State {
       if (!chat) return state
       const messages = chat.messages.map(m =>
         m.id === action.assistantMessageId
-          ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, isComplete: true, choices: action.choices, userQuestion: action.userQuestion }
+          ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
           : m
       )
       const updatedChat: Chat = { ...chat, messages, updatedAt: Date.now() }
@@ -397,6 +397,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               title: ev.title,
               choices: ev.choices,
               userQuestion: ev.userQuestion,
+              fallback: ev.fallback,
             })
             delete pendingAssistantId.current[ev.chatId]
           } else {
