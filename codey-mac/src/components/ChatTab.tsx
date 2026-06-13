@@ -903,6 +903,12 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
               onClick={isUser ? undefined : () => {
                 setSelectedTurnIdState(msg.id)
                 setFollowLatest(false)
+                // If the context panel is closed, open it on the turn-detail
+                // tab so clicking a message reveals that turn's own detail.
+                if (!panelOpen) {
+                  setContextPanelOpen(chat.id, true)
+                  setPanelTab('current')
+                }
               }}
               style={{
                 display: 'flex', flexDirection: 'column',
