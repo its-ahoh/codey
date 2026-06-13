@@ -154,6 +154,16 @@ function toggleCaptureWindow() {
   captureWindow.webContents.send('capture:shown')
 }
 
+function applyUiPreferences(rawCfg: any) {
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!rawCfg?.ui?.launchAtLogin })
+  } catch (err: any) {
+    sendToRenderer('gateway-log', `[ui] setLoginItemSettings failed: ${err?.message ?? err}`)
+  }
+  if (rawCfg?.ui?.dockless) app.dock?.hide()
+  else app.dock?.show()
+}
+
 let currentCaptureAccelerator: string | null = null
 function applyCaptureHotkey(rawCfg: any) {
   const desired = captureAccelerator(rawCfg?.capture?.hotkey)
@@ -639,6 +649,7 @@ async function bootInProcessCore() {
       })
       applyVoiceHotkey(updated)
       applyCaptureHotkey(updated)
+      applyUiPreferences(updated)
     })
     {
       const v = (coreConfigManager.get() as any)?.voice
@@ -646,6 +657,7 @@ async function bootInProcessCore() {
     }
     applyVoiceHotkey(coreConfigManager.get())
     applyCaptureHotkey(coreConfigManager.get())
+    applyUiPreferences(coreConfigManager.get())
     sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length}, agent: ${runtimeCfg.defaultAgent})`)
     // Boot the gateway in the background so configured channels (telegram,
     // discord, imessage) connect. Done after returning so IPC handler
