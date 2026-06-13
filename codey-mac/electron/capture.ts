@@ -33,6 +33,17 @@ export function captureAccelerator(hotkey: string | undefined): string | null {
   return normalizeAccelerator(t)
 }
 
+// Screenshot-to-capture hotkey. Unlike captureAccelerator, there is no default:
+// undefined/blank both mean disabled, so the feature stays off until the user
+// assigns a binding (avoids clashing with macOS ⌘⇧3/4/5 on a fresh install).
+export function screenshotAccelerator(hotkey: string | undefined): string | null {
+  if (!hotkey) return null
+  const t = hotkey.trim()
+  if (!t) return null
+  if (t.toLowerCase() === 'fn') return null
+  return normalizeAccelerator(t)
+}
+
 export type CaptureSubmitResolution =
   | { ok: true; text: string; workspaceName: string }
   | { ok: false; error: string }

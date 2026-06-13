@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen } from 'electron'
 import { join } from 'path'
-import { captureAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
+import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
@@ -18,6 +18,10 @@ import { ApiServer } from '@codey/gateway/dist/health'
 
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
+// True while a native file-picker spawned from the capture window is open.
+// The picker steals focus, which would otherwise trip the blur→hide handler
+// and discard the user's in-progress capture (text + chosen workspace).
+let capturePickingFiles = false
 let tray: Tray | null = null
 let trayState: import('./tray-state').TrayStateMap = {}
 let trayRebuildTimer: NodeJS.Timeout | null = null
@@ -114,10 +118,25 @@ function createWindow() {
 }
 
 // ── Quick capture window ─────────────────────────────────────────────
+// Best-effort MIME from a filename extension. Native file pickers hand back
+// paths (no browser File.type), so the capture flow infers it here to fill the
+// FileAttachment.mimeType the agent pipeline expects. Covers the common image /
+// document types; anything else falls back to a generic binary type.
+const CAPTURE_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+  webp: 'image/webp', svg: 'image/svg+xml', heic: 'image/heic',
+  pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown',
+  json: 'application/json', csv: 'text/csv',
+}
+function inferCaptureMimeType(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  return CAPTURE_MIME_BY_EXT[ext] ?? 'application/octet-stream'
+}
+
 function createCaptureWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 560,
-    height: 120,
+    height: 150,
     show: false,
     frame: false,
     resizable: false,
@@ -136,22 +155,94 @@ function createCaptureWindow(): BrowserWindow {
   } else {
     win.loadFile(join(__dirname, '../dist/index.html'), { hash: '/capture' })
   }
-  win.on('blur', () => { win.hide() })
+  win.on('blur', () => { if (!capturePickingFiles) win.hide() })
   win.on('closed', () => { captureWindow = null })
   return win
+}
+
+type CapturePrefillFile = { path: string; name: string; size: number }
+
+// Show (or re-show) the capture window, anchored near the bottom-center of the
+// display under the cursor, and notify the renderer via capture:shown. An
+// optional prefill (e.g. a just-taken screenshot) arrives in the same event so
+// the renderer can attach it as a chip. The screenshot flow always shows —
+// never toggles-to-hide — which is why this is split out from toggle.
+function showCaptureWindow(prefillFiles?: CapturePrefillFile[]) {
+  if (!captureWindow || captureWindow.isDestroyed()) captureWindow = createCaptureWindow()
+  // workArea already excludes the Dock/menu bar, so a small margin keeps the
+  // window clear of the screen edge.
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const { x, y, width, height } = display.workArea
+  const [w, h] = captureWindow.getSize()
+  const bottomMargin = 24
+  captureWindow.setPosition(
+    Math.round(x + (width - w) / 2),
+    Math.round(y + height - h - bottomMargin),
+  )
+  captureWindow.show()
+  captureWindow.focus()
+  sendCaptureShown(prefillFiles)
+}
+
+// capture:shown carries the prefill payload. A freshly-created window may still
+// be loading its bundle (renderer not yet subscribed), so defer the send until
+// did-finish-load — plus a tick for React to mount and attach the listener —
+// otherwise the prefill would be dropped on the very first hotkey press.
+function sendCaptureShown(prefillFiles?: CapturePrefillFile[]) {
+  const wc = captureWindow?.webContents
+  if (!wc) return
+  const payload = prefillFiles && prefillFiles.length > 0 ? { files: prefillFiles } : undefined
+  if (wc.isLoading()) {
+    wc.once('did-finish-load', () => setTimeout(() => wc.send('capture:shown', payload), 60))
+  } else {
+    wc.send('capture:shown', payload)
+  }
 }
 
 function toggleCaptureWindow() {
   if (!captureWindow || captureWindow.isDestroyed()) captureWindow = createCaptureWindow()
   if (captureWindow.isVisible()) { captureWindow.hide(); return }
-  // Center horizontally, upper third vertically, on the display under the cursor.
-  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-  const { x, y, width, height } = display.workArea
-  const [w] = captureWindow.getSize()
-  captureWindow.setPosition(Math.round(x + (width - w) / 2), Math.round(y + height * 0.25))
-  captureWindow.show()
-  captureWindow.focus()
-  captureWindow.webContents.send('capture:shown')
+  showCaptureWindow()
+}
+
+// Grab a full-screen PNG (main display, silently) into a temp file. Returns the
+// attachment descriptor, or null if the file is missing/empty — which on macOS
+// usually means Screen Recording permission has not been granted.
+async function captureScreenshotToTemp(): Promise<CapturePrefillFile | null> {
+  const os = await import('os')
+  const pathMod = await import('path')
+  const fsMod = await import('fs')
+  const { execFile } = await import('child_process')
+  const name = `codey-screenshot-${Date.now()}.png`
+  const dest = pathMod.join(os.tmpdir(), name)
+  await new Promise<void>((resolve, reject) => {
+    // -x: no capture sound. Captures the main display to `dest`.
+    execFile('screencapture', ['-x', dest], err => (err ? reject(err) : resolve()))
+  })
+  let size = 0
+  try { size = fsMod.statSync(dest).size } catch { return null }
+  if (size === 0) return null
+  return { path: dest, name, size }
+}
+
+async function triggerScreenshotCapture() {
+  try {
+    const shot = await captureScreenshotToTemp()
+    if (!shot) {
+      sendToRenderer('gateway-log', '[capture] screenshot produced no image — check Screen Recording permission')
+      try {
+        new Notification({
+          title: 'Screenshot failed',
+          body: 'Codey may need Screen Recording permission (System Settings → Privacy & Security → Screen Recording).',
+          silent: true,
+        }).show()
+      } catch { /* best-effort */ }
+      return
+    }
+    showCaptureWindow([shot])
+  } catch (err: any) {
+    sendToRenderer('gateway-log', `[capture] screenshot failed: ${err?.message ?? err}`)
+  }
 }
 
 function applyUiPreferences(rawCfg: any) {
@@ -177,6 +268,22 @@ function applyCaptureHotkey(rawCfg: any) {
     currentCaptureAccelerator = desired
   } else {
     sendToRenderer('gateway-log', `[capture] hotkey registration failed (in use by another app?): ${desired}`)
+  }
+}
+
+let currentScreenshotAccelerator: string | null = null
+function applyScreenshotHotkey(rawCfg: any) {
+  const desired = screenshotAccelerator(rawCfg?.capture?.screenshotHotkey)
+  if (currentScreenshotAccelerator && currentScreenshotAccelerator !== desired) {
+    try { globalShortcut.unregister(currentScreenshotAccelerator) } catch { /* not registered */ }
+    currentScreenshotAccelerator = null
+  }
+  if (!desired || currentScreenshotAccelerator === desired) return
+  const ok = globalShortcut.register(desired, () => { void triggerScreenshotCapture() })
+  if (ok) {
+    currentScreenshotAccelerator = desired
+  } else {
+    sendToRenderer('gateway-log', `[capture] screenshot hotkey registration failed (in use by another app?): ${desired}`)
   }
 }
 
@@ -649,6 +756,7 @@ async function bootInProcessCore() {
       })
       applyVoiceHotkey(updated)
       applyCaptureHotkey(updated)
+      applyScreenshotHotkey(updated)
       applyUiPreferences(updated)
     })
     {
@@ -657,6 +765,7 @@ async function bootInProcessCore() {
     }
     applyVoiceHotkey(coreConfigManager.get())
     applyCaptureHotkey(coreConfigManager.get())
+    applyScreenshotHotkey(coreConfigManager.get())
     applyUiPreferences(coreConfigManager.get())
     sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length}, agent: ${runtimeCfg.defaultAgent})`)
     // Boot the gateway in the background so configured channels (telegram,
@@ -1021,17 +1130,82 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:relaunch', async () =>
     wrap(async () => { app.relaunch(); app.quit() })
   )
-  ipcMain.handle('capture:submit', async (_e, payload: { workspaceName?: string; text: string }) =>
+  ipcMain.handle('capture:pickFiles', async () =>
+    wrap(async () => {
+      capturePickingFiles = true
+      try {
+        const result = await dialog.showOpenDialog(captureWindow ?? (undefined as any), {
+          properties: ['openFile', 'multiSelections'],
+        })
+        if (result.canceled) return { files: [] as Array<{ path: string; name: string; size: number }> }
+        const fsMod = await import('fs')
+        const pathMod = await import('path')
+        const files = result.filePaths.map(p => {
+          let size = 0
+          try { size = fsMod.statSync(p).size } catch { /* unreadable — size 0 */ }
+          return { path: p, name: pathMod.basename(p), size }
+        })
+        return { files }
+      } finally {
+        capturePickingFiles = false
+        // Closing the native dialog leaves the capture window unfocused; restore
+        // focus so typing and Escape keep working.
+        captureWindow?.focus()
+      }
+    })
+  )
+  ipcMain.handle('capture:submit', async (_e, payload: { workspaceName?: string; text: string; filePaths?: string[] }) =>
     wrap(async () => {
       if (!inProcessGateway || !workspaceManager) throw new Error('Core not ready — open Codey to check its status')
       const known = workspaceManager.listWorkspaces()
       const resolved = resolveCaptureSubmit(payload?.text ?? '', payload?.workspaceName, known)
       if (!resolved.ok) throw new Error(resolved.error)
       const chat = inProcessGateway.getChatManager().create({ workspaceName: resolved.workspaceName })
+
+      // Copy any picked files into the target workspace's .codey/uploads/ and
+      // build FileAttachments — mirrors the chats:upload handler so the agent
+      // sees attachments identically to a normal chat send.
+      const attachments: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> = []
+      const filePaths = payload?.filePaths ?? []
+      if (filePaths.length > 0) {
+        const fsMod = await import('fs')
+        const pathMod = await import('path')
+        const cryptoMod = await import('crypto')
+        const workspacesRoot = (inProcessGateway as any).workspaceManager.getWorkspacesRoot()
+        const wsConfigPath = pathMod.join(workspacesRoot, resolved.workspaceName, 'workspace.json')
+        let workingDir = (inProcessGateway as any).workingDir
+        if (fsMod.existsSync(wsConfigPath)) {
+          try {
+            const wsConfig = JSON.parse(fsMod.readFileSync(wsConfigPath, 'utf-8'))
+            if (wsConfig.workingDir) workingDir = wsConfig.workingDir
+          } catch { /* use default */ }
+        }
+        const uploadsDir = pathMod.join(pathMod.resolve(workingDir || process.cwd()), '.codey', 'uploads')
+        fsMod.mkdirSync(uploadsDir, { recursive: true })
+        for (const src of filePaths) {
+          try {
+            const name = pathMod.basename(src)
+            const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_')
+            const uniqueName = `${Date.now()}-${cryptoMod.randomBytes(4).toString('hex')}-${safeName}`
+            const dest = pathMod.join(uploadsDir, uniqueName)
+            fsMod.copyFileSync(src, dest)
+            attachments.push({
+              id: cryptoMod.randomUUID(),
+              name,
+              path: dest,
+              mimeType: inferCaptureMimeType(name),
+              size: fsMod.statSync(dest).size,
+            })
+          } catch (err: any) {
+            sendToRenderer('gateway-log', `[capture] attachment copy failed for ${src}: ${err?.message ?? err}`)
+          }
+        }
+      }
+
       // Fire and forget: the global chatEventListener mirrors events to the
       // main window, Aide auto-titles, and the notification pipeline reports
       // completion/errors.
-      inProcessGateway.sendToChat(chat.id, resolved.text, () => { /* no-op sink */ }).catch((err: any) => {
+      inProcessGateway.sendToChat(chat.id, resolved.text, () => { /* no-op sink */ }, attachments.length > 0 ? attachments : undefined).catch((err: any) => {
         // The sink tee already emitted the error event to the notification
         // pipeline; this just keeps the rejection out of unhandledRejection.
         sendToRenderer('gateway-log', `[capture] dispatch failed: ${err?.message ?? err}`)
