@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { captureAccelerator, resolveCaptureSubmit, DEFAULT_CAPTURE_HOTKEY } from './capture'
+import { captureAccelerator, resolveCaptureSubmit, normalizeAccelerator, DEFAULT_CAPTURE_HOTKEY } from './capture'
 
 describe('captureAccelerator', () => {
   it('defaults to Alt+Space when unset', () => {
@@ -22,6 +22,18 @@ describe('captureAccelerator', () => {
   it('rejects Fn (not bindable via globalShortcut)', () => {
     expect(captureAccelerator('Fn')).toBeNull()
     expect(captureAccelerator(' fn ')).toBeNull()
+  })
+})
+
+// Shared with main.ts's toElectronAccelerator (voice global hotkey). Space is
+// recorded by HotkeyRecorder as e.key === ' ', so a stored hotkey like "Meta+ "
+// must survive trim() and still normalize to a real Space accelerator rather
+// than dropping the part and yielding an invalid "CommandOrControl+".
+describe('normalizeAccelerator (voice hotkey)', () => {
+  it('keeps a space part recorded as " " (not dropped after trim)', () => {
+    expect(normalizeAccelerator('Meta+ ')).toBe('CommandOrControl+Space')
+    expect(normalizeAccelerator('Meta+Shift+ ')).toBe('CommandOrControl+Shift+Space')
+    expect(normalizeAccelerator('Control+space')).toBe('Control+Space')
   })
 })
 

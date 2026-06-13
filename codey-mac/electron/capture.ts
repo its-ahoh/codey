@@ -3,9 +3,11 @@
 
 export const DEFAULT_CAPTURE_HOTKEY = 'Alt+Space'
 
-// Same normalization as main.ts's toElectronAccelerator (WhisperTab format →
-// Electron accelerator), kept pure here for testability.
-function normalizeAccelerator(hotkey: string): string {
+// Shared normalization (WhisperTab format → Electron accelerator), kept pure
+// here for testability. Reused by main.ts's toElectronAccelerator so the voice
+// and quick-capture hotkeys stay in lockstep. The `low === ''` branch matters:
+// HotkeyRecorder stores Space as e.key === ' ', which becomes '' after trim().
+export function normalizeAccelerator(hotkey: string): string {
   return hotkey
     .split('+')
     .map(p => p.trim())
