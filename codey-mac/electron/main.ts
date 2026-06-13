@@ -1,6 +1,6 @@
 import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen } from 'electron'
 import { join } from 'path'
-import { captureAccelerator, resolveCaptureSubmit } from './capture'
+import { captureAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
@@ -714,19 +714,11 @@ async function bootInProcessCore() {
 // accelerator string. Returns null if the binding is empty/disabled.
 function toElectronAccelerator(hotkey: string | undefined): string | null {
   if (!hotkey) return null
-  return hotkey
-    .split('+')
-    .map(p => p.trim())
-    .map(p => {
-      const low = p.toLowerCase()
-      if (low === 'meta' || low === 'cmd' || low === 'command') return 'CommandOrControl'
-      if (low === 'control' || low === 'ctrl') return 'Control'
-      if (low === 'alt' || low === 'option') return 'Alt'
-      if (low === 'shift') return 'Shift'
-      if (low === ' ' || low === 'space') return 'Space'
-      return p.length === 1 ? p.toUpperCase() : p
-    })
-    .join('+')
+  // Delegate to the shared, pure normalizer in capture.ts. Its `low === ''`
+  // check handles Space recorded as ' ' (which trim() collapses to ''); the
+  // old inline copy checked `low === ' '` *after* trim and so dropped the part,
+  // producing invalid accelerators like "CommandOrControl+".
+  return normalizeAccelerator(hotkey)
 }
 
 let currentVoiceAccelerator: string | null = null
