@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -13,7 +13,7 @@ import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
-import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry } from './chat-runner';
+import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
 import { resolveChoiceDigit } from './digit-mapping';
@@ -33,6 +33,9 @@ interface DirectoryResolveResult {
   workspace?: string;
   isWorkspaceName?: boolean;
 }
+
+/** Max advisor escalation rounds per single-agent turn (solo advisor). */
+const SOLO_ADVISOR_MAX_ROUNDS = 2;
 
 export class Codey {
   private config: GatewayConfig;
@@ -366,6 +369,33 @@ export class Codey {
   private advisorRunner = (req: AgentRequest): Promise<AgentResponse> => {
     return this.runWithFallback(req.agent, req);
   };
+
+  /** Run the stronger advisor model for a stuck single agent. Returns plain-text
+   *  guidance, or null on failure/timeout (caller degrades to the agent's reply). */
+  private async runSoloAdvisor(
+    input: SoloAdvisorInput,
+    workingDir: string,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    const { agent, model } = this.getAdvisorAgentAndModel();
+    try {
+      const resp = await this.runWithFallback(agent, {
+        prompt: buildSoloAdvisorPrompt(input),
+        agent,
+        model,
+        context: { workingDir },
+        onStream: () => {},
+        onThinking: () => {},
+        onStatus: () => {},
+        signal,
+      });
+      if (!resp?.success) return null;
+      const text = this.formatAgentResponse(resp).trim();
+      return text.length > 0 ? text : null;
+    } catch {
+      return null;
+    }
+  }
 
   /** Resolve the agent + model for Aide (housekeeping) calls. Falls back to defaults. */
   private getAideAgentAndModel(): { agent: CodingAgent; model?: ModelConfig } {
@@ -3777,6 +3807,11 @@ Example: /model gpt-4.1 write a Python script`;
       }
     }
 
+    // Solo advisor: when enabled (and not a team), tell the agent how to escalate.
+    if (chat.soloAdvisor && chat.selection.type !== 'team') {
+      prompt = prompt + '\n\n' + SOLO_ADVISOR_INSTRUCTION;
+    }
+
     const userMessage: ChatMessage = {
       id: randomUUID(),
       role: 'user',
@@ -3902,8 +3937,47 @@ Example: /model gpt-4.1 write a Python script`;
             newSessionId,
           });
         }
+        // Solo advisor escalation: if the agent signalled it's stuck, get
+        // guidance from the stronger advisor model and re-run, up to N rounds.
+        let advisorRounds = 0;
+        while (
+          chat.soloAdvisor &&
+          response?.success &&
+          advisorRounds < SOLO_ADVISOR_MAX_ROUNDS &&
+          !abortController.signal.aborted
+        ) {
+          const ask = parseAskAdvisor(this.formatAgentResponse(response));
+          if (!ask) break;
+          advisorRounds++;
+          const guidance = await this.runSoloAdvisor(
+            { task: userText, stuckOutput: ask.preamble, reason: ask.reason },
+            workingDir,
+            abortController.signal,
+          );
+          if (!guidance) break; // advisor failed → keep the agent's own reply
+          sink({ type: 'info', chatId, message: `🧭 Advisor: ${guidance}` });
+          streamedText = '';
+          const followup = selPrefix + buildSoloAdvisorFollowupPrompt({
+            task: userText,
+            stuckOutput: ask.preamble,
+            reason: ask.reason,
+            guidance,
+          });
+          response = await this.runWithFallback(agent, {
+            prompt: followup,
+            agent,
+            model,
+            context: { workingDir },
+            skipPermissions: this.getSkipPermissions(),
+            onStream,
+            onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
+            onStatus,
+            signal: abortController.signal,
+          });
+        }
         singleAgentResponse = response;
         output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
+        if (chat.soloAdvisor) output = stripAskAdvisor(output);
         tokens = (response as any)?.tokens?.total;
         // Persist the anchor on success for next-turn resume.
         if (canResume && response?.success) {
