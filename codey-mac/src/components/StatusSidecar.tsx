@@ -52,7 +52,12 @@ export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, width })
         <span style={styles.headerLabel}>Status</span>
         <div style={styles.headerRight}>
           {loading && <span style={styles.headerLoading}>updating…</span>}
-          <span style={styles.chevron} aria-hidden>{collapsed ? '▸' : '▾'}</span>
+          <svg
+            style={{ ...styles.chevron, transform: collapsed ? 'rotate(-90deg)' : 'none' }}
+            width="14" height="14" viewBox="0 0 14 14" aria-hidden
+          >
+            <path d="M3.5 5.25 L7 8.75 L10.5 5.25" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </div>
       </div>
 
@@ -119,7 +124,7 @@ const styles: Record<string, React.CSSProperties> = {
   headerLabel: { fontSize: 10, fontWeight: 600, letterSpacing: 0.6, textTransform: 'uppercase', color: C.fg3 },
   headerRight: { display: 'flex', alignItems: 'center', gap: 8 },
   headerLoading: { fontSize: 10, color: C.fg3, fontStyle: 'italic' },
-  chevron: { color: C.fg2, fontSize: 15, lineHeight: 1 },
+  chevron: { color: C.fg2, display: 'block', flex: 'none', transition: 'transform 0.15s ease' },
   goal: { fontSize: 13, fontWeight: 600, color: C.fg, lineHeight: 1.35, ...clamp(2) },
   statusRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   pill: { fontSize: 11, padding: '2px 7px', borderRadius: 6 },
