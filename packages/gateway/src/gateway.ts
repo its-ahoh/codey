@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, TeamGraph, startRun, advance, resolveEdge, outgoingEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -3109,8 +3109,12 @@ Example: /model gpt-4.1 write a Python script`;
       // Pause if this worker asked the user a question.
       const ask = parseAskUser(cleanOutput);
       if (ask) {
-        // The `chat-` prefix must mirror runTeamForChat's baseConv so the anchors
-        // snapshotted here rehydrate under the same key in resumeTeamFromAnswer.
+        // The `chat-` prefix mirrors runTeamForChat's baseConv. NOTE: as with the
+        // existing auto/sequential sink pauses, this persisted state is only consumed
+        // by resumeTeamFromAnswer (reached via handleMessage on unlinked channels);
+        // the sendToChat path (Mac app / linked channels) has no team-resume branch
+        // yet, so a flow paused there restarts on the next turn. See the follow-up to
+        // wire pendingTeam resume into sendToChat (fixes all team modes, not just graph).
         const teamConv = this.workerConversationId(`chat-${chatId}`, { team: teamName });
         const askWorkerName = wm.getWorker(workerName)?.name ?? workerName;
         this.persistPendingTeam(chatId, {
@@ -4171,6 +4175,14 @@ Example: /model gpt-4.1 write a Python script`;
         if (fallbackDispatch === 'parallel') {
           const rawParallel = (!Array.isArray(rawTeam) && rawTeam?.parallel) || {};
           fallbackTeam.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...rawParallel };
+        }
+        // Carry a Sequential flow graph through the inline fallback too. This path
+        // bypasses normalizeTeam, so validate here as well — an invalid graph drops
+        // to linear rather than reaching the executor.
+        if (fallbackDispatch === 'all' && !Array.isArray(rawTeam) && rawTeam?.graph) {
+          const problems = validateGraph(rawTeam.graph, rawMembers);
+          if (problems.length === 0) fallbackTeam.graph = rawTeam.graph;
+          else this.logger.warn(`[Workspace] Team "${teamName}" fallback flow graph invalid — running linearly: ${problems.join('; ')}`);
         }
         const team: TeamConfig = wsTeam ?? fallbackTeam;
         this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasParallel=${!!team.parallel} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
