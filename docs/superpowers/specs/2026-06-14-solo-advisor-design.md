@@ -67,8 +67,11 @@ text-matching or a per-turn classifier.
 ### 3. Parser
 
 - New `parseAskAdvisor(text)` in core (sibling to `parseAsk` / `parseAskUser`),
-  returning `{ reason: string } | null`. Matches a line `[ASK_ADVISOR]: <reason>`.
-  The marker is always stripped from the final user-visible message.
+  returning `{ preamble: string; reason: string } | null` (preamble = the agent's
+  output before the marker; needed so the follow-up prompt can re-inject the prior
+  attempt). Matches a line `[ASK_ADVISOR]: <reason>`, skipping blank-reason markers.
+  The marker is always stripped from the final user-visible message via
+  `stripAskAdvisor`.
 
 ### 4. Solo advisor prompt + runner
 
