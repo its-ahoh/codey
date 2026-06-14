@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { decideNotification, createTurnTracker, truncate } from './chat-notifications'
+import { decideNotification, createTurnTracker, truncate, mdToPlainText } from './chat-notifications'
 
 const ctx = { focused: false, enabled: true }
 
@@ -75,6 +75,37 @@ describe('decideNotification', () => {
     const d = decideNotification({ type: 'done', chatId: 'c1', response: long }, ctx)
     expect(d?.body.length).toBe(180)
     expect(d?.body.endsWith('…')).toBe(true)
+  })
+})
+
+describe('mdToPlainText', () => {
+  it('strips emphasis, inline code and headings', () => {
+    expect(mdToPlainText('## Done\nFixed **the bug** in `auth.ts`')).toBe('Done Fixed the bug in auth.ts')
+  })
+  it('keeps link/image text, drops the URL', () => {
+    expect(mdToPlainText('See [the PR](https://x/y) and ![logo](a.png)')).toBe('See the PR and logo')
+  })
+  it('flattens bullet and numbered lists into one line', () => {
+    expect(mdToPlainText('- one\n- two\n\n1. three')).toBe('one two three')
+  })
+  it('drops code fences but keeps the code text', () => {
+    expect(mdToPlainText('Run:\n```bash\nnpm test\n```')).toBe('Run: npm test')
+  })
+  it('strips blockquotes and horizontal rules', () => {
+    expect(mdToPlainText('> quoted\n\n---\n\ntext')).toBe('quoted text')
+  })
+  it('leaves plain prose untouched', () => {
+    expect(mdToPlainText('All tests pass.')).toBe('All tests pass.')
+  })
+})
+
+describe('decideNotification markdown handling', () => {
+  it('renders the done body as plain text, not raw markdown', () => {
+    const d = decideNotification(
+      { type: 'done', chatId: 'c1', response: '## Summary\n- Did **X**\n- See [docs](http://d)' },
+      ctx,
+    )
+    expect(d?.body).toBe('Summary Did X See docs')
   })
 })
 
