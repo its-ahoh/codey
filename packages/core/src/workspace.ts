@@ -4,6 +4,7 @@ import * as path from 'path';
 import { CoreLogger } from './types';
 import { WorkerManager } from './workers';
 import { MemoryStore } from './memory';
+import { TeamGraph, validateGraph } from './team-graph';
 
 const defaultLogger: CoreLogger = {
   info: (msg: string) => console.log(msg),
@@ -32,6 +33,7 @@ export type TeamConfigRaw =
       members: string[];
       dispatch?: TeamDispatchMode;
       parallel?: Partial<ParallelSettings>;
+      graph?: TeamGraph;
     };
 
 /** Normalized team value used at runtime. */
@@ -40,6 +42,8 @@ export interface TeamConfig {
   dispatch: TeamDispatchMode;
   /** Only populated when dispatch === 'parallel'. */
   parallel?: ParallelSettings;
+  /** Only honored when dispatch === 'all' (Sequential). */
+  graph?: TeamGraph;
 }
 
 export interface WorkspaceJson {
@@ -184,6 +188,7 @@ export class WorkspaceManager {
     let members: string[];
     let dispatch: TeamDispatchMode = 'all';
     let parallel: Partial<ParallelSettings> | undefined;
+    let graph: TeamGraph | undefined;
 
     if (Array.isArray(raw)) {
       members = raw;
@@ -195,6 +200,7 @@ export class WorkspaceManager {
         this.logger.warn(`[Workspace] Team "${name}" has invalid dispatch="${raw.dispatch}" — defaulting to "all"`);
       }
       parallel = raw.parallel;
+      graph = raw.graph;
     } else {
       this.logger.error(`[Workspace] Team "${name}" has invalid shape — skipping`);
       return null;
@@ -215,6 +221,14 @@ export class WorkspaceManager {
       }
       delete raw.managerPollMs;
       result.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...raw };
+    }
+    if (dispatch === 'all' && graph) {
+      const problems = validateGraph(graph, members);
+      if (problems.length === 0) {
+        result.graph = graph;
+      } else {
+        this.logger.warn(`[Workspace] Team "${name}" has an invalid flow graph — running linearly. Problems: ${problems.join('; ')}`);
+      }
     }
     return result;
   }
