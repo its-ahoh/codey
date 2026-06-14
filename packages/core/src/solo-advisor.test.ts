@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseAskAdvisor, stripAskAdvisor } from './utils/ask-user';
+import { buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt } from './solo-advisor';
 
 describe('parseAskAdvisor', () => {
   it('returns null when no marker present', () => {
@@ -40,5 +41,29 @@ describe('stripAskAdvisor', () => {
 
   it('removes multiple marker lines', () => {
     expect(stripAskAdvisor('a\n[ASK_ADVISOR]: x\nb\n[ASK_ADVISOR]: y')).toBe('a\nb');
+  });
+});
+
+describe('buildSoloAdvisorPrompt', () => {
+  const input = { task: 'add login', stuckOutput: 'tried JWT', reason: 'token never validates' };
+
+  it('includes task, stuck output, and reason', () => {
+    const p = buildSoloAdvisorPrompt(input);
+    expect(p).toContain('add login');
+    expect(p).toContain('tried JWT');
+    expect(p).toContain('token never validates');
+  });
+
+  it('instructs guidance-only (no code)', () => {
+    expect(buildSoloAdvisorPrompt(input).toLowerCase()).toContain('do not write code');
+  });
+});
+
+describe('buildSoloAdvisorFollowupPrompt', () => {
+  it('includes the guidance and the original task', () => {
+    const p = buildSoloAdvisorFollowupPrompt('token never validates', 'check the clock skew', 'add login', 'tried JWT');
+    expect(p).toContain('check the clock skew');
+    expect(p).toContain('add login');
+    expect(p).toContain('tried JWT');
   });
 });
