@@ -36,6 +36,32 @@ export function truncate(s: string, max: number): string {
   return t.length <= max ? t : t.slice(0, max - 1) + '…'
 }
 
+// Flatten markdown into clean single-line plain text for notification bodies.
+// macOS notifications don't render markdown, so raw `**bold**`, `## heads`,
+// `- bullets`, links and code fences read as noise. We keep the words, drop
+// the syntax, and collapse whitespace to a compact preview.
+export function mdToPlainText(input: string): string {
+  let s = input
+  // Fenced code blocks: keep the inner code, drop the ``` fences/lang.
+  s = s.replace(/```[^\n]*\n?([\s\S]*?)```/g, (_m, code) => code)
+  // Images ![alt](url) → alt, then links [text](url) → text.
+  s = s.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+  s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+  // Strip leading block markers (headings, blockquotes, list bullets).
+  s = s.replace(/^\s{0,3}#{1,6}\s+/gm, '')
+  s = s.replace(/^\s*>\s?/gm, '')
+  s = s.replace(/^\s*([-*_])\1{2,}\s*$/gm, '') // horizontal rules
+  s = s.replace(/^\s*[-*+]\s+/gm, '')
+  s = s.replace(/^\s*\d+\.\s+/gm, '')
+  // Inline emphasis / code markers.
+  s = s.replace(/(\*\*|__)(.*?)\1/g, '$2')
+  s = s.replace(/(\*|_)(.*?)\1/g, '$2')
+  s = s.replace(/~~(.*?)~~/g, '$1')
+  s = s.replace(/`([^`]+)`/g, '$1')
+  // Collapse all whitespace (incl. newlines) into single spaces.
+  return s.replace(/\s+/g, ' ').trim()
+}
+
 function withTitle(base: string, chatTitle?: string): string {
   return chatTitle ? `${base} — ${chatTitle}` : base
 }
@@ -43,7 +69,7 @@ function withTitle(base: string, chatTitle?: string): string {
 export function decideNotification(ev: NotifyEvent, ctx: NotifyContext): NotificationDecision | null {
   if (!ctx.enabled || ctx.focused) return null
   if (ev.type === 'error') {
-    return { chatId: ev.chatId, title: withTitle('Codey hit an error', ctx.chatTitle), body: truncate(ev.message ?? '', MAX_BODY) }
+    return { chatId: ev.chatId, title: withTitle('Codey hit an error', ctx.chatTitle), body: truncate(mdToPlainText(ev.message ?? ''), MAX_BODY) }
   }
   if (ev.type !== 'done') return null
   const q = ev.userQuestion
@@ -51,12 +77,12 @@ export function decideNotification(ev: NotifyEvent, ctx: NotifyContext): Notific
     const decision: NotificationDecision = {
       chatId: ev.chatId,
       title: withTitle('Codey needs your input', ctx.chatTitle),
-      body: truncate(q.question, MAX_BODY),
+      body: truncate(mdToPlainText(q.question), MAX_BODY),
     }
     if (!q.multiSelect) decision.actions = q.options.slice(0, MAX_ACTIONS).map(o => ({ label: o.label }))
     return decision
   }
-  return { chatId: ev.chatId, title: withTitle('Codey finished', ctx.chatTitle), body: truncate(ev.response ?? '', MAX_BODY) }
+  return { chatId: ev.chatId, title: withTitle('Codey finished', ctx.chatTitle), body: truncate(mdToPlainText(ev.response ?? ''), MAX_BODY) }
 }
 
 const TERMINAL_TYPES = new Set(['done', 'error', 'stopped'])
