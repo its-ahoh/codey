@@ -500,7 +500,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   // closed (it's absolutely positioned, so it takes no layout space). Hidden on
   // narrow windows where it would cover most of the conversation, and only when
   // there's at least one assistant turn to summarize.
-  const SIDECAR_W = 220
+  const SIDECAR_W = 264
   const sidecarFits = windowWidth >= 720
   const hasAssistantMsg = (chat?.messages ?? []).some(m => m.role === 'assistant')
   const sidecarVisible = !panelOpen && sidecarFits && !!chat && hasAssistantMsg
