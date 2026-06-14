@@ -38,16 +38,21 @@ export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, width })
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
       title="Open status panel"
     >
-      <div style={styles.header}>
+      <div
+        style={styles.header}
+        onClick={(e) => { e.stopPropagation(); setCollapsed(v => !v) }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); setCollapsed(v => !v) }
+        }}
+        title={collapsed ? 'Expand status' : 'Collapse status'}
+        aria-expanded={!collapsed}
+      >
         <span style={styles.headerLabel}>Status</span>
         <div style={styles.headerRight}>
           {loading && <span style={styles.headerLoading}>updating…</span>}
-          <button
-            style={styles.collapseBtn}
-            onClick={(e) => { e.stopPropagation(); setCollapsed(v => !v) }}
-            title={collapsed ? 'Expand' : 'Collapse'}
-            aria-label={collapsed ? 'Expand status' : 'Collapse status'}
-          >{collapsed ? '▸' : '▾'}</button>
+          <span style={styles.chevron} aria-hidden>{collapsed ? '▸' : '▾'}</span>
         </div>
       </div>
 
@@ -105,14 +110,16 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', flexDirection: 'column', gap: 10,
     padding: '12px 13px', overflowY: 'auto', cursor: 'pointer',
   },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
-  headerLabel: { fontSize: 10, fontWeight: 600, letterSpacing: 0.6, textTransform: 'uppercase', color: C.fg3 },
-  headerRight: { display: 'flex', alignItems: 'center', gap: 6 },
-  headerLoading: { fontSize: 10, color: C.fg3, fontStyle: 'italic' },
-  collapseBtn: {
-    background: 'transparent', border: 'none', color: C.fg3, cursor: 'pointer',
-    fontSize: 11, lineHeight: 1, padding: '2px 4px', borderRadius: 4,
+  header: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    cursor: 'pointer', userSelect: 'none',
+    // Stretch the click target across the full card width.
+    margin: '-12px -13px 0', padding: '12px 13px 8px',
   },
+  headerLabel: { fontSize: 10, fontWeight: 600, letterSpacing: 0.6, textTransform: 'uppercase', color: C.fg3 },
+  headerRight: { display: 'flex', alignItems: 'center', gap: 8 },
+  headerLoading: { fontSize: 10, color: C.fg3, fontStyle: 'italic' },
+  chevron: { color: C.fg2, fontSize: 15, lineHeight: 1 },
   goal: { fontSize: 13, fontWeight: 600, color: C.fg, lineHeight: 1.35, ...clamp(2) },
   statusRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
   pill: { fontSize: 11, padding: '2px 7px', borderRadius: 6 },
