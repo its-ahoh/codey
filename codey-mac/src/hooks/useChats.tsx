@@ -47,6 +47,7 @@ type Action =
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
   | { type: 'patchContextPanelOpen'; chatId: string; open: boolean | null }
+  | { type: 'patchSoloAdvisor'; chatId: string; enabled: boolean }
   | { type: 'patchTaskBrief'; chatId: string; brief: TaskBrief }
   | { type: 'permissionRequest'; chatId: string; toolNames: string[] }
   | { type: 'dismissPermission'; chatId: string }
@@ -121,6 +122,12 @@ export function reducer(state: State, action: Action): State {
       const chat = state.chats[action.chatId]
       if (!chat) return state
       const updated: Chat = { ...chat, contextPanelOpen: action.open ?? undefined }
+      return { ...state, chats: { ...state.chats, [chat.id]: updated } }
+    }
+    case 'patchSoloAdvisor': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      const updated: Chat = { ...chat, soloAdvisor: action.enabled || undefined }
       return { ...state, chats: { ...state.chats, [chat.id]: updated } }
     }
     case 'patchTaskBrief': {
@@ -325,6 +332,7 @@ interface ChatsContextValue {
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
   setAgentModel: (chatId: string, agent: string | null, model: string | null) => Promise<void>
   setContextPanelOpen: (chatId: string, open: boolean | null) => Promise<void>
+  setSoloAdvisor: (chatId: string, enabled: boolean) => Promise<void>
   generateTaskBrief: (chatId: string) => Promise<TaskBrief | null>
   linkChannel: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<void>
   unlinkChannel: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<void>
@@ -540,6 +548,10 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // The server-side write happens in the background.
       dispatch({ type: 'patchContextPanelOpen', chatId, open })
       try { await apiService.chats.updateContextPanelOpen(chatId, open) } catch { /* swallow */ }
+    },
+    async setSoloAdvisor(chatId, enabled) {
+      dispatch({ type: 'patchSoloAdvisor', chatId, enabled })
+      try { await apiService.chats.setSoloAdvisor(chatId, enabled) } catch { /* swallow */ }
     },
     async generateTaskBrief(chatId) {
       const brief = await apiService.chats.taskBrief(chatId)
