@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, TeamGraph, startRun, advance, resolveEdge, outgoingEdges, runJudge, JudgeInput, GraphRunState } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, TeamGraph, startRun, advance, resolveEdge, outgoingEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -2842,6 +2842,47 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   /**
+   * Build the judge edge descriptors for the given node. Shared by both graph
+   * walk variants so they can't silently drift.
+   */
+  private buildJudgeEdges(
+    graph: TeamGraph,
+    nodeById: Map<string, TeamGraph['nodes'][number]>,
+    nodeId: string,
+  ): JudgeInput['edges'] {
+    return outgoingEdges(graph, nodeId).map(e => ({
+      id: e.id,
+      condition: e.condition,
+      targetWorker: nodeById.get(e.to)?.type === 'end' ? '(end)' : (nodeById.get(e.to)?.worker ?? e.to),
+    }));
+  }
+
+  /**
+   * Assemble the JudgeInput, run the judge, and resolve the chosen edge. Shared
+   * by both graph walk variants. Returns the raw decision (for the caller's
+   * reason/fallback emit) plus the resolved edge (null if no match).
+   */
+  private async pickNextGraphEdge(
+    graph: TeamGraph,
+    nodeById: Map<string, TeamGraph['nodes'][number]>,
+    currentNodeId: string,
+    task: string,
+    workerName: string,
+    workerOutput: string,
+    blackboardSummary: string,
+    signal?: AbortSignal,
+  ): Promise<{ decision: JudgeDecision; edge: TeamGraphEdge | null }> {
+    const edges = this.buildJudgeEdges(graph, nodeById, currentNodeId);
+    const { agent, model } = this.getAdvisorAgentAndModel();
+    const decision = await runJudge(
+      { task, worker: workerName, workerOutput, blackboardSummary, edges },
+      { agent, model, runner: this.advisorRunner, signal },
+    );
+    const edge = resolveEdge(graph, currentNodeId, decision.edgeId);
+    return { decision, edge };
+  }
+
+  /**
    * Walk a Sequential team's flow graph, letting a judge LLM choose the next
    * edge after each worker. Mirrors runAllMembersInOrder but follows graph
    * topology (with loop-backs and a maxHops cap) instead of a linear list.
@@ -2881,6 +2922,7 @@ Example: /model gpt-4.1 write a Python script`;
     let stepIndex = 0;
     while (state.status === 'running') {
       const node = nodeById.get(state.currentNodeId)!;
+      // safe: team.graph is only set after validateGraph guarantees every worker node has a worker
       const workerName = node.worker!;
       const worker = wm.getWorker(workerName);
       if (!worker) { results.push(`**${workerName}**: ❌ not found`); break; }
@@ -2900,24 +2942,13 @@ Example: /model gpt-4.1 write a Python script`;
       if (!resp.success) { results.push(`**${worker.name}**: ❌ Failed - ${resp.error}`); break; }
 
       const ingested = blackboard.ingest(workerName, stepIndex, resp.output);
-      results.push(`**${worker.name}**:\n${ingested.stripped.substring(0, 200)}`);
+      results.push(`**${worker.name}**:\n${ingested.stripped.substring(0, 500)}`);
 
       // Judge picks the next edge.
-      const edges = outgoingEdges(graph, state.currentNodeId).map(e => ({
-        id: e.id,
-        condition: e.condition,
-        targetWorker: nodeById.get(e.to)?.type === 'end' ? '(end)' : (nodeById.get(e.to)?.worker ?? e.to),
-      }));
-      const { agent: jAgent, model: jModel } = this.getAdvisorAgentAndModel();
-      const judgeInput: JudgeInput = {
-        task, worker: workerName, workerOutput: ingested.stripped,
-        blackboardSummary: blackboard.renderForUser() || '', edges,
-      };
-      const decision = await runJudge(judgeInput, {
-        agent: jAgent, model: jModel,
-        runner: this.advisorRunner,
-      });
-      const edge = resolveEdge(graph, state.currentNodeId, decision.edgeId);
+      const { decision, edge } = await this.pickNextGraphEdge(
+        graph, nodeById, state.currentNodeId, task, workerName,
+        ingested.stripped, blackboard.renderForUser() || '',
+      );
       if (!edge) {
         await this.sendResponse({ chatId, channel, text: `🏁 Flow stopped at **${worker.name}** (no matching next step).` });
         break;
@@ -2980,6 +3011,7 @@ Example: /model gpt-4.1 write a Python script`;
     while (state.status === 'running') {
       if (signal?.aborted) break;
       const node = nodeById.get(state.currentNodeId)!;
+      // safe: team.graph is only set after validateGraph guarantees every worker node has a worker
       const workerName = node.worker!;
       const worker = wm.getWorker(workerName);
       if (!worker) { parts.push(`### ${workerName}\n\n❌ not found`); break; }
@@ -3010,22 +3042,10 @@ Example: /model gpt-4.1 write a Python script`;
       parts.push(`### Step ${stepNum}: ${worker.name}\n\n${cleanOutput}`);
 
       // Judge picks the next edge.
-      const edges = outgoingEdges(graph, state.currentNodeId).map(e => ({
-        id: e.id,
-        condition: e.condition,
-        targetWorker: nodeById.get(e.to)?.type === 'end' ? '(end)' : (nodeById.get(e.to)?.worker ?? e.to),
-      }));
-      const { agent: jAgent, model: jModel } = this.getAdvisorAgentAndModel();
-      const judgeInput: JudgeInput = {
-        task: prompt, worker: workerName, workerOutput: cleanOutput,
-        blackboardSummary: blackboard.renderForUser() || '', edges,
-      };
-      const decision = await runJudge(judgeInput, {
-        agent: jAgent, model: jModel,
-        runner: this.advisorRunner,
-        signal,
-      });
-      const edge = resolveEdge(graph, state.currentNodeId, decision.edgeId);
+      const { decision, edge } = await this.pickNextGraphEdge(
+        graph, nodeById, state.currentNodeId, prompt, workerName,
+        cleanOutput, blackboard.renderForUser() || '', signal,
+      );
       if (!edge) {
         sink({ type: 'info', chatId, message: `Flow stopped at ${worker.name} (no matching next step).` });
         break;
