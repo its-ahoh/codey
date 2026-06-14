@@ -127,7 +127,7 @@ export function reducer(state: State, action: Action): State {
     case 'patchSoloAdvisor': {
       const chat = state.chats[action.chatId]
       if (!chat) return state
-      const updated: Chat = { ...chat, soloAdvisor: action.enabled || undefined }
+      const updated: Chat = { ...chat, soloAdvisor: action.enabled ? true : undefined }
       return { ...state, chats: { ...state.chats, [chat.id]: updated } }
     }
     case 'patchTaskBrief': {
@@ -550,6 +550,9 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try { await apiService.chats.updateContextPanelOpen(chatId, open) } catch { /* swallow */ }
     },
     async setSoloAdvisor(chatId, enabled) {
+      // Optimistically patch local state (same rationale as setContextPanelOpen):
+      // avoid replacing the chat object and clobbering an in-flight streaming
+      // assistant message. The server-side write happens in the background.
       dispatch({ type: 'patchSoloAdvisor', chatId, enabled })
       try { await apiService.chats.setSoloAdvisor(chatId, enabled) } catch { /* swallow */ }
     },

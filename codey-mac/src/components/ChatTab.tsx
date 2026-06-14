@@ -846,7 +846,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
               title={chat.soloAdvisor
                 ? 'Solo Advisor 兜底: ON — stuck agent escalates to the advisor model'
                 : 'Solo Advisor 兜底: OFF'}
-              aria-label="Toggle solo advisor"
+              role="switch"
+              aria-checked={chat.soloAdvisor ?? false}
+              aria-label={chat.soloAdvisor ? 'Solo Advisor ON' : 'Solo Advisor OFF'}
             >
               🧭
             </button>
