@@ -31,6 +31,19 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
   const [wsRenameValue, setWsRenameValue] = useState('')
   const [chatMenu, setChatMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [chatMenuView, setChatMenuView] = useState<'main' | 'connect'>('main')
+  // User-defined workspace ordering (drag to reorder). Persisted locally; names
+  // not in the list fall back to alphabetical after the ordered ones.
+  const [wsOrder, setWsOrder] = useState<string[]>(() => {
+    try { const v = JSON.parse(localStorage.getItem('codey.workspaceOrder') || '[]'); return Array.isArray(v) ? v : [] }
+    catch { return [] }
+  })
+  const [draggingWs, setDraggingWs] = useState<string | null>(null)
+  const [dragOverWs, setDragOverWs] = useState<string | null>(null)
+
+  const persistWsOrder = (next: string[]) => {
+    setWsOrder(next)
+    localStorage.setItem('codey.workspaceOrder', JSON.stringify(next))
+  }
   // Shrink the panel on narrow windows so the conversation column keeps
   // breathing room. Matches the threshold used in ChatTab for the context panel.
   const [narrow, setNarrow] = useState<boolean>(() => window.innerWidth < 600)
@@ -189,7 +202,25 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
   for (const ws of workspaces) {
     if (!groups[ws]) groups[ws] = []
   }
-  const groupNames = Object.keys(groups).sort()
+  // Order by the user's saved arrangement; unknown names sort alphabetically
+  // after the explicitly-ordered ones.
+  const orderIndex = (name: string) => {
+    const i = wsOrder.indexOf(name)
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i
+  }
+  const groupNames = Object.keys(groups).sort((a, b) => {
+    const ia = orderIndex(a), ib = orderIndex(b)
+    return ia !== ib ? ia - ib : a.localeCompare(b)
+  })
+
+  const reorderWs = (dragged: string, target: string) => {
+    if (dragged === target) return
+    const without = groupNames.filter(n => n !== dragged)
+    const idx = without.indexOf(target)
+    if (idx === -1) return
+    without.splice(idx, 0, dragged)
+    persistWsOrder(without)
+  }
 
   return (
     <div style={{ ...styles.root, width: narrow ? 180 : 240 }}>
@@ -202,12 +233,37 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
           return (
             <div key={ws}>
               <div
-                style={styles.groupHeader}
+                style={{
+                  ...styles.groupHeader,
+                  ...(dragOverWs === ws && draggingWs && draggingWs !== ws ? styles.groupHeaderDropTarget : null),
+                  ...(draggingWs === ws ? styles.groupHeaderDragging : null),
+                }}
+                draggable={renamingWs !== ws}
                 onClick={() => renamingWs === ws ? null : toggleWorkspace(ws)}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   setWsMenu({ workspace: ws, x: e.clientX, y: e.clientY })
                 }}
+                onDragStart={(e) => {
+                  setDraggingWs(ws)
+                  e.dataTransfer.effectAllowed = 'move'
+                  // Some platforms require data to be set for drag to initiate.
+                  try { e.dataTransfer.setData('text/plain', ws) } catch { /* ignore */ }
+                }}
+                onDragOver={(e) => {
+                  if (!draggingWs) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  if (dragOverWs !== ws) setDragOverWs(ws)
+                }}
+                onDragLeave={() => { if (dragOverWs === ws) setDragOverWs(null) }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  if (draggingWs) reorderWs(draggingWs, ws)
+                  setDraggingWs(null)
+                  setDragOverWs(null)
+                }}
+                onDragEnd={() => { setDraggingWs(null); setDragOverWs(null) }}
               >
                 <span style={styles.chevron}>{collapsed ? '📁︎' : '📂︎'}</span>
                 {renamingWs === ws ? (
@@ -451,6 +507,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '6px 8px', color: C.fg3, fontSize: 13, fontWeight: 600,
     cursor: 'pointer', userSelect: 'none',
   },
+  groupHeaderDropTarget: { boxShadow: `inset 0 2px 0 ${C.accent}` },
+  groupHeaderDragging: { opacity: 0.45 },
   groupName: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   groupAddBtn: {
     background: 'transparent', border: 'none', color: C.fg3,
