@@ -12,7 +12,7 @@ describe('parseTeamMessage', () => {
 
   it('parses summary + multiple steps', () => {
     const input = [
-      '🧭 Manager summary: All done.',
+      '🧭 Advisor summary: All done.',
       '',
       '### Step 1: alice',
       '',
@@ -52,7 +52,7 @@ describe('parseTeamMessage', () => {
 
   it('returns null when any chunk fails to match the step pattern', () => {
     const input = [
-      '🧭 Manager summary: x',
+      '🧭 Advisor summary: x',
       '',
       'not a step heading at all',
     ].join('\n')

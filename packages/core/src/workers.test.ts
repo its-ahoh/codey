@@ -19,7 +19,7 @@ function seedWorkers(workersDir: string, names: string[]) {
 }
 
 describe('WorkerManager.buildParallelWorkerPrompt', () => {
-  it('builds a parallel-mode prompt with role, topic, file paths, ASK_MANAGER, and control protocol', async () => {
+  it('builds a parallel-mode prompt with role, topic, file paths, ASK_ADVISOR, and control protocol', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workers-parallel-'));
     seedWorkers(root, ['alice', 'bob']);
     const wm = new WorkerManager(root);
@@ -39,7 +39,7 @@ describe('WorkerManager.buildParallelWorkerPrompt', () => {
     expect(prompt).toContain('/tmp/s.md');
     expect(prompt).toContain('/tmp/c.md');
     expect(prompt).toContain('/tmp/bob.md');
-    expect(prompt).toContain('[ASK_MANAGER]');
+    expect(prompt).toContain('[ASK_ADVISOR]');
     expect(prompt.toLowerCase()).toContain('read control.md');
   });
 

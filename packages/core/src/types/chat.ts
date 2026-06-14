@@ -64,7 +64,7 @@ export type DiscussionTerminatedReason =
   | 'timeout'
   | 'max_duration'
   | 'user_cancel'
-  | 'manager_error';
+  | 'advisor_error';
 
 export interface DiscussionMeta {
   teamName: string;

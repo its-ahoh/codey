@@ -16,13 +16,13 @@ export type TeamDispatchMode = 'all' | 'auto' | 'parallel';
 export interface ParallelSettings {
   maxDurationMs: number;
   idleTimeoutMs: number;
-  managerPollMs: number;
+  advisorPollMs: number;
 }
 
 export const DEFAULT_PARALLEL_SETTINGS: ParallelSettings = {
   maxDurationMs: 600_000,
   idleTimeoutMs: 60_000,
-  managerPollMs: 30_000,
+  advisorPollMs: 30_000,
 };
 
 /** Raw team value as it can appear in workspace.json. */
@@ -208,7 +208,13 @@ export class WorkspaceManager {
 
     const result: TeamConfig = { members, dispatch };
     if (dispatch === 'parallel') {
-      result.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...(parallel ?? {}) };
+      const raw = (parallel ?? {}) as Partial<ParallelSettings> & { managerPollMs?: number };
+      // Back-compat: old `managerPollMs` key maps onto `advisorPollMs`.
+      if (raw.managerPollMs !== undefined && raw.advisorPollMs === undefined) {
+        raw.advisorPollMs = raw.managerPollMs;
+      }
+      delete raw.managerPollMs;
+      result.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...raw };
     }
     return result;
   }
