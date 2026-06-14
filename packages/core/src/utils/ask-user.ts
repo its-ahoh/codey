@@ -113,7 +113,7 @@ export function parseAskAdvisor(output: string): AskAdvisor | null {
     const m = lines[i].match(ADVISOR_MARKER_RE);
     if (!m) continue;
     const reason = m[1].trim();
-    if (!reason) return null;
+    if (!reason) continue;
     const preamble = lines.slice(0, i).join('\n').replace(/\s+$/, '');
     return { preamble, reason };
   }

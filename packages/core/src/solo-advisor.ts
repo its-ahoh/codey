@@ -7,6 +7,17 @@ export interface SoloAdvisorInput {
   reason: string;
 }
 
+export interface SoloAdvisorFollowupInput {
+  /** The user's request for the current turn. */
+  task: string;
+  /** The stuck agent's reply text (preamble before the [ASK_ADVISOR] marker). */
+  stuckOutput: string;
+  /** The reason the agent gave after [ASK_ADVISOR]:. */
+  reason: string;
+  /** The advisor model's plain-text guidance. */
+  guidance: string;
+}
+
 /**
  * Prompt for the stronger advisor model when a single agent is stuck. The
  * advisor gives plain-text guidance only — it never writes code (the original
@@ -34,17 +45,12 @@ export function buildSoloAdvisorPrompt(input: SoloAdvisorInput): string {
  * injected. Bootstraps fresh (no session resume) so it works for every agent;
  * the agent's prior attempt and the guidance are both included inline.
  */
-export function buildSoloAdvisorFollowupPrompt(
-  reason: string,
-  guidance: string,
-  task: string,
-  stuckOutput: string,
-): string {
+export function buildSoloAdvisorFollowupPrompt(input: SoloAdvisorFollowupInput): string {
   return [
-    `[Respond to this new user message]\n${task}`,
-    `[Your previous attempt]\n${stuckOutput || '(none)'}`,
-    `[You reported being stuck: ${reason}]`,
-    `[A senior advisor reviewed your situation and gave this guidance — follow it to continue and complete the task]\n${guidance}`,
+    `[Respond to this new user message]\n${input.task}`,
+    `[Your previous attempt]\n${input.stuckOutput || '(none)'}`,
+    `[You reported being stuck: ${input.reason}]`,
+    `[A senior advisor reviewed your situation and gave this guidance — follow it to continue and complete the task]\n${input.guidance}`,
     'Continue the task now. Only emit `[ASK_ADVISOR]: <reason>` again if you are still genuinely blocked after applying this guidance.',
   ].join('\n\n');
 }

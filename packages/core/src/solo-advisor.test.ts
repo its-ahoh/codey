@@ -27,6 +27,11 @@ describe('parseAskAdvisor', () => {
     const out = 'a\n[ASK_ADVISOR]: first\n[ASK_ADVISOR]: second';
     expect(parseAskAdvisor(out)?.reason).toBe('first');
   });
+
+  it('skips a blank-reason marker and matches a later non-blank one', () => {
+    const out = '[ASK_ADVISOR]:\n[ASK_ADVISOR]: real reason';
+    expect(parseAskAdvisor(out)?.reason).toBe('real reason');
+  });
 });
 
 describe('stripAskAdvisor', () => {
@@ -61,7 +66,12 @@ describe('buildSoloAdvisorPrompt', () => {
 
 describe('buildSoloAdvisorFollowupPrompt', () => {
   it('includes the guidance and the original task', () => {
-    const p = buildSoloAdvisorFollowupPrompt('token never validates', 'check the clock skew', 'add login', 'tried JWT');
+    const p = buildSoloAdvisorFollowupPrompt({
+      reason: 'token never validates',
+      guidance: 'check the clock skew',
+      task: 'add login',
+      stuckOutput: 'tried JWT',
+    });
     expect(p).toContain('check the clock skew');
     expect(p).toContain('add login');
     expect(p).toContain('tried JWT');
