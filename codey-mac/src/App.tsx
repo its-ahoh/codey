@@ -105,8 +105,7 @@ const Shell: React.FC = () => {
             </svg>
           </button>
           <div style={styles.titleCenter}>
-            <span style={styles.appName}>Codey</span>
-            {activeChat && <span style={styles.workspaceLabel}>· {activeChat.workspaceName}</span>}
+            {activeChat && <span style={styles.appName}>{activeChat.title}</span>}
           </div>
         </div>
         <NotificationCenter />
@@ -198,7 +197,7 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitAppRegion: 'drag',
   },
   titleBarDragArea: { flex: 1, display: 'flex', alignItems: 'center', height: '100%' },
-  titleCenter: { flex: 1, textAlign: 'center', paddingRight: 76 },
+  titleCenter: { flex: 1, textAlign: 'center', paddingRight: 76, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' },
   appName: { color: C.fg2, fontSize: 13, fontWeight: 500 },
   sidebarToggle: {
     background: 'transparent', border: 'none', cursor: 'pointer',
@@ -207,7 +206,6 @@ const styles: Record<string, React.CSSProperties> = {
     // @ts-ignore Electron
     WebkitAppRegion: 'no-drag',
   },
-  workspaceLabel: { color: C.fg3, fontSize: 11, marginLeft: 6 },
   body: { flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' },
   content: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
   emptyMain: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.fg3 },
