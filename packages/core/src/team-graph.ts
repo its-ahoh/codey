@@ -94,3 +94,73 @@ export function validateGraph(graph: TeamGraph, knownWorkers: string[]): string[
 
   return problems;
 }
+
+export type GraphRunStatus = 'running' | 'done' | 'capped' | 'stuck';
+
+export interface GraphRunState {
+  currentNodeId: string;
+  hops: number;
+  status: GraphRunStatus;
+  /** Node ids visited in order (worker nodes only), for progress/history. */
+  visited: string[];
+}
+
+function nodeMap(graph: TeamGraph): Map<string, TeamGraphNode> {
+  return new Map(graph.nodes.map(n => [n.id, n]));
+}
+
+export function outgoingEdges(graph: TeamGraph, nodeId: string): TeamGraphEdge[] {
+  return graph.edges.filter(e => e.from === nodeId);
+}
+
+/** Follow non-worker nodes (start) forward to the first worker/end node. */
+function settle(graph: TeamGraph, nodeId: string, state: GraphRunState): GraphRunState {
+  const nodes = nodeMap(graph);
+  let cur = nodeId;
+  // start nodes have exactly one meaningful outgoing edge; walk through them.
+  while (nodes.get(cur)?.type === 'start') {
+    const next = outgoingEdges(graph, cur)[0];
+    if (!next) return { ...state, currentNodeId: cur, status: 'stuck' };
+    cur = next.to;
+  }
+  const node = nodes.get(cur);
+  if (!node) return { ...state, currentNodeId: cur, status: 'stuck' };
+  if (node.type === 'end') return { ...state, currentNodeId: cur, status: 'done' };
+  return {
+    ...state,
+    currentNodeId: cur,
+    status: 'running',
+    visited: [...state.visited, cur],
+  };
+}
+
+export function startRun(graph: TeamGraph): GraphRunState {
+  return settle(graph, graph.entry, { currentNodeId: graph.entry, hops: 0, status: 'running', visited: [] });
+}
+
+/**
+ * Move from the current node along `edgeId`. Increments the hop counter,
+ * enforces maxHops, and settles onto the next worker/end node.
+ */
+export function advance(graph: TeamGraph, state: GraphRunState, edgeId: string): GraphRunState {
+  const edge = graph.edges.find(e => e.id === edgeId && e.from === state.currentNodeId);
+  if (!edge) return { ...state, status: 'stuck' };
+  const hops = state.hops + 1;
+  const settled = settle(graph, edge.to, { ...state, hops });
+  if (settled.status === 'running' && hops >= graph.maxHops) {
+    return { ...settled, status: 'capped' };
+  }
+  return settled;
+}
+
+/**
+ * Pick the edge to follow given the judge's chosen edge id. Falls back to the
+ * default edge when the judge's choice is absent/invalid, then to "stuck".
+ */
+export function resolveEdge(graph: TeamGraph, nodeId: string, chosenEdgeId: string | null): TeamGraphEdge | null {
+  const edges = outgoingEdges(graph, nodeId);
+  if (edges.length === 0) return null;
+  const chosen = chosenEdgeId ? edges.find(e => e.id === chosenEdgeId) : undefined;
+  if (chosen) return chosen;
+  return edges.find(e => e.isDefault) ?? null;
+}

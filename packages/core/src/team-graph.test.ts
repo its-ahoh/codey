@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateGraph, TeamGraph } from './team-graph';
+import { validateGraph, TeamGraph, startRun, advance, outgoingEdges } from './team-graph';
 
 function baseGraph(): TeamGraph {
   return {
@@ -51,5 +51,60 @@ describe('validateGraph', () => {
     const g = baseGraph();
     g.nodes.push({ id: 'orphan', type: 'worker', worker: 'coder', x: 0, y: 99 });
     expect(validateGraph(g, ['coder'])).toContain('node "orphan" is unreachable from entry');
+  });
+});
+
+describe('step machine', () => {
+  it('starts at the first worker node after entry', () => {
+    const g = baseGraph();
+    const state = startRun(g);
+    expect(state.currentNodeId).toBe('n_coder');
+    expect(state.hops).toBe(0);
+    expect(state.status).toBe('running');
+  });
+
+  it('lists outgoing edges for the current node', () => {
+    const g = baseGraph();
+    const state = startRun(g);
+    expect(outgoingEdges(g, state.currentNodeId).map(e => e.id)).toEqual(['e2']);
+  });
+
+  it('advancing along an edge to an end node finishes the run', () => {
+    const g = baseGraph();
+    let state = startRun(g);
+    state = advance(g, state, 'e2');
+    expect(state.status).toBe('done');
+    expect(state.hops).toBe(1);
+  });
+
+  it('loops back and counts hops', () => {
+    const g = baseGraph();
+    g.nodes.push({ id: 'n_review', type: 'worker', worker: 'reviewer', x: 150, y: 0 });
+    g.edges = [
+      { id: 'e1', from: 'start', to: 'n_coder' },
+      { id: 'e2', from: 'n_coder', to: 'n_review', isDefault: true },
+      { id: 'e3', from: 'n_review', to: 'n_coder', condition: 'work incomplete' },
+      { id: 'e4', from: 'n_review', to: 'end', isDefault: true },
+    ];
+    let state = startRun(g);            // at n_coder, hops 0
+    state = advance(g, state, 'e2');    // -> n_review, hops 1
+    expect(state.currentNodeId).toBe('n_review');
+    state = advance(g, state, 'e3');    // -> n_coder, hops 2
+    expect(state.currentNodeId).toBe('n_coder');
+    expect(state.status).toBe('running');
+  });
+
+  it('stops with status "capped" when maxHops is exceeded', () => {
+    const g = baseGraph();
+    g.maxHops = 1;
+    g.nodes.push({ id: 'n_review', type: 'worker', worker: 'reviewer', x: 150, y: 0 });
+    g.edges = [
+      { id: 'e1', from: 'start', to: 'n_coder' },
+      { id: 'e2', from: 'n_coder', to: 'n_review', isDefault: true },
+      { id: 'e3', from: 'n_review', to: 'end', isDefault: true },
+    ];
+    let state = startRun(g);
+    state = advance(g, state, 'e2');   // hops -> 1, at n_review
+    expect(state.status).toBe('capped');
   });
 });
