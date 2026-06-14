@@ -3109,6 +3109,8 @@ Example: /model gpt-4.1 write a Python script`;
       // Pause if this worker asked the user a question.
       const ask = parseAskUser(cleanOutput);
       if (ask) {
+        // The `chat-` prefix must mirror runTeamForChat's baseConv so the anchors
+        // snapshotted here rehydrate under the same key in resumeTeamFromAnswer.
         const teamConv = this.workerConversationId(`chat-${chatId}`, { team: teamName });
         const askWorkerName = wm.getWorker(workerName)?.name ?? workerName;
         this.persistPendingTeam(chatId, {
