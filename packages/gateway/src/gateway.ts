@@ -2974,6 +2974,8 @@ Example: /model gpt-4.1 write a Python script`;
       return { response: `⚠️ Team **${teamName}** flow could not start (${state.status}).` };
     }
 
+    sink({ type: 'info', chatId, message: `Running flow for team ${teamName}` });
+
     let stepIndex = 0;
     while (state.status === 'running') {
       if (signal?.aborted) break;
@@ -2998,7 +3000,7 @@ Example: /model gpt-4.1 write a Python script`;
       );
       const response = await runOneWorker(workerName, stepPrompt, codingAgent, modelConfig, blackboard,
         (text: string) => sink({ type: 'thinking', chatId, token: text, step: stepNum }));
-      if (!response.success) { parts.push(`### Step ${stepNum}: ${worker.name}\n\n`); break; }
+      if (!response.success) { parts.push(`### Step ${stepNum}: ${worker.name}\n\n❌ Failed - ${response.error}`); break; }
       if (response.thinking) thinkingByStep[stepNum] = response.thinking;
 
       const ingested = blackboard.ingest(workerName, stepNum, response.output);
