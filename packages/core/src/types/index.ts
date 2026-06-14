@@ -281,7 +281,7 @@ export interface GatewayConfig {
   rateLimitMs?: number; // Rate limit in ms (default: 3000)
   context?: ContextSettings;
   memory?: MemorySettings;
-  /** Advisor (team manager / auto-dispatcher) settings. */
+  /** Advisor (team advisor / auto-dispatcher) settings. */
   advisor?: AdvisorSettings;
   /** Aide (lightweight housekeeping LLM) settings. */
   aide?: AideSettings;

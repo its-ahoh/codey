@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildParallelManagerPrompt, parseParallelManagerTurn } from './parallel-advisor';
+import { buildParallelAdvisorPrompt, parseParallelAdvisorTurn } from './parallel-advisor';
 
-describe('buildParallelManagerPrompt', () => {
+describe('buildParallelAdvisorPrompt', () => {
   it('includes topic, opinions, pending asks, and the word JSON', () => {
-    const prompt = buildParallelManagerPrompt({
+    const prompt = buildParallelAdvisorPrompt({
       topic: 'choose-stack',
       summary: 'so far we lean rust',
       opinions: [
@@ -23,9 +23,9 @@ describe('buildParallelManagerPrompt', () => {
   });
 });
 
-describe('parseParallelManagerTurn', () => {
+describe('parseParallelAdvisorTurn', () => {
   it('parses a continue action with summary_update and directive', () => {
-    const out = parseParallelManagerTurn(
+    const out = parseParallelAdvisorTurn(
       '{"action":"continue","summary_update":"new sum","directive":"focus on cost","reason":"continuing"}',
     );
     expect(out).toEqual({
@@ -37,7 +37,7 @@ describe('parseParallelManagerTurn', () => {
   });
 
   it('parses ask_user with user_question_choices', () => {
-    const out = parseParallelManagerTurn(
+    const out = parseParallelAdvisorTurn(
       JSON.stringify({
         action: 'ask_user',
         user_question: 'pick one',
@@ -54,7 +54,7 @@ describe('parseParallelManagerTurn', () => {
   });
 
   it('parses finalize with final_message', () => {
-    const out = parseParallelManagerTurn(
+    const out = parseParallelAdvisorTurn(
       '{"action":"finalize","final_message":"we agreed","reason":"consensus"}',
     );
     expect(out?.action).toBe('finalize');
@@ -63,7 +63,7 @@ describe('parseParallelManagerTurn', () => {
   });
 
   it('parses terminate with final_message', () => {
-    const out = parseParallelManagerTurn(
+    const out = parseParallelAdvisorTurn(
       '{"action":"terminate","final_message":"off topic","reason":"drift"}',
     );
     expect(out?.action).toBe('terminate');
@@ -71,24 +71,24 @@ describe('parseParallelManagerTurn', () => {
   });
 
   it('returns null on non-JSON garbage', () => {
-    expect(parseParallelManagerTurn('not json at all')).toBeNull();
+    expect(parseParallelAdvisorTurn('not json at all')).toBeNull();
   });
 
   it('returns null on unknown action', () => {
     expect(
-      parseParallelManagerTurn('{"action":"explode","reason":"continuing"}'),
+      parseParallelAdvisorTurn('{"action":"explode","reason":"continuing"}'),
     ).toBeNull();
   });
 
   it('returns null when ask_user is missing user_question', () => {
     expect(
-      parseParallelManagerTurn('{"action":"ask_user","reason":"pending_question"}'),
+      parseParallelAdvisorTurn('{"action":"ask_user","reason":"pending_question"}'),
     ).toBeNull();
   });
 
   it('returns null when terminate is missing final_message', () => {
     expect(
-      parseParallelManagerTurn('{"action":"terminate","reason":"drift"}'),
+      parseParallelAdvisorTurn('{"action":"terminate","reason":"drift"}'),
     ).toBeNull();
   });
 });

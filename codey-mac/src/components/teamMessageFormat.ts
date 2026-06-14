@@ -9,7 +9,7 @@ export interface ParsedTeamMessage {
   steps: TeamStep[]
 }
 
-const SUMMARY_PREFIX = '🧭 Manager summary: '
+const SUMMARY_PREFIX = '🧭 Advisor summary: '
 const STEP_HEADING = /^### Step (\d+): (.+?)\n\n([\s\S]*)$/
 
 export function parseTeamMessage(content: string): ParsedTeamMessage | null {

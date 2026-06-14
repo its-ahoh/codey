@@ -1,4 +1,4 @@
-// Run: npx ts-node packages/core/src/manager.test.ts
+// Run: npx ts-node packages/core/src/advisor.test.ts
 import * as assert from 'assert';
 import { runAdvisor, AdvisorInput, AdvisorTurn, AdvisorRunner } from './advisor';
 import { AgentRequest, AgentResponse } from './types';
@@ -131,7 +131,7 @@ async function testEmptyMembersReturnsDone() {
 }
 
 async function testNullNextWithoutDoneFallsBack() {
-  // Manager returned next:null but done:false — invalid, should fallback.
+  // Advisor returned next:null but done:false — invalid, should fallback.
   const runner = makeRunner([JSON.stringify({
     summary_of_last: '',
     next: null,
@@ -153,7 +153,7 @@ async function run() {
   await testRunnerErrorFallsBack();
   await testEmptyMembersReturnsDone();
   await testNullNextWithoutDoneFallsBack();
-  console.log('manager.test.ts: all tests passed');
+  console.log('advisor.test.ts: all tests passed');
 }
 
 run().catch(err => { console.error(err); process.exit(1); });

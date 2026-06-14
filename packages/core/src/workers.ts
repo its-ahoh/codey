@@ -219,7 +219,7 @@ export class WorkerManager {
   /**
    * Sequential-mode variant. Includes the full team roster and (optionally) the
    * next worker in the chain so this worker can shape its output to feed into
-   * the next step. Sequential mode has no Manager arbitration, so we keep only
+   * the next step. Sequential mode has no Advisor arbitration, so we keep only
    * the `[ASK_USER]:` marker (no forwarding).
    */
   buildSequentialWorkerPrompt(
@@ -297,7 +297,7 @@ export class WorkerManager {
       [
         'If you need information you do not have:',
         '1. First check the Teammates list. If a teammate plausibly knows the answer, output a single line `[ASK: <teammate>]: <your question>` and stop. The team will route the question to that teammate directly.',
-        '2. If no teammate could plausibly answer, output a single line `[ASK_USER]: <your question>` and stop. The manager will decide whether to ask the user or route to a teammate.',
+        '2. If no teammate could plausibly answer, output a single line `[ASK_USER]: <your question>` and stop. The advisor will decide whether to ask the user or route to a teammate.',
         'When the question is yes/no or a pick-one from a small set (≤ 8) of explicit options, prefer `[ASK_USER:choice]: <question> | <option 1> | <option 2>` so the user can answer with a tap. Use the free-text `[ASK_USER]:` form for open-ended questions.',
         'Use exactly one ASK marker per output. Do not guess. Do not continue the work after emitting an ASK marker.',
       ].join('\n'),
@@ -359,15 +359,15 @@ export class WorkerManager {
         '1. Read control.md. If status is "terminated", exit immediately. If "finalizing", write one consolidating final entry to your opinion file then exit. If "paused", wait and re-read every ~5 seconds until status changes.',
         '2. Read summary.md and each peer opinion file.',
         '3. Update YOUR opinion file (append a timestamped section; do not overwrite past entries) with your current position, what you agree/disagree with, and any open question.',
-        '4. If you need information you do not have, append a single line `[ASK_MANAGER]: <question>` at the end of your opinion file. The Manager will route or escalate.',
+        '4. If you need information you do not have, append a single line `[ASK_ADVISOR]: <question>` at the end of your opinion file. The Advisor will route or escalate.',
         '5. If you have nothing new to add after the most recent peer/summary update, write a short "no further input" note and exit.',
         '6. Otherwise sleep briefly (the agent may simply continue) and repeat from step 1.',
       ].join('\n'),
       `## Important`,
       [
-        '- Do not touch other workers\' opinion files, the summary, or control.md — those are owned by the Manager and peers.',
+        '- Do not touch other workers\' opinion files, the summary, or control.md — those are owned by the Advisor and peers.',
         '- Keep each appended entry concise (a few short paragraphs) so peers can absorb it quickly.',
-        '- Re-read control.md before every write — the Manager may have flipped status to terminated/finalizing/paused since your last check.',
+        '- Re-read control.md before every write — the Advisor may have flipped status to terminated/finalizing/paused since your last check.',
       ].join('\n'),
     ].join('\n\n');
   }

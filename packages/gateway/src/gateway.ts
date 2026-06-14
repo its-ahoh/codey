@@ -259,7 +259,7 @@ export class Codey {
    * memory is disabled. Idempotent thanks to MemoryStore dedup.
    */
   /**
-   * Persist the Manager's final summary from a parallel discussion as a
+   * Persist the Advisor's final summary from a parallel discussion as a
    * `decision` memory entry so future runs on the same topic can recall
    * what was concluded. Best-effort — skipped when summary is empty.
    */
@@ -1367,7 +1367,7 @@ export class Codey {
         `- Send any message to get coding help from the active agent`,
         `- /worker <name> <task> — run a specific worker`,
         `- /teams — list teams for this workspace`,
-        `- /team <name> [--all] <task> — run a named team. With dispatch:auto the Manager iteratively picks workers and may loop back for revisions; --all bypasses the Manager and runs every member in declared order.`,
+        `- /team <name> [--all] <task> — run a named team. With dispatch:auto the Advisor iteratively picks workers and may loop back for revisions; --all bypasses the Advisor and runs every member in declared order.`,
         `- /parallel <prompt> — run all agents in parallel`,
         `- /agent <name> — switch agent (${agents})`,
         `- /workspace <name> — switch workspace`,
@@ -1849,7 +1849,7 @@ export class Codey {
 /workers - List all workers in the global library
 /worker <name> <task> - Run a specific worker
 /teams - List teams declared on this workspace
-/team <name> [--all] <task> — run a named team. With dispatch:auto the Manager iteratively picks workers and may loop back for revisions; --all bypasses the Manager and runs every member in declared order.
+/team <name> [--all] <task> — run a named team. With dispatch:auto the Advisor iteratively picks workers and may loop back for revisions; --all bypasses the Advisor and runs every member in declared order.
 
 \ud83e\udd16 Agents (legacy)
 /parallel <prompt> - Run all agents in parallel
@@ -2017,11 +2017,11 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   /**
-   * Iteratively drives the team Manager. Returns the chronological run result
-   * or `{ fallback: true }` when the Manager fails on turn 1 — caller should
+   * Iteratively drives the team Advisor. Returns the chronological run result
+   * or `{ fallback: true }` when the Advisor fails on turn 1 — caller should
    * fall back to running all members in input order.
    *
-   * Mid-run Manager failures (turn 2+) end the loop gracefully: the parts
+   * Mid-run Advisor failures (turn 2+) end the loop gracefully: the parts
    * collected so far are returned with `fallbackMidRun` set so the caller
    * can annotate the user-visible header.
    */
@@ -2080,13 +2080,13 @@ Example: /model gpt-4.1 write a Python script`;
     const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
     const seenWorkers = new Set<string>();
 
-    // When set, skip the next Manager call and run this worker directly
+    // When set, skip the next Advisor call and run this worker directly
     // (used when a worker emits `[ASK: <teammate>]: q` to forward).
     let directNext: { worker: string; instruction: string } | null = null;
-    // When set, the next Manager turn arbitrates this pending question
+    // When set, the next Advisor turn arbitrates this pending question
     // (used when a worker emits `[ASK_USER]:` or forwards to an unknown target).
     let pendingArbitration: { worker: string; question: string; options?: string[] } | null = null;
-    // Number of consecutive direct forwards since the last Manager turn.
+    // Number of consecutive direct forwards since the last Advisor turn.
     let forwardHops = 0;
 
     for (let step = 1; step <= cap; step++) {
@@ -2172,7 +2172,7 @@ Example: /model gpt-4.1 write a Python script`;
         : chatModel ?? this.getDefaultModelConfig(codingAgent);
 
       const stepTaskBody = this.composeStepTask(task, turnInstruction, lastWorker, lastOutput);
-      // Build a per-step "last did" map from Manager history: latest entry per worker.
+      // Build a per-step "last did" map from Advisor history: latest entry per worker.
       const lastDidByWorker = new Map<string, string>();
       for (const h of history) lastDidByWorker.set(h.worker, h.summary);
       const teamRoster = members
@@ -2214,8 +2214,8 @@ Example: /model gpt-4.1 write a Python script`;
         const targetValid = members.includes(ask.target) && ask.target !== turnNext;
         if (targetValid && forwardHops < FORWARD_HOP_CAP) {
           forwardHops += 1;
-          // Record the forward in history so the Manager retains visibility of
-          // the asking worker's contribution despite skipping the Manager turn.
+          // Record the forward in history so the Advisor retains visibility of
+          // the asking worker's contribution despite skipping the Advisor turn.
           history.push({
             worker: turnNext,
             summary: `Asked ${ask.target}: "${ask.question}"`,
@@ -2226,11 +2226,11 @@ Example: /model gpt-4.1 write a Python script`;
           };
           continue;
         }
-        // Invalid target or hop cap exceeded → Manager arbitrates.
+        // Invalid target or hop cap exceeded → Advisor arbitrates.
         pendingArbitration = { worker: turnNext, question: ask.question, options: undefined };
         continue;
       }
-      // kind === 'user' → Manager arbitrates whether to route or escalate.
+      // kind === 'user' → Advisor arbitrates whether to route or escalate.
       pendingArbitration = { worker: turnNext, question: ask.question, options: ask.options };
     }
 
@@ -2270,12 +2270,12 @@ Example: /model gpt-4.1 write a Python script`;
     return sections.join('\n\n');
   }
 
-  private formatManagerParts(
+  private formatAdvisorParts(
     parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>,
     finalSummary: string,
     previewChars?: number,
   ): string {
-    const head = finalSummary ? `🧭 Manager summary: ${finalSummary}\n\n` : '';
+    const head = finalSummary ? `🧭 Advisor summary: ${finalSummary}\n\n` : '';
     const body = parts
       .map(p => {
         const label = p.isRevision ? `${p.worker} (revision)` : p.worker;
@@ -2322,7 +2322,7 @@ Example: /model gpt-4.1 write a Python script`;
     const baseConv = `${channel}-${chatId}`;
     const teamConv = this.workerConversationId(baseConv, { team: teamName });
 
-    // Helper to run one worker once, used by both the Manager loop and the
+    // Helper to run one worker once, used by both the Advisor loop and the
     // legacy "all members in input order" fallback. Routes through
     // runWorkerStep so subsequent invocations of the same worker reuse
     // the warm CLI session via --resume.
@@ -2354,13 +2354,13 @@ Example: /model gpt-4.1 write a Python script`;
         : { success: false, output: '', error: response.error };
     };
 
-    const useManager = dispatch === 'auto' && !opts.forceAll;
+    const useAdvisor = dispatch === 'auto' && !opts.forceAll;
 
-    if (useManager) {
+    if (useAdvisor) {
       await this.sendResponse({
         chatId,
         channel,
-        text: `🧭 Manager running team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
+        text: `🧭 Advisor running team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
       });
 
       const result = await this.runAdvisorLoop(
@@ -2428,11 +2428,11 @@ Example: /model gpt-4.1 write a Python script`;
         await this.sendResponse({
           chatId,
           channel,
-          text: `⚠️ Manager halted mid-run: ${result.fallbackMidRun.reason}`,
+          text: `⚠️ Advisor halted mid-run: ${result.fallbackMidRun.reason}`,
         });
       }
 
-      const text = this.formatManagerParts(result.parts, result.finalSummary, /*previewChars*/ 200);
+      const text = this.formatAdvisorParts(result.parts, result.finalSummary, /*previewChars*/ 200);
       const bbBlock = result.blackboard.renderForUser();
       const body = `📊 Team **${teamName}** results\n\n${text}`;
       await this.sendResponse({
@@ -2629,7 +2629,7 @@ Example: /model gpt-4.1 write a Python script`;
       await this.sendResponse({
         chatId: message.chatId,
         channel: message.channel,
-        text: `⚠️ Manager failed on resume (${turn.fallbackReason}). Paused run dropped.`,
+        text: `⚠️ Advisor failed on resume (${turn.fallbackReason}). Paused run dropped.`,
       });
       return;
     }
@@ -2641,7 +2641,7 @@ Example: /model gpt-4.1 write a Python script`;
       await this.sendResponse({
         chatId: message.chatId,
         channel: message.channel,
-        text: this.formatManagerParts(pending.partsSoFar, turn.final_summary ?? '', 200),
+        text: this.formatAdvisorParts(pending.partsSoFar, turn.final_summary ?? '', 200),
       });
       return;
     }
@@ -2729,7 +2729,7 @@ Example: /model gpt-4.1 write a Python script`;
     );
     const finalSummary = closing.fallback ? '' : (closing.final_summary ?? '');
     const resumeBlock = resumeBoard.renderForUser();
-    const resumeFormatted = this.formatManagerParts(newParts, finalSummary, 200);
+    const resumeFormatted = this.formatAdvisorParts(newParts, finalSummary, 200);
     this.persistBlackboardDecisions(resumeBoard, pending.teamName);
     await this.sendResponse({
       chatId: message.chatId,
@@ -2885,7 +2885,7 @@ Example: /model gpt-4.1 write a Python script`;
         : { success: false, output: '', error: response?.error };
     };
 
-    const useManager = team.dispatch === 'auto' && !opts.forceAll;
+    const useAdvisor = team.dispatch === 'auto' && !opts.forceAll;
 
     // === parallel dispatch branch ===
     // Check if user is answering a pending question from a paused parallel discussion
@@ -2929,7 +2929,7 @@ Example: /model gpt-4.1 write a Python script`;
           onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
           signal: req.signal,
         }),
-        managerRunner: async req => {
+        advisorRunner: async req => {
           const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
           const advisorResult = await this.runWithFallback(mAgent, {
             prompt: req.prompt,
@@ -2957,7 +2957,7 @@ Example: /model gpt-4.1 write a Python script`;
         },
         onUserQuestion: q => {
           this.parallelResumes.set(chat.id, q.resume);
-          const rendered = renderQuestion('Manager', '', q.question, q.choices);
+          const rendered = renderQuestion('Advisor', '', q.question, q.choices);
           sink({ type: 'stream', chatId, token: rendered.text });
         },
         onFinal: ev => {
@@ -2990,7 +2990,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
     // === end parallel dispatch branch ===
 
-    if (useManager) {
+    if (useAdvisor) {
       let isFirstStep = true;
       const result = await this.runAdvisorLoop(
         team,
@@ -3048,13 +3048,13 @@ Example: /model gpt-4.1 write a Python script`;
         return { response: rendered5.text, choices: rendered5.choices };
       } else {
         if (signal?.aborted) {
-          return { response: this.formatManagerParts(result.parts, result.finalSummary) };
+          return { response: this.formatAdvisorParts(result.parts, result.finalSummary) };
         }
         if (result.fallbackMidRun) {
-          sink({ type: 'info', chatId, message: `Manager halted mid-run: ${result.fallbackMidRun.reason}` });
+          sink({ type: 'info', chatId, message: `Advisor halted mid-run: ${result.fallbackMidRun.reason}` });
         }
         const bbBlock = result.blackboard.renderForUser();
-        const formatted = this.formatManagerParts(result.parts, result.finalSummary);
+        const formatted = this.formatAdvisorParts(result.parts, result.finalSummary);
         this.persistBlackboardDecisions(result.blackboard, teamName);
         return { response: bbBlock ? `${formatted}\n\n${bbBlock}` : formatted, thinkingByStep: result.thinkingByStep };
       }
@@ -3140,7 +3140,7 @@ Example: /model gpt-4.1 write a Python script`;
       `🪑 Roundtable: **${team}**`,
       `终止原因: ${ev.reason}`,
       '',
-      '## Manager 总结',
+      '## Advisor 总结',
       summaryBody || '(empty)',
       '',
       '## 各方观点',
@@ -3683,7 +3683,7 @@ Example: /model gpt-4.1 write a Python script`;
     // Tee every sink event to the registered global listener so other surfaces
     // (e.g., the Mac app) see channel-driven chat updates too. Also capture
     // 'info' events into the persisted toolCalls array so the right Context
-    // Panel still shows manager routing reasons after a chat reload (info
+    // Panel still shows advisor routing reasons after a chat reload (info
     // events come from team-mode orchestration via direct sink calls and
     // never go through onStatus, so they would otherwise vanish on persist).
     const sink: ChatStreamSink = (ev) => {

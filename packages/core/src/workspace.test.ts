@@ -44,7 +44,7 @@ describe('WorkspaceManager parallel team config', () => {
     expect(team!.parallel).toEqual({
       maxDurationMs: 600_000,
       idleTimeoutMs: 60_000,
-      managerPollMs: 30_000,
+      advisorPollMs: 30_000,
     });
   });
 
@@ -65,7 +65,7 @@ describe('WorkspaceManager parallel team config', () => {
       rt: {
         members: ['a'],
         dispatch: 'parallel',
-        parallel: { maxDurationMs: 1000, idleTimeoutMs: 200, managerPollMs: 100 },
+        parallel: { maxDurationMs: 1000, idleTimeoutMs: 200, advisorPollMs: 100 },
       },
     }));
     await ws.switchWorkspace('demo');
@@ -73,7 +73,7 @@ describe('WorkspaceManager parallel team config', () => {
     expect(ws.getTeam('rt')!.parallel).toEqual({
       maxDurationMs: 1000,
       idleTimeoutMs: 200,
-      managerPollMs: 100,
+      advisorPollMs: 100,
     });
   });
 

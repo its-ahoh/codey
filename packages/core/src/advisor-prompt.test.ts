@@ -51,7 +51,7 @@ describe('runAdvisor escalation', () => {
       ({ success: true, output: reply, agent: 'claude-code' } as AgentResponse);
   }
 
-  it('returns escalateToUser when arbitrating and Manager sets escalate_to_user', async () => {
+  it('returns escalateToUser when arbitrating and Advisor sets escalate_to_user', async () => {
     const turn = await runAdvisor(
       {
         task: 't',
@@ -80,7 +80,7 @@ describe('runAdvisor escalation', () => {
     expect(turn.done).toBe(true);
   });
 
-  it('routes to a teammate when arbitrating and Manager sets next', async () => {
+  it('routes to a teammate when arbitrating and Advisor sets next', async () => {
     const turn = await runAdvisor(
       {
         task: 't',
