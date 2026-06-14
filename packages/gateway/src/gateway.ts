@@ -2611,6 +2611,17 @@ Example: /model gpt-4.1 write a Python script`;
       return;
     }
 
+    if (pending.mode === 'graph') {
+      if (!team.graph) {
+        await this.sendResponse({ chatId: message.chatId, channel: message.channel, text: `Team \`${pending.teamName}\` no longer has a flow graph; the paused run was dropped.` });
+        return;
+      }
+      const state: GraphRunState = { currentNodeId: pending.graphState.currentNodeId, hops: pending.graphState.hops, status: 'running', visited: pending.graphState.visited };
+      const blackboard = TeamBlackboard.fromJSON(pending.blackboard);
+      await this.continueGraphRun(message, pending.teamName, team.graph, pending.task, state, blackboard, pending.results, runOneWorker, { question: pending.question, answer });
+      return;
+    }
+
     // mode === 'auto'
     const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
     const wm = this.workspaceManager.getWorkerManager();
@@ -2903,12 +2914,7 @@ Example: /model gpt-4.1 write a Python script`;
     ) => Promise<{ success: boolean; output: string; error?: string }>,
   ): Promise<void> {
     const { chatId, channel } = message;
-    const wm = this.workspaceManager.getWorkerManager();
-    const blackboard = new TeamBlackboard();
-    const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
-    const results: string[] = [];
-
-    let state: GraphRunState = startRun(graph);
+    const state = startRun(graph);
     if (state.status !== 'running') {
       await this.sendResponse({ chatId, channel, text: `⚠️ Team **${teamName}** flow could not start (${state.status}).` });
       return;
@@ -2918,6 +2924,41 @@ Example: /model gpt-4.1 write a Python script`;
       chatId, channel,
       text: `🧭 Running flow for team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
+
+    const results: string[] = [];
+    const blackboard = new TeamBlackboard();
+    await this.continueGraphRun(message, teamName, graph, task, state, blackboard, results, runOneWorker);
+  }
+
+  /**
+   * Resumable body of runSequentialGraphForChat's flow walk. Runs the void/
+   * sendResponse loop from `state` until the graph finishes (or pauses on an
+   * [ASK_USER]), then emits the cap warning + final results block. Shared by the
+   * fresh run and the `mode:'graph'` resume path so post-pause steps behave
+   * identically. When `resume` is set, the FIRST worker's prompt is re-issued
+   * with the user's answer injected (matching the sequential resume format).
+   */
+  private async continueGraphRun(
+    message: UserMessage,
+    teamName: string,
+    graph: TeamGraph,
+    task: string,
+    state: GraphRunState,
+    blackboard: TeamBlackboard,
+    results: string[],
+    runOneWorker: (
+      workerName: string,
+      prompt: string,
+      codingAgent: CodingAgent,
+      modelConfig: ModelConfig | undefined,
+      blackboard: TeamBlackboard,
+    ) => Promise<{ success: boolean; output: string; error?: string }>,
+    resume?: { question: string; answer: string },
+  ): Promise<void> {
+    const { chatId, channel } = message;
+    const wm = this.workspaceManager.getWorkerManager();
+    const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
+    let resumeInfo = resume;
 
     let stepIndex = 0;
     while (state.status === 'running') {
@@ -2935,14 +2976,38 @@ Example: /model gpt-4.1 write a Python script`;
       const roster = graph.nodes
         .filter(n => n.type === 'worker' && n.worker)
         .map(n => ({ name: n.worker!, hint: wm.getDispatchHint(n.worker!) }));
+      // On the first iteration of a resume, inject the user's answer into the
+      // re-issued prompt for the worker that asked; subsequent steps use `task`.
+      const promptTask = resumeInfo
+        ? `${task}\n\n[User answer to your question "${resumeInfo.question}"]:\n${resumeInfo.answer}`
+        : task;
       const prompt = wm.buildSequentialWorkerPrompt(
-        workerName, task, roster, null, blackboard.renderForWorker(workerName),
+        workerName, promptTask, roster, null, blackboard.renderForWorker(workerName),
       );
+      resumeInfo = undefined;
       const resp = await runOneWorker(workerName, prompt, codingAgent, modelConfig, blackboard);
       if (!resp.success) { results.push(`**${worker.name}**: ❌ Failed - ${resp.error}`); break; }
 
       const ingested = blackboard.ingest(workerName, stepIndex, resp.output);
       results.push(`**${worker.name}**:\n${ingested.stripped.substring(0, 500)}`);
+
+      // Pause if this worker asked the user a question.
+      const ask = parseAskUser(ingested.stripped);
+      if (ask) {
+        const teamConv = this.workerConversationId(`${message.channel}-${message.chatId}`, { team: teamName });
+        this.persistPendingTeam(message.chatId, {
+          mode: 'graph', teamName, task,
+          graphState: { currentNodeId: state.currentNodeId, hops: state.hops, visited: state.visited },
+          results,
+          askingWorker: workerName, question: ask.question, options: ask.options,
+          askedAt: Date.now(), blackboard: blackboard.toJSON(),
+          workerAnchors: this.snapshotWorkerAnchors(teamConv),
+        });
+        const askWorkerName = this.workspaceManager.getWorkerManager().getWorker(workerName)?.name ?? workerName;
+        const rendered = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
+        await this.sendResponse({ chatId: message.chatId, channel: message.channel, text: rendered.text, choices: rendered.choices });
+        return;
+      }
 
       // Judge picks the next edge.
       const { decision, edge } = await this.pickNextGraphEdge(
@@ -3040,6 +3105,24 @@ Example: /model gpt-4.1 write a Python script`;
       const deltaSummary = blackboard.summarizeDelta(ingested.added);
       if (deltaSummary) sink({ type: 'info', chatId, message: deltaSummary });
       parts.push(`### Step ${stepNum}: ${worker.name}\n\n${cleanOutput}`);
+
+      // Pause if this worker asked the user a question.
+      const ask = parseAskUser(cleanOutput);
+      if (ask) {
+        const teamConv = this.workerConversationId(`chat-${chatId}`, { team: teamName });
+        const askWorkerName = wm.getWorker(workerName)?.name ?? workerName;
+        this.persistPendingTeam(chatId, {
+          mode: 'graph', teamName, task: prompt,
+          graphState: { currentNodeId: state.currentNodeId, hops: state.hops, visited: state.visited },
+          results: parts,
+          askingWorker: workerName, question: ask.question, options: ask.options,
+          askedAt: Date.now(), blackboard: blackboard.toJSON(),
+          workerAnchors: this.snapshotWorkerAnchors(teamConv),
+        });
+        const rendered = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
+        sink({ type: 'stream', chatId, token: rendered.text });
+        return { response: rendered.text, choices: rendered.choices };
+      }
 
       // Judge picks the next edge.
       const { decision, edge } = await this.pickNextGraphEdge(
