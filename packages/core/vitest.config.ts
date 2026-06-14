@@ -15,6 +15,7 @@ export default defineConfig({
       'src/task-brief.test.ts',
       'src/aide-tasks.test.ts',
       'src/agents/thinking-stream.test.ts',
+      'src/team-graph.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },
