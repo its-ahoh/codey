@@ -222,7 +222,7 @@ const TeamMessage: React.FC<{
 }
 
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed }) => {
-  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, renameChat, setContextPanelOpen, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setContextPanelOpen, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -233,8 +233,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   const [enabledAgents, setEnabledAgents] = useState<string[]>([...AGENT_NAMES])
   const [defaultAgent, setDefaultAgent] = useState<string | null>(null)
   const [agentDefaultModels, setAgentDefaultModels] = useState<Record<string, string | undefined>>({})
-  const [editingTitle, setEditingTitle] = useState(false)
-  const [titleDraft, setTitleDraft] = useState('')
   const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [slashCommands, setSlashCommands] = useState<Array<{ name: string; description: string; source: 'agent' | 'gateway' }>>([])
@@ -798,23 +796,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
         </div>
       )}
       <div style={styles.header}>
-        {editingTitle ? (
-          <input
-            autoFocus
-            value={titleDraft}
-            onChange={e => setTitleDraft(e.target.value)}
-            onBlur={async () => {
-              if (titleDraft.trim() && titleDraft !== chat.title) await renameChat(chat.id, titleDraft.trim())
-              setEditingTitle(false)
-            }}
-            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditingTitle(false) }}
-            style={styles.titleInput}
-          />
-        ) : (
-          <span style={styles.title} onDoubleClick={() => { setEditingTitle(true); setTitleDraft(chat.title) }}>
-            {chat.title}
-          </span>
-        )}
         <span style={styles.workspaceTag}>{chat.workspaceName}</span>
         <select value={selectionValue} onChange={e => onSelectionChange(e.target.value)} style={{ ...styles.workerSelect, marginLeft: 'auto' }}>
           <option value="none">No worker</option>
@@ -1381,8 +1362,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
     flexWrap: 'wrap', rowGap: 6,
   },
-  title: { color: C.fg, fontSize: 13, fontWeight: 600, cursor: 'text', flexShrink: 0 },
-  titleInput: { background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 4, padding: '2px 6px', color: C.fg, fontSize: 13, outline: 'none' },
   workspaceTag: { color: C.fg3, fontSize: 11, flexShrink: 0 },
   workerSelect: {
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6,
