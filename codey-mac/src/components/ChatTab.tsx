@@ -610,6 +610,24 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
     setPendingAttachments(prev => prev.filter(a => a.id !== id))
   }
 
+  // Without this, dropping a file outside the chat's own drop zone (or on the
+  // composer/textarea) makes Electron navigate to file:// and "open" the file.
+  // Swallow file drags window-wide; the chat's onDrop still handles the upload
+  // for drops inside the conversation column.
+  useEffect(() => {
+    const prevent = (e: DragEvent) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+        e.preventDefault()
+      }
+    }
+    window.addEventListener('dragover', prevent)
+    window.addEventListener('drop', prevent)
+    return () => {
+      window.removeEventListener('dragover', prevent)
+      window.removeEventListener('drop', prevent)
+    }
+  }, [])
+
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -763,7 +781,22 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
 
   return (
     <div style={styles.outer}>
-      <div style={styles.container}>
+      <div
+        style={styles.container}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+      {isDragging && (
+        <div style={styles.dropOverlay}>
+          <div style={styles.dropOverlayCard}>
+            <UploadCloudIcon color={C.accent} size={36} />
+            <div style={styles.dropOverlayTitle}>Drop to attach</div>
+            <div style={styles.dropOverlaySubtitle}>Up to 10 files · max 10 MB each</div>
+          </div>
+        </div>
+      )}
       <div style={styles.header}>
         {editingTitle ? (
           <input
@@ -904,20 +937,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
 
       <div
         style={{ ...styles.messages, position: 'relative' }}
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
       >
-        {isDragging && (
-          <div style={styles.dropOverlay}>
-            <div style={styles.dropOverlayCard}>
-              <UploadCloudIcon color={C.accent} size={36} />
-              <div style={styles.dropOverlayTitle}>Drop to attach</div>
-              <div style={styles.dropOverlaySubtitle}>Up to 10 files · max 10 MB each</div>
-            </div>
-          </div>
-        )}
         {chat.messages.map((msg, idx) => {
           const isUser = msg.role === 'user'
           const isSelected = !isUser && msg.id === selectedTurnId && panelOpen
@@ -1355,7 +1375,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
 
 const styles: Record<string, React.CSSProperties> = {
   outer: { display: 'flex', flexDirection: 'row', height: '100%', minHeight: 0, position: 'relative' },
-  container: { display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0 },
+  container: { display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0, position: 'relative' },
   header: {
     padding: '10px 16px', borderBottom: `1px solid ${C.border}`,
     display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
