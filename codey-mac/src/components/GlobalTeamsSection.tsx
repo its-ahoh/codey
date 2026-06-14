@@ -133,7 +133,7 @@ export default function GlobalTeamsSection() {
             <select
               value={team.dispatch}
               onChange={e => setDispatch(name, e.target.value as DispatchMode)}
-              title="Sequential: members run in order, output passed forward. Auto: the advisor picks the relevant subset. Parallel: all members discuss concurrently as a Manager-moderated roundtable."
+              title="Sequential: members run in order, output passed forward. Auto: the advisor picks the relevant subset. Parallel: all members discuss concurrently as a Advisor-moderated roundtable."
               style={{
                 background: C.surface2, color: C.fg, border: `1px solid ${C.border}`,
                 borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer',

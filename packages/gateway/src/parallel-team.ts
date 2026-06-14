@@ -11,9 +11,9 @@ import {
   appendTranscript,
   readControl,
   writeControl,
-  buildParallelManagerPrompt,
-  parseParallelManagerTurn,
-  type ParallelManagerTurn,
+  buildParallelAdvisorPrompt,
+  parseParallelAdvisorTurn,
+  type ParallelAdvisorTurn,
   type ParallelSettings,
   type DiscussionTerminatedReason,
 } from '@codey/core';
@@ -44,7 +44,7 @@ export interface ParallelTeamRunnerOptions {
   topic: string;
   settings: ParallelSettings;
   workerRunner: AgentRunner;
-  managerRunner: AgentRunner;
+  advisorRunner: AgentRunner;
   buildWorkerPrompt: (worker: string) => string;
   onUserQuestion: (q: ParallelUserQuestion) => void;
   onFinal: (e: ParallelFinalEvent) => void;
@@ -74,10 +74,10 @@ export class ParallelTeamRunner {
     this.startedAt = Date.now();
     this.idleSince = this.startedAt;
     await appendTranscript(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId, { actor: 'system', kind: 'started' });
-    void this.runManagerLoop();
+    void this.runAdvisorLoop();
     this.spawnWorkers();
     this.armSupervisors();
-    console.log(`[parallel-runner] all workers spawned, manager loop running, supervisors armed`);
+    console.log(`[parallel-runner] all workers spawned, advisor loop running, supervisors armed`);
   }
 
   waitDone(): Promise<void> { return this.donePromise; }
@@ -159,7 +159,7 @@ export class ParallelTeamRunner {
       }
     }
   }
-  private async runManagerLoop(): Promise<void> {
+  private async runAdvisorLoop(): Promise<void> {
     const dir = this.discussionDir;
     const wsRoot = this.opts.workspacesRoot;
     const ws = this.opts.workspace;
@@ -188,7 +188,7 @@ export class ParallelTeamRunner {
     let pendingUserAnswer: { question: string; answer: string } | undefined;
 
     while (!this.done) {
-      await new Promise<void>(res => setTimeout(res, this.opts.settings.managerPollMs));
+      await new Promise<void>(res => setTimeout(res, this.opts.settings.advisorPollMs));
       if (this.done) break;
 
       const topic = safeRead(topPath);
@@ -201,31 +201,31 @@ export class ParallelTeamRunner {
       const ctrl = await readControl(ctrlPath);
       this.idleSince = Date.now();
 
-      const prompt = buildParallelManagerPrompt({
+      const prompt = buildParallelAdvisorPrompt({
         topic, summary, opinions, pendingAsks, idleMs: 0,
         revision: ctrl?.revision ?? 0,
         userAnswer: pendingUserAnswer,
       });
       pendingUserAnswer = undefined;
 
-      console.log(`[parallel-runner] manager poll: opinions=${opinions.map(o => o.name).join(',')}, revision=${ctrl?.revision ?? 0}`);
+      console.log(`[parallel-runner] advisor poll: opinions=${opinions.map(o => o.name).join(',')}, revision=${ctrl?.revision ?? 0}`);
       let resp: AgentResponse;
       try {
-        resp = await this.opts.managerRunner({ prompt, signal: this.abort.signal } as AgentRequest);
+        resp = await this.opts.advisorRunner({ prompt, signal: this.abort.signal } as AgentRequest);
       } catch (err) {
-        console.log(`[parallel-runner] manager runner threw: ${(err as Error).message}`);
-        await appendTranscript(wsRoot, ws, chat, { actor: 'manager', kind: 'error', note: (err as Error).message });
+        console.log(`[parallel-runner] advisor runner threw: ${(err as Error).message}`);
+        await appendTranscript(wsRoot, ws, chat, { actor: 'advisor', kind: 'error', note: (err as Error).message });
         continue;
       }
-      console.log(`[parallel-runner] manager response: success=${resp.success} output=${(resp.output || '').substring(0, 200)}`);
+      console.log(`[parallel-runner] advisor response: success=${resp.success} output=${(resp.output || '').substring(0, 200)}`);
       if (!resp.success) {
-        await appendTranscript(wsRoot, ws, chat, { actor: 'manager', kind: 'error', note: resp.error });
+        await appendTranscript(wsRoot, ws, chat, { actor: 'advisor', kind: 'error', note: resp.error });
         continue;
       }
-      const turn = parseParallelManagerTurn(resp.output);
-      console.log(`[parallel-runner] manager parsed: action=${turn?.action} reason=${turn?.reason}`);
+      const turn = parseParallelAdvisorTurn(resp.output);
+      console.log(`[parallel-runner] advisor parsed: action=${turn?.action} reason=${turn?.reason}`);
       if (!turn) {
-        await appendTranscript(wsRoot, ws, chat, { actor: 'manager', kind: 'parse_error' });
+        await appendTranscript(wsRoot, ws, chat, { actor: 'advisor', kind: 'parse_error' });
         continue;
       }
 
@@ -237,7 +237,7 @@ export class ParallelTeamRunner {
       }
 
       if (turn.action === 'continue') {
-        await appendTranscript(wsRoot, ws, chat, { actor: 'manager', kind: 'continue', note: turn.reason });
+        await appendTranscript(wsRoot, ws, chat, { actor: 'advisor', kind: 'continue', note: turn.reason });
         continue;
       }
       if (turn.action === 'ask_user') {
@@ -330,7 +330,7 @@ function extractPendingAsks(opinions: Array<{ name: string; text: string }>): Ar
   for (const o of opinions) {
     const lines = o.text.split('\n');
     for (const line of lines) {
-      const m = /^\[ASK_MANAGER\]:\s*(.+)$/.exec(line.trim());
+      const m = /^\[ASK_ADVISOR\]:\s*(.+)$/.exec(line.trim());
       if (m) out.push({ worker: o.name, question: m[1] });
     }
   }

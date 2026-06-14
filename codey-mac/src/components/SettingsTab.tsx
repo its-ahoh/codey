@@ -562,7 +562,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
 
       <Section title="Advisor"/>
       <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        The advisor is the routing/orchestration model: it runs the <code>/team</code> manager and picks workers for Auto-mode teams. Set a stronger model (e.g. Opus) here for better routing decisions. Leave both as <em>Use default</em> to fall back to the gateway default agent + model.
+        The advisor is the routing/orchestration model: it runs the <code>/team</code> advisor and picks workers for Auto-mode teams. Set a stronger model (e.g. Opus) here for better routing decisions. Leave both as <em>Use default</em> to fall back to the gateway default agent + model.
       </div>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,

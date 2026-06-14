@@ -22,7 +22,7 @@ export interface AdvisorInput {
   /** Set on the turn immediately after a paused run resumes. */
   userClarification?: { worker: string; question: string; answer: string };
   /**
-   * Set when a worker emitted `[ASK_USER]: q` and the Manager must decide
+   * Set when a worker emitted `[ASK_USER]: q` and the Advisor must decide
    * whether to route the question to a teammate or escalate to the user.
    */
   pendingQuestion?: { worker: string; question: string };
@@ -37,7 +37,7 @@ export interface AdvisorTurn {
   final_summary?: string;
   fallback: boolean;
   fallbackReason?: string;
-  /** Set by the Manager to escalate the pending question to the user. */
+  /** Set by the Advisor to escalate the pending question to the user. */
   escalateToUser?: boolean;
 }
 
@@ -56,7 +56,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 export function buildAdvisorPrompt(input: AdvisorInput): string {
   const lines: string[] = [];
-  lines.push('# Manager');
+  lines.push('# Advisor');
   lines.push('## Role');
   lines.push(ADVISOR_PERSONALITY.role);
   lines.push('## Instructions');
@@ -205,7 +205,7 @@ export async function runAdvisor(
         escalate_to_user?: unknown;
       }
     | null;
-  if (!obj) return fallback('no JSON object in manager output');
+  if (!obj) return fallback('no JSON object in advisor output');
 
   const summary_of_last = typeof obj.summary_of_last === 'string' ? obj.summary_of_last : '';
   const reason = typeof obj.reason === 'string' ? obj.reason.trim() : '';
@@ -240,7 +240,7 @@ export async function runAdvisor(
     };
   }
 
-  // When the Manager is arbitrating a pending question, escalate_to_user is a
+  // When the Advisor is arbitrating a pending question, escalate_to_user is a
   // valid resolution: done=true, no next, and we surface the question to the user.
   if (input.pendingQuestion && escalateToUser) {
     return {

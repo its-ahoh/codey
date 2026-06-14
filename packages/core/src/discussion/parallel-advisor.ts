@@ -1,6 +1,6 @@
 import { extractJsonObject } from '../advisor';
 
-export interface ParallelManagerInput {
+export interface ParallelAdvisorInput {
   topic: string;
   summary: string;
   opinions: Array<{ name: string; text: string }>;
@@ -11,9 +11,9 @@ export interface ParallelManagerInput {
 }
 
 export type ParallelAction = 'continue' | 'ask_user' | 'finalize' | 'terminate';
-export type ParallelReason = 'continuing' | 'pending_question' | 'consensus' | 'drift' | 'idle' | 'manager_error';
+export type ParallelReason = 'continuing' | 'pending_question' | 'consensus' | 'drift' | 'idle' | 'advisor_error';
 
-export interface ParallelManagerTurn {
+export interface ParallelAdvisorTurn {
   action: ParallelAction;
   summary_update?: string;
   directive?: string;
@@ -25,12 +25,12 @@ export interface ParallelManagerTurn {
 }
 
 const VALID_ACTIONS: readonly ParallelAction[] = ['continue', 'ask_user', 'finalize', 'terminate'];
-const VALID_REASONS: readonly ParallelReason[] = ['continuing', 'pending_question', 'consensus', 'drift', 'idle', 'manager_error'];
+const VALID_REASONS: readonly ParallelReason[] = ['continuing', 'pending_question', 'consensus', 'drift', 'idle', 'advisor_error'];
 
-export function buildParallelManagerPrompt(input: ParallelManagerInput): string {
+export function buildParallelAdvisorPrompt(input: ParallelAdvisorInput): string {
   const lines: string[] = [];
   lines.push('# Role');
-  lines.push('You are the Manager of a parallel roundtable discussion. Multiple workers are appending opinions in parallel. Read the current state, optionally update the shared summary, and decide what happens next.');
+  lines.push('You are the Advisor of a parallel roundtable discussion. Multiple workers are appending opinions in parallel. Read the current state, optionally update the shared summary, and decide what happens next.');
 
   lines.push('## Topic');
   lines.push(input.topic);
@@ -76,7 +76,7 @@ export function buildParallelManagerPrompt(input: ParallelManagerInput): string 
     '  "user_question": "<required when action == ask_user>",',
     '  "user_question_choices": ["<optional>", "<pick-one>", "<choices>"] ,',
     '  "final_message": "<required when action == finalize or terminate>",',
-    '  "reason": "continuing" | "pending_question" | "consensus" | "drift" | "idle" | "manager_error"',
+    '  "reason": "continuing" | "pending_question" | "consensus" | "drift" | "idle" | "advisor_error"',
     '}',
     '',
     'Guidelines:',
@@ -84,14 +84,14 @@ export function buildParallelManagerPrompt(input: ParallelManagerInput): string 
     '- Use "ask_user" with reason "pending_question" when a worker question requires human input.',
     '- Use "finalize" with reason "consensus" or "idle" when the discussion has converged or stalled.',
     '- Use "terminate" with reason "drift" when the discussion has gone off-topic and must be stopped.',
-    '- "manager_error" is reserved for parser-side fallbacks; do not emit it yourself.',
+    '- "advisor_error" is reserved for parser-side fallbacks; do not emit it yourself.',
     '- Output a single JSON object. No markdown fences, no commentary.',
   ].join('\n'));
 
   return lines.join('\n\n');
 }
 
-export function parseParallelManagerTurn(raw: string): ParallelManagerTurn | null {
+export function parseParallelAdvisorTurn(raw: string): ParallelAdvisorTurn | null {
   const obj = extractJsonObject(raw) as Record<string, unknown> | null;
   if (!obj || typeof obj !== 'object') return null;
 
@@ -111,7 +111,7 @@ export function parseParallelManagerTurn(raw: string): ParallelManagerTurn | nul
     ? (obj.user_question_choices.filter(c => typeof c === 'string') as string[])
     : undefined;
 
-  const turn: ParallelManagerTurn = {
+  const turn: ParallelAdvisorTurn = {
     action: action as ParallelAction,
     reason: reason as ParallelReason,
   };

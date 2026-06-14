@@ -41,7 +41,7 @@ export interface GatewayConfigJson {
     logLevel: 'debug' | 'info' | 'warn' | 'error';
     logFile?: string;
   };
-  /** Advisor (team manager / auto-dispatcher) configuration. Optional. */
+  /** Advisor (team advisor / auto-dispatcher) configuration. Optional. */
   advisor?: {
     agent?: CodingAgent;
     model?: string;

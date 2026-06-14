@@ -2,7 +2,7 @@ import { AdvisorHistoryEntry } from '../advisor';
 import type { BlackboardSnapshot } from '../team-blackboard';
 import type { WorkerAnchor } from '../context';
 
-/** Recorded part of a Manager-driven run, kept while the team is paused. */
+/** Recorded part of a Advisor-driven run, kept while the team is paused. */
 export interface PendingPart {
   step: number;
   worker: string;
