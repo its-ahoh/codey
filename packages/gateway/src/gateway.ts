@@ -2658,7 +2658,7 @@ Example: /model gpt-4.1 write a Python script`;
       await this.continueGraphRun(
         gemitter, message.chatId, `${message.channel}-${message.chatId}`,
         pending.teamName, team.graph, pending.task, state, blackboard, pending.results,
-        runOneWorker, { question: pending.question, answer },
+        runOneWorker, { resume: { question: pending.question, answer } },
       );
       return;
     }
@@ -2996,23 +2996,31 @@ Example: /model gpt-4.1 write a Python script`;
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
     ) => Promise<{ success: boolean; output: string; error?: string }>,
-    resume?: { question: string; answer: string },
+    opts?: {
+      signal?: AbortSignal;
+      fallbackAgent?: CodingAgent;
+      fallbackModel?: ModelConfig;
+      resume?: { question: string; answer: string };
+    },
   ): Promise<string> {
     const wm = this.workspaceManager.getWorkerManager();
     const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
-    let resumeInfo = resume;
+    let resumeInfo = opts?.resume;
 
     let stepIndex = 0;
     while (state.status === 'running') {
+      if (opts?.signal?.aborted) break;
       const node = nodeById.get(state.currentNodeId)!;
       // safe: team.graph is only set after validateGraph guarantees every worker node has a worker
       const workerName = node.worker!;
       const worker = wm.getWorker(workerName);
       if (!worker) { results.push(`**${workerName}**: ❌ not found`); break; }
 
-      const codingAgent = wm.getWorkerCodingAgent(workerName) as CodingAgent;
-      const model = wm.getWorkerModel(workerName);
-      const modelConfig = this.getModelConfig(codingAgent, model);
+      const codingAgent = (wm.getWorkerCodingAgent(workerName) ?? opts?.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const wmModel = wm.getWorkerModel(workerName);
+      const modelConfig = wmModel
+        ? this.getModelConfig(codingAgent, wmModel)
+        : (opts?.fallbackModel ?? this.getDefaultModelConfig(codingAgent));
       await emitter.notify(`🔄 Step ${++stepIndex}: **${worker.name}** is working...`);
 
       const roster = graph.nodes
@@ -3031,7 +3039,7 @@ Example: /model gpt-4.1 write a Python script`;
       if (!resp.success) { results.push(`**${worker.name}**: ❌ Failed - ${resp.error}`); break; }
 
       const ingested = blackboard.ingest(workerName, stepIndex, resp.output);
-      results.push(`**${worker.name}**:\n${ingested.stripped.substring(0, 500)}`);
+      results.push(`**${worker.name}**:\n${ingested.stripped}`);
 
       // Pause if this worker asked the user a question.
       const ask = parseAskUser(ingested.stripped);
@@ -3094,9 +3102,9 @@ Example: /model gpt-4.1 write a Python script`;
       blackboard: TeamBlackboard,
       onThinking?: (text: string) => void,
     ) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
-    _chatAgent?: CodingAgent,
-    _chatModel?: ModelConfig,
-    _signal?: AbortSignal,
+    chatAgent?: CodingAgent,
+    chatModel?: ModelConfig,
+    signal?: AbortSignal,
   ): Promise<{ response: string; choices?: string[]; thinkingByStep?: Record<number, string> }> {
     const emitter = new ChatEmitter(sink, chatId);
     const blackboard = new TeamBlackboard();
@@ -3106,7 +3114,8 @@ Example: /model gpt-4.1 write a Python script`;
       return { response: emitter.transcript };
     }
     await emitter.notify(`Running flow for team ${teamName}`);
-    await this.continueGraphRun(emitter, chatId, `chat-${chatId}`, teamName, graph, prompt, state, blackboard, [], runOneWorker);
+    await this.continueGraphRun(emitter, chatId, `chat-${chatId}`, teamName, graph, prompt, state, blackboard, [], runOneWorker,
+      { signal, fallbackAgent: chatAgent, fallbackModel: chatModel });
     return { response: emitter.transcript, choices: emitter.choices };
   }
 
