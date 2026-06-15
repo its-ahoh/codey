@@ -46,4 +46,17 @@ export type PendingTeamState =
       /** Warm worker sessions captured at pause; rehydrated on resume so the
        *  next step's prompt continues `--resume`-ing instead of re-bootstrapping. */
       workerAnchors?: Record<string, WorkerAnchor>;
+    }
+  | {
+      teamName: string;
+      task: string;
+      mode: 'graph';
+      graphState: { currentNodeId: string; hops: number; visited: string[] };
+      results: string[];
+      askingWorker: string;
+      question: string;
+      options?: string[];
+      askedAt: number;
+      blackboard?: BlackboardSnapshot;
+      workerAnchors?: Record<string, WorkerAnchor>;
     };
