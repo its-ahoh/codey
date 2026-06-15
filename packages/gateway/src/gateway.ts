@@ -3486,12 +3486,12 @@ Example: /model gpt-4.1 write a Python script`;
     const summaryBody = ev.summary.replace(/^#\s+Summary\s*/i, '').trim();
     return [
       `🪑 Roundtable: **${team}**`,
-      `终止原因: ${ev.reason}`,
+      `Termination reason: ${ev.reason}`,
       '',
-      '## Advisor 总结',
+      '## Advisor Summary',
       summaryBody || '(empty)',
       '',
-      '## 各方观点',
+      '## Viewpoints',
       ...ev.perWorker.map(p => `**${p.name}**: ${p.excerpt || '(empty)'}`),
       '',
       ev.message,
