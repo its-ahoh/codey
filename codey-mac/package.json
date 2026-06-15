@@ -88,7 +88,8 @@
     "publish": {
       "provider": "github",
       "owner": "its-ahoh",
-      "repo": "codey"
+      "repo": "codey",
+      "releaseType": "release"
     },
     "extraResources": [
       {
