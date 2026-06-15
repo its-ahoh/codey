@@ -975,7 +975,19 @@ export class Codey {
           // fall through to normal command handling
         } else {
           try { this.chatManager.setPendingTeam(message.chatId, null); } catch (_) { /* ignore */ }
-          await this.resumeTeamFromAnswer(message, pending, message.text);
+          const handler = this.handlers.get(message.channel);
+          const emitter = new ChannelEmitter(
+            (r) => this.sendResponse(r),
+            handler?.streamText ? (t: string) => handler.streamText!(t) : undefined,
+            message.chatId, message.channel,
+          );
+          await this.resumeTeamFromAnswer(
+            message.chatId,
+            `${message.channel}-${message.chatId}`,
+            pending,
+            message.text,
+            emitter,
+          );
           return;
         }
       }
@@ -2516,28 +2528,24 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   private async resumeTeamFromAnswer(
-    message: UserMessage,
+    chatId: string,
+    convBase: string,
     pending: PendingTeamState,
     answer: string,
-  ): Promise<void> {
-    // NOTE: this resume path streams via sendResponse and emits the legacy
-    // "📊 Team results" format (not the `### Step` structure parsed by the mac
-    // UI), so extended-thinking is intentionally NOT surfaced here. Showing
-    // per-step thinking on resume requires first unifying this path onto the
-    // same sink + structured-message pipeline as runTeamForChat — tracked as a
-    // follow-up (see docs/superpowers/specs/...-resume-streaming-unification).
+    emitter: TeamEmitter,
+  ): Promise<string> {
+    // NOTE: this resume path emits the legacy "📊 Team results" format (not the
+    // `### Step` structure parsed by the mac UI), so extended-thinking is only
+    // surfaced through the emitter's onThinking hook. Showing per-step thinking
+    // on resume more richly requires first unifying this path onto the same sink
+    // + structured-message pipeline as runTeamForChat — tracked as a follow-up
+    // (see docs/superpowers/specs/...-resume-streaming-unification).
     const team = this.workspaceManager.getTeam(pending.teamName);
     if (!team) {
-      await this.sendResponse({
-        chatId: message.chatId,
-        channel: message.channel,
-        text: `Team \`${pending.teamName}\` no longer exists; the paused run was dropped.`,
-      });
-      return;
+      await emitter.notify(`Team \`${pending.teamName}\` no longer exists; the paused run was dropped.`);
+      return emitter.transcript;
     }
-    const handler = this.handlers.get(message.channel);
-    const baseConv = `${message.channel}-${message.chatId}`;
-    const teamConv = this.workerConversationId(baseConv, { team: pending.teamName });
+    const teamConv = this.workerConversationId(convBase, { team: pending.teamName });
     // Rehydrate any warm worker sessions captured at pause time so the
     // resumed step continues `--resume`-ing instead of re-bootstrapping.
     await this.rehydrateWorkerAnchors(teamConv, pending.workerAnchors);
@@ -2549,7 +2557,6 @@ Example: /model gpt-4.1 write a Python script`;
       blackboard: TeamBlackboard,
       onThinking?: (text: string) => void,
     ): Promise<{ success: boolean; output: string; error?: string; thinking?: string }> => {
-      const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
       const { response } = await this.runWorkerStep({
         conversationId: teamConv,
         workerName,
@@ -2558,8 +2565,8 @@ Example: /model gpt-4.1 write a Python script`;
         codingAgent,
         modelConfig,
         buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, pending.task, workerName),
-        onStream,
-        onThinking,
+        onStream: (text: string) => emitter.onStream(text),
+        onThinking: onThinking ?? ((text: string) => emitter.onThinking(text, 0)),
         interactive: this.tuiMode,
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       });
@@ -2587,29 +2594,21 @@ Example: /model gpt-4.1 write a Python script`;
         seqNextWorker,
         blackboard.renderForWorker(memberName),
       );
-      await this.sendResponse({
-        chatId: message.chatId,
-        channel: message.channel,
-        text: `🔄 Resuming **${memberName}** with your answer…`,
-      });
+      await emitter.status(`🔄 Resuming **${memberName}** with your answer…`);
       const response = await runOneWorker(memberName, reprompt, codingAgent, modelConfig, blackboard);
       if (!response.success) {
-        await this.sendResponse({
-          chatId: message.chatId,
-          channel: message.channel,
-          text: `❌ Worker **${memberName}** failed on resume: ${response.error}`,
-        });
-        return;
+        await emitter.notify(`❌ Worker **${memberName}** failed on resume: ${response.error}`);
+        return emitter.transcript;
       }
       const ingested = blackboard.ingest(memberName, pending.memberIndex + 1, response.output);
       response.output = ingested.stripped;
       const deltaSummary = blackboard.summarizeDelta(ingested.added);
       if (deltaSummary) {
-        await this.sendResponse({ chatId: message.chatId, channel: message.channel, text: deltaSummary });
+        await emitter.status(deltaSummary);
       }
       const ask = parseAskUser(response.output);
       if (ask) {
-        this.persistPendingTeam(message.chatId, {
+        this.persistPendingTeam(chatId, {
           mode: 'sequential',
           teamName: pending.teamName,
           task: pending.task,
@@ -2623,49 +2622,37 @@ Example: /model gpt-4.1 write a Python script`;
           workerAnchors: this.snapshotWorkerAnchors(teamConv),
         });
         const rendered2 = renderQuestion(memberName, ask.preamble, ask.question, ask.options);
-        await this.sendResponse({
-          chatId: message.chatId,
-          channel: message.channel,
-          text: rendered2.text,
-          choices: rendered2.choices,
-        });
-        return;
+        await emitter.notify(rendered2.text, rendered2.choices);
+        return emitter.transcript;
       }
       const carryForNext = `Previous worker output:\n${response.output}\n\nYour task: ${pending.task}`;
       const priorResults: string[] = [`**${memberName}**: ${response.output}`];
-      const resumeEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
       await this.runAllMembersInOrder(
-        resumeEmitter,
-        message.chatId,
-        baseConv,
+        emitter,
+        chatId,
+        convBase,
         pending.teamName,
         team.members,
         pending.task,
         runOneWorker,
         { startIndex: pending.memberIndex + 1, startCarry: carryForNext, priorResults, blackboard, conversationId: teamConv },
       );
-      return;
+      return emitter.transcript;
     }
 
     if (pending.mode === 'graph') {
       if (!team.graph) {
-        await this.sendResponse({ chatId: message.chatId, channel: message.channel, text: `Team \`${pending.teamName}\` no longer has a flow graph; the paused run was dropped.` });
-        return;
+        await emitter.notify(`Team \`${pending.teamName}\` no longer has a flow graph; the paused run was dropped.`);
+        return emitter.transcript;
       }
       const state: GraphRunState = { currentNodeId: pending.graphState.currentNodeId, hops: pending.graphState.hops, status: 'running', visited: pending.graphState.visited };
       const blackboard = TeamBlackboard.fromJSON(pending.blackboard);
-      const ghandler = this.handlers.get(message.channel);
-      const gemitter = new ChannelEmitter(
-        (r) => this.sendResponse(r),
-        ghandler?.streamText ? (t: string) => ghandler.streamText!(t) : undefined,
-        message.chatId, message.channel,
-      );
       await this.continueGraphRun(
-        gemitter, message.chatId, `${message.channel}-${message.chatId}`,
+        emitter, chatId, convBase,
         pending.teamName, team.graph, pending.task, state, blackboard, pending.results,
         runOneWorker, { resume: { question: pending.question, answer } },
       );
-      return;
+      return emitter.transcript;
     }
 
     // mode === 'auto'
@@ -2687,31 +2674,19 @@ Example: /model gpt-4.1 write a Python script`;
       { agent: mAgent, model: mModel, runner: this.advisorRunner },
     );
     if (turn.fallback) {
-      await this.sendResponse({
-        chatId: message.chatId,
-        channel: message.channel,
-        text: `⚠️ Advisor failed on resume (${turn.fallbackReason}). Paused run dropped.`,
-      });
-      return;
+      await emitter.notify(`⚠️ Advisor failed on resume (${turn.fallbackReason}). Paused run dropped.`);
+      return emitter.transcript;
     }
     const seededHistory: AdvisorHistoryEntry[] = [
       ...pending.history,
       { worker: pending.askingWorker, summary: `User clarified: ${pending.question} → ${answer}` },
     ];
     if (turn.done || !turn.next) {
-      await this.sendResponse({
-        chatId: message.chatId,
-        channel: message.channel,
-        text: this.formatAdvisorParts(pending.partsSoFar, turn.final_summary ?? '', 200),
-      });
-      return;
+      await emitter.notify(this.formatAdvisorParts(pending.partsSoFar, turn.final_summary ?? '', 200));
+      return emitter.transcript;
     }
     const isRevision = pending.seenWorkers.includes(turn.next);
-    await this.sendResponse({
-      chatId: message.chatId,
-      channel: message.channel,
-      text: `🔄 Step ${pending.step}: **${turn.next}**${isRevision ? ' (revision)' : ''} — ${turn.reason}`,
-    });
+    await emitter.status(`🔄 Step ${pending.step}: **${turn.next}**${isRevision ? ' (revision)' : ''} — ${turn.reason}`);
     const codingAgent = (wm.getWorkerCodingAgent(turn.next) ?? this.getDefaultAgent()) as CodingAgent;
     const workerModelName = wm.getWorkerModel(turn.next);
     const modelConfig = workerModelName
@@ -2732,12 +2707,8 @@ Example: /model gpt-4.1 write a Python script`;
     );
     const response = await runOneWorker(turn.next, stepPrompt, codingAgent, modelConfig, resumeBoardForPrompt);
     if (!response.success) {
-      await this.sendResponse({
-        chatId: message.chatId,
-        channel: message.channel,
-        text: `❌ Worker **${turn.next}** failed on resume: ${response.error}`,
-      });
-      return;
+      await emitter.notify(`❌ Worker **${turn.next}** failed on resume: ${response.error}`);
+      return emitter.transcript;
     }
     // Restore the blackboard captured at pause time so resumed step + future
     // pauses keep accumulating against the same shared state.
@@ -2751,7 +2722,7 @@ Example: /model gpt-4.1 write a Python script`;
       ? [...seededHistory, { worker: pending.askingWorker, summary: turn.summary_of_last }]
       : seededHistory;
     if (ask) {
-      this.persistPendingTeam(message.chatId, {
+      this.persistPendingTeam(chatId, {
         mode: 'auto',
         teamName: pending.teamName,
         task: pending.task,
@@ -2769,13 +2740,8 @@ Example: /model gpt-4.1 write a Python script`;
         workerAnchors: this.snapshotWorkerAnchors(teamConv),
       });
       const rendered3 = renderQuestion(turn.next, ask.preamble, ask.question, ask.options);
-      await this.sendResponse({
-        chatId: message.chatId,
-        channel: message.channel,
-        text: rendered3.text,
-        choices: rendered3.choices,
-      });
-      return;
+      await emitter.notify(rendered3.text, rendered3.choices);
+      return emitter.transcript;
     }
     const closing = await runAdvisor(
       {
@@ -2792,11 +2758,8 @@ Example: /model gpt-4.1 write a Python script`;
     const resumeBlock = resumeBoard.renderForUser();
     const resumeFormatted = this.formatAdvisorParts(newParts, finalSummary, 200);
     this.persistBlackboardDecisions(resumeBoard, pending.teamName);
-    await this.sendResponse({
-      chatId: message.chatId,
-      channel: message.channel,
-      text: resumeBlock ? `${resumeFormatted}\n\n${resumeBlock}` : resumeFormatted,
-    });
+    await emitter.notify(resumeBlock ? `${resumeFormatted}\n\n${resumeBlock}` : resumeFormatted);
+    return emitter.transcript;
   }
 
   private async runAllMembersInOrder(
