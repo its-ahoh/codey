@@ -182,6 +182,7 @@ declare global {
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<string>
       revealInFolder: (path: string) => Promise<boolean>
+      readTextFile: (path: string) => Promise<string | null>
       onLog: (handler: (msg: string) => void) => () => void
     }
   }

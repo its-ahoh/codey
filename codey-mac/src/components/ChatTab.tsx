@@ -92,6 +92,50 @@ const formatBytes = (n: number): string => {
   return `${(n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`
 }
 
+// A long user message is folded into a small preview by default; the user can
+// expand it on demand so the transcript isn't dominated by one big paste.
+const USER_MSG_COLLAPSE_CHARS = 600
+const USER_MSG_COLLAPSE_LINES = 12
+
+const UserMessageContent: React.FC<{ content: string }> = ({ content }) => {
+  const lineCount = content.split('\n').length
+  const isLong = content.length > USER_MSG_COLLAPSE_CHARS || lineCount > USER_MSG_COLLAPSE_LINES
+  const [expanded, setExpanded] = useState(false)
+
+  if (!isLong) return <Markdown variant="user">{content}</Markdown>
+
+  if (expanded) {
+    return (
+      <div>
+        <Markdown variant="user">{content}</Markdown>
+        <button style={userFoldStyles.btn} onClick={() => setExpanded(false)}>Show less ▲</button>
+      </div>
+    )
+  }
+
+  const preview = content.replace(/\s+/g, ' ').trim().slice(0, 120)
+  return (
+    <div>
+      <div style={userFoldStyles.preview}>{preview}…</div>
+      <button style={userFoldStyles.btn} onClick={() => setExpanded(true)}>
+        Show full message · {lineCount} lines, {content.length.toLocaleString()} chars ▾
+      </button>
+    </div>
+  )
+}
+
+const userFoldStyles: Record<string, React.CSSProperties> = {
+  preview: {
+    opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+    maxWidth: '100%', fontStyle: 'italic',
+  },
+  btn: {
+    marginTop: 6, background: 'rgba(255,255,255,0.18)', border: 'none',
+    color: C.onAccent, fontSize: 11, fontWeight: 600,
+    padding: '3px 9px', borderRadius: 8, cursor: 'pointer',
+  },
+}
+
 // Agents that the gateway supports. Mirror of AGENT_NAMES in SettingsTab — kept
 // local so the chat header doesn't depend on the settings module.
 const AGENT_NAMES = ['claude-code', 'opencode', 'codex'] as const
@@ -258,7 +302,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   const [panelWidth, setPanelWidth] = useState<number>(() => {
     const v = localStorage.getItem('codey.contextPanelWidth')
     const n = v ? parseInt(v, 10) : NaN
-    return Number.isFinite(n) ? Math.max(260, Math.min(520, n)) : 340
+    return Number.isFinite(n) ? Math.max(260, Math.min(900, n)) : 340
   })
   // Manual composer height (px). null = auto-grow up to 120px (default
   // behavior). Once the user drags the handle we pin an explicit height so
@@ -857,14 +901,6 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
             </button>
           </>
         )}
-        <button
-          onClick={() => setContextPanelOpen(chat.id, !panelOpen)}
-          style={{ ...styles.linkBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px' }}
-          title={panelOpen ? 'Hide context panel (⌘\\)' : 'Show context panel (⌘\\)'}
-          aria-label={panelOpen ? 'Hide context panel' : 'Show context panel'}
-        >
-          <PanelRightIcon color={C.fg} filled={panelOpen} />
-        </button>
         <RouteIcons routes={chat.routes} />
         <div style={{ position: 'relative' }}>
           <button
@@ -934,6 +970,14 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
             </>
           )}
         </div>
+        <button
+          onClick={() => setContextPanelOpen(chat.id, !panelOpen)}
+          style={{ ...styles.linkBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px' }}
+          title={panelOpen ? 'Hide context panel (⌘\\)' : 'Show context panel (⌘\\)'}
+          aria-label={panelOpen ? 'Hide context panel' : 'Show context panel'}
+        >
+          <PanelRightIcon color={C.fg} filled={panelOpen} />
+        </button>
       </div>
 
       <div
@@ -981,7 +1025,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                   <LiveActivity toolCalls={msg.toolCalls} />
                 )}
                 {(msg.content || (!isUser && msg.userQuestion?.question)) && (() => {
-                  if (isUser) return <Markdown variant="user">{msg.content}</Markdown>
+                  if (isUser) return <UserMessageContent content={msg.content} />
                   const text = msg.content || msg.userQuestion?.question || ''
                   const parsed = parseTeamMessage(text)
                   const isStreaming = !!flight && msg === lastMsg
