@@ -94,7 +94,7 @@ function sanitizeTitle(raw: string): string {
   const cleaned = raw.replace(/^\s*\[Fallback:[^\]]*\]\s*/i, '');
   let t = cleaned.trim().split('\n')[0].trim();
   // Drop a leading "Title:" style label some models prepend.
-  t = t.replace(/^(title|标题)\s*[:：]\s*/i, '');
+  t = t.replace(/^(title|标题)\s*[:：]\s*/i, ''); // lint-allow-non-english: strips Chinese "title:" prefix from model output
   // Strip a single layer of wrapping quotes or backticks.
   t = t.replace(/^["'`“”]+|["'`“”]+$/g, '').trim();
   t = t.replace(/\s+/g, ' ');

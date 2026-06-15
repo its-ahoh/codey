@@ -377,7 +377,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
           onClick={(e) => e.stopPropagation()}
         >
           <div style={styles.menuHeader}>{wsMenu.workspace}</div>
-          <button style={styles.menuItem} onClick={() => handleNewChat(wsMenu.workspace).then(closeWsMenu)}>＋ New chat</button>
+          <button style={styles.menuItem} onClick={() => handleNewChat(wsMenu.workspace).then(closeWsMenu)}>+ New chat</button>
           <button
             style={{ ...styles.menuItem, opacity: wsMenu.workspace === 'default' ? 0.4 : 1 }}
             disabled={wsMenu.workspace === 'default'}
