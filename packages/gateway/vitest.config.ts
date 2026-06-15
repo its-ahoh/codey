@@ -15,6 +15,7 @@ export default defineConfig({
       'src/chats.taskBrief.test.ts',
       'src/chats.fallbackHeal.test.ts',
       'src/parallel-team.test.ts',
+      'src/team-emitter.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },
