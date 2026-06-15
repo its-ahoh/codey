@@ -156,7 +156,7 @@ export interface TaskBrief {
   state: {
     /** 0–100, best-effort. */
     progress: number;
-    /** e.g. "步骤 3 / 5" or a phase name. */
+    /** e.g. "step 3 / 5" or a phase name. */
     stepLabel?: string;
     status: TaskStatus;
   };
