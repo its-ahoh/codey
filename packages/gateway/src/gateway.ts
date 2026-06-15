@@ -3848,7 +3848,7 @@ Example: /model gpt-4.1 write a Python script`;
 
   async sendToChat(
     chatId: string,
-    userText: string,
+    userTextParam: string,
     sinkParam: ChatStreamSink,
     attachments?: import('@codey/core').FileAttachment[],
     // Origin identifies which surface initiated this turn so the chat-mirror
@@ -3860,6 +3860,25 @@ Example: /model gpt-4.1 write a Python script`;
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
+
+    // Resolvable copy of the incoming text. A digit reply to a paused team is
+    // rewritten to the chosen option's text BEFORE it is persisted as the user
+    // message and handed to the resume path.
+    let userText = userTextParam;
+
+    // Detect a paused team and decide how this turn relates to it. A slash turn
+    // cancels the paused run and proceeds normally; otherwise this turn is an
+    // answer to the team's question, so map any digit reply to the option text.
+    const pendingTeam = chat.pendingTeam;
+    const isSlashTurn = userText.trimStart().startsWith('/');
+    if (pendingTeam) {
+      if (isSlashTurn) {
+        this.chatManager.setPendingTeam(chatId, null);
+      } else if (pendingTeam.options && pendingTeam.options.length > 0) {
+        const resolved = resolveChoiceDigit(userText, pendingTeam.options);
+        if (resolved !== null) userText = resolved;
+      }
+    }
 
     // Persisted alongside the assistant message at completion. Declared here
     // so the sink wrapper can capture 'info' events into it (see below).
@@ -4022,7 +4041,17 @@ Example: /model gpt-4.1 write a Python script`;
       let teamThinkingByStep: Record<number, string> | undefined;
       let agentUserQuestion: AgentResponse['userQuestion'];
       let singleAgentResponse: AgentResponse | null | undefined;
-      if (chat.selection.type === 'team') {
+      if (pendingTeam && !isSlashTurn) {
+        // This turn answers a paused team's question. Resume regardless of the
+        // chat's current selection — a paused team can outlive a selection change.
+        // The resume reuses the assistant-persist + 'done' + semaphore-release
+        // lifecycle below (a re-pause sets pendingTeam again and surfaces new
+        // choices through emitter.choices → teamChoices).
+        this.chatManager.setPendingTeam(chatId, null);
+        const emitter = new ChatEmitter(sink, chatId);
+        output = await this.resumeTeamFromAnswer(chatId, `chat-${chatId}`, pendingTeam, userText, emitter);
+        teamChoices = emitter.choices;
+      } else if (chat.selection.type === 'team') {
         // Resolve the team from the chat's workspace.json (read above), not from
         // the active workspace, so a chat in workspace B uses B's team config
         // even if WorkspaceManager has loaded A. Worker prompt bodies still come
