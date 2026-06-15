@@ -2964,10 +2964,10 @@ Example: /model gpt-4.1 write a Python script`;
     const blackboard = new TeamBlackboard();
     const state = startRun(graph);
     if (state.status !== 'running') {
-      await emitter.notify(`⚠️ Team **${teamName}** flow could not start (${state.status}).`);
+      await emitter.status(`⚠️ Team **${teamName}** flow could not start (${state.status}).`);
       return;
     }
-    await emitter.notify(`🧭 Running flow for team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`);
+    await emitter.status(`🧭 Running flow for team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`);
     await this.continueGraphRun(emitter, message.chatId, convBase, teamName, graph, task, state, blackboard, [], runOneWorker);
   }
 
@@ -3021,7 +3021,7 @@ Example: /model gpt-4.1 write a Python script`;
       const modelConfig = wmModel
         ? this.getModelConfig(codingAgent, wmModel)
         : (opts?.fallbackModel ?? this.getDefaultModelConfig(codingAgent));
-      await emitter.notify(`🔄 Step ${++stepIndex}: **${worker.name}** is working...`);
+      await emitter.status(`🔄 Step ${++stepIndex}: **${worker.name}** is working...`);
 
       const roster = graph.nodes
         .filter(n => n.type === 'worker' && n.worker)
@@ -3065,15 +3065,15 @@ Example: /model gpt-4.1 write a Python script`;
         ingested.stripped, blackboard.renderForUser() || '',
       );
       if (!edge) {
-        await emitter.notify(`🏁 Flow stopped at **${worker.name}** (no matching next step).`);
+        await emitter.status(`🏁 Flow stopped at **${worker.name}** (no matching next step).`);
         break;
       }
-      await emitter.notify(`↪️ ${decision.fallback ? '(default) ' : ''}${decision.reason || 'next step'}`);
+      await emitter.status(`↪️ ${decision.fallback ? '(default) ' : ''}${decision.reason || 'next step'}`);
       state = advance(graph, state, edge.id);
     }
 
     if (state.status === 'capped') {
-      await emitter.notify(`⚠️ Flow hit the max-hops cap (${graph.maxHops}); reporting partial result.`);
+      await emitter.status(`⚠️ Flow hit the max-hops cap (${graph.maxHops}); reporting partial result.`);
     }
     const bbBlock = blackboard.renderForUser();
     const body = `📊 Team **${teamName}** flow results\n\n${results.join('\n\n')}`;
@@ -3110,10 +3110,10 @@ Example: /model gpt-4.1 write a Python script`;
     const blackboard = new TeamBlackboard();
     const state = startRun(graph);
     if (state.status !== 'running') {
-      await emitter.notify(`⚠️ Team **${teamName}** flow could not start (${state.status}).`);
+      await emitter.status(`⚠️ Team **${teamName}** flow could not start (${state.status}).`);
       return { response: emitter.transcript };
     }
-    await emitter.notify(`Running flow for team ${teamName}`);
+    await emitter.status(`Running flow for team ${teamName}`);
     await this.continueGraphRun(emitter, chatId, `chat-${chatId}`, teamName, graph, prompt, state, blackboard, [], runOneWorker,
       { signal, fallbackAgent: chatAgent, fallbackModel: chatModel });
     return { response: emitter.transcript, choices: emitter.choices };

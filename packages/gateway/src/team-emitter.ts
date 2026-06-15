@@ -4,6 +4,8 @@ import { ChannelType } from '@codey/core';
 export interface TeamEmitter {
   /** A discrete status / result / ASK_USER message to the user. */
   notify(text: string, choices?: string[]): Promise<void>;
+  /** An ephemeral status/orchestration line. NOT recorded in the chat transcript. */
+  status(text: string): Promise<void>;
   /** Per-worker streamed output token. */
   onStream(token: string): void;
   /** Per-worker streamed thinking token. */
@@ -25,6 +27,9 @@ export class ChatEmitter implements TeamEmitter {
     this._choices = choices;
     this.parts.push(text);
     try { this.sink({ type: 'stream', chatId: this.chatId, token: text }); } catch { /* swallow */ }
+  }
+  async status(text: string): Promise<void> {
+    try { this.sink({ type: 'info', chatId: this.chatId, message: text }); } catch { /* swallow */ }
   }
   onStream(token: string): void {
     this.parts.push(token);
@@ -49,6 +54,9 @@ export class ChannelEmitter implements TeamEmitter {
   async notify(text: string, choices?: string[]): Promise<void> {
     this._choices = choices;
     await this.send({ chatId: this.chatId, channel: this.channel, text, choices });
+  }
+  async status(text: string): Promise<void> {
+    await this.send({ chatId: this.chatId, channel: this.channel, text });
   }
   onStream(token: string): void { this.streamText?.(token); }
   onThinking(_token: string, _step: number): void { /* channels don't render thinking today */ }

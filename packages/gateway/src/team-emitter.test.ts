@@ -24,6 +24,14 @@ describe('ChatEmitter', () => {
     e.onThinking('pondering', 2);
     expect(events.some(v => v.type === 'thinking' && v.token === 'pondering' && v.step === 2)).toBe(true);
   });
+
+  it('status emits an info event and is NOT recorded in the transcript', async () => {
+    const events: any[] = [];
+    const e = new ChatEmitter((ev) => events.push(ev), 'c1');
+    await e.status('Step 1: coder');
+    expect(events.some(v => v.type === 'info' && v.message === 'Step 1: coder')).toBe(true);
+    expect(e.transcript).toBe('');
+  });
 });
 
 describe('ChannelEmitter', () => {
@@ -39,5 +47,12 @@ describe('ChannelEmitter', () => {
     expect(sent).toContainEqual({ chatId: 'c1', channel: 'telegram', text: 'done', choices: ['x'] });
     expect(sent).toContainEqual({ stream: 'tok' });
     expect(e.transcript).toBe('');
+  });
+
+  it('status routes through sendResponse without choices', async () => {
+    const sent: any[] = [];
+    const e = new ChannelEmitter(async (r) => { sent.push(r); }, undefined, 'c1', 'telegram' as any);
+    await e.status('working');
+    expect(sent).toContainEqual({ chatId: 'c1', channel: 'telegram', text: 'working' });
   });
 });
