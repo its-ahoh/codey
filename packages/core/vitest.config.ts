@@ -16,6 +16,8 @@ export default defineConfig({
       'src/aide-tasks.test.ts',
       'src/agents/thinking-stream.test.ts',
       'src/solo-advisor.test.ts',
+      'src/team-graph.test.ts',
+      'src/judge.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },

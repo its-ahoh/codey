@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -2475,6 +2475,10 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // dispatch === 'all' OR forceAll: legacy path
+    if (!opts.forceAll && team.graph) {
+      await this.runSequentialGraphForChat(message, teamName, team.graph, task, runOneWorker);
+      return;
+    }
     const headerSuffix = opts.forceAll ? ' [--all override]' : '';
     await this.sendResponse({
       chatId,
@@ -2634,6 +2638,17 @@ Example: /model gpt-4.1 write a Python script`;
         runOneWorker,
         { startIndex: pending.memberIndex + 1, startCarry: carryForNext, priorResults, blackboard, conversationId: teamConv },
       );
+      return;
+    }
+
+    if (pending.mode === 'graph') {
+      if (!team.graph) {
+        await this.sendResponse({ chatId: message.chatId, channel: message.channel, text: `Team \`${pending.teamName}\` no longer has a flow graph; the paused run was dropped.` });
+        return;
+      }
+      const state: GraphRunState = { currentNodeId: pending.graphState.currentNodeId, hops: pending.graphState.hops, status: 'running', visited: pending.graphState.visited };
+      const blackboard = TeamBlackboard.fromJSON(pending.blackboard);
+      await this.continueGraphRun(message, pending.teamName, team.graph, pending.task, state, blackboard, pending.results, runOneWorker, { question: pending.question, answer });
       return;
     }
 
@@ -2867,6 +2882,306 @@ Example: /model gpt-4.1 write a Python script`;
     this.persistBlackboardDecisions(blackboard, teamName);
   }
 
+  /**
+   * Build the judge edge descriptors for the given node. Shared by both graph
+   * walk variants so they can't silently drift.
+   */
+  private buildJudgeEdges(
+    graph: TeamGraph,
+    nodeById: Map<string, TeamGraph['nodes'][number]>,
+    nodeId: string,
+  ): JudgeInput['edges'] {
+    return outgoingEdges(graph, nodeId).map(e => ({
+      id: e.id,
+      condition: e.condition,
+      targetWorker: nodeById.get(e.to)?.type === 'end' ? '(end)' : (nodeById.get(e.to)?.worker ?? e.to),
+    }));
+  }
+
+  /**
+   * Assemble the JudgeInput, run the judge, and resolve the chosen edge. Shared
+   * by both graph walk variants. Returns the raw decision (for the caller's
+   * reason/fallback emit) plus the resolved edge (null if no match).
+   */
+  private async pickNextGraphEdge(
+    graph: TeamGraph,
+    nodeById: Map<string, TeamGraph['nodes'][number]>,
+    currentNodeId: string,
+    task: string,
+    workerName: string,
+    workerOutput: string,
+    blackboardSummary: string,
+    signal?: AbortSignal,
+  ): Promise<{ decision: JudgeDecision; edge: TeamGraphEdge | null }> {
+    const edges = this.buildJudgeEdges(graph, nodeById, currentNodeId);
+    const { agent, model } = this.getAdvisorAgentAndModel();
+    const decision = await runJudge(
+      { task, worker: workerName, workerOutput, blackboardSummary, edges },
+      { agent, model, runner: this.advisorRunner, signal },
+    );
+    const edge = resolveEdge(graph, currentNodeId, decision.edgeId);
+    return { decision, edge };
+  }
+
+  /**
+   * Walk a Sequential team's flow graph, letting a judge LLM choose the next
+   * edge after each worker. Mirrors runAllMembersInOrder but follows graph
+   * topology (with loop-backs and a maxHops cap) instead of a linear list.
+   * sendResponse/void variant used by runTeamTask. ([ASK_USER] pause/resume is
+   * a separate task — here a worker's [ASK_USER] text is just treated as output.)
+   */
+  private async runSequentialGraphForChat(
+    message: UserMessage,
+    teamName: string,
+    graph: TeamGraph,
+    task: string,
+    runOneWorker: (
+      workerName: string,
+      prompt: string,
+      codingAgent: CodingAgent,
+      modelConfig: ModelConfig | undefined,
+      blackboard: TeamBlackboard,
+    ) => Promise<{ success: boolean; output: string; error?: string }>,
+  ): Promise<void> {
+    const { chatId, channel } = message;
+    const state = startRun(graph);
+    if (state.status !== 'running') {
+      await this.sendResponse({ chatId, channel, text: `⚠️ Team **${teamName}** flow could not start (${state.status}).` });
+      return;
+    }
+
+    await this.sendResponse({
+      chatId, channel,
+      text: `🧭 Running flow for team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
+    });
+
+    const results: string[] = [];
+    const blackboard = new TeamBlackboard();
+    await this.continueGraphRun(message, teamName, graph, task, state, blackboard, results, runOneWorker);
+  }
+
+  /**
+   * Resumable body of runSequentialGraphForChat's flow walk. Runs the void/
+   * sendResponse loop from `state` until the graph finishes (or pauses on an
+   * [ASK_USER]), then emits the cap warning + final results block. Shared by the
+   * fresh run and the `mode:'graph'` resume path so post-pause steps behave
+   * identically. When `resume` is set, the FIRST worker's prompt is re-issued
+   * with the user's answer injected (matching the sequential resume format).
+   */
+  private async continueGraphRun(
+    message: UserMessage,
+    teamName: string,
+    graph: TeamGraph,
+    task: string,
+    state: GraphRunState,
+    blackboard: TeamBlackboard,
+    results: string[],
+    runOneWorker: (
+      workerName: string,
+      prompt: string,
+      codingAgent: CodingAgent,
+      modelConfig: ModelConfig | undefined,
+      blackboard: TeamBlackboard,
+    ) => Promise<{ success: boolean; output: string; error?: string }>,
+    resume?: { question: string; answer: string },
+  ): Promise<void> {
+    const { chatId, channel } = message;
+    const wm = this.workspaceManager.getWorkerManager();
+    const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
+    let resumeInfo = resume;
+
+    let stepIndex = 0;
+    while (state.status === 'running') {
+      const node = nodeById.get(state.currentNodeId)!;
+      // safe: team.graph is only set after validateGraph guarantees every worker node has a worker
+      const workerName = node.worker!;
+      const worker = wm.getWorker(workerName);
+      if (!worker) { results.push(`**${workerName}**: ❌ not found`); break; }
+
+      const codingAgent = wm.getWorkerCodingAgent(workerName) as CodingAgent;
+      const model = wm.getWorkerModel(workerName);
+      const modelConfig = this.getModelConfig(codingAgent, model);
+      await this.sendResponse({ chatId, channel, text: `🔄 Step ${++stepIndex}: **${worker.name}** is working...` });
+
+      const roster = graph.nodes
+        .filter(n => n.type === 'worker' && n.worker)
+        .map(n => ({ name: n.worker!, hint: wm.getDispatchHint(n.worker!) }));
+      // On the first iteration of a resume, inject the user's answer into the
+      // re-issued prompt for the worker that asked; subsequent steps use `task`.
+      const promptTask = resumeInfo
+        ? `${task}\n\n[User answer to your question "${resumeInfo.question}"]:\n${resumeInfo.answer}`
+        : task;
+      const prompt = wm.buildSequentialWorkerPrompt(
+        workerName, promptTask, roster, null, blackboard.renderForWorker(workerName),
+      );
+      resumeInfo = undefined;
+      const resp = await runOneWorker(workerName, prompt, codingAgent, modelConfig, blackboard);
+      if (!resp.success) { results.push(`**${worker.name}**: ❌ Failed - ${resp.error}`); break; }
+
+      const ingested = blackboard.ingest(workerName, stepIndex, resp.output);
+      results.push(`**${worker.name}**:\n${ingested.stripped.substring(0, 500)}`);
+
+      // Pause if this worker asked the user a question.
+      const ask = parseAskUser(ingested.stripped);
+      if (ask) {
+        const teamConv = this.workerConversationId(`${message.channel}-${message.chatId}`, { team: teamName });
+        this.persistPendingTeam(message.chatId, {
+          mode: 'graph', teamName, task,
+          graphState: { currentNodeId: state.currentNodeId, hops: state.hops, visited: state.visited },
+          results,
+          askingWorker: workerName, question: ask.question, options: ask.options,
+          askedAt: Date.now(), blackboard: blackboard.toJSON(),
+          workerAnchors: this.snapshotWorkerAnchors(teamConv),
+        });
+        const askWorkerName = this.workspaceManager.getWorkerManager().getWorker(workerName)?.name ?? workerName;
+        const rendered = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
+        await this.sendResponse({ chatId: message.chatId, channel: message.channel, text: rendered.text, choices: rendered.choices });
+        return;
+      }
+
+      // Judge picks the next edge.
+      const { decision, edge } = await this.pickNextGraphEdge(
+        graph, nodeById, state.currentNodeId, task, workerName,
+        ingested.stripped, blackboard.renderForUser() || '',
+      );
+      if (!edge) {
+        await this.sendResponse({ chatId, channel, text: `🏁 Flow stopped at **${worker.name}** (no matching next step).` });
+        break;
+      }
+      await this.sendResponse({
+        chatId, channel,
+        text: `↪️ ${decision.fallback ? '(default) ' : ''}${decision.reason || 'next step'}`,
+      });
+      state = advance(graph, state, edge.id);
+    }
+
+    if (state.status === 'capped') {
+      await this.sendResponse({ chatId, channel, text: `⚠️ Flow hit the max-hops cap (${graph.maxHops}); reporting partial result.` });
+    }
+    const bbBlock = blackboard.renderForUser();
+    const body = `📊 Team **${teamName}** flow results\n\n${results.join('\n\n')}`;
+    await this.sendResponse({ chatId, channel, text: bbBlock ? `${body}\n\n${bbBlock}` : body });
+    this.persistBlackboardDecisions(blackboard, teamName);
+  }
+
+  /**
+   * Sink/return variant of runSequentialGraphForChat for runTeamForChat. Walks
+   * the flow graph with a judge LLM, streaming progress through the chat sink
+   * and returning the assembled transcript (mirrors runTeamForChat's linear
+   * fallback contract). [ASK_USER] pause/resume is a separate task.
+   */
+  private async runSequentialGraphForChatSink(
+    teamName: string,
+    graph: TeamGraph,
+    prompt: string,
+    sink: ChatStreamSink,
+    chatId: string,
+    runOneWorker: (
+      workerName: string,
+      workerPrompt: string,
+      codingAgent: CodingAgent,
+      modelConfig: ModelConfig | undefined,
+      blackboard: TeamBlackboard,
+      onThinking?: (text: string) => void,
+    ) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
+    chatAgent?: CodingAgent,
+    chatModel?: ModelConfig,
+    signal?: AbortSignal,
+  ): Promise<{ response: string; choices?: string[]; thinkingByStep?: Record<number, string> }> {
+    const wm = this.workspaceManager.getWorkerManager();
+    const blackboard = new TeamBlackboard();
+    const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
+    const parts: string[] = [];
+    const thinkingByStep: Record<number, string> = {};
+
+    let state: GraphRunState = startRun(graph);
+    if (state.status !== 'running') {
+      sink({ type: 'info', chatId, message: `Team ${teamName} flow could not start (${state.status}).` });
+      return { response: `⚠️ Team **${teamName}** flow could not start (${state.status}).` };
+    }
+
+    sink({ type: 'info', chatId, message: `Running flow for team ${teamName}` });
+
+    let stepIndex = 0;
+    while (state.status === 'running') {
+      if (signal?.aborted) break;
+      const node = nodeById.get(state.currentNodeId)!;
+      // safe: team.graph is only set after validateGraph guarantees every worker node has a worker
+      const workerName = node.worker!;
+      const worker = wm.getWorker(workerName);
+      if (!worker) { parts.push(`### ${workerName}\n\n❌ not found`); break; }
+
+      const stepNum = ++stepIndex;
+      const codingAgent = (wm.getWorkerCodingAgent(workerName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const workerModel = wm.getWorkerModel(workerName);
+      const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
+      sink({ type: 'info', chatId, message: `Step ${stepNum}: ${worker.name}` });
+      const sep = stepNum === 1 ? '' : '\n\n---\n\n';
+      sink({ type: 'stream', chatId, token: `${sep}### Step ${stepNum}: ${worker.name}\n\n` });
+
+      const roster = graph.nodes
+        .filter(n => n.type === 'worker' && n.worker)
+        .map(n => ({ name: n.worker!, hint: wm.getDispatchHint(n.worker!) }));
+      const stepPrompt = wm.buildSequentialWorkerPrompt(
+        workerName, prompt, roster, null, blackboard.renderForWorker(workerName),
+      );
+      const response = await runOneWorker(workerName, stepPrompt, codingAgent, modelConfig, blackboard,
+        (text: string) => sink({ type: 'thinking', chatId, token: text, step: stepNum }));
+      if (!response.success) { parts.push(`### Step ${stepNum}: ${worker.name}\n\n❌ Failed - ${response.error}`); break; }
+      if (response.thinking) thinkingByStep[stepNum] = response.thinking;
+
+      const ingested = blackboard.ingest(workerName, stepNum, response.output);
+      const cleanOutput = ingested.stripped;
+      const deltaSummary = blackboard.summarizeDelta(ingested.added);
+      if (deltaSummary) sink({ type: 'info', chatId, message: deltaSummary });
+      parts.push(`### Step ${stepNum}: ${worker.name}\n\n${cleanOutput}`);
+
+      // Pause if this worker asked the user a question.
+      const ask = parseAskUser(cleanOutput);
+      if (ask) {
+        // The `chat-` prefix mirrors runTeamForChat's baseConv. NOTE: as with the
+        // existing auto/sequential sink pauses, this persisted state is only consumed
+        // by resumeTeamFromAnswer (reached via handleMessage on unlinked channels);
+        // the sendToChat path (Mac app / linked channels) has no team-resume branch
+        // yet, so a flow paused there restarts on the next turn. See the follow-up to
+        // wire pendingTeam resume into sendToChat (fixes all team modes, not just graph).
+        const teamConv = this.workerConversationId(`chat-${chatId}`, { team: teamName });
+        const askWorkerName = wm.getWorker(workerName)?.name ?? workerName;
+        this.persistPendingTeam(chatId, {
+          mode: 'graph', teamName, task: prompt,
+          graphState: { currentNodeId: state.currentNodeId, hops: state.hops, visited: state.visited },
+          results: parts,
+          askingWorker: workerName, question: ask.question, options: ask.options,
+          askedAt: Date.now(), blackboard: blackboard.toJSON(),
+          workerAnchors: this.snapshotWorkerAnchors(teamConv),
+        });
+        const rendered = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
+        sink({ type: 'stream', chatId, token: rendered.text });
+        return { response: rendered.text, choices: rendered.choices };
+      }
+
+      // Judge picks the next edge.
+      const { decision, edge } = await this.pickNextGraphEdge(
+        graph, nodeById, state.currentNodeId, prompt, workerName,
+        cleanOutput, blackboard.renderForUser() || '', signal,
+      );
+      if (!edge) {
+        sink({ type: 'info', chatId, message: `Flow stopped at ${worker.name} (no matching next step).` });
+        break;
+      }
+      sink({ type: 'info', chatId, message: `${decision.fallback ? '(default) ' : ''}${decision.reason || 'next step'}` });
+      state = advance(graph, state, edge.id);
+    }
+
+    if (state.status === 'capped') {
+      sink({ type: 'info', chatId, message: `Flow hit the max-hops cap (${graph.maxHops}); reporting partial result.` });
+    }
+    const bbBlock = blackboard.renderForUser();
+    this.persistBlackboardDecisions(blackboard, teamName);
+    const body = parts.join('\n\n---\n\n');
+    return { response: bbBlock ? `${body}\n\n${bbBlock}` : body, thinkingByStep };
+  }
+
   private async runTeamForChat(
     teamName: string,
     team: TeamConfig,
@@ -3091,6 +3406,9 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // dispatch === 'all', forceAll, or auto-routing fallback
+    if (!opts.forceAll && team.graph) {
+      return this.runSequentialGraphForChatSink(teamName, team.graph, prompt, sink, chatId, runOneWorker, chatAgent, chatModel, signal);
+    }
     let carry = prompt;
     const parts: string[] = [];
     const blackboard = new TeamBlackboard();
@@ -3892,6 +4210,14 @@ Example: /model gpt-4.1 write a Python script`;
         if (fallbackDispatch === 'parallel') {
           const rawParallel = (!Array.isArray(rawTeam) && rawTeam?.parallel) || {};
           fallbackTeam.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...rawParallel };
+        }
+        // Carry a Sequential flow graph through the inline fallback too. This path
+        // bypasses normalizeTeam, so validate here as well — an invalid graph drops
+        // to linear rather than reaching the executor.
+        if (fallbackDispatch === 'all' && !Array.isArray(rawTeam) && rawTeam?.graph) {
+          const problems = validateGraph(rawTeam.graph, rawMembers);
+          if (problems.length === 0) fallbackTeam.graph = rawTeam.graph;
+          else this.logger.warn(`[Workspace] Team "${teamName}" fallback flow graph invalid — running linearly: ${problems.join('; ')}`);
         }
         const team: TeamConfig = wsTeam ?? fallbackTeam;
         this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasParallel=${!!team.parallel} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
