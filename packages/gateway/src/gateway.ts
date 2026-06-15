@@ -2420,7 +2420,8 @@ Example: /model gpt-4.1 write a Python script`;
           channel,
           text: `⚠️ Auto-routing failed (${result.fallbackReason}), running all members.`,
         });
-        await this.runAllMembersInOrder(message, teamName, members, task, runOneWorker);
+        const fbEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
+        await this.runAllMembersInOrder(fbEmitter, message.chatId, baseConv, teamName, members, task, runOneWorker);
         return;
       }
 
@@ -2486,7 +2487,8 @@ Example: /model gpt-4.1 write a Python script`;
       channel,
       text: `👥 Running team **${teamName}** (${members.join(' → ')})${headerSuffix}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
-    await this.runAllMembersInOrder(message, teamName, members, task, runOneWorker);
+    const allEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
+    await this.runAllMembersInOrder(allEmitter, message.chatId, baseConv, teamName, members, task, runOneWorker);
   }
 
   /**
@@ -2630,9 +2632,12 @@ Example: /model gpt-4.1 write a Python script`;
         return;
       }
       const carryForNext = `Previous worker output:\n${response.output}\n\nYour task: ${pending.task}`;
-      const priorResults: string[] = [`**${memberName}**: ${response.output.substring(0, 500)}`];
+      const priorResults: string[] = [`**${memberName}**: ${response.output}`];
+      const resumeEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
       await this.runAllMembersInOrder(
-        message,
+        resumeEmitter,
+        message.chatId,
+        baseConv,
         pending.teamName,
         team.members,
         pending.task,
@@ -2795,7 +2800,9 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   private async runAllMembersInOrder(
-    message: UserMessage,
+    emitter: TeamEmitter,
+    chatId: string,
+    convBase: string,
     teamName: string,
     members: string[],
     task: string,
@@ -2805,31 +2812,30 @@ Example: /model gpt-4.1 write a Python script`;
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
-    ) => Promise<{ success: boolean; output: string; error?: string }>,
-    opts: { startIndex?: number; startCarry?: string; priorResults?: string[]; blackboard?: TeamBlackboard; conversationId?: string } = {},
-  ): Promise<void> {
-    const { chatId, channel } = message;
+      onThinking?: (text: string) => void,
+    ) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
+    opts: { startIndex?: number; startCarry?: string; priorResults?: string[]; blackboard?: TeamBlackboard; conversationId?: string; signal?: AbortSignal; fallbackAgent?: CodingAgent; fallbackModel?: ModelConfig } = {},
+  ): Promise<{ thinkingByStep: Record<number, string> }> {
     const workerManager = this.workspaceManager.getWorkerManager();
     const results: string[] = opts.priorResults ? [...opts.priorResults] : [];
     let currentTask = opts.startCarry ?? task;
     const blackboard = opts.blackboard ?? new TeamBlackboard();
+    const thinkingByStep: Record<number, string> = {};
     const teamConv = opts.conversationId
-      ?? this.workerConversationId(`${channel}-${chatId}`, { team: teamName });
+      ?? this.workerConversationId(convBase, { team: teamName });
 
     for (let i = opts.startIndex ?? 0; i < members.length; i++) {
+      if (opts.signal?.aborted) break;
       const memberName = members[i];
       const worker = workerManager.getWorker(memberName);
       if (!worker) {
         results.push(`**${memberName}**: ❌ not found in global library`);
         break;
       }
-      const codingAgent = workerManager.getWorkerCodingAgent(memberName) as CodingAgent;
-      const model = workerManager.getWorkerModel(memberName);
-      await this.sendResponse({
-        chatId,
-        channel,
-        text: `🔄 Worker **${worker.name}** is working...`,
-      });
+      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? opts.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const wmModel = workerManager.getWorkerModel(memberName);
+      const modelConfig = wmModel ? this.getModelConfig(codingAgent, wmModel) : (opts.fallbackModel ?? this.getDefaultModelConfig(codingAgent));
+      await emitter.status(`🔄 Worker **${worker.name}** is working...`);
       const roster = members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
       const nextName = members[i + 1];
       const nextWorker = nextName
@@ -2842,17 +2848,17 @@ Example: /model gpt-4.1 write a Python script`;
         nextWorker,
         blackboard.renderForWorker(memberName),
       );
-      const modelConfig = this.getModelConfig(codingAgent, model);
-      const response = await runOneWorker(memberName, prompt, codingAgent, modelConfig, blackboard);
+      const response = await runOneWorker(memberName, prompt, codingAgent, modelConfig, blackboard, (t) => emitter.onThinking(t, i + 1));
       if (!response.success) {
         results.push(`**${worker.name}**: ❌ Failed - ${response.error}`);
         break;
       }
+      if (response.thinking) thinkingByStep[i + 1] = response.thinking;
       const ingested = blackboard.ingest(memberName, i + 1, response.output);
       const cleanOutput = ingested.stripped;
       const deltaSummary = blackboard.summarizeDelta(ingested.added);
       if (deltaSummary) {
-        await this.sendResponse({ chatId, channel, text: deltaSummary });
+        await emitter.status(deltaSummary);
       }
       const ask = parseAskUser(cleanOutput);
       if (ask) {
@@ -2871,26 +2877,18 @@ Example: /model gpt-4.1 write a Python script`;
         };
         this.persistPendingTeam(chatId, pending);
         const rendered4 = renderQuestion(worker.name, ask.preamble, ask.question, ask.options);
-        await this.sendResponse({
-          chatId,
-          channel,
-          text: rendered4.text,
-          choices: rendered4.choices,
-        });
-        return;
+        await emitter.notify(rendered4.text, rendered4.choices);
+        return { thinkingByStep };
       }
-      results.push(`**${worker.name}**: ${cleanOutput.substring(0, 500)}`);
+      results.push(`**${worker.name}**: ${cleanOutput}`);
       currentTask = `Previous worker output:\n${cleanOutput}\n\nYour task: ${task}`;
     }
 
     const bbBlock = blackboard.renderForUser();
     const body = `📊 Team **${teamName}** results\n\n${results.join('\n\n')}`;
-    await this.sendResponse({
-      chatId,
-      channel,
-      text: bbBlock ? `${body}\n\n${bbBlock}` : body,
-    });
+    await emitter.notify(bbBlock ? `${body}\n\n${bbBlock}` : body);
     this.persistBlackboardDecisions(blackboard, teamName);
+    return { thinkingByStep };
   }
 
   /**
@@ -3135,7 +3133,6 @@ Example: /model gpt-4.1 write a Python script`;
     if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
     }
-    const workerManager = this.workspaceManager.getWorkerManager();
 
     const baseConv = `chat-${chat.id}`;
     const teamConv = this.workerConversationId(baseConv, { team: teamName });
@@ -3346,70 +3343,10 @@ Example: /model gpt-4.1 write a Python script`;
     if (!opts.forceAll && team.graph) {
       return this.runSequentialGraphForChatSink(teamName, team.graph, prompt, sink, chatId, runOneWorker, chatAgent, chatModel, signal);
     }
-    let carry = prompt;
-    const parts: string[] = [];
-    const blackboard = new TeamBlackboard();
-    const thinkingByStep: Record<number, string> = {};
-    for (let i = 0; i < team.members.length; i++) {
-      if (signal?.aborted) break;
-      const memberName = team.members[i];
-      const stepNum = i + 1;
-      sink({ type: 'info', chatId, message: `Step ${stepNum}/${team.members.length}: ${memberName}` });
-      const sep = i === 0 ? '' : '\n\n---\n\n';
-      sink({ type: 'stream', chatId, token: `${sep}### Step ${stepNum}: ${memberName}\n\n` });
-      const seqRoster = team.members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
-      const seqNextName = team.members[i + 1];
-      const seqNextWorker = seqNextName
-        ? { name: seqNextName, hint: workerManager.getDispatchHint(seqNextName) }
-        : null;
-      const stepPrompt = workerManager.buildSequentialWorkerPrompt(
-        memberName,
-        carry,
-        seqRoster,
-        seqNextWorker,
-        blackboard.renderForWorker(memberName),
-      );
-      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
-      const workerModel = workerManager.getWorkerModel(memberName);
-      const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
-      const response = await runOneWorker(memberName, stepPrompt, codingAgent, modelConfig, blackboard,
-        (text: string) => sink({ type: 'thinking', chatId, token: text, step: stepNum }));
-      if (!response.success) {
-        parts.push(`### Step ${stepNum}: ${memberName}\n\n`);
-        break;
-      }
-      if (response.thinking) thinkingByStep[stepNum] = response.thinking;
-      const ingested = blackboard.ingest(memberName, stepNum, response.output);
-      const cleanOutput = ingested.stripped;
-      const deltaSummary = blackboard.summarizeDelta(ingested.added);
-      if (deltaSummary) sink({ type: 'info', chatId, message: deltaSummary });
-      const ask = parseAskUser(cleanOutput);
-      if (ask) {
-        const askWorkerName = workerManager.getWorker(memberName)?.name ?? memberName;
-        this.persistPendingTeam(chatId, {
-          mode: 'sequential',
-          teamName,
-          task: prompt,
-          memberIndex: i,
-          carry,
-          askingWorker: memberName,
-          question: ask.question,
-          options: ask.options,
-          askedAt: Date.now(),
-          blackboard: blackboard.toJSON(),
-          workerAnchors: this.snapshotWorkerAnchors(teamConv),
-        });
-        const rendered6 = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
-        sink({ type: 'stream', chatId, token: rendered6.text });
-        return { response: parts.length ? parts.join('\n\n---\n\n') + '\n\n' + rendered6.text : rendered6.text, choices: rendered6.choices };
-      }
-      parts.push(`### Step ${stepNum}: ${memberName}\n\n${cleanOutput}`);
-      carry = cleanOutput;
-    }
-    const bbBlock = blackboard.renderForUser();
-    this.persistBlackboardDecisions(blackboard, teamName);
-    const body = parts.join('\n\n---\n\n');
-    return { response: bbBlock ? `${body}\n\n${bbBlock}` : body, thinkingByStep };
+    const emitter = new ChatEmitter(sink, chatId);
+    const r = await this.runAllMembersInOrder(emitter, chatId, baseConv, teamName, team.members, prompt, runOneWorker,
+      { signal, fallbackAgent: chatAgent, fallbackModel: chatModel });
+    return { response: emitter.transcript, choices: emitter.choices, thinkingByStep: r.thinkingByStep };
   }
 
   private formatUptime(seconds: number): string {
