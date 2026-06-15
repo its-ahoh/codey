@@ -22,11 +22,53 @@ jobs:
 
       - run: npm ci
 
+      # Workaround for an npm extraction bug where 7zip-bin's `7za` binary is
+      # occasionally absent after `npm ci`, which makes electron-builder fail
+      # with: `ENOENT ... chmod '.../node_modules/7zip-bin/mac/arm64/7za'`.
+      # Reinstall the package if the binary is missing, then ensure it's
+      # executable. (Locally the binary is always present; this only bites CI.)
+      - name: Ensure 7zip-bin binary is present
+        run: |
+          if [ ! -f node_modules/7zip-bin/mac/arm64/7za ]; then
+            echo "7za missing after npm ci — reinstalling 7zip-bin"
+            rm -rf node_modules/7zip-bin
+            npm install --no-save 7zip-bin
+          fi
+          chmod -R +x node_modules/7zip-bin/mac 2>/dev/null || true
+
       - name: Build core
         run: npm run build -w @codey/core
 
       - name: Build gateway
         run: npm run build -w @codey/gateway
+
+      # Signing + notarization require these repo secrets (Settings → Secrets and
+      # variables → Actions). Without them electron-builder can't sign/notarize
+      # and the release silently fails late in the build, so fail fast here with
+      # a clear message instead:
+      #   CSC_LINK                     base64 of the Developer ID Application .p12
+      #   CSC_KEY_PASSWORD             password for that .p12
+      #   APPLE_ID                     Apple ID email used for notarization
+      #   APPLE_APP_SPECIFIC_PASSWORD  app-specific password (appleid.apple.com)
+      #   APPLE_TEAM_ID                Apple Developer team id (e.g. N59NN58KB2)
+      - name: Verify signing secrets are configured
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          [ -z "$CSC_LINK" ] && missing+=("CSC_LINK")
+          [ -z "$CSC_KEY_PASSWORD" ] && missing+=("CSC_KEY_PASSWORD")
+          [ -z "$APPLE_ID" ] && missing+=("APPLE_ID")
+          [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ] && missing+=("APPLE_APP_SPECIFIC_PASSWORD")
+          [ -z "$APPLE_TEAM_ID" ] && missing+=("APPLE_TEAM_ID")
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing required signing secrets: ${missing[*]}. Add them in repo Settings → Secrets and variables → Actions, then re-run."
+            exit 1
+          fi
 
       - name: Build & publish codey-mac
         working-directory: codey-mac
