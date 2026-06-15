@@ -1,25 +1,30 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { apiService, WorkerDto } from '../services/api'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
+import type { TeamGraph } from '../../../packages/core/src/team-graph'
 import { C } from '../theme'
+import FlowEditor from './FlowEditor'
+import { emptyGraph } from './flowEditorModel'
 
 // Mirrors TeamsSection's editor, but operates on the global team library
 // stored in gateway.json. Workspaces opt into these teams by name.
 
 type DispatchMode = 'all' | 'auto' | 'parallel'
-interface TeamState { members: string[]; dispatch: DispatchMode }
+interface TeamState { members: string[]; dispatch: DispatchMode; graph?: TeamGraph }
 type TeamsState = Record<string, TeamState>
 
 function fromRaw(raw: TeamConfigRaw): TeamState {
   if (Array.isArray(raw)) return { members: raw, dispatch: 'all' }
   const d = raw?.dispatch
   const dispatch: DispatchMode = d === 'auto' ? 'auto' : d === 'parallel' ? 'parallel' : 'all'
-  return { members: Array.isArray(raw?.members) ? raw.members : [], dispatch }
+  return { members: Array.isArray(raw?.members) ? raw.members : [], dispatch, graph: (raw as any)?.graph }
 }
 
 function toRaw(t: TeamState): TeamConfigRaw {
-  if (t.dispatch === 'all') return t.members
-  return { members: t.members, dispatch: t.dispatch }
+  if (t.dispatch === 'all' && !t.graph) return t.members
+  const out: any = { members: t.members, dispatch: t.dispatch }
+  if (t.dispatch === 'all' && t.graph) out.graph = t.graph
+  return out
 }
 
 function normalizeAll(raw: Record<string, TeamConfigRaw>): TeamsState {
@@ -91,6 +96,7 @@ export default function GlobalTeamsSection() {
   const [drag, setDrag] = useState<{ team: string; idx: number } | null>(null)
   const [dragOver, setDragOver] = useState<{ team: string; idx: number } | null>(null)
   const [creatingFor, setCreatingFor] = useState<string | null>(null)
+  const [editingFlow, setEditingFlow] = useState<string | null>(null)
   const [createPrompt, setCreatePrompt] = useState('')
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -191,6 +197,15 @@ export default function GlobalTeamsSection() {
               <option value="__create__">+ Create new worker…</option>
             </select>
           </div>
+          {team.dispatch === 'all' && (
+            <div style={{ marginTop: 8 }}>
+              <button onClick={() => setEditingFlow(name)}
+                style={{ padding: '3px 10px', fontSize: 11, background: 'transparent', color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 6, cursor: 'pointer' }}>
+                {team.graph ? 'Edit flow ↗' : '+ Add flow ↗'}
+              </button>
+              {team.graph && <span style={{ fontSize: 11, color: C.fg3, marginLeft: 8 }}>{team.graph.nodes.filter(n => n.type === 'worker').length} nodes</span>}
+            </div>
+          )}
         </div>
       ))}
       {creatingFor && (
@@ -214,6 +229,15 @@ export default function GlobalTeamsSection() {
             </div>
           </div>
         </div>
+      )}
+      {editingFlow && teams[editingFlow] && (
+        <FlowEditor
+          teamName={editingFlow}
+          workerNames={workers.map(w => w.name)}
+          graph={teams[editingFlow].graph ?? emptyGraph()}
+          onSave={(graph) => { queueSave({ ...teams, [editingFlow]: { ...teams[editingFlow], graph } }) }}
+          onClose={() => setEditingFlow(null)}
+        />
       )}
     </div>
   )

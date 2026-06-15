@@ -18,3 +18,5 @@ export * from './discussion/files';
 export * from './discussion/control';
 export * from './discussion/parallel-advisor';
 export * from './team-blackboard';
+export * from './team-graph';
+export * from './judge';
