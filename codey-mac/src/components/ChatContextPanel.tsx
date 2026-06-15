@@ -2,7 +2,7 @@ import React from 'react'
 import type { Chat, ChatMessage } from '../types'
 import { C } from '../theme'
 import { parseTeamMessage } from './teamMessageFormat'
-import { ToolDetail, DiffView, normalizeTool } from './toolFormat'
+import { ToolDetail, CombinedDiffView, normalizeTool } from './toolFormat'
 import { QuickQuestionView } from './QuickQuestionView'
 import { TaskHud } from './TaskHud'
 
@@ -95,7 +95,7 @@ export const ChatContextPanel: React.FC<Props> = ({
     const startX = e.clientX
     const startW = width
     const move = (mv: MouseEvent) => {
-      const next = Math.max(260, Math.min(520, startW + (startX - mv.clientX)))
+      const next = Math.max(260, Math.min(900, startW + (startX - mv.clientX)))
       onResize(next)
     }
     const up = () => {
@@ -160,13 +160,13 @@ export const ChatContextPanel: React.FC<Props> = ({
           aria-selected={tab === 'files'}
           style={{ ...styles.tab, ...(tab === 'files' ? styles.tabActive : null) }}
           onClick={() => setTab('files')}
-        >File changes</button>
+        >Files</button>
         <button
           role="tab"
           aria-selected={tab === 'qq'}
           style={{ ...styles.tab, ...(tab === 'qq' ? styles.tabActive : null) }}
           onClick={() => setTab('qq')}
-        >Quick Question</button>
+        >Q&amp;A</button>
       </div>
 
       <div style={styles.body}>
@@ -618,6 +618,26 @@ const extractChanges = (chat: Chat): FileChange[] => {
   return out
 }
 
+/**
+ * Find the real 1-based line where an edit begins, by locating its content in
+ * the current file. Prefers the post-edit text (present in the current file);
+ * falls back to the pre-edit text, then to the first non-blank line. Returns
+ * undefined when the file is unavailable or the text can't be located (e.g. the
+ * file changed since, or a later edit superseded this one).
+ */
+const locateStartLine = (content: string | null | undefined, oldText: string, newText: string): number | undefined => {
+  if (!content) return undefined
+  const needle = newText && newText.trim() ? newText : oldText
+  if (!needle) return undefined
+  let idx = content.indexOf(needle)
+  if (idx < 0) {
+    const firstLine = needle.split('\n').find(l => l.trim().length > 0)
+    if (firstLine) idx = content.indexOf(firstLine)
+  }
+  if (idx < 0) return undefined
+  return content.slice(0, idx).split('\n').length
+}
+
 const displayPath = (abs: string, workingDir?: string): string => {
   if (workingDir && abs.startsWith(workingDir)) {
     const rel = abs.slice(workingDir.length).replace(/^\/+/, '')
@@ -636,6 +656,26 @@ const FileChangesView: React.FC<{
   const [filter, setFilter] = React.useState<'all' | 'turn'>('all')
   // Files default to expanded; this set tracks the ones the user collapsed.
   const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set())
+
+  // Current on-disk text per file, used to resolve real line numbers for each
+  // edit. Loaded lazily and cached; a path we've already fetched is skipped.
+  const [fileText, setFileText] = React.useState<Record<string, string | null>>({})
+  const fetchedRef = React.useRef<Set<string>>(new Set())
+  React.useEffect(() => {
+    let cancelled = false
+    const paths = Array.from(new Set(changes.map(c => c.path)))
+      .filter(p => p && p.startsWith('/') && !fetchedRef.current.has(p))
+    if (paths.length === 0) return
+    ;(async () => {
+      for (const p of paths) {
+        fetchedRef.current.add(p)
+        const content = (await window.codey?.readTextFile?.(p)) ?? null
+        if (cancelled) return
+        setFileText(prev => ({ ...prev, [p]: content }))
+      }
+    })()
+    return () => { cancelled = true }
+  }, [changes])
 
   const visible = filter === 'turn' && selectedTurnId
     ? changes.filter(c => c.msgId === selectedTurnId)
@@ -699,21 +739,29 @@ const FileChangesView: React.FC<{
                 >⤴</button>
               )}
             </div>
-            {!isCollapsed && (
-              <div style={fcStyles.changeBody}>
-                {group.map(c => (
-                  <div key={`${c.msgId}::${c.callId}`} style={fcStyles.changeItem}>
-                    {c.tool === 'Patch' ? (
-                      <pre style={fcStyles.patchPre}>{c.patchText || '(empty patch)'}</pre>
-                    ) : c.tool === 'Write' ? (
-                      <DiffView oldText="" newText={c.newText} />
-                    ) : (
-                      <DiffView oldText={c.oldText} newText={c.newText} />
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+            {!isCollapsed && (() => {
+              // All Edit/Write/Notebook edits to this file collapse into a
+              // single continuous diff; raw patches keep their own block.
+              const content = fileText[path]
+              const diffHunks = group
+                .filter(c => c.tool !== 'Patch')
+                .map(c => ({
+                  oldText: c.oldText,
+                  newText: c.newText,
+                  startLine: locateStartLine(content, c.oldText, c.newText),
+                }))
+              const patches = group.filter(c => c.tool === 'Patch')
+              return (
+                <div style={fcStyles.changeBody}>
+                  {diffHunks.length > 0 && <CombinedDiffView hunks={diffHunks} />}
+                  {patches.map(c => (
+                    <pre key={`${c.msgId}::${c.callId}`} style={fcStyles.patchPre}>
+                      {c.patchText || '(empty patch)'}
+                    </pre>
+                  ))}
+                </div>
+              )
+            })()}
           </div>
         )
       })}
@@ -757,7 +805,7 @@ const fcStyles: Record<string, React.CSSProperties> = {
     background: 'transparent', border: 'none', color: C.fg3,
     cursor: 'pointer', fontSize: 12, padding: '0 4px', flexShrink: 0,
   },
-  changeBody: { padding: 8, background: 'rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: 6 },
+  changeBody: { padding: 8, background: C.bg, display: 'flex', flexDirection: 'column', gap: 6 },
   changeItem: {},
   patchPre: {
     margin: 0, fontSize: 11.5, color: C.fg,
@@ -802,10 +850,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   tab: {
     flex: 1, minWidth: 0, textAlign: 'center', whiteSpace: 'nowrap',
+    // Clip to ellipsis when the panel is narrow so labels never overlap.
+    overflow: 'hidden', textOverflow: 'ellipsis',
     background: 'transparent', border: 'none',
     color: C.fg3, fontSize: 11, fontWeight: 600,
     letterSpacing: 0.4, textTransform: 'uppercase',
-    padding: '6px 6px', cursor: 'pointer',
+    padding: '6px 4px', cursor: 'pointer',
     // Persistent gray underline under every tab (visible from first open);
     // the active tab overrides the color with the accent.
     borderBottom: `2px solid ${C.border2}`, marginBottom: -1,

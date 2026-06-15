@@ -231,6 +231,7 @@ contextBridge.exposeInMainWorld('codey', {
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
   revealInFolder: (path: string) => ipcRenderer.invoke('shell:showItemInFolder', path),
+  readTextFile: (path: string) => ipcRenderer.invoke('file:readText', path),
   onLog: (handler: (msg: string) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, msg: string) => handler(msg)
     ipcRenderer.on('gateway-log', listener)
