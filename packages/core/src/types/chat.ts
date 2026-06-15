@@ -85,7 +85,7 @@ export interface Chat {
   agent?: 'claude-code' | 'opencode' | 'codex';
   /** Per-chat model override (model id from the global catalog). Falls back to the agent's default model when unset. */
   model?: string;
-  /** Per-chat "solo advisor" 兜底 toggle. When true and the chat is NOT a team,
+  /** Per-chat "solo advisor" backup toggle. When true and the chat is NOT a team,
    *  a stuck single agent (one that emits `[ASK_ADVISOR]: <reason>`) is escalated
    *  to the stronger advisor model for guidance, then re-run. Default off. */
   soloAdvisor?: boolean;
