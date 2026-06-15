@@ -838,19 +838,22 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
             <button
               onClick={() => setSoloAdvisor(chat.id, !(chat.soloAdvisor ?? false))}
               style={{
-                ...styles.linkBtn,
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                padding: '4px 6px',
-                opacity: chat.soloAdvisor ? 1 : 0.5,
+                ...styles.workerSelect,
+                cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                color: chat.soloAdvisor ? C.accent : C.fg3,
+                border: `1px solid ${chat.soloAdvisor ? C.accent : C.border2}`,
+                background: chat.soloAdvisor ? C.accentDim : C.surface3,
+                fontWeight: chat.soloAdvisor ? 600 : 400,
               }}
               title={chat.soloAdvisor
-                ? 'Solo Advisor 兜底: ON — stuck agent escalates to the advisor model'
-                : 'Solo Advisor 兜底: OFF'}
+                ? 'Advisor: ON — when the model gets stuck, a stronger advisor model gives it hints to continue'
+                : 'Advisor: OFF — click to let a stronger advisor model help when the model gets stuck'}
               role="switch"
               aria-checked={chat.soloAdvisor ?? false}
-              aria-label={chat.soloAdvisor ? 'Solo Advisor ON' : 'Solo Advisor OFF'}
+              aria-label="Advisor"
             >
-              🧭
+              💡 Advisor
             </button>
           </>
         )}
