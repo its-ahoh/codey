@@ -72,8 +72,8 @@ describe('extractPreview', () => {
   })
 
   it('handles Chinese full stop', () => {
-    const text = '中间段落\n\n结论一。结论二。'
-    expect(extractPreview(text)).toBe('结论一。')
+    const text = '中间段落\n\n结论一。结论二。' // lint-allow-non-english: Chinese fixture
+    expect(extractPreview(text)).toBe('结论一。') // lint-allow-non-english: Chinese fixture
   })
 
   it('returns whole paragraph when no sentence terminator', () => {

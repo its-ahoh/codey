@@ -52,7 +52,7 @@ export function extractPreview(output: string): string {
   const westernParts = last.split(/(?<=\w[.!?])\s+/)
   const chunk = westernParts[westernParts.length - 1].trim()
   // Extract the first complete sentence from that chunk
-  const m = chunk.match(/^([^.!?。！？]*[.!?。！？])/)
+  const m = chunk.match(/^([^.!?。！？]*[.!?。！？])/) // lint-allow-non-english: splits on Chinese sentence terminators
   const sentence = (m ? m[1] : chunk).trim()
   if (sentence.length <= MAX_PREVIEW) return sentence
   return sentence.slice(0, MAX_PREVIEW) + '…'
