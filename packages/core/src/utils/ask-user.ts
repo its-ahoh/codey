@@ -92,3 +92,40 @@ export function parseAsk(output: string): AskMarker | null {
   }
   return null;
 }
+
+const ADVISOR_MARKER_RE = /^\s*\[ASK_ADVISOR\]\s*:\s*(.*)$/;
+
+export interface AskAdvisor {
+  /** Agent output before the marker line (joined with \n, trailing ws trimmed). */
+  preamble: string;
+  /** The text after `[ASK_ADVISOR]:` describing where the agent is stuck. */
+  reason: string;
+}
+
+/**
+ * Detect a `[ASK_ADVISOR]: <reason>` marker line in a single agent's output.
+ * Returns the first marker (in document order) or null when absent/blank.
+ */
+export function parseAskAdvisor(output: string): AskAdvisor | null {
+  if (!output) return null;
+  const lines = output.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(ADVISOR_MARKER_RE);
+    if (!m) continue;
+    const reason = m[1].trim();
+    if (!reason) continue;
+    const preamble = lines.slice(0, i).join('\n').replace(/\s+$/, '');
+    return { preamble, reason };
+  }
+  return null;
+}
+
+/** Remove every `[ASK_ADVISOR]: ...` marker line from output (trailing ws trimmed). */
+export function stripAskAdvisor(output: string): string {
+  if (!output) return output;
+  return output
+    .split(/\r?\n/)
+    .filter(l => !ADVISOR_MARKER_RE.test(l))
+    .join('\n')
+    .replace(/\s+$/, '');
+}
