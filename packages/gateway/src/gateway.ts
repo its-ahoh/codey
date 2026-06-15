@@ -18,6 +18,7 @@ import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
 import { resolveChoiceDigit } from './digit-mapping';
 import { ParallelTeamRunner, ParallelFinalEvent } from './parallel-team';
+import { ChannelEmitter, ChatEmitter, TeamEmitter } from './team-emitter';
 
 interface ParsedCommand {
   command: string;
@@ -2648,7 +2649,17 @@ Example: /model gpt-4.1 write a Python script`;
       }
       const state: GraphRunState = { currentNodeId: pending.graphState.currentNodeId, hops: pending.graphState.hops, status: 'running', visited: pending.graphState.visited };
       const blackboard = TeamBlackboard.fromJSON(pending.blackboard);
-      await this.continueGraphRun(message, pending.teamName, team.graph, pending.task, state, blackboard, pending.results, runOneWorker, { question: pending.question, answer });
+      const ghandler = this.handlers.get(message.channel);
+      const gemitter = new ChannelEmitter(
+        (r) => this.sendResponse(r),
+        ghandler?.streamText ? (t: string) => ghandler.streamText!(t) : undefined,
+        message.chatId, message.channel,
+      );
+      await this.continueGraphRun(
+        gemitter, message.chatId, `${message.channel}-${message.chatId}`,
+        pending.teamName, team.graph, pending.task, state, blackboard, pending.results,
+        runOneWorker, { question: pending.question, answer },
+      );
       return;
     }
 
@@ -2943,21 +2954,21 @@ Example: /model gpt-4.1 write a Python script`;
       blackboard: TeamBlackboard,
     ) => Promise<{ success: boolean; output: string; error?: string }>,
   ): Promise<void> {
-    const { chatId, channel } = message;
+    const handler = this.handlers.get(message.channel);
+    const emitter = new ChannelEmitter(
+      (r) => this.sendResponse(r),
+      handler?.streamText ? (t: string) => handler.streamText!(t) : undefined,
+      message.chatId, message.channel,
+    );
+    const convBase = `${message.channel}-${message.chatId}`;
+    const blackboard = new TeamBlackboard();
     const state = startRun(graph);
     if (state.status !== 'running') {
-      await this.sendResponse({ chatId, channel, text: `⚠️ Team **${teamName}** flow could not start (${state.status}).` });
+      await emitter.notify(`⚠️ Team **${teamName}** flow could not start (${state.status}).`);
       return;
     }
-
-    await this.sendResponse({
-      chatId, channel,
-      text: `🧭 Running flow for team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
-    });
-
-    const results: string[] = [];
-    const blackboard = new TeamBlackboard();
-    await this.continueGraphRun(message, teamName, graph, task, state, blackboard, results, runOneWorker);
+    await emitter.notify(`🧭 Running flow for team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`);
+    await this.continueGraphRun(emitter, message.chatId, convBase, teamName, graph, task, state, blackboard, [], runOneWorker);
   }
 
   /**
@@ -2969,7 +2980,9 @@ Example: /model gpt-4.1 write a Python script`;
    * with the user's answer injected (matching the sequential resume format).
    */
   private async continueGraphRun(
-    message: UserMessage,
+    emitter: TeamEmitter,
+    chatId: string,
+    convBase: string,
     teamName: string,
     graph: TeamGraph,
     task: string,
@@ -2984,8 +2997,7 @@ Example: /model gpt-4.1 write a Python script`;
       blackboard: TeamBlackboard,
     ) => Promise<{ success: boolean; output: string; error?: string }>,
     resume?: { question: string; answer: string },
-  ): Promise<void> {
-    const { chatId, channel } = message;
+  ): Promise<string> {
     const wm = this.workspaceManager.getWorkerManager();
     const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
     let resumeInfo = resume;
@@ -3001,7 +3013,7 @@ Example: /model gpt-4.1 write a Python script`;
       const codingAgent = wm.getWorkerCodingAgent(workerName) as CodingAgent;
       const model = wm.getWorkerModel(workerName);
       const modelConfig = this.getModelConfig(codingAgent, model);
-      await this.sendResponse({ chatId, channel, text: `🔄 Step ${++stepIndex}: **${worker.name}** is working...` });
+      await emitter.notify(`🔄 Step ${++stepIndex}: **${worker.name}** is working...`);
 
       const roster = graph.nodes
         .filter(n => n.type === 'worker' && n.worker)
@@ -3024,8 +3036,8 @@ Example: /model gpt-4.1 write a Python script`;
       // Pause if this worker asked the user a question.
       const ask = parseAskUser(ingested.stripped);
       if (ask) {
-        const teamConv = this.workerConversationId(`${message.channel}-${message.chatId}`, { team: teamName });
-        this.persistPendingTeam(message.chatId, {
+        const teamConv = this.workerConversationId(convBase, { team: teamName });
+        this.persistPendingTeam(chatId, {
           mode: 'graph', teamName, task,
           graphState: { currentNodeId: state.currentNodeId, hops: state.hops, visited: state.visited },
           results,
@@ -3035,8 +3047,8 @@ Example: /model gpt-4.1 write a Python script`;
         });
         const askWorkerName = this.workspaceManager.getWorkerManager().getWorker(workerName)?.name ?? workerName;
         const rendered = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
-        await this.sendResponse({ chatId: message.chatId, channel: message.channel, text: rendered.text, choices: rendered.choices });
-        return;
+        await emitter.notify(rendered.text, rendered.choices);
+        return emitter.transcript;
       }
 
       // Judge picks the next edge.
@@ -3045,23 +3057,21 @@ Example: /model gpt-4.1 write a Python script`;
         ingested.stripped, blackboard.renderForUser() || '',
       );
       if (!edge) {
-        await this.sendResponse({ chatId, channel, text: `🏁 Flow stopped at **${worker.name}** (no matching next step).` });
+        await emitter.notify(`🏁 Flow stopped at **${worker.name}** (no matching next step).`);
         break;
       }
-      await this.sendResponse({
-        chatId, channel,
-        text: `↪️ ${decision.fallback ? '(default) ' : ''}${decision.reason || 'next step'}`,
-      });
+      await emitter.notify(`↪️ ${decision.fallback ? '(default) ' : ''}${decision.reason || 'next step'}`);
       state = advance(graph, state, edge.id);
     }
 
     if (state.status === 'capped') {
-      await this.sendResponse({ chatId, channel, text: `⚠️ Flow hit the max-hops cap (${graph.maxHops}); reporting partial result.` });
+      await emitter.notify(`⚠️ Flow hit the max-hops cap (${graph.maxHops}); reporting partial result.`);
     }
     const bbBlock = blackboard.renderForUser();
     const body = `📊 Team **${teamName}** flow results\n\n${results.join('\n\n')}`;
-    await this.sendResponse({ chatId, channel, text: bbBlock ? `${body}\n\n${bbBlock}` : body });
+    await emitter.notify(bbBlock ? `${body}\n\n${bbBlock}` : body);
     this.persistBlackboardDecisions(blackboard, teamName);
+    return emitter.transcript;
   }
 
   /**
@@ -3084,102 +3094,20 @@ Example: /model gpt-4.1 write a Python script`;
       blackboard: TeamBlackboard,
       onThinking?: (text: string) => void,
     ) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
-    chatAgent?: CodingAgent,
-    chatModel?: ModelConfig,
-    signal?: AbortSignal,
+    _chatAgent?: CodingAgent,
+    _chatModel?: ModelConfig,
+    _signal?: AbortSignal,
   ): Promise<{ response: string; choices?: string[]; thinkingByStep?: Record<number, string> }> {
-    const wm = this.workspaceManager.getWorkerManager();
+    const emitter = new ChatEmitter(sink, chatId);
     const blackboard = new TeamBlackboard();
-    const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
-    const parts: string[] = [];
-    const thinkingByStep: Record<number, string> = {};
-
-    let state: GraphRunState = startRun(graph);
+    const state = startRun(graph);
     if (state.status !== 'running') {
-      sink({ type: 'info', chatId, message: `Team ${teamName} flow could not start (${state.status}).` });
-      return { response: `⚠️ Team **${teamName}** flow could not start (${state.status}).` };
+      await emitter.notify(`⚠️ Team **${teamName}** flow could not start (${state.status}).`);
+      return { response: emitter.transcript };
     }
-
-    sink({ type: 'info', chatId, message: `Running flow for team ${teamName}` });
-
-    let stepIndex = 0;
-    while (state.status === 'running') {
-      if (signal?.aborted) break;
-      const node = nodeById.get(state.currentNodeId)!;
-      // safe: team.graph is only set after validateGraph guarantees every worker node has a worker
-      const workerName = node.worker!;
-      const worker = wm.getWorker(workerName);
-      if (!worker) { parts.push(`### ${workerName}\n\n❌ not found`); break; }
-
-      const stepNum = ++stepIndex;
-      const codingAgent = (wm.getWorkerCodingAgent(workerName) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
-      const workerModel = wm.getWorkerModel(workerName);
-      const modelConfig = workerModel ? this.getModelConfig(codingAgent, workerModel) : chatModel ?? this.getDefaultModelConfig(codingAgent);
-      sink({ type: 'info', chatId, message: `Step ${stepNum}: ${worker.name}` });
-      const sep = stepNum === 1 ? '' : '\n\n---\n\n';
-      sink({ type: 'stream', chatId, token: `${sep}### Step ${stepNum}: ${worker.name}\n\n` });
-
-      const roster = graph.nodes
-        .filter(n => n.type === 'worker' && n.worker)
-        .map(n => ({ name: n.worker!, hint: wm.getDispatchHint(n.worker!) }));
-      const stepPrompt = wm.buildSequentialWorkerPrompt(
-        workerName, prompt, roster, null, blackboard.renderForWorker(workerName),
-      );
-      const response = await runOneWorker(workerName, stepPrompt, codingAgent, modelConfig, blackboard,
-        (text: string) => sink({ type: 'thinking', chatId, token: text, step: stepNum }));
-      if (!response.success) { parts.push(`### Step ${stepNum}: ${worker.name}\n\n❌ Failed - ${response.error}`); break; }
-      if (response.thinking) thinkingByStep[stepNum] = response.thinking;
-
-      const ingested = blackboard.ingest(workerName, stepNum, response.output);
-      const cleanOutput = ingested.stripped;
-      const deltaSummary = blackboard.summarizeDelta(ingested.added);
-      if (deltaSummary) sink({ type: 'info', chatId, message: deltaSummary });
-      parts.push(`### Step ${stepNum}: ${worker.name}\n\n${cleanOutput}`);
-
-      // Pause if this worker asked the user a question.
-      const ask = parseAskUser(cleanOutput);
-      if (ask) {
-        // The `chat-` prefix mirrors runTeamForChat's baseConv. NOTE: as with the
-        // existing auto/sequential sink pauses, this persisted state is only consumed
-        // by resumeTeamFromAnswer (reached via handleMessage on unlinked channels);
-        // the sendToChat path (Mac app / linked channels) has no team-resume branch
-        // yet, so a flow paused there restarts on the next turn. See the follow-up to
-        // wire pendingTeam resume into sendToChat (fixes all team modes, not just graph).
-        const teamConv = this.workerConversationId(`chat-${chatId}`, { team: teamName });
-        const askWorkerName = wm.getWorker(workerName)?.name ?? workerName;
-        this.persistPendingTeam(chatId, {
-          mode: 'graph', teamName, task: prompt,
-          graphState: { currentNodeId: state.currentNodeId, hops: state.hops, visited: state.visited },
-          results: parts,
-          askingWorker: workerName, question: ask.question, options: ask.options,
-          askedAt: Date.now(), blackboard: blackboard.toJSON(),
-          workerAnchors: this.snapshotWorkerAnchors(teamConv),
-        });
-        const rendered = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
-        sink({ type: 'stream', chatId, token: rendered.text });
-        return { response: rendered.text, choices: rendered.choices };
-      }
-
-      // Judge picks the next edge.
-      const { decision, edge } = await this.pickNextGraphEdge(
-        graph, nodeById, state.currentNodeId, prompt, workerName,
-        cleanOutput, blackboard.renderForUser() || '', signal,
-      );
-      if (!edge) {
-        sink({ type: 'info', chatId, message: `Flow stopped at ${worker.name} (no matching next step).` });
-        break;
-      }
-      sink({ type: 'info', chatId, message: `${decision.fallback ? '(default) ' : ''}${decision.reason || 'next step'}` });
-      state = advance(graph, state, edge.id);
-    }
-
-    if (state.status === 'capped') {
-      sink({ type: 'info', chatId, message: `Flow hit the max-hops cap (${graph.maxHops}); reporting partial result.` });
-    }
-    const bbBlock = blackboard.renderForUser();
-    this.persistBlackboardDecisions(blackboard, teamName);
-    const body = parts.join('\n\n---\n\n');
-    return { response: bbBlock ? `${body}\n\n${bbBlock}` : body, thinkingByStep };
+    await emitter.notify(`Running flow for team ${teamName}`);
+    await this.continueGraphRun(emitter, chatId, `chat-${chatId}`, teamName, graph, prompt, state, blackboard, [], runOneWorker);
+    return { response: emitter.transcript, choices: emitter.choices };
   }
 
   private async runTeamForChat(
