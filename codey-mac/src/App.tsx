@@ -197,7 +197,7 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitAppRegion: 'drag',
   },
   titleBarDragArea: { flex: 1, display: 'flex', alignItems: 'center', height: '100%' },
-  titleCenter: { flex: 1, textAlign: 'center', paddingLeft: 12, paddingRight: 12, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' },
+  titleCenter: { flex: 1, textAlign: 'center', paddingLeft: 4, paddingRight: 4, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' },
   appName: { color: C.fg2, fontSize: 13, fontWeight: 500 },
   sidebarToggle: {
     background: 'transparent', border: 'none', cursor: 'pointer',
