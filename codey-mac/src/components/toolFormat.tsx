@@ -126,11 +126,16 @@ const lineDiff = (a: string, b: string): DiffLine[] => {
 }
 
 const diffStyles: Record<string, React.CSSProperties> = {
-  wrap: { fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 11.5, lineHeight: 1.45, borderRadius: 4, overflow: 'hidden', border: `1px solid ${C.border}` },
-  row: { display: 'flex', whiteSpace: 'pre' },
-  add: { background: 'rgba(50,215,75,0.13)', color: C.green },
-  del: { background: 'rgba(255,69,58,0.13)', color: C.dangerFg },
-  eq:  { color: C.fg2 },
+  // overflowX:auto lets long lines scroll horizontally instead of being clipped.
+  wrap: { fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 11.5, lineHeight: 1.45, borderRadius: 4, overflowX: 'auto', border: `1px solid ${C.border}` },
+  // width:max-content sizes each row to its longest content (so the wrap can
+  // scroll); minWidth:100% keeps the tint spanning the full visible width.
+  row: { display: 'flex', whiteSpace: 'pre', width: 'max-content', minWidth: '100%' },
+  // Code text stays in the readable foreground color in both light and dark
+  // mode; the row tint + colored marker carry the add/delete meaning.
+  add: { background: 'rgba(50,215,75,0.18)' },
+  del: { background: 'rgba(255,69,58,0.16)' },
+  eq:  {},
   // Gutter + marker are not selectable, so line numbers stay out of copied text.
   gutter: {
     flexShrink: 0, textAlign: 'right', padding: '0 6px',
@@ -138,7 +143,64 @@ const diffStyles: Record<string, React.CSSProperties> = {
     minWidth: 30,
   },
   marker: { width: 16, flexShrink: 0, textAlign: 'center', userSelect: 'none', WebkitUserSelect: 'none' },
-  code: { flex: 1, paddingRight: 6 },
+  code: { flexShrink: 0, paddingRight: 12 },
+  // Divider between separate edits to the same file in a combined view.
+  hunkSep: { minWidth: '100%', height: 0, borderTop: `1px dashed ${C.border2}`, margin: '2px 0' },
+}
+
+export type DiffHunk = {
+  oldText: string
+  newText: string
+  /**
+   * Real 1-based line in the current file where this edit begins, resolved by
+   * locating the edit's text on disk. When provided, the gutter numbers this
+   * hunk from its true position; when absent it falls back to continuing from
+   * the previous hunk (or line 1 for the first).
+   */
+  startLine?: number
+}
+
+/**
+ * Renders several edits to the SAME file as one diff. When a hunk's real
+ * startLine is known the gutter shows true file line numbers; otherwise
+ * numbering continues across hunks. A dashed divider marks each edit boundary.
+ */
+export const CombinedDiffView: React.FC<{ hunks: DiffHunk[] }> = ({ hunks }) => {
+  let oldNo = 0
+  let newNo = 0
+  return (
+    <div style={diffStyles.wrap}>
+      {hunks.map((h, hi) => {
+        const lines = lineDiff(h.oldText, h.newText)
+        // Anchor this hunk's gutter to the real file line when we resolved one.
+        if (h.startLine != null && Number.isFinite(h.startLine)) {
+          oldNo = h.startLine - 1
+          newNo = h.startLine - 1
+        }
+        return (
+          <React.Fragment key={hi}>
+            {hi > 0 && <div style={diffStyles.hunkSep} />}
+            {lines.map((l, idx) => {
+              const bg = l.kind === 'add' ? diffStyles.add : l.kind === 'del' ? diffStyles.del : diffStyles.eq
+              const markerColor = l.kind === 'add' ? C.green : l.kind === 'del' ? C.red : C.fg3
+              const codeColor = l.kind === 'eq' ? C.fg2 : C.fg
+              const marker = l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '
+              const oldLabel = l.kind === 'add' ? '' : String(++oldNo)
+              const newLabel = l.kind === 'del' ? '' : String(++newNo)
+              return (
+                <div key={`${hi}:${idx}`} style={{ ...diffStyles.row, ...bg }}>
+                  <span style={diffStyles.gutter}>{oldLabel}</span>
+                  <span style={diffStyles.gutter}>{newLabel}</span>
+                  <span style={{ ...diffStyles.marker, color: markerColor }}>{marker}</span>
+                  <span style={{ ...diffStyles.code, color: codeColor }}>{l.text || ' '}</span>
+                </div>
+              )
+            })}
+          </React.Fragment>
+        )
+      })}
+    </div>
+  )
 }
 
 export const DiffView: React.FC<{ oldText: string; newText: string }> = ({ oldText, newText }) => {
@@ -148,16 +210,18 @@ export const DiffView: React.FC<{ oldText: string; newText: string }> = ({ oldTe
   return (
     <div style={diffStyles.wrap}>
       {lines.map((l, idx) => {
-        const style = l.kind === 'add' ? diffStyles.add : l.kind === 'del' ? diffStyles.del : diffStyles.eq
+        const bg = l.kind === 'add' ? diffStyles.add : l.kind === 'del' ? diffStyles.del : diffStyles.eq
+        const markerColor = l.kind === 'add' ? C.green : l.kind === 'del' ? C.red : C.fg3
+        const codeColor = l.kind === 'eq' ? C.fg2 : C.fg
         const marker = l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '
         const oldLabel = l.kind === 'add' ? '' : String(++oldNo)
         const newLabel = l.kind === 'del' ? '' : String(++newNo)
         return (
-          <div key={idx} style={{ ...diffStyles.row, ...style }}>
+          <div key={idx} style={{ ...diffStyles.row, ...bg }}>
             <span style={diffStyles.gutter}>{oldLabel}</span>
             <span style={diffStyles.gutter}>{newLabel}</span>
-            <span style={diffStyles.marker}>{marker}</span>
-            <span style={diffStyles.code}>{l.text || ' '}</span>
+            <span style={{ ...diffStyles.marker, color: markerColor }}>{marker}</span>
+            <span style={{ ...diffStyles.code, color: codeColor }}>{l.text ||' '}</span>
           </div>
         )
       })}

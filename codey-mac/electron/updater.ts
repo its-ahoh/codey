@@ -50,10 +50,19 @@ export function initAutoUpdater(notify: Notify, isPackaged: boolean, log: Log): 
 }
 
 /** IPC handlers driven by the renderer button. */
-export function registerUpdaterIpc(ipcMain: IpcMain, wrap: Wrap): void {
+export function registerUpdaterIpc(ipcMain: IpcMain, wrap: Wrap, beforeInstall?: () => void): void {
   ipcMain.handle('updater:check', () => wrap(async () => { await autoUpdater.checkForUpdates() }))
   ipcMain.handle('updater:download', () => wrap(async () => { await autoUpdater.downloadUpdate() }))
-  ipcMain.handle('updater:install', () => wrap(async () => { autoUpdater.quitAndInstall() }))
+  ipcMain.handle('updater:install', () => wrap(async () => {
+    // Mark the app as quitting first. On macOS quitAndInstall() closes every
+    // window via Squirrel and only quits once they have actually closed — but
+    // our mainWindow 'close' handler hides the window (preventDefault) unless
+    // isQuitting is set, so without this the update would just hide the window
+    // instead of restarting. (The Squirrel path fires `before-quit-for-update`,
+    // not the normal `before-quit` that otherwise sets the flag.)
+    beforeInstall?.()
+    autoUpdater.quitAndInstall()
+  }))
   // Backfill: the renderer reads the last known state on mount in case it
   // missed the initial event while React was still mounting.
   ipcMain.handle('updater:lastState', () => wrap(async () => lastState))

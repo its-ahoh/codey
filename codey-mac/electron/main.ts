@@ -1119,7 +1119,7 @@ app.whenReady().then(async () => {
   createAppMenu()
   createWindow()
   createTray()
-  registerUpdaterIpc(ipcMain, wrap)
+  registerUpdaterIpc(ipcMain, wrap, () => { isQuitting = true })
   initAutoUpdater(
     (payload) => sendToRenderer('updater:state', payload),
     app.isPackaged,
@@ -2282,4 +2282,19 @@ ipcMain.handle('shell:showItemInFolder', async (_event, p: string) => {
   if (typeof p !== 'string' || !p) return false
   shell.showItemInFolder(p)
   return true
+})
+
+// Read a text file so the file-changes viewer can resolve real line numbers for
+// an edit by locating its content in the current file. Capped at 2 MB and
+// returns null on any failure (missing file, binary, too large).
+ipcMain.handle('file:readText', async (_event, p: string): Promise<string | null> => {
+  if (typeof p !== 'string' || !p) return null
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const stat = await fs.promises.stat(p)
+    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) return null
+    return await fs.promises.readFile(p, 'utf-8')
+  } catch {
+    return null
+  }
 })
