@@ -847,11 +847,11 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                 fontWeight: chat.soloAdvisor ? 600 : 400,
               }}
               title={chat.soloAdvisor
-                ? 'Advisor hints: ON — when the model gets stuck, a stronger advisor model gives it hints to continue'
-                : 'Advisor hints: OFF — click to let a stronger advisor model help when the model gets stuck'}
+                ? 'Advisor: ON — when the model gets stuck, a stronger advisor model gives it hints to continue'
+                : 'Advisor: OFF — click to let a stronger advisor model help when the model gets stuck'}
               role="switch"
               aria-checked={chat.soloAdvisor ?? false}
-              aria-label={chat.soloAdvisor ? 'Advisor hints on' : 'Advisor hints off'}
+              aria-label={chat.soloAdvisor ? 'Advisor on' : 'Advisor off'}
             >
               💡 Advisor {chat.soloAdvisor ? 'On' : 'Off'}
             </button>
