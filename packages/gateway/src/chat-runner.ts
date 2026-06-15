@@ -3,6 +3,17 @@ import { Chat, ChatMessage, FileAttachment, ToolCallEntry } from '@codey/core';
 export const MAX_CONCURRENT_AGENTS = 4;
 export const CHAT_CONTEXT_WINDOW = 40;
 
+/**
+ * Appended to the prompt only when a chat has soloAdvisor enabled. Tells the
+ * single agent to self-escalate when stuck via the [ASK_ADVISOR] marker.
+ */
+export const SOLO_ADVISOR_INSTRUCTION =
+  'If you cannot make progress, or you notice you are repeating the same failed ' +
+  'approach across turns, end your reply with a single line ' +
+  '`[ASK_ADVISOR]: <brief description of where you are stuck>` (a stronger advisor ' +
+  'model will give you guidance, then you continue). Do not use this line unless you ' +
+  'are genuinely blocked.';
+
 export type ChatStreamEvent =
   | { type: 'queued'; chatId: string; position: number }
   | { type: 'tool_start'; chatId: string; tool?: string; message: string; input?: Record<string, unknown> }

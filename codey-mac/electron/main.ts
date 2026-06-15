@@ -2064,6 +2064,13 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('chats:setSoloAdvisor', async (_e, id: string, enabled: boolean) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.getChatManager().setSoloAdvisor(id, enabled)
+    })
+  )
+
   ipcMain.handle('chats:stop', async (_e, chatId: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')

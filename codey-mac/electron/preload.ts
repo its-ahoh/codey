@@ -110,6 +110,8 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.invoke('chats:unlink', chatId, channel, channelUserId),
     updateContextPanelOpen: (id: string, open: boolean | null) =>
       ipcRenderer.invoke('chats:updateContextPanelOpen', id, open),
+    setSoloAdvisor: (id: string, enabled: boolean) =>
+      ipcRenderer.invoke('chats:setSoloAdvisor', id, enabled),
     send: (payload: { chatId: string; text: string; attachments?: any[] }) =>
       ipcRenderer.invoke('chats:send', payload),
     stop: (chatId: string) => ipcRenderer.invoke('chats:stop', chatId),

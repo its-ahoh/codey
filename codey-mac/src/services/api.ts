@@ -198,6 +198,8 @@ export const apiService = {
       unwrap(await window.codey.chats.updateAgentModel(id, agent, model)),
     updateContextPanelOpen: async (id: string, open: boolean | null): Promise<Chat> =>
       unwrap(await window.codey.chats.updateContextPanelOpen(id, open)),
+    setSoloAdvisor: async (id: string, enabled: boolean): Promise<Chat> =>
+      unwrap(await window.codey.chats.setSoloAdvisor(id, enabled)),
     upload: async (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer): Promise<{ id: string; name: string; path: string; mimeType: string; size: number }> =>
       unwrap(await window.codey.chats.upload(chatId, fileName, mimeType, data)),
     send: async (chatId: string, text: string, attachments?: { id: string; name: string; path: string; mimeType: string; size: number }[]): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> =>

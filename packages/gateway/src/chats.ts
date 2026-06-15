@@ -218,6 +218,16 @@ export class ChatManager {
     return chat;
   }
 
+  /** Set or clear the per-chat solo-advisor toggle. */
+  setSoloAdvisor(chatId: string, enabled: boolean): Chat {
+    const chat = this.requireChat(chatId);
+    if (enabled) chat.soloAdvisor = true;
+    else delete chat.soloAdvisor;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
   /** Set lastAskedOptions on a non-team chat (the question message id + options). */
   setLastAskedOptions(chatId: string, messageId: string, options: string[]): void {
     const chat = this.cache.get(chatId);

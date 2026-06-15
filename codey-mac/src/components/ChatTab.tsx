@@ -222,7 +222,7 @@ const TeamMessage: React.FC<{
 }
 
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed }) => {
-  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setContextPanelOpen, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -835,6 +835,23 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                 <option key={m.model} value={m.model}>{m.model}</option>
               ))}
             </select>
+            <button
+              onClick={() => setSoloAdvisor(chat.id, !(chat.soloAdvisor ?? false))}
+              style={{
+                ...styles.linkBtn,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                padding: '4px 6px',
+                opacity: chat.soloAdvisor ? 1 : 0.5,
+              }}
+              title={chat.soloAdvisor
+                ? 'Solo Advisor 兜底: ON — stuck agent escalates to the advisor model'
+                : 'Solo Advisor 兜底: OFF'}
+              role="switch"
+              aria-checked={chat.soloAdvisor ?? false}
+              aria-label={chat.soloAdvisor ? 'Solo Advisor ON' : 'Solo Advisor OFF'}
+            >
+              🧭
+            </button>
           </>
         )}
         <button
