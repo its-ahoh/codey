@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import {
   ReactFlow, Background, Controls, addEdge, applyNodeChanges, applyEdgeChanges,
+  ReactFlowProvider, useReactFlow,
   Handle, Position,
   type Node, type Edge, type Connection, type NodeProps,
 } from '@xyflow/react'
@@ -75,7 +76,7 @@ interface Props {
   onClose: () => void
 }
 
-export default function FlowEditor({ teamName, workerNames, workerRoles = {}, graph, onSave, onClose }: Props) {
+function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSave, onClose }: Props) {
   const withTypes = (ns: Node[]): Node[] => ns.map(n => {
     const t = (n.data as any).type
     const rfType = t === 'worker' ? 'workerNode' : t === 'condition' ? 'conditionNode' : 'terminalNode'
@@ -104,10 +105,29 @@ export default function FlowEditor({ teamName, workerNames, workerRoles = {}, gr
       data: {},
     } as any, es)), [])
 
+  const rf = useReactFlow()
   const addWorker = (worker: string) => {
     const id = newNodeId(nodes.map(n => n.id))
-    setNodes(ns => [...ns, { id, position: { x: 200, y: 60 + ns.length * 70 }, data: { label: worker, type: 'worker', worker } } as any])
+    setNodes(ns => [...ns, { id, type: 'workerNode', position: { x: 200, y: 60 + ns.length * 70 }, data: { label: worker, type: 'worker', worker, role: workerRoles[worker] } } as any])
   }
+  const addCondition = () => {
+    const id = newNodeId(nodes.map(n => n.id))
+    setNodes(ns => [...ns, { id, type: 'conditionNode', position: { x: 260, y: 60 + ns.length * 70 }, data: { label: 'condition', type: 'condition' } } as any])
+  }
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    const raw = e.dataTransfer.getData('application/codey-node')
+    if (!raw) return
+    const payload = JSON.parse(raw) as { kind: 'worker' | 'condition'; worker?: string }
+    const position = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
+    const id = newNodeId(nodes.map(n => n.id))
+    if (payload.kind === 'condition') {
+      setNodes(ns => [...ns, { id, type: 'conditionNode', position, data: { label: 'condition', type: 'condition' } } as any])
+    } else {
+      setNodes(ns => [...ns, { id, type: 'workerNode', position, data: { label: payload.worker, type: 'worker', worker: payload.worker, role: workerRoles[payload.worker!] } } as any])
+    }
+  }, [nodes, rf, workerRoles])
+  const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }, [])
   const updateEdge = (id: string, patch: any) =>
     setEdges(es => es.map(e => e.id === id ? { ...e, data: { ...(e as any).data, ...patch }, label: patch.isDefault ? 'default' : patch.condition ?? (e as any).data?.condition } : e))
 
@@ -140,14 +160,24 @@ export default function FlowEditor({ teamName, workerNames, workerRoles = {}, gr
             <div style={{ width: 160, borderRight: `1px solid ${C.border}`, padding: 10, overflowY: 'auto' }}>
               <div style={{ fontSize: 11, color: C.fg3, marginBottom: 6 }}>Workers</div>
               {workerNames.map(w => (
-                <button key={w} onClick={() => addWorker(w)} style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4, fontSize: 12, padding: '4px 6px', background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer' }}>+ {w}</button>
+                <button key={w} draggable
+                  onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'worker', worker: w }))}
+                  onClick={() => addWorker(w)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4, fontSize: 12, padding: '8px 8px', minHeight: 40, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer' }}>
+                  <div style={{ fontWeight: 600 }}>+ {w}</div>
+                  {workerRoles[w] && <div style={{ fontSize: 10, color: C.fg3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{workerRoles[w]}</div>}
+                </button>
               ))}
+              <button draggable
+                onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'condition' }))}
+                onClick={() => addCondition()}
+                style={{ display: 'block', width: '100%', marginTop: 8, fontSize: 12, padding: '6px', background: C.surface2, border: `1px dashed ${C.accent}`, borderRadius: 6, cursor: 'pointer' }}>◇ + Condition</button>
             </div>
           )}
           {showRaw ? (
             <pre style={{ flex: 1, margin: 0, padding: 14, overflow: 'auto', fontSize: 12, color: C.fg }}>{JSON.stringify(current(), null, 2)}</pre>
           ) : (
-            <div style={{ flex: 1, position: 'relative' }}>
+            <div style={{ flex: 1, position: 'relative' }} onDrop={onDrop} onDragOver={onDragOver}>
               <ReactFlow nodes={nodes} edges={styledEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => setSelEdge(e.id)} nodeTypes={nodeTypes} fitView>
                 <Background />
                 <Controls />
@@ -167,4 +197,8 @@ export default function FlowEditor({ teamName, workerNames, workerRoles = {}, gr
       </div>
     </div>
   )
+}
+
+export default function FlowEditor(props: Props) {
+  return <ReactFlowProvider><FlowEditorInner {...props} /></ReactFlowProvider>
 }
