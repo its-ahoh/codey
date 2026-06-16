@@ -988,11 +988,11 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
           const isSelected = !isUser && msg.id === selectedTurnId && panelOpen
           return (
             <div key={msg.id}
-              onClick={isUser ? undefined : () => {
+              onDoubleClick={isUser ? undefined : () => {
                 setSelectedTurnIdState(msg.id)
                 setFollowLatest(false)
-                // If the context panel is closed, open it on the turn-detail
-                // tab so clicking a message reveals that turn's own detail.
+                // Only a double-click reveals the right panel; open it on the
+                // turn-detail tab so it shows that turn's own detail.
                 if (!panelOpen) {
                   setContextPanelOpen(chat.id, true)
                   setPanelTab('current')
@@ -1011,7 +1011,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
               <div style={{
                 maxWidth: '72%', padding: '10px 14px',
                 borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                background: isUser ? C.userBg : C.aiBg,
+                background: isUser ? C.userBg : C.codeBg,
                 color: isUser ? C.onAccent : C.fg, fontSize: 13, lineHeight: 1.55, wordBreak: 'break-word',
                 boxShadow: isUser
                   ? 'none'
@@ -1090,7 +1090,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                 && msg.userQuestion.options.length > 0
                 && (
                   msg.userQuestion.multiSelect ? (
-                    <div style={styles.choiceRow}>
+                    <div style={styles.choiceRow} onDoubleClick={e => e.stopPropagation()}>
                       {msg.userQuestion.options.map((opt, i) => {
                         const picked = multiChoice.includes(opt.label)
                         return (
@@ -1128,7 +1128,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                       </button>
                     </div>
                   ) : (
-                    <div style={styles.choiceRow}>
+                    <div style={styles.choiceRow} onDoubleClick={e => e.stopPropagation()}>
                       {msg.userQuestion.options.map((opt, i) => (
                         <button
                           key={i}
