@@ -6,7 +6,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { TeamGraph, validateGraph } from '../../../packages/core/src/team-graph'
-import { toFlow, fromFlow, newNodeId } from './flowEditorModel'
+import { toFlow, fromFlow, newNodeId, branchColors } from './flowEditorModel'
 import { C } from '../theme'
 
 // ---------------------------------------------------------------------------
@@ -97,7 +97,12 @@ export default function FlowEditor({ teamName, workerNames, workerRoles = {}, gr
   const onNodesChange = useCallback((cs: any) => setNodes(ns => applyNodeChanges(cs, ns)), [])
   const onEdgesChange = useCallback((cs: any) => setEdges(es => applyEdgeChanges(cs, es)), [])
   const onConnect = useCallback((c: Connection) =>
-    setEdges(es => addEdge({ ...c, id: `e_${Date.now()}`, data: {} } as any, es)), [])
+    setEdges(es => addEdge({
+      ...c, id: `e_${Date.now()}`,
+      sourceHandle: c.sourceHandle ?? undefined,
+      targetHandle: c.targetHandle ?? undefined,
+      data: {},
+    } as any, es)), [])
 
   const addWorker = (worker: string) => {
     const id = newNodeId(nodes.map(n => n.id))
@@ -105,6 +110,13 @@ export default function FlowEditor({ teamName, workerNames, workerRoles = {}, gr
   }
   const updateEdge = (id: string, patch: any) =>
     setEdges(es => es.map(e => e.id === id ? { ...e, data: { ...(e as any).data, ...patch }, label: patch.isDefault ? 'default' : patch.condition ?? (e as any).data?.condition } : e))
+
+  const colors = useMemo(() => branchColors(nodes as any, edges as any), [nodes, edges])
+  const styledEdges = useMemo(() => edges.map(e => ({
+    ...e,
+    animated: true,
+    style: { ...(e as any).style, stroke: colors[e.id] ?? C.fg3 },
+  })), [edges, colors])
 
   const save = () => onSave(current())
 
@@ -136,7 +148,7 @@ export default function FlowEditor({ teamName, workerNames, workerRoles = {}, gr
             <pre style={{ flex: 1, margin: 0, padding: 14, overflow: 'auto', fontSize: 12, color: C.fg }}>{JSON.stringify(current(), null, 2)}</pre>
           ) : (
             <div style={{ flex: 1, position: 'relative' }}>
-              <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => setSelEdge(e.id)} nodeTypes={nodeTypes} fitView>
+              <ReactFlow nodes={nodes} edges={styledEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => setSelEdge(e.id)} nodeTypes={nodeTypes} fitView>
                 <Background />
                 <Controls />
               </ReactFlow>
