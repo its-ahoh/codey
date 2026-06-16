@@ -1,4 +1,4 @@
-export type TeamGraphNodeType = 'start' | 'worker' | 'end';
+export type TeamGraphNodeType = 'start' | 'worker' | 'condition' | 'end';
 
 export interface TeamGraphNode {
   id: string;
@@ -17,6 +17,10 @@ export interface TeamGraphEdge {
   condition?: string;
   /** Fallback edge taken when no conditioned edge matches. */
   isDefault?: boolean;
+  /** Presentation-only: React Flow source handle id. Ignored by the runtime. */
+  sourceHandle?: string;
+  /** Presentation-only: React Flow target handle id. Ignored by the runtime. */
+  targetHandle?: string;
 }
 
 export interface TeamGraph {
