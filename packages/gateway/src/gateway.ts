@@ -2968,10 +2968,29 @@ Example: /model gpt-4.1 write a Python script`;
     const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
     let resumeInfo = opts?.resume;
 
+    let lastWorkerOutput = '';
+    let lastWorkerName = '';
     let stepIndex = 0;
     while (state.status === 'running') {
       if (opts?.signal?.aborted) break;
       const node = nodeById.get(state.currentNodeId)!;
+
+      if (node.type === 'condition') {
+        // Branch point: no worker runs. The judge picks among the diamond's
+        // outgoing edges using the last worker's output for context.
+        const { decision, edge } = await this.pickNextGraphEdge(
+          graph, nodeById, state.currentNodeId, task, lastWorkerName,
+          lastWorkerOutput, blackboard.renderForUser() || '',
+        );
+        if (!edge) {
+          await emitter.status(`🏁 Flow stopped at a decision point (no matching branch).`);
+          break;
+        }
+        await emitter.status(`↪️ ${decision.fallback ? '(default) ' : ''}${decision.reason || 'branch'}`);
+        state = advance(graph, state, edge.id);
+        continue;
+      }
+
       // safe: team.graph is only set after validateGraph guarantees every worker node has a worker
       const workerName = node.worker!;
       const worker = wm.getWorker(workerName);
@@ -3001,6 +3020,8 @@ Example: /model gpt-4.1 write a Python script`;
 
       const ingested = blackboard.ingest(workerName, stepIndex, resp.output);
       results.push(`**${worker.name}**:\n${ingested.stripped}`);
+      lastWorkerOutput = ingested.stripped;
+      lastWorkerName = workerName;
 
       // Pause if this worker asked the user a question.
       const ask = parseAskUser(ingested.stripped);
