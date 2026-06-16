@@ -925,7 +925,28 @@ function warmMarkerPath(): string {
   return path.join(app.getPath('userData'), 'voice-warm.json')
 }
 
-type WarmMarkers = Record<string, { warmedAt: string; loadSeconds: number }>
+// The macOS build (e.g. "23F79") the warm marker was stamped under. CoreML
+// rebuilds its per-machine compiled model cache on an OS update, so a marker
+// written before the bump is stale: the model is still on disk but the next
+// load recompiles from scratch (30-90s, and trips the helper's 10s load
+// timeout). Keying markers on the build lets us downgrade ⚡→✓ after an OS
+// change instead of lying about "instant".
+let _osBuildCache: string | null = null
+function currentOsBuild(): string {
+  if (_osBuildCache !== null) return _osBuildCache
+  try {
+    const cp = require('child_process') as typeof import('child_process')
+    _osBuildCache = cp.execSync('sw_vers -buildVersion', { encoding: 'utf8' }).trim()
+  } catch {
+    // Non-macOS or sw_vers missing — fall back to the Darwin kernel string,
+    // which also bumps on OS updates.
+    const os = require('os') as typeof import('os')
+    _osBuildCache = os.release()
+  }
+  return _osBuildCache || ''
+}
+
+type WarmMarkers = Record<string, { warmedAt: string; loadSeconds: number; osBuild?: string }>
 
 function readWarmMarkers(): WarmMarkers {
   try {
@@ -944,7 +965,7 @@ function writeWarmMarker(model: string, loadSeconds: number) {
     // Store under both forms so lookups work whether UI sends the prefixed
     // (`openai_whisper-...`) or bare (`large-v3...`) variant string.
     const bare = model.startsWith('openai_whisper-') ? model.slice('openai_whisper-'.length) : model
-    const entry = { warmedAt: new Date().toISOString(), loadSeconds }
+    const entry = { warmedAt: new Date().toISOString(), loadSeconds, osBuild: currentOsBuild() }
     cur[model] = entry
     cur[bare] = entry
     cur[`openai_whisper-${bare}`] = entry
@@ -1707,7 +1728,15 @@ app.whenReady().then(async () => {
   )
 
   ipcMain.handle('voice:listWarmedModels', async () =>
-    wrap(async () => Object.keys(readWarmMarkers()))
+    wrap(async () => {
+      // Only report models whose warm marker matches the current OS build.
+      // Entries from a prior build (or pre-osBuild markers, which read as
+      // undefined) are dropped, so the UI shows ✓ instead of ⚡ and
+      // WhisperTab's auto-warm effect re-warms the selected model on boot.
+      const build = currentOsBuild()
+      const markers = readWarmMarkers()
+      return Object.keys(markers).filter(k => markers[k]?.osBuild === build)
+    })
   )
 
   // Lists WhisperKit model folders currently on disk. WhisperKit stores
