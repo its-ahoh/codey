@@ -238,4 +238,37 @@ describe('validateGraph — worker self-loops', () => {
     };
     expect(validateGraph(g, ['coder']).some(p => p.includes('maxCalls must be >= 1'))).toBe(true);
   });
+
+  it('rejects non-integer maxCalls', () => {
+    const g: import('./team-graph').TeamGraph = {
+      entry: 'start', maxHops: 10,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 1.5, x: 1, y: 0 },
+        { id: 'end', type: 'end', x: 2, y: 0 },
+      ],
+      edges: [
+        { id: 'e0', from: 'start', to: 'w1' },
+        { id: 'e1', from: 'w1', to: 'end' },
+      ],
+    };
+    expect(validateGraph(g, ['coder']).some(p => p.includes('maxCalls must be >= 1'))).toBe(true);
+  });
+
+  it('accepts a worker with both a self-edge and an exit edge', () => {
+    const g: import('./team-graph').TeamGraph = {
+      entry: 'start', maxHops: 10,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 3, x: 1, y: 0 },
+        { id: 'end', type: 'end', x: 2, y: 0 },
+      ],
+      edges: [
+        { id: 'e0', from: 'start', to: 'w1' },
+        { id: 'e1', from: 'w1', to: 'w1' },
+        { id: 'e2', from: 'w1', to: 'end' },
+      ],
+    };
+    expect(validateGraph(g, ['coder'])).toEqual([]);
+  });
 });
