@@ -1,7 +1,7 @@
 import type { TeamGraph, TeamGraphNode, TeamGraphEdge } from '../../../packages/core/src/team-graph'
 
 export interface FlowNode { id: string; position: { x: number; y: number }; data: { label: string; type: TeamGraphNode['type']; worker?: string }; type?: string }
-export interface FlowEdge { id: string; source: string; target: string; label?: string; data: { condition?: string; isDefault?: boolean } }
+export interface FlowEdge { id: string; source: string; target: string; sourceHandle?: string; targetHandle?: string; label?: string; data: { condition?: string; isDefault?: boolean } }
 
 export function toFlow(g: TeamGraph): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const nodes = g.nodes.map(n => ({
@@ -11,6 +11,7 @@ export function toFlow(g: TeamGraph): { nodes: FlowNode[]; edges: FlowEdge[] } {
   }))
   const edges = g.edges.map(e => ({
     id: e.id, source: e.from, target: e.to,
+    sourceHandle: e.sourceHandle, targetHandle: e.targetHandle,
     label: e.isDefault ? 'default' : e.condition,
     data: { condition: e.condition, isDefault: e.isDefault },
   }))
@@ -27,6 +28,8 @@ export function fromFlow(nodes: FlowNode[], edges: FlowEdge[], entry: string, ma
     const edge: TeamGraphEdge = { id: e.id, from: e.source, to: e.target }
     if (e.data.condition !== undefined) edge.condition = e.data.condition
     if (e.data.isDefault !== undefined) edge.isDefault = e.data.isDefault
+    if (e.sourceHandle) edge.sourceHandle = e.sourceHandle
+    if (e.targetHandle) edge.targetHandle = e.targetHandle
     return edge
   })
   return { entry, maxHops, nodes: gNodes, edges: gEdges }

@@ -34,3 +34,32 @@ describe('flowEditorModel', () => {
     expect(newNodeId(['n_1', 'n_2'])).not.toBe('n_1')
   })
 })
+
+const gHandles: TeamGraph = {
+  entry: 'start', maxHops: 20,
+  nodes: [
+    { id: 'start', type: 'start', x: 0, y: 0 },
+    { id: 'w1', type: 'worker', worker: 'coder', x: 100, y: 0 },
+    { id: 'c1', type: 'condition', x: 200, y: 0 },
+    { id: 'end', type: 'end', x: 300, y: 0 },
+  ],
+  edges: [
+    { id: 'e0', from: 'start', to: 'w1' },
+    { id: 'e1', from: 'w1', to: 'c1', sourceHandle: 'r', targetHandle: 'l' },
+    { id: 'e2', from: 'c1', to: 'end', isDefault: true },
+  ],
+}
+
+describe('flowEditorModel condition + handles round-trip', () => {
+  it('preserves condition node type and edge handles', () => {
+    const flow = toFlow(gHandles)
+    const cNode = flow.nodes.find(n => n.id === 'c1')!
+    expect(cNode.data.type).toBe('condition')
+
+    const back = fromFlow(flow.nodes, flow.edges, gHandles.entry, gHandles.maxHops)
+    expect(back.nodes.find(n => n.id === 'c1')!.type).toBe('condition')
+    const e1 = back.edges.find(e => e.id === 'e1')!
+    expect(e1.sourceHandle).toBe('r')
+    expect(e1.targetHandle).toBe('l')
+  })
+})
