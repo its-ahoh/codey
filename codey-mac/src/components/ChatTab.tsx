@@ -1011,7 +1011,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
               <div style={{
                 maxWidth: '72%', padding: '10px 14px',
                 borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                background: isUser ? C.userBg : C.codeBg,
+                background: isUser ? C.userBg : C.aiBg,
                 color: isUser ? C.onAccent : C.fg, fontSize: 13, lineHeight: 1.55, wordBreak: 'break-word',
                 boxShadow: isUser
                   ? 'none'
