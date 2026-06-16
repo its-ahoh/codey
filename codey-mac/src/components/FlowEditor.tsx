@@ -204,7 +204,7 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
             <pre style={{ flex: 1, margin: 0, padding: 14, overflow: 'auto', fontSize: 12, color: C.fg }}>{JSON.stringify(current(), null, 2)}</pre>
           ) : (
             <div style={{ flex: 1, position: 'relative' }} onDrop={onDrop} onDragOver={onDragOver}>
-              <ReactFlow nodes={nodes} edges={styledEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => { setSelEdge(e.id); setSelNode(null) }} onNodeClick={(_, n) => { setSelNode(n.id); setSelEdge(null) }} nodeTypes={nodeTypes} fitView>
+              <ReactFlow nodes={nodes} edges={styledEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => { setSelEdge(e.id); setSelNode(null) }} onNodeClick={(_, n) => { setSelNode(n.id); setSelEdge(null) }} onNodesDelete={(ns) => { if (ns.some(n => n.id === selNode)) setSelNode(null) }} onEdgesDelete={(es) => { if (es.some(e => e.id === selEdge)) setSelEdge(null) }} nodeTypes={nodeTypes} fitView>
                 <Background />
                 <Controls />
               </ReactFlow>
