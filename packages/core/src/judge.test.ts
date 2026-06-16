@@ -24,6 +24,33 @@ describe('buildJudgePrompt', () => {
   });
 });
 
+describe('buildJudgePrompt — decision question', () => {
+  it('renders the decision question and yes/no edges', () => {
+    const prompt = buildJudgePrompt({
+      task: 'ship it',
+      worker: 'coder',
+      workerOutput: 'all green',
+      blackboardSummary: '',
+      question: 'Did the tests pass?',
+      edges: [
+        { id: 'yes', condition: 'yes', targetWorker: '(end)' },
+        { id: 'no', condition: 'no', targetWorker: 'coder' },
+      ],
+    });
+    expect(prompt).toContain('Did the tests pass?');
+    expect(prompt).toContain('id="yes"');
+    expect(prompt).toContain('id="no"');
+  });
+
+  it('omits the decision section when no question is given', () => {
+    const prompt = buildJudgePrompt({
+      task: 't', worker: 'w', workerOutput: 'o', blackboardSummary: '',
+      edges: [{ id: 'e1', condition: 'tests pass', targetWorker: 'reviewer' }],
+    });
+    expect(prompt).not.toContain('## Decision');
+  });
+});
+
 describe('runJudge', () => {
   it('returns the chosen edge id and reason from JSON output', async () => {
     const runner = async (): Promise<AgentResponse> =>

@@ -1,12 +1,19 @@
-export type TeamGraphNodeType = 'start' | 'worker' | 'end';
+export type TeamGraphNodeType = 'start' | 'worker' | 'condition' | 'end';
 
 export interface TeamGraphNode {
   id: string;
   type: TeamGraphNodeType;
   /** Worker name; required when type === 'worker'. */
   worker?: string;
+  /** Decision question the judge evaluates; used when type === 'condition'. */
+  condition?: string;
+  /** Max consecutive runs of this (self-looping) worker before a forced exit. */
+  maxCalls?: number;
   x: number;
   y: number;
+  /** Presentation-only: editor card size. Ignored by the runtime. */
+  width?: number;
+  height?: number;
 }
 
 export interface TeamGraphEdge {
@@ -17,6 +24,12 @@ export interface TeamGraphEdge {
   condition?: string;
   /** Fallback edge taken when no conditioned edge matches. */
   isDefault?: boolean;
+  /** Outcome of a diamond's decision. Only set on edges leaving a 'condition' node. */
+  branch?: 'yes' | 'no';
+  /** Presentation-only: React Flow source handle id. Ignored by the runtime. */
+  sourceHandle?: string;
+  /** Presentation-only: React Flow target handle id. Ignored by the runtime. */
+  targetHandle?: string;
 }
 
 export interface TeamGraph {
@@ -49,6 +62,26 @@ export function validateGraph(graph: TeamGraph, knownWorkers: string[]): string[
       } else if (!known.has(node.worker.toLowerCase())) {
         problems.push(`node "${node.id}" references unknown worker "${node.worker}"`);
       }
+      const outs = graph.edges.filter(e => e.from === node.id);
+      if (outs.some(e => e.to === node.id) && !outs.some(e => e.to !== node.id)) {
+        problems.push(`worker node "${node.id}" self-loops with no exit edge`);
+      }
+      if (node.maxCalls !== undefined && (!Number.isInteger(node.maxCalls) || node.maxCalls < 1)) {
+        problems.push(`worker node "${node.id}" maxCalls must be >= 1`);
+      }
+    } else if (node.type === 'condition') {
+      if (node.worker) {
+        problems.push(`condition node "${node.id}" must not reference a worker`);
+      }
+      if (!node.condition || !node.condition.trim()) {
+        problems.push(`condition node "${node.id}" needs a question`);
+      }
+      const outs = graph.edges.filter(e => e.from === node.id);
+      const yes = outs.filter(e => e.branch === 'yes').length;
+      const no = outs.filter(e => e.branch === 'no').length;
+      if (outs.length !== 2 || yes !== 1 || no !== 1) {
+        problems.push(`condition node "${node.id}" needs exactly one yes and one no outgoing edge`);
+      }
     }
   }
 
@@ -66,8 +99,8 @@ export function validateGraph(graph: TeamGraph, knownWorkers: string[]): string[
 
   for (const node of graph.nodes) {
     const hasOut = (outgoing.get(node.id)?.length ?? 0) > 0;
-    if ((node.type === 'worker' || node.type === 'start') && !hasOut) {
-      const label = node.type === 'start' ? 'start node' : 'worker node';
+    if ((node.type === 'worker' || node.type === 'start' || node.type === 'condition') && !hasOut) {
+      const label = node.type === 'start' ? 'start node' : node.type === 'condition' ? 'condition node' : 'worker node';
       problems.push(`${label} "${node.id}" has no outgoing edge`);
     }
   }
@@ -103,6 +136,8 @@ export interface GraphRunState {
   status: GraphRunStatus;
   /** Node ids visited in order (worker nodes only), for progress/history. */
   visited: string[];
+  /** Consecutive runs of currentNodeId; resets when settling onto a different node. */
+  runStreak: number;
 }
 
 function nodeMap(graph: TeamGraph): Map<string, TeamGraphNode> {
@@ -111,6 +146,20 @@ function nodeMap(graph: TeamGraph): Map<string, TeamGraphNode> {
 
 export function outgoingEdges(graph: TeamGraph, nodeId: string): TeamGraphEdge[] {
   return graph.edges.filter(e => e.from === nodeId);
+}
+
+/**
+ * Outgoing edges the judge may choose from. Drops a worker's self-edge once its
+ * consecutive-run streak has reached the node's maxCalls, forcing an exit. For
+ * nodes without maxCalls (or non-worker nodes) this equals outgoingEdges.
+ */
+export function eligibleEdges(graph: TeamGraph, state: GraphRunState, nodeId: string): TeamGraphEdge[] {
+  const edges = outgoingEdges(graph, nodeId);
+  const node = nodeMap(graph).get(nodeId);
+  if (node?.type === 'worker' && node.maxCalls !== undefined && state.runStreak >= node.maxCalls) {
+    return edges.filter(e => e.to !== nodeId);
+  }
+  return edges;
 }
 
 /** Follow non-worker nodes (start) forward to the first worker/end node. */
@@ -125,17 +174,22 @@ function settle(graph: TeamGraph, nodeId: string, state: GraphRunState): GraphRu
   }
   const node = nodes.get(cur);
   if (!node) return { ...state, currentNodeId: cur, status: 'stuck' };
-  if (node.type === 'end') return { ...state, currentNodeId: cur, status: 'done' };
+  const runStreak = state.currentNodeId === cur ? state.runStreak : 0;
+  if (node.type === 'end') return { ...state, currentNodeId: cur, status: 'done', runStreak };
+  if (node.type === 'condition') {
+    return { ...state, currentNodeId: cur, status: 'running', runStreak };
+  }
   return {
     ...state,
     currentNodeId: cur,
     status: 'running',
     visited: [...state.visited, cur],
+    runStreak,
   };
 }
 
 export function startRun(graph: TeamGraph): GraphRunState {
-  return settle(graph, graph.entry, { currentNodeId: graph.entry, hops: 0, status: 'running', visited: [] });
+  return settle(graph, graph.entry, { currentNodeId: graph.entry, hops: 0, status: 'running', visited: [], runStreak: 0 });
 }
 
 /**
@@ -162,5 +216,9 @@ export function resolveEdge(graph: TeamGraph, nodeId: string, chosenEdgeId: stri
   if (edges.length === 0) return null;
   const chosen = chosenEdgeId ? edges.find(e => e.id === chosenEdgeId) : undefined;
   if (chosen) return chosen;
+  const node = nodeMap(graph).get(nodeId);
+  if (node?.type === 'condition') {
+    return edges.find(e => e.branch === 'no') ?? null;
+  }
   return edges.find(e => e.isDefault) ?? null;
 }
