@@ -5,8 +5,15 @@ export interface TeamGraphNode {
   type: TeamGraphNodeType;
   /** Worker name; required when type === 'worker'. */
   worker?: string;
+  /** Decision question the judge evaluates; used when type === 'condition'. */
+  condition?: string;
+  /** Max consecutive runs of this (self-looping) worker before a forced exit. */
+  maxCalls?: number;
   x: number;
   y: number;
+  /** Presentation-only: editor card size. Ignored by the runtime. */
+  width?: number;
+  height?: number;
 }
 
 export interface TeamGraphEdge {
@@ -17,6 +24,8 @@ export interface TeamGraphEdge {
   condition?: string;
   /** Fallback edge taken when no conditioned edge matches. */
   isDefault?: boolean;
+  /** Outcome of a diamond's decision. Only set on edges leaving a 'condition' node. */
+  branch?: 'yes' | 'no';
   /** Presentation-only: React Flow source handle id. Ignored by the runtime. */
   sourceHandle?: string;
   /** Presentation-only: React Flow target handle id. Ignored by the runtime. */
@@ -53,13 +62,25 @@ export function validateGraph(graph: TeamGraph, knownWorkers: string[]): string[
       } else if (!known.has(node.worker.toLowerCase())) {
         problems.push(`node "${node.id}" references unknown worker "${node.worker}"`);
       }
+      const outs = graph.edges.filter(e => e.from === node.id);
+      if (outs.some(e => e.to === node.id) && !outs.some(e => e.to !== node.id)) {
+        problems.push(`worker node "${node.id}" self-loops with no exit edge`);
+      }
+      if (node.maxCalls !== undefined && (!Number.isInteger(node.maxCalls) || node.maxCalls < 1)) {
+        problems.push(`worker node "${node.id}" maxCalls must be >= 1`);
+      }
     } else if (node.type === 'condition') {
       if (node.worker) {
         problems.push(`condition node "${node.id}" must not reference a worker`);
       }
+      if (!node.condition || !node.condition.trim()) {
+        problems.push(`condition node "${node.id}" needs a question`);
+      }
       const outs = graph.edges.filter(e => e.from === node.id);
-      if (!outs.some(e => e.isDefault)) {
-        problems.push(`condition node "${node.id}" needs a default outgoing edge`);
+      const yes = outs.filter(e => e.branch === 'yes').length;
+      const no = outs.filter(e => e.branch === 'no').length;
+      if (outs.length !== 2 || yes !== 1 || no !== 1) {
+        problems.push(`condition node "${node.id}" needs exactly one yes and one no outgoing edge`);
       }
     }
   }

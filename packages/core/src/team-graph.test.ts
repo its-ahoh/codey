@@ -115,15 +115,15 @@ function graphWithCondition(): TeamGraph {
     nodes: [
       { id: 'start', type: 'start', x: 0, y: 0 },
       { id: 'w1', type: 'worker', worker: 'coder', x: 100, y: 0 },
-      { id: 'c1', type: 'condition', x: 200, y: 0 },
+      { id: 'c1', type: 'condition', condition: 'needs review?', x: 200, y: 0 },
       { id: 'w2', type: 'worker', worker: 'reviewer', x: 300, y: 0 },
       { id: 'end', type: 'end', x: 400, y: 0 },
     ],
     edges: [
       { id: 'e0', from: 'start', to: 'w1' },
       { id: 'e1', from: 'w1', to: 'c1' },
-      { id: 'e2', from: 'c1', to: 'w2', condition: 'needs review' },
-      { id: 'e3', from: 'c1', to: 'end', isDefault: true },
+      { id: 'e2', from: 'c1', to: 'w2', branch: 'yes' },
+      { id: 'e3', from: 'c1', to: 'end', branch: 'no' },
       { id: 'e4', from: 'w2', to: 'end', isDefault: true },
     ],
   };
@@ -160,14 +160,82 @@ describe('condition node validation', () => {
     expect(problems.some(p => p.includes('c1') && p.includes('worker'))).toBe(true);
   });
 
-  it('rejects a condition node with no default outgoing edge', () => {
+  it('rejects a condition node missing a yes or no branch edge', () => {
     const g = graphWithCondition();
-    g.edges = g.edges.map(e => e.id === 'e3' ? { ...e, isDefault: false } : e);
+    g.edges = g.edges.map(e => e.id === 'e3' ? { ...e, branch: undefined } : e);
     const problems = validateGraph(g, workers);
-    expect(problems.some(p => p.includes('c1') && p.includes('default'))).toBe(true);
+    expect(problems.some(p => p.includes('c1') && p.includes('one yes and one no'))).toBe(true);
   });
 
   it('accepts a well-formed condition node', () => {
     expect(validateGraph(graphWithCondition(), workers)).toEqual([]);
+  });
+});
+
+describe('validateGraph — diamonds carry conditions', () => {
+  const base = (over: Partial<import('./team-graph').TeamGraph> = {}) => ({
+    entry: 'start', maxHops: 10,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'w1', type: 'worker', worker: 'coder', x: 1, y: 0 },
+      { id: 'd1', type: 'condition', condition: 'tests pass?', x: 2, y: 0 },
+      { id: 'end', type: 'end', x: 3, y: 0 },
+    ],
+    edges: [
+      { id: 'e0', from: 'start', to: 'w1' },
+      { id: 'e1', from: 'w1', to: 'd1' },
+      { id: 'e2', from: 'd1', to: 'end', branch: 'yes' },
+      { id: 'e3', from: 'd1', to: 'w1', branch: 'no' },
+    ],
+    ...over,
+  } as import('./team-graph').TeamGraph);
+
+  it('accepts a diamond with a question and one yes + one no edge', () => {
+    expect(validateGraph(base(), ['coder'])).toEqual([]);
+  });
+
+  it('rejects a diamond with no question', () => {
+    const g = base();
+    g.nodes.find(n => n.id === 'd1')!.condition = '';
+    expect(validateGraph(g, ['coder']).some(p => p.includes('needs a question'))).toBe(true);
+  });
+
+  it('rejects a diamond without exactly one yes and one no edge', () => {
+    const g = base();
+    g.edges.find(e => e.id === 'e3')!.branch = 'yes';
+    expect(validateGraph(g, ['coder']).some(p => p.includes('one yes and one no'))).toBe(true);
+  });
+});
+
+describe('validateGraph — worker self-loops', () => {
+  it('rejects a worker self-loop with no exit edge', () => {
+    const g: import('./team-graph').TeamGraph = {
+      entry: 'start', maxHops: 10,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 3, x: 1, y: 0 },
+      ],
+      edges: [
+        { id: 'e0', from: 'start', to: 'w1' },
+        { id: 'e1', from: 'w1', to: 'w1' },
+      ],
+    };
+    expect(validateGraph(g, ['coder']).some(p => p.includes('self-loops with no exit'))).toBe(true);
+  });
+
+  it('rejects maxCalls < 1', () => {
+    const g: import('./team-graph').TeamGraph = {
+      entry: 'start', maxHops: 10,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 0, x: 1, y: 0 },
+        { id: 'end', type: 'end', x: 2, y: 0 },
+      ],
+      edges: [
+        { id: 'e0', from: 'start', to: 'w1' },
+        { id: 'e1', from: 'w1', to: 'end' },
+      ],
+    };
+    expect(validateGraph(g, ['coder']).some(p => p.includes('maxCalls must be >= 1'))).toBe(true);
   });
 });
