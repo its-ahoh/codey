@@ -157,7 +157,7 @@ export const QuickQuestionView: React.FC<Props> = ({ chatId, inputRef }) => {
       </div>
       <div ref={listRef} style={qqStyles.list}>
         {thread.messages.length === 0 && (
-          <div style={qqStyles.empty}>Ask a quick question about this chat.</div>
+          <div style={qqStyles.empty}>Ask a quick question...</div>
         )}
         {thread.messages.map(m => (
           <div key={m.id} style={m.role === 'user' ? qqStyles.userMsg : qqStyles.asstMsg}>
@@ -230,7 +230,7 @@ export const QuickQuestionView: React.FC<Props> = ({ chatId, inputRef }) => {
             ref={inputRef}
             style={qqStyles.textarea}
             value={draft}
-            placeholder={isDragging ? 'Drop to attach…' : 'Ask a quick question… (↵ to send)'}
+            placeholder={isDragging ? 'Drop to attach…' : 'Ask a quick question...'}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={onKey}
             onPaste={handlePaste}
