@@ -3027,7 +3027,6 @@ Example: /model gpt-4.1 write a Python script`;
       results.push(`**${worker.name}**:\n${ingested.stripped}`);
       lastWorkerOutput = ingested.stripped;
       lastWorkerName = workerName;
-      state = { ...state, runStreak: state.runStreak + 1 };
 
       // Pause if this worker asked the user a question.
       const ask = parseAskUser(ingested.stripped);
@@ -3046,6 +3045,9 @@ Example: /model gpt-4.1 write a Python script`;
         await emitter.notify(rendered.text, rendered.choices);
         return emitter.transcript;
       }
+
+      // Count this completed (non-paused) run toward the worker's self-loop cap.
+      state = { ...state, runStreak: state.runStreak + 1 };
 
       // Judge picks the next edge.
       const { decision, edge } = await this.pickNextGraphEdge(
