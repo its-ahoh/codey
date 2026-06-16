@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -2645,7 +2645,7 @@ Example: /model gpt-4.1 write a Python script`;
         await emitter.notify(`Team \`${pending.teamName}\` no longer has a flow graph; the paused run was dropped.`);
         return emitter.transcript;
       }
-      const state: GraphRunState = { currentNodeId: pending.graphState.currentNodeId, hops: pending.graphState.hops, status: 'running', visited: pending.graphState.visited };
+      const state: GraphRunState = { currentNodeId: pending.graphState.currentNodeId, hops: pending.graphState.hops, status: 'running', visited: pending.graphState.visited, runStreak: pending.graphState.runStreak ?? 0 };
       const blackboard = TeamBlackboard.fromJSON(pending.blackboard);
       await this.continueGraphRun(
         emitter, chatId, convBase,
@@ -2862,10 +2862,12 @@ Example: /model gpt-4.1 write a Python script`;
     graph: TeamGraph,
     nodeById: Map<string, TeamGraph['nodes'][number]>,
     nodeId: string,
+    state: GraphRunState,
   ): JudgeInput['edges'] {
-    return outgoingEdges(graph, nodeId).map(e => ({
+    const node = nodeById.get(nodeId);
+    return eligibleEdges(graph, state, nodeId).map(e => ({
       id: e.id,
-      condition: e.condition,
+      condition: node?.type === 'condition' ? e.branch : e.condition,
       targetWorker: nodeById.get(e.to)?.type === 'end' ? '(end)' : (nodeById.get(e.to)?.worker ?? e.to),
     }));
   }
@@ -2879,16 +2881,19 @@ Example: /model gpt-4.1 write a Python script`;
     graph: TeamGraph,
     nodeById: Map<string, TeamGraph['nodes'][number]>,
     currentNodeId: string,
+    state: GraphRunState,
     task: string,
     workerName: string,
     workerOutput: string,
     blackboardSummary: string,
     signal?: AbortSignal,
   ): Promise<{ decision: JudgeDecision; edge: TeamGraphEdge | null }> {
-    const edges = this.buildJudgeEdges(graph, nodeById, currentNodeId);
+    const edges = this.buildJudgeEdges(graph, nodeById, currentNodeId, state);
+    const node = nodeById.get(currentNodeId);
     const { agent, model } = this.getAdvisorAgentAndModel();
     const decision = await runJudge(
-      { task, worker: workerName, workerOutput, blackboardSummary, edges },
+      { task, worker: workerName, workerOutput, blackboardSummary, edges,
+        question: node?.type === 'condition' ? node.condition : undefined },
       { agent, model, runner: this.advisorRunner, signal },
     );
     const edge = resolveEdge(graph, currentNodeId, decision.edgeId);
@@ -2979,7 +2984,7 @@ Example: /model gpt-4.1 write a Python script`;
         // Branch point: no worker runs. The judge picks among the diamond's
         // outgoing edges using the last worker's output for context.
         const { decision, edge } = await this.pickNextGraphEdge(
-          graph, nodeById, state.currentNodeId, task, lastWorkerName,
+          graph, nodeById, state.currentNodeId, state, task, lastWorkerName,
           lastWorkerOutput, blackboard.renderForUser() || '',
         );
         if (!edge) {
@@ -3022,6 +3027,7 @@ Example: /model gpt-4.1 write a Python script`;
       results.push(`**${worker.name}**:\n${ingested.stripped}`);
       lastWorkerOutput = ingested.stripped;
       lastWorkerName = workerName;
+      state = { ...state, runStreak: state.runStreak + 1 };
 
       // Pause if this worker asked the user a question.
       const ask = parseAskUser(ingested.stripped);
@@ -3029,7 +3035,7 @@ Example: /model gpt-4.1 write a Python script`;
         const teamConv = this.workerConversationId(convBase, { team: teamName });
         this.persistPendingTeam(chatId, {
           mode: 'graph', teamName, task,
-          graphState: { currentNodeId: state.currentNodeId, hops: state.hops, visited: state.visited },
+          graphState: { currentNodeId: state.currentNodeId, hops: state.hops, visited: state.visited, runStreak: state.runStreak },
           results,
           askingWorker: workerName, question: ask.question, options: ask.options,
           askedAt: Date.now(), blackboard: blackboard.toJSON(),
@@ -3043,7 +3049,7 @@ Example: /model gpt-4.1 write a Python script`;
 
       // Judge picks the next edge.
       const { decision, edge } = await this.pickNextGraphEdge(
-        graph, nodeById, state.currentNodeId, task, workerName,
+        graph, nodeById, state.currentNodeId, state, task, workerName,
         ingested.stripped, blackboard.renderForUser() || '',
       );
       if (!edge) {

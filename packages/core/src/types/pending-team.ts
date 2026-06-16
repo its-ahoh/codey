@@ -51,7 +51,7 @@ export type PendingTeamState =
       teamName: string;
       task: string;
       mode: 'graph';
-      graphState: { currentNodeId: string; hops: number; visited: string[] };
+      graphState: { currentNodeId: string; hops: number; visited: string[]; runStreak?: number };
       results: string[];
       askingWorker: string;
       question: string;
