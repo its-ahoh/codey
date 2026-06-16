@@ -1,24 +1,90 @@
 import { useCallback, useMemo, useState } from 'react'
 import {
   ReactFlow, Background, Controls, addEdge, applyNodeChanges, applyEdgeChanges,
-  type Node, type Edge, type Connection,
+  Handle, Position,
+  type Node, type Edge, type Connection, type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { TeamGraph, validateGraph } from '../../../packages/core/src/team-graph'
 import { toFlow, fromFlow, newNodeId } from './flowEditorModel'
 import { C } from '../theme'
 
+// ---------------------------------------------------------------------------
+// Custom node components
+// ---------------------------------------------------------------------------
+
+const HANDLE_IDS = ['t', 'r', 'b', 'l'] as const
+const HANDLE_POS = { t: Position.Top, r: Position.Right, b: Position.Bottom, l: Position.Left }
+
+function NodeHandles() {
+  return (
+    <>
+      {HANDLE_IDS.map(id => (
+        <Handle key={`s-${id}`} type="source" id={id} position={HANDLE_POS[id]} style={{ background: C.accent }} />
+      ))}
+      {HANDLE_IDS.map(id => (
+        <Handle key={`tg-${id}`} type="target" id={id} position={HANDLE_POS[id]} style={{ background: C.fg3 }} />
+      ))}
+    </>
+  )
+}
+
+function WorkerNodeView({ data }: NodeProps) {
+  const d = data as { label: string; role?: string }
+  return (
+    <div style={{ minWidth: 150, padding: '8px 10px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}`, color: C.fg }}>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>{d.label}</div>
+      {d.role && <div style={{ fontSize: 11, color: C.fg3, marginTop: 2, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
+      <NodeHandles />
+    </div>
+  )
+}
+
+function ConditionNodeView() {
+  return (
+    <div style={{ width: 90, height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+      <div style={{ width: 64, height: 64, transform: 'rotate(45deg)', background: C.surface2, border: `1px solid ${C.accent}`, borderRadius: 8 }} />
+      <span style={{ position: 'absolute', fontSize: 11, color: C.fg3 }}>?</span>
+      <NodeHandles />
+    </div>
+  )
+}
+
+function TerminalNodeView({ data }: NodeProps) {
+  const d = data as { label: string }
+  return (
+    <div style={{ padding: '6px 14px', borderRadius: 999, background: C.bg, border: `1px solid ${C.border}`, color: C.fg, fontSize: 12 }}>
+      {d.label}
+      <NodeHandles />
+    </div>
+  )
+}
+
+const nodeTypes = { workerNode: WorkerNodeView, conditionNode: ConditionNodeView, terminalNode: TerminalNodeView }
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
+
 interface Props {
   teamName: string
   workerNames: string[]
+  workerRoles?: Record<string, string>
   graph: TeamGraph
   onSave: (graph: TeamGraph) => void
   onClose: () => void
 }
 
-export default function FlowEditor({ teamName, workerNames, graph, onSave, onClose }: Props) {
+export default function FlowEditor({ teamName, workerNames, workerRoles = {}, graph, onSave, onClose }: Props) {
+  const withTypes = (ns: Node[]): Node[] => ns.map(n => {
+    const t = (n.data as any).type
+    const rfType = t === 'worker' ? 'workerNode' : t === 'condition' ? 'conditionNode' : 'terminalNode'
+    const role = t === 'worker' ? workerRoles[(n.data as any).worker] : undefined
+    return { ...n, type: rfType, data: { ...n.data, role } }
+  })
+
   const initial = useMemo(() => toFlow(graph), [])
-  const [nodes, setNodes] = useState<Node[]>(initial.nodes as unknown as Node[])
+  const [nodes, setNodes] = useState<Node[]>(withTypes(initial.nodes as unknown as Node[]))
   const [edges, setEdges] = useState<Edge[]>(initial.edges as unknown as Edge[])
   const [maxHops, setMaxHops] = useState(graph.maxHops)
   const [selEdge, setSelEdge] = useState<string | null>(null)
@@ -70,7 +136,7 @@ export default function FlowEditor({ teamName, workerNames, graph, onSave, onClo
             <pre style={{ flex: 1, margin: 0, padding: 14, overflow: 'auto', fontSize: 12, color: C.fg }}>{JSON.stringify(current(), null, 2)}</pre>
           ) : (
             <div style={{ flex: 1, position: 'relative' }}>
-              <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => setSelEdge(e.id)} fitView>
+              <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => setSelEdge(e.id)} nodeTypes={nodeTypes} fitView>
                 <Background />
                 <Controls />
               </ReactFlow>
