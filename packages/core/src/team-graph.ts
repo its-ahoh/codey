@@ -53,6 +53,14 @@ export function validateGraph(graph: TeamGraph, knownWorkers: string[]): string[
       } else if (!known.has(node.worker.toLowerCase())) {
         problems.push(`node "${node.id}" references unknown worker "${node.worker}"`);
       }
+    } else if (node.type === 'condition') {
+      if (node.worker) {
+        problems.push(`condition node "${node.id}" must not reference a worker`);
+      }
+      const outs = graph.edges.filter(e => e.from === node.id);
+      if (!outs.some(e => e.isDefault)) {
+        problems.push(`condition node "${node.id}" needs a default outgoing edge`);
+      }
     }
   }
 
@@ -70,8 +78,8 @@ export function validateGraph(graph: TeamGraph, knownWorkers: string[]): string[
 
   for (const node of graph.nodes) {
     const hasOut = (outgoing.get(node.id)?.length ?? 0) > 0;
-    if ((node.type === 'worker' || node.type === 'start') && !hasOut) {
-      const label = node.type === 'start' ? 'start node' : 'worker node';
+    if ((node.type === 'worker' || node.type === 'start' || node.type === 'condition') && !hasOut) {
+      const label = node.type === 'start' ? 'start node' : node.type === 'condition' ? 'condition node' : 'worker node';
       problems.push(`${label} "${node.id}" has no outgoing edge`);
     }
   }

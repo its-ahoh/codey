@@ -124,6 +124,7 @@ function graphWithCondition(): TeamGraph {
       { id: 'e1', from: 'w1', to: 'c1' },
       { id: 'e2', from: 'c1', to: 'w2', condition: 'needs review' },
       { id: 'e3', from: 'c1', to: 'end', isDefault: true },
+      { id: 'e4', from: 'w2', to: 'end', isDefault: true },
     ],
   };
 }
@@ -146,5 +147,27 @@ describe('condition node settle', () => {
     s = advance(g, s, 'e2');
     expect(s.currentNodeId).toBe('w2');
     expect(s.visited).toEqual(['w1', 'w2']);
+  });
+});
+
+describe('condition node validation', () => {
+  const workers = ['coder', 'reviewer'];
+
+  it('rejects a condition node that carries a worker', () => {
+    const g = graphWithCondition();
+    (g.nodes.find(n => n.id === 'c1') as any).worker = 'coder';
+    const problems = validateGraph(g, workers);
+    expect(problems.some(p => p.includes('c1') && p.includes('worker'))).toBe(true);
+  });
+
+  it('rejects a condition node with no default outgoing edge', () => {
+    const g = graphWithCondition();
+    g.edges = g.edges.map(e => e.id === 'e3' ? { ...e, isDefault: false } : e);
+    const problems = validateGraph(g, workers);
+    expect(problems.some(p => p.includes('c1') && p.includes('default'))).toBe(true);
+  });
+
+  it('accepts a well-formed condition node', () => {
+    expect(validateGraph(graphWithCondition(), workers)).toEqual([]);
   });
 });
