@@ -136,6 +136,8 @@ export interface GraphRunState {
   status: GraphRunStatus;
   /** Node ids visited in order (worker nodes only), for progress/history. */
   visited: string[];
+  /** Consecutive runs of currentNodeId; resets when settling onto a different node. */
+  runStreak: number;
 }
 
 function nodeMap(graph: TeamGraph): Map<string, TeamGraphNode> {
@@ -158,20 +160,22 @@ function settle(graph: TeamGraph, nodeId: string, state: GraphRunState): GraphRu
   }
   const node = nodes.get(cur);
   if (!node) return { ...state, currentNodeId: cur, status: 'stuck' };
-  if (node.type === 'end') return { ...state, currentNodeId: cur, status: 'done' };
+  const runStreak = state.currentNodeId === cur ? state.runStreak : 0;
+  if (node.type === 'end') return { ...state, currentNodeId: cur, status: 'done', runStreak };
   if (node.type === 'condition') {
-    return { ...state, currentNodeId: cur, status: 'running' };
+    return { ...state, currentNodeId: cur, status: 'running', runStreak };
   }
   return {
     ...state,
     currentNodeId: cur,
     status: 'running',
     visited: [...state.visited, cur],
+    runStreak,
   };
 }
 
 export function startRun(graph: TeamGraph): GraphRunState {
-  return settle(graph, graph.entry, { currentNodeId: graph.entry, hops: 0, status: 'running', visited: [] });
+  return settle(graph, graph.entry, { currentNodeId: graph.entry, hops: 0, status: 'running', visited: [], runStreak: 0 });
 }
 
 /**

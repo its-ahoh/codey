@@ -272,3 +272,39 @@ describe('validateGraph — worker self-loops', () => {
     expect(validateGraph(g, ['coder'])).toEqual([]);
   });
 });
+
+describe('runStreak', () => {
+  const g: import('./team-graph').TeamGraph = {
+    entry: 'start', maxHops: 20,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 2, x: 1, y: 0 },
+      { id: 'w2', type: 'worker', worker: 'reviewer', x: 2, y: 0 },
+      { id: 'end', type: 'end', x: 3, y: 0 },
+    ],
+    edges: [
+      { id: 'e0', from: 'start', to: 'w1' },
+      { id: 'e1', from: 'w1', to: 'w1' },   // self-loop
+      { id: 'e2', from: 'w1', to: 'w2' },   // exit
+      { id: 'e3', from: 'w2', to: 'end' },
+    ],
+  };
+
+  it('starts at 0', () => {
+    expect(startRun(g).runStreak).toBe(0);
+  });
+
+  it('carries the streak when looping onto the same node', () => {
+    const s0 = { ...startRun(g), runStreak: 5 };
+    const s1 = advance(g, s0, 'e1'); // w1 -> w1
+    expect(s1.currentNodeId).toBe('w1');
+    expect(s1.runStreak).toBe(5);
+  });
+
+  it('resets the streak when moving to a different node', () => {
+    const s0 = { ...startRun(g), runStreak: 5 };
+    const s1 = advance(g, s0, 'e2'); // w1 -> w2
+    expect(s1.currentNodeId).toBe('w2');
+    expect(s1.runStreak).toBe(0);
+  });
+});
