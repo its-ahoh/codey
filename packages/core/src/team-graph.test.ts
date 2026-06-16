@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateGraph, TeamGraph, startRun, advance, outgoingEdges, eligibleEdges } from './team-graph';
+import { validateGraph, TeamGraph, startRun, advance, outgoingEdges, eligibleEdges, resolveEdge } from './team-graph';
 
 function baseGraph(): TeamGraph {
   return {
@@ -342,5 +342,32 @@ describe('eligibleEdges', () => {
     const ids = eligibleEdges(g2, { ...startRun(g2), currentNodeId: 'w2', runStreak: 99 }, 'w2').map(e => e.id);
     expect(ids).toContain('e3'); // self-edge kept
     expect(ids).toContain('e4');
+  });
+});
+
+describe('resolveEdge diamond fallback', () => {
+  const g: import('./team-graph').TeamGraph = {
+    entry: 'start', maxHops: 10,
+    nodes: [
+      { id: 'd1', type: 'condition', condition: 'ok?', x: 0, y: 0 },
+      { id: 'a', type: 'worker', worker: 'a', x: 1, y: 0 },
+      { id: 'b', type: 'worker', worker: 'b', x: 2, y: 0 },
+    ],
+    edges: [
+      { id: 'yes', from: 'd1', to: 'a', branch: 'yes' },
+      { id: 'no', from: 'd1', to: 'b', branch: 'no' },
+    ],
+  };
+
+  it('falls back to the no edge on a null choice', () => {
+    expect(resolveEdge(g, 'd1', null)?.id).toBe('no');
+  });
+
+  it('falls back to the no edge on an unknown choice', () => {
+    expect(resolveEdge(g, 'd1', 'bogus')?.id).toBe('no');
+  });
+
+  it('honors a valid choice', () => {
+    expect(resolveEdge(g, 'd1', 'yes')?.id).toBe('yes');
   });
 });

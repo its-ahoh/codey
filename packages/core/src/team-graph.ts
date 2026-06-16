@@ -216,5 +216,9 @@ export function resolveEdge(graph: TeamGraph, nodeId: string, chosenEdgeId: stri
   if (edges.length === 0) return null;
   const chosen = chosenEdgeId ? edges.find(e => e.id === chosenEdgeId) : undefined;
   if (chosen) return chosen;
+  const node = nodeMap(graph).get(nodeId);
+  if (node?.type === 'condition') {
+    return edges.find(e => e.branch === 'no') ?? null;
+  }
   return edges.find(e => e.isDefault) ?? null;
 }
