@@ -13,6 +13,8 @@ export interface JudgeInput {
   worker: string;
   workerOutput: string;
   blackboardSummary: string;
+  /** Diamond decision question; when set, the judge answers it yes/no over the edges. */
+  question?: string;
   edges: JudgeEdge[];
 }
 
@@ -55,6 +57,10 @@ export function buildJudgePrompt(input: JudgeInput): string {
   lines.push(`## Worker just finished: ${input.worker}`);
   lines.push('## Worker output');
   lines.push(input.workerOutput || '(empty)');
+  if (input.question && input.question.trim()) {
+    lines.push('## Decision');
+    lines.push(`Answer this yes/no question about the latest output, then pick the matching edge: ${input.question.trim()}`);
+  }
   lines.push('## Outgoing edges (choose one)');
   for (const e of input.edges) {
     lines.push(`- id="${e.id}" → ${e.targetWorker}: ${e.condition ? `if ${e.condition}` : '(default)'}`);
