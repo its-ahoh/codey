@@ -89,6 +89,7 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
   const [edges, setEdges] = useState<Edge[]>(initial.edges as unknown as Edge[])
   const [maxHops, setMaxHops] = useState(graph.maxHops)
   const [selEdge, setSelEdge] = useState<string | null>(null)
+  const [selNode, setSelNode] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
 
   const current = (): TeamGraph =>
@@ -98,12 +99,22 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
   const onNodesChange = useCallback((cs: any) => setNodes(ns => applyNodeChanges(cs, ns)), [])
   const onEdgesChange = useCallback((cs: any) => setEdges(es => applyEdgeChanges(cs, es)), [])
   const onConnect = useCallback((c: Connection) =>
-    setEdges(es => addEdge({
-      ...c, id: `e_${Date.now()}`,
-      sourceHandle: c.sourceHandle ?? undefined,
-      targetHandle: c.targetHandle ?? undefined,
-      data: {},
-    } as any, es)), [])
+    setEdges(es => {
+      const fromNode = nodes.find(n => n.id === c.source)
+      let data: any = {}
+      if ((fromNode?.data as any)?.type === 'condition') {
+        const existing = es.filter(e => e.source === c.source)
+        if (existing.length >= 2) return es // a diamond has exactly two outcomes
+        data = { branch: existing.some(e => (e as any).data?.branch === 'yes') ? 'no' : 'yes' }
+      }
+      return addEdge({
+        ...c, id: `e_${Date.now()}`,
+        sourceHandle: c.sourceHandle ?? undefined,
+        targetHandle: c.targetHandle ?? undefined,
+        label: data.branch,
+        data,
+      } as any, es)
+    }), [nodes])
 
   const rf = useReactFlow()
   const addWorker = (worker: string) => {
@@ -141,6 +152,8 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
   const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }, [])
   const updateEdge = (id: string, patch: any) =>
     setEdges(es => es.map(e => e.id === id ? { ...e, data: { ...(e as any).data, ...patch }, label: patch.isDefault ? 'default' : patch.condition ?? (e as any).data?.condition } : e))
+  const updateNodeData = (id: string, patch: any) =>
+    setNodes(ns => ns.map(n => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n))
 
   const colors = useMemo(() => branchColors(nodes as any, edges as any), [nodes, edges])
   const styledEdges = useMemo(() => edges.map(e => ({
@@ -152,6 +165,8 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
   const save = () => onSave(current())
 
   const sel = edges.find(e => e.id === selEdge) as any
+  const selN = nodes.find(n => n.id === selNode) as any
+  const selfLoops = selN ? edges.some(e => e.source === selN.id && e.target === selN.id) : false
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -189,13 +204,41 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
             <pre style={{ flex: 1, margin: 0, padding: 14, overflow: 'auto', fontSize: 12, color: C.fg }}>{JSON.stringify(current(), null, 2)}</pre>
           ) : (
             <div style={{ flex: 1, position: 'relative' }} onDrop={onDrop} onDragOver={onDragOver}>
-              <ReactFlow nodes={nodes} edges={styledEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => setSelEdge(e.id)} nodeTypes={nodeTypes} fitView>
+              <ReactFlow nodes={nodes} edges={styledEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => { setSelEdge(e.id); setSelNode(null) }} onNodeClick={(_, n) => { setSelNode(n.id); setSelEdge(null) }} nodeTypes={nodeTypes} fitView>
                 <Background />
                 <Controls />
               </ReactFlow>
             </div>
           )}
-          {!showRaw && sel && (
+          {!showRaw && selN && (selN.data?.type === 'worker' || selN.data?.type === 'condition') && (
+            <div style={{ width: 240, borderLeft: `1px solid ${C.border}`, padding: 10, overflowY: 'auto' }}>
+              {selN.data?.type === 'worker' ? (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{selN.data.worker}</div>
+                  <div style={{ fontSize: 11, color: C.fg3, marginBottom: 10, whiteSpace: 'pre-wrap' }}>
+                    {workerRoles[selN.data.worker] || 'No description.'}
+                  </div>
+                  {selfLoops && (
+                    <label style={{ fontSize: 12, display: 'block' }}>
+                      Max self-loops
+                      <input type="number" min={1} value={selN.data.maxCalls ?? ''} placeholder="∞"
+                        onChange={e => updateNodeData(selN.id, { maxCalls: e.target.value === '' ? undefined : Math.max(1, Number(e.target.value) || 1) })}
+                        style={{ width: 64, marginLeft: 6 }} />
+                    </label>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 11, color: C.fg3, marginBottom: 6 }}>Decision</div>
+                  <textarea value={selN.data.condition ?? ''} placeholder='e.g. "Did the tests pass?"'
+                    onChange={e => updateNodeData(selN.id, { condition: e.target.value })}
+                    style={{ width: '100%', minHeight: 70, fontSize: 12, padding: 6, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6 }} />
+                  <div style={{ fontSize: 10, color: C.fg3, marginTop: 6 }}>Yes edge → green · No edge → red</div>
+                </>
+              )}
+            </div>
+          )}
+          {!showRaw && !selN && sel && (sel.data?.branch === undefined) && (
             <div style={{ width: 220, borderLeft: `1px solid ${C.border}`, padding: 10 }}>
               <div style={{ fontSize: 11, color: C.fg3, marginBottom: 6 }}>Edge condition</div>
               <textarea value={sel.data?.condition ?? ''} onChange={e => updateEdge(sel.id, { condition: e.target.value, isDefault: false })} placeholder='e.g. "tests pass"' style={{ width: '100%', minHeight: 70, fontSize: 12, padding: 6, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6 }} />
