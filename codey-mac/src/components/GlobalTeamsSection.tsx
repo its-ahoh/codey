@@ -234,6 +234,7 @@ export default function GlobalTeamsSection() {
         <FlowEditor
           teamName={editingFlow}
           workerNames={workers.map(w => w.name)}
+          workerRoles={Object.fromEntries(workers.map(w => [w.name, w.personality.role]))}
           graph={teams[editingFlow].graph ?? emptyGraph()}
           onSave={(graph) => { queueSave({ ...teams, [editingFlow]: { ...teams[editingFlow], graph } }) }}
           onClose={() => setEditingFlow(null)}

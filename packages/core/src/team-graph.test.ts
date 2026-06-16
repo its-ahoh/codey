@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateGraph, TeamGraph, startRun, advance, outgoingEdges } from './team-graph';
+import { validateGraph, TeamGraph, startRun, advance, outgoingEdges, eligibleEdges, resolveEdge } from './team-graph';
 
 function baseGraph(): TeamGraph {
   return {
@@ -106,5 +106,268 @@ describe('step machine', () => {
     let state = startRun(g);
     state = advance(g, state, 'e2');   // hops -> 1, at n_review
     expect(state.status).toBe('capped');
+  });
+});
+
+function graphWithCondition(): TeamGraph {
+  return {
+    entry: 'start', maxHops: 20,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'w1', type: 'worker', worker: 'coder', x: 100, y: 0 },
+      { id: 'c1', type: 'condition', condition: 'needs review?', x: 200, y: 0 },
+      { id: 'w2', type: 'worker', worker: 'reviewer', x: 300, y: 0 },
+      { id: 'end', type: 'end', x: 400, y: 0 },
+    ],
+    edges: [
+      { id: 'e0', from: 'start', to: 'w1' },
+      { id: 'e1', from: 'w1', to: 'c1' },
+      { id: 'e2', from: 'c1', to: 'w2', branch: 'yes' },
+      { id: 'e3', from: 'c1', to: 'end', branch: 'no' },
+      { id: 'e4', from: 'w2', to: 'end', isDefault: true },
+    ],
+  };
+}
+
+describe('condition node settle', () => {
+  it('settles onto a condition node without recording it in visited', () => {
+    const g = graphWithCondition();
+    let s = startRun(g);
+    expect(s.currentNodeId).toBe('w1');
+    s = advance(g, s, 'e1');
+    expect(s.currentNodeId).toBe('c1');
+    expect(s.status).toBe('running');
+    expect(s.visited).toEqual(['w1']);
+  });
+
+  it('advances from a condition node to the next worker', () => {
+    const g = graphWithCondition();
+    let s = startRun(g);
+    s = advance(g, s, 'e1');
+    s = advance(g, s, 'e2');
+    expect(s.currentNodeId).toBe('w2');
+    expect(s.visited).toEqual(['w1', 'w2']);
+  });
+});
+
+describe('condition node validation', () => {
+  const workers = ['coder', 'reviewer'];
+
+  it('rejects a condition node that carries a worker', () => {
+    const g = graphWithCondition();
+    (g.nodes.find(n => n.id === 'c1') as any).worker = 'coder';
+    const problems = validateGraph(g, workers);
+    expect(problems.some(p => p.includes('c1') && p.includes('worker'))).toBe(true);
+  });
+
+  it('rejects a condition node missing a yes or no branch edge', () => {
+    const g = graphWithCondition();
+    g.edges = g.edges.map(e => e.id === 'e3' ? { ...e, branch: undefined } : e);
+    const problems = validateGraph(g, workers);
+    expect(problems.some(p => p.includes('c1') && p.includes('one yes and one no'))).toBe(true);
+  });
+
+  it('accepts a well-formed condition node', () => {
+    expect(validateGraph(graphWithCondition(), workers)).toEqual([]);
+  });
+});
+
+describe('validateGraph — diamonds carry conditions', () => {
+  const base = (over: Partial<import('./team-graph').TeamGraph> = {}) => ({
+    entry: 'start', maxHops: 10,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'w1', type: 'worker', worker: 'coder', x: 1, y: 0 },
+      { id: 'd1', type: 'condition', condition: 'tests pass?', x: 2, y: 0 },
+      { id: 'end', type: 'end', x: 3, y: 0 },
+    ],
+    edges: [
+      { id: 'e0', from: 'start', to: 'w1' },
+      { id: 'e1', from: 'w1', to: 'd1' },
+      { id: 'e2', from: 'd1', to: 'end', branch: 'yes' },
+      { id: 'e3', from: 'd1', to: 'w1', branch: 'no' },
+    ],
+    ...over,
+  } as import('./team-graph').TeamGraph);
+
+  it('accepts a diamond with a question and one yes + one no edge', () => {
+    expect(validateGraph(base(), ['coder'])).toEqual([]);
+  });
+
+  it('rejects a diamond with no question', () => {
+    const g = base();
+    g.nodes.find(n => n.id === 'd1')!.condition = '';
+    expect(validateGraph(g, ['coder']).some(p => p.includes('needs a question'))).toBe(true);
+  });
+
+  it('rejects a diamond without exactly one yes and one no edge', () => {
+    const g = base();
+    g.edges.find(e => e.id === 'e3')!.branch = 'yes';
+    expect(validateGraph(g, ['coder']).some(p => p.includes('one yes and one no'))).toBe(true);
+  });
+});
+
+describe('validateGraph — worker self-loops', () => {
+  it('rejects a worker self-loop with no exit edge', () => {
+    const g: import('./team-graph').TeamGraph = {
+      entry: 'start', maxHops: 10,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 3, x: 1, y: 0 },
+      ],
+      edges: [
+        { id: 'e0', from: 'start', to: 'w1' },
+        { id: 'e1', from: 'w1', to: 'w1' },
+      ],
+    };
+    expect(validateGraph(g, ['coder']).some(p => p.includes('self-loops with no exit'))).toBe(true);
+  });
+
+  it('rejects maxCalls < 1', () => {
+    const g: import('./team-graph').TeamGraph = {
+      entry: 'start', maxHops: 10,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 0, x: 1, y: 0 },
+        { id: 'end', type: 'end', x: 2, y: 0 },
+      ],
+      edges: [
+        { id: 'e0', from: 'start', to: 'w1' },
+        { id: 'e1', from: 'w1', to: 'end' },
+      ],
+    };
+    expect(validateGraph(g, ['coder']).some(p => p.includes('maxCalls must be >= 1'))).toBe(true);
+  });
+
+  it('rejects non-integer maxCalls', () => {
+    const g: import('./team-graph').TeamGraph = {
+      entry: 'start', maxHops: 10,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 1.5, x: 1, y: 0 },
+        { id: 'end', type: 'end', x: 2, y: 0 },
+      ],
+      edges: [
+        { id: 'e0', from: 'start', to: 'w1' },
+        { id: 'e1', from: 'w1', to: 'end' },
+      ],
+    };
+    expect(validateGraph(g, ['coder']).some(p => p.includes('maxCalls must be >= 1'))).toBe(true);
+  });
+
+  it('accepts a worker with both a self-edge and an exit edge', () => {
+    const g: import('./team-graph').TeamGraph = {
+      entry: 'start', maxHops: 10,
+      nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 },
+        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 3, x: 1, y: 0 },
+        { id: 'end', type: 'end', x: 2, y: 0 },
+      ],
+      edges: [
+        { id: 'e0', from: 'start', to: 'w1' },
+        { id: 'e1', from: 'w1', to: 'w1' },
+        { id: 'e2', from: 'w1', to: 'end' },
+      ],
+    };
+    expect(validateGraph(g, ['coder'])).toEqual([]);
+  });
+});
+
+describe('runStreak', () => {
+  const g: import('./team-graph').TeamGraph = {
+    entry: 'start', maxHops: 20,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 2, x: 1, y: 0 },
+      { id: 'w2', type: 'worker', worker: 'reviewer', x: 2, y: 0 },
+      { id: 'end', type: 'end', x: 3, y: 0 },
+    ],
+    edges: [
+      { id: 'e0', from: 'start', to: 'w1' },
+      { id: 'e1', from: 'w1', to: 'w1' },   // self-loop
+      { id: 'e2', from: 'w1', to: 'w2' },   // exit
+      { id: 'e3', from: 'w2', to: 'end' },
+    ],
+  };
+
+  it('starts at 0', () => {
+    expect(startRun(g).runStreak).toBe(0);
+  });
+
+  it('carries the streak when looping onto the same node', () => {
+    const s0 = { ...startRun(g), runStreak: 5 };
+    const s1 = advance(g, s0, 'e1'); // w1 -> w1
+    expect(s1.currentNodeId).toBe('w1');
+    expect(s1.runStreak).toBe(5);
+  });
+
+  it('resets the streak when moving to a different node', () => {
+    const s0 = { ...startRun(g), runStreak: 5 };
+    const s1 = advance(g, s0, 'e2'); // w1 -> w2
+    expect(s1.currentNodeId).toBe('w2');
+    expect(s1.runStreak).toBe(0);
+  });
+});
+
+describe('eligibleEdges', () => {
+  const g: import('./team-graph').TeamGraph = {
+    entry: 'start', maxHops: 20,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 2, x: 1, y: 0 },
+      { id: 'w2', type: 'worker', worker: 'reviewer', x: 2, y: 0 },
+    ],
+    edges: [
+      { id: 'e0', from: 'start', to: 'w1' },
+      { id: 'e1', from: 'w1', to: 'w1' },
+      { id: 'e2', from: 'w1', to: 'w2' },
+    ],
+  };
+
+  it('keeps the self-edge below maxCalls', () => {
+    const ids = eligibleEdges(g, { ...startRun(g), currentNodeId: 'w1', runStreak: 1 }, 'w1').map(e => e.id);
+    expect(ids).toContain('e1');
+    expect(ids).toContain('e2');
+  });
+
+  it('drops the self-edge at/after maxCalls', () => {
+    const ids = eligibleEdges(g, { ...startRun(g), currentNodeId: 'w1', runStreak: 2 }, 'w1').map(e => e.id);
+    expect(ids).not.toContain('e1');
+    expect(ids).toContain('e2');
+  });
+
+  it('ignores nodes without maxCalls (keeps every edge, including a self-edge)', () => {
+    // w2 has no maxCalls; even a huge runStreak must not drop any edge.
+    const g2 = { ...g, edges: [...g.edges, { id: 'e3', from: 'w2', to: 'w2' }, { id: 'e4', from: 'w2', to: 'w1' }] };
+    const ids = eligibleEdges(g2, { ...startRun(g2), currentNodeId: 'w2', runStreak: 99 }, 'w2').map(e => e.id);
+    expect(ids).toContain('e3'); // self-edge kept
+    expect(ids).toContain('e4');
+  });
+});
+
+describe('resolveEdge diamond fallback', () => {
+  const g: import('./team-graph').TeamGraph = {
+    entry: 'start', maxHops: 10,
+    nodes: [
+      { id: 'd1', type: 'condition', condition: 'ok?', x: 0, y: 0 },
+      { id: 'a', type: 'worker', worker: 'a', x: 1, y: 0 },
+      { id: 'b', type: 'worker', worker: 'b', x: 2, y: 0 },
+    ],
+    edges: [
+      { id: 'yes', from: 'd1', to: 'a', branch: 'yes' },
+      { id: 'no', from: 'd1', to: 'b', branch: 'no' },
+    ],
+  };
+
+  it('falls back to the no edge on a null choice', () => {
+    expect(resolveEdge(g, 'd1', null)?.id).toBe('no');
+  });
+
+  it('falls back to the no edge on an unknown choice', () => {
+    expect(resolveEdge(g, 'd1', 'bogus')?.id).toBe('no');
+  });
+
+  it('honors a valid choice', () => {
+    expect(resolveEdge(g, 'd1', 'yes')?.id).toBe('yes');
   });
 });

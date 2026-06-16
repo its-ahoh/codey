@@ -1,27 +1,96 @@
 import { useCallback, useMemo, useState } from 'react'
 import {
   ReactFlow, Background, Controls, addEdge, applyNodeChanges, applyEdgeChanges,
-  type Node, type Edge, type Connection,
+  ReactFlowProvider, useReactFlow,
+  Handle, Position, NodeResizer,
+  type Node, type Edge, type Connection, type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { TeamGraph, validateGraph } from '../../../packages/core/src/team-graph'
-import { toFlow, fromFlow, newNodeId } from './flowEditorModel'
+import { toFlow, fromFlow, newNodeId, branchColors } from './flowEditorModel'
 import { C } from '../theme'
+
+// ---------------------------------------------------------------------------
+// Custom node components
+// ---------------------------------------------------------------------------
+
+const HANDLE_IDS = ['t', 'r', 'b', 'l'] as const
+const HANDLE_POS = { t: Position.Top, r: Position.Right, b: Position.Bottom, l: Position.Left }
+
+function NodeHandles() {
+  return (
+    <>
+      {HANDLE_IDS.map(id => (
+        <Handle key={`s-${id}`} type="source" id={id} position={HANDLE_POS[id]} style={{ background: C.accent }} />
+      ))}
+      {HANDLE_IDS.map(id => (
+        <Handle key={`tg-${id}`} type="target" id={id} position={HANDLE_POS[id]} style={{ background: C.fg3 }} />
+      ))}
+    </>
+  )
+}
+
+function WorkerNodeView({ data, selected, width, height }: NodeProps) {
+  const d = data as { label: string; role?: string }
+  return (
+    <div style={{ width: width ?? undefined, height: height ?? undefined, minWidth: 120, padding: '8px 10px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}`, color: C.fg, boxSizing: 'border-box' }}>
+      <NodeResizer isVisible={selected} minWidth={120} minHeight={48} />
+      <div style={{ fontSize: 13, fontWeight: 600 }}>{d.label}</div>
+      {d.role && <div style={{ fontSize: 11, color: C.fg3, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
+      <NodeHandles />
+    </div>
+  )
+}
+
+function ConditionNodeView() {
+  return (
+    <div style={{ width: 90, height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+      <div style={{ width: 64, height: 64, transform: 'rotate(45deg)', background: C.surface2, border: `1px solid ${C.accent}`, borderRadius: 8 }} />
+      <span style={{ position: 'absolute', fontSize: 11, color: C.fg3 }}>?</span>
+      <NodeHandles />
+    </div>
+  )
+}
+
+function TerminalNodeView({ data }: NodeProps) {
+  const d = data as { label: string }
+  return (
+    <div style={{ padding: '6px 14px', borderRadius: 999, background: C.bg, border: `1px solid ${C.border}`, color: C.fg, fontSize: 12 }}>
+      {d.label}
+      <NodeHandles />
+    </div>
+  )
+}
+
+const nodeTypes = { workerNode: WorkerNodeView, conditionNode: ConditionNodeView, terminalNode: TerminalNodeView }
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
 
 interface Props {
   teamName: string
   workerNames: string[]
+  workerRoles?: Record<string, string>
   graph: TeamGraph
   onSave: (graph: TeamGraph) => void
   onClose: () => void
 }
 
-export default function FlowEditor({ teamName, workerNames, graph, onSave, onClose }: Props) {
+function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSave, onClose }: Props) {
+  const withTypes = (ns: Node[]): Node[] => ns.map(n => {
+    const t = (n.data as any).type
+    const rfType = t === 'worker' ? 'workerNode' : t === 'condition' ? 'conditionNode' : 'terminalNode'
+    const role = t === 'worker' ? workerRoles[(n.data as any).worker] : undefined
+    return { ...n, type: rfType, data: { ...n.data, role } }
+  })
+
   const initial = useMemo(() => toFlow(graph), [])
-  const [nodes, setNodes] = useState<Node[]>(initial.nodes as unknown as Node[])
+  const [nodes, setNodes] = useState<Node[]>(withTypes(initial.nodes as unknown as Node[]))
   const [edges, setEdges] = useState<Edge[]>(initial.edges as unknown as Edge[])
   const [maxHops, setMaxHops] = useState(graph.maxHops)
   const [selEdge, setSelEdge] = useState<string | null>(null)
+  const [selNode, setSelNode] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
 
   const current = (): TeamGraph =>
@@ -31,18 +100,74 @@ export default function FlowEditor({ teamName, workerNames, graph, onSave, onClo
   const onNodesChange = useCallback((cs: any) => setNodes(ns => applyNodeChanges(cs, ns)), [])
   const onEdgesChange = useCallback((cs: any) => setEdges(es => applyEdgeChanges(cs, es)), [])
   const onConnect = useCallback((c: Connection) =>
-    setEdges(es => addEdge({ ...c, id: `e_${Date.now()}`, data: {} } as any, es)), [])
+    setEdges(es => {
+      const fromNode = nodes.find(n => n.id === c.source)
+      let data: any = {}
+      if ((fromNode?.data as any)?.type === 'condition') {
+        const existing = es.filter(e => e.source === c.source)
+        if (existing.length >= 2) return es // a diamond has exactly two outcomes
+        data = { branch: existing.some(e => (e as any).data?.branch === 'yes') ? 'no' : 'yes' }
+      }
+      return addEdge({
+        ...c, id: `e_${Date.now()}`,
+        sourceHandle: c.sourceHandle ?? undefined,
+        targetHandle: c.targetHandle ?? undefined,
+        label: data.branch,
+        data,
+      } as any, es)
+    }), [nodes])
 
+  const rf = useReactFlow()
   const addWorker = (worker: string) => {
-    const id = newNodeId(nodes.map(n => n.id))
-    setNodes(ns => [...ns, { id, position: { x: 200, y: 60 + ns.length * 70 }, data: { label: worker, type: 'worker', worker } } as any])
+    setNodes(ns => {
+      const id = newNodeId(ns.map(n => n.id))
+      return [...ns, { id, type: 'workerNode', position: { x: 200, y: 60 + ns.length * 70 }, data: { label: worker, type: 'worker', worker, role: workerRoles[worker] } } as any]
+    })
   }
+  const addCondition = () => {
+    setNodes(ns => {
+      const id = newNodeId(ns.map(n => n.id))
+      return [...ns, { id, type: 'conditionNode', position: { x: 260, y: 60 + ns.length * 70 }, data: { label: 'condition', type: 'condition' } } as any]
+    })
+  }
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    const raw = e.dataTransfer.getData('application/codey-node')
+    if (!raw) return
+    let payload: { kind: 'worker' | 'condition'; worker?: string }
+    try { payload = JSON.parse(raw) } catch { return }
+    const position = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
+    if (payload.kind === 'condition') {
+      setNodes(ns => {
+        const id = newNodeId(ns.map(n => n.id))
+        return [...ns, { id, type: 'conditionNode', position, data: { label: 'condition', type: 'condition' } } as any]
+      })
+    } else {
+      if (!payload.worker) return
+      setNodes(ns => {
+        const id = newNodeId(ns.map(n => n.id))
+        return [...ns, { id, type: 'workerNode', position, data: { label: payload.worker, type: 'worker', worker: payload.worker, role: workerRoles[payload.worker!] } } as any]
+      })
+    }
+  }, [rf, workerRoles])
+  const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }, [])
   const updateEdge = (id: string, patch: any) =>
     setEdges(es => es.map(e => e.id === id ? { ...e, data: { ...(e as any).data, ...patch }, label: patch.isDefault ? 'default' : patch.condition ?? (e as any).data?.condition } : e))
+  const updateNodeData = (id: string, patch: any) =>
+    setNodes(ns => ns.map(n => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n))
+
+  const colors = useMemo(() => branchColors(nodes as any, edges as any), [nodes, edges])
+  const styledEdges = useMemo(() => edges.map(e => ({
+    ...e,
+    animated: true,
+    style: { ...(e as any).style, stroke: colors[e.id] ?? C.fg3 },
+  })), [edges, colors])
 
   const save = () => onSave(current())
 
   const sel = edges.find(e => e.id === selEdge) as any
+  const selN = nodes.find(n => n.id === selNode) as any
+  const selfLoops = selN ? edges.some(e => e.source === selN.id && e.target === selN.id) : false
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -62,21 +187,59 @@ export default function FlowEditor({ teamName, workerNames, graph, onSave, onClo
             <div style={{ width: 160, borderRight: `1px solid ${C.border}`, padding: 10, overflowY: 'auto' }}>
               <div style={{ fontSize: 11, color: C.fg3, marginBottom: 6 }}>Workers</div>
               {workerNames.map(w => (
-                <button key={w} onClick={() => addWorker(w)} style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4, fontSize: 12, padding: '4px 6px', background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer' }}>+ {w}</button>
+                <button key={w} draggable
+                  onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'worker', worker: w }))}
+                  onClick={() => addWorker(w)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4, fontSize: 12, padding: '8px 8px', minHeight: 40, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer' }}>
+                  <div style={{ fontWeight: 600 }}>+ {w}</div>
+                  {workerRoles[w] && <div style={{ fontSize: 10, color: C.fg3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{workerRoles[w]}</div>}
+                </button>
               ))}
+              <button draggable
+                onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'condition' }))}
+                onClick={() => addCondition()}
+                style={{ display: 'block', width: '100%', marginTop: 8, fontSize: 12, padding: '6px', background: C.surface2, border: `1px dashed ${C.accent}`, borderRadius: 6, cursor: 'pointer' }}>◇ + Condition</button>
             </div>
           )}
           {showRaw ? (
             <pre style={{ flex: 1, margin: 0, padding: 14, overflow: 'auto', fontSize: 12, color: C.fg }}>{JSON.stringify(current(), null, 2)}</pre>
           ) : (
-            <div style={{ flex: 1, position: 'relative' }}>
-              <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => setSelEdge(e.id)} fitView>
+            <div style={{ flex: 1, position: 'relative' }} onDrop={onDrop} onDragOver={onDragOver}>
+              <ReactFlow nodes={nodes} edges={styledEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => { setSelEdge(e.id); setSelNode(null) }} onNodeClick={(_, n) => { setSelNode(n.id); setSelEdge(null) }} onNodesDelete={(ns) => { if (ns.some(n => n.id === selNode)) setSelNode(null) }} onEdgesDelete={(es) => { if (es.some(e => e.id === selEdge)) setSelEdge(null) }} nodeTypes={nodeTypes} fitView>
                 <Background />
                 <Controls />
               </ReactFlow>
             </div>
           )}
-          {!showRaw && sel && (
+          {!showRaw && selN && (selN.data?.type === 'worker' || selN.data?.type === 'condition') && (
+            <div style={{ width: 240, borderLeft: `1px solid ${C.border}`, padding: 10, overflowY: 'auto' }}>
+              {selN.data?.type === 'worker' ? (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{selN.data.worker}</div>
+                  <div style={{ fontSize: 11, color: C.fg3, marginBottom: 10, whiteSpace: 'pre-wrap' }}>
+                    {workerRoles[selN.data.worker] || 'No description.'}
+                  </div>
+                  {selfLoops && (
+                    <label style={{ fontSize: 12, display: 'block' }}>
+                      Max self-loops
+                      <input type="number" min={1} value={selN.data.maxCalls ?? ''} placeholder="∞"
+                        onChange={e => updateNodeData(selN.id, { maxCalls: e.target.value === '' ? undefined : Math.max(1, Number(e.target.value) || 1) })}
+                        style={{ width: 64, marginLeft: 6 }} />
+                    </label>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 11, color: C.fg3, marginBottom: 6 }}>Decision</div>
+                  <textarea value={selN.data.condition ?? ''} placeholder='e.g. "Did the tests pass?"'
+                    onChange={e => updateNodeData(selN.id, { condition: e.target.value })}
+                    style={{ width: '100%', minHeight: 70, fontSize: 12, padding: 6, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6 }} />
+                  <div style={{ fontSize: 10, color: C.fg3, marginTop: 6 }}>Yes edge → green · No edge → red</div>
+                </>
+              )}
+            </div>
+          )}
+          {!showRaw && !selN && sel && (sel.data?.branch === undefined) && (
             <div style={{ width: 220, borderLeft: `1px solid ${C.border}`, padding: 10 }}>
               <div style={{ fontSize: 11, color: C.fg3, marginBottom: 6 }}>Edge condition</div>
               <textarea value={sel.data?.condition ?? ''} onChange={e => updateEdge(sel.id, { condition: e.target.value, isDefault: false })} placeholder='e.g. "tests pass"' style={{ width: '100%', minHeight: 70, fontSize: 12, padding: 6, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6 }} />
@@ -89,4 +252,8 @@ export default function FlowEditor({ teamName, workerNames, graph, onSave, onClo
       </div>
     </div>
   )
+}
+
+export default function FlowEditor(props: Props) {
+  return <ReactFlowProvider><FlowEditorInner {...props} /></ReactFlowProvider>
 }
