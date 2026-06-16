@@ -82,3 +82,39 @@ describe('branchColors', () => {
     expect(colors['only']).toBeUndefined()
   })
 })
+
+describe('flowEditorModel diamond + maxCalls round-trip', () => {
+  const g: TeamGraph = {
+    entry: 'start', maxHops: 20,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 3, width: 220, height: 90, x: 1, y: 0 },
+      { id: 'd1', type: 'condition', condition: 'tests pass?', x: 2, y: 0 },
+      { id: 'end', type: 'end', x: 3, y: 0 },
+    ],
+    edges: [
+      { id: 'e0', from: 'start', to: 'w1' },
+      { id: 'e1', from: 'w1', to: 'd1' },
+      { id: 'e2', from: 'd1', to: 'end', branch: 'yes' },
+      { id: 'e3', from: 'd1', to: 'w1', branch: 'no' },
+    ],
+  };
+
+  it('round-trips condition, maxCalls, width/height, and branch', () => {
+    const flow = toFlow(g);
+    const back = fromFlow(flow.nodes, flow.edges, g.entry, g.maxHops);
+    expect(back).toEqual(g);
+  });
+});
+
+describe('branchColors diamond colors', () => {
+  it('colors a diamond yes green and no red', () => {
+    const nodes = [{ id: 'd1', position: { x: 0, y: 0 }, data: { label: 'd1', type: 'condition' } }] as any;
+    const colors = branchColors(nodes, [
+      { id: 'y', source: 'd1', data: { branch: 'yes' } },
+      { id: 'n', source: 'd1', data: { branch: 'no' } },
+    ] as any);
+    expect(colors['y']).toBe('#22c55e');
+    expect(colors['n']).toBe('#ef4444');
+  });
+});
