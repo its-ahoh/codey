@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toFlow, fromFlow, newNodeId, emptyGraph } from './flowEditorModel'
+import { toFlow, fromFlow, newNodeId, emptyGraph, branchColors } from './flowEditorModel'
 import type { TeamGraph } from '../../../packages/core/src/team-graph'
 
 const g: TeamGraph = {
@@ -61,5 +61,24 @@ describe('flowEditorModel condition + handles round-trip', () => {
     const e1 = back.edges.find(e => e.id === 'e1')!
     expect(e1.sourceHandle).toBe('r')
     expect(e1.targetHandle).toBe('l')
+  })
+})
+
+describe('branchColors', () => {
+  it('colors non-default branch edges distinctly and default gray', () => {
+    const colors = branchColors([] as any, [
+      { id: 'e2a', source: 'c1', data: { isDefault: false } },
+      { id: 'e2b', source: 'c1', data: { isDefault: true } },
+    ] as any)
+    expect(colors['e2a']).toBeTruthy()
+    expect(colors['e2b']).toBe('#888')
+    expect(colors['e2a']).not.toBe('#888')
+  })
+
+  it('does not color edges out of a single-output node', () => {
+    const colors = branchColors([] as any, [
+      { id: 'only', source: 'w1', data: {} },
+    ] as any)
+    expect(colors['only']).toBeUndefined()
   })
 })
