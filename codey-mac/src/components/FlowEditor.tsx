@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import {
   ReactFlow, Background, Controls, addEdge, applyNodeChanges, applyEdgeChanges,
   ReactFlowProvider, useReactFlow,
-  Handle, Position,
+  Handle, Position, NodeResizer,
   type Node, type Edge, type Connection, type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -30,12 +30,13 @@ function NodeHandles() {
   )
 }
 
-function WorkerNodeView({ data }: NodeProps) {
+function WorkerNodeView({ data, selected, width, height }: NodeProps) {
   const d = data as { label: string; role?: string }
   return (
-    <div style={{ minWidth: 150, padding: '8px 10px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}`, color: C.fg }}>
+    <div style={{ width: width ?? undefined, height: height ?? undefined, minWidth: 120, padding: '8px 10px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}`, color: C.fg, boxSizing: 'border-box' }}>
+      <NodeResizer isVisible={selected} minWidth={120} minHeight={48} />
       <div style={{ fontSize: 13, fontWeight: 600 }}>{d.label}</div>
-      {d.role && <div style={{ fontSize: 11, color: C.fg3, marginTop: 2, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
+      {d.role && <div style={{ fontSize: 11, color: C.fg3, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
       <NodeHandles />
     </div>
   )
