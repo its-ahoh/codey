@@ -336,8 +336,11 @@ describe('eligibleEdges', () => {
     expect(ids).toContain('e2');
   });
 
-  it('ignores nodes without maxCalls', () => {
-    const ids = eligibleEdges(g, { ...startRun(g), currentNodeId: 'w2', runStreak: 99 }, 'w2').map(e => e.id);
-    expect(ids).toEqual([]); // w2 has no outgoing in this fixture
+  it('ignores nodes without maxCalls (keeps every edge, including a self-edge)', () => {
+    // w2 has no maxCalls; even a huge runStreak must not drop any edge.
+    const g2 = { ...g, edges: [...g.edges, { id: 'e3', from: 'w2', to: 'w2' }, { id: 'e4', from: 'w2', to: 'w1' }] };
+    const ids = eligibleEdges(g2, { ...startRun(g2), currentNodeId: 'w2', runStreak: 99 }, 'w2').map(e => e.id);
+    expect(ids).toContain('e3'); // self-edge kept
+    expect(ids).toContain('e4');
   });
 });
