@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateGraph, TeamGraph, startRun, advance, outgoingEdges } from './team-graph';
+import { validateGraph, TeamGraph, startRun, advance, outgoingEdges, eligibleEdges } from './team-graph';
 
 function baseGraph(): TeamGraph {
   return {
@@ -306,5 +306,38 @@ describe('runStreak', () => {
     const s1 = advance(g, s0, 'e2'); // w1 -> w2
     expect(s1.currentNodeId).toBe('w2');
     expect(s1.runStreak).toBe(0);
+  });
+});
+
+describe('eligibleEdges', () => {
+  const g: import('./team-graph').TeamGraph = {
+    entry: 'start', maxHops: 20,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 2, x: 1, y: 0 },
+      { id: 'w2', type: 'worker', worker: 'reviewer', x: 2, y: 0 },
+    ],
+    edges: [
+      { id: 'e0', from: 'start', to: 'w1' },
+      { id: 'e1', from: 'w1', to: 'w1' },
+      { id: 'e2', from: 'w1', to: 'w2' },
+    ],
+  };
+
+  it('keeps the self-edge below maxCalls', () => {
+    const ids = eligibleEdges(g, { ...startRun(g), currentNodeId: 'w1', runStreak: 1 }, 'w1').map(e => e.id);
+    expect(ids).toContain('e1');
+    expect(ids).toContain('e2');
+  });
+
+  it('drops the self-edge at/after maxCalls', () => {
+    const ids = eligibleEdges(g, { ...startRun(g), currentNodeId: 'w1', runStreak: 2 }, 'w1').map(e => e.id);
+    expect(ids).not.toContain('e1');
+    expect(ids).toContain('e2');
+  });
+
+  it('ignores nodes without maxCalls', () => {
+    const ids = eligibleEdges(g, { ...startRun(g), currentNodeId: 'w2', runStreak: 99 }, 'w2').map(e => e.id);
+    expect(ids).toEqual([]); // w2 has no outgoing in this fixture
   });
 });

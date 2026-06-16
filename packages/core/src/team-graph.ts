@@ -148,6 +148,20 @@ export function outgoingEdges(graph: TeamGraph, nodeId: string): TeamGraphEdge[]
   return graph.edges.filter(e => e.from === nodeId);
 }
 
+/**
+ * Outgoing edges the judge may choose from. Drops a worker's self-edge once its
+ * consecutive-run streak has reached the node's maxCalls, forcing an exit. For
+ * nodes without maxCalls (or non-worker nodes) this equals outgoingEdges.
+ */
+export function eligibleEdges(graph: TeamGraph, state: GraphRunState, nodeId: string): TeamGraphEdge[] {
+  const edges = outgoingEdges(graph, nodeId);
+  const node = nodeMap(graph).get(nodeId);
+  if (node?.type === 'worker' && node.maxCalls !== undefined && state.runStreak >= node.maxCalls) {
+    return edges.filter(e => e.to !== nodeId);
+  }
+  return edges;
+}
+
 /** Follow non-worker nodes (start) forward to the first worker/end node. */
 function settle(graph: TeamGraph, nodeId: string, state: GraphRunState): GraphRunState {
   const nodes = nodeMap(graph);
