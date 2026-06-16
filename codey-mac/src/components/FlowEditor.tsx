@@ -107,26 +107,37 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
 
   const rf = useReactFlow()
   const addWorker = (worker: string) => {
-    const id = newNodeId(nodes.map(n => n.id))
-    setNodes(ns => [...ns, { id, type: 'workerNode', position: { x: 200, y: 60 + ns.length * 70 }, data: { label: worker, type: 'worker', worker, role: workerRoles[worker] } } as any])
+    setNodes(ns => {
+      const id = newNodeId(ns.map(n => n.id))
+      return [...ns, { id, type: 'workerNode', position: { x: 200, y: 60 + ns.length * 70 }, data: { label: worker, type: 'worker', worker, role: workerRoles[worker] } } as any]
+    })
   }
   const addCondition = () => {
-    const id = newNodeId(nodes.map(n => n.id))
-    setNodes(ns => [...ns, { id, type: 'conditionNode', position: { x: 260, y: 60 + ns.length * 70 }, data: { label: 'condition', type: 'condition' } } as any])
+    setNodes(ns => {
+      const id = newNodeId(ns.map(n => n.id))
+      return [...ns, { id, type: 'conditionNode', position: { x: 260, y: 60 + ns.length * 70 }, data: { label: 'condition', type: 'condition' } } as any]
+    })
   }
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     const raw = e.dataTransfer.getData('application/codey-node')
     if (!raw) return
-    const payload = JSON.parse(raw) as { kind: 'worker' | 'condition'; worker?: string }
+    let payload: { kind: 'worker' | 'condition'; worker?: string }
+    try { payload = JSON.parse(raw) } catch { return }
     const position = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
-    const id = newNodeId(nodes.map(n => n.id))
     if (payload.kind === 'condition') {
-      setNodes(ns => [...ns, { id, type: 'conditionNode', position, data: { label: 'condition', type: 'condition' } } as any])
+      setNodes(ns => {
+        const id = newNodeId(ns.map(n => n.id))
+        return [...ns, { id, type: 'conditionNode', position, data: { label: 'condition', type: 'condition' } } as any]
+      })
     } else {
-      setNodes(ns => [...ns, { id, type: 'workerNode', position, data: { label: payload.worker, type: 'worker', worker: payload.worker, role: workerRoles[payload.worker!] } } as any])
+      if (!payload.worker) return
+      setNodes(ns => {
+        const id = newNodeId(ns.map(n => n.id))
+        return [...ns, { id, type: 'workerNode', position, data: { label: payload.worker, type: 'worker', worker: payload.worker, role: workerRoles[payload.worker!] } } as any]
+      })
     }
-  }, [nodes, rf, workerRoles])
+  }, [rf, workerRoles])
   const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }, [])
   const updateEdge = (id: string, patch: any) =>
     setEdges(es => es.map(e => e.id === id ? { ...e, data: { ...(e as any).data, ...patch }, label: patch.isDefault ? 'default' : patch.condition ?? (e as any).data?.condition } : e))
