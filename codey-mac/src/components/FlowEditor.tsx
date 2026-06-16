@@ -33,10 +33,10 @@ function NodeHandles() {
 function WorkerNodeView({ data, selected, width, height }: NodeProps) {
   const d = data as { label: string; role?: string }
   return (
-    <div style={{ width: width ?? undefined, height: height ?? undefined, minWidth: 120, padding: '8px 10px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}`, color: C.fg, boxSizing: 'border-box' }}>
-      <NodeResizer isVisible={selected} minWidth={120} minHeight={48} />
-      <div style={{ fontSize: 13, fontWeight: 600 }}>{d.label}</div>
-      {d.role && <div style={{ fontSize: 11, color: C.fg3, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
+    <div style={{ width: width ?? undefined, height: height ?? undefined, minWidth: 110, maxWidth: width ? undefined : 180, padding: '6px 9px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}`, color: C.fg, boxSizing: 'border-box', overflow: 'hidden' }}>
+      <NodeResizer isVisible={selected} minWidth={110} minHeight={40} />
+      <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</div>
+      {d.role && <div style={{ fontSize: 10, color: C.fg3, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
       <NodeHandles />
     </div>
   )
