@@ -130,6 +130,9 @@ function settle(graph: TeamGraph, nodeId: string, state: GraphRunState): GraphRu
   const node = nodes.get(cur);
   if (!node) return { ...state, currentNodeId: cur, status: 'stuck' };
   if (node.type === 'end') return { ...state, currentNodeId: cur, status: 'done' };
+  if (node.type === 'condition') {
+    return { ...state, currentNodeId: cur, status: 'running' };
+  }
   return {
     ...state,
     currentNodeId: cur,

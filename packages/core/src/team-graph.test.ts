@@ -108,3 +108,43 @@ describe('step machine', () => {
     expect(state.status).toBe('capped');
   });
 });
+
+function graphWithCondition(): TeamGraph {
+  return {
+    entry: 'start', maxHops: 20,
+    nodes: [
+      { id: 'start', type: 'start', x: 0, y: 0 },
+      { id: 'w1', type: 'worker', worker: 'coder', x: 100, y: 0 },
+      { id: 'c1', type: 'condition', x: 200, y: 0 },
+      { id: 'w2', type: 'worker', worker: 'reviewer', x: 300, y: 0 },
+      { id: 'end', type: 'end', x: 400, y: 0 },
+    ],
+    edges: [
+      { id: 'e0', from: 'start', to: 'w1' },
+      { id: 'e1', from: 'w1', to: 'c1' },
+      { id: 'e2', from: 'c1', to: 'w2', condition: 'needs review' },
+      { id: 'e3', from: 'c1', to: 'end', isDefault: true },
+    ],
+  };
+}
+
+describe('condition node settle', () => {
+  it('settles onto a condition node without recording it in visited', () => {
+    const g = graphWithCondition();
+    let s = startRun(g);
+    expect(s.currentNodeId).toBe('w1');
+    s = advance(g, s, 'e1');
+    expect(s.currentNodeId).toBe('c1');
+    expect(s.status).toBe('running');
+    expect(s.visited).toEqual(['w1']);
+  });
+
+  it('advances from a condition node to the next worker', () => {
+    const g = graphWithCondition();
+    let s = startRun(g);
+    s = advance(g, s, 'e1');
+    s = advance(g, s, 'e2');
+    expect(s.currentNodeId).toBe('w2');
+    expect(s.visited).toEqual(['w1', 'w2']);
+  });
+});
