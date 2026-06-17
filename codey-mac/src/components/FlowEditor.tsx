@@ -30,13 +30,16 @@ function NodeHandles() {
   )
 }
 
-function WorkerNodeView({ data, selected, width, height }: NodeProps) {
+function WorkerNodeView({ data, selected }: NodeProps) {
   const d = data as { label: string; role?: string }
+  // Size to content (full name on one line); never clip the name. React Flow
+  // applies any user-resized width/height to the node wrapper itself, so we
+  // don't bind them here — that previously collapsed the card and clipped text.
   return (
-    <div style={{ width: width ?? 'max-content', height: height ?? undefined, minWidth: 90, maxWidth: width ? undefined : 240, padding: '6px 10px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}`, color: C.fg, boxSizing: 'border-box', overflow: 'hidden' }}>
-      <NodeResizer isVisible={selected} minWidth={90} minHeight={36} />
-      <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>{d.label}</div>
-      {d.role && <div style={{ fontSize: 10, color: C.fg3, marginTop: 1, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
+    <div style={{ minWidth: 100, padding: '8px 12px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}`, color: C.fg, boxSizing: 'border-box' }}>
+      <NodeResizer isVisible={selected} minWidth={100} minHeight={44} />
+      <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>{d.label}</div>
+      {d.role && <div style={{ fontSize: 11, color: C.fg3, marginTop: 2, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
       <NodeHandles />
     </div>
   )
@@ -55,7 +58,7 @@ function ConditionNodeView() {
 function TerminalNodeView({ data }: NodeProps) {
   const d = data as { label: string }
   return (
-    <div style={{ padding: '6px 14px', borderRadius: 999, background: C.bg, border: `1px solid ${C.border}`, color: C.fg, fontSize: 12 }}>
+    <div style={{ padding: '10px 22px', borderRadius: 999, background: C.bg, border: `1px solid ${C.border}`, color: C.fg, fontSize: 14, fontWeight: 600 }}>
       {d.label}
       <NodeHandles />
     </div>
