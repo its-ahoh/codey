@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import {
   ReactFlow, Background, Controls, addEdge, applyNodeChanges, applyEdgeChanges,
   ReactFlowProvider, useReactFlow,
-  Handle, Position, NodeResizer,
+  Handle, Position, NodeResizer, ConnectionMode,
   type Node, type Edge, type Connection, type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -17,14 +17,16 @@ import { C } from '../theme'
 const HANDLE_IDS = ['t', 'r', 'b', 'l'] as const
 const HANDLE_POS = { t: Position.Top, r: Position.Right, b: Position.Bottom, l: Position.Left }
 
+// One handle per side. With ConnectionMode.Loose (set on <ReactFlow>), a single
+// `source` handle can both start and receive a connection, so a drag can begin
+// from any side. Rendering separate source+target handles per side stacked them
+// on top of each other — the target covered the source, so drags could never
+// start and no edges could be drawn.
 function NodeHandles() {
   return (
     <>
       {HANDLE_IDS.map(id => (
-        <Handle key={`s-${id}`} type="source" id={id} position={HANDLE_POS[id]} style={{ background: C.accent }} />
-      ))}
-      {HANDLE_IDS.map(id => (
-        <Handle key={`tg-${id}`} type="target" id={id} position={HANDLE_POS[id]} style={{ background: C.fg3 }} />
+        <Handle key={id} type="source" id={id} position={HANDLE_POS[id]} style={{ width: 9, height: 9, background: C.accent }} />
       ))}
     </>
   )
@@ -208,7 +210,7 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
             <pre style={{ flex: 1, margin: 0, padding: 14, overflow: 'auto', fontSize: 12, color: C.fg }}>{JSON.stringify(current(), null, 2)}</pre>
           ) : (
             <div style={{ flex: 1, position: 'relative' }} onDrop={onDrop} onDragOver={onDragOver}>
-              <ReactFlow nodes={nodes} edges={styledEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => { setSelEdge(e.id); setSelNode(null) }} onNodeClick={(_, n) => { setSelNode(n.id); setSelEdge(null) }} onNodesDelete={(ns) => { if (ns.some(n => n.id === selNode)) setSelNode(null) }} onEdgesDelete={(es) => { if (es.some(e => e.id === selEdge)) setSelEdge(null) }} nodeTypes={nodeTypes} fitView fitViewOptions={{ maxZoom: 1, padding: 0.2 }} minZoom={0.2} maxZoom={1.5}>
+              <ReactFlow nodes={nodes} edges={styledEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => { setSelEdge(e.id); setSelNode(null) }} onNodeClick={(_, n) => { setSelNode(n.id); setSelEdge(null) }} onNodesDelete={(ns) => { if (ns.some(n => n.id === selNode)) setSelNode(null) }} onEdgesDelete={(es) => { if (es.some(e => e.id === selEdge)) setSelEdge(null) }} nodeTypes={nodeTypes} connectionMode={ConnectionMode.Loose} fitView fitViewOptions={{ maxZoom: 1, padding: 0.2 }} minZoom={0.2} maxZoom={1.5}>
                 <Background />
                 <Controls />
               </ReactFlow>
