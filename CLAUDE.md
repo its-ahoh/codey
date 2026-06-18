@@ -17,9 +17,12 @@ npm run configure      # Interactive config setup
 npm run status         # Show current config
 npm run set-agent      # Set default coding agent
 npm run set-model      # Set default model
+npm test               # Run all workspace unit tests (Vitest)
+npm run lint           # Flag non-English characters in source
 ```
 
-No test runner is configured.
+Tests run on Vitest. `npm test` runs every workspace's suite (`packages/core`,
+`packages/gateway`, `codey-mac`); target one with `npm test -w @codey/core`.
 
 ## Architecture
 
