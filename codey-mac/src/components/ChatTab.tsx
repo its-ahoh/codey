@@ -108,31 +108,42 @@ const UserMessageContent: React.FC<{ content: string }> = ({ content }) => {
     return (
       <div>
         <Markdown variant="user">{content}</Markdown>
-        <button style={userFoldStyles.btn} onClick={() => setExpanded(false)}>Show less ▲</button>
+        <button style={{ ...userFoldStyles.btn, marginTop: 6 }} onClick={() => setExpanded(false)}>Show less ▲</button>
       </div>
     )
   }
 
-  const preview = content.replace(/\s+/g, ' ').trim().slice(0, 120)
   return (
-    <div>
-      <div style={userFoldStyles.preview}>{preview}…</div>
-      <button style={userFoldStyles.btn} onClick={() => setExpanded(true)}>
-        Show full message · {lineCount} lines, {content.length.toLocaleString()} chars ▾
-      </button>
+    <div style={userFoldStyles.wrap}>
+      <div style={userFoldStyles.clamp}>
+        <Markdown variant="user">{content}</Markdown>
+      </div>
+      <div style={userFoldStyles.fade}>
+        <button style={userFoldStyles.btn} onClick={() => setExpanded(true)} title={`${lineCount} lines · ${content.length.toLocaleString()} chars`}>
+          Show more ▾
+        </button>
+      </div>
     </div>
   )
 }
 
 const userFoldStyles: Record<string, React.CSSProperties> = {
-  preview: {
-    opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-    maxWidth: '100%', fontStyle: 'italic',
+  wrap: { position: 'relative' },
+  // Clamp the real message to a few lines; the fade block below hides the cut.
+  clamp: { maxHeight: '7.5em', overflow: 'hidden' },
+  // A short gradient block at the bottom that fades into the bubble and holds
+  // the unfold button. The gradient ignores clicks; the button takes them.
+  fade: {
+    position: 'absolute', left: 0, right: 0, bottom: 0, height: 44,
+    display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+    background: `linear-gradient(to bottom, transparent, ${C.userBg})`,
+    pointerEvents: 'none',
   },
   btn: {
-    marginTop: 6, background: 'rgba(255,255,255,0.18)', border: 'none',
+    pointerEvents: 'auto', background: 'rgba(255,255,255,0.18)', border: 'none',
     color: C.onAccent, fontSize: 11, fontWeight: 600,
-    padding: '3px 9px', borderRadius: 8, cursor: 'pointer',
+    padding: '2px 10px', borderRadius: 8, cursor: 'pointer',
+    backdropFilter: 'blur(2px)',
   },
 }
 
