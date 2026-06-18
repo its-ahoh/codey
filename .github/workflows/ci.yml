@@ -28,6 +28,11 @@ jobs:
 
       - run: npm ci
 
+      # Lint first so style/source violations fail fast, before the heavier
+      # build and test steps.
+      - name: Lint
+        run: npm run lint
+
       # Build the two TS packages. This invokes `tsc` which both type-checks
       # and emits; codey-mac is skipped here because its `build` script runs
       # electron-builder, which is heavy and only meaningful on macOS.
