@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react'
 import { apiService, WorkerDto } from '../services/api'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 import type { TeamGraph } from '../../../packages/core/src/team-graph'
@@ -12,6 +12,14 @@ import { emptyGraph } from './flowEditorModel'
 type DispatchMode = 'all' | 'auto' | 'parallel'
 interface TeamState { members: string[]; dispatch: DispatchMode; graph?: TeamGraph }
 type TeamsState = Record<string, TeamState>
+
+const DISPATCH: { id: DispatchMode; label: string; desc: string }[] = [
+  { id: 'all', label: 'Sequential', desc: 'Members run in order, each passing its output to the next.' },
+  { id: 'auto', label: 'Auto', desc: 'The advisor picks the relevant subset for each task.' },
+  { id: 'parallel', label: 'Parallel', desc: 'All members discuss concurrently in an advisor-moderated roundtable.' },
+]
+
+const labelStyle: CSSProperties = { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: C.fg3, marginBottom: 6 }
 
 function fromRaw(raw: TeamConfigRaw): TeamState {
   if (Array.isArray(raw)) return { members: raw, dispatch: 'all' }
@@ -131,83 +139,117 @@ export default function GlobalTeamsSection() {
       </div>
       {error && <div style={{ background: C.dangerBg, color: C.dangerFg, padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{error}</div>}
       {Object.keys(teams).length === 0 && <div style={{ fontSize: 12, color: C.fg3 }}>No teams yet. Click &quot;+ New team&quot;.</div>}
-      {Object.entries(teams).map(([name, team]) => (
-        <div key={name} style={{ marginBottom: 12, padding: 10, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <input defaultValue={name} onBlur={e => renameTeam(name, e.target.value.trim())}
-              style={{ flex: 1, background: 'transparent', color: C.fg, border: 'none', fontSize: 14, fontWeight: 600 }} />
-            <select
-              value={team.dispatch}
-              onChange={e => setDispatch(name, e.target.value as DispatchMode)}
-              title="Sequential: members run in order, output passed forward. Auto: the advisor picks the relevant subset. Parallel: all members discuss concurrently as a Advisor-moderated roundtable."
-              style={{
-                background: C.surface2, color: C.fg, border: `1px solid ${C.border}`,
-                borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer',
-              }}
-            >
-              <option value="all">Sequential</option>
-              <option value="auto">Auto</option>
-              <option value="parallel">Parallel</option>
-            </select>
-            <button onClick={() => removeTeam(name)} style={{ background: 'transparent', color: C.dangerFg, border: 'none', cursor: 'pointer', fontSize: 12 }}>Delete</button>
+      {Object.entries(teams).map(([name, team]) => {
+        const showOrder = team.dispatch === 'all' && !team.graph
+        return (
+        <div key={name} style={{ marginBottom: 12, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+          {/* Header: name · member count · delete */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: `1px solid ${C.border}` }}>
+            <input defaultValue={name} onBlur={e => renameTeam(name, e.target.value.trim())} aria-label="Team name"
+              style={{ flex: 1, background: 'transparent', color: C.fg, border: 'none', fontSize: 15, fontWeight: 700, outline: 'none' }} />
+            <span style={{ fontSize: 11, color: C.fg3 }}>{team.members.length} {team.members.length === 1 ? 'member' : 'members'}</span>
+            <button onClick={() => removeTeam(name)} title="Delete team"
+              style={{ background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer', fontSize: 11, padding: '2px 4px' }}>Delete</button>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-            {team.members.map((m, i) => {
-              const isDragging = drag?.team === name && drag.idx === i
-              const isOver = dragOver?.team === name && dragOver.idx === i && !isDragging
-              return (
-                <span
-                  key={`${m}-${i}`}
-                  draggable
-                  onDragStart={e => { setDrag({ team: name, idx: i }); e.dataTransfer.effectAllowed = 'move' }}
-                  onDragOver={e => {
-                    if (drag?.team !== name) return
-                    e.preventDefault(); e.dataTransfer.dropEffect = 'move'
-                    if (dragOver?.team !== name || dragOver.idx !== i) setDragOver({ team: name, idx: i })
-                  }}
-                  onDrop={e => {
-                    e.preventDefault()
-                    if (drag?.team === name) reorderMember(name, drag.idx, i)
-                    setDrag(null); setDragOver(null)
-                  }}
-                  onDragEnd={() => { setDrag(null); setDragOver(null) }}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px',
-                    background: C.surface2, borderRadius: 14, fontSize: 12,
-                    cursor: 'grab', opacity: isDragging ? 0.4 : 1,
-                    border: isOver ? `1px solid ${C.accent}` : '1px solid transparent',
-                  }}
-                >
-                  <span style={{ color: C.fg3, cursor: 'grab' }}>⋮⋮</span>
-                  {m}
-                  <button onClick={() => removeMember(name, i)} style={{ background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer', padding: 0 }}>×</button>
-                </span>
-              )
-            })}
-            <select value="" onChange={e => {
-                const v = e.target.value
-                if (!v) return
-                if (v === '__create__') { setCreatingFor(name); setCreatePrompt(''); setCreateError(null) }
-                else addMember(name, v)
-                e.target.value = ''
-              }}
-              style={{ background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '4px 8px', fontSize: 12 }}>
-              <option value="">+ add worker</option>
-              {available(name).map(w => <option key={w.name} value={w.name}>{w.name}</option>)}
-              <option value="__create__">+ Create new worker…</option>
-            </select>
-          </div>
-          {team.dispatch === 'all' && (
-            <div style={{ marginTop: 8 }}>
-              <button onClick={() => setEditingFlow(name)}
-                style={{ padding: '3px 10px', fontSize: 11, background: 'transparent', color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 6, cursor: 'pointer' }}>
-                {team.graph ? 'Edit flow ↗' : '+ Add flow ↗'}
-              </button>
-              {team.graph && <span style={{ fontSize: 11, color: C.fg3, marginLeft: 8 }}>{team.graph.nodes.filter(n => n.type === 'worker').length} nodes</span>}
+
+          <div style={{ padding: 12 }}>
+            {/* Dispatch: segmented control + description */}
+            <div style={labelStyle}>Dispatch mode</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
+              <div style={{ display: 'inline-flex', background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, padding: 2, gap: 2 }}>
+                {DISPATCH.map(d => {
+                  const on = team.dispatch === d.id
+                  return (
+                    <button key={d.id} onClick={() => setDispatch(name, d.id)}
+                      style={{ fontSize: 11, padding: '4px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                        background: on ? C.accent : 'transparent', color: on ? C.onAccent : C.fg2, fontWeight: on ? 600 : 400 }}>
+                      {d.label}
+                    </button>
+                  )
+                })}
+              </div>
+              <span style={{ fontSize: 11, color: C.fg3, flex: 1, minWidth: 180 }}>{DISPATCH.find(d => d.id === team.dispatch)?.desc}</span>
             </div>
-          )}
+
+            {/* Members. Show run-order (numbers + arrows + drag) only for a plain
+                Sequential team — when a flow graph exists it defines the order,
+                so the linear numbering would just be misleading. */}
+            <div style={labelStyle}>
+              {showOrder
+                ? <>Run order <span style={{ textTransform: 'none', letterSpacing: 0, color: C.fg3 }}>· drag to reorder</span></>
+                : 'Members'}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: showOrder ? 4 : 6, alignItems: 'center' }}>
+              {team.members.length === 0 && <span style={{ fontSize: 12, color: C.fg3 }}>No members yet —</span>}
+              {team.members.map((m, i) => {
+                const isDragging = drag?.team === name && drag.idx === i
+                const isOver = dragOver?.team === name && dragOver.idx === i && !isDragging
+                return (
+                  <span key={`${m}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    {showOrder && i > 0 && <span style={{ color: C.fg3, fontSize: 13 }}>→</span>}
+                    <span
+                      draggable
+                      onDragStart={e => { setDrag({ team: name, idx: i }); e.dataTransfer.effectAllowed = 'move' }}
+                      onDragOver={e => {
+                        if (drag?.team !== name) return
+                        e.preventDefault(); e.dataTransfer.dropEffect = 'move'
+                        if (dragOver?.team !== name || dragOver.idx !== i) setDragOver({ team: name, idx: i })
+                      }}
+                      onDrop={e => {
+                        e.preventDefault()
+                        if (drag?.team === name) reorderMember(name, drag.idx, i)
+                        setDrag(null); setDragOver(null)
+                      }}
+                      onDragEnd={() => { setDrag(null); setDragOver(null) }}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6, padding: showOrder ? '4px 8px 4px 5px' : '4px 8px 4px 6px',
+                        background: C.surface2, borderRadius: 14, fontSize: 12,
+                        cursor: 'grab', opacity: isDragging ? 0.4 : 1,
+                        border: isOver ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
+                      }}
+                    >
+                      <span style={{ color: C.fg3, cursor: 'grab', fontSize: 10 }}>⋮⋮</span>
+                      {showOrder && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 9, background: C.accent, color: C.onAccent, fontSize: 10, fontWeight: 700 }}>{i + 1}</span>
+                      )}
+                      <span>{m}</span>
+                      <button onClick={() => removeMember(name, i)} title="Remove" style={{ background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer', padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
+                    </span>
+                  </span>
+                )
+              })}
+              <select value="" onChange={e => {
+                  const v = e.target.value
+                  if (!v) return
+                  if (v === '__create__') { setCreatingFor(name); setCreatePrompt(''); setCreateError(null) }
+                  else addMember(name, v)
+                  e.target.value = ''
+                }}
+                style={{ background: 'transparent', color: C.accent, border: `1px dashed ${C.accent}`, borderRadius: 14, padding: '4px 8px', fontSize: 12, cursor: 'pointer' }}>
+                <option value="">+ add worker</option>
+                {available(name).map(w => <option key={w.name} value={w.name}>{w.name}</option>)}
+                <option value="__create__">+ Create new worker…</option>
+              </select>
+            </div>
+
+            {/* Flow (Sequential only) */}
+            {team.dispatch === 'all' && (
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: C.fg3 }}>Workflow</span>
+                <button onClick={() => setEditingFlow(name)}
+                  style={{ padding: '4px 12px', fontSize: 11, fontWeight: 600, borderRadius: 6, cursor: 'pointer',
+                    background: team.graph ? C.accent : 'transparent', color: team.graph ? C.onAccent : C.accent, border: `1px solid ${C.accent}` }}>
+                  {team.graph ? '✎ Edit workflow' : '+ Add workflow'}
+                </button>
+                {team.graph
+                  ? <span style={{ fontSize: 11, color: C.fg3 }}>{team.graph.nodes.filter(n => n.type === 'worker').length} worker nodes wired</span>
+                  : <span style={{ fontSize: 11, color: C.fg3 }}>Optional — branch &amp; loop between members on a workflow canvas.</span>}
+              </div>
+            )}
+          </div>
         </div>
-      ))}
+        )
+      })}
       {creatingFor && (
         <div onClick={() => !createBusy && setCreatingFor(null)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
