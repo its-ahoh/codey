@@ -199,18 +199,12 @@ export const ChatContextPanel: React.FC<Props> = ({
               </div>
             </Section>
 
-            {turn && teamName && (
-              <Section title="Team flow">
-                <button onClick={() => setFlowOpen(true)} style={{ fontSize: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 12px', cursor: 'pointer', marginBottom: 8 }}>
-                  View flow ⤢
-                </button>
-              </Section>
-            )}
             {turn && (
               <TeamFlow
                 turn={turn}
                 isStreaming={isTurnStreaming}
                 onScrollToStep={onScrollToStep}
+                onViewFlow={teamName ? () => setFlowOpen(true) : undefined}
               />
             )}
             {turn && <ToolTimeline toolCalls={turn.toolCalls ?? []} />}
@@ -319,9 +313,12 @@ const TeamFlow: React.FC<{
   turn: ChatMessage
   isStreaming: boolean
   onScrollToStep: (messageId: string, stepNum: number) => void
-}> = ({ turn, isStreaming, onScrollToStep }) => {
+  /** When set, renders a "View flow ⤢" button that opens the run-flow overlay. */
+  onViewFlow?: () => void
+}> = ({ turn, isStreaming, onScrollToStep, onViewFlow }) => {
   const parsed = parseTeamMessage(turn.content)
-  if (!parsed) return null
+  // Nothing to show: no steps to list and no overlay to launch.
+  if (!parsed && !onViewFlow) return null
   const infos = (turn.toolCalls ?? []).filter(tc => tc.type === 'info')
   // Match info messages to steps by step number prefix ("Step N:" or "Step N/M:")
   const reasonByStep = new Map<number, string>()
@@ -330,11 +327,20 @@ const TeamFlow: React.FC<{
     if (!m) continue
     reasonByStep.set(parseInt(m[1], 10), info.message)
   }
-  const lastIdx = parsed.steps.length - 1
+  const steps = parsed?.steps ?? []
+  const lastIdx = steps.length - 1
   return (
-    <Section title={`Team flow (${parsed.steps.length} step${parsed.steps.length === 1 ? '' : 's'})`}>
+    <Section title="Team flow">
+      {onViewFlow && (
+        <button
+          onClick={onViewFlow}
+          style={{ fontSize: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 12px', cursor: 'pointer', marginBottom: steps.length ? 8 : 0 }}
+        >
+          View flow ⤢
+        </button>
+      )}
       <div style={flowStyles.list}>
-        {parsed.steps.map((s, i) => {
+        {steps.map((s, i) => {
           const isRunning = isStreaming && i === lastIdx
           const status: 'done' | 'running' = isRunning ? 'running' : 'done'
           const reason = reasonByStep.get(s.step)
