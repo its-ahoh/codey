@@ -831,6 +831,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
 
   const panelWorkerName = chat.selection.type === 'worker' ? chat.selection.name : undefined
   const panelTeamName = chat.selection.type === 'team' ? chat.selection.name : undefined
+  const [panelTeamGraph, setPanelTeamGraph] = useState<import('../../../packages/core/src/team-graph').TeamGraph | undefined>(undefined)
+  useEffect(() => {
+    if (!panelTeamName) { setPanelTeamGraph(undefined); return }
+    apiService.getGlobalTeams()
+      .then(teams => setPanelTeamGraph((teams[panelTeamName] as any)?.graph))
+      .catch(() => setPanelTeamGraph(undefined))
+  }, [panelTeamName])
 
   return (
     <div style={styles.outer}>
@@ -1389,6 +1396,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
               effectiveModel={effectiveModel}
               workerName={panelWorkerName}
               teamName={panelTeamName}
+              teamGraph={panelTeamGraph}
               workingDir={workingDir}
               width={effectiveWidth}
               onFollowLatest={() => setFollowLatest(true)}

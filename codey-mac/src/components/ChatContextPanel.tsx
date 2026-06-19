@@ -5,6 +5,7 @@ import { parseTeamMessage } from './teamMessageFormat'
 import { ToolDetail, CombinedDiffView, normalizeTool } from './toolFormat'
 import { QuickQuestionView } from './QuickQuestionView'
 import { TaskHud } from './TaskHud'
+import TeamRunFlow from './TeamRunFlow'
 
 export type ContextPanelTab = 'current' | 'task' | 'files' | 'qq'
 
@@ -22,6 +23,8 @@ interface Props {
   workerName?: string
   /** Team name actively bound, when chat selection is a team. */
   teamName?: string
+  /** Authored flow graph for the chat's team, if any. */
+  teamGraph?: import('../../../packages/core/src/team-graph').TeamGraph
   /** Working directory of the workspace, used to render relative file paths. */
   workingDir?: string
   width: number
@@ -57,7 +60,7 @@ const formatTokens = (n: number): string | null => {
 
 export const ChatContextPanel: React.FC<Props> = ({
   chat, selectedTurnId, followLatest, selectedTurnIndex,
-  effectiveAgent, effectiveModel, workerName, teamName, workingDir,
+  effectiveAgent, effectiveModel, workerName, teamName, teamGraph, workingDir,
   width, onFollowLatest, onClose, onResize, onRevealFile, onScrollToStep, isTurnStreaming,
   activeTab, onTabChange, qqInputRef,
   onAnswerNextAction, taskBriefLoading, onTaskTabShown,
@@ -65,6 +68,8 @@ export const ChatContextPanel: React.FC<Props> = ({
   const turn: ChatMessage | undefined = selectedTurnId
     ? chat.messages.find(m => m.id === selectedTurnId && m.role === 'assistant')
     : undefined
+
+  const [flowOpen, setFlowOpen] = React.useState(false)
 
   const triggeringUserMsg: ChatMessage | undefined = (() => {
     if (!turn) return undefined
@@ -193,6 +198,13 @@ export const ChatContextPanel: React.FC<Props> = ({
               </div>
             </Section>
 
+            {turn && teamName && (
+              <Section title="Team flow">
+                <button onClick={() => setFlowOpen(true)} style={{ fontSize: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 12px', cursor: 'pointer', marginBottom: 8 }}>
+                  View flow ⤢
+                </button>
+              </Section>
+            )}
             {turn && (
               <TeamFlow
                 turn={turn}
@@ -214,6 +226,15 @@ export const ChatContextPanel: React.FC<Props> = ({
               </Section>
             )}
             {!turn && <div style={styles.emptyHint}>Send a message to see run context.</div>}
+            {flowOpen && turn && (
+              <TeamRunFlow
+                turn={turn}
+                isStreaming={isTurnStreaming}
+                teamGraph={teamGraph}
+                askingWorker={chat.pendingTeam?.askingWorker}
+                onClose={() => setFlowOpen(false)}
+              />
+            )}
           </>
         ) : (
           <FileChangesView
