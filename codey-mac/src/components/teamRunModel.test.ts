@@ -31,6 +31,23 @@ describe('deriveWorkerRuns', () => {
     const runs = deriveWorkerRuns(teamTurn({ content: 'just a normal reply' }), false)
     expect(runs).toEqual([])
   })
+
+  // Authored-graph (Sequential) teams emit the "flow results" / **worker**:
+  // transcript, not the `### Step` format. deriveWorkerRuns must handle it too.
+  it('derives runs from the Sequential "flow results" transcript', () => {
+    const content = [
+      '📊 Team **Feature** flow results',
+      '',
+      '**product-manager**:',
+      'PM output here.',
+      '',
+      '**developer**: ❌ Failed - build error',
+    ].join('\n')
+    const runs = deriveWorkerRuns(teamTurn({ content, thinkingByStep: undefined }), false)
+    expect(runs).toHaveLength(2)
+    expect(runs[0]).toMatchObject({ step: 1, worker: 'product-manager', output: 'PM output here.', status: 'done' })
+    expect(runs[1]).toMatchObject({ step: 2, worker: 'developer', status: 'failed' })
+  })
 })
 
 import { synthesizeChainGraph, nodeStatuses } from './teamRunModel'

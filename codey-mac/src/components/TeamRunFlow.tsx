@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react'
-import { ReactFlow, ReactFlowProvider, type Node, type Edge } from '@xyflow/react'
+import { ReactFlow, ReactFlowProvider, ConnectionMode, type Node, type Edge } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { ChatMessage } from '../types'
 import type { TeamGraph } from '../../../packages/core/src/team-graph'
@@ -67,6 +67,7 @@ function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, onClose 
               nodeTypes={nodeTypes} edgeTypes={edgeTypes}
               onNodeClick={(_, n) => { const w = (n.data as any)?.worker; if (w) setSelWorker(w) }}
               nodesDraggable={false} nodesConnectable={false} elementsSelectable
+              connectionMode={ConnectionMode.Loose}
               fitView fitViewOptions={{ maxZoom: 1, padding: 0.2 }} minZoom={0.2} maxZoom={1.5}
               colorMode={effectiveTheme}
             />
