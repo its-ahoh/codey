@@ -9,11 +9,16 @@ import {
 import '@xyflow/react/dist/style.css'
 import { TeamGraph, validateGraph } from '../../../packages/core/src/team-graph'
 import { toFlow, fromFlow, newNodeId } from './flowEditorModel'
-import { C } from '../theme'
+import { C, useEffectiveTheme } from '../theme'
 
 // A single edge color throughout — edges don't encode meaning by color; the
 // branch (yes/no) and conditions are shown as labels instead.
 const EDGE_COLOR = C.accent
+
+// SVG <marker> fill is a presentation attribute — CSS var() references don't
+// resolve there. Read the actual computed hex from the document root instead.
+const resolveColor = (cssVar: string) =>
+  getComputedStyle(document.documentElement).getPropertyValue(cssVar.slice(4, -1)).trim()
 
 // ---------------------------------------------------------------------------
 // Custom node components
@@ -54,7 +59,7 @@ function WorkerNodeView({ data, selected }: NodeProps) {
     <div style={{ minWidth: 100, padding: '8px 12px', borderRadius: 8, background: C.surface2, border: `1px solid ${d.bad ? C.red : C.border}`, color: C.fg, boxSizing: 'border-box', boxShadow: ring(selected, d.bad) }}>
       <NodeResizer isVisible={selected} minWidth={100} minHeight={44} />
       <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>{d.label}</div>
-      {d.role && <div style={{ fontSize: 11, color: C.fg3, marginTop: 2, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
+      {d.role && <div style={{ fontSize: 11, color: C.fg2, marginTop: 2, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
       <NodeHandles />
     </div>
   )
@@ -93,7 +98,7 @@ function FlowEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, 
   const running = (data as any)?.running
   // Edges in the live flow (reachable from start) use the accent color; dangling
   // edges are greyed. The selected edge is always accent and drawn thicker.
-  const stroke = selected ? C.accent : running ? EDGE_COLOR : C.fg3
+  const stroke = selected ? C.accent : running ? EDGE_COLOR : C.fg2
   return (
     <>
       {selected && <path d={edgePath} fill="none" stroke={C.accent} strokeWidth={9} strokeLinecap="round" style={{ opacity: 0.25 }} />}
@@ -107,7 +112,7 @@ function FlowEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, 
         <EdgeLabelRenderer>
           <div style={{
             position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-            background: C.bg, color: C.fg3, fontSize: 10, padding: '1px 5px', borderRadius: 4,
+            background: C.bg, color: C.fg2, fontSize: 10, padding: '1px 5px', borderRadius: 4,
             border: `1px solid ${C.border}`, pointerEvents: 'none',
           }}>{String(label)}</div>
         </EdgeLabelRenderer>
@@ -132,6 +137,7 @@ interface Props {
 }
 
 function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSave, onClose }: Props) {
+  const effectiveTheme = useEffectiveTheme()
   const withTypes = (ns: Node[]): Node[] => ns.map(n => {
     const t = (n.data as any).type
     const rfType = t === 'worker' ? 'workerNode' : t === 'condition' ? 'conditionNode' : 'terminalNode'
@@ -258,13 +264,14 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
 
   const styledEdges = useMemo(() => edges.map(e => {
     const running = runningEdgeIds.has(e.id)
+    const markerColor = resolveColor(running || e.selected ? C.accent : C.fg2)
     return {
       ...e,
       type: 'flowEdge',
-      markerEnd: { type: MarkerType.ArrowClosed, color: running ? EDGE_COLOR : C.fg3 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: markerColor },
       data: { ...(e as any).data, running },
     }
-  }), [edges, runningEdgeIds])
+  }), [edges, runningEdgeIds, effectiveTheme])
 
   // Inject the per-node `bad` flag so node views can paint themselves red.
   const styledNodes = useMemo(() => nodes.map(n => ({
@@ -281,17 +288,19 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
   // then reversed, which never assigned one).
   const selIsBranch = sel ? (nodes.find(n => n.id === sel.source)?.data as any)?.type === 'condition' : false
 
+  const secondaryBtn = { fontSize: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 12px', cursor: 'pointer' } as const
+
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onClick={e => e.stopPropagation()} style={{ width: '90vw', height: '85vh', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderBottom: `1px solid ${C.border}` }}>
           <strong style={{ flex: 1 }}>Workflow — {teamName}</strong>
-          <label style={{ fontSize: 12, color: C.fg3 }}>max hops <input type="number" min={1} value={maxHops} onChange={e => setMaxHops(Math.max(1, Number(e.target.value) || 1))} style={{ width: 56, marginLeft: 6 }} /></label>
-          <button onClick={reverseAllEdges} title="Flip the direction of every edge" style={{ fontSize: 12 }}>⇄ Reverse all</button>
-          <button onClick={() => setShowRaw(s => !s)} style={{ fontSize: 12 }}>{showRaw ? 'Canvas' : 'Raw config'}</button>
+          <label style={{ fontSize: 12, color: C.fg }}>max hops <input type="number" min={1} value={maxHops} onChange={e => setMaxHops(Math.max(1, Number(e.target.value) || 1))} style={{ width: 56, marginLeft: 6, background: C.surface3, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 4, padding: '2px 6px', colorScheme: effectiveTheme, WebkitAppearance: 'textfield' }} /></label>
+          <button onClick={reverseAllEdges} title="Flip the direction of every edge" style={secondaryBtn}>⇄ Reverse all</button>
+          <button onClick={() => setShowRaw(s => !s)} style={secondaryBtn}>{showRaw ? 'Canvas' : 'Raw config'}</button>
           {justSaved && <span style={{ fontSize: 12, color: C.green }}>Saved ✓</span>}
           <button onClick={save} style={{ fontSize: 12, color: C.onAccent, background: C.accent, border: 'none', borderRadius: 6, padding: '4px 12px' }}>Save</button>
-          <button onClick={onClose} style={{ fontSize: 12 }}>Close</button>
+          <button onClick={onClose} style={secondaryBtn}>Close</button>
         </div>
         {problems.length > 0 && (
           <div style={{ background: C.dangerBg, color: C.dangerFg, fontSize: 11, padding: '4px 12px' }}>{problems.join(' · ')}</div>
@@ -304,24 +313,24 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
                 <button key={w} draggable
                   onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'worker', worker: w }))}
                   onClick={() => addWorker(w)}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4, fontSize: 12, padding: '8px 8px', minHeight: 40, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer' }}>
+                  style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4, fontSize: 12, padding: '8px 8px', minHeight: 40, background: C.surface3, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, cursor: 'pointer' }}>
                   <div style={{ fontWeight: 600 }}>+ {w}</div>
-                  {workerRoles[w] && <div style={{ fontSize: 10, color: C.fg3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{workerRoles[w]}</div>}
+                  {workerRoles[w] && <div style={{ fontSize: 10, color: C.fg2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{workerRoles[w]}</div>}
                 </button>
               ))}
               <button draggable
                 onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'condition' }))}
                 onClick={() => addCondition()}
-                style={{ display: 'block', width: '100%', marginTop: 8, fontSize: 12, padding: '6px', background: C.surface2, border: `1px dashed ${C.accent}`, borderRadius: 6, cursor: 'pointer' }}>◇ + Condition</button>
+                style={{ display: 'block', width: '100%', marginTop: 8, fontSize: 12, padding: '6px', background: C.surface3, color: C.fg, border: `1px dashed ${C.accent}`, borderRadius: 6, cursor: 'pointer' }}>◇ + Condition</button>
             </div>
           )}
           {showRaw ? (
             <pre style={{ flex: 1, margin: 0, padding: 14, overflow: 'auto', fontSize: 12, color: C.fg }}>{JSON.stringify(current(), null, 2)}</pre>
           ) : (
             <div style={{ flex: 1, position: 'relative' }} onDrop={onDrop} onDragOver={onDragOver}>
-              <ReactFlow nodes={styledNodes} edges={styledEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => { setSelEdge(e.id); setSelNode(null) }} onNodeClick={(_, n) => { setSelNode(n.id); setSelEdge(null) }} onNodesDelete={(ns) => { if (ns.some(n => n.id === selNode)) setSelNode(null) }} onEdgesDelete={(es) => { if (es.some(e => e.id === selEdge)) setSelEdge(null) }} nodeTypes={nodeTypes} edgeTypes={edgeTypes} connectionMode={ConnectionMode.Loose} fitView fitViewOptions={{ maxZoom: 1, padding: 0.2 }} minZoom={0.2} maxZoom={1.5}>
-                <Background />
-                <Controls />
+              <ReactFlow nodes={styledNodes} edges={styledEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect} onEdgeClick={(_, e) => { setSelEdge(e.id); setSelNode(null) }} onNodeClick={(_, n) => { setSelNode(n.id); setSelEdge(null) }} onNodesDelete={(ns) => { if (ns.some(n => n.id === selNode)) setSelNode(null) }} onEdgesDelete={(es) => { if (es.some(e => e.id === selEdge)) setSelEdge(null) }} nodeTypes={nodeTypes} edgeTypes={edgeTypes} connectionMode={ConnectionMode.Loose} fitView fitViewOptions={{ maxZoom: 1, padding: 0.2 }} minZoom={0.2} maxZoom={1.5} colorMode={effectiveTheme}>
+                <Background style={{ '--xy-background-color': C.bg, '--xy-background-pattern-color': C.border2 } as React.CSSProperties} />
+                <Controls style={{ '--xy-controls-button-background-color': C.surface2, '--xy-controls-button-background-color-hover': C.surface3, '--xy-controls-button-color': C.fg, '--xy-controls-button-border-color': C.border2 } as React.CSSProperties} />
               </ReactFlow>
             </div>
           )}
@@ -330,7 +339,7 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
               {selN.data?.type === 'worker' ? (
                 <>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{selN.data.worker}</div>
-                  <div style={{ fontSize: 11, color: C.fg3, marginBottom: 10, whiteSpace: 'pre-wrap' }}>
+                  <div style={{ fontSize: 11, color: C.fg2, marginBottom: 10, whiteSpace: 'pre-wrap' }}>
                     {workerRoles[selN.data.worker] || 'No description.'}
                   </div>
                   {selfLoops && (
@@ -338,7 +347,7 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
                       Max self-loops
                       <input type="number" min={1} value={selN.data.maxCalls ?? ''} placeholder="∞"
                         onChange={e => updateNodeData(selN.id, { maxCalls: e.target.value === '' ? undefined : Math.max(1, Number(e.target.value) || 1) })}
-                        style={{ width: 64, marginLeft: 6 }} />
+                        style={{ width: 64, marginLeft: 6, background: C.surface3, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 4, padding: '2px 6px', colorScheme: effectiveTheme, WebkitAppearance: 'textfield' }} />
                     </label>
                   )}
                 </>
