@@ -81,7 +81,7 @@ function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, onClose 
                 <div style={{ fontSize: 11, textTransform: 'uppercase', color: C.fg3, marginBottom: 6 }}>Output</div>
                 <Markdown variant="assistant">{sel.output || '(no output yet)'}</Markdown>
                 <div style={{ fontSize: 11, textTransform: 'uppercase', color: C.fg3, margin: '14px 0 6px' }}>Tool calls</div>
-                <ToolCallList toolCalls={toolCallsForStep(turn.toolCalls, sel.step)} emptyHint="(no tool calls)" />
+                <ToolCallList toolCalls={toolCallsForStep(turn.toolCalls, sel.step)} emptyHint="(no tool calls)" minimal />
                 {sel.thinking && (
                   <div style={{ marginTop: 14 }}>
                     <button onClick={() => setShowThinking(s => !s)} style={{ ...secondaryBtn, fontSize: 11 }}>

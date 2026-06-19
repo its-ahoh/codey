@@ -11,7 +11,7 @@ import type { ToolCallEntry } from '../types'
  * Returns null when there are no rows and no `emptyHint` is given (matches the
  * single-agent panel, which hides the section entirely when empty).
  */
-export const ToolCallList: React.FC<{ toolCalls: ToolCallEntry[]; emptyHint?: string }> = ({ toolCalls, emptyHint }) => {
+export const ToolCallList: React.FC<{ toolCalls: ToolCallEntry[]; emptyHint?: string; minimal?: boolean }> = ({ toolCalls, emptyHint, minimal }) => {
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set())
 
   type Row =
@@ -54,7 +54,7 @@ export const ToolCallList: React.FC<{ toolCalls: ToolCallEntry[]; emptyHint?: st
         if (r.kind === 'info') {
           return (
             <div key={r.id} style={timelineStyles.infoRow}>
-              <span style={timelineStyles.iconInfo}>ⓘ</span>
+              {!minimal && <span style={timelineStyles.iconInfo}>ⓘ</span>}
               <span>{r.message}</span>
             </div>
           )
@@ -73,9 +73,21 @@ export const ToolCallList: React.FC<{ toolCalls: ToolCallEntry[]; emptyHint?: st
               style={{ ...timelineStyles.callRow, cursor: hasDetail ? 'pointer' : 'default' }}
               onClick={hasDetail ? toggle : undefined}
             >
-              <span style={r.done ? timelineStyles.iconDone : timelineStyles.iconRunning}>{icon}</span>
-              <span style={timelineStyles.tool}>{r.tool ?? '(tool)'}</span>
-              <span style={timelineStyles.callMsg}>{r.message}</span>
+              {minimal ? (
+                // Clean variant: drop the colored status icon and the redundant
+                // tool label (the message already reads "Read(foo.ts)"); keep a
+                // subtle chevron only when there's detail to expand.
+                <>
+                  <span style={timelineStyles.chevron}>{hasDetail ? (isOpen ? '⌄' : '›') : ''}</span>
+                  <span style={timelineStyles.callMsg}>{r.message || r.tool}</span>
+                </>
+              ) : (
+                <>
+                  <span style={r.done ? timelineStyles.iconDone : timelineStyles.iconRunning}>{icon}</span>
+                  <span style={timelineStyles.tool}>{r.tool ?? '(tool)'}</span>
+                  <span style={timelineStyles.callMsg}>{r.message}</span>
+                </>
+              )}
             </div>
             {hasDetail && isOpen && (
               <div style={timelineStyles.detail}>
@@ -108,6 +120,7 @@ const timelineStyles: Record<string, React.CSSProperties> = {
     padding: '2px 0',
   },
   tool: { color: C.fg2, flexShrink: 0 },
+  chevron: { color: C.fg3, width: 10, flexShrink: 0 },
   callMsg: { color: C.fg2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   iconRunning: { color: C.accent, width: 12, flexShrink: 0 },
   iconDone: { color: C.green, width: 12, flexShrink: 0 },
