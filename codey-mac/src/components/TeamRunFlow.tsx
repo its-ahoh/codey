@@ -5,7 +5,8 @@ import type { ChatMessage } from '../types'
 import type { TeamGraph } from '../../../packages/core/src/team-graph'
 import { toFlow } from './flowEditorModel'
 import { nodeTypes, edgeTypes, rfNodeType } from './flowGraph'
-import { deriveWorkerRuns, synthesizeChainGraph, nodeStatuses } from './teamRunModel'
+import { deriveWorkerRuns, synthesizeChainGraph, nodeStatuses, toolCallsForStep } from './teamRunModel'
+import { ToolCallList } from './ToolCallList'
 import { C, useEffectiveTheme } from '../theme'
 import { Markdown } from './Markdown'
 
@@ -79,6 +80,8 @@ function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, onClose 
                 <div style={{ fontSize: 11, color: C.fg2, marginBottom: 12 }}>Step {sel.step} · {sel.status}</div>
                 <div style={{ fontSize: 11, textTransform: 'uppercase', color: C.fg3, marginBottom: 6 }}>Output</div>
                 <Markdown variant="assistant">{sel.output || '(no output yet)'}</Markdown>
+                <div style={{ fontSize: 11, textTransform: 'uppercase', color: C.fg3, margin: '14px 0 6px' }}>Tool calls</div>
+                <ToolCallList toolCalls={toolCallsForStep(turn.toolCalls, sel.step)} emptyHint="(no tool calls)" />
                 {sel.thinking && (
                   <div style={{ marginTop: 14 }}>
                     <button onClick={() => setShowThinking(s => !s)} style={{ ...secondaryBtn, fontSize: 11 }}>

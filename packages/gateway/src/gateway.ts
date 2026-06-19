@@ -3146,7 +3146,22 @@ Example: /model gpt-4.1 write a Python script`;
         buildBootstrapPrompt: () => this.wrapPromptWithMemory(workerPrompt, prompt, workerName),
         onStream: (text: string) => sink({ type: 'stream', chatId, token: text }),
         onThinking,
-        onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
+        onStatus: (update: any) => {
+          // Forward each worker's tool events to the chat so the run-flow view
+          // can attribute them per worker (team runs here are serial; the Mac
+          // side buckets each call under the most-recent "Step N" marker).
+          // Mirrors the single-agent onStatus; step narration stays on
+          // emitter.status. (Parallel path below is left untouched — its tool
+          // events interleave and can't be attributed by order.)
+          try {
+            const parsed = typeof update === 'string' ? JSON.parse(update) : update;
+            if (parsed?.type === 'tool_start') {
+              sink({ type: 'tool_start', chatId, tool: parsed.tool, message: parsed.message ?? '', input: parsed.input });
+            } else if (parsed?.type === 'tool_end') {
+              sink({ type: 'tool_end', chatId, tool: parsed.tool, message: parsed.message ?? '', output: parsed.output });
+            }
+          } catch { /* non-JSON status */ }
+        },
         signal,
         workingDir,
       });

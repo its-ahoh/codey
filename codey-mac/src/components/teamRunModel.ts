@@ -56,6 +56,22 @@ export function deriveWorkerRuns(turn: ChatMessage, isStreaming: boolean): Worke
   })
 }
 
+// Attribute tool calls to a step. Team runs are serial, so each tool event
+// belongs to the most-recent preceding `🔄 Step N:` / `Step N:` marker in the
+// stream. Returns only tool_start/tool_end entries (not the info markers).
+export function toolCallsForStep(toolCalls: ToolCallEntry[] | undefined, step: number): ToolCallEntry[] {
+  const out: ToolCallEntry[] = []
+  let current = 0
+  for (const tc of toolCalls ?? []) {
+    if (tc.type === 'info' && tc.message) {
+      const m = tc.message.match(LIVE_SEQ) ?? tc.message.match(LIVE_AUTO)
+      if (m) { current = parseInt(m[1], 10); continue }
+    }
+    if ((tc.type === 'tool_start' || tc.type === 'tool_end') && current === step) out.push(tc)
+  }
+  return out
+}
+
 export function synthesizeChainGraph(runs: WorkerRun[]): TeamGraph {
   const workers: string[] = []
   for (const r of runs) if (!workers.includes(r.worker)) workers.push(r.worker)

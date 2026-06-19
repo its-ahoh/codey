@@ -92,9 +92,33 @@ describe('deriveWorkerRuns', () => {
   })
 })
 
-import { synthesizeChainGraph, nodeStatuses } from './teamRunModel'
+import { synthesizeChainGraph, nodeStatuses, toolCallsForStep } from './teamRunModel'
 import type { WorkerRun } from './teamRunModel'
 import { validateGraph } from '../../../packages/core/src/team-graph'
+
+describe('toolCallsForStep', () => {
+  const calls = [
+    { id: 'm1', type: 'info', message: '🔄 Step 1: **product-manager** is working...' },
+    { id: 't1', type: 'tool_start', tool: 'Read', message: 'reading spec', input: { file: 'a' } },
+    { id: 't1', type: 'tool_end', tool: 'Read', output: 'contents' },
+    { id: 'm2', type: 'info', message: '🔄 Step 2: **developer** is working...' },
+    { id: 't2', type: 'tool_start', tool: 'Edit', message: 'editing' },
+  ] as any
+
+  it('returns only the tool calls that belong to a step', () => {
+    expect(toolCallsForStep(calls, 1).map(c => c.id)).toEqual(['t1', 't1'])
+    expect(toolCallsForStep(calls, 2).map(c => c.id)).toEqual(['t2'])
+  })
+
+  it('excludes the info step markers themselves', () => {
+    expect(toolCallsForStep(calls, 1).some(c => c.type === 'info')).toBe(false)
+  })
+
+  it('returns [] for a step with no tool calls or missing toolCalls', () => {
+    expect(toolCallsForStep(calls, 3)).toEqual([])
+    expect(toolCallsForStep(undefined, 1)).toEqual([])
+  })
+})
 
 const run = (step: number, worker: string, status: WorkerRun['status']): WorkerRun =>
   ({ step, worker, status, output: 'o' })
