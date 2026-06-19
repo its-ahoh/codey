@@ -32,6 +32,48 @@ describe('deriveWorkerRuns', () => {
     expect(runs).toEqual([])
   })
 
+  // Mid-run, the Sequential transcript has no `**worker**:` structure yet —
+  // only live `info` step markers exist. deriveWorkerRuns must surface those so
+  // the overlay can highlight the active worker live.
+  it('derives live worker runs from info step markers when content is unstructured', () => {
+    const turn = teamTurn({
+      content: 'raw streamed tokens with no worker headers yet',
+      thinkingByStep: undefined,
+      toolCalls: [
+        { id: 'a', type: 'info', message: '🔄 Step 1: **product-manager** is working...' },
+        { id: 'b', type: 'info', message: '🔄 Step 2: **architect** is working...' },
+      ] as any,
+    })
+    const runs = deriveWorkerRuns(turn, true)
+    expect(runs).toHaveLength(2)
+    expect(runs[0]).toMatchObject({ step: 1, worker: 'product-manager', status: 'done' })
+    expect(runs[1]).toMatchObject({ step: 2, worker: 'architect', status: 'running' })
+  })
+
+  it('merges live info steps with structured output (output wins, live fills the running step)', () => {
+    const turn = teamTurn({
+      content: '📊 Team **Feature** flow results\n\n**product-manager**:\nPM done.',
+      thinkingByStep: undefined,
+      toolCalls: [
+        { id: 'a', type: 'info', message: '🔄 Step 1: **product-manager** is working...' },
+        { id: 'b', type: 'info', message: '🔄 Step 2: **architect** is working...' },
+      ] as any,
+    })
+    const runs = deriveWorkerRuns(turn, true)
+    expect(runs).toHaveLength(2)
+    expect(runs[0]).toMatchObject({ step: 1, worker: 'product-manager', output: 'PM done.', status: 'done' })
+    expect(runs[1]).toMatchObject({ step: 2, worker: 'architect', output: '', status: 'running' })
+  })
+
+  it('parses the auto-path info marker (Step N: worker — reason)', () => {
+    const turn = teamTurn({
+      content: 'unstructured', thinkingByStep: undefined,
+      toolCalls: [{ id: 'a', type: 'info', message: 'Step 1: alice — picked alice to start' }] as any,
+    })
+    const runs = deriveWorkerRuns(turn, true)
+    expect(runs[0]).toMatchObject({ step: 1, worker: 'alice', status: 'running' })
+  })
+
   // Authored-graph (Sequential) teams emit the "flow results" / **worker**:
   // transcript, not the `### Step` format. deriveWorkerRuns must handle it too.
   it('derives runs from the Sequential "flow results" transcript', () => {

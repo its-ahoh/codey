@@ -21,7 +21,7 @@ const secondaryBtn = { fontSize: 12, background: C.surface2, color: C.fg, border
 
 function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, onClose }: Props) {
   const effectiveTheme = useEffectiveTheme()
-  const runs = useMemo(() => deriveWorkerRuns(turn, isStreaming), [turn.content, turn.thinkingByStep, isStreaming])
+  const runs = useMemo(() => deriveWorkerRuns(turn, isStreaming), [turn.content, turn.thinkingByStep, turn.toolCalls?.length, isStreaming])
   const graph: TeamGraph = useMemo(() => teamGraph ?? synthesizeChainGraph(runs), [teamGraph, runs])
   const statuses = useMemo(() => nodeStatuses(graph, runs, askingWorker), [graph, runs, askingWorker])
 

@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../types'
+import type { ChatMessage, ToolCallEntry } from '../types'
 import { parseTeamMessage } from './teamMessageFormat'
 import type { TeamGraph, TeamGraphNode, TeamGraphEdge } from '../../../packages/core/src/team-graph'
 
@@ -15,16 +15,44 @@ export interface WorkerRun {
 // Gateway marks a failed team step with a leading ❌ in its output.
 const FAILED_RE = /❌/
 
+// Live per-step "is working" markers streamed as `info` events. The structured
+// `**worker**:` transcript only lands when the run completes, so mid-run these
+// are the only signal of which worker is active.
+//   Sequential: "🔄 Step 1: **product-manager** is working..."
+//   Auto:       "Step 1: alice — <reason>"  (optionally " (revision)")
+const LIVE_SEQ = /^🔄 Step (\d+): \*\*(.+?)\*\* is working/
+const LIVE_AUTO = /^Step (\d+): (.+?)(?: —|$)/
+
+function parseLiveSteps(toolCalls?: ToolCallEntry[]): Array<{ step: number; worker: string }> {
+  const byStep = new Map<number, string>()
+  for (const tc of toolCalls ?? []) {
+    if (tc.type !== 'info' || !tc.message) continue
+    const m = tc.message.match(LIVE_SEQ) ?? tc.message.match(LIVE_AUTO)
+    if (m) byStep.set(parseInt(m[1], 10), m[2].trim())
+  }
+  return [...byStep.entries()].map(([step, worker]) => ({ step, worker })).sort((a, b) => a.step - b.step)
+}
+
 export function deriveWorkerRuns(turn: ChatMessage, isStreaming: boolean): WorkerRun[] {
-  const parsed = parseTeamMessage(turn.content)
-  if (!parsed || parsed.steps.length === 0) return []
-  const lastStep = parsed.steps[parsed.steps.length - 1].step
-  return parsed.steps.map(s => {
+  // Structured transcript (has per-worker output) — authoritative once present.
+  const contentSteps = parseTeamMessage(turn.content)?.steps ?? []
+  // Live `info` markers — present from the moment each worker starts.
+  const liveSteps = parseLiveSteps(turn.toolCalls)
+  if (contentSteps.length === 0 && liveSteps.length === 0) return []
+
+  // Merge by step number; content wins (it carries the worker's output).
+  const byStep = new Map<number, { worker: string; output: string }>()
+  for (const s of liveSteps) byStep.set(s.step, { worker: s.worker, output: '' })
+  for (const s of contentSteps) byStep.set(s.step, { worker: s.worker, output: s.output })
+
+  const ordered = [...byStep.entries()].sort((a, b) => a[0] - b[0])
+  const lastStep = ordered[ordered.length - 1][0]
+  return ordered.map(([step, v]) => {
     const status: NodeRunStatus =
-      isStreaming && s.step === lastStep ? 'running'
-      : FAILED_RE.test(s.output) ? 'failed'
+      isStreaming && step === lastStep ? 'running'
+      : FAILED_RE.test(v.output) ? 'failed'
       : 'done'
-    return { step: s.step, worker: s.worker, status, output: s.output, thinking: turn.thinkingByStep?.[s.step] }
+    return { step, worker: v.worker, status, output: v.output, thinking: turn.thinkingByStep?.[step] }
   })
 }
 
