@@ -11,7 +11,8 @@ export interface WorkerRun {
   thinking?: string
 }
 
-const FAILED_RE = /❌|\bFailed\b/
+// Gateway marks a failed team step with a leading ❌ in its output.
+const FAILED_RE = /❌/
 
 export function deriveWorkerRuns(turn: ChatMessage, isStreaming: boolean): WorkerRun[] {
   const parsed = parseTeamMessage(turn.content)
