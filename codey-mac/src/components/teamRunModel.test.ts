@@ -32,3 +32,53 @@ describe('deriveWorkerRuns', () => {
     expect(runs).toEqual([])
   })
 })
+
+import { synthesizeChainGraph, nodeStatuses } from './teamRunModel'
+import type { WorkerRun } from './teamRunModel'
+import { validateGraph } from '../../../packages/core/src/team-graph'
+
+const run = (step: number, worker: string, status: WorkerRun['status']): WorkerRun =>
+  ({ step, worker, status, output: 'o' })
+
+describe('synthesizeChainGraph', () => {
+  it('builds start -> w1 -> w2 -> end and validates', () => {
+    const runs = [run(1, 'pm', 'done'), run(2, 'dev', 'running')]
+    const g = synthesizeChainGraph(runs)
+    expect(g.entry).toBe('start')
+    expect(g.nodes.find(n => n.type === 'start')).toBeTruthy()
+    expect(g.nodes.find(n => n.type === 'end')).toBeTruthy()
+    expect(g.nodes.filter(n => n.type === 'worker').map(n => n.worker)).toEqual(['pm', 'dev'])
+    expect(validateGraph(g, ['pm', 'dev'])).toEqual([])
+  })
+
+  it('dedupes a revisited worker into one node', () => {
+    const g = synthesizeChainGraph([run(1, 'pm', 'done'), run(2, 'dev', 'done'), run(3, 'pm', 'done')])
+    expect(g.nodes.filter(n => n.type === 'worker')).toHaveLength(2)
+  })
+})
+
+describe('nodeStatuses', () => {
+  it('maps run status onto matching worker nodes, pending for unreached', () => {
+    const runs = [run(1, 'pm', 'done')]
+    const g = synthesizeChainGraph([run(1, 'pm', 'done'), run(2, 'dev', 'done')])
+    const st = nodeStatuses(g, runs)
+    const pmNode = g.nodes.find(n => n.worker === 'pm')!
+    const devNode = g.nodes.find(n => n.worker === 'dev')!
+    expect(st[pmNode.id]).toBe('done')
+    expect(st[devNode.id]).toBe('pending')
+  })
+
+  it('marks the asking worker askedUser', () => {
+    const g = synthesizeChainGraph([run(1, 'pm', 'done'), run(2, 'dev', 'running')])
+    const st = nodeStatuses(g, [run(1, 'pm', 'done'), run(2, 'dev', 'running')], 'dev')
+    const devNode = g.nodes.find(n => n.worker === 'dev')!
+    expect(st[devNode.id]).toBe('askedUser')
+  })
+
+  it('end is pending while a run is running, done otherwise', () => {
+    const g = synthesizeChainGraph([run(1, 'pm', 'done')])
+    const endId = g.nodes.find(n => n.type === 'end')!.id
+    expect(nodeStatuses(g, [run(1, 'pm', 'running')])[endId]).toBe('pending')
+    expect(nodeStatuses(g, [run(1, 'pm', 'done')])[endId]).toBe('done')
+  })
+})
