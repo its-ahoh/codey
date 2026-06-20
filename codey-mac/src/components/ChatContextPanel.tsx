@@ -227,6 +227,7 @@ export const ChatContextPanel: React.FC<Props> = ({
                 isStreaming={isTurnStreaming}
                 teamGraph={teamGraph}
                 askingWorker={chat.pendingTeam?.askingWorker}
+                group={turn.teamTurnId ? chat.messages.filter(m => m.teamTurnId === turn.teamTurnId) : undefined}
                 onClose={() => setFlowOpen(false)}
               />
             )}

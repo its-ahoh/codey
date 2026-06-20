@@ -5,7 +5,7 @@ import type { ChatMessage } from '../types'
 import type { TeamGraph } from '../../../packages/core/src/team-graph'
 import { toFlow } from './flowEditorModel'
 import { nodeTypes, edgeTypes, rfNodeType } from './flowGraph'
-import { deriveWorkerRuns, synthesizeChainGraph, nodeStatuses, toolCallsForStep } from './teamRunModel'
+import { deriveWorkerRuns, deriveWorkerRunsFromGroup, synthesizeChainGraph, nodeStatuses, toolCallsForStep } from './teamRunModel'
 import { ToolCallList } from './ToolCallList'
 import { C, useEffectiveTheme } from '../theme'
 import { Markdown } from './Markdown'
@@ -15,14 +15,20 @@ interface Props {
   isStreaming: boolean
   teamGraph?: TeamGraph
   askingWorker?: string
+  /** Per-worker message group for this team run; when present, worker runs are
+   *  derived from it instead of from the (legacy) combined transcript. */
+  group?: ChatMessage[]
   onClose: () => void
 }
 
 const secondaryBtn = { fontSize: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 12px', cursor: 'pointer' } as const
 
-function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, onClose }: Props) {
+function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, group, onClose }: Props) {
   const effectiveTheme = useEffectiveTheme()
-  const runs = useMemo(() => deriveWorkerRuns(turn, isStreaming), [turn.content, turn.thinkingByStep, turn.toolCalls?.length, isStreaming])
+  const runs = useMemo(
+    () => (group && group.length > 0 ? deriveWorkerRunsFromGroup(group) : deriveWorkerRuns(turn, isStreaming)),
+    [group, turn.content, turn.thinkingByStep, turn.toolCalls?.length, isStreaming],
+  )
   const graph: TeamGraph = useMemo(() => teamGraph ?? synthesizeChainGraph(runs), [teamGraph, runs])
   const statuses = useMemo(() => nodeStatuses(graph, runs, askingWorker), [graph, runs, askingWorker])
 
@@ -52,6 +58,16 @@ function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, onClose 
   }, [runs, selWorker, runByWorker])
 
   const sel = selWorker ? runByWorker.get(selWorker) : undefined
+  // In group mode each worker message carries only its own tool calls, so scope
+  // by the matching group message; otherwise attribute from the combined stream.
+  const selToolCalls = useMemo(() => {
+    if (!sel) return []
+    if (group && group.length > 0) {
+      const msg = group.find(m => m.step === sel.step && m.worker === sel.worker)
+      return msg?.toolCalls ?? []
+    }
+    return toolCallsForStep(turn.toolCalls, sel.step)
+  }, [sel, group, turn.toolCalls])
   const [showThinking, setShowThinking] = useState(false)
 
   return (
@@ -81,7 +97,7 @@ function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, onClose 
                 <div style={{ fontSize: 11, textTransform: 'uppercase', color: C.fg3, marginBottom: 6 }}>Output</div>
                 <Markdown variant="assistant">{sel.output || '(no output yet)'}</Markdown>
                 <div style={{ fontSize: 11, textTransform: 'uppercase', color: C.fg3, margin: '14px 0 6px' }}>Tool calls</div>
-                <ToolCallList toolCalls={toolCallsForStep(turn.toolCalls, sel.step)} emptyHint="(no tool calls)" minimal />
+                <ToolCallList toolCalls={selToolCalls} emptyHint="(no tool calls)" minimal />
                 {sel.thinking && (
                   <div style={{ marginTop: 14 }}>
                     <button onClick={() => setShowThinking(s => !s)} style={{ ...secondaryBtn, fontSize: 11 }}>
