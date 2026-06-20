@@ -444,7 +444,8 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // so streaming/tool events render and the "working" indicator shows.
       if (
         (ev.type === 'tool_start' || ev.type === 'tool_end' || ev.type === 'info' ||
-         ev.type === 'stream' || ev.type === 'thinking') &&
+         ev.type === 'stream' || ev.type === 'thinking' ||
+         ev.type === 'team_start' || ev.type === 'worker_start' || ev.type === 'worker_end') &&
         !pendingAssistantId.current[ev.chatId] &&
         !adopting.current.has(ev.chatId)
       ) {
@@ -470,6 +471,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             chatId: ev.chatId,
             entry: { id: `tc-${Date.now()}-${Math.random()}`, type: 'tool_start', tool: ev.tool, message: ev.message, input: ev.input },
             status: 'working',
+            messageId: ev.messageId,
           })
           break
         case 'tool_end':
@@ -478,6 +480,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             chatId: ev.chatId,
             entry: { id: `tc-${Date.now()}-${Math.random()}`, type: 'tool_end', tool: ev.tool, message: ev.message, output: ev.output },
             status: 'working',
+            messageId: ev.messageId,
           })
           break
         case 'info':
@@ -489,10 +492,19 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           })
           break
         case 'stream':
-          dispatch({ type: 'streamToken', chatId: ev.chatId, token: ev.token })
+          dispatch({ type: 'streamToken', chatId: ev.chatId, token: ev.token, messageId: ev.messageId })
           break
         case 'thinking':
-          dispatch({ type: 'thinkingToken', chatId: ev.chatId, token: ev.token, step: ev.step })
+          dispatch({ type: 'thinkingToken', chatId: ev.chatId, token: ev.token, step: ev.step, messageId: ev.messageId })
+          break
+        case 'team_start':
+          dispatch({ type: 'teamStart', chatId: ev.chatId, teamTurnId: ev.teamTurnId, teamName: ev.teamName, mode: ev.mode, workers: ev.workers })
+          break
+        case 'worker_start':
+          dispatch({ type: 'workerStart', chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, step: ev.step, worker: ev.worker, reason: ev.reason })
+          break
+        case 'worker_end':
+          dispatch({ type: 'workerEnd', chatId: ev.chatId, messageId: ev.messageId, step: ev.step, status: ev.status })
           break
         case 'done': {
           adopting.current.delete(ev.chatId)
