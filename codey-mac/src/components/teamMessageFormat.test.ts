@@ -58,6 +58,59 @@ describe('parseTeamMessage', () => {
     ].join('\n')
     expect(parseTeamMessage(input)).toBeNull()
   })
+
+  // The Sequential / `all` dispatch paths (authored-graph teams) emit a
+  // different transcript than the `### Step` auto/advisor format: a
+  // "📊 Team **X** flow results" header followed by "**worker**:" blocks,
+  // optionally trailed by a "🧠 Team blackboard" section.
+  it('parses the Sequential "flow results" / **worker**: format', () => {
+    const input = [
+      '📊 Team **Feature** flow results',
+      '',
+      '**product-manager**:',
+      'PM wrote the spec.',
+      '',
+      'It has **bold** mid-output and a blank line.',
+      '',
+      '**architect**:',
+      'Design done.',
+    ].join('\n')
+    const r = parseTeamMessage(input)
+    expect(r).not.toBeNull()
+    expect(r!.steps).toHaveLength(2)
+    expect(r!.steps[0]).toEqual({
+      step: 1, worker: 'product-manager',
+      output: 'PM wrote the spec.\n\nIt has **bold** mid-output and a blank line.',
+    })
+    expect(r!.steps[1]).toMatchObject({ step: 2, worker: 'architect', output: 'Design done.' })
+  })
+
+  it('captures same-line worker output (failed step) and excludes the blackboard', () => {
+    const input = [
+      '📊 Team **Feature** flow results',
+      '',
+      '**product-manager**:',
+      'spec ok',
+      '',
+      '**developer**: ❌ Failed - build error',
+      '',
+      '---',
+      '',
+      '### 🧠 Team blackboard',
+      '',
+      '**Decisions:**',
+      '- *product-manager* — ship it',
+    ].join('\n')
+    const r = parseTeamMessage(input)
+    expect(r!.steps).toHaveLength(2)
+    expect(r!.steps[1]).toMatchObject({ step: 2, worker: 'developer', output: '❌ Failed - build error' })
+  })
+
+  it('also parses the "results" header without the "flow" word (all path)', () => {
+    const input = '📊 Team **Crew** results\n\n**alice**:\ndid a thing'
+    const r = parseTeamMessage(input)
+    expect(r!.steps).toEqual([{ step: 1, worker: 'alice', output: 'did a thing' }])
+  })
 })
 
 describe('extractPreview', () => {
