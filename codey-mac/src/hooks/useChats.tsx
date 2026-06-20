@@ -38,9 +38,9 @@ type Action =
   | { type: 'select'; chatId: string | null }
   | { type: 'toggleWorkspace'; workspaceName: string }
   | { type: 'startSend'; chatId: string; userMessage: ChatMessage; assistantMessageId: string }
-  | { type: 'streamToken'; chatId: string; token: string }
-  | { type: 'thinkingToken'; chatId: string; token: string; step?: number }
-  | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: 'working' | 'writing' }
+  | { type: 'streamToken'; chatId: string; token: string; messageId?: string }
+  | { type: 'thinkingToken'; chatId: string; token: string; step?: number; messageId?: string }
+  | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: 'working' | 'writing'; messageId?: string }
   | { type: 'queued'; chatId: string; position: number }
   | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback'] }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
@@ -51,9 +51,16 @@ type Action =
   | { type: 'patchTaskBrief'; chatId: string; brief: TaskBrief }
   | { type: 'permissionRequest'; chatId: string; toolNames: string[] }
   | { type: 'dismissPermission'; chatId: string }
+  | { type: 'teamStart'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string }> }
+  | { type: 'workerStart'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; reason?: string }
+  | { type: 'workerEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser' }
 
 function reorder(order: string[], chatId: string): string[] {
   return [chatId, ...order.filter(id => id !== chatId)]
+}
+
+function mkWorkerStub(teamTurnId: string, teamName: string, mode: ChatMessage['teamMode'], id: string, step: number, worker: string, reason?: string): ChatMessage {
+  return { id, role: 'assistant', content: '', timestamp: Date.now(), toolCalls: [], isComplete: false, teamTurnId, teamName, teamMode: mode, step, worker, workerStatus: 'running', advisorReason: reason }
 }
 
 export function reducer(state: State, action: Action): State {
@@ -196,52 +203,84 @@ export function reducer(state: State, action: Action): State {
     }
     case 'thinkingToken': {
       const chat = state.chats[action.chatId]
+      if (!chat) return state
       const fl = state.inFlight[action.chatId]
-      if (!chat || !fl) return state
-      const nextFl: InFlight = { ...fl, agentStatus: 'thinking' }
-      if (action.step === undefined) {
-        nextFl.thinking = (fl.thinking ?? '') + action.token
-      } else {
-        nextFl.thinkingByStep = { ...(fl.thinkingByStep ?? {}), [action.step]: (fl.thinkingByStep?.[action.step] ?? '') + action.token }
+      const targetId = action.messageId ?? fl?.assistantMessageId
+      if (!targetId) return state
+      const nextFl: InFlight | undefined = fl ? { ...fl, agentStatus: 'thinking' } : undefined
+      if (nextFl) {
+        if (action.step === undefined) {
+          nextFl.thinking = (fl!.thinking ?? '') + action.token
+        } else {
+          nextFl.thinkingByStep = { ...(fl!.thinkingByStep ?? {}), [action.step]: (fl!.thinkingByStep?.[action.step] ?? '') + action.token }
+        }
       }
       const messages = chat.messages.map(m =>
-        m.id === fl.assistantMessageId
-          ? { ...m, thinking: nextFl.thinking, thinkingByStep: nextFl.thinkingByStep }
+        m.id === targetId
+          ? { ...m, thinking: nextFl?.thinking ?? m.thinking, thinkingByStep: nextFl?.thinkingByStep ?? m.thinkingByStep }
           : m
       )
       return {
         ...state,
         chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } },
-        inFlight: { ...state.inFlight, [chat.id]: nextFl },
+        ...(nextFl ? { inFlight: { ...state.inFlight, [chat.id]: nextFl } } : {}),
       }
     }
     case 'streamToken': {
       const chat = state.chats[action.chatId]
+      if (!chat) return state
       const fl = state.inFlight[action.chatId]
-      if (!chat || !fl) return state
+      const targetId = action.messageId ?? fl?.assistantMessageId
+      if (!targetId) return state
       const messages = chat.messages.map(m =>
-        m.id === fl.assistantMessageId ? { ...m, content: m.content + action.token } : m
+        m.id === targetId ? { ...m, content: m.content + action.token } : m
       )
       return {
         ...state,
         chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } },
-        inFlight: { ...state.inFlight, [chat.id]: { ...fl, agentStatus: 'writing' } },
+        ...(fl ? { inFlight: { ...state.inFlight, [chat.id]: { ...fl, agentStatus: 'writing' } } } : {}),
       }
     }
     case 'toolCall': {
       const chat = state.chats[action.chatId]
+      if (!chat) return state
       const fl = state.inFlight[action.chatId]
-      if (!chat || !fl) return state
+      const targetId = action.messageId ?? fl?.assistantMessageId
+      if (!targetId) return state
       const messages = chat.messages.map(m =>
-        m.id === fl.assistantMessageId
+        m.id === targetId
           ? { ...m, toolCalls: [...(m.toolCalls ?? []), action.entry] }
           : m
       )
       return {
         ...state,
         chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } },
-        inFlight: { ...state.inFlight, [chat.id]: { ...fl, agentStatus: action.status } },
+        ...(fl ? { inFlight: { ...state.inFlight, [chat.id]: { ...fl, agentStatus: action.status } } } : {}),
       }
+    }
+    case 'teamStart': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      const stubs = (action.workers ?? []).map(w => mkWorkerStub(action.teamTurnId, action.teamName, action.mode, w.messageId, w.step, w.worker))
+      if (stubs.length === 0) return state
+      const existing = new Set(chat.messages.map(m => m.id))
+      const messages = [...chat.messages, ...stubs.filter(s => !existing.has(s.id))]
+      return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
+    }
+    case 'workerStart': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      if (chat.messages.some(m => m.id === action.messageId)) return state
+      const teamName = chat.messages.find(m => m.teamTurnId === action.teamTurnId)?.teamName ?? (chat.selection.type === 'team' ? chat.selection.name ?? '' : '')
+      const mode = chat.messages.find(m => m.teamTurnId === action.teamTurnId)?.teamMode ?? 'auto'
+      const stub = mkWorkerStub(action.teamTurnId, teamName, mode, action.messageId, action.step, action.worker, action.reason)
+      return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages: [...chat.messages, stub], updatedAt: Date.now() } } }
+    }
+    case 'workerEnd': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      const messages = chat.messages.map(m => m.id === action.messageId ? { ...m, workerStatus: action.status, isComplete: action.status !== 'running' } : m)
+      return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
     }
     case 'queued': {
       const fl = state.inFlight[action.chatId]
