@@ -332,12 +332,20 @@ export class Codey {
 
   /**
    * Per-agent default model name. Looks up the first fallback entry for the
-   * agent that pins a model. Used to resolve `getDefaultModelConfig` without
-   * depending on the now-removed `agents.{}.defaultModel` slot.
+   * agent that pins a model. When no entry pins a model for this agent, falls
+   * back to the first model in the global catalog so fallback entries without
+   * a pinned model don't get silently skipped.
    */
   private getDefaultModelName(agent: CodingAgent): string | undefined {
     const fb = this.configManager?.getFallback() ?? this.config.fallback;
-    return fb?.order.find(e => e.agent === agent && !!e.model)?.model;
+    const pinned = fb?.order.find(e => e.agent === agent && !!e.model)?.model;
+    if (pinned) return pinned;
+    // No model pinned for this agent in the fallback order — pick the first
+    // catalog model as a last resort. (The adapter may later reject it if the
+    // apiType doesn't match, but that's still better than silently skipping
+    // the entire fallback entry.)
+    const catalog = this.configManager?.listModels() ?? this.config.models;
+    return catalog?.[0]?.model;
   }
 
   private getEffectiveModel(agent?: CodingAgent): string {
