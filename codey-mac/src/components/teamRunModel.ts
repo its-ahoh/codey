@@ -56,6 +56,21 @@ export function deriveWorkerRuns(turn: ChatMessage, isStreaming: boolean): Worke
   })
 }
 
+// Derive worker runs directly from a per-worker message group (one ChatMessage
+// per worker, each carrying its own step/worker/status/output/thinking).
+export function deriveWorkerRunsFromGroup(messages: ChatMessage[]): WorkerRun[] {
+  return messages
+    .filter(m => m.teamTurnId && m.worker)
+    .map(m => ({
+      step: m.step ?? 0,
+      worker: m.worker!,
+      status: (m.workerStatus ?? 'done') as NodeRunStatus,
+      output: m.content,
+      thinking: m.thinking,
+    }))
+    .sort((a, b) => a.step - b.step)
+}
+
 // Attribute tool calls to a step. Team runs are serial, so each tool event
 // belongs to the most-recent preceding `🔄 Step N:` / `Step N:` marker in the
 // stream. Returns only tool_start/tool_end entries (not the info markers).

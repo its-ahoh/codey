@@ -1,3 +1,31 @@
+const INVOKE_ASK_USER_RE = /<invoke\s+name="AskUserQuestion">\s*<parameter\s+name="questions">([\s\S]*?)<\/parameter>\s*<\/invoke>/g;
+
+/**
+ * Convert hallucinated `<invoke name="AskUserQuestion">` XML blocks emitted by
+ * worker LLMs into `[ASK_USER:choice]` markers so the normal parsing path handles them.
+ */
+export function normalizeWorkerOutput(output: string): string {
+  if (!output.includes('<invoke name="AskUserQuestion">')) return output;
+  return output.replace(INVOKE_ASK_USER_RE, (_, rawJson) => {
+    try {
+      const questions: any[] = JSON.parse(rawJson.trim());
+      if (!Array.isArray(questions) || questions.length === 0) return '';
+      const q = questions[0];
+      const question = String(q.question ?? '').trim();
+      if (!question) return '';
+      const opts: string[] = Array.isArray(q.options)
+        ? q.options
+            .map((o: any) => (typeof o === 'string' ? o : String(o.label ?? '')).trim())
+            .filter(Boolean)
+        : [];
+      if (opts.length >= 2) return `[ASK_USER:choice]: ${question} | ${opts.join(' | ')}`;
+      return `[ASK_USER]: ${question}`;
+    } catch {
+      return '';
+    }
+  });
+}
+
 export interface AskUser {
   /** Worker output before the marker line (joined with \n, trimmed of trailing whitespace). */
   preamble: string;
@@ -37,7 +65,7 @@ function splitChoicePayload(payload: string): { question: string; options?: stri
  */
 export function parseAskUser(output: string): AskUser | null {
   if (!output) return null;
-  const lines = output.split(/\r?\n/);
+  const lines = normalizeWorkerOutput(output).split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(USER_MARKER_RE);
     if (!m) continue;
@@ -62,7 +90,7 @@ export function parseAskUser(output: string): AskUser | null {
  */
 export function parseAsk(output: string): AskMarker | null {
   if (!output) return null;
-  const lines = output.split(/\r?\n/);
+  const lines = normalizeWorkerOutput(output).split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const m = line.match(USER_MARKER_RE);

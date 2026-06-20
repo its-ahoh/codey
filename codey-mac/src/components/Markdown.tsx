@@ -16,6 +16,13 @@ const MONO = 'ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace'
 // blockquotes, HRs — otherwise GFM stops recognizing them as blocks (e.g.
 // a hard-break on the line above a table glues it into the prose paragraph
 // and the table is rendered as plain text).
+const INVOKE_XML_RE = /<invoke\s+name="AskUserQuestion">[\s\S]*?<\/invoke>/g
+
+function stripHallucinatedInvoke(src: string): string {
+  if (!src.includes('<invoke name="AskUserQuestion">')) return src
+  return src.replace(INVOKE_XML_RE, '').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 function preserveLineBreaks(src: string): string {
   const lines = src.split('\n')
   const out: string[] = []
@@ -216,11 +223,14 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
                     lineHeight: 1.5,
                     fontFamily: MONO,
                     color: C.codeFg,
+                    background: 'transparent',
                     whiteSpace: 'pre',
                     tabSize: 2,
                   }}
                 >
-                  {children}
+                  <code style={{ background: 'transparent', padding: 0, fontFamily: MONO, color: 'inherit' }}>
+                    {codeText.replace(/\n$/, '')}
+                  </code>
                 </pre>
               </div>
             )
@@ -249,7 +259,7 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
           },
         }}
       >
-        {preserveLineBreaks(children)}
+        {preserveLineBreaks(stripHallucinatedInvoke(children))}
       </ReactMarkdown>
     </div>
   )

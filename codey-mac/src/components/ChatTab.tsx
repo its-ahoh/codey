@@ -11,6 +11,8 @@ import { ChatContextPanel } from './ChatContextPanel'
 import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
+import { groupMessages } from './teamGroup'
+import type { RenderItem } from './teamGroup'
 import { StatusSidecar } from './StatusSidecar'
 import { isTaskBriefStale, extractSidecarBrief } from './taskHudView'
 import { onTeamsChanged } from './teamsChanged'
@@ -18,6 +20,7 @@ import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolForm
 import { defaultThinkingExpanded } from './thinkingState'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
+import { useGitStatus } from '../hooks/useGitStatus'
 
 interface Props {
   chatId: string
@@ -277,6 +280,43 @@ const TeamMessage: React.FC<{
   )
 }
 
+const TeamRunGroup: React.FC<{
+  item: Extract<RenderItem, { kind: 'team' }>
+  isStreaming: boolean
+  selectedTurnId: string | null
+  panelOpen: boolean
+  onSelectTurn: (id: string) => void
+}> = ({ item, isStreaming, selectedTurnId, panelOpen, onSelectTurn }) => {
+  const [collapsed, setCollapsed] = React.useState(false)
+  const lastId = item.messages[item.messages.length - 1]?.id
+  return (
+    <div style={styles.teamGroup}>
+      <div style={styles.teamGroupHeader} onClick={() => setCollapsed(c => !c)}>
+        <span style={{ ...styles.teamStepChevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>▶</span>
+        <span style={styles.teamGroupTitle}>Team: {item.teamName ?? '—'} · {item.teamMode}</span>
+        <span style={styles.teamGroupCount}>{item.messages.length} workers</span>
+      </div>
+      {!collapsed && item.messages.map(m => {
+        const running = isStreaming && m.id === lastId && m.workerStatus === 'running'
+        const selected = m.id === selectedTurnId && panelOpen
+        return (
+          <div key={m.id}
+            style={{ ...styles.teamWorkerBubble, ...(selected ? styles.teamWorkerBubbleActive : undefined) }}
+            onClick={() => onSelectTurn(m.id)}>
+            <div style={styles.teamWorkerHead}>
+              <span style={styles.teamStepLabel}>Step {m.step}: {m.worker}</span>
+              {m.workerStatus === 'failed' && <span style={styles.teamWorkerFailed}>failed</span>}
+              {running && <span style={styles.teamStepRunning}>● running</span>}
+            </div>
+            {m.advisorReason && <div style={styles.teamWorkerReason}>{m.advisorReason}</div>}
+            <div style={styles.teamStepBody}><Markdown variant="assistant">{m.content || '…'}</Markdown></div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed }) => {
   const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
@@ -406,6 +446,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
       .then(info => setWorkingDir(info.workingDir))
       .catch(() => setWorkingDir(undefined))
   }, [chat?.workspaceName])
+  const { status: gitStatus, refresh: refreshGit } = useGitStatus(workingDir)
   useEffect(() => {
     if (!isGatewayRunning) return
     ;(async () => {
@@ -460,7 +501,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   useEffect(() => {
     const toggled = prevTurnActiveRef.current !== turnActive
     prevTurnActiveRef.current = turnActive
-    if (!toggled || panelTab !== 'task' || !chat) return
+    if (!toggled) return
+    if (!turnActive) void refreshGit()
+    if (!chat || panelTab !== 'task') return
     setTaskBriefLoading(true)
     generateTaskBrief(chat.id).finally(() => setTaskBriefLoading(false))
   }, [turnActive, panelTab, chatId])
@@ -868,6 +911,11 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
       )}
       <div style={styles.header}>
         <span style={styles.workspaceTag}>{chat.workspaceName}</span>
+        {gitStatus && (
+          <span style={styles.gitBadge} title={`Branch: ${gitStatus.branch}${gitStatus.dirty > 0 ? ` · ${gitStatus.dirty} change${gitStatus.dirty !== 1 ? 's' : ''}` : ''}`}>
+            ⎇ {gitStatus.branch}{gitStatus.dirty > 0 ? ` +${gitStatus.dirty}` : ''}
+          </span>
+        )}
         <select value={selectionValue} onChange={e => onSelectionChange(e.target.value)} style={{ ...styles.workerSelect, marginLeft: 'auto' }}>
           <option value="none">No worker</option>
           {workers.length > 0 && (
@@ -1010,7 +1058,27 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
       <div
         style={{ ...styles.messages, position: 'relative' }}
       >
-        {chat.messages.map((msg, idx) => {
+        {groupMessages(chat.messages).map((item, idx) => {
+          if (item.kind === 'team') {
+            return (
+              <TeamRunGroup
+                key={item.teamTurnId}
+                item={item}
+                isStreaming={!!flight && item.messages[item.messages.length - 1]?.id === lastMsg?.id}
+                selectedTurnId={selectedTurnId}
+                panelOpen={panelOpen}
+                onSelectTurn={(id: string) => {
+                  setSelectedTurnIdState(id)
+                  setFollowLatest(false)
+                  if (!panelOpen) {
+                    setContextPanelOpen(chat.id, true)
+                    setPanelTab('current')
+                  }
+                }}
+              />
+            )
+          }
+          const msg = item.message
           const isUser = msg.role === 'user'
           const isSelected = !isUser && msg.id === selectedTurnId && panelOpen
           return (
@@ -1455,6 +1523,13 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: 'wrap', rowGap: 6,
   },
   workspaceTag: { color: C.fg3, fontSize: 11, flexShrink: 0 },
+  gitBadge: {
+    color: C.fg3, fontSize: 11, flexShrink: 0,
+    background: C.surface3, border: `1px solid ${C.border2}`,
+    borderRadius: 4, padding: '2px 6px',
+    fontFamily: 'SF Mono, Menlo, monospace',
+    maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
+  },
   workerSelect: {
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6,
     color: C.fg2, fontSize: 12, padding: '4px 8px', outline: 'none',
@@ -1733,6 +1808,15 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1, minWidth: 0,
   },
   teamStepBody: { marginTop: 4, marginLeft: 17 },
+  teamGroup: { border: `1px solid ${C.border}`, borderRadius: 10, margin: '6px 0', overflow: 'hidden', background: C.surface2 },
+  teamGroupHeader: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}` },
+  teamGroupTitle: { flex: 1, fontSize: 12, fontWeight: 600, color: C.fg },
+  teamGroupCount: { fontSize: 11, color: C.fg3 },
+  teamWorkerBubble: { padding: '8px 12px', borderBottom: `1px solid ${C.border2}`, cursor: 'pointer' },
+  teamWorkerBubbleActive: { background: C.surface3 },
+  teamWorkerHead: { display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 2 },
+  teamWorkerReason: { fontSize: 11, color: C.fg3, marginBottom: 4 },
+  teamWorkerFailed: { fontSize: 10, color: C.red ?? '#e66', textTransform: 'uppercase' as const },
   thinkingToggle: {
     display: 'flex', alignItems: 'center', cursor: 'pointer',
     fontSize: 11, color: C.fg3, padding: '2px 0', userSelect: 'none' as const,

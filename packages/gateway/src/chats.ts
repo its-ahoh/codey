@@ -307,6 +307,19 @@ export class ChatManager {
     return chat;
   }
 
+  /** Shallow-merge a patch into an existing message and persist. No-op if the
+   *  message id is not found. Used by team runs to fill a worker's stub on
+   *  completion. Does NOT trigger compaction (that fires on appendMessage). */
+  updateMessage(chatId: string, messageId: string, patch: Partial<ChatMessage>): Chat {
+    const chat = this.requireChat(chatId);
+    const idx = chat.messages.findIndex(m => m.id === messageId);
+    if (idx < 0) return chat;
+    chat.messages[idx] = { ...chat.messages[idx], ...patch };
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
   /**
    * Kick off a background compaction job if the unsummarized tail has grown
    * past the threshold and one isn't already running for this chat. Errors
@@ -449,5 +462,6 @@ export class ChatManager {
 
 function deriveTitle(firstMessage: string): string {
   const cleaned = firstMessage.trim().replace(/\s+/g, ' ');
+  if (!cleaned) return 'New Chat';
   return cleaned.length <= 40 ? cleaned : cleaned.slice(0, 40) + '…';
 }
