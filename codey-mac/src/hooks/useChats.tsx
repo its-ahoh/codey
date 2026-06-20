@@ -342,6 +342,7 @@ interface ChatsContextValue {
   clearRestore: (chatId: string) => void
   toggleWorkspace: (workspaceName: string) => void
   refreshWorkspaces: () => Promise<void>
+  refreshChats: () => Promise<void>
 }
 
 const ChatsContext = createContext<ChatsContextValue | null>(null)
@@ -607,6 +608,14 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     async refreshWorkspaces() {
       const workspaces = await apiService.getWorkspaces()
       dispatch({ type: 'setWorkspaces', workspaces })
+    },
+    // Re-fetch the chat list from the gateway. Used after a workspace is deleted
+    // (which also deletes its chats) so the sidebar groups, which are derived
+    // from state.chats, drop the removed workspace instead of waiting for a
+    // full app reload.
+    async refreshChats() {
+      const chats = await apiService.chats.list()
+      dispatch({ type: 'loaded', chats })
     },
   }), [state])
 
