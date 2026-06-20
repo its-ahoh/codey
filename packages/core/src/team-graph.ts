@@ -40,6 +40,8 @@ export interface TeamGraph {
 }
 
 export const DEFAULT_MAX_HOPS = 20;
+/** Default cap on consecutive self-loops for a worker node that doesn't set maxCalls. */
+export const DEFAULT_MAX_SELF_LOOP = 3;
 
 /**
  * Returns a list of human-readable problems with the graph. Empty array means
@@ -150,14 +152,17 @@ export function outgoingEdges(graph: TeamGraph, nodeId: string): TeamGraphEdge[]
 
 /**
  * Outgoing edges the judge may choose from. Drops a worker's self-edge once its
- * consecutive-run streak has reached the node's maxCalls, forcing an exit. For
- * nodes without maxCalls (or non-worker nodes) this equals outgoingEdges.
+ * consecutive-run streak has reached the node's maxCalls, forcing an exit.
+ * Worker nodes that don't set maxCalls fall back to DEFAULT_MAX_SELF_LOOP.
  */
 export function eligibleEdges(graph: TeamGraph, state: GraphRunState, nodeId: string): TeamGraphEdge[] {
   const edges = outgoingEdges(graph, nodeId);
   const node = nodeMap(graph).get(nodeId);
-  if (node?.type === 'worker' && node.maxCalls !== undefined && state.runStreak >= node.maxCalls) {
-    return edges.filter(e => e.to !== nodeId);
+  if (node?.type === 'worker') {
+    const cap = node.maxCalls ?? DEFAULT_MAX_SELF_LOOP;
+    if (state.runStreak >= cap) {
+      return edges.filter(e => e.to !== nodeId);
+    }
   }
   return edges;
 }

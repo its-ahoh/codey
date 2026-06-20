@@ -336,12 +336,16 @@ describe('eligibleEdges', () => {
     expect(ids).toContain('e2');
   });
 
-  it('ignores nodes without maxCalls (keeps every edge, including a self-edge)', () => {
-    // w2 has no maxCalls; even a huge runStreak must not drop any edge.
+  it('applies DEFAULT_MAX_SELF_LOOP (3) when a worker node omits maxCalls', () => {
+    // w2 has no maxCalls; default cap of 3 kicks in.
     const g2 = { ...g, edges: [...g.edges, { id: 'e3', from: 'w2', to: 'w2' }, { id: 'e4', from: 'w2', to: 'w1' }] };
-    const ids = eligibleEdges(g2, { ...startRun(g2), currentNodeId: 'w2', runStreak: 99 }, 'w2').map(e => e.id);
-    expect(ids).toContain('e3'); // self-edge kept
-    expect(ids).toContain('e4');
+    const below = eligibleEdges(g2, { ...startRun(g2), currentNodeId: 'w2', runStreak: 2 }, 'w2').map(e => e.id);
+    expect(below).toContain('e3'); // below cap, self-edge kept
+    expect(below).toContain('e4');
+
+    const atCap = eligibleEdges(g2, { ...startRun(g2), currentNodeId: 'w2', runStreak: 3 }, 'w2').map(e => e.id);
+    expect(atCap).not.toContain('e3'); // at default cap, self-edge dropped
+    expect(atCap).toContain('e4');
   });
 });
 
