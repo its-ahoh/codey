@@ -53,6 +53,7 @@ async function run() {
     mode: 'sequential' as const,
     teamName: 'review',
     task: 'audit pr',
+    teamTurnId: 'test-turn-id',
     memberIndex: 1,
     carry: 'previous output',
     askingWorker: 'reviewer',

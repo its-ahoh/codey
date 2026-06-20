@@ -2368,6 +2368,7 @@ Example: /model gpt-4.1 write a Python script`;
     const { members, dispatch } = team;
     const baseConv = `${channel}-${chatId}`;
     const teamConv = this.workerConversationId(baseConv, { team: teamName });
+    const turnTeamTurnId = randomUUID();
 
     // Helper to run one worker once, used by both the Advisor loop and the
     // legacy "all members in input order" fallback. Routes through
@@ -2437,7 +2438,7 @@ Example: /model gpt-4.1 write a Python script`;
           text: `⚠️ Auto-routing failed (${result.fallbackReason}), running all members.`,
         });
         const fbEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
-        await this.runAllMembersInOrder(fbEmitter, message.chatId, baseConv, teamName, members, task, runOneWorker);
+        await this.runAllMembersInOrder(fbEmitter, message.chatId, baseConv, teamName, members, task, runOneWorker, { teamTurnId: turnTeamTurnId });
         return;
       }
 
@@ -2449,6 +2450,7 @@ Example: /model gpt-4.1 write a Python script`;
           mode: 'auto',
           teamName,
           task,
+          teamTurnId: turnTeamTurnId,
           history: p.history,
           lastWorker: p.lastWorker,
           lastOutput: p.lastOutput,
@@ -2494,7 +2496,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     // dispatch === 'all' OR forceAll: legacy path
     if (!opts.forceAll && team.graph) {
-      await this.runSequentialGraphForChat(message, teamName, team.graph, task, runOneWorker);
+      await this.runSequentialGraphForChat(message, teamName, team.graph, task, runOneWorker, turnTeamTurnId);
       return;
     }
     const headerSuffix = opts.forceAll ? ' [--all override]' : '';
@@ -2504,7 +2506,7 @@ Example: /model gpt-4.1 write a Python script`;
       text: `👥 Running team **${teamName}** (${members.join(' → ')})${headerSuffix}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
     const allEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
-    await this.runAllMembersInOrder(allEmitter, message.chatId, baseConv, teamName, members, task, runOneWorker);
+    await this.runAllMembersInOrder(allEmitter, message.chatId, baseConv, teamName, members, task, runOneWorker, { teamTurnId: turnTeamTurnId });
   }
 
   /**
@@ -2616,6 +2618,7 @@ Example: /model gpt-4.1 write a Python script`;
           mode: 'sequential',
           teamName: pending.teamName,
           task: pending.task,
+          teamTurnId: pending.teamTurnId,
           memberIndex: pending.memberIndex,
           carry: pending.carry,
           askingWorker: memberName,
@@ -2639,7 +2642,7 @@ Example: /model gpt-4.1 write a Python script`;
         team.members,
         pending.task,
         runOneWorker,
-        { startIndex: pending.memberIndex + 1, startCarry: carryForNext, priorResults, blackboard, conversationId: teamConv },
+        { startIndex: pending.memberIndex + 1, startCarry: carryForNext, priorResults, blackboard, conversationId: teamConv, teamTurnId: pending.teamTurnId },
       );
       return emitter.transcript;
     }
@@ -2653,7 +2656,7 @@ Example: /model gpt-4.1 write a Python script`;
       const blackboard = TeamBlackboard.fromJSON(pending.blackboard);
       await this.continueGraphRun(
         emitter, chatId, convBase,
-        pending.teamName, team.graph, pending.task, state, blackboard, pending.results,
+        pending.teamName, pending.teamTurnId, team.graph, pending.task, state, blackboard, pending.results,
         runOneWorker, { resume: { question: pending.question, answer } },
       );
       return emitter.transcript;
@@ -2730,6 +2733,7 @@ Example: /model gpt-4.1 write a Python script`;
         mode: 'auto',
         teamName: pending.teamName,
         task: pending.task,
+        teamTurnId: pending.teamTurnId,
         history: newHistory,
         lastWorker: turn.next,
         lastOutput: response.output,
@@ -2781,7 +2785,7 @@ Example: /model gpt-4.1 write a Python script`;
       blackboard: TeamBlackboard,
       onThinking?: (text: string) => void,
     ) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
-    opts: { startIndex?: number; startCarry?: string; priorResults?: string[]; blackboard?: TeamBlackboard; conversationId?: string; signal?: AbortSignal; fallbackAgent?: CodingAgent; fallbackModel?: ModelConfig } = {},
+    opts: { startIndex?: number; startCarry?: string; priorResults?: string[]; blackboard?: TeamBlackboard; conversationId?: string; signal?: AbortSignal; fallbackAgent?: CodingAgent; fallbackModel?: ModelConfig; teamTurnId?: string } = {},
   ): Promise<{ thinkingByStep: Record<number, string> }> {
     const workerManager = this.workspaceManager.getWorkerManager();
     const results: string[] = opts.priorResults ? [...opts.priorResults] : [];
@@ -2835,6 +2839,7 @@ Example: /model gpt-4.1 write a Python script`;
           mode: 'sequential',
           teamName,
           task,
+          teamTurnId: opts.teamTurnId || '',
           memberIndex: i,
           carry: currentTask,
           askingWorker: memberName,
@@ -2927,6 +2932,7 @@ Example: /model gpt-4.1 write a Python script`;
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
     ) => Promise<{ success: boolean; output: string; error?: string }>,
+    teamTurnId?: string,
   ): Promise<void> {
     const handler = this.handlers.get(message.channel);
     const emitter = new ChannelEmitter(
@@ -2942,7 +2948,7 @@ Example: /model gpt-4.1 write a Python script`;
       return;
     }
     await emitter.status(`🧭 Running flow for team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`);
-    await this.continueGraphRun(emitter, message.chatId, convBase, teamName, graph, task, state, blackboard, [], runOneWorker);
+    await this.continueGraphRun(emitter, message.chatId, convBase, teamName, teamTurnId || '', graph, task, state, blackboard, [], runOneWorker);
   }
 
   /**
@@ -2958,6 +2964,7 @@ Example: /model gpt-4.1 write a Python script`;
     chatId: string,
     convBase: string,
     teamName: string,
+    teamTurnId: string,
     graph: TeamGraph,
     task: string,
     state: GraphRunState,
@@ -3043,7 +3050,7 @@ Example: /model gpt-4.1 write a Python script`;
       if (ask) {
         const teamConv = this.workerConversationId(convBase, { team: teamName });
         this.persistPendingTeam(chatId, {
-          mode: 'graph', teamName, task,
+          mode: 'graph', teamName, task, teamTurnId,
           graphState: { currentNodeId: state.currentNodeId, hops: state.hops, visited: state.visited, runStreak: state.runStreak },
           results,
           askingWorker: workerName, question: ask.question, options: ask.options,
@@ -3107,6 +3114,7 @@ Example: /model gpt-4.1 write a Python script`;
     chatModel?: ModelConfig,
     signal?: AbortSignal,
     workerMsgs?: WorkerMessageEmitter,
+    teamTurnId?: string,
   ): Promise<{ response: string; choices?: string[]; thinkingByStep?: Record<number, string> }> {
     const emitter = new ChatEmitter(sink, chatId, workerMsgs);
     const blackboard = new TeamBlackboard();
@@ -3116,7 +3124,7 @@ Example: /model gpt-4.1 write a Python script`;
       return { response: emitter.transcript };
     }
     await emitter.status(`Running flow for team ${teamName}`);
-    await this.continueGraphRun(emitter, chatId, `chat-${chatId}`, teamName, graph, prompt, state, blackboard, [], runOneWorker,
+    await this.continueGraphRun(emitter, chatId, `chat-${chatId}`, teamName, teamTurnId || '', graph, prompt, state, blackboard, [], runOneWorker,
       { signal, fallbackAgent: chatAgent, fallbackModel: chatModel });
     return { response: emitter.transcript, choices: emitter.choices };
   }
@@ -3363,6 +3371,7 @@ Example: /model gpt-4.1 write a Python script`;
           mode: 'auto',
           teamName,
           task: prompt,
+          teamTurnId,
           history: p.history,
           lastWorker: p.lastWorker,
           lastOutput: p.lastOutput,
@@ -3395,12 +3404,12 @@ Example: /model gpt-4.1 write a Python script`;
 
     // dispatch === 'all', forceAll, or auto-routing fallback
     if (!opts.forceAll && team.graph) {
-      const g = await this.runSequentialGraphForChatSink(teamName, team.graph, prompt, sink, chatId, runOneWorker, chatAgent, chatModel, signal, workerMsgs);
+      const g = await this.runSequentialGraphForChatSink(teamName, team.graph, prompt, sink, chatId, runOneWorker, chatAgent, chatModel, signal, workerMsgs, teamTurnId);
       return { ...g, teamTurnId };
     }
     const emitter = new ChatEmitter(sink, chatId, workerMsgs);
     const r = await this.runAllMembersInOrder(emitter, chatId, baseConv, teamName, team.members, prompt, runOneWorker,
-      { signal, fallbackAgent: chatAgent, fallbackModel: chatModel });
+      { signal, fallbackAgent: chatAgent, fallbackModel: chatModel, teamTurnId });
     return { response: emitter.transcript, choices: emitter.choices, thinkingByStep: r.thinkingByStep, teamTurnId };
   }
 
@@ -4141,7 +4150,21 @@ Example: /model gpt-4.1 write a Python script`;
         // lifecycle below (a re-pause sets pendingTeam again and surfaces new
         // choices through emitter.choices → teamChoices).
         this.chatManager.setPendingTeam(chatId, null);
-        const emitter = new ChatEmitter(sink, chatId);
+        teamTurnId = pendingTeam.teamTurnId;
+        const workerMsgs = new WorkerMessageEmitter(
+          sink, this.chatManager, chatId,
+          { teamTurnId: teamTurnId!, teamName: pendingTeam.teamName, mode: pendingTeam.mode === 'graph' ? 'graph' : pendingTeam.mode },
+        );
+        // Patch the asking worker's message from askedUser → done so the Mac
+        // UI can release the pause UI and show the worker as completed.
+        const resumeChat = this.chatManager.get(chatId);
+        if (resumeChat) {
+          const askingMsg = resumeChat.messages.filter(m => m.teamTurnId === teamTurnId && m.worker === pendingTeam.askingWorker).pop();
+          if (askingMsg) {
+            this.chatManager.updateMessage(chatId, askingMsg.id, { workerStatus: 'done' });
+          }
+        }
+        const emitter = new ChatEmitter(sink, chatId, workerMsgs);
         output = await this.resumeTeamFromAnswer(chatId, `chat-${chatId}`, pendingTeam, userText, emitter);
         teamChoices = emitter.choices;
       } else if (chat.selection.type === 'team') {
