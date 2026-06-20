@@ -40,6 +40,22 @@ export interface ChatMessage {
   thinking?: string;
   /** Per-team-step extended-thinking, keyed by step number. */
   thinkingByStep?: Record<number, string>;
+  /** Groups the per-worker messages of one team run. Absent on single-agent
+   *  turns and on legacy combined team turns (which use the parseTeamMessage
+   *  fallback renderer). */
+  teamTurnId?: string;
+  /** Team name for a worker message (for the group header). */
+  teamName?: string;
+  /** Dispatch mode of the owning team run. */
+  teamMode?: 'sequential' | 'graph' | 'auto' | 'parallel';
+  /** 1-based step / run index of this worker within the team run. */
+  step?: number;
+  /** Worker name that produced this message. */
+  worker?: string;
+  /** Live status of this worker's run. */
+  workerStatus?: 'running' | 'done' | 'failed' | 'askedUser';
+  /** Advisor's routing reason, shown as a caption on the bubble. */
+  advisorReason?: string;
   /** Option labels when this assistant message ended in [ASK_USER:choice]. */
   choices?: string[];
   /** Structured question from AskUserQuestion tool call, with option descriptions. */
