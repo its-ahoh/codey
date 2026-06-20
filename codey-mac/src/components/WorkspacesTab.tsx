@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { apiService } from '../services/api'
 import { C } from '../theme'
 import TeamsSection from './TeamsSection'
+import { emitWorkspacesChanged } from './workspacesChanged'
 
 interface WorkspacesTabProps {
   isGatewayRunning: boolean
@@ -91,6 +92,7 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
       if (!dir) return
       await apiService.createWorkspaceFromDir(dir)
       await loadWorkspaces()
+      emitWorkspacesChanged()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create workspace')
     } finally {
@@ -117,6 +119,7 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
     try {
       await apiService.deleteWorkspace(name)
       setWorkspaces(prev => prev.filter(w => w !== name))
+      emitWorkspacesChanged()
       setInfoCache(prev => {
         const next = { ...prev }; delete next[name]; return next
       })
