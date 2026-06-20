@@ -11,6 +11,8 @@ import { ChatContextPanel } from './ChatContextPanel'
 import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
+import { groupMessages } from './teamGroup'
+import type { RenderItem } from './teamGroup'
 import { StatusSidecar } from './StatusSidecar'
 import { isTaskBriefStale, extractSidecarBrief } from './taskHudView'
 import { onTeamsChanged } from './teamsChanged'
@@ -271,6 +273,43 @@ const TeamMessage: React.FC<{
                 </div>
               )}
             </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+const TeamRunGroup: React.FC<{
+  item: Extract<RenderItem, { kind: 'team' }>
+  isStreaming: boolean
+  selectedTurnId: string | null
+  panelOpen: boolean
+  onSelectTurn: (id: string) => void
+}> = ({ item, isStreaming, selectedTurnId, panelOpen, onSelectTurn }) => {
+  const [collapsed, setCollapsed] = React.useState(false)
+  const lastId = item.messages[item.messages.length - 1]?.id
+  return (
+    <div style={styles.teamGroup}>
+      <div style={styles.teamGroupHeader} onClick={() => setCollapsed(c => !c)}>
+        <span style={{ ...styles.teamStepChevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>▶</span>
+        <span style={styles.teamGroupTitle}>Team: {item.teamName ?? '—'} · {item.teamMode}</span>
+        <span style={styles.teamGroupCount}>{item.messages.length} workers</span>
+      </div>
+      {!collapsed && item.messages.map(m => {
+        const running = isStreaming && m.id === lastId && m.workerStatus === 'running'
+        const selected = m.id === selectedTurnId && panelOpen
+        return (
+          <div key={m.id}
+            style={{ ...styles.teamWorkerBubble, ...(selected ? styles.teamWorkerBubbleActive : undefined) }}
+            onClick={() => onSelectTurn(m.id)}>
+            <div style={styles.teamWorkerHead}>
+              <span style={styles.teamStepLabel}>Step {m.step}: {m.worker}</span>
+              {m.workerStatus === 'failed' && <span style={styles.teamWorkerFailed}>failed</span>}
+              {running && <span style={styles.teamStepRunning}>● running</span>}
+            </div>
+            {m.advisorReason && <div style={styles.teamWorkerReason}>{m.advisorReason}</div>}
+            <div style={styles.teamStepBody}><Markdown variant="assistant">{m.content || '…'}</Markdown></div>
           </div>
         )
       })}
@@ -1019,7 +1058,27 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
       <div
         style={{ ...styles.messages, position: 'relative' }}
       >
-        {chat.messages.map((msg, idx) => {
+        {groupMessages(chat.messages).map((item, idx) => {
+          if (item.kind === 'team') {
+            return (
+              <TeamRunGroup
+                key={item.teamTurnId}
+                item={item}
+                isStreaming={!!flight && item.messages[item.messages.length - 1]?.id === lastMsg?.id}
+                selectedTurnId={selectedTurnId}
+                panelOpen={panelOpen}
+                onSelectTurn={(id: string) => {
+                  setSelectedTurnIdState(id)
+                  setFollowLatest(false)
+                  if (!panelOpen) {
+                    setContextPanelOpen(chat.id, true)
+                    setPanelTab('current')
+                  }
+                }}
+              />
+            )
+          }
+          const msg = item.message
           const isUser = msg.role === 'user'
           const isSelected = !isUser && msg.id === selectedTurnId && panelOpen
           return (
@@ -1749,6 +1808,15 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1, minWidth: 0,
   },
   teamStepBody: { marginTop: 4, marginLeft: 17 },
+  teamGroup: { border: `1px solid ${C.border}`, borderRadius: 10, margin: '6px 0', overflow: 'hidden', background: C.surface2 },
+  teamGroupHeader: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}` },
+  teamGroupTitle: { flex: 1, fontSize: 12, fontWeight: 600, color: C.fg },
+  teamGroupCount: { fontSize: 11, color: C.fg3 },
+  teamWorkerBubble: { padding: '8px 12px', borderBottom: `1px solid ${C.border2}`, cursor: 'pointer' },
+  teamWorkerBubbleActive: { background: C.surface3 },
+  teamWorkerHead: { display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 2 },
+  teamWorkerReason: { fontSize: 11, color: C.fg3, marginBottom: 4 },
+  teamWorkerFailed: { fontSize: 10, color: C.red ?? '#e66', textTransform: 'uppercase' as const },
   thinkingToggle: {
     display: 'flex', alignItems: 'center', cursor: 'pointer',
     fontSize: 11, color: C.fg3, padding: '2px 0', userSelect: 'none' as const,

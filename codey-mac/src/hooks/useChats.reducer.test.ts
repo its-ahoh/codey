@@ -17,6 +17,42 @@ const makeChat = (overrides: Partial<Chat> = {}): Chat => ({
   ...overrides,
 })
 
+function baseState(): State {
+  return {
+    chats: { c1: { id: 'c1', title: 't', workspaceName: 'ws', selection: { type: 'team', name: 'team' }, messages: [], createdAt: 0, updatedAt: 0 } },
+    order: ['c1'], selectedChatId: 'c1',
+    inFlight: { c1: { assistantMessageId: 'asst-x', userMessageId: 'u1', agentStatus: 'thinking' } },
+    collapsedWorkspaces: {}, workspaces: ['ws'], pendingRestores: {}, unreadChats: {}, pendingPermissions: {},
+  };
+}
+
+describe('team reducer routing', () => {
+  it('workerStart appends a running worker message with the backend id', () => {
+    let s = baseState();
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'pm', reason: 'kickoff' });
+    const m = s.chats.c1.messages.find(x => x.id === 'w1')!;
+    expect(m).toMatchObject({ id: 'w1', role: 'assistant', teamTurnId: 'tt1', worker: 'pm', workerStatus: 'running', advisorReason: 'kickoff' });
+  });
+
+  it('streamToken/toolCall route to the event messageId, not the single inFlight id', () => {
+    let s = baseState();
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' });
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w2', step: 2, worker: 'b', reason: '' });
+    s = reducer(s, { type: 'streamToken', chatId: 'c1', token: 'hi', messageId: 'w1' });
+    s = reducer(s, { type: 'toolCall', chatId: 'c1', entry: { id: 't', type: 'tool_start', tool: 'Read', message: 'Read(a)' }, status: 'working', messageId: 'w2' });
+    expect(s.chats.c1.messages.find(x => x.id === 'w1')!.content).toBe('hi');
+    expect(s.chats.c1.messages.find(x => x.id === 'w2')!.toolCalls).toHaveLength(1);
+    expect(s.chats.c1.messages.find(x => x.id === 'w1')!.toolCalls ?? []).toHaveLength(0);
+  });
+
+  it('workerEnd sets status', () => {
+    let s = baseState();
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' });
+    s = reducer(s, { type: 'workerEnd', chatId: 'c1', messageId: 'w1', step: 1, status: 'done' });
+    expect(s.chats.c1.messages.find(x => x.id === 'w1')!.workerStatus).toBe('done');
+  });
+});
+
 // Regression: quick-capture (and paired-channel) turns are created + run in the
 // main process, so the renderer has no inFlight entry and previously dropped
 // every live event until 'done' — the chat was invisible until refresh and

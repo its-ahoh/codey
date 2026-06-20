@@ -16,6 +16,7 @@ export type PendingTeamState =
       teamName: string;
       task: string;
       mode: 'sequential';
+      teamTurnId: string;
       memberIndex: number;
       carry: string;
       askingWorker: string;
@@ -32,6 +33,7 @@ export type PendingTeamState =
       teamName: string;
       task: string;
       mode: 'auto';
+      teamTurnId: string;
       history: AdvisorHistoryEntry[];
       lastWorker: string;
       lastOutput: string;
@@ -51,6 +53,7 @@ export type PendingTeamState =
       teamName: string;
       task: string;
       mode: 'graph';
+      teamTurnId: string;
       graphState: { currentNodeId: string; hops: number; visited: string[]; runStreak?: number };
       results: string[];
       askingWorker: string;

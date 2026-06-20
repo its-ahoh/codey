@@ -1,4 +1,5 @@
 import { ChannelType } from '@codey/core';
+import type { WorkerMessageEmitter } from './worker-message-emitter';
 
 /** Surface-agnostic sink for team continuation output. */
 export interface TeamEmitter {
@@ -10,6 +11,10 @@ export interface TeamEmitter {
   onStream(token: string): void;
   /** Per-worker streamed thinking token. */
   onThinking(token: string, step: number): void;
+  /** Begin a per-worker chat message (chat surface only). */
+  beginWorker?(args: { step: number; worker: string; reason?: string }): void;
+  /** Finalize the active per-worker chat message (chat surface only). */
+  endWorker?(status: 'done' | 'failed' | 'askedUser'): void;
   /** Accumulated assistant transcript (chat surface); '' for channels. */
   readonly transcript: string;
   /** Latest choices passed to notify (for the chat return contract). */
@@ -22,7 +27,7 @@ type SinkLike = (ev: any) => void;
 export class ChatEmitter implements TeamEmitter {
   private parts: string[] = [];
   private _choices: string[] | undefined;
-  constructor(private sink: SinkLike, private chatId: string) {}
+  constructor(private sink: SinkLike, private chatId: string, private workerMsgs?: WorkerMessageEmitter) {}
   async notify(text: string, choices?: string[]): Promise<void> {
     this._choices = choices;
     this.parts.push(text);
@@ -33,11 +38,15 @@ export class ChatEmitter implements TeamEmitter {
   }
   onStream(token: string): void {
     this.parts.push(token);
+    if (this.workerMsgs) { this.workerMsgs.onStream(token); return; }
     try { this.sink({ type: 'stream', chatId: this.chatId, token }); } catch { /* swallow */ }
   }
   onThinking(token: string, step: number): void {
+    if (this.workerMsgs) { this.workerMsgs.onThinking(token, step); return; }
     try { this.sink({ type: 'thinking', chatId: this.chatId, token, step }); } catch { /* swallow */ }
   }
+  beginWorker(args: { step: number; worker: string; reason?: string }): void { this.workerMsgs?.beginWorker(args); }
+  endWorker(status: 'done' | 'failed' | 'askedUser'): void { this.workerMsgs?.endWorker(status); }
   get transcript(): string { return this.parts.join('\n\n'); }
   get choices(): string[] | undefined { return this._choices; }
 }

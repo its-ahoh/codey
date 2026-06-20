@@ -92,9 +92,21 @@ describe('deriveWorkerRuns', () => {
   })
 })
 
-import { synthesizeChainGraph, nodeStatuses, toolCallsForStep } from './teamRunModel'
+import { synthesizeChainGraph, nodeStatuses, toolCallsForStep, deriveWorkerRunsFromGroup } from './teamRunModel'
 import type { WorkerRun } from './teamRunModel'
 import { validateGraph } from '../../../packages/core/src/team-graph'
+
+const w = (step: number, worker: string, status: any, content: string): ChatMessage =>
+  ({ id: `w${step}`, role: 'assistant', content, timestamp: 0, teamTurnId: 'tt', worker, step, workerStatus: status })
+
+describe('deriveWorkerRunsFromGroup', () => {
+  it('builds ordered runs from the group, carrying status + output', () => {
+    const runs = deriveWorkerRunsFromGroup([w(2, 'b', 'running', 'B'), w(1, 'a', 'done', 'A')])
+    expect(runs.map(r => [r.step, r.worker, r.status, r.output])).toEqual([
+      [1, 'a', 'done', 'A'], [2, 'b', 'running', 'B'],
+    ])
+  })
+})
 
 describe('toolCallsForStep', () => {
   const calls = [
