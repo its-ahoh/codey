@@ -46,7 +46,7 @@ function statusGlow(status?: NodeRunStatus): string | undefined {
   return undefined
 }
 const STATUS_ICON: Record<NodeRunStatus, string> = {
-  done: '✓', running: '◐', failed: '✕', askedUser: '？', pending: '○',
+  done: '✓', running: '◐', failed: '✕', askedUser: '?', pending: '○',
 }
 
 export function WorkerNodeView({ data, selected }: NodeProps) {
