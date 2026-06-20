@@ -14,6 +14,7 @@ export default defineConfig({
       'src/chats.discussion.test.ts',
       'src/chats.taskBrief.test.ts',
       'src/chats.fallbackHeal.test.ts',
+      'src/chats.updateMessage.test.ts',
       'src/parallel-team.test.ts',
       'src/team-emitter.test.ts',
     ],
