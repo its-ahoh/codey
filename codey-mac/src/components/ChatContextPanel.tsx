@@ -227,6 +227,7 @@ export const ChatContextPanel: React.FC<Props> = ({
                 isStreaming={isTurnStreaming}
                 teamGraph={teamGraph}
                 askingWorker={chat.pendingTeam?.askingWorker}
+                group={turn.teamTurnId ? chat.messages.filter(m => m.teamTurnId === turn.teamTurnId) : undefined}
                 onClose={() => setFlowOpen(false)}
               />
             )}
@@ -483,6 +484,21 @@ type FileChange = {
   patchText?: string
 }
 
+const extractReads = (chat: Chat): Array<{ path: string; msgId: string }> => {
+  const out: Array<{ path: string; msgId: string }> = []
+  const seen = new Set<string>()
+  for (const m of chat.messages) {
+    if (m.role !== 'assistant') continue
+    for (const tc of m.toolCalls ?? []) {
+      if (tc.type !== 'tool_start') continue
+      if (normalizeTool(tc.tool) !== 'Read') continue
+      const p = String((tc.input as any)?.file_path ?? '')
+      if (p && !seen.has(p)) { seen.add(p); out.push({ path: p, msgId: m.id }) }
+    }
+  }
+  return out
+}
+
 const extractChanges = (chat: Chat): FileChange[] => {
   const out: FileChange[] = []
   let turnNum = 0
@@ -579,6 +595,7 @@ const FileChangesView: React.FC<{
   onReveal: (absPath: string) => void
 }> = ({ chat, workingDir, selectedTurnId, onReveal }) => {
   const changes = React.useMemo(() => extractChanges(chat), [chat])
+  const reads = React.useMemo(() => extractReads(chat), [chat])
   const [filter, setFilter] = React.useState<'all' | 'turn'>('all')
   // Files default to expanded; this set tracks the ones the user collapsed.
   const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set())
@@ -607,8 +624,16 @@ const FileChangesView: React.FC<{
     ? changes.filter(c => c.msgId === selectedTurnId)
     : changes
 
-  if (changes.length === 0) {
-    return <div style={styles.emptyHint}>No file changes in this chat yet.</div>
+  const visibleReads = filter === 'turn' && selectedTurnId
+    ? reads.filter(r => r.msgId === selectedTurnId)
+    : reads
+
+  // Reads that aren't already shown in the edits section
+  const editedPaths = new Set(visible.map(c => c.path))
+  const readOnlyFiles = visibleReads.filter(r => !editedPaths.has(r.path))
+
+  if (changes.length === 0 && reads.length === 0) {
+    return <div style={styles.emptyHint}>No file activity in this chat yet.</div>
   }
 
   // Group changes by file path, preserve first-seen order.
@@ -635,12 +660,14 @@ const FileChangesView: React.FC<{
           >This turn</button>
         </div>
         <div style={fcStyles.summary}>
-          {order.length} file{order.length === 1 ? '' : 's'} · {visible.length} change{visible.length === 1 ? '' : 's'}
+          {order.length + readOnlyFiles.length} file{order.length + readOnlyFiles.length === 1 ? '' : 's'}
+          {visible.length > 0 && <> · {visible.length} edit{visible.length === 1 ? '' : 's'}</>}
+          {readOnlyFiles.length > 0 && <> · {readOnlyFiles.length} read</>}
         </div>
       </div>
 
-      {visible.length === 0 && (
-        <div style={styles.emptyHint}>No file changes in the selected turn.</div>
+      {visible.length === 0 && readOnlyFiles.length === 0 && (
+        <div style={styles.emptyHint}>No file activity in the selected turn.</div>
       )}
 
       {order.map(path => {
@@ -691,6 +718,21 @@ const FileChangesView: React.FC<{
           </div>
         )
       })}
+
+      {readOnlyFiles.length > 0 && (
+        <div style={fcStyles.readSection}>
+          <div style={fcStyles.readHeader}>Files read</div>
+          {readOnlyFiles.map(r => (
+            <div key={r.path} style={filesStyles.row} title={r.path}>
+              <span style={filesStyles.path}>{displayPath(r.path, workingDir)}</span>
+              {r.path.startsWith('/') && (
+                <button style={filesStyles.iconBtn} onClick={() => onReveal(r.path)} title="Reveal in Finder">⤴</button>
+              )}
+              <button style={filesStyles.iconBtn} onClick={() => navigator.clipboard.writeText(r.path)} title="Copy path">⧉</button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -731,6 +773,8 @@ const fcStyles: Record<string, React.CSSProperties> = {
     background: 'transparent', border: 'none', color: C.fg3,
     cursor: 'pointer', fontSize: 12, padding: '0 4px', flexShrink: 0,
   },
+  readSection: { marginTop: 12 },
+  readHeader: { color: C.fg3, fontSize: 10, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.4, marginBottom: 4 },
   changeBody: { padding: 8, background: C.bg, display: 'flex', flexDirection: 'column', gap: 6 },
   changeItem: {},
   patchPre: {

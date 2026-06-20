@@ -347,7 +347,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
                         style={styles.renameInput}
                       />
                     ) : (
-                      <span style={styles.title}>{chat.title}</span>
+                      <span style={styles.title}>{chat.title?.trim() || 'New Chat'}</span>
                     )}
                     <RouteIcons routes={chat.routes} />
                     {unread && !active && <span style={styles.unreadDot} />}
@@ -357,7 +357,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
                         style={styles.xBtn}
                         onClick={async (e) => {
                           e.stopPropagation()
-                          if (confirm(`Delete chat "${chat.title}"?`)) {
+                          if (confirm(`Delete chat "${chat.title?.trim() || 'New Chat'}"?`)) {
                             await deleteChat(chat.id)
                           }
                         }}
@@ -415,7 +415,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
-          <div style={styles.menuHeader}>{chatMenu.chat.title}</div>
+          <div style={styles.menuHeader}>{chatMenu.chat.title?.trim() || 'New Chat'}</div>
           {chatMenuView === 'main' ? (
             <>
               <button
@@ -444,7 +444,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
                 onClick={async () => {
                   const c = chatMenu.chat
                   setChatMenu(null)
-                  if (confirm(`Delete chat "${c.title}"?`)) {
+                  if (confirm(`Delete chat "${c.title?.trim() || 'New Chat'}"?`)) {
                     await deleteChat(c.id)
                   }
                 }}

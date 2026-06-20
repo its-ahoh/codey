@@ -232,7 +232,7 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
                   {selfLoops && (
                     <label style={{ fontSize: 12, display: 'block' }}>
                       Max self-loops
-                      <input type="number" min={1} value={selN.data.maxCalls ?? ''} placeholder="∞"
+                      <input type="number" min={1} value={selN.data.maxCalls ?? ''} placeholder="3"
                         onChange={e => updateNodeData(selN.id, { maxCalls: e.target.value === '' ? undefined : Math.max(1, Number(e.target.value) || 1) })}
                         style={{ width: 64, marginLeft: 6, background: C.surface3, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 4, padding: '2px 6px', colorScheme: effectiveTheme, WebkitAppearance: 'textfield' }} />
                     </label>

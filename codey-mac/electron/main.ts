@@ -1088,6 +1088,40 @@ async function wrap<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
   catch (e: any) { return { ok: false, error: e?.message ?? String(e) } }
 }
 
+function parseSkillFrontmatter(md: string): { name: string; description: string } {
+  const fmMatch = md.match(/^---[ \t]*\n([\s\S]*?)\n---/)
+  if (!fmMatch) return { name: '', description: '' }
+  const fm = fmMatch[1]
+  const nameMatch = fm.match(/^name:[ \t]*(.+)$/m)
+  const descMatch = fm.match(/^description:[ \t]*(.+)$/m)
+  return {
+    name: (nameMatch?.[1] ?? '').trim(),
+    description: (descMatch?.[1] ?? '').trim(),
+  }
+}
+
+function scanSkillsDir(
+  fsMod: typeof import('fs'),
+  pathMod: typeof import('path'),
+  dir: string,
+  scope: 'user' | 'project',
+): Array<{ name: string; description: string; scope: string; dir: string }> {
+  if (!fsMod.existsSync(dir)) return []
+  const result: Array<{ name: string; description: string; scope: string; dir: string }> = []
+  for (const entry of fsMod.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const skillDir = pathMod.join(dir, entry.name)
+    const skillMdPath = pathMod.join(skillDir, 'SKILL.md')
+    if (!fsMod.existsSync(skillMdPath)) continue
+    try {
+      const md = fsMod.readFileSync(skillMdPath, 'utf-8')
+      const { name, description } = parseSkillFrontmatter(md)
+      result.push({ name: name || entry.name, description, scope, dir: skillDir })
+    } catch { /* skip unreadable skill */ }
+  }
+  return result
+}
+
 function createAppMenu() {
   // Minimal Mac menu so Cmd+Q, Cmd+W, Cmd+R, Cmd+Option+I etc. work.
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -1320,6 +1354,31 @@ app.whenReady().then(async () => {
   // boot would be lost. Expose the ring buffer so the renderer can backfill.
   ipcMain.handle('gateway:recentLogs', async () =>
     wrap(async () => recentGatewayLogs.slice())
+  )
+
+  // ── Git status IPC ────────────────────────────────────────────────
+  ipcMain.handle('git:status', async (_e, workingDir: string) =>
+    wrap(async () => {
+      if (!workingDir || typeof workingDir !== 'string') return null
+      const { execFile } = await import('child_process')
+      const run = (args: string[]) => new Promise<string>((resolve, reject) => {
+        execFile('git', args, { cwd: workingDir, timeout: 1500 }, (err, stdout) => {
+          if (err) reject(err)
+          else resolve(stdout)
+        })
+      })
+      try {
+        const [branchOut, statusOut] = await Promise.all([
+          run(['rev-parse', '--abbrev-ref', 'HEAD']),
+          run(['status', '--porcelain']),
+        ])
+        const branch = branchOut.trim() || 'HEAD'
+        const dirty = statusOut.split('\n').filter(l => l.trim()).length
+        return { branch, dirty }
+      } catch {
+        return null
+      }
+    })
   )
 
   // ── Workers IPC ──────────────────────────────────────────────────
@@ -1985,6 +2044,114 @@ app.whenReady().then(async () => {
       // Avoid a duplicate if a future discovery ever yields one.
       return [qq, ...discovered.filter(c => c.name !== 'qq')]
     })
+  )
+
+  // ── Skills IPC ────────────────────────────────────────────────────
+  const skillPaths: Record<string, { userDirs: string[]; projectSubdirs: string[] }> = {
+    'claude-code': { userDirs: ['.claude/skills'], projectSubdirs: ['.claude/skills'] },
+    'codex':       { userDirs: ['.codex/skills'], projectSubdirs: ['.codex/skills'] },
+    'opencode':    { userDirs: ['.config/opencode/skills'], projectSubdirs: ['.opencode/skills'] },
+  }
+
+  function getWorkingDir(fsMod: typeof import('fs'), pathMod: typeof import('path')): string | null {
+    if (!workspaceManager) return null
+    const wsName = workspaceManager.getCurrentWorkspace()
+    if (!wsName) return null
+    const configPath = pathMod.join(workspaceManager.getWorkspacesRoot(), wsName, 'workspace.json')
+    if (!fsMod.existsSync(configPath)) return null
+    try {
+      const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
+      return data.workingDir ?? null
+    } catch { return null }
+  }
+
+  ipcMain.handle('skills:list', async (_e, agent?: string) =>
+    wrap(async () => {
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const osMod = await import('os')
+      const home = osMod.homedir()
+      const agentKey = agent ?? 'claude-code'
+      const paths = skillPaths[agentKey] ?? skillPaths['claude-code']
+
+      const skills: Array<{ name: string; description: string; scope: string; dir: string }> = []
+      for (const rel of paths.userDirs) {
+        skills.push(...scanSkillsDir(fsMod, pathMod, pathMod.join(home, rel), 'user'))
+      }
+
+      let projectDir: string | null = null
+      const workingDir = getWorkingDir(fsMod, pathMod)
+      if (workingDir) {
+        for (const rel of paths.projectSubdirs) {
+          const dir = pathMod.join(workingDir, rel)
+          if (!projectDir) projectDir = dir
+          skills.push(...scanSkillsDir(fsMod, pathMod, dir, 'project'))
+        }
+      }
+
+      return { skills, projectDir }
+    })
+  )
+
+  ipcMain.handle('skills:install', async (_e, payload: { agent?: string; scope: 'user' | 'project'; localDir?: string; gitUrl?: string }) =>
+    wrap(async () => {
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const osMod = await import('os')
+      const agentKey = payload.agent ?? 'claude-code'
+      const paths = skillPaths[agentKey] ?? skillPaths['claude-code']
+
+      const getTargetRoot = async (): Promise<string> => {
+        if (payload.scope === 'user') return pathMod.join(osMod.homedir(), paths.userDirs[0])
+        if (!workspaceManager) throw new Error('No workspace manager')
+        const wsName = workspaceManager.getCurrentWorkspace()
+        if (!wsName) throw new Error('No active workspace')
+        const root = workspaceManager.getWorkspacesRoot()
+        const configPath = pathMod.join(root, wsName, 'workspace.json')
+        const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
+        if (!data.workingDir) throw new Error('Workspace has no working directory')
+        return pathMod.join(data.workingDir, paths.projectSubdirs[0])
+      }
+
+      const targetRoot = await getTargetRoot()
+      await fsMod.promises.mkdir(targetRoot, { recursive: true })
+
+      if (payload.localDir) {
+        const src = payload.localDir
+        if (!fsMod.existsSync(src) || !fsMod.statSync(src).isDirectory()) throw new Error(`Not a directory: ${src}`)
+        const name = pathMod.basename(src)
+        const dest = pathMod.join(targetRoot, name)
+        if (fsMod.existsSync(dest)) throw new Error(`Skill already exists: ${name}`)
+        await fsMod.promises.cp(src, dest, { recursive: true })
+        return { name, dir: dest }
+      }
+
+      if (payload.gitUrl) {
+        const { execFile } = await import('child_process')
+        const { promisify } = await import('util')
+        const execFileAsync = promisify(execFile)
+        const url = payload.gitUrl.trim()
+        const name = pathMod.basename(url, '.git')
+        const dest = pathMod.join(targetRoot, name)
+        if (fsMod.existsSync(dest)) throw new Error(`Skill already exists: ${name}`)
+        await execFileAsync('git', ['clone', '--depth', '1', url, dest])
+        return { name, dir: dest }
+      }
+
+      throw new Error('Either localDir or gitUrl is required')
+    })
+  )
+
+  ipcMain.handle('skills:remove', async (_e, dir: string) =>
+    wrap(async () => {
+      if (typeof dir !== 'string' || !dir) throw new Error('Invalid path')
+      const fsMod = await import('fs')
+      await fsMod.promises.rm(dir, { recursive: true, force: true })
+    })
+  )
+
+  ipcMain.handle('skills:reveal', async (_e, dir: string) =>
+    wrap(async () => { shell.showItemInFolder(dir) })
   )
 
   // ── Conversations IPC ─────────────────────────────────────────────

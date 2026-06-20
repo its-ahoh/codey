@@ -6,12 +6,15 @@ import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 // Inline ChatStreamEvent to avoid cross-package import
 export type ChatStreamEvent =
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'tool_start'; chatId: string; tool?: string; message: string; input?: Record<string, unknown> }
-  | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string }
+  | { type: 'tool_start'; chatId: string; tool?: string; message: string; input?: Record<string, unknown>; messageId?: string; step?: number }
+  | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string; messageId?: string; step?: number }
   | { type: 'info'; chatId: string; message: string }
-  | { type: 'stream'; chatId: string; token: string }
-  | { type: 'thinking'; chatId: string; token: string; step?: number }
-  | { type: 'done'; chatId: string; response: string; thinking?: string; tokens?: number; durationSec?: number; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string } }
+  | { type: 'stream'; chatId: string; token: string; messageId?: string; step?: number }
+  | { type: 'thinking'; chatId: string; token: string; step?: number; messageId?: string }
+  | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: string; model?: string }> }
+  | { type: 'worker_start'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: string; model?: string; reason?: string }
+  | { type: 'worker_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number }
+  | { type: 'done'; chatId: string; response: string; thinking?: string; tokens?: number; durationSec?: number; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string }; teamTurnId?: string }
   | { type: 'stopped'; chatId: string; userMessageId: string; text: string }
   | { type: 'error'; chatId: string; message: string }
   | { type: 'permission_denials'; chatId: string; denials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> };

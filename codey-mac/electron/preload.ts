@@ -84,6 +84,13 @@ contextBridge.exposeInMainWorld('codey', {
     get: () => ipcRenderer.invoke('aide:get'),
     set: (updates: { agent?: string; model?: string }) => ipcRenderer.invoke('aide:set', updates),
   },
+  skills: {
+    list: (agent?: string) => ipcRenderer.invoke('skills:list', agent),
+    install: (payload: { agent?: string; scope: 'user' | 'project'; localDir?: string; gitUrl?: string }) =>
+      ipcRenderer.invoke('skills:install', payload),
+    remove: (dir: string) => ipcRenderer.invoke('skills:remove', dir),
+    reveal: (dir: string) => ipcRenderer.invoke('skills:reveal', dir),
+  },
   agents: {
     get: () => ipcRenderer.invoke('agents:get'),
     set: (updates: any) => ipcRenderer.invoke('agents:set', updates),
@@ -142,6 +149,9 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.on('pairing:event', listener)
       return () => ipcRenderer.removeListener('pairing:event', listener)
     },
+  },
+  git: {
+    status: (workingDir: string) => ipcRenderer.invoke('git:status', workingDir),
   },
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
