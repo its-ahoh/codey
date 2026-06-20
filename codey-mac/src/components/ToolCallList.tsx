@@ -84,8 +84,7 @@ export const ToolCallList: React.FC<{ toolCalls: ToolCallEntry[]; emptyHint?: st
               ) : (
                 <>
                   <span style={r.done ? timelineStyles.iconDone : timelineStyles.iconRunning}>{icon}</span>
-                  <span style={timelineStyles.tool}>{r.tool ?? '(tool)'}</span>
-                  <span style={timelineStyles.callMsg}>{r.message}</span>
+                  <span style={timelineStyles.callMsg}>{r.message || r.tool || '(tool)'}</span>
                 </>
               )}
             </div>
@@ -119,7 +118,6 @@ const timelineStyles: Record<string, React.CSSProperties> = {
     fontSize: 12, fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     padding: '2px 0',
   },
-  tool: { color: C.fg2, flexShrink: 0 },
   chevron: { color: C.fg3, width: 10, flexShrink: 0 },
   callMsg: { color: C.fg2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   iconRunning: { color: C.accent, width: 12, flexShrink: 0 },

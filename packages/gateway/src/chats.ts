@@ -462,5 +462,6 @@ export class ChatManager {
 
 function deriveTitle(firstMessage: string): string {
   const cleaned = firstMessage.trim().replace(/\s+/g, ' ');
+  if (!cleaned) return 'New Chat';
   return cleaned.length <= 40 ? cleaned : cleaned.slice(0, 40) + '…';
 }
