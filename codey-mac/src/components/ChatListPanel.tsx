@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useChats } from '../hooks/useChats'
 import { apiService } from '../services/api'
 import type { Chat } from '../types'
@@ -6,6 +6,7 @@ import { C } from '../theme'
 import { RouteIcons } from './RouteIcons'
 import { UpdateButton } from './UpdateButton'
 import { setPendingPairing } from './pendingPairing'
+import { onWorkspacesChanged } from './workspacesChanged'
 
 interface Props {
   onOpenSettings: (tab?: string) => void
@@ -19,7 +20,7 @@ interface WsMenuState {
 }
 
 export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId }) => {
-  const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces, linkChannel, unlinkChannel } = useChats()
+  const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces, refreshChats, linkChannel, unlinkChannel } = useChats()
   const [addingWorkspace, setAddingWorkspace] = useState(false)
   const [workspaces, setWorkspaces] = useState<string[]>([])
   const [lastWorkspace, setLastWorkspace] = useState<string>('')
@@ -53,29 +54,33 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    const refresh = () => {
-      apiService.getCurrentWorkspace()
-        .then(w => { if (!cancelled) setGatewayWorkspace(w) })
-        .catch(() => {})
-      apiService.getWorkspaces()
-        .then(w => {
-          if (cancelled) return
-          setWorkspaces(w)
-          setLastWorkspace(prev => {
-            if (prev && w.includes(prev)) return prev
-            const stored = localStorage.getItem('codey.lastWorkspace')
-            if (stored && w.includes(stored)) return stored
-            return w[0] ?? ''
-          })
+  const refreshWs = useCallback(() => {
+    apiService.getCurrentWorkspace()
+      .then(setGatewayWorkspace)
+      .catch(() => {})
+    apiService.getWorkspaces()
+      .then(w => {
+        setWorkspaces(w)
+        setLastWorkspace(prev => {
+          if (prev && w.includes(prev)) return prev
+          const stored = localStorage.getItem('codey.lastWorkspace')
+          if (stored && w.includes(stored)) return stored
+          return w[0] ?? ''
         })
-        .catch(() => {})
-    }
-    refresh()
-    const id = setInterval(refresh, 5000)
-    return () => { cancelled = true; clearInterval(id) }
+      })
+      .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    refreshWs()
+    const id = setInterval(refreshWs, 5000)
+    // Refresh immediately when a workspace is added/removed/renamed in the
+    // Settings overlay, instead of waiting up to 5s for the next poll. A delete
+    // also removes that workspace's chats, so reload the chat list too — the
+    // sidebar groups are derived from state.chats, not the workspace array.
+    const off = onWorkspacesChanged(() => { refreshWs(); refreshChats() })
+    return () => { clearInterval(id); off() }
+  }, [refreshWs, refreshChats])
 
   useEffect(() => {
     if (lastWorkspace) localStorage.setItem('codey.lastWorkspace', lastWorkspace)
@@ -110,6 +115,9 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
       const fresh = await apiService.getWorkspaces()
       setWorkspaces(fresh)
       await refreshWorkspaces()
+      // Rename cascades to the chats' workspaceName on the backend; reload them
+      // so they regroup under the new name instead of stranding the old group.
+      await refreshChats()
       if (lastWorkspace === oldName) setLastWorkspace(newName)
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Failed to rename workspace')
@@ -128,6 +136,9 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
       const fresh = await apiService.getWorkspaces()
       setWorkspaces(fresh)
       await refreshWorkspaces()
+      // Deleting a workspace also deletes its chats; drop them from the store so
+      // the group disappears instead of lingering until a reload.
+      await refreshChats()
       if (lastWorkspace === ws) setLastWorkspace(fresh[0] ?? '')
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Failed to delete workspace')

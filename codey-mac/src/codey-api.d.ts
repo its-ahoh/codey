@@ -8,6 +8,18 @@ import type { CoreState } from '../electron/core-state'
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
+export interface SkillEntry {
+  name: string
+  description: string
+  scope: 'user' | 'project'
+  dir: string
+}
+
+export interface SkillsListResult {
+  skills: SkillEntry[]
+  projectDir: string | null
+}
+
 export interface ModelEntry {
   apiType: 'anthropic' | 'openai'
   model: string
@@ -85,6 +97,12 @@ declare global {
         get: () => Promise<IpcResult<{ agent?: string; model?: string }>>
         set: (updates: { agent?: string; model?: string }) => Promise<IpcResult<void>>
       }
+      skills: {
+        list: (agent?: string) => Promise<IpcResult<SkillsListResult>>
+        install: (payload: { agent?: string; scope: 'user' | 'project'; localDir?: string; gitUrl?: string }) => Promise<IpcResult<{ name: string; dir: string }>>
+        remove: (dir: string) => Promise<IpcResult<void>>
+        reveal: (dir: string) => Promise<IpcResult<void>>
+      }
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>>>
         set: (updates: Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>) => Promise<IpcResult<void>>
@@ -128,6 +146,9 @@ declare global {
           createdAt: number
         }>>>
         onEvent: (handler: (ev: { type: 'completed'; channel: 'telegram' | 'discord' | 'imessage'; channelUserId: string }) => void) => () => void
+      }
+      git: {
+        status: (workingDir: string) => Promise<IpcResult<{ branch: string; dirty: number } | null>>
       }
       gateway: {
         status: () => Promise<IpcResult<{

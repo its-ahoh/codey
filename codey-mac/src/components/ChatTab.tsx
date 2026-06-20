@@ -17,6 +17,8 @@ import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 import { defaultThinkingExpanded } from './thinkingState'
 import { composerPlaceholder } from './coreOfflineView'
+import { getDraft, setDraft } from './chatDrafts'
+import { useGitStatus } from '../hooks/useGitStatus'
 
 interface Props {
   chatId: string
@@ -281,14 +283,16 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
-  const [input, setInput] = useState('')
+  // Seed from the per-chat draft store so unsent text/attachments survive the
+  // remount that happens when switching chats (App.tsx keys ChatTab by chat id).
+  const [input, setInput] = useState(() => getDraft(chatId).text)
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   const [teamNames, setTeamNames] = useState<string[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
   const [enabledAgents, setEnabledAgents] = useState<string[]>([...AGENT_NAMES])
   const [defaultAgent, setDefaultAgent] = useState<string | null>(null)
   const [agentDefaultModels, setAgentDefaultModels] = useState<Record<string, string | undefined>>({})
-  const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>([])
+  const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>(() => getDraft(chatId).attachments)
   const [isDragging, setIsDragging] = useState(false)
   const [slashCommands, setSlashCommands] = useState<Array<{ name: string; description: string; source: 'agent' | 'gateway' }>>([])
   const [slashIdx, setSlashIdx] = useState(0)
@@ -403,6 +407,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
       .then(info => setWorkingDir(info.workingDir))
       .catch(() => setWorkingDir(undefined))
   }, [chat?.workspaceName])
+  const { status: gitStatus, refresh: refreshGit } = useGitStatus(workingDir)
   useEffect(() => {
     if (!isGatewayRunning) return
     ;(async () => {
@@ -457,10 +462,18 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   useEffect(() => {
     const toggled = prevTurnActiveRef.current !== turnActive
     prevTurnActiveRef.current = turnActive
-    if (!toggled || panelTab !== 'task' || !chat) return
+    if (!toggled) return
+    if (!turnActive) void refreshGit()
+    if (!chat || panelTab !== 'task') return
     setTaskBriefLoading(true)
     generateTaskBrief(chat.id).finally(() => setTaskBriefLoading(false))
   }, [turnActive, panelTab, chatId])
+  // Keep the per-chat draft store in sync so the current text/attachments are
+  // preserved when ChatTab remounts on a chat switch. setDraft drops the entry
+  // once both are empty (e.g. after send), so this also clears sent drafts.
+  useEffect(() => {
+    setDraft(chatId, { text: input, attachments: pendingAttachments })
+  }, [chatId, input, pendingAttachments])
   // When a turn is interrupted, lift the original prompt back into the input
   // and focus the textarea so the user can edit/resend without retyping.
   const restoreText = state.pendingRestores[chatId]
@@ -859,6 +872,11 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
       )}
       <div style={styles.header}>
         <span style={styles.workspaceTag}>{chat.workspaceName}</span>
+        {gitStatus && (
+          <span style={styles.gitBadge} title={`Branch: ${gitStatus.branch}${gitStatus.dirty > 0 ? ` · ${gitStatus.dirty} change${gitStatus.dirty !== 1 ? 's' : ''}` : ''}`}>
+            ⎇ {gitStatus.branch}{gitStatus.dirty > 0 ? ` +${gitStatus.dirty}` : ''}
+          </span>
+        )}
         <select value={selectionValue} onChange={e => onSelectionChange(e.target.value)} style={{ ...styles.workerSelect, marginLeft: 'auto' }}>
           <option value="none">No worker</option>
           {workers.length > 0 && (
@@ -1446,6 +1464,13 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: 'wrap', rowGap: 6,
   },
   workspaceTag: { color: C.fg3, fontSize: 11, flexShrink: 0 },
+  gitBadge: {
+    color: C.fg3, fontSize: 11, flexShrink: 0,
+    background: C.surface3, border: `1px solid ${C.border2}`,
+    borderRadius: 4, padding: '2px 6px',
+    fontFamily: 'SF Mono, Menlo, monospace',
+    maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
+  },
   workerSelect: {
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6,
     color: C.fg2, fontSize: 12, padding: '4px 8px', outline: 'none',
