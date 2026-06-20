@@ -43,11 +43,13 @@ export interface ParallelTeamRunnerOptions {
   members: string[];
   topic: string;
   settings: ParallelSettings;
-  workerRunner: AgentRunner;
+  workerRunner: (req: AgentRequest, worker: string) => Promise<AgentResponse>;
   advisorRunner: AgentRunner;
   buildWorkerPrompt: (worker: string) => string;
   onUserQuestion: (q: ParallelUserQuestion) => void;
   onFinal: (e: ParallelFinalEvent) => void;
+  /** Called when a worker's run finishes (success or failure). */
+  onWorkerDone?: (worker: string, ok: boolean) => void;
 }
 
 export class ParallelTeamRunner {
@@ -112,6 +114,7 @@ export class ParallelTeamRunner {
     const chat = this.opts.chatId;
     const ctrlPath = controlPath(wsRoot, ws, chat);
     let round = 0;
+    let finalized = false;
 
     while (!this.done && !ac.signal.aborted) {
       round++;
@@ -121,17 +124,18 @@ export class ParallelTeamRunner {
       const req: AgentRequest = { prompt, signal: ac.signal } as AgentRequest;
 
       try {
-        const res = await this.opts.workerRunner(req);
+        const res = await this.opts.workerRunner(req, worker);
         console.log(`[parallel-runner] worker "${worker}" round ${round} done. success=${res.success} output=${(res.output || '').substring(0, 100)}`);
         await appendTranscript(wsRoot, ws, chat, {
           actor: worker, kind: res.success ? 'worker_done' : 'worker_failed',
           note: res.error || `round ${round}`,
         });
-        if (!res.success) break;
+        if (!res.success) { this.opts.onWorkerDone?.(worker, false); finalized = true; break; }
       } catch (err) {
         await appendTranscript(wsRoot, ws, chat, {
           actor: worker, kind: 'worker_error', note: (err as Error).message,
         });
+        this.opts.onWorkerDone?.(worker, false); finalized = true;
         break;
       }
 
@@ -158,6 +162,9 @@ export class ParallelTeamRunner {
         }
       }
     }
+    // Worker exited the loop via termination, finalizing, or external abort
+    // (not due to a worker-level failure/error, which finalized above).
+    if (!finalized) this.opts.onWorkerDone?.(worker, round > 0);
   }
   private async runAdvisorLoop(): Promise<void> {
     const dir = this.discussionDir;

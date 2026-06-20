@@ -3225,6 +3225,11 @@ Example: /model gpt-4.1 write a Python script`;
         await sink({ type: 'stream', chatId, token: '⚠️ parallel team is missing settings' });
         return { response: '' };
       }
+      // Pre-create one stub message per worker so streaming events are routed
+      // per-worker. Serial modes use beginWorker; parallel pre-creates them all.
+      workerMsgs.teamStart(team.members.map((w, i) => ({ step: i + 1, worker: w })));
+      const workerStep = new Map<string, number>(team.members.map((w, i) => [w, i + 1]));
+
       const runner = new ParallelTeamRunner({
         workspacesRoot,
         workspace: chat.workspaceName,
@@ -3233,14 +3238,25 @@ Example: /model gpt-4.1 write a Python script`;
         members: team.members,
         topic: prompt,
         settings: team.parallel,
-        workerRunner: async req => this.runWithFallback(chatAgent ?? this.getDefaultAgent() as CodingAgent, {
+        workerRunner: async (req, workerName) => this.runWithFallback(chatAgent ?? this.getDefaultAgent() as CodingAgent, {
           prompt: req.prompt,
           agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
           model: chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent),
           context: { workingDir },
-          onStream: (text: string) => sink({ type: 'stream', chatId, token: text }),
-          onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
-          onStatus: (_update: any) => { /* status forwarded via sink elsewhere */ },
+          onStream: (text: string) => workerMsgs.onStream(text, workerName),
+          onThinking: (text: string) => workerMsgs.onThinking(text, workerStep.get(workerName) ?? 0, workerName),
+          onStatus: (update: any) => {
+            // Route per-worker tool events through workerMsgs for parallel mode,
+            // matching the serial-mode routing in runOneWorker.
+            try {
+              const parsed = typeof update === 'string' ? JSON.parse(update) : update;
+              if (parsed?.type === 'tool_start') {
+                workerMsgs.onTool({ type: 'tool_start', tool: parsed.tool, message: parsed.message ?? '', input: parsed.input }, workerName);
+              } else if (parsed?.type === 'tool_end') {
+                workerMsgs.onTool({ type: 'tool_end', tool: parsed.tool, message: parsed.message ?? '', output: parsed.output }, workerName);
+              }
+            } catch { /* non-JSON status */ }
+          },
           signal: req.signal,
         }),
         advisorRunner: async req => {
@@ -3285,6 +3301,7 @@ Example: /model gpt-4.1 write a Python script`;
           this.persistDiscussionSummary(teamName, prompt, ev);
           void sink({ type: 'stream', chatId, token: this.formatParallelFinal(ev, teamName) });
         },
+        onWorkerDone: (worker, ok) => workerMsgs.endWorker(ok ? 'done' : 'failed', undefined, worker),
       });
       const c0 = this.chatManager.get(chat.id);
       if (c0) {
