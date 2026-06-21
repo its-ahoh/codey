@@ -44,3 +44,6 @@ voice/*.bin
 /gateway.js
 
 .superpowers/
+
+# Local tooling artifacts
+graphify-out/
