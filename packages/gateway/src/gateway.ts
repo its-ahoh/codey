@@ -3338,7 +3338,6 @@ Example: /model gpt-4.1 write a Python script`;
     // === end parallel dispatch branch ===
 
     if (useAdvisor) {
-      let isFirstStep = true;
       const result = await this.runAdvisorLoop(
         team,
         prompt,
@@ -3352,10 +3351,10 @@ Example: /model gpt-4.1 write a Python script`;
               chatId,
               message: `Step ${msg.step}: ${msg.worker}${msg.isRevision ? ' (revision)' : ''} — ${msg.reason}`,
             });
-            const label = msg.isRevision ? `${msg.worker} (revision)` : msg.worker;
-            const sep = isFirstStep ? '' : '\n\n---\n\n';
-            sink({ type: 'stream', chatId, token: `${sep}### Step ${msg.step}: ${label}\n\n` });
-            isFirstStep = false;
+            // Each worker streams its full output into its own per-worker bubble
+            // (beginWorker below). Don't also echo a "### Step N" header into the
+            // turn's main message — that produced a second, redundant copy of the
+            // whole run in a different format.
             workerMsgs.beginWorker({ step: msg.step, worker: msg.worker, reason: msg.reason });
           } else {
             sink({ type: 'info', chatId, message: msg.summary });
@@ -3397,16 +3396,23 @@ Example: /model gpt-4.1 write a Python script`;
         sink({ type: 'stream', chatId, token: rendered5.text });
         return { response: rendered5.text, choices: rendered5.choices, teamTurnId };
       } else {
+        // Per-worker bubbles already render each step's full output, so the
+        // turn's main message is just the Advisor's wrap-up summary (a short
+        // recap when the run produced a lot of detail) plus the blackboard —
+        // not a second copy of every step.
+        const summary = result.finalSummary?.trim()
+          ? `🧭 Advisor summary: ${result.finalSummary.trim()}`
+          : '';
         if (signal?.aborted) {
-          return { response: this.formatAdvisorParts(result.parts, result.finalSummary), teamTurnId };
+          return { response: summary, teamTurnId };
         }
         if (result.fallbackMidRun) {
           sink({ type: 'info', chatId, message: `Advisor halted mid-run: ${result.fallbackMidRun.reason}` });
         }
         const bbBlock = result.blackboard.renderForUser();
-        const formatted = this.formatAdvisorParts(result.parts, result.finalSummary);
         this.persistBlackboardDecisions(result.blackboard, teamName);
-        return { response: bbBlock ? `${formatted}\n\n${bbBlock}` : formatted, thinkingByStep: result.thinkingByStep, teamTurnId };
+        const response = [summary, bbBlock].filter(Boolean).join('\n\n');
+        return { response, thinkingByStep: result.thinkingByStep, teamTurnId };
       }
     }
 
