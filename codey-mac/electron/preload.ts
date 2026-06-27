@@ -114,6 +114,8 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.invoke('chats:updateContextPanelOpen', id, open),
     setSoloAdvisor: (id: string, enabled: boolean) =>
       ipcRenderer.invoke('chats:setSoloAdvisor', id, enabled),
+    setWorkingDir: (id: string, dir: string | null) =>
+      ipcRenderer.invoke('chats:setWorkingDir', id, dir),
     send: (payload: { chatId: string; text: string; attachments?: any[] }) =>
       ipcRenderer.invoke('chats:send', payload),
     stop: (chatId: string) => ipcRenderer.invoke('chats:stop', chatId),

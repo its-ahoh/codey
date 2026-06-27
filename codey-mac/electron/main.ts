@@ -2403,6 +2403,13 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('chats:setWorkingDir', async (_e, id: string, dir: string | null) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.getChatManager().setWorkingDirOverride(id, dir)
+    })
+  )
+
   ipcMain.handle('chats:stop', async (_e, chatId: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')

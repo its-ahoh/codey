@@ -123,6 +123,7 @@ declare global {
         unlink: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<IpcResult<Chat>>
         updateContextPanelOpen: (id: string, open: boolean | null) => Promise<IpcResult<Chat>>
         setSoloAdvisor: (id: string, enabled: boolean) => Promise<IpcResult<Chat>>
+        setWorkingDir: (id: string, dir: string | null) => Promise<IpcResult<Chat>>
       }
       qq: {
         ask: (payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }>; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) => Promise<IpcResult<{ response: string; tokens?: number; durationSec?: number }>>
