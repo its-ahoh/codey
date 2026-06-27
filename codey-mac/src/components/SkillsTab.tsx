@@ -27,6 +27,10 @@ export const SkillsTab: React.FC = () => {
   const [installing, setInstalling] = useState(false)
   const [activeAgent, setActiveAgent] = useState<AgentFilter>('claude-code')
   const [agentFilter, setAgentFilter] = useState<AgentFilter>('claude-code')
+  const [selected, setSelected] = useState<SkillEntry | null>(null)
+  const [copyState, setCopyState] = useState<{ label: string; status: 'copying' | 'done' | 'error'; msg?: string } | null>(null)
+  const [copyMenuOpen, setCopyMenuOpen] = useState(false)
+  const copyRef = useRef<HTMLDivElement>(null)
   const initDone = useRef(false)
 
   const reload = useCallback(async (agent: AgentFilter) => {
@@ -55,6 +59,15 @@ export const SkillsTab: React.FC = () => {
   }, [])
 
   useEffect(() => { void reload(agentFilter) }, [agentFilter, reload])
+
+  useEffect(() => {
+    if (!copyMenuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (copyRef.current && !copyRef.current.contains(e.target as Node)) setCopyMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [copyMenuOpen])
 
   const handleBrowse = async () => {
     const r = await window.codey.dialog.pickDirectory()
@@ -95,38 +108,165 @@ export const SkillsTab: React.FC = () => {
     void window.codey.skills.reveal(dir)
   }
 
+  const handleCopyTo = async (skill: SkillEntry, targets: AgentFilter[], label: string) => {
+    setCopyMenuOpen(false)
+    setCopyState({ label, status: 'copying' })
+    const failures: string[] = []
+    for (const target of targets) {
+      try {
+        unwrap(await window.codey.skills.install({ agent: target, scope: 'user', localDir: skill.dir }))
+      } catch (e: any) {
+        const tgt = AGENTS.find(a => a.key === target)?.label ?? target
+        failures.push(`${tgt}: ${e?.message ?? String(e)}`)
+      }
+    }
+    if (targets.includes(agentFilter)) await reload(agentFilter)
+    if (failures.length) setCopyState({ label, status: 'error', msg: failures.join('  •  ') })
+    else setCopyState({ label, status: 'done' })
+  }
+
   const renderCard = (skill: SkillEntry) => (
-    <div key={skill.dir} style={cardStyle}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <span style={{ color: C.fg, fontSize: 13, fontWeight: 600 }}>{skill.name}</span>
-            <span style={{
-              fontSize: 10, fontWeight: 600, letterSpacing: 0.3,
-              padding: '2px 6px', borderRadius: 4,
-              background: skill.scope === 'user' ? C.accentDim : C.surface3,
-              color: skill.scope === 'user' ? C.accent : C.fg3,
-            }}>
-              {skill.scope === 'user' ? 'User' : 'Project'}
-            </span>
-          </div>
-          {skill.description && (
-            <div style={{ color: C.fg3, fontSize: 12, lineHeight: '1.4' }}>{skill.description}</div>
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginTop: 2 }}>
-          <button onClick={() => handleReveal(skill.dir)} style={iconBtn} title="Reveal in Finder">↗</button>
-          <button onClick={() => handleRemove(skill)} style={{ ...iconBtn, color: C.red }} title="Remove skill">✕</button>
-        </div>
+    <button
+      key={skill.dir}
+      onClick={() => { setSelected(skill); setCopyState(null); setCopyMenuOpen(false) }}
+      style={cardStyle}
+      title={skill.description || skill.name}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, width: '100%' }}>
+        <span style={{
+          color: C.fg, fontSize: 13, fontWeight: 600,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1,
+        }}>
+          {skill.name}
+        </span>
+        <span style={{
+          fontSize: 9, fontWeight: 600, letterSpacing: 0.3,
+          padding: '2px 6px', borderRadius: 4, flexShrink: 0,
+          background: skill.scope === 'user' ? C.accentDim : C.surface3,
+          color: skill.scope === 'user' ? C.accent : C.fg3,
+        }}>
+          {skill.scope === 'user' ? 'User' : 'Project'}
+        </span>
       </div>
-      <div style={{ color: C.fg3, fontSize: 11, marginTop: 8, opacity: 0.7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {skill.dir}
+      {skill.description && (
+        <div style={{
+          color: C.fg3, fontSize: 12, lineHeight: '1.5', width: '100%',
+          display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+          overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {skill.description}
+        </div>
+      )}
+    </button>
+  )
+
+  const renderDetail = (skill: SkillEntry) => (
+    <div
+      onClick={() => setSelected(null)}
+      style={{
+        position: 'absolute', inset: 0, zIndex: 10,
+        background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12,
+          padding: 20, width: '100%', maxWidth: 440, maxHeight: '100%', overflowY: 'auto',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <span style={{ color: C.fg, fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }}>{skill.name}</span>
+          <span style={{
+            fontSize: 10, fontWeight: 600, letterSpacing: 0.3,
+            padding: '2px 6px', borderRadius: 4,
+            background: skill.scope === 'user' ? C.accentDim : C.surface3,
+            color: skill.scope === 'user' ? C.accent : C.fg3,
+          }}>
+            {skill.scope === 'user' ? 'User' : 'Project'}
+          </span>
+          <button onClick={() => setSelected(null)} style={iconBtn} title="Close">✕</button>
+        </div>
+
+        {skill.description && (
+          <div style={{ color: C.fg2, fontSize: 13, lineHeight: '1.55', marginBottom: 16, whiteSpace: 'pre-wrap' }}>
+            {skill.description}
+          </div>
+        )}
+
+        <div style={{ color: C.fg3, fontSize: 11, marginBottom: 18 }}>
+          <div style={{ fontWeight: 600, marginBottom: 2, opacity: 0.7 }}>Location</div>
+          <div style={{ wordBreak: 'break-all', fontFamily: 'monospace' }}>{skill.dir}</div>
+        </div>
+
+        {copyState && (
+          <div style={{
+            fontSize: 11, marginBottom: 12,
+            color: copyState.status === 'error' ? C.red : copyState.status === 'done' ? C.accent : C.fg3,
+          }}>
+            {copyState.status === 'copying' && `Copying to ${copyState.label}…`}
+            {copyState.status === 'done' && `✓ Copied to ${copyState.label}`}
+            {copyState.status === 'error' && copyState.msg}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div ref={copyRef} style={{ position: 'relative', display: 'flex' }}>
+            <button
+              onClick={() => handleCopyTo(skill, AGENTS.filter(a => a.key !== agentFilter).map(a => a.key), 'all agents')}
+              disabled={copyState?.status === 'copying'}
+              style={{ ...pillButton('primary'), borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+            >
+              Copy to all
+            </button>
+            <button
+              onClick={() => setCopyMenuOpen(o => !o)}
+              disabled={copyState?.status === 'copying'}
+              title="Copy to a specific agent"
+              style={{
+                ...pillButton('primary'),
+                borderTopLeftRadius: 0, borderBottomLeftRadius: 0,
+                borderLeft: '1px solid rgba(0,0,0,0.25)',
+                paddingLeft: 8, paddingRight: 8,
+              }}
+            >
+              ▾
+            </button>
+            {copyMenuOpen && (
+              <div style={{
+                position: 'absolute', bottom: '100%', left: 0, marginBottom: 6, zIndex: 1,
+                background: C.surface2 ?? C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
+                padding: 4, minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+              }}>
+                <div style={{ color: C.fg3, fontSize: 10, fontWeight: 600, opacity: 0.7, padding: '4px 10px 2px' }}>
+                  COPY TO
+                </div>
+                {AGENTS.filter(a => a.key !== agentFilter).map(a => (
+                  <button key={a.key} onClick={() => handleCopyTo(skill, [a.key], a.label)} style={menuItem}>
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <span style={{ flex: 1 }} />
+          <button onClick={() => handleReveal(skill.dir)} style={pillButton('ghost')}>↗ Reveal in Finder</button>
+          <button
+            onClick={() => { const s = skill; setSelected(null); void handleRemove(s) }}
+            style={{ ...pillButton('ghost'), color: C.red }}
+          >
+            ✕ Remove
+          </button>
+        </div>
       </div>
     </div>
   )
 
   return (
-    <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
+    <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto', position: 'relative' }}>
+      {selected && renderDetail(selected)}
       {/* Agent filter bar */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
         {AGENTS.map(a => {
@@ -226,7 +366,7 @@ export const SkillsTab: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
           {data.skills.map(renderCard)}
         </div>
       )}
@@ -238,8 +378,22 @@ const cardStyle: React.CSSProperties = {
   background: C.surface,
   border: `1px solid ${C.border}`,
   borderRadius: 10,
-  padding: '14px 16px',
+  padding: '18px 18px',
+  minHeight: 128,
   transition: 'border-color 0.15s',
+  cursor: 'pointer',
+  textAlign: 'left',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'flex-start',
+  gap: 4,
+  font: 'inherit',
+}
+
+const menuItem: React.CSSProperties = {
+  display: 'block', width: '100%', textAlign: 'left',
+  padding: '7px 10px', borderRadius: 6, border: 'none',
+  background: 'transparent', color: C.fg, fontSize: 12, cursor: 'pointer',
 }
 
 const iconBtn: React.CSSProperties = {
