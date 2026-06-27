@@ -147,6 +147,23 @@ contextBridge.exposeInMainWorld('codey', {
   },
   git: {
     status: (workingDir: string) => ipcRenderer.invoke('git:status', workingDir),
+    branches: (workingDir: string) => ipcRenderer.invoke('git:branches', workingDir),
+    checkout: (workingDir: string, name: string, opts?: { create?: boolean; track?: boolean }) =>
+      ipcRenderer.invoke('git:checkout', workingDir, name, opts),
+    stash: (workingDir: string, message?: string) => ipcRenderer.invoke('git:stash', workingDir, message),
+    fetch: (workingDir: string) => ipcRenderer.invoke('git:fetch', workingDir),
+    worktrees: (workingDir: string) => ipcRenderer.invoke('git:worktrees', workingDir),
+    worktreeAdd: (workingDir: string, args: { name: string; path: string }) =>
+      ipcRenderer.invoke('git:worktreeAdd', workingDir, args),
+    createPr: (workingDir: string, input: { title: string; body: string }) =>
+      ipcRenderer.invoke('git:createPr', workingDir, input),
+    watch: (workingDir: string) => ipcRenderer.invoke('git:watch', workingDir),
+    unwatch: (workingDir: string) => ipcRenderer.invoke('git:unwatch', workingDir),
+    onChanged: (handler: (ev: { workingDir: string }) => void) => {
+      const listener = (_e: unknown, ev: { workingDir: string }) => handler(ev)
+      ipcRenderer.on('git:changed', listener)
+      return () => ipcRenderer.removeListener('git:changed', listener)
+    },
   },
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),
