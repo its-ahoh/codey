@@ -1498,7 +1498,7 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('git:createPr', async (_e, workingDir: string, input: { title: string; body: string }) =>
+  ipcMain.handle('git:createPr', async (_e, workingDir: string, input: { title: string; body?: string }) =>
     wrap(async () => {
       if (!workingDir || !input?.title) return { ok: false, error: 'missing args' }
       const { execFile } = await import('child_process')
@@ -1528,7 +1528,6 @@ app.whenReady().then(async () => {
       const fsMod = await import('fs')
       const pathMod = await import('path')
       const gitDir = pathMod.join(workingDir, '.git')
-      const headPath = pathMod.join(gitDir, 'HEAD')
       const existing = gitWatchers.get(workingDir)
       if (existing) { existing.count++; return { ok: true } }
       try {
@@ -1538,11 +1537,15 @@ app.whenReady().then(async () => {
           if (entry.timer) clearTimeout(entry.timer)
           entry.timer = setTimeout(() => sendToRenderer('git:changed', { workingDir }), 200)
         }
-        // Watch the .git dir non-recursively; HEAD + refs changes bubble as rename/change events.
-        const watcher = fsMod.watch(gitDir, { persistent: false }, () => emit())
+        // Resolve real git dir: for a linked worktree .git is a file containing "gitdir: <path>"
+        const resolvedGitDir = fsMod.existsSync(gitDir) && fsMod.statSync(gitDir).isDirectory()
+          ? gitDir
+          : (() => {
+              try { return fsMod.readFileSync(gitDir, 'utf8').match(/gitdir:\s*(.+)/)?.[1]?.trim() } catch { return undefined }
+            })()
+        if (!resolvedGitDir) return { ok: false }
+        const watcher = fsMod.watch(resolvedGitDir, { persistent: false }, () => emit())
         gitWatchers.set(workingDir, { watcher, count: 1, timer: null })
-        // Fire once so the renderer pulls fresh status immediately.
-        void headPath
         return { ok: true }
       } catch {
         return { ok: false }
@@ -1552,6 +1555,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('git:unwatch', async (_e, workingDir: string) =>
     wrap(async () => {
+      if (!workingDir) return { ok: true }
       const entry = gitWatchers.get(workingDir)
       if (!entry) return { ok: true }
       entry.count--

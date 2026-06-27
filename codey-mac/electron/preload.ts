@@ -155,7 +155,7 @@ contextBridge.exposeInMainWorld('codey', {
     worktrees: (workingDir: string) => ipcRenderer.invoke('git:worktrees', workingDir),
     worktreeAdd: (workingDir: string, args: { name: string; path: string }) =>
       ipcRenderer.invoke('git:worktreeAdd', workingDir, args),
-    createPr: (workingDir: string, input: { title: string; body: string }) =>
+    createPr: (workingDir: string, input: { title: string; body?: string }) =>
       ipcRenderer.invoke('git:createPr', workingDir, input),
     watch: (workingDir: string) => ipcRenderer.invoke('git:watch', workingDir),
     unwatch: (workingDir: string) => ipcRenderer.invoke('git:unwatch', workingDir),

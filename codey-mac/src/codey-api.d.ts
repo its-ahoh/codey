@@ -151,7 +151,7 @@ declare global {
         fetch: (workingDir: string) => Promise<IpcResult<{ ok: boolean; error?: string }>>
         worktrees: (workingDir: string) => Promise<IpcResult<{ list: { branch: string; path: string; isMain: boolean }[] }>>
         worktreeAdd: (workingDir: string, args: { name: string; path: string }) => Promise<IpcResult<{ ok: boolean; path?: string; error?: string }>>
-        createPr: (workingDir: string, input: { title: string; body: string }) => Promise<IpcResult<{ ok: boolean; url?: string; error?: string }>>
+        createPr: (workingDir: string, input: { title: string; body?: string }) => Promise<IpcResult<{ ok: boolean; url?: string; error?: string }>>
         watch: (workingDir: string) => Promise<IpcResult<{ ok: boolean }>>
         unwatch: (workingDir: string) => Promise<IpcResult<{ ok: boolean }>>
         onChanged: (handler: (ev: { workingDir: string }) => void) => () => void
