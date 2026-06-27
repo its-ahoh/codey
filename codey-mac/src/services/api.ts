@@ -117,14 +117,7 @@ export const apiService = {
     try { await window.codey.revealInFolder(absPath) } catch { /* silent no-op */ }
   },
 
-  // Workspace teams — the names of global teams enabled for this workspace.
-  getTeams: async (workspace?: string): Promise<string[]> =>
-    unwrap(await window.codey.teams.get(workspace)),
-
-  setTeams: async (workspace: string, names: string[]): Promise<void> =>
-    unwrap(await window.codey.teams.set(workspace, names)),
-
-  // Global team library — defined once, opted into per workspace.
+  // Global team library — defined once, available to every workspace.
   getGlobalTeams: async (): Promise<Record<string, TeamConfigRaw>> =>
     unwrap(await window.codey.globalTeams.get()),
 

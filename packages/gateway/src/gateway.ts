@@ -1557,7 +1557,7 @@ export class Codey {
     await this.sendResponse({
       chatId,
       channel,
-      text: `👥 Teams on workspace **${this.workspaceManager.getCurrentWorkspace()}**\n\n${this.workspaceManager.listTeams()}`,
+      text: `👥 Teams (available in all workspaces)\n\n${this.workspaceManager.listTeams()}`,
     });
   }
 
@@ -2356,7 +2356,7 @@ Example: /model gpt-4.1 write a Python script`;
       await this.sendResponse({
         chatId,
         channel,
-        text: `Usage: /team <name> [--all] <task>\n\nTeams on this workspace:\n${teamList}`,
+        text: `Usage: /team <name> [--all] <task>\n\nAvailable teams:\n${teamList}`,
       });
       return;
     }
@@ -2367,7 +2367,7 @@ Example: /model gpt-4.1 write a Python script`;
       await this.sendResponse({
         chatId,
         channel,
-        text: `Team "${teamName}" not found on workspace "${this.workspaceManager.getCurrentWorkspace()}".\n\nAvailable teams:\n${teamList}`,
+        text: `Team "${teamName}" not found.\n\nAvailable teams:\n${teamList}`,
       });
       return;
     }

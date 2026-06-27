@@ -5,9 +5,10 @@ import type { TeamGraph } from '../../../packages/core/src/team-graph'
 import { C } from '../theme'
 import FlowEditor from './FlowEditor'
 import { emptyGraph } from './flowEditorModel'
+import { emitTeamsChanged } from './teamsChanged'
 
-// Mirrors TeamsSection's editor, but operates on the global team library
-// stored in gateway.json. Workspaces opt into these teams by name.
+// Editor for the global team library stored in gateway.json. Teams defined
+// here are available to every workspace.
 
 type DispatchMode = 'all' | 'auto' | 'parallel'
 interface TeamState { members: string[]; dispatch: DispatchMode; graph?: TeamGraph }
@@ -65,7 +66,7 @@ export default function GlobalTeamsSection() {
     setTeams(next); setError(null)
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(async () => {
-      try { await apiService.setGlobalTeams(denormalizeAll(next)); setSavedAt(Date.now()) }
+      try { await apiService.setGlobalTeams(denormalizeAll(next)); setSavedAt(Date.now()); emitTeamsChanged() }
       catch (err: any) { setError(err.message || String(err)) }
     }, 400)
   }
@@ -131,7 +132,7 @@ export default function GlobalTeamsSection() {
   return (
     <div style={{ marginTop: 8 }}>
       <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        Teams defined here are available to every workspace. Each workspace opts in by enabling the names it wants under Workspaces &rarr; Teams.
+        Teams defined here are available to every workspace.
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, marginBottom: 8 }}>
         {savedAt > 0 && Date.now() - savedAt < 2000 && <span style={{ fontSize: 11, color: C.green }}>✓ Saved</span>}
