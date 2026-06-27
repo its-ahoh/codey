@@ -433,7 +433,12 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   useEffect(() => {
     const ws = chat?.workspaceName
     if (!ws) return
-    const refresh = () => apiService.getTeams(ws).then(setTeamNames).catch(() => setTeamNames([]))
+    // Teams are global — every workspace can run every team — so list the full
+    // global library rather than a per-workspace enabled subset.
+    const refresh = () =>
+      apiService.getGlobalTeams()
+        .then(lib => setTeamNames(Object.keys(lib)))
+        .catch(() => setTeamNames([]))
     refresh()
     // Re-fetch when teams are enabled/edited in the Settings overlay, which
     // stays mounted alongside this tab so workspaceName never changes.

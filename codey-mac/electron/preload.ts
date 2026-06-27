@@ -25,11 +25,6 @@ contextBridge.exposeInMainWorld('codey', {
   dialog: {
     pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),
   },
-  teams: {
-    get: (name?: string) => ipcRenderer.invoke('teams:get', name),
-    set: (name: string, names: string[]) =>
-      ipcRenderer.invoke('teams:set', name, names),
-  },
   globalTeams: {
     get: () => ipcRenderer.invoke('globalTeams:get'),
     set: (teams: Record<string, unknown>) => ipcRenderer.invoke('globalTeams:set', teams),

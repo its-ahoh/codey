@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { apiService } from '../services/api'
 import { C } from '../theme'
-import TeamsSection from './TeamsSection'
 import { emitWorkspacesChanged } from './workspacesChanged'
 
 interface WorkspacesTabProps {
@@ -216,10 +215,6 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
 
                     <div style={{ marginTop: 12 }}>
                       <MemorySection workspace={ws} />
-                    </div>
-
-                    <div style={{ marginTop: 12 }}>
-                      <TeamsSection workspace={ws} />
                     </div>
                   </div>
                 )}
