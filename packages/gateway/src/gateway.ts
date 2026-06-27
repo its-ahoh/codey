@@ -834,6 +834,9 @@ export class Codey {
   }
 
   private resolveChatWorkingDir(chat: Chat): string {
+    if (chat.workingDirOverride && fs.existsSync(chat.workingDirOverride)) {
+      return chat.workingDirOverride;
+    }
     const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
     const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
     if (fs.existsSync(wsConfigPath)) {
