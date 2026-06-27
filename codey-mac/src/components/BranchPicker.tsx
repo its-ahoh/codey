@@ -45,6 +45,13 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
     if (r.reason === 'dirty') setMode({ kind: 'dirty', target: name })
   }
 
+  const doSwitchRemote = async (b: string) => {
+    const localName = b.replace(/^[^/]+\//, '')
+    const r = await git.checkout(localName, { track: true })
+    if (r.ok) { setOpen(false); return }
+    if (r.reason === 'dirty') setMode({ kind: 'dirty', target: localName })
+  }
+
   const doCreate = async () => {
     if (!newName.trim()) return
     if (useWorktree) {
@@ -58,7 +65,7 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <button style={styles.pill} onClick={() => setOpen(o => !o)} title="Branch & worktree">
+      <button style={styles.pill} onClick={() => setOpen(o => { if (!o) setNote(null); return !o })} title="Branch & worktree">
         <span>⎇ {s?.branch ?? '—'}</span>
         {s && s.dirty > 0 && <span style={styles.dirty}>+{s.dirty}</span>}
         {boundLabel && <span style={styles.wt}>🌳 {boundLabel}</span>}
@@ -104,7 +111,7 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
                 ))}
                 {remoteFiltered.length > 0 && <div style={styles.divider}>Remote</div>}
                 {remoteFiltered.map(b => (
-                  <button key={b} style={styles.item} onClick={() => git.checkout(b.replace(/^[^/]+\//, ''), { track: true }).then(() => setOpen(false))}>
+                  <button key={b} style={styles.item} onClick={() => doSwitchRemote(b)}>
                     {b}
                   </button>
                 ))}
