@@ -4057,6 +4057,14 @@ Example: /model gpt-4.1 write a Python script`;
       throw new Error(msg);
     }
 
+    // Per-chat worktree binding: an explicit workingDirOverride wins over the
+    // workspace's workingDir so the agent actually runs in the bound worktree
+    // (mirrors resolveChatWorkingDir's precedence).
+    if (chat.workingDirOverride) {
+      if (fs.existsSync(chat.workingDirOverride)) workingDir = chat.workingDirOverride;
+      else this.logger.warn(`Chat ${chat.id} workingDirOverride=${chat.workingDirOverride} is gone; falling back to workspace dir`);
+    }
+
     // Per-chat override takes precedence over the gateway default.
     const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
     let model: ModelConfig | undefined;
