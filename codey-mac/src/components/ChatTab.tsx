@@ -114,7 +114,9 @@ const UserMessageContent: React.FC<{ content: string }> = ({ content }) => {
     return (
       <div>
         <Markdown variant="user">{content}</Markdown>
-        <button style={{ ...userFoldStyles.btn, marginTop: 6 }} onClick={() => setExpanded(false)}>Show less ▲</button>
+        <div style={userFoldStyles.lessRow}>
+          <button style={userFoldStyles.btn} onClick={() => setExpanded(false)}>Show less ▲</button>
+        </div>
       </div>
     )
   }
@@ -145,6 +147,8 @@ const userFoldStyles: Record<string, React.CSSProperties> = {
     background: `linear-gradient(to bottom, transparent, ${C.userBg})`,
     pointerEvents: 'none',
   },
+  // Center the "Show less" button to match the centered "Show more" above.
+  lessRow: { display: 'flex', justifyContent: 'center', marginTop: 6 },
   btn: {
     pointerEvents: 'auto', background: 'rgba(255,255,255,0.18)', border: 'none',
     color: C.onAccent, fontSize: 11, fontWeight: 600,
