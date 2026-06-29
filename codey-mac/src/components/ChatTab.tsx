@@ -21,6 +21,7 @@ import { defaultThinkingExpanded } from './thinkingState'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
 import { useGitStatus } from '../hooks/useGitStatus'
+import { BranchPicker } from './BranchPicker'
 
 interface Props {
   chatId: string
@@ -318,7 +319,7 @@ const TeamRunGroup: React.FC<{
 }
 
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed }) => {
-  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setWorkingDir: setChatWorkingDir, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -444,13 +445,17 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
     // stays mounted alongside this tab so workspaceName never changes.
     return onTeamsChanged(refresh)
   }, [chat?.workspaceName])
-  const [workingDir, setWorkingDir] = useState<string | undefined>(undefined)
+  const [workspaceDir, setWorkspaceDir] = useState<string | undefined>(undefined)
   useEffect(() => {
     if (!chat?.workspaceName) return
     apiService.getWorkspaceInfo(chat.workspaceName)
-      .then(info => setWorkingDir(info.workingDir))
-      .catch(() => setWorkingDir(undefined))
+      .then(info => setWorkspaceDir(info.workingDir))
+      .catch(() => setWorkspaceDir(undefined))
   }, [chat?.workspaceName])
+  // The effective working dir is the chat's per-chat override (a bound
+  // worktree) when set, otherwise the workspace's repo root. Git status and the
+  // header BranchPicker both operate on this effective dir.
+  const workingDir = chat?.workingDirOverride || workspaceDir
   const { status: gitStatus, refresh: refreshGit } = useGitStatus(workingDir)
   useEffect(() => {
     if (!isGatewayRunning) return
@@ -916,11 +921,15 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
       )}
       <div style={styles.header}>
         <span style={styles.workspaceTag}>{chat.workspaceName}</span>
-        {gitStatus && (
-          <span style={styles.gitBadge} title={`Branch: ${gitStatus.branch}${gitStatus.dirty > 0 ? ` · ${gitStatus.dirty} change${gitStatus.dirty !== 1 ? 's' : ''}` : ''}`}>
-            ⎇ {gitStatus.branch}{gitStatus.dirty > 0 ? ` +${gitStatus.dirty}` : ''}
-          </span>
-        )}
+        <BranchPicker
+          workingDir={workingDir}
+          repoRoot={workspaceDir}
+          boundWorktreePath={chat?.workingDirOverride}
+          onBindWorktree={async (path) => {
+            if (!chat) return
+            await setChatWorkingDir(chat.id, path)
+          }}
+        />
         <select value={selectionValue} onChange={e => onSelectionChange(e.target.value)} style={{ ...styles.workerSelect, marginLeft: 'auto' }}>
           <option value="none">No worker</option>
           {workers.length > 0 && (
