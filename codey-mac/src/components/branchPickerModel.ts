@@ -1,4 +1,6 @@
-import * as path from 'path';
+// NOTE: this module runs in the renderer (nodeIntegration is off), so it must
+// not import Node's 'path' — that externalizes to require() and crashes the
+// renderer bundle. The path building below is plain string work (macOS paths).
 
 export interface Worktree { branch: string; path: string; isMain: boolean }
 export interface BranchData { current: string; local: string[]; remote: string[] }
@@ -10,12 +12,11 @@ export function filterBranches(list: string[], query: string): string[] {
   return list.filter(b => b.toLowerCase().includes(q));
 }
 
-/** Default worktree location: `<repo-parent>/.codey-worktrees/<repo>-<branch>`. */
+/** Default worktree location: `<repo>/.codey/worktrees/<branch>` (in-repo, gitignored). */
 export function defaultWorktreePath(repoPath: string, branchName: string): string {
-  const parent = path.dirname(repoPath);
-  const repo = path.basename(repoPath);
+  const root = repoPath.replace(/\/+$/, '');
   const safe = branchName.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
-  return path.join(parent, '.codey-worktrees', `${repo}-${safe}`);
+  return `${root}/.codey/worktrees/${safe}`;
 }
 
 /** Separate the main worktree from the rest for display. */

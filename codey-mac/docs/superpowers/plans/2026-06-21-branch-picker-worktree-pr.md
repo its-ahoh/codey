@@ -656,9 +656,9 @@ describe('filterBranches', () => {
 });
 
 describe('defaultWorktreePath', () => {
-  it('builds a sibling .codey-worktrees path with sanitized branch', () => {
+  it('builds an in-repo .codey/worktrees path with sanitized branch', () => {
     expect(defaultWorktreePath('/home/u/repo', 'feat/cool thing'))
-      .toBe('/home/u/.codey-worktrees/repo-feat-cool-thing');
+      .toBe('/home/u/repo/.codey/worktrees/feat-cool-thing');
   });
 });
 
@@ -694,12 +694,11 @@ export function filterBranches(list: string[], query: string): string[] {
   return list.filter(b => b.toLowerCase().includes(q));
 }
 
-/** Default worktree location: `<repo-parent>/.codey-worktrees/<repo>-<branch>`. */
+/** Default worktree location: `<repo>/.codey/worktrees/<branch>` (in-repo, gitignored). */
 export function defaultWorktreePath(repoPath: string, branchName: string): string {
-  const parent = path.dirname(repoPath);
-  const repo = path.basename(repoPath);
+  const root = repoPath.replace(/\/+$/, '');
   const safe = branchName.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
-  return path.join(parent, '.codey-worktrees', `${repo}-${safe}`);
+  return `${root}/.codey/worktrees/${safe}`;
 }
 
 /** Separate the main worktree from the rest for display. */
@@ -1387,7 +1386,7 @@ Verify each:
 - [ ] Click the branch pill → dropdown lists local branches with the current one checked.
 - [ ] Switch to a clean branch → pill updates.
 - [ ] Switch with uncommitted changes → "Stash & switch" prompt appears; confirming stashes + switches and shows the stash note.
-- [ ] "+ New branch…" → toggle defaults to **In a new worktree**; the preview path shows `.codey-worktrees/...`; Create makes the worktree and binds the chat (🌳 chip appears).
+- [ ] "+ New branch…" → toggle defaults to **In a new worktree**; the preview path shows `.codey/worktrees/...`; Create makes the worktree and binds the chat (🌳 chip appears).
 - [ ] Selecting the main worktree clears the binding (🌳 chip disappears).
 - [ ] Change branch in an external terminal → pill updates within ~5s (or instantly via watcher) without focusing the window.
 - [ ] Drive a chat to `waiting`/`done` → Create PR button appears; with commits it's enabled; clicking opens the modal; creating runs push + `gh pr create` and shows the PR URL.

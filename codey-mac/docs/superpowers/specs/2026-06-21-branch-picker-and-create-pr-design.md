@@ -125,9 +125,10 @@ shared checkout in place. This is the **default** when creating a new branch.
 - **Create in a new worktree** (default of the "+ New branch…" toggle):
   - Runs `git worktree add <path> -b <name>` from the chat's current
     `workingDir` repo.
-  - Default `<path>`: `<repo-parent>/.codey-worktrees/<repo>-<name>` — a sibling
-    of the repo, predictable, and easy to gitignore. The resolved path is shown
-    in the create row before confirming.
+  - Default `<path>`: `<repo>/.codey/worktrees/<name>` — in-repo and predictable.
+    The worktree-add backend drops a `.gitignore` (`*`) in the `worktrees/`
+    container so the checkouts never show up in the main repo's `git status`. The
+    resolved path is shown in the create row before confirming.
   - On success the chat is **bound** to the new worktree (see below) so the agent
     immediately works there.
 - **Select an existing worktree** from the dropdown's Worktrees section → binds
@@ -228,6 +229,6 @@ A **Create PR** button rendered inside `StatusSidecar.tsx`.
 
 - Force checkout.
 - Worktree **removal** from the UI (manage via terminal).
-- Configurable worktree location (fixed `.codey-worktrees/` default in v1).
+- Configurable worktree location (fixed `<repo>/.codey/worktrees/` default in v1).
 - Editing PR base branch, reviewers, labels in the modal (gh defaults only).
 - Non-GitHub remotes (gh handles only GitHub).

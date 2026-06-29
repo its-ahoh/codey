@@ -1488,7 +1488,15 @@ app.whenReady().then(async () => {
       const fsMod = await import('fs')
       const pathMod = await import('path')
       const target = pathMod.resolve(args2.path)
-      fsMod.mkdirSync(pathMod.dirname(target), { recursive: true })
+      const container = pathMod.dirname(target)
+      fsMod.mkdirSync(container, { recursive: true })
+      // In-repo worktrees would otherwise show up in the main repo's `git status`.
+      // Drop a `.gitignore` (`*`) in the container so every worktree checkout is ignored.
+      // Location-agnostic: works whether the container is the default .codey/worktrees or a custom path.
+      try {
+        const ignorePath = pathMod.join(container, '.gitignore')
+        if (!fsMod.existsSync(ignorePath)) fsMod.writeFileSync(ignorePath, '*\n')
+      } catch { /* best-effort; worktree add still proceeds */ }
       return await new Promise<{ ok: boolean; path?: string; error?: string }>((resolve) => {
         execFile('git', ['worktree', 'add', target, '-b', args2.name], { cwd: workingDir, timeout: 20000 }, (err, _out, stderr) => {
           if (err) resolve({ ok: false, error: (stderr || String(err)).trim() })

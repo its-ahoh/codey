@@ -11,9 +11,13 @@ describe('filterBranches', () => {
 });
 
 describe('defaultWorktreePath', () => {
-  it('builds a sibling .codey-worktrees path with sanitized branch', () => {
+  it('builds an in-repo .codey/worktrees path with sanitized branch', () => {
     expect(defaultWorktreePath('/home/u/repo', 'feat/cool thing'))
-      .toBe('/home/u/.codey-worktrees/repo-feat-cool-thing');
+      .toBe('/home/u/repo/.codey/worktrees/feat-cool-thing');
+  });
+  it('strips a trailing slash from the repo path', () => {
+    expect(defaultWorktreePath('/home/u/repo/', 'x'))
+      .toBe('/home/u/repo/.codey/worktrees/x');
   });
 });
 
