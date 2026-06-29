@@ -22,6 +22,7 @@ import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
 import { useGitStatus } from '../hooks/useGitStatus'
 import { BranchPicker } from './BranchPicker'
+import { CreatePrModal } from './CreatePrModal'
 
 interface Props {
   chatId: string
@@ -457,6 +458,10 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   // header BranchPicker both operate on this effective dir.
   const workingDir = chat?.workingDirOverride || workspaceDir
   const { status: gitStatus, refresh: refreshGit } = useGitStatus(workingDir)
+  const [showPrModal, setShowPrModal] = useState(false)
+  // Derived from the gitStatus useGitStatus already fetches — no extra IPC round-trip.
+  // v1 heuristic: a dirty tree, or any non-default branch, counts as "something to PR".
+  const branchAhead = !!gitStatus && (gitStatus.dirty > 0 || gitStatus.branch !== 'main')
   useEffect(() => {
     if (!isGatewayRunning) return
     ;(async () => {
@@ -1463,6 +1468,17 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
           }}
         />
       )}
+      {showPrModal && (
+        <CreatePrModal
+          defaultTitle={chat?.taskBrief?.goal || gitStatus?.branch || ''}
+          onCancel={() => setShowPrModal(false)}
+          onCreate={async (input) => {
+            if (!workingDir) return { ok: false, error: 'No working dir' }
+            const r = await window.codey.git.createPr(workingDir, input)
+            return r.ok ? r.data : { ok: false, error: r.error || 'Failed' }
+          }}
+        />
+      )}
       </div>
       {/* The context panel only renders when there's room for both the chat
           list (~180-240px) AND a usable conversation column (>= MIN_MIDDLE).
@@ -1520,6 +1536,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
             view={extractSidecarBrief(chat.taskBrief)}
             loading={taskBriefLoading}
             width={SIDECAR_W}
+            branchAhead={branchAhead}
+            onCreatePr={() => setShowPrModal(true)}
             onOpen={() => { setContextPanelOpen(chat.id, true); setPanelTab('task') }}
           />
         )
