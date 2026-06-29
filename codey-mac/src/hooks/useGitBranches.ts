@@ -50,18 +50,20 @@ export function useGitBranches(workingDir: string | undefined) {
     if (!workingDir) return { ok: false, error: 'no dir' }
     setError(null)
     const r = await window.codey.git.checkout(workingDir, name, opts)
-    if (r.ok) await refresh()
-    else if (r.data?.reason !== 'dirty') setError(r.data?.error || r.error || 'checkout failed')
-    return r.ok ? { ok: true } : { ok: false, error: r.data?.error, reason: r.data?.reason }
+    if (!r.ok) { setError(r.error || 'checkout failed'); return { ok: false, error: r.error } }
+    const d = r.data
+    if (d.ok) { await refresh(); return { ok: true } }
+    if (d.reason !== 'dirty') setError(d.error || 'checkout failed')
+    return { ok: false, error: d.error, reason: d.reason }
   }, [workingDir, refresh])
 
   const stashAndSwitch = useCallback(async (name: string) => {
     if (!workingDir) return { ok: false }
     const st = await window.codey.git.stash(workingDir, `codey-mac: switch to ${name}`)
-    if (!st.ok || !st.data?.ok) { setError(st.data?.error || 'stash failed'); return { ok: false } }
+    if (!st.ok || !st.data.ok) { setError((st.ok ? st.data.error : st.error) || 'stash failed'); return { ok: false } }
     const co = await window.codey.git.checkout(workingDir, name)
-    if (co.ok && co.data?.ok) { await refresh(); return { ok: true } }
-    setError(co.data?.error || 'checkout failed'); return { ok: false }
+    if (co.ok && co.data.ok) { await refresh(); return { ok: true } }
+    setError((co.ok ? co.data.error : co.error) || 'checkout failed'); return { ok: false }
   }, [workingDir, refresh])
 
   const createBranch = useCallback(async (name: string) => checkout(name, { create: true }), [checkout])
@@ -69,15 +71,15 @@ export function useGitBranches(workingDir: string | undefined) {
   const fetchRemote = useCallback(async () => {
     if (!workingDir) return
     const r = await window.codey.git.fetch(workingDir)
-    if (r.ok && r.data?.ok) await refresh()
-    else setError(r.data?.error || 'fetch failed')
+    if (r.ok && r.data.ok) await refresh()
+    else setError((r.ok ? r.data.error : r.error) || 'fetch failed')
   }, [workingDir, refresh])
 
   const addWorktree = useCallback(async (name: string, path: string) => {
     if (!workingDir) return { ok: false }
     const r = await window.codey.git.worktreeAdd(workingDir, { name, path })
-    if (r.ok && r.data?.ok) { await refresh(); return { ok: true, path: r.data.path } }
-    setError(r.data?.error || 'worktree add failed'); return { ok: false }
+    if (r.ok && r.data.ok) { await refresh(); return { ok: true, path: r.data.path } }
+    setError((r.ok ? r.data.error : r.error) || 'worktree add failed'); return { ok: false }
   }, [workingDir, refresh])
 
   return { state, error, setError, refresh, checkout, stashAndSwitch, createBranch, fetchRemote, addWorktree }
