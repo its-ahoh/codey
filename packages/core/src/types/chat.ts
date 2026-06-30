@@ -113,6 +113,10 @@ export interface Chat {
    *  undefined = user hasn't decided; auto-open logic applies on first tool call.
    *  true/false = explicit user choice; honored verbatim. */
   contextPanelOpen?: boolean;
+  /** Per-chat working-directory override (absolute path). When set, the agent
+   *  runs here instead of the workspace's workingDir — used to bind a chat to a
+   *  git worktree. Cleared (deleted) to fall back to the workspace dir. */
+  workingDirOverride?: string;
   /** Last unanswered choice question in a non-team chat. Cleared on next user message. */
   lastAskedOptions?: { messageId: string; options: string[] };
   /**

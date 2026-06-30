@@ -1,6 +1,7 @@
 import React from 'react'
 import { C } from '../theme'
 import { statusMeta, formatAgo, type SidecarView, type StatusTone } from './taskHudView'
+import { createPrButtonState } from './createPrModel'
 
 interface Props {
   view: SidecarView
@@ -9,6 +10,10 @@ interface Props {
   /** Open the full panel on the Status tab. */
   onOpen: () => void
   width: number
+  /** Branch is ahead of the default branch (has commits to PR). */
+  branchAhead?: boolean
+  /** Open the Create PR flow. Only invoked when the button is enabled. */
+  onCreatePr?: () => void
 }
 
 const toneColor = (tone: StatusTone): string =>
@@ -20,8 +25,9 @@ const clamp = (lines: number): React.CSSProperties => ({
 
 const COLLAPSE_KEY = 'codey.statusSidecarCollapsed'
 
-export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, width }) => {
+export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, width, branchAhead, onCreatePr }) => {
   const sm = statusMeta(view.status)
+  const prState = createPrButtonState(view.status, !!branchAhead)
   const [collapsed, setCollapsed] = React.useState<boolean>(() => localStorage.getItem(COLLAPSE_KEY) === '1')
   React.useEffect(() => { localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0') }, [collapsed])
 
@@ -85,6 +91,17 @@ export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, width })
             </div>
           )}
 
+          {prState.show && (
+            <button
+              style={{ ...styles.prBtn, opacity: prState.enabled ? 1 : 0.5, cursor: prState.enabled ? 'pointer' : 'not-allowed' }}
+              disabled={!prState.enabled}
+              title={prState.enabled ? 'Create a pull request' : 'No commits to PR'}
+              onClick={(e) => { e.stopPropagation(); if (prState.enabled) onCreatePr?.() }}
+            >
+              Create PR →
+            </button>
+          )}
+
           {view.recent.length > 0 && (
             <div style={styles.recent}>
               <div style={styles.sectionLabel}>Recent</div>
@@ -140,4 +157,6 @@ const styles: Record<string, React.CSSProperties> = {
   recentText: { flex: 1, minWidth: 0, fontSize: 12, color: C.fg2, lineHeight: 1.4, ...clamp(2) },
   recentWhen: { flex: 'none', fontSize: 10, color: C.fg3, whiteSpace: 'nowrap' },
   footer: { fontSize: 11, color: C.fg3, paddingTop: 2 },
+  prBtn: { marginTop: 4, width: '100%', background: C.green, color: '#0b0b0b', border: 'none',
+    borderRadius: 8, padding: '8px 10px', fontSize: 12, fontWeight: 600 },
 }

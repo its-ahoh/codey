@@ -370,6 +370,7 @@ interface ChatsContextValue {
   deleteChat: (chatId: string) => Promise<void>
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
   setAgentModel: (chatId: string, agent: string | null, model: string | null) => Promise<void>
+  setWorkingDir: (chatId: string, dir: string | null) => Promise<void>
   setContextPanelOpen: (chatId: string, open: boolean | null) => Promise<void>
   setSoloAdvisor: (chatId: string, enabled: boolean) => Promise<void>
   generateTaskBrief: (chatId: string) => Promise<TaskBrief | null>
@@ -592,6 +593,13 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     async setAgentModel(chatId, agent, model) {
       const chat = await apiService.chats.updateAgentModel(chatId, agent, model)
+      dispatch({ type: 'upsert', chat })
+    },
+    async setWorkingDir(chatId, dir) {
+      // Mirrors setSelection: the gateway returns the updated chat (with the
+      // new workingDirOverride), which we upsert so the header's BranchPicker
+      // bound chip reflects the binding immediately.
+      const chat = await apiService.chats.setWorkingDir(chatId, dir)
       dispatch({ type: 'upsert', chat })
     },
     async setContextPanelOpen(chatId, open) {
