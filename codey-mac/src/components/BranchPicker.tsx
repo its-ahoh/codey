@@ -90,8 +90,8 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
               <input autoFocus placeholder="new-branch-name" value={newName}
                 onChange={e => setNewName(e.target.value)} style={styles.input} />
               <div style={styles.toggle}>
-                <button style={useWorktree ? styles.segOn : styles.seg} onClick={() => setUseWorktree(true)}>In a new worktree</button>
-                <button style={!useWorktree ? styles.segOn : styles.seg} onClick={() => setUseWorktree(false)}>On current checkout</button>
+                <button style={useWorktree ? styles.segOn : styles.seg} onClick={() => setUseWorktree(true)}>Worktree</button>
+                <button style={!useWorktree ? styles.segOn : styles.seg} onClick={() => setUseWorktree(false)}>Branch</button>
               </div>
               {previewPath && <div style={styles.preview}>{previewPath}</div>}
               <div style={styles.row}>
@@ -162,11 +162,11 @@ const styles: Record<string, React.CSSProperties> = {
   toggle: { display: 'flex', gap: 4 },
   seg: { flex: 1, background: C.surface3, border: `1px solid ${C.border2}`, color: C.fg2, fontSize: 11,
     padding: '5px 6px', borderRadius: 6, cursor: 'pointer' },
-  segOn: { flex: 1, background: C.accent, border: `1px solid ${C.accent}`, color: '#fff', fontSize: 11,
+  segOn: { flex: 1, background: C.accent, border: `1px solid ${C.accent}`, color: C.onAccent, fontSize: 11,
     padding: '5px 6px', borderRadius: 6, cursor: 'pointer' },
   preview: { fontSize: 10, color: C.fg3, fontFamily: 'SF Mono, Menlo, monospace', wordBreak: 'break-all' },
   row: { display: 'flex', gap: 6 },
-  primary: { background: C.accent, color: '#fff', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, cursor: 'pointer' },
+  primary: { background: C.accent, color: C.onAccent, border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, cursor: 'pointer' },
   ghost: { background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '5px 10px', fontSize: 12, cursor: 'pointer' },
   footer: { display: 'flex', justifyContent: 'space-between', borderTop: `1px solid ${C.border}`, paddingTop: 6 },
   warn: { fontSize: 12, color: C.yellow },

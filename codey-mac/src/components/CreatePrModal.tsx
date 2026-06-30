@@ -63,7 +63,7 @@ const styles: Record<string, React.CSSProperties> = {
   input: { background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6, color: C.fg, fontSize: 13, padding: '6px 8px', outline: 'none' },
   textarea: { background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6, color: C.fg, fontSize: 13, padding: '6px 8px', outline: 'none', resize: 'vertical' },
   row: { display: 'flex', gap: 8, marginTop: 4 },
-  primary: { background: C.accent, color: '#fff', border: 'none', borderRadius: 6, padding: '6px 12px', fontSize: 13, cursor: 'pointer' },
+  primary: { background: C.accent, color: C.onAccent, border: 'none', borderRadius: 6, padding: '6px 12px', fontSize: 13, cursor: 'pointer' },
   ghost: { background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '6px 12px', fontSize: 13, cursor: 'pointer' },
   success: { fontSize: 13, color: C.green },
   err: { fontSize: 12, color: C.red },
