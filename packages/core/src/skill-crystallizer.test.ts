@@ -1,0 +1,197 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX } from './skill-crystallizer';
+
+describe('SkillStore', () => {
+  let tmp: string;
+  let store: SkillStore;
+
+  beforeEach(async () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-skills-test-'));
+    store = new SkillStore(tmp);
+    await store.load();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('adds a skill and persists to index.json', async () => {
+    const entry = store.add({
+      name: 'release-notes',
+      description: 'Draft release notes from merged PRs',
+      whenToUse: 'user asks for release notes or changelog',
+      steps: '1. fetch merged PRs\n2. group by type\n3. format output',
+      sourceRunId: 'run_001',
+    });
+    expect(entry.name).toBe('release-notes');
+    expect(entry.version).toBe(1);
+    expect(entry.history).toEqual([]);
+    expect(entry.archived).toBe(false);
+    expect(entry.useCount).toBe(0);
+    await store.flush();
+    const indexPath = path.join(tmp, 'skills', 'index.json');
+    const raw = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
+    expect(raw.entries.length).toBe(1);
+    expect(raw.entries[0].name).toBe('release-notes');
+  });
+
+  it('loads existing skills from disk and defaults missing history/rejected', async () => {
+    const skillsDir = path.join(tmp, 'skills');
+    fs.mkdirSync(skillsDir, { recursive: true });
+    fs.writeFileSync(path.join(skillsDir, 'index.json'), JSON.stringify({
+      version: 1,
+      entries: [{
+        name: 'weekly-digest', description: 'Generate weekly summary',
+        whenToUse: 'user asks for weekly report',
+        steps: '1. gather\n2. format',
+        version: 2, useCount: 3, lastUsedAt: Date.now() - 86400000,
+        successSignals: { cleanRuns: 2, corrections: 1 },
+        sourceRunIds: ['run_a'], createdAt: Date.now() - 604800000,
+        archived: false,
+      }],
+    }));
+    const store2 = new SkillStore(tmp);
+    await store2.load();
+    expect(store2.getAll().length).toBe(1);
+    expect(store2.get('weekly-digest')!.version).toBe(2);
+    expect(store2.get('weekly-digest')!.history).toEqual([]);
+    expect(store2.getRejected()).toEqual([]);
+  });
+
+  it('add() on existing name updates in place', () => {
+    store.add({ name: 'test', description: 'first', whenToUse: 'w', steps: 's' });
+    store.add({ name: 'test', description: 'second', whenToUse: 'w2', steps: 's2' });
+    expect(store.getAll().length).toBe(1);
+    const u = store.get('test')!;
+    expect(u.description).toBe('second');
+    // Changed steps bump the version and retain the old steps in history.
+    expect(u.version).toBe(2);
+    expect(u.history).toEqual([{ version: 1, steps: 's' }]);
+    // Re-adding with identical steps does NOT bump the version.
+    store.add({ name: 'test', description: 'third', whenToUse: 'w3', steps: 's2' });
+    const u2 = store.get('test')!;
+    expect(u2.version).toBe(2);
+    expect(u2.history).toEqual([{ version: 1, steps: 's' }]);
+    expect(u2.description).toBe('third');
+  });
+
+  it('archive() and restore()', () => {
+    store.add({ name: 's', description: 'd', whenToUse: 'w', steps: 'st' });
+    expect(store.archive('s')).toBe(true);
+    expect(store.get('s')!.archived).toBe(true);
+    expect(store.getActive().length).toBe(0);
+    expect(store.restore('s')).toBe(true);
+    expect(store.get('s')!.archived).toBe(false);
+    expect(store.getActive().length).toBe(1);
+  });
+
+  it('recordUse bumps useCount and lastUsedAt', () => {
+    store.add({ name: 'test', description: 'd', whenToUse: 'w', steps: 's' });
+    const before = Date.now();
+    store.recordUse('test');
+    const u = store.get('test')!;
+    expect(u.useCount).toBe(1);
+    expect(u.lastUsedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it('recordSuccessSignal tracks clean runs vs corrections', () => {
+    store.add({ name: 'test', description: 'd', whenToUse: 'w', steps: 's' });
+    store.recordSuccessSignal('test', true);
+    store.recordSuccessSignal('test', false);
+    const s = store.get('test')!.successSignals;
+    expect(s.cleanRuns).toBe(1);
+    expect(s.corrections).toBe(1);
+  });
+
+  it('bumpVersion retains prior steps in history', () => {
+    store.add({ name: 'test', description: 'd', whenToUse: 'w', steps: 'old' });
+    expect(store.bumpVersion('test', 'new')).toBe(true);
+    const u = store.get('test')!;
+    expect(u.version).toBe(2);
+    expect(u.steps).toBe('new');
+    expect(u.history).toEqual([{ version: 1, steps: 'old' }]);
+  });
+
+  it('history is capped at HISTORY_MAX', () => {
+    store.add({ name: 'test', description: 'd', whenToUse: 'w', steps: 'v1' });
+    for (let i = 2; i <= HISTORY_MAX + 3; i++) {
+      store.bumpVersion('test', `v${i}`);
+    }
+    const u = store.get('test')!;
+    expect(u.history.length).toBe(HISTORY_MAX);
+    expect(u.history[u.history.length - 1].steps).toBe(`v${HISTORY_MAX + 2}`);
+  });
+
+  it('rollback restores the prior version and steps', () => {
+    store.add({ name: 'test', description: 'd', whenToUse: 'w', steps: 'old' });
+    store.bumpVersion('test', 'new');
+    expect(store.rollback('test')).toBe(true);
+    const u = store.get('test')!;
+    expect(u.version).toBe(1);
+    expect(u.steps).toBe('old');
+    expect(u.history).toEqual([]);
+  });
+
+  it('rollback returns false with no history', () => {
+    store.add({ name: 'test', description: 'd', whenToUse: 'w', steps: 's' });
+    expect(store.rollback('test')).toBe(false);
+  });
+
+  it('rejectSuggestion records and caps at REJECTED_MAX', () => {
+    for (let i = 0; i < REJECTED_MAX + 5; i++) {
+      store.rejectSuggestion(`skill-${i}`, `desc ${i}`);
+    }
+    const rejected = store.getRejected();
+    expect(rejected.length).toBe(REJECTED_MAX);
+    expect(rejected[rejected.length - 1].name).toBe(`skill-${REJECTED_MAX + 4}`);
+  });
+
+  it('recordTrace stores traces and caps at RECENT_TRACES_MAX', () => {
+    for (let i = 0; i < RECENT_TRACES_MAX + 5; i++) {
+      store.recordTrace({
+        runId: `run_${i}`, promptSummary: 'task', outputPreview: 'text',
+        timestamp: Date.now() - i * 60000, mode: 'solo',
+      });
+    }
+    const recent = store.getRecentTraces(100);
+    expect(recent.length).toBe(RECENT_TRACES_MAX);
+    expect(recent[0].runId).toBe(`run_${RECENT_TRACES_MAX + 4}`);
+  });
+
+  it('traces persist to disk and reload across store instances', async () => {
+    store.recordTrace({ runId: 'r1', promptSummary: 'draft notes', outputPreview: 'md', timestamp: 1000, mode: 'solo' });
+    store.recordTrace({ runId: 'r2', promptSummary: 'changelog', outputPreview: 'md', timestamp: 2000, mode: 'solo' });
+    await store.flush();
+    const store2 = new SkillStore(tmp);
+    await store2.load();
+    const traces = store2.getRecentTraces(10);
+    expect(traces.length).toBe(2);
+    expect(traces[0].runId).toBe('r2');
+  });
+
+  it('getRecentTraces returns most recent first', () => {
+    store.recordTrace({ runId: 'older', promptSummary: 'o', outputPreview: 't', timestamp: 1000, mode: 'solo' });
+    store.recordTrace({ runId: 'newer', promptSummary: 'n', outputPreview: 't', timestamp: 2000, mode: 'solo' });
+    expect(store.getRecentTraces(10)[0].runId).toBe('newer');
+  });
+
+  it('runCollectGarbage archives stale and weak skills', () => {
+    const old = Date.now() - 31 * 86_400_000;
+    const s1 = store.add({ name: 'old', description: 'd', whenToUse: 'w', steps: 's', sourceRunId: 'r1' });
+    s1.lastUsedAt = old;
+    const s2 = store.add({ name: 'weak', description: 'd', whenToUse: 'w', steps: 's', sourceRunId: 'r2' });
+    s2.createdAt = old;
+    s2.lastUsedAt = old;
+    const s3 = store.add({ name: 'active', description: 'd', whenToUse: 'w', steps: 's', sourceRunId: 'r3' });
+    s3.useCount = 5;
+    s3.lastUsedAt = Date.now() - 86_400_000;
+    const archived = store.runCollectGarbage({ staleDays: 30, weakSkillDays: 7 });
+    expect(archived).toBe(2);
+    expect(store.get('old')!.archived).toBe(true);
+    expect(store.get('weak')!.archived).toBe(true);
+    expect(store.get('active')!.archived).toBe(false);
+  });
+});
