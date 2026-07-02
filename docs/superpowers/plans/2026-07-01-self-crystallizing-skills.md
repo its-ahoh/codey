@@ -1674,7 +1674,9 @@ In `parseCommand()` (`gateway.ts:3457`), inside the `if (commandMatch)` block, b
         return {
           command: `skill-${skillSubMatch[1].toLowerCase()}`,
           args: [skillSubMatch[2]],
-          agent: undefined as any, model: undefined, prompt: '',
+          agent: this.getDefaultAgent() as CodingAgent,
+          model: undefined,
+          prompt: '',
         };
       }
 ```
@@ -1765,9 +1767,12 @@ Add to the `Codey` class:
 
 - [ ] **Step 8: Add the shared post-run pass**
 
-This one method serves both surfaces (channel + chat). It is only ever called fire-and-forget (`void this.afterRunSkillPass(...).catch(...)`) AFTER the user's response has been delivered, so its LLM calls (evolve, distill) never block a run — as the spec requires. GC runs on the 1st post-run pass after startup and every Nth run after (covers the spec's "on workspace load and after every Nth run" without an init-ordering dependency).
+This one method serves both surfaces (channel + chat). It is only ever called fire-and-forget (`void this.afterRunSkillPass(...)`) AFTER the user's response has been delivered, so its LLM calls (evolve, distill) never block a run — as the spec requires. Every LLM stage (evolve, distill — each ends in a `notify()` that is a channel send and can reject) is isolated in its own try/catch, and the whole body is wrapped in a final try/catch, so the method never rejects and call sites need no `.catch`. Bookkeeping (recordUse / recordSuccessSignal / recordTrace / GC) stays outside the LLM try blocks so it always happens. GC runs on the 1st post-run pass after startup and every Nth run after (covers the spec's "on workspace load and after every Nth run" without an init-ordering dependency).
 
 ```typescript
+  /** Shared post-run skill pass for both surfaces. Never rejects — every LLM
+   *  stage is isolated in its own try/catch so call sites can be a bare
+   *  `void this.afterRunSkillPass(...)` without a `.catch`. */
   private async afterRunSkillPass(opts: {
     trace: RunTrace;
     appliedSkill: SkillEntry | null;
@@ -1777,50 +1782,67 @@ This one method serves both surfaces (channel + chat). It is only ever called fi
     /** Stash a suggestion so the user's next reply can resolve it. */
     setPending: (s: DistillResult) => void;
   }): Promise<void> {
-    const cfg = this.configManager.getSkillsConfig();
-    if (!cfg.enabled) return;
-    const store = this.workspaceManager.getSkillStore();
+    try {
+      const cfg = this.configManager?.getSkillsConfig();
+      if (!cfg || !cfg.enabled) return;
+      const store = this.workspaceManager.getSkillStore();
 
-    if (opts.appliedSkill) {
-      store.recordUse(opts.appliedSkill.name);
-      store.recordSuccessSignal(opts.appliedSkill.name, opts.clean);
-      const entry = store.get(opts.appliedSkill.name);
-      // Gate evolution to every Nth use — one weak trace is not enough signal
-      // to rewrite steps on, and per-run LLM calls would be pure cost.
-      if (opts.clean && entry && entry.useCount % Codey.SKILL_EVOLVE_EVERY_N_USES === 0) {
-        const evolved = await evolveSkill(this.getSkillDistillDeps(), entry, opts.trace);
-        if (evolved) {
-          store.bumpVersion(entry.name, evolved);
-          this.logger.info(`[skills] evolved ${entry.name} → v${entry.version}`);
-          await opts.notify(`⚙︎ evolved skill ${entry.name} → v${entry.version} (rollback with /skill rollback ${entry.name})`);
+      if (opts.appliedSkill) {
+        // Bookkeeping stays outside the LLM try block so it always happens.
+        store.recordUse(opts.appliedSkill.name);
+        store.recordSuccessSignal(opts.appliedSkill.name, opts.clean);
+        const entry = store.get(opts.appliedSkill.name);
+        // Gate evolution to every Nth use — one weak trace is not enough signal
+        // to rewrite steps on, and per-run LLM calls would be pure cost.
+        if (opts.clean && entry && entry.useCount % Codey.SKILL_EVOLVE_EVERY_N_USES === 0) {
+          try {
+            const evolved = await evolveSkill(this.getSkillDistillDeps(), entry, opts.trace);
+            if (evolved) {
+              // Known v1 window: a concurrent /skill rollback (or another evolve)
+              // between evolveSkill and bumpVersion can be silently overwritten.
+              store.bumpVersion(entry.name, evolved);
+              this.logger.info(`[skills] evolved ${entry.name} → v${entry.version}`);
+              await opts.notify(`⚙︎ evolved skill ${entry.name} → v${entry.version} (rollback with /skill rollback ${entry.name})`);
+            }
+          } catch (err) {
+            this.logger.warn(`[skills] evolve stage failed: ${err}`);
+          }
         }
       }
-    }
 
-    if (!opts.clean) return; // failed runs contribute a correction signal, not a trace
+      if (!opts.clean) return; // failed runs contribute a correction signal, not a trace
 
-    store.recordTrace(opts.trace);
+      store.recordTrace(opts.trace);
 
-    this.skillRunCounter++;
-    if (this.skillRunCounter % Codey.SKILL_GC_EVERY_N_RUNS === 1) {
-      const n = store.runCollectGarbage({ staleDays: cfg.staleDays, weakSkillDays: cfg.weakSkillDays });
-      if (n > 0) this.logger.info(`[skills] GC archived ${n} skill(s)`);
-    }
-
-    const now = Date.now();
-    if (now - this.lastSkillDistillTime > Codey.SKILL_DISTILL_COOLDOWN_MS) {
-      this.lastSkillDistillTime = now;
-      const recent = store.getRecentTraces(cfg.suggestOnRepeat + 5);
-      const candidate = await distillCandidate(
-        this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
-      );
-      if (candidate) {
-        opts.setPending(candidate);
-        await opts.notify(
-          `🧩 I've done something like this repeatedly ("${candidate.description}"). ` +
-          `Save it as a reusable skill **${candidate.name}**? (reply "yes", "no", or "rename <new-name>")`
-        );
+      this.skillRunCounter++;
+      if (this.skillRunCounter % Codey.SKILL_GC_EVERY_N_RUNS === 1) {
+        const n = store.runCollectGarbage({ staleDays: cfg.staleDays, weakSkillDays: cfg.weakSkillDays });
+        if (n > 0) this.logger.info(`[skills] GC archived ${n} skill(s)`);
       }
+
+      try {
+        const now = Date.now();
+        if (now - this.lastSkillDistillTime > Codey.SKILL_DISTILL_COOLDOWN_MS) {
+          const recent = store.getRecentTraces(cfg.suggestOnRepeat + 5);
+          // Nothing to distill yet — skip WITHOUT consuming the cooldown.
+          if (recent.length < cfg.suggestOnRepeat) return;
+          this.lastSkillDistillTime = now;
+          const candidate = await distillCandidate(
+            this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
+          );
+          if (candidate) {
+            opts.setPending(candidate);
+            await opts.notify(
+              `🧩 I've done something like this repeatedly ("${candidate.description}"). ` +
+              `Save it as a reusable skill **${candidate.name}**? (reply "yes", "no", or "rename <new-name>")`
+            );
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`[skills] distill stage failed: ${err}`);
+      }
+    } catch (err) {
+      this.logger.warn(`[skills] post-run pass failed: ${err}`);
     }
   }
 ```
@@ -1943,13 +1965,14 @@ In `runOneTurn()`, after the `sendResponse(...)` call (`gateway.ts:1182`) — NO
         timestamp: Date.now(),
         mode: 'solo',
       };
+      // afterRunSkillPass never rejects (stage-isolated try/catch inside).
       void this.afterRunSkillPass({
         trace,
         appliedSkill,
         clean: response.success,
         notify: (text) => this.sendResponse({ chatId: message.chatId, channel: message.channel, text }),
         setPending: (s) => this.pendingSkillSuggestions.set(`${message.channel}:${message.chatId}`, s),
-      }).catch(err => this.logger.warn(`[skills] post-run pass failed: ${err}`));
+      });
     }
 ```
 
@@ -2073,13 +2096,14 @@ After the `sink({ type: 'done', ... })` call (`gateway.ts:~4406`), add:
           timestamp: Date.now(),
           mode: teamTurnId ? 'team-sequential' : 'solo',
         };
+        // afterRunSkillPass never rejects (stage-isolated try/catch inside).
         void this.afterRunSkillPass({
           trace: chatTrace,
           appliedSkill: appliedChatSkill,
           clean: true,
           notify: (text) => { sink({ type: 'info', chatId, message: text }); },
           setPending: (s) => { this.chatManager.setPendingSkillSuggestion(chatId, s); },
-        }).catch(err => this.logger.warn(`[skills] post-run pass failed: ${err}`));
+        });
       }
 ```
 
