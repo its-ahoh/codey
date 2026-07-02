@@ -373,6 +373,26 @@ function stripCodeFences(s: string): string {
   return m ? m[1].trim() : s.trim();
 }
 
+/** Single-pass template fill. A function replacement is immune to `$`-pattern
+ *  expansion in user-derived text, and one pass means substituted content
+ *  can't itself be re-substituted. Keys are literals like '%TRACES%' — only
+ *  word chars between %, so no regex metacharacters to escape. */
+function fillPrompt(template: string, sections: Record<string, string>): string {
+  const pattern = new RegExp(Object.keys(sections).join('|'), 'g');
+  return template.replace(pattern, m => sections[m]);
+}
+
+async function runCrystallizerLLM(deps: DistillDeps, prompt: string) {
+  return deps.agentFactory.run(deps.activeAgent, {
+    prompt,
+    agent: deps.activeAgent,
+    model: deps.activeModel,
+    interactive: false,
+    skipPermissions: true,
+    context: { workingDir: deps.workingDir },
+  });
+}
+
 // ── distillCandidate ───────────────────────────────────────────
 
 const DISTILL_PROMPT = `You analyze coding-agent runs to find recurring work patterns.
@@ -443,25 +463,16 @@ export async function distillCandidate(
 ): Promise<DistillResult | null> {
   if (traces.length < minRecurrence) return null;
 
-  // Function replacement: string replacements would corrupt user-derived
-  // content containing $-patterns ($&, $', $$, ...).
-  const sections: Record<string, string> = {
+  const composed = fillPrompt(DISTILL_PROMPT, {
     '%TRACES%': formatTracesForPrompt(traces),
     '%SKILLS%': formatSkillsForPrompt(existing.filter(s => !s.archived)),
     '%REJECTED%': formatRejectedForPrompt(rejected),
-  };
-  const composed = DISTILL_PROMPT.replace(/%(TRACES|SKILLS|REJECTED)%/g, m => sections[m]);
+  });
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const response = await deps.agentFactory.run(deps.activeAgent, {
-      prompt: attempt === 0 ? composed
-        : `${composed}\n\nReminder: return ONLY the JSON object or the word "NONE". No markdown.`,
-      agent: deps.activeAgent,
-      model: deps.activeModel,
-      interactive: false,
-      skipPermissions: true,
-      context: { workingDir: deps.workingDir },
-    });
+    const prompt = attempt === 0 ? composed
+      : `${composed}\n\nReminder: return ONLY the JSON object or the word "NONE". No markdown.`;
+    const response = await runCrystallizerLLM(deps, prompt);
     if (!response.success) continue;
     const parsed = tryParseDistill(response.output);
     if (parsed) {
@@ -530,21 +541,13 @@ export async function confirmMatch(
   task: string,
   skill: SkillEntry,
 ): Promise<boolean> {
-  // Function replacement: string replacements would corrupt user-derived
-  // content containing $-patterns ($&, $', $$, ...).
-  const sections: Record<string, string> = {
+  const prompt = fillPrompt(MATCH_CONFIRM_PROMPT, {
     '%SKILL_NAME%': skill.name,
     '%SKILL_DESC%': skill.description,
     '%SKILL_WHEN%': skill.whenToUse,
     '%TASK%': task,
-  };
-  const prompt = MATCH_CONFIRM_PROMPT.replace(
-    /%(SKILL_NAME|SKILL_DESC|SKILL_WHEN|TASK)%/g, m => sections[m]);
-  const response = await deps.agentFactory.run(deps.activeAgent, {
-    prompt, agent: deps.activeAgent, model: deps.activeModel,
-    interactive: false, skipPermissions: true,
-    context: { workingDir: deps.workingDir },
   });
+  const response = await runCrystallizerLLM(deps, prompt);
   if (!response.success) return false;
   return response.output.trim().toUpperCase() === 'YES';
 }
@@ -587,9 +590,7 @@ export async function evolveSkill(
   if (trace.workerSequence && trace.workerSequence.length > 0) {
     workerPart = `- Worker sequence: ${trace.workerSequence.join(' → ')}`;
   }
-  // Function replacement: string replacements would corrupt user-derived
-  // content containing $-patterns ($&, $', $$, ...).
-  const sections: Record<string, string> = {
+  const composed = fillPrompt(EVOLVE_PROMPT, {
     '%SKILL_NAME%': skill.name,
     '%SKILL_DESC%': skill.description,
     '%SKILL_WHEN%': skill.whenToUse,
@@ -598,16 +599,9 @@ export async function evolveSkill(
     '%OUTPUT_PREVIEW%': trace.outputPreview,
     '%MODE%': trace.mode,
     '%WORKER_STEPS%': workerPart,
-  };
-  const composed = EVOLVE_PROMPT.replace(
-    /%(SKILL_NAME|SKILL_DESC|SKILL_WHEN|STEPS|TASK_SUMMARY|OUTPUT_PREVIEW|MODE|WORKER_STEPS)%/g,
-    m => sections[m]);
-
-  const response = await deps.agentFactory.run(deps.activeAgent, {
-    prompt: composed, agent: deps.activeAgent, model: deps.activeModel,
-    interactive: false, skipPermissions: true,
-    context: { workingDir: deps.workingDir },
   });
+
+  const response = await runCrystallizerLLM(deps, composed);
   if (!response.success) return null;
   try {
     const parsed = JSON.parse(stripCodeFences(response.output));

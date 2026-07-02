@@ -468,4 +468,24 @@ describe('evolveSkill', () => {
     const result = await evolveSkill(deps, skill, trace);
     expect(result).toBeNull();
   });
+
+  it('returns null when improved is a string "true" instead of boolean', async () => {
+    const deps = fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({ improved: 'true', steps: 'x' }),
+      error: null, tokens: { total: 50 },
+    }));
+    const result = await evolveSkill(deps, skill, trace);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when improved is true but steps is whitespace-only', async () => {
+    const deps = fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({ improved: true, steps: '   ' }),
+      error: null, tokens: { total: 50 },
+    }));
+    const result = await evolveSkill(deps, skill, trace);
+    expect(result).toBeNull();
+  });
 });
