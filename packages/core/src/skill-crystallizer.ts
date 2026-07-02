@@ -389,6 +389,11 @@ async function runCrystallizerLLM(deps: DistillDeps, prompt: string) {
     prompt,
     agent: deps.activeAgent,
     model: deps.activeModel,
+    // Crystallizer calls are small classification/extraction prompts. Bound
+    // them well below the adapter's 900s default: confirmMatch is awaited on
+    // the user's reply path, so a hung call would otherwise stall the reply
+    // for up to 15 minutes.
+    timeout: 60_000,
     interactive: false,
     skipPermissions: true,
     context: { workingDir: deps.workingDir },

@@ -39,6 +39,17 @@ interface DirectoryResolveResult {
 /** Max advisor escalation rounds per single-agent turn (solo advisor). */
 const SOLO_ADVISOR_MAX_ROUNDS = 2;
 
+/** Explicit `/skill <name> <task>` invocation. Threaded per-turn: handleMessage
+ *  attaches it to the queued turn's payload, runOneTurn reads it from the
+ *  payload, and (for channel-linked chats) it rides into sendToChat on the
+ *  `origin` argument. Carrying it WITH the turn — instead of a chat-keyed
+ *  map — means two queued `/skill` messages from the same chat can never
+ *  swap invokes. */
+export interface SkillInvoke {
+  skill: SkillEntry;
+  task: string;
+}
+
 export class Codey {
   private config: GatewayConfig;
   private agentFactory: AgentFactory;
@@ -77,13 +88,6 @@ export class Codey {
   /** Pending skill suggestions for the channel surface, keyed `${channel}:${chatId}`.
    *  (Chat-surface suggestions are persisted on the Chat via ChatManager instead.) */
   private pendingSkillSuggestions = new Map<string, DistillResult>();
-  /** Consume-once handoff of an explicit `/skill <name> <task>` invocation from
-   *  handleMessage to the run path, keyed `${channel}:${chatId}`. Rewriting the
-   *  message text alone would lose the skill identity (no use-count, possible
-   *  double-apply by the matcher, banner text polluting context/memory).
-   *  Consumed by runOneTurn or sendToChat (Task 12); stale entries are cleared
-   *  at the top of handleMessage. */
-  private pendingSkillInvokes = new Map<string, { skill: SkillEntry; task: string }>();
   private skillRunCounter = 0;
   private lastSkillDistillTime = 0;
   private static SKILL_DISTILL_COOLDOWN_MS = 300_000; // 5 min
@@ -546,7 +550,7 @@ export class Codey {
       // No coalescing in this version: process each queued message in order.
       for (const item of batch) {
         if (!item.payload) continue;
-        await this.runOneTurn(item.payload.message, item.payload.parsed);
+        await this.runOneTurn(item.payload.message, item.payload.parsed, item.payload.skillInvoke);
       }
     });
     this.COOLDOWN_MS = config.rateLimitMs || 3000; // Default 3 seconds
@@ -995,9 +999,6 @@ export class Codey {
 
       // ── Pending skill suggestion (channel surface) ──────────
       const pendingSkillKey = `${message.channel}:${message.chatId}`;
-      // Drop any stale unconsumed invoke from a mis-routed prior turn so it
-      // can't attach to this (unrelated) message. A fresh one may be set below.
-      this.pendingSkillInvokes.delete(pendingSkillKey);
       const pendingSkill = this.pendingSkillSuggestions.get(pendingSkillKey);
       if (pendingSkill) {
         const reply = message.text.trim().toLowerCase();
@@ -1034,24 +1035,44 @@ export class Codey {
       }
 
       // ── Explicit skill invocation: /skill <name> <task> ─────
-      // Stashes the skill for the run path (consume-once) and rewrites the
-      // message to the RAW task, so context/memory record the user's text and
-      // the run path applies the skill exactly once — even with autoApply off.
+      // Captures the invoke into a local carried WITH this turn (through
+      // processPrompt → queue payload → runOneTurn), and rewrites the message
+      // to the RAW task, so context/memory record the user's text and the run
+      // path applies the skill exactly once — even with autoApply off.
       // Subcommands are excluded — parseCommand handles those.
+      let skillInvoke: SkillInvoke | undefined;
       const invokeMatch = message.text.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
       if (invokeMatch) {
+        if (!this.configManager?.getSkillsConfig()?.enabled) {
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: 'Skills are disabled.',
+          });
+          return;
+        }
+        const task = invokeMatch[2].trim();
+        if (task.startsWith('/')) {
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: 'Usage: /skill <name> <task> — the task can\'t start with "/".',
+          });
+          return;
+        }
+        const name = invokeMatch[1].toLowerCase();
         const skill = this.workspaceManager.getSkillStore().getActive()
-          .find(s => s.name === invokeMatch[1]);
+          .find(s => s.name === name);
         if (!skill) {
           await this.sendResponse({
             chatId: message.chatId,
             channel: message.channel,
-            text: `Skill "${invokeMatch[1]}" not found. Use /skills to list active skills.`,
+            text: `Skill "${name}" not found. Use /skills to list active skills.`,
           });
           return;
         }
-        this.pendingSkillInvokes.set(pendingSkillKey, { skill, task: invokeMatch[2].trim() });
-        message = { ...message, text: invokeMatch[2].trim() }; // raw task; run path applies the skill
+        skillInvoke = { skill, task };
+        message = { ...message, text: task }; // raw task; run path applies the skill
       }
 
       if (pending) {
@@ -1092,7 +1113,7 @@ export class Codey {
       }
 
       // Process as prompt
-      await this.processPrompt(message, parsed);
+      await this.processPrompt(message, parsed, skillInvoke);
 
     } catch (error) {
       this.errors++;
@@ -1140,7 +1161,11 @@ export class Codey {
     return undefined;
   }
 
-  private async processPrompt(message: UserMessage, parsed: ParsedCommand): Promise<void> {
+  private async processPrompt(
+    message: UserMessage,
+    parsed: ParsedCommand,
+    skillInvoke?: SkillInvoke,
+  ): Promise<void> {
     const { userId, chatId, channel } = message;
 
     const codeyChatId = this.resolveChatId(channel as ChannelType, userId);
@@ -1155,11 +1180,15 @@ export class Codey {
       text: parsed.prompt ?? '',
       userId,
       timestamp: Date.now(),
-      payload: { message, parsed },
+      payload: { message, parsed, skillInvoke },
     });
   }
 
-  private async runOneTurn(message: UserMessage, parsed: ParsedCommand): Promise<void> {
+  private async runOneTurn(
+    message: UserMessage,
+    parsed: ParsedCommand,
+    skillInvoke?: SkillInvoke,
+  ): Promise<void> {
     const { userId, chatId, channel, id: messageId } = message;
 
     const codeyChatId = this.resolveChatId(channel as ChannelType, userId);
@@ -1167,7 +1196,7 @@ export class Codey {
     // Channel-side with a linked Codey chat → route through sendToChat so the
     // Codey Chat record is updated and the Mac app sees the events.
     if (codeyChatId) {
-      await this.runChannelTurnViaChat(message, parsed, codeyChatId);
+      await this.runChannelTurnViaChat(message, parsed, codeyChatId, skillInvoke);
       return;
     }
 
@@ -1198,20 +1227,19 @@ export class Codey {
     const streamed = { active: false };
 
     // ── Skill matching (pre-run) ──────────────────────────
-    // Explicit `/skill <name> <task>` invoke (handed off by handleMessage via
-    // the consume-once map — works even with autoApply off) takes precedence;
-    // otherwise high-confidence match → apply directly; borderline → LLM
-    // confirm gate.
+    // Explicit `/skill <name> <task>` invoke (carried on this turn's queue
+    // payload by handleMessage — works even with autoApply off) takes
+    // precedence; otherwise high-confidence match → apply directly;
+    // borderline → LLM confirm gate.
     let appliedSkill: SkillEntry | null = null;
     const skillsCfg = this.configManager?.getSkillsConfig();
     let runPrompt = parsed.prompt;
-    const invoke = this.pendingSkillInvokes.get(`${channel}:${chatId}`);
-    if (invoke) this.pendingSkillInvokes.delete(`${channel}:${chatId}`);
-    if (skillsCfg?.enabled && invoke) {
-      appliedSkill = invoke.skill;
-      runPrompt = applySkill(invoke.task, invoke.skill);
-      this.logger.info(`[skills] explicit invoke: ${invoke.skill.name} v${invoke.skill.version}`);
-    } else if (skillsCfg?.enabled && skillsCfg.autoApply && runPrompt.trim()) {
+    if (skillsCfg?.enabled && skillInvoke) {
+      appliedSkill = skillInvoke.skill;
+      runPrompt = applySkill(skillInvoke.task, skillInvoke.skill);
+      this.logger.info(`[skills] explicit invoke: ${skillInvoke.skill.name} v${skillInvoke.skill.version}`);
+    } else if (skillsCfg?.enabled && skillsCfg.autoApply) {
+      // runPrompt is non-empty here: empty prompts already returned above.
       const match = matchSkill(runPrompt, this.workspaceManager.getSkillStore().getActive());
       if (match) {
         const confirmed = match.confidence === 'high'
@@ -1320,6 +1348,7 @@ export class Codey {
     message: UserMessage,
     parsed: ParsedCommand,
     codeyChatId: string,
+    skillInvoke?: SkillInvoke,
   ): Promise<void> {
     const { chatId, channel, userId, id: messageId } = message;
 
@@ -1347,12 +1376,16 @@ export class Codey {
     };
 
     try {
+      // Task 12: sendToChat receives channel-origin explicit skill invokes on
+      // `origin.skillInvoke` (threaded per-turn from handleMessage, never via
+      // shared state). Its skill pre-run pass should give this precedence over
+      // the matcher, exactly like runOneTurn does.
       await this.sendToChat(
         codeyChatId,
         parsed.prompt ?? message.text ?? '',
         sink,
         undefined,
-        { channel: channel as ChannelType, channelUserId: userId },
+        { channel: channel as ChannelType, channelUserId: userId, skillInvoke },
       );
     } catch (err) {
       this.logger.error(`runChannelTurnViaChat failed: ${(err as Error).message}`);
@@ -4247,7 +4280,10 @@ Example: /model gpt-4.1 write a Python script`;
     // is Mac (no route matches '__mac__'), so all attached channels receive
     // the mirror. Channel-side callers must pass the real channel+userId so
     // we don't echo the message back to the user who typed it.
-    origin?: { channel: ChannelType; channelUserId: string },
+    // `skillInvoke` is an explicit `/skill <name> <task>` invocation threaded
+    // per-turn from the channel surface (Task 12: apply it in this method's
+    // skill pre-run pass, taking precedence over the auto-apply matcher).
+    origin?: { channel: ChannelType; channelUserId: string; skillInvoke?: SkillInvoke },
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
