@@ -283,6 +283,7 @@ export class ChatManager {
     chatId: string,
     pending: NonNullable<Chat['pendingSkillSuggestion']> | null,
   ): void {
+    this.ensureLoaded();
     const chat = this.cache.get(chatId);
     if (!chat) return;
     if (pending) chat.pendingSkillSuggestion = pending;

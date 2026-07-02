@@ -69,22 +69,8 @@ async function run() {
   mgr.setPendingTeam(chat.id, null);
   assert.strictEqual(mgr.get(chat.id)?.pendingTeam, undefined);
 
-  // pendingSkillSuggestion round-trip
-  const skillSuggestion = {
-    name: 'generate-changelog',
-    description: 'Generates a changelog from merged PRs',
-    whenToUse: 'When the user asks for a changelog or release notes',
-    steps: '1. List merged PRs\n2. Summarize each\n3. Format as changelog',
-  };
-  mgr.setPendingSkillSuggestion(chat.id, skillSuggestion);
-  assert.deepStrictEqual(mgr.get(chat.id)?.pendingSkillSuggestion, skillSuggestion);
-
-  const reloadedForSkill = new ChatManager(root);
-  assert.deepStrictEqual(reloadedForSkill.get(chat.id)?.pendingSkillSuggestion, skillSuggestion);
-
-  mgr.setPendingSkillSuggestion(chat.id, null);
-  assert.strictEqual(mgr.get(chat.id)?.pendingSkillSuggestion, undefined);
-
+  // Note: pendingSkillSuggestion coverage lives in
+  // chats.pendingSkillSuggestion.test.ts (vitest, runs in CI).
   // Note: fallback-title heal coverage lives in chats.fallbackHeal.test.ts
   // (a vitest file that actually runs in CI; this script is ts-node only).
 
