@@ -21,6 +21,8 @@ import { defaultThinkingExpanded } from './thinkingState'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
 import { useGitStatus } from '../hooks/useGitStatus'
+import { BranchPicker } from './BranchPicker'
+import { CreatePrModal } from './CreatePrModal'
 
 interface Props {
   chatId: string
@@ -112,7 +114,9 @@ const UserMessageContent: React.FC<{ content: string }> = ({ content }) => {
     return (
       <div>
         <Markdown variant="user">{content}</Markdown>
-        <button style={{ ...userFoldStyles.btn, marginTop: 6 }} onClick={() => setExpanded(false)}>Show less ▲</button>
+        <div style={userFoldStyles.lessRow}>
+          <button style={userFoldStyles.btn} onClick={() => setExpanded(false)}>Show less ▲</button>
+        </div>
       </div>
     )
   }
@@ -143,6 +147,8 @@ const userFoldStyles: Record<string, React.CSSProperties> = {
     background: `linear-gradient(to bottom, transparent, ${C.userBg})`,
     pointerEvents: 'none',
   },
+  // Center the "Show less" button to match the centered "Show more" above.
+  lessRow: { display: 'flex', justifyContent: 'center', marginTop: 6 },
   btn: {
     pointerEvents: 'auto', background: 'rgba(255,255,255,0.18)', border: 'none',
     color: C.onAccent, fontSize: 11, fontWeight: 600,
@@ -318,7 +324,7 @@ const TeamRunGroup: React.FC<{
 }
 
 export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed }) => {
-  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setWorkingDir: setChatWorkingDir, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -444,14 +450,22 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
     // stays mounted alongside this tab so workspaceName never changes.
     return onTeamsChanged(refresh)
   }, [chat?.workspaceName])
-  const [workingDir, setWorkingDir] = useState<string | undefined>(undefined)
+  const [workspaceDir, setWorkspaceDir] = useState<string | undefined>(undefined)
   useEffect(() => {
     if (!chat?.workspaceName) return
     apiService.getWorkspaceInfo(chat.workspaceName)
-      .then(info => setWorkingDir(info.workingDir))
-      .catch(() => setWorkingDir(undefined))
+      .then(info => setWorkspaceDir(info.workingDir))
+      .catch(() => setWorkspaceDir(undefined))
   }, [chat?.workspaceName])
+  // The effective working dir is the chat's per-chat override (a bound
+  // worktree) when set, otherwise the workspace's repo root. Git status and the
+  // header BranchPicker both operate on this effective dir.
+  const workingDir = chat?.workingDirOverride || workspaceDir
   const { status: gitStatus, refresh: refreshGit } = useGitStatus(workingDir)
+  const [showPrModal, setShowPrModal] = useState(false)
+  // Derived from the gitStatus useGitStatus already fetches — no extra IPC round-trip.
+  // v1 heuristic: a dirty tree, or any non-default branch, counts as "something to PR".
+  const branchAhead = !!gitStatus && (gitStatus.dirty > 0 || gitStatus.branch !== 'main')
   useEffect(() => {
     if (!isGatewayRunning) return
     ;(async () => {
@@ -916,11 +930,15 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
       )}
       <div style={styles.header}>
         <span style={styles.workspaceTag}>{chat.workspaceName}</span>
-        {gitStatus && (
-          <span style={styles.gitBadge} title={`Branch: ${gitStatus.branch}${gitStatus.dirty > 0 ? ` · ${gitStatus.dirty} change${gitStatus.dirty !== 1 ? 's' : ''}` : ''}`}>
-            ⎇ {gitStatus.branch}{gitStatus.dirty > 0 ? ` +${gitStatus.dirty}` : ''}
-          </span>
-        )}
+        <BranchPicker
+          workingDir={workingDir}
+          repoRoot={workspaceDir}
+          boundWorktreePath={chat?.workingDirOverride}
+          onBindWorktree={async (path) => {
+            if (!chat) return
+            await setChatWorkingDir(chat.id, path)
+          }}
+        />
         <select value={selectionValue} onChange={e => onSelectionChange(e.target.value)} style={{ ...styles.workerSelect, marginLeft: 'auto' }}>
           <option value="none">No worker</option>
           {workers.length > 0 && (
@@ -1454,6 +1472,17 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
           }}
         />
       )}
+      {showPrModal && (
+        <CreatePrModal
+          defaultTitle={chat?.taskBrief?.goal || gitStatus?.branch || ''}
+          onCancel={() => setShowPrModal(false)}
+          onCreate={async (input) => {
+            if (!workingDir) return { ok: false, error: 'No working dir' }
+            const r = await window.codey.git.createPr(workingDir, input)
+            return r.ok ? r.data : { ok: false, error: r.error || 'Failed' }
+          }}
+        />
+      )}
       </div>
       {/* The context panel only renders when there's room for both the chat
           list (~180-240px) AND a usable conversation column (>= MIN_MIDDLE).
@@ -1511,6 +1540,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
             view={extractSidecarBrief(chat.taskBrief)}
             loading={taskBriefLoading}
             width={SIDECAR_W}
+            branchAhead={branchAhead}
+            onCreatePr={() => setShowPrModal(true)}
             onOpen={() => { setContextPanelOpen(chat.id, true); setPanelTab('task') }}
           />
         )

@@ -56,6 +56,16 @@ export interface GatewayConfigJson {
     agent?: CodingAgent;
     model?: string;
   };
+  /** Self-crystallizing skills configuration. All fields optional — defaults are sensible. */
+  skills?: {
+    enabled?: boolean;
+    suggestOnRepeat?: number;
+    autoApply?: boolean;
+    staleDays?: number;
+    weakSkillDays?: number;
+    /** Model override for distillation. Falls back to advisor.model. */
+    distillModel?: string;
+  };
   /**
    * Global team library. Each entry maps a team name to its members + dispatch
    * mode. Workspaces opt into teams by listing their names in workspace.json's
@@ -334,6 +344,21 @@ export class ConfigManager extends EventEmitter {
     return this.getModel(entry.model);
   }
 
+  getSkillsConfig(): {
+    enabled: boolean; suggestOnRepeat: number; autoApply: boolean;
+    staleDays: number; weakSkillDays: number; distillModel: string | undefined;
+  } {
+    const raw = this.config.skills;
+    return {
+      enabled: raw?.enabled ?? true,
+      suggestOnRepeat: raw?.suggestOnRepeat ?? 2,
+      autoApply: raw?.autoApply ?? true,
+      staleDays: raw?.staleDays ?? 30,
+      weakSkillDays: raw?.weakSkillDays ?? 7,
+      distillModel: raw?.distillModel,
+    };
+  }
+
   /** Resolved default model id (the model on fallback.order[0], if any). */
   getDefaultModel(): string {
     return this.config.fallback.order[0]?.model ?? '';
@@ -552,6 +577,16 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
     out.aide = {
       agent: raw.aide.agent,
       model: raw.aide.model,
+    };
+  }
+  if (raw.skills && typeof raw.skills === 'object') {
+    out.skills = {
+      enabled: raw.skills.enabled,
+      suggestOnRepeat: raw.skills.suggestOnRepeat,
+      autoApply: raw.skills.autoApply,
+      staleDays: raw.skills.staleDays,
+      weakSkillDays: raw.skills.weakSkillDays,
+      distillModel: raw.skills.distillModel,
     };
   }
   if (raw.advisor && typeof raw.advisor === 'object') {

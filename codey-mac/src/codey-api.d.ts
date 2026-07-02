@@ -123,6 +123,7 @@ declare global {
         unlink: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<IpcResult<Chat>>
         updateContextPanelOpen: (id: string, open: boolean | null) => Promise<IpcResult<Chat>>
         setSoloAdvisor: (id: string, enabled: boolean) => Promise<IpcResult<Chat>>
+        setWorkingDir: (id: string, dir: string | null) => Promise<IpcResult<Chat>>
       }
       qq: {
         ask: (payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }>; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) => Promise<IpcResult<{ response: string; tokens?: number; durationSec?: number }>>
@@ -145,6 +146,16 @@ declare global {
       }
       git: {
         status: (workingDir: string) => Promise<IpcResult<{ branch: string; dirty: number } | null>>
+        branches: (workingDir: string) => Promise<IpcResult<{ current: string; local: string[]; remote: string[] }>>
+        checkout: (workingDir: string, name: string, opts?: { create?: boolean; track?: boolean }) => Promise<IpcResult<{ ok: boolean; error?: string; reason?: 'dirty' }>>
+        stash: (workingDir: string, message?: string) => Promise<IpcResult<{ ok: boolean; error?: string }>>
+        fetch: (workingDir: string) => Promise<IpcResult<{ ok: boolean; error?: string }>>
+        worktrees: (workingDir: string) => Promise<IpcResult<{ list: { branch: string; path: string; isMain: boolean }[] }>>
+        worktreeAdd: (workingDir: string, args: { name: string; path: string }) => Promise<IpcResult<{ ok: boolean; path?: string; error?: string }>>
+        createPr: (workingDir: string, input: { title: string; body?: string }) => Promise<IpcResult<{ ok: boolean; url?: string; error?: string }>>
+        watch: (workingDir: string) => Promise<IpcResult<{ ok: boolean }>>
+        unwatch: (workingDir: string) => Promise<IpcResult<{ ok: boolean }>>
+        onChanged: (handler: (ev: { workingDir: string }) => void) => () => void
       }
       gateway: {
         status: () => Promise<IpcResult<{

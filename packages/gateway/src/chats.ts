@@ -228,6 +228,17 @@ export class ChatManager {
     return chat;
   }
 
+  /** Set or clear the per-chat working-directory override (worktree binding).
+   *  Pass null/undefined/'' to clear and fall back to the workspace dir. */
+  setWorkingDirOverride(chatId: string, dir: string | null): Chat {
+    const chat = this.requireChat(chatId);
+    if (dir === null || dir === undefined || dir === '') delete chat.workingDirOverride;
+    else chat.workingDirOverride = dir;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
   /** Set lastAskedOptions on a non-team chat (the question message id + options). */
   setLastAskedOptions(chatId: string, messageId: string, options: string[]): void {
     const chat = this.cache.get(chatId);
@@ -265,6 +276,20 @@ export class ChatManager {
     chat.updatedAt = Date.now();
     this.persist(chat);
     return chat;
+  }
+
+  /** Set or clear the pending skill suggestion for a chat. Pass null to clear. */
+  setPendingSkillSuggestion(
+    chatId: string,
+    pending: NonNullable<Chat['pendingSkillSuggestion']> | null,
+  ): void {
+    this.ensureLoaded();
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    if (pending) chat.pendingSkillSuggestion = pending;
+    else delete chat.pendingSkillSuggestion;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
   }
 
   delete(chatId: string): void {

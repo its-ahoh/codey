@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -125,6 +125,83 @@ const validGraph = {
     { id: 'e2', from: 'n_coder', to: 'end', isDefault: true },
   ],
 };
+
+describe('WorkspaceManager SkillStore', () => {
+  let root: string;
+  let wsDir: string;
+  let manager: WorkspaceManager;
+
+  const seededSkill = {
+    name: 'weekly-digest',
+    description: 'Generate weekly summary',
+    whenToUse: 'user asks for weekly report',
+    steps: '1. gather\n2. format',
+    version: 1,
+    history: [],
+    useCount: 0,
+    lastUsedAt: Date.now(),
+    successSignals: { cleanRuns: 0, corrections: 0 },
+    sourceRunIds: [],
+    createdAt: Date.now(),
+    archived: false,
+  };
+
+  function seedWorkspace(name: string, withSkill: boolean) {
+    const dir = path.join(wsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'workspace.json'), JSON.stringify({ workingDir: root }));
+    if (withSkill) {
+      const skillsDir = path.join(dir, 'skills');
+      fs.mkdirSync(skillsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(skillsDir, 'index.json'),
+        JSON.stringify({ version: 1, entries: [seededSkill], rejected: [] }),
+      );
+    }
+  }
+
+  beforeEach(async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-skill-'));
+    wsDir = path.join(root, 'workspaces');
+    seedWorkspace('proj', true);
+    seedWorkspace('other', false);
+    const workers = new WorkerManager(path.join(root, 'workers'));
+    manager = new WorkspaceManager(workers, wsDir);
+    await manager.switchWorkspace('proj');
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('hydrates skills from disk on workspace load', () => {
+    const active = manager.getSkillStore().getActive();
+    expect(active.length).toBe(1);
+    expect(active[0].name).toBe('weekly-digest');
+  });
+
+  it('keeps hydrated skills after renaming the active workspace', async () => {
+    await manager.renameWorkspace('proj', 'proj-renamed');
+    expect(manager.getCurrentWorkspace()).toBe('proj-renamed');
+    const active = manager.getSkillStore().getActive();
+    expect(active.length).toBe(1);
+    expect(active[0].name).toBe('weekly-digest');
+    // Regression: with an unloaded post-rename store, the first flush would
+    // clobber the renamed workspace's skills/index.json with an empty index.
+    await manager.getSkillStore().flush();
+    const raw = JSON.parse(fs.readFileSync(
+      path.join(wsDir, 'proj-renamed', 'skills', 'index.json'), 'utf-8'));
+    expect(raw.entries.length).toBe(1);
+  });
+
+  it('returns a different SkillStore after switching workspaces', async () => {
+    const before = manager.getSkillStore();
+    await manager.switchWorkspace('other');
+    const after = manager.getSkillStore();
+    expect(after).not.toBe(before);
+    expect(after.getActive()).toEqual([]);
+  });
+});
 
 describe('normalizeTeam graph', () => {
   it('keeps a valid graph on a sequential team', () => {
