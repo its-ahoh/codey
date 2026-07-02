@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -125,6 +125,36 @@ const validGraph = {
     { id: 'e2', from: 'n_coder', to: 'end', isDefault: true },
   ],
 };
+
+describe('WorkspaceManager SkillStore', () => {
+  let root: string;
+  let manager: WorkspaceManager;
+
+  beforeEach(async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-skill-'));
+    const wsDir = path.join(root, 'workspaces');
+    fs.mkdirSync(path.join(wsDir, 'default'), { recursive: true });
+    fs.writeFileSync(
+      path.join(wsDir, 'default', 'workspace.json'),
+      JSON.stringify({ workingDir: root }),
+    );
+    const workers = new WorkerManager(path.join(root, 'workers'));
+    manager = new WorkspaceManager(workers, wsDir);
+    await manager.load();
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('exposes a per-workspace SkillStore that survives getMemoryStore calls', () => {
+    const store = manager.getSkillStore();
+    expect(store).toBeDefined();
+    // Calling getMemoryStore must not replace the skillStore reference
+    void manager.getMemoryStore();
+    expect(manager.getSkillStore()).toBe(store); // stable reference until switch
+  });
+});
 
 describe('normalizeTeam graph', () => {
   it('keeps a valid graph on a sequential team', () => {

@@ -4,6 +4,7 @@ import * as path from 'path';
 import { CoreLogger } from './types';
 import { WorkerManager } from './workers';
 import { MemoryStore } from './memory';
+import { SkillStore } from './skill-crystallizer';
 import { TeamGraph, validateGraph } from './team-graph';
 
 const defaultLogger: CoreLogger = {
@@ -74,6 +75,7 @@ export class WorkspaceManager {
   private config: WorkspaceJson | null = null;
   private workerManager: WorkerManager;
   private memoryStore: MemoryStore;
+  private skillStore: SkillStore;
   /** User-global memory shared across workspaces. Lazily loaded. */
   private globalMemory: MemoryStore | null = null;
   private teams: Map<string, TeamConfig> = new Map();
@@ -89,6 +91,7 @@ export class WorkspaceManager {
     this.workspacesDir = workspacesDir;
     this.workerManager = workerManager;
     this.memoryStore = new MemoryStore(this.getWorkspacePath());
+    this.skillStore = new SkillStore(this.getWorkspacePath());
     this.logger = logger || defaultLogger;
     this.globalTeamsProvider = globalTeamsProvider || (() => ({}));
   }
@@ -157,6 +160,8 @@ export class WorkspaceManager {
 
     this.memoryStore = new MemoryStore(workspacePath);
     await this.memoryStore.load();
+    this.skillStore = new SkillStore(workspacePath);
+    await this.skillStore.load();
   }
 
   /**
@@ -273,6 +278,7 @@ export class WorkspaceManager {
   getWorkspacesRoot(): string { return this.workspacesDir; }
   getWorkerManager(): WorkerManager { return this.workerManager; }
   getMemoryStore(): MemoryStore { return this.memoryStore; }
+  getSkillStore(): SkillStore { return this.skillStore; }
 
   /**
    * User-global memory store, rooted at `~/.codey/` (override via
@@ -318,6 +324,7 @@ export class WorkspaceManager {
     if (this.currentWorkspace === oldName) {
       this.currentWorkspace = trimmed;
       this.memoryStore = new MemoryStore(this.getWorkspacePath());
+      this.skillStore = new SkillStore(this.getWorkspacePath());
     }
   }
 
