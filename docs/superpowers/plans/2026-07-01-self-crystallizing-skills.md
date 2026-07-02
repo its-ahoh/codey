@@ -1872,11 +1872,26 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Handle suggestion replies + explicit invocation in handleMessage**
 
-In `handleMessage()` (`gateway.ts:934`), after the `lastAskedOptions` clearing block (~line 978) and *before* the pending team check (~line 980), add:
+First add a consume-once handoff field on `Codey` (next to `pendingSkillSuggestions`). Rewriting
+`message.text` to the banner alone would lose the skill identity: no use-count with autoApply off,
+possible double-apply by the matcher, and banner text polluting context/memory/trace.
+
+```typescript
+  /** Consume-once handoff of an explicit `/skill <name> <task>` invocation from
+   *  handleMessage to the run path, keyed `${channel}:${chatId}`. Consumed by
+   *  runOneTurn or sendToChat (Task 12); stale entries are cleared at the top
+   *  of handleMessage. */
+  private pendingSkillInvokes = new Map<string, { skill: SkillEntry; task: string }>();
+```
+
+Then in `handleMessage()` (`gateway.ts:934`), after the `lastAskedOptions` clearing block (~line 978) and *before* the pending team check (~line 980), add:
 
 ```typescript
       // ── Pending skill suggestion (channel surface) ──────────
       const pendingKey = `${message.channel}:${message.chatId}`;
+      // Drop any stale unconsumed invoke from a mis-routed prior turn so it
+      // can't attach to this (unrelated) message. A fresh one may be set below.
+      this.pendingSkillInvokes.delete(pendingKey);
       const pendingSkill = this.pendingSkillSuggestions.get(pendingKey);
       if (pendingSkill) {
         const reply = message.text.trim().toLowerCase();
@@ -1905,9 +1920,10 @@ In `handleMessage()` (`gateway.ts:934`), after the `lastAskedOptions` clearing b
       }
 
       // ── Explicit skill invocation: /skill <name> <task> ─────
-      // Rewrites the message into the skill-applied prompt and proceeds as a
-      // normal (non-command) turn. Subcommands are excluded — parseCommand
-      // handles those.
+      // Stashes the skill for the run path (consume-once) and rewrites the
+      // message to the RAW task, so context/memory record the user's text and
+      // the run path applies the skill exactly once — even with autoApply off.
+      // Subcommands are excluded — parseCommand handles those.
       const invokeMatch = message.text.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
       if (invokeMatch) {
         const skill = this.workspaceManager.getSkillStore().getActive()
@@ -1917,10 +1933,11 @@ In `handleMessage()` (`gateway.ts:934`), after the `lastAskedOptions` clearing b
             text: `Skill "${invokeMatch[1]}" not found. Use /skills to list active skills.` });
           return;
         }
+        this.pendingSkillInvokes.set(pendingKey, { skill, task: invokeMatch[2].trim() });
         // handleMessage holds `message` in a reassignable local; reassign with a
         // spread copy (same pattern as digit → option resolution) rather than
         // mutating the original UserMessage in place.
-        message = { ...message, text: applySkill(invokeMatch[2].trim(), skill) };
+        message = { ...message, text: invokeMatch[2].trim() }; // raw task; run path applies the skill
       }
 ```
 
@@ -1932,11 +1949,20 @@ In `runOneTurn()`, replace the line `let prep = this.prepareAgentTurn(ctxWindow,
 
 ```typescript
     // ── Skill matching (pre-run) ──────────────────────────
-    // high-confidence match → apply directly; borderline → LLM confirm gate.
+    // Explicit `/skill <name> <task>` invoke (handed off by handleMessage via
+    // the consume-once map — works even with autoApply off) takes precedence;
+    // otherwise high-confidence match → apply directly; borderline → LLM
+    // confirm gate.
     let appliedSkill: SkillEntry | null = null;
     const skillsCfg = this.configManager?.getSkillsConfig(); // configManager is optional on the class
     let runPrompt = parsed.prompt;
-    if (skillsCfg?.enabled && skillsCfg.autoApply && runPrompt.trim()) {
+    const invoke = this.pendingSkillInvokes.get(`${channel}:${chatId}`);
+    if (invoke) this.pendingSkillInvokes.delete(`${channel}:${chatId}`);
+    if (skillsCfg?.enabled && invoke) {
+      appliedSkill = invoke.skill;
+      runPrompt = applySkill(invoke.task, invoke.skill);
+      this.logger.info(`[skills] explicit invoke: ${invoke.skill.name} v${invoke.skill.version}`);
+    } else if (skillsCfg?.enabled && skillsCfg.autoApply && runPrompt.trim()) {
       const match = matchSkill(runPrompt, this.workspaceManager.getSkillStore().getActive());
       if (match) {
         const confirmed = match.confidence === 'high'
@@ -1952,7 +1978,7 @@ In `runOneTurn()`, replace the line `let prep = this.prepareAgentTurn(ctxWindow,
     let prep = this.prepareAgentTurn(ctxWindow, agent, runPrompt, memoryContext);
 ```
 
-IMPORTANT: there is a retry call to `prepareAgentTurn` at ~`gateway.ts:1145` — update it to pass `runPrompt` as well, so the retry doesn't silently drop the applied skill. The later bookkeeping uses of `parsed.prompt` (`addUserTurn` at 1153, `extractFromInteraction` at 1161) must KEEP using `parsed.prompt` — the user's original text is what belongs in context and memory.
+IMPORTANT: there is a retry call to `prepareAgentTurn` at ~`gateway.ts:1145` — update it to pass `runPrompt` as well, so the retry doesn't silently drop the applied skill. The later bookkeeping uses of `parsed.prompt` (`addUserTurn` at 1153, `extractFromInteraction` at 1161) must KEEP using `parsed.prompt` — for explicit invokes this is the raw task (handleMessage rewrote the message), so the user's original text is what lands in context, memory, and `trace.promptSummary`.
 
 - [ ] **Step 3: Post-run pass — AFTER the response is sent, fire-and-forget**
 
@@ -2005,7 +2031,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `packages/gateway/src/gateway.ts`
 
-Mac messages enter through `sendToChat` directly (IPC `chats:send` → `inProcessGateway.sendToChat`, `codey-mac/electron/main.ts:2494-2505`); channel messages with a linked chat are routed here too (`gateway.ts:1227`). So this surface needs its own suggestion-reply handling — `handleMessage` never sees these turns. `sendToChat` does not parse slash commands, so command-style management (`/skills`, `/skill forget`, …) remains channel-only for v1; the Mac app's natural surface for that is a Skills panel (follow-up, see YAGNI).
+Mac messages enter through `sendToChat` directly (IPC `chats:send` → `inProcessGateway.sendToChat`, `codey-mac/electron/main.ts:2494-2505`); channel messages with a linked chat are routed here too (`gateway.ts:1227`). So this surface needs its own suggestion-reply handling — `handleMessage` never sees these turns. For channel-origin turns routed here (`runChannelTurnViaChat`), `sendToChat` must also consume `pendingSkillInvokes` (same `${channel}:${chatId}` key, same consume-once semantics as runOneTurn) so explicit `/skill <name> <task>` invokes apply on this path too. `sendToChat` does not parse slash commands, so command-style management (`/skills`, `/skill forget`, …) remains channel-only for v1; the Mac app's natural surface for that is a Skills panel (follow-up, see YAGNI).
 
 - [ ] **Step 1: Handle suggestion replies early in sendToChat**
 

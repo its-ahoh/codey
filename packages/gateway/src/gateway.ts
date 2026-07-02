@@ -77,6 +77,13 @@ export class Codey {
   /** Pending skill suggestions for the channel surface, keyed `${channel}:${chatId}`.
    *  (Chat-surface suggestions are persisted on the Chat via ChatManager instead.) */
   private pendingSkillSuggestions = new Map<string, DistillResult>();
+  /** Consume-once handoff of an explicit `/skill <name> <task>` invocation from
+   *  handleMessage to the run path, keyed `${channel}:${chatId}`. Rewriting the
+   *  message text alone would lose the skill identity (no use-count, possible
+   *  double-apply by the matcher, banner text polluting context/memory).
+   *  Consumed by runOneTurn or sendToChat (Task 12); stale entries are cleared
+   *  at the top of handleMessage. */
+  private pendingSkillInvokes = new Map<string, { skill: SkillEntry; task: string }>();
   private skillRunCounter = 0;
   private lastSkillDistillTime = 0;
   private static SKILL_DISTILL_COOLDOWN_MS = 300_000; // 5 min
@@ -988,6 +995,9 @@ export class Codey {
 
       // ── Pending skill suggestion (channel surface) ──────────
       const pendingSkillKey = `${message.channel}:${message.chatId}`;
+      // Drop any stale unconsumed invoke from a mis-routed prior turn so it
+      // can't attach to this (unrelated) message. A fresh one may be set below.
+      this.pendingSkillInvokes.delete(pendingSkillKey);
       const pendingSkill = this.pendingSkillSuggestions.get(pendingSkillKey);
       if (pendingSkill) {
         const reply = message.text.trim().toLowerCase();
@@ -1024,9 +1034,10 @@ export class Codey {
       }
 
       // ── Explicit skill invocation: /skill <name> <task> ─────
-      // Rewrites the message into the skill-applied prompt and proceeds as a
-      // normal (non-command) turn. Subcommands are excluded — parseCommand
-      // handles those.
+      // Stashes the skill for the run path (consume-once) and rewrites the
+      // message to the RAW task, so context/memory record the user's text and
+      // the run path applies the skill exactly once — even with autoApply off.
+      // Subcommands are excluded — parseCommand handles those.
       const invokeMatch = message.text.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
       if (invokeMatch) {
         const skill = this.workspaceManager.getSkillStore().getActive()
@@ -1039,7 +1050,8 @@ export class Codey {
           });
           return;
         }
-        message = { ...message, text: applySkill(invokeMatch[2].trim(), skill) };
+        this.pendingSkillInvokes.set(pendingSkillKey, { skill, task: invokeMatch[2].trim() });
+        message = { ...message, text: invokeMatch[2].trim() }; // raw task; run path applies the skill
       }
 
       if (pending) {
@@ -1186,11 +1198,20 @@ export class Codey {
     const streamed = { active: false };
 
     // ── Skill matching (pre-run) ──────────────────────────
-    // high-confidence match → apply directly; borderline → LLM confirm gate.
+    // Explicit `/skill <name> <task>` invoke (handed off by handleMessage via
+    // the consume-once map — works even with autoApply off) takes precedence;
+    // otherwise high-confidence match → apply directly; borderline → LLM
+    // confirm gate.
     let appliedSkill: SkillEntry | null = null;
     const skillsCfg = this.configManager?.getSkillsConfig();
     let runPrompt = parsed.prompt;
-    if (skillsCfg?.enabled && skillsCfg.autoApply && runPrompt.trim()) {
+    const invoke = this.pendingSkillInvokes.get(`${channel}:${chatId}`);
+    if (invoke) this.pendingSkillInvokes.delete(`${channel}:${chatId}`);
+    if (skillsCfg?.enabled && invoke) {
+      appliedSkill = invoke.skill;
+      runPrompt = applySkill(invoke.task, invoke.skill);
+      this.logger.info(`[skills] explicit invoke: ${invoke.skill.name} v${invoke.skill.version}`);
+    } else if (skillsCfg?.enabled && skillsCfg.autoApply && runPrompt.trim()) {
       const match = matchSkill(runPrompt, this.workspaceManager.getSkillStore().getActive());
       if (match) {
         const confirmed = match.confidence === 'high'
