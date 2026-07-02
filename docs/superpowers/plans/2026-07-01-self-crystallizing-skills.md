@@ -4,9 +4,11 @@
 
 **Goal:** Build a workspace-scoped skill crystallizer that detects recurring sub-processes across runs, suggests reusable skills, auto-applies them on future tasks, self-evolves on use, and archives when stale.
 
-**Architecture:** A new `SkillStore` class in `packages/core` mirrors the `MemoryStore` pattern (`index.json` + individual `.md` files per workspace). An LLM-based distiller (reuses Advisor's `{agent, model}` config, like `judge.ts`) compares recent run traces to find repeating sub-processes. A cheap keyword pre-filter (`matchSkill`) runs before every task; a secondary LLM gate (`confirmMatch`) is available for borderline cases. The gateway wires the store in at run start/complete for the solo path (`runOneTurn`) and team/Chat path (`sendToChat`).
+**Architecture:** A new `SkillStore` class in `packages/core` mirrors the `MemoryStore` pattern and is **owned by `WorkspaceManager`** (constructed per workspace, re-created on workspace switch — exactly like `memoryStore` at `workspace.ts:91/158/320`). Persistence is `skills/index.json` (skill entries + rejected-suggestion list) plus `skills/traces.json` (rolling run-trace history, survives restarts). An LLM-based distiller (reuses Advisor's `{agent, model}` config, like `judge.ts`) compares recent run traces to find repeating sub-processes. A cheap keyword pre-filter (`matchSkill`) returns a `high` or `borderline` confidence; borderline matches are confirmed by a secondary LLM gate (`confirmMatch`) before applying. The gateway wires a shared post-run pass (`afterRunSkillPass`) into both the channel path (`runOneTurn`) and the Chat/Mac path (`sendToChat`); all post-run LLM work is fire-and-forget so it never blocks a user-visible response. Pending skill suggestions on the chat surface are persisted per-chat via `ChatManager` (same pattern as `pendingTeam`), because Mac messages never pass through `handleMessage` — they enter via `sendToChat` directly.
 
 **Tech Stack:** TypeScript (strict), existing `AgentFactory.run()` for LLM calls, Vitest for tests.
+
+**Note on the class name:** the gateway class is `Codey` (`gateway.ts:42`), not `Gateway`. Static members are referenced as `Codey.NAME`.
 
 ---
 
@@ -14,11 +16,54 @@
 
 | File | Responsibility |
 |------|---------------|
-| `packages/core/src/skill-crystallizer.ts` (new) | `SkillStore` (CRUD, manifest, GC, traces), `distillCandidate()`, `matchSkill()`, `confirmMatch()`, `applySkill()`, `evolveSkill()` |
+| `packages/core/src/skill-crystallizer.ts` (new) | `SkillStore` (CRUD, history/rollback, rejected list, traces, GC), `distillCandidate()`, `matchSkill()`, `confirmMatch()`, `applySkill()`, `evolveSkill()` |
 | `packages/core/src/skill-crystallizer.test.ts` (new) | Unit tests for store + all standalone functions |
 | `packages/core/src/index.ts` | Add `export * from './skill-crystallizer'` |
+| `packages/core/src/workspace.ts` | `WorkspaceManager` owns a per-workspace `SkillStore` (`getSkillStore()`), re-created on switch/rename |
+| `packages/core/src/types/chat.ts` | `Chat.pendingSkillSuggestion?` field |
+| `packages/gateway/src/chats.ts` | `ChatManager.setPendingSkillSuggestion()` (persisted, mirrors `setPendingTeam`) |
 | `packages/gateway/src/config.ts` | `skills?` block on `GatewayConfigJson`, `normalize()`, `getSkillsConfig()` accessor |
-| `packages/gateway/src/gateway.ts` | SkillStore lifecycle, pre-run injection, post-run trace + distillation, suggestion handling, `/skill` + `/skills` commands |
+| `packages/gateway/src/gateway.ts` | Skill commands, `afterRunSkillPass`, pre-run injection on both surfaces, suggestion reply handling on both surfaces |
+| `docs/superpowers/specs/2026-07-01-self-crystallizing-skills-design.md` | Amend YAGNI so spec and plan agree on v1 persistence |
+
+---
+
+### Task 0: Reconcile the spec with v1 persistence decisions
+
+**Files:**
+- Modify: `docs/superpowers/specs/2026-07-01-self-crystallizing-skills-design.md`
+
+The plan persists `skills/index.json` + `skills/traces.json` only — no per-skill `.md` files and no `skills/archived/` directory in v1 (archived skills stay in the index with `archived: true`). This matches the actual `MemoryStore` behavior (despite its doc-comment, `memory.ts:492-519` writes only `index.json` + a legacy summary — no per-id `.md` files). The spec must say the same so the two documents agree.
+
+- [ ] **Step 1: Replace the directory sketch in the spec's Architecture section**
+
+Replace the ```skills/``` directory block (spec lines ~53-60) with:
+
+```
+workspaces/<name>/
+  skills/
+    index.json             — manifest of skills (active + archived) with per-skill
+                             steps, version history, and rejected-suggestion list
+    traces.json            — rolling run-trace history (survives restarts)
+```
+
+- [ ] **Step 2: Add two lines to the spec's "Out of Scope (YAGNI)" section**
+
+```markdown
+- Per-skill `.md` files on disk — v1 keeps steps + version history inside
+  `index.json` (matches MemoryStore's actual persistence).
+- `skills/archived/` subdirectory — archived skills stay in the index with
+  `archived: true`; restorable via `/skill restore`.
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add docs/superpowers/specs/2026-07-01-self-crystallizing-skills-design.md
+git commit -m "docs(skills): align spec persistence model with v1 plan
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
 
 ---
 
@@ -27,13 +72,17 @@
 **Files:**
 - Create: `packages/core/src/skill-crystallizer.ts`
 
-- [ ] **Step 1: Create the file with types and empty function stubs**
+- [ ] **Step 1: Create the file with types, SkillStore, and empty function stubs**
+
+Note: `DistillDeps` is fully typed (no `any`) — same pattern as `GenerateDeps` in `worker-generator.ts:7-14`.
 
 ```typescript
 // packages/core/src/skill-crystallizer.ts
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
+import { AgentFactory } from './agents';
+import { CodingAgent, ModelConfig } from './types';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -43,6 +92,8 @@ export interface SkillEntry {
   whenToUse: string;
   steps: string;
   version: number;
+  /** Prior versions of steps, oldest first, capped at HISTORY_MAX. Enables rollback. */
+  history: { version: number; steps: string }[];
   useCount: number;
   lastUsedAt: number;
   successSignals: { cleanRuns: number; corrections: number };
@@ -51,24 +102,33 @@ export interface SkillEntry {
   archived: boolean;
 }
 
+export interface RejectedSuggestion {
+  name: string;
+  description: string;
+  rejectedAt: number;
+}
+
 export interface SkillIndex {
   version: 1;
   entries: SkillEntry[];
+  /** Suggestions the user said "no" to — fed to the distiller so it stops re-proposing them. */
+  rejected: RejectedSuggestion[];
 }
 
 export interface RunTrace {
   runId: string;
   promptSummary: string;
-  outputShape: string;
+  /** First ~300 chars of the agent's output. A preview, not a structural analysis. */
+  outputPreview: string;
   workerSequence?: string[];
   timestamp: number;
   mode: 'solo' | 'team-sequential' | 'team-parallel' | 'team-auto';
 }
 
 export interface DistillDeps {
-  agentFactory: any;
-  activeAgent: any;
-  activeModel: any;
+  agentFactory: AgentFactory;
+  activeAgent: CodingAgent;
+  activeModel: ModelConfig | undefined;
   workingDir: string;
 }
 
@@ -79,7 +139,21 @@ export interface DistillResult {
   steps: string;
 }
 
+export interface SkillMatch {
+  skill: SkillEntry;
+  /** high → apply directly; borderline → confirm with the LLM gate first. */
+  confidence: 'high' | 'borderline';
+  score: number;
+}
+
 export const RECENT_TRACES_MAX = 20;
+export const HISTORY_MAX = 5;
+export const REJECTED_MAX = 20;
+
+interface TracesFile {
+  version: 1;
+  traces: RunTrace[];
+}
 
 // ── SkillStore ─────────────────────────────────────────────────────
 
@@ -87,17 +161,20 @@ export class SkillStore {
   private workspacePath: string;
   private skillsDir: string;
   private indexPath: string;
-  private index: SkillIndex = { version: 1, entries: [] };
+  private tracesPath: string;
+  private index: SkillIndex = { version: 1, entries: [], rejected: [] };
+  private runTraces: RunTrace[] = [];
   private writeChain: Promise<void> = Promise.resolve();
   private indexDirty = false;
+  private tracesDirty = false;
   private flushTimer: NodeJS.Timeout | null = null;
   private static FLUSH_DEBOUNCE_MS = 50;
-  private runTraces: RunTrace[] = [];
 
   constructor(workspacePath: string) {
     this.workspacePath = workspacePath;
     this.skillsDir = path.join(workspacePath, 'skills');
     this.indexPath = path.join(this.skillsDir, 'index.json');
+    this.tracesPath = path.join(this.skillsDir, 'traces.json');
   }
 
   // ── Lifecycle ────────────────────────────────────────────────
@@ -108,14 +185,25 @@ export class SkillStore {
     }
     if (fs.existsSync(this.indexPath)) {
       try {
-        const data = fs.readFileSync(this.indexPath, 'utf-8');
-        const parsed = JSON.parse(data) as SkillIndex;
+        const parsed = JSON.parse(fs.readFileSync(this.indexPath, 'utf-8')) as SkillIndex;
         if (parsed && parsed.version === 1 && Array.isArray(parsed.entries)) {
-          this.index = parsed;
+          this.index = {
+            version: 1,
+            entries: parsed.entries.map(e => ({ ...e, history: e.history ?? [] })),
+            rejected: Array.isArray(parsed.rejected) ? parsed.rejected : [],
+          };
         }
       } catch {
-        this.index = { version: 1, entries: [] };
+        this.index = { version: 1, entries: [], rejected: [] };
       }
+    }
+    if (fs.existsSync(this.tracesPath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(this.tracesPath, 'utf-8')) as TracesFile;
+        if (parsed && parsed.version === 1 && Array.isArray(parsed.traces)) {
+          this.runTraces = parsed.traces.slice(0, RECENT_TRACES_MAX);
+        }
+      } catch { /* start with empty traces */ }
     }
   }
 
@@ -146,7 +234,7 @@ export class SkillStore {
       if (params.sourceRunId && !existing.sourceRunIds.includes(params.sourceRunId)) {
         existing.sourceRunIds.push(params.sourceRunId);
       }
-      this.markDirty();
+      this.markIndexDirty();
       return existing;
     }
     const entry: SkillEntry = {
@@ -155,6 +243,7 @@ export class SkillStore {
       whenToUse: params.whenToUse,
       steps: params.steps,
       version: 1,
+      history: [],
       useCount: 0,
       lastUsedAt: now,
       successSignals: { cleanRuns: 0, corrections: 0 },
@@ -163,7 +252,7 @@ export class SkillStore {
       archived: false,
     };
     this.index.entries.push(entry);
-    this.markDirty();
+    this.markIndexDirty();
     return entry;
   }
 
@@ -181,7 +270,7 @@ export class SkillStore {
     const entry = this.index.entries.find(e => e.name === name);
     if (!entry) return false;
     entry.archived = true;
-    this.markDirty();
+    this.markIndexDirty();
     return true;
   }
 
@@ -189,7 +278,7 @@ export class SkillStore {
     const entry = this.index.entries.find(e => e.name === name);
     if (!entry) return false;
     entry.archived = false;
-    this.markDirty();
+    this.markIndexDirty();
     return true;
   }
 
@@ -198,7 +287,7 @@ export class SkillStore {
     if (!entry) return false;
     entry.useCount++;
     entry.lastUsedAt = Date.now();
-    this.markDirty();
+    this.markIndexDirty();
     return true;
   }
 
@@ -207,26 +296,57 @@ export class SkillStore {
     if (!entry) return false;
     if (clean) entry.successSignals.cleanRuns++;
     else entry.successSignals.corrections++;
-    this.markDirty();
+    this.markIndexDirty();
     return true;
   }
 
+  /** Bump version, retaining the outgoing steps in history (capped) for rollback. */
   bumpVersion(name: string, newSteps: string): boolean {
     const entry = this.index.entries.find(e => e.name === name);
     if (!entry) return false;
+    entry.history.push({ version: entry.version, steps: entry.steps });
+    if (entry.history.length > HISTORY_MAX) {
+      entry.history = entry.history.slice(-HISTORY_MAX);
+    }
     entry.version++;
     entry.steps = newSteps;
-    this.markDirty();
+    this.markIndexDirty();
     return true;
   }
 
-  // ── Traces ───────────────────────────────────────────────────
+  /** Restore the most recent prior version of steps. Returns false if no history. */
+  rollback(name: string): boolean {
+    const entry = this.index.entries.find(e => e.name === name);
+    if (!entry) return false;
+    const prior = entry.history.pop();
+    if (!prior) return false;
+    entry.version = prior.version;
+    entry.steps = prior.steps;
+    this.markIndexDirty();
+    return true;
+  }
+
+  // ── Rejected suggestions ─────────────────────────────────────
+
+  rejectSuggestion(name: string, description: string): void {
+    this.index.rejected.push({ name, description, rejectedAt: Date.now() });
+    if (this.index.rejected.length > REJECTED_MAX) {
+      this.index.rejected = this.index.rejected.slice(-REJECTED_MAX);
+    }
+    this.markIndexDirty();
+  }
+
+  getRejected(): RejectedSuggestion[] { return [...this.index.rejected]; }
+
+  // ── Traces (persisted) ───────────────────────────────────────
 
   recordTrace(trace: RunTrace): void {
     this.runTraces.unshift(trace);
     if (this.runTraces.length > RECENT_TRACES_MAX) {
       this.runTraces = this.runTraces.slice(0, RECENT_TRACES_MAX);
     }
+    this.tracesDirty = true;
+    this.scheduleFlush();
   }
 
   getRecentTraces(limit: number = 10): RunTrace[] {
@@ -250,13 +370,13 @@ export class SkillStore {
         archived++;
       }
     }
-    if (archived > 0) this.markDirty();
+    if (archived > 0) this.markIndexDirty();
     return archived;
   }
 
   // ── Persistence ──────────────────────────────────────────────
 
-  private markDirty(): void {
+  private markIndexDirty(): void {
     this.indexDirty = true;
     this.scheduleFlush();
   }
@@ -266,14 +386,23 @@ export class SkillStore {
   }
 
   private async doPersist(): Promise<void> {
-    if (!this.indexDirty) return;
-    const payload = JSON.stringify(this.index, null, 2);
+    if (!this.indexDirty && !this.tracesDirty) return;
+    const writeIndex = this.indexDirty;
+    const writeTraces = this.tracesDirty;
     this.indexDirty = false;
+    this.tracesDirty = false;
     try {
       await fsp.mkdir(this.skillsDir, { recursive: true });
-      await atomicWrite(this.indexPath, payload);
+      if (writeIndex) {
+        await atomicWrite(this.indexPath, JSON.stringify(this.index, null, 2));
+      }
+      if (writeTraces) {
+        const payload: TracesFile = { version: 1, traces: this.runTraces };
+        await atomicWrite(this.tracesPath, JSON.stringify(payload, null, 2));
+      }
     } catch {
-      this.indexDirty = true;
+      this.indexDirty = this.indexDirty || writeIndex;
+      this.tracesDirty = this.tracesDirty || writeTraces;
       this.scheduleFlush();
     }
   }
@@ -304,16 +433,17 @@ function stripCodeFences(s: string): string {
 // ── Stubs (filled in later tasks) ──────────────────────────────
 
 export async function distillCandidate(
-  _deps: DistillDeps, _traces: RunTrace[], _existing: SkillEntry[], _minRecurrence: number,
+  _deps: DistillDeps, _traces: RunTrace[], _existing: SkillEntry[],
+  _rejected: RejectedSuggestion[], _minRecurrence: number,
 ): Promise<DistillResult | null> { return null; }
 
-export function matchSkill(_task: string, _skills: SkillEntry[]): SkillEntry | null { return null; }
+export function matchSkill(_task: string, _skills: SkillEntry[]): SkillMatch | null { return null; }
 
 export async function confirmMatch(
   _deps: DistillDeps, _task: string, _skill: SkillEntry,
 ): Promise<boolean> { return false; }
 
-export function applySkill(task: string, skill: SkillEntry): string { return task; }
+export function applySkill(task: string, _skill: SkillEntry): string { return task; }
 
 export async function evolveSkill(
   _deps: DistillDeps, _skill: SkillEntry, _trace: RunTrace,
@@ -331,9 +461,9 @@ Expected: Compiles without errors.
 
 ```bash
 git add packages/core/src/skill-crystallizer.ts
-git commit -m "feat(skills): SkillStore types, CRUD, traces, GC, and function stubs
+git commit -m "feat(skills): SkillStore with persisted traces, history/rollback, rejected list
 
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -350,15 +480,16 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { SkillStore, RECENT_TRACES_MAX } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
   let store: SkillStore;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-skills-test-'));
     store = new SkillStore(tmp);
+    await store.load();
   });
 
   afterEach(() => {
@@ -366,7 +497,6 @@ describe('SkillStore', () => {
   });
 
   it('adds a skill and persists to index.json', async () => {
-    await store.load();
     const entry = store.add({
       name: 'release-notes',
       description: 'Draft release notes from merged PRs',
@@ -376,6 +506,7 @@ describe('SkillStore', () => {
     });
     expect(entry.name).toBe('release-notes');
     expect(entry.version).toBe(1);
+    expect(entry.history).toEqual([]);
     expect(entry.archived).toBe(false);
     expect(entry.useCount).toBe(0);
     await store.flush();
@@ -385,7 +516,7 @@ describe('SkillStore', () => {
     expect(raw.entries[0].name).toBe('release-notes');
   });
 
-  it('loads existing skills from disk', async () => {
+  it('loads existing skills from disk and defaults missing history/rejected', async () => {
     const skillsDir = path.join(tmp, 'skills');
     fs.mkdirSync(skillsDir, { recursive: true });
     fs.writeFileSync(path.join(skillsDir, 'index.json'), JSON.stringify({
@@ -404,18 +535,18 @@ describe('SkillStore', () => {
     await store2.load();
     expect(store2.getAll().length).toBe(1);
     expect(store2.get('weekly-digest')!.version).toBe(2);
+    expect(store2.get('weekly-digest')!.history).toEqual([]);
+    expect(store2.getRejected()).toEqual([]);
   });
 
-  it('add() on existing name updates in place', async () => {
-    await store.load();
+  it('add() on existing name updates in place', () => {
     store.add({ name: 'test', description: 'first', whenToUse: 'w', steps: 's' });
     store.add({ name: 'test', description: 'second', whenToUse: 'w2', steps: 's2' });
     expect(store.getAll().length).toBe(1);
     expect(store.get('test')!.description).toBe('second');
   });
 
-  it('archive() and restore()', async () => {
-    await store.load();
+  it('archive() and restore()', () => {
     store.add({ name: 's', description: 'd', whenToUse: 'w', steps: 'st' });
     expect(store.archive('s')).toBe(true);
     expect(store.get('s')!.archived).toBe(true);
@@ -443,18 +574,53 @@ describe('SkillStore', () => {
     expect(s.corrections).toBe(1);
   });
 
-  it('bumpVersion increments version and updates steps', () => {
+  it('bumpVersion retains prior steps in history', () => {
     store.add({ name: 'test', description: 'd', whenToUse: 'w', steps: 'old' });
     expect(store.bumpVersion('test', 'new')).toBe(true);
     const u = store.get('test')!;
     expect(u.version).toBe(2);
     expect(u.steps).toBe('new');
+    expect(u.history).toEqual([{ version: 1, steps: 'old' }]);
+  });
+
+  it('history is capped at HISTORY_MAX', () => {
+    store.add({ name: 'test', description: 'd', whenToUse: 'w', steps: 'v1' });
+    for (let i = 2; i <= HISTORY_MAX + 3; i++) {
+      store.bumpVersion('test', `v${i}`);
+    }
+    const u = store.get('test')!;
+    expect(u.history.length).toBe(HISTORY_MAX);
+    expect(u.history[u.history.length - 1].steps).toBe(`v${HISTORY_MAX + 2}`);
+  });
+
+  it('rollback restores the prior version and steps', () => {
+    store.add({ name: 'test', description: 'd', whenToUse: 'w', steps: 'old' });
+    store.bumpVersion('test', 'new');
+    expect(store.rollback('test')).toBe(true);
+    const u = store.get('test')!;
+    expect(u.version).toBe(1);
+    expect(u.steps).toBe('old');
+    expect(u.history).toEqual([]);
+  });
+
+  it('rollback returns false with no history', () => {
+    store.add({ name: 'test', description: 'd', whenToUse: 'w', steps: 's' });
+    expect(store.rollback('test')).toBe(false);
+  });
+
+  it('rejectSuggestion records and caps at REJECTED_MAX', () => {
+    for (let i = 0; i < REJECTED_MAX + 5; i++) {
+      store.rejectSuggestion(`skill-${i}`, `desc ${i}`);
+    }
+    const rejected = store.getRejected();
+    expect(rejected.length).toBe(REJECTED_MAX);
+    expect(rejected[rejected.length - 1].name).toBe(`skill-${REJECTED_MAX + 4}`);
   });
 
   it('recordTrace stores traces and caps at RECENT_TRACES_MAX', () => {
     for (let i = 0; i < RECENT_TRACES_MAX + 5; i++) {
       store.recordTrace({
-        runId: `run_${i}`, promptSummary: 'task', outputShape: 'text',
+        runId: `run_${i}`, promptSummary: 'task', outputPreview: 'text',
         timestamp: Date.now() - i * 60000, mode: 'solo',
       });
     }
@@ -463,14 +629,24 @@ describe('SkillStore', () => {
     expect(recent[0].runId).toBe(`run_${RECENT_TRACES_MAX + 4}`);
   });
 
+  it('traces persist to disk and reload across store instances', async () => {
+    store.recordTrace({ runId: 'r1', promptSummary: 'draft notes', outputPreview: 'md', timestamp: 1000, mode: 'solo' });
+    store.recordTrace({ runId: 'r2', promptSummary: 'changelog', outputPreview: 'md', timestamp: 2000, mode: 'solo' });
+    await store.flush();
+    const store2 = new SkillStore(tmp);
+    await store2.load();
+    const traces = store2.getRecentTraces(10);
+    expect(traces.length).toBe(2);
+    expect(traces[0].runId).toBe('r2');
+  });
+
   it('getRecentTraces returns most recent first', () => {
-    store.recordTrace({ runId: 'older', promptSummary: 'o', outputShape: 't', timestamp: 1000, mode: 'solo' });
-    store.recordTrace({ runId: 'newer', promptSummary: 'n', outputShape: 't', timestamp: 2000, mode: 'solo' });
+    store.recordTrace({ runId: 'older', promptSummary: 'o', outputPreview: 't', timestamp: 1000, mode: 'solo' });
+    store.recordTrace({ runId: 'newer', promptSummary: 'n', outputPreview: 't', timestamp: 2000, mode: 'solo' });
     expect(store.getRecentTraces(10)[0].runId).toBe('newer');
   });
 
   it('runCollectGarbage archives stale and weak skills', () => {
-    store.load();
     const old = Date.now() - 31 * 86_400_000;
     const s1 = store.add({ name: 'old', description: 'd', whenToUse: 'w', steps: 's', sourceRunId: 'r1' });
     s1.lastUsedAt = old;
@@ -493,15 +669,15 @@ describe('SkillStore', () => {
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-crystallizer 2>&1 | tail -20
 ```
-Expected: 10 tests PASS.
+Expected: 15 tests PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add packages/core/src/skill-crystallizer.test.ts
-git commit -m "test(skills): SkillStore CRUD, traces, and GC tests
+git commit -m "test(skills): SkillStore CRUD, history/rollback, rejected, traces, GC
 
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -517,77 +693,87 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 Append to `packages/core/src/skill-crystallizer.test.ts`:
 
 ```typescript
-import { distillCandidate, RunTrace } from './skill-crystallizer';
+import { distillCandidate, RunTrace, DistillDeps } from './skill-crystallizer';
+
+function fakeDeps(runImpl: (req: any) => Promise<any>): DistillDeps {
+  return {
+    activeAgent: 'claude-code' as any,
+    activeModel: { provider: 'anthropic', model: 'test' } as any,
+    workingDir: '/tmp',
+    agentFactory: { run: (_agent: any, req: any) => runImpl(req) } as any,
+  };
+}
 
 describe('distillCandidate', () => {
   it('returns null for empty traces', async () => {
-    const result = await distillCandidate(null as any, [], [], 2);
+    const result = await distillCandidate(null as any, [], [], [], 2);
     expect(result).toBeNull();
   });
 
   it('returns null when fewer traces than minRecurrence', async () => {
     const result = await distillCandidate(null as any,
-      [{ runId: '1', promptSummary: 'x', outputShape: 'y', timestamp: 0, mode: 'solo' }],
-      [], 2);
+      [{ runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' }],
+      [], [], 2);
     expect(result).toBeNull();
   });
 
-  it('calls agent with traces and parses JSON result', async () => {
+  it('calls agent with traces and rejected list, parses JSON result', async () => {
     let calledPrompt = '';
-    const deps = {
-      activeAgent: 'claude-code' as any,
-      activeModel: { model: 'test' } as any,
-      workingDir: '/tmp',
-      agentFactory: {
-        run: async (_agent: any, req: any) => {
-          calledPrompt = req.prompt;
-          return { success: true, output: JSON.stringify({
-            name: 'release-notes',
-            description: 'Generate release notes from merged PRs',
-            whenToUse: 'user asks for release notes or changelog',
-            steps: '1. fetch PRs\n2. group by type\n3. format with links',
-          }), error: null, tokens: { total: 100 } } as any;
-        },
-      },
-    };
+    const deps = fakeDeps(async (req) => {
+      calledPrompt = req.prompt;
+      return { success: true, output: JSON.stringify({
+        name: 'release-notes',
+        description: 'Generate release notes from merged PRs',
+        whenToUse: 'user asks for release notes or changelog',
+        steps: '1. fetch PRs\n2. group by type\n3. format with links',
+      }), error: null, tokens: { total: 100 } };
+    });
     const traces: RunTrace[] = [
-      { runId: '1', promptSummary: 'Draft release notes', outputShape: 'markdown list', timestamp: 1, mode: 'solo' },
-      { runId: '2', promptSummary: 'Generate changelog', outputShape: 'markdown list', timestamp: 2, mode: 'solo' },
-      { runId: '3', promptSummary: 'Write release announcement', outputShape: 'markdown list', timestamp: 3, mode: 'solo' },
+      { runId: '1', promptSummary: 'Draft release notes', outputPreview: 'markdown list', timestamp: 1, mode: 'solo' },
+      { runId: '2', promptSummary: 'Generate changelog', outputPreview: 'markdown list', timestamp: 2, mode: 'solo' },
+      { runId: '3', promptSummary: 'Write release announcement', outputPreview: 'markdown list', timestamp: 3, mode: 'solo' },
     ];
-    const result = await distillCandidate(deps, traces, [], 2);
+    const rejected = [{ name: 'weekly-digest', description: 'Weekly summary', rejectedAt: 1 }];
+    const result = await distillCandidate(deps, traces, [], rejected, 2);
     expect(result).not.toBeNull();
     expect(result!.name).toBe('release-notes');
     expect(result!.steps).toContain('fetch PRs');
     expect(calledPrompt).toContain('Draft release notes');
     expect(calledPrompt).toContain('release announcement');
+    expect(calledPrompt).toContain('weekly-digest');
   });
 
   it('returns null on "NONE" response', async () => {
-    const deps = {
-      activeAgent: 'claude-code' as any, activeModel: { model: 'test' } as any,
-      workingDir: '/tmp',
-      agentFactory: { run: async () => ({ success: true, output: 'NONE', error: null, tokens: { total: 10 } } as any) },
-    };
+    const deps = fakeDeps(async () => ({ success: true, output: 'NONE', error: null, tokens: { total: 10 } }));
     const traces: RunTrace[] = [
-      { runId: '1', promptSummary: 'x', outputShape: 'y', timestamp: 0, mode: 'solo' },
-      { runId: '2', promptSummary: 'z', outputShape: 'y', timestamp: 1, mode: 'solo' },
+      { runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' },
+      { runId: '2', promptSummary: 'z', outputPreview: 'y', timestamp: 1, mode: 'solo' },
     ];
-    const result = await distillCandidate(deps, traces, [], 2);
+    const result = await distillCandidate(deps, traces, [], [], 2);
     expect(result).toBeNull();
   });
 
   it('returns null on unparseable output', async () => {
-    const deps = {
-      activeAgent: 'claude-code' as any, activeModel: { model: 'test' } as any,
-      workingDir: '/tmp',
-      agentFactory: { run: async () => ({ success: true, output: 'garbage', error: null, tokens: { total: 10 } } as any) },
-    };
+    const deps = fakeDeps(async () => ({ success: true, output: 'garbage', error: null, tokens: { total: 10 } }));
     const traces: RunTrace[] = [
-      { runId: '1', promptSummary: 'x', outputShape: 'y', timestamp: 0, mode: 'solo' },
-      { runId: '2', promptSummary: 'z', outputShape: 'y', timestamp: 1, mode: 'solo' },
+      { runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' },
+      { runId: '2', promptSummary: 'z', outputPreview: 'y', timestamp: 1, mode: 'solo' },
     ];
-    const result = await distillCandidate(deps, traces, [], 2);
+    const result = await distillCandidate(deps, traces, [], [], 2);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when result fields are missing or not strings', async () => {
+    const deps = fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({ name: 'valid-name', steps: '1. x' }), // no description/whenToUse
+      error: null, tokens: { total: 10 },
+    }));
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' },
+      { runId: '2', promptSummary: 'z', outputPreview: 'y', timestamp: 1, mode: 'solo' },
+    ];
+    const result = await distillCandidate(deps, traces, [], [], 2);
     expect(result).toBeNull();
   });
 });
@@ -598,7 +784,7 @@ describe('distillCandidate', () => {
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-crystallizer 2>&1 | tail -15
 ```
-Expected: distill tests FAIL (stubs return null).
+Expected: the "calls agent" test FAILS (stub returns null).
 
 - [ ] **Step 3: Implement distillCandidate**
 
@@ -614,6 +800,9 @@ Recent traces:
 
 Existing skills (don't duplicate):
 %SKILLS%
+
+Previously rejected suggestions (the user said no — do NOT re-propose these or close variants):
+%REJECTED%
 
 Return ONE JSON object (no markdown, no prose) or the literal word "NONE":
 {
@@ -642,23 +831,38 @@ function formatSkillsForPrompt(skills: SkillEntry[]): string {
   return skills.map(s => `- ${s.name}: ${s.description}`).join('\n');
 }
 
+function formatRejectedForPrompt(rejected: RejectedSuggestion[]): string {
+  if (rejected.length === 0) return '(none)';
+  return rejected.map(r => `- ${r.name}: ${r.description}`).join('\n');
+}
+
 function tryParseDistill(raw: string): DistillResult | null {
   const trimmed = raw.trim();
   if (trimmed === 'NONE' || trimmed === '"NONE"') return null;
-  try { return JSON.parse(stripCodeFences(trimmed)); } catch { return null; }
+  let parsed: unknown;
+  try { parsed = JSON.parse(stripCodeFences(trimmed)); } catch { return null; }
+  const p = parsed as Record<string, unknown>;
+  if (!p || typeof p !== 'object') return null;
+  for (const field of ['name', 'description', 'whenToUse', 'steps'] as const) {
+    if (typeof p[field] !== 'string' || !(p[field] as string).trim()) return null;
+  }
+  return { name: p.name as string, description: p.description as string,
+           whenToUse: p.whenToUse as string, steps: p.steps as string };
 }
 
 export async function distillCandidate(
   deps: DistillDeps,
   traces: RunTrace[],
   existing: SkillEntry[],
+  rejected: RejectedSuggestion[],
   minRecurrence: number,
 ): Promise<DistillResult | null> {
   if (traces.length < minRecurrence) return null;
 
   const composed = DISTILL_PROMPT
     .replace('%TRACES%', formatTracesForPrompt(traces))
-    .replace('%SKILLS%', formatSkillsForPrompt(existing.filter(s => !s.archived)));
+    .replace('%SKILLS%', formatSkillsForPrompt(existing.filter(s => !s.archived)))
+    .replace('%REJECTED%', formatRejectedForPrompt(rejected));
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await deps.agentFactory.run(deps.activeAgent, {
@@ -669,10 +873,10 @@ export async function distillCandidate(
       interactive: false,
       skipPermissions: true,
       context: { workingDir: deps.workingDir },
-    });
+    } as any);
     if (!response.success) continue;
     const parsed = tryParseDistill(response.output);
-    if (parsed && parsed.name && parsed.steps) {
+    if (parsed) {
       if (/^[a-z][a-z0-9-]*$/.test(parsed.name) && parsed.name.length >= 3 && parsed.name.length <= 30) {
         return parsed;
       }
@@ -683,54 +887,73 @@ export async function distillCandidate(
 }
 ```
 
+Note: if `AgentFactory.run()`'s request type accepts these fields directly, drop the `as any` on the request — check `packages/core/src/agents` for the exact request interface and use it.
+
 - [ ] **Step 4: Run tests — all pass**
 
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-crystallizer 2>&1 | tail -15
 ```
-Expected: 14 tests PASS.
+Expected: 21 tests PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/skill-crystallizer.ts packages/core/src/skill-crystallizer.test.ts
-git commit -m "feat(skills): LLM-based distillCandidate for pattern detection
+git commit -m "feat(skills): LLM distillCandidate with rejected-suggestion suppression
 
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 4: Skill matching (keyword + LLM)
+### Task 4: Skill matching (keyword pre-filter with confidence + LLM confirm)
 
 **Files:**
 - Modify: `packages/core/src/skill-crystallizer.ts` — replace `matchSkill` + `confirmMatch` stubs
 - Modify: `packages/core/src/skill-crystallizer.test.ts` — add matching tests
+
+`matchSkill` returns a `SkillMatch` with `confidence: 'high' | 'borderline'`. The gateway applies `high` matches directly and routes `borderline` matches through `confirmMatch` (the LLM gate) — this is how the spec's "cheap description match → confirm with a lightweight LLM check" is wired, and it is what makes single-keyword overlaps (e.g. only "changelog") usable without false positives.
 
 - [ ] **Step 1: Add matching tests**
 
 Append to test file:
 
 ```typescript
-import { matchSkill, SkillEntry } from './skill-crystallizer';
+import { matchSkill, confirmMatch, SkillEntry } from './skill-crystallizer';
+
+function makeSkill(over: Partial<SkillEntry>): SkillEntry {
+  return {
+    name: 'x', description: '', whenToUse: '', steps: 's',
+    version: 1, history: [], useCount: 0, lastUsedAt: Date.now(),
+    successSignals: { cleanRuns: 0, corrections: 0 },
+    sourceRunIds: [], createdAt: Date.now(), archived: false,
+    ...over,
+  };
+}
 
 describe('matchSkill', () => {
   const skills: SkillEntry[] = [
-    { name: 'release-notes', description: 'Generate release notes', whenToUse: 'user asks for release notes or changelog', steps: '1. fetch\n2. group', version: 1, useCount: 3, lastUsedAt: Date.now(), successSignals: { cleanRuns: 3, corrections: 0 }, sourceRunIds: ['r1'], createdAt: Date.now(), archived: false },
-    { name: 'fix-lint', description: 'Fix lint errors', whenToUse: 'user reports lint errors or ESLint failures', steps: '1. lint\n2. fix', version: 1, useCount: 1, lastUsedAt: Date.now(), successSignals: { cleanRuns: 1, corrections: 0 }, sourceRunIds: ['r2'], createdAt: Date.now(), archived: false },
-    { name: 'archived-x', description: 'Hidden', whenToUse: 'anything', steps: 's', version: 1, useCount: 0, lastUsedAt: Date.now(), successSignals: { cleanRuns: 0, corrections: 0 }, sourceRunIds: [], createdAt: Date.now(), archived: true },
+    makeSkill({ name: 'release-notes', description: 'Generate release notes', whenToUse: 'user asks for release notes or changelog' }),
+    makeSkill({ name: 'fix-lint', description: 'Fix lint errors', whenToUse: 'user reports lint errors or ESLint failures' }),
+    makeSkill({ name: 'archived-x', description: 'Hidden', whenToUse: 'anything', archived: true }),
   ];
 
-  it('matches release-notes for changelog task', () => {
-    expect(matchSkill('write a changelog for v2.1', skills)?.name).toBe('release-notes');
+  it('high-confidence match for multi-keyword overlap', () => {
+    const m = matchSkill('generate release notes from merged PRs', skills);
+    expect(m?.skill.name).toBe('release-notes');
+    expect(m?.confidence).toBe('high');
   });
 
-  it('matches release-notes for release notes task', () => {
-    expect(matchSkill('generate release notes from merged PRs', skills)?.name).toBe('release-notes');
+  it('borderline match for single-keyword overlap', () => {
+    const m = matchSkill('write a changelog for v2.1', skills);
+    expect(m?.skill.name).toBe('release-notes');
+    expect(m?.confidence).toBe('borderline');
   });
 
   it('matches fix-lint for ESLint task', () => {
-    expect(matchSkill('eslint is failing on CI, can you fix?', skills)?.name).toBe('fix-lint');
+    const m = matchSkill('eslint is failing on CI, can you fix?', skills);
+    expect(m?.skill.name).toBe('fix-lint');
   });
 
   it('returns null for unrelated task', () => {
@@ -739,6 +962,25 @@ describe('matchSkill', () => {
 
   it('never matches archived skills', () => {
     expect(matchSkill('do anything at all please', skills)).toBeNull();
+  });
+});
+
+describe('confirmMatch', () => {
+  const skill = makeSkill({ name: 'release-notes', description: 'Generate release notes', whenToUse: 'release notes or changelog' });
+
+  it('returns true on YES', async () => {
+    const deps = fakeDeps(async () => ({ success: true, output: 'YES', error: null, tokens: { total: 5 } }));
+    expect(await confirmMatch(deps, 'write a changelog', skill)).toBe(true);
+  });
+
+  it('returns false on NO', async () => {
+    const deps = fakeDeps(async () => ({ success: true, output: 'NO', error: null, tokens: { total: 5 } }));
+    expect(await confirmMatch(deps, 'build an API', skill)).toBe(false);
+  });
+
+  it('returns false on failed agent call', async () => {
+    const deps = fakeDeps(async () => ({ success: false, output: '', error: 'crash', tokens: { total: 0 } }));
+    expect(await confirmMatch(deps, 'write a changelog', skill)).toBe(false);
   });
 });
 ```
@@ -754,25 +996,26 @@ source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-c
 Replace the stubs:
 
 ```typescript
-export function matchSkill(task: string, skills: SkillEntry[]): SkillEntry | null {
+export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | null {
   const active = skills.filter(s => !s.archived);
   if (active.length === 0) return null;
   const taskTokens = tokenizeLax(task);
   if (taskTokens.length === 0) return null;
-  let best: { skill: SkillEntry; score: number } | null = null;
+  let best: SkillMatch | null = null;
   for (const skill of active) {
-    const searchText = `${skill.description} ${skill.whenToUse}`;
-    const skillTokens = tokenizeLax(searchText);
+    const skillTokens = tokenizeLax(`${skill.description} ${skill.whenToUse}`);
     if (skillTokens.length === 0) continue;
     const intersection = skillTokens.filter(t => taskTokens.includes(t));
-    if (intersection.length < 2) continue;
+    if (intersection.length < 1) continue;
     const unionSize = new Set([...taskTokens, ...skillTokens]).size;
     const score = intersection.length / unionSize;
-    if (score > 0.1 && (!best || score > best.score)) {
-      best = { skill, score };
+    const confidence: SkillMatch['confidence'] =
+      intersection.length >= 2 && score > 0.1 ? 'high' : 'borderline';
+    if (!best || score > best.score) {
+      best = { skill, confidence, score };
     }
   }
-  return best?.skill ?? null;
+  return best;
 }
 
 function tokenizeLax(text: string): string[] {
@@ -812,7 +1055,7 @@ export async function confirmMatch(
     prompt, agent: deps.activeAgent, model: deps.activeModel,
     interactive: false, skipPermissions: true,
     context: { workingDir: deps.workingDir },
-  });
+  } as any);
   if (!response.success) return false;
   return response.output.trim().toUpperCase() === 'YES';
 }
@@ -823,15 +1066,15 @@ export async function confirmMatch(
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-crystallizer 2>&1 | tail -15
 ```
-Expected: 19 tests PASS.
+Expected: 29 tests PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/skill-crystallizer.ts packages/core/src/skill-crystallizer.test.ts
-git commit -m "feat(skills): keyword pre-filter matchSkill + LLM confirmMatch
+git commit -m "feat(skills): confidence-scored matchSkill + LLM confirmMatch gate
 
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -850,14 +1093,12 @@ Append to test file:
 import { applySkill, evolveSkill } from './skill-crystallizer';
 
 describe('applySkill', () => {
-  const skill: SkillEntry = {
+  const skill = makeSkill({
     name: 'release-notes', description: 'Generate release notes',
     whenToUse: 'user asks for release notes',
     steps: '1. fetch merged PRs\n2. group by type\n3. format with links',
-    version: 2, useCount: 3, lastUsedAt: Date.now(),
-    successSignals: { cleanRuns: 3, corrections: 0 },
-    sourceRunIds: ['r1'], createdAt: Date.now(), archived: false,
-  };
+    version: 2,
+  });
 
   it('prepends banner + steps before task', () => {
     const result = applySkill('generate release notes for v2.1', skill);
@@ -876,46 +1117,37 @@ describe('applySkill', () => {
 });
 
 describe('evolveSkill', () => {
-  const skill: SkillEntry = {
+  const skill = makeSkill({
     name: 'release-notes', description: 'Release notes',
     whenToUse: 'release notes', steps: '1. fetch PRs\n2. group',
-    version: 1, useCount: 3, lastUsedAt: Date.now(),
-    successSignals: { cleanRuns: 2, corrections: 1 },
-    sourceRunIds: ['r1'], createdAt: Date.now(), archived: false,
-  };
+    useCount: 3, successSignals: { cleanRuns: 2, corrections: 1 },
+  });
   const trace: RunTrace = {
     runId: 'r2', promptSummary: 'Draft release notes',
-    outputShape: 'markdown with sections', timestamp: Date.now(), mode: 'solo',
+    outputPreview: 'markdown with sections', timestamp: Date.now(), mode: 'solo',
   };
 
   it('evolves when agent finds better steps', async () => {
-    const deps = {
-      activeAgent: 'claude-code' as any,
-      activeModel: { model: 'test' } as any,
-      workingDir: '/tmp',
-      agentFactory: { run: async () => ({ success: true, output: JSON.stringify({ improved: true, steps: '1. fetch\n2. group\n3. add links\n4. format' }), error: null, tokens: { total: 100 } } as any) },
-    };
+    const deps = fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({ improved: true, steps: '1. fetch\n2. group\n3. add links\n4. format' }),
+      error: null, tokens: { total: 100 },
+    }));
     const result = await evolveSkill(deps, skill, trace);
     expect(result).not.toBeNull();
     expect(result).toContain('add links');
   });
 
   it('returns null when no improvement needed', async () => {
-    const deps = {
-      activeAgent: 'claude-code' as any, activeModel: { model: 'test' } as any,
-      workingDir: '/tmp',
-      agentFactory: { run: async () => ({ success: true, output: JSON.stringify({ improved: false }), error: null, tokens: { total: 50 } } as any) },
-    };
+    const deps = fakeDeps(async () => ({
+      success: true, output: JSON.stringify({ improved: false }), error: null, tokens: { total: 50 },
+    }));
     const result = await evolveSkill(deps, skill, trace);
     expect(result).toBeNull();
   });
 
   it('returns null on failed agent call', async () => {
-    const deps = {
-      activeAgent: 'claude-code' as any, activeModel: { model: 'test' } as any,
-      workingDir: '/tmp',
-      agentFactory: { run: async () => ({ success: false, output: '', error: 'crash', tokens: { total: 0 } } as any) },
-    };
+    const deps = fakeDeps(async () => ({ success: false, output: '', error: 'crash', tokens: { total: 0 } }));
     const result = await evolveSkill(deps, skill, trace);
     expect(result).toBeNull();
   });
@@ -923,6 +1155,10 @@ describe('evolveSkill', () => {
 ```
 
 - [ ] **Step 2: Run — verify FAIL**
+
+```bash
+source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-crystallizer 2>&1 | tail -15
+```
 
 - [ ] **Step 3: Implement applySkill + evolveSkill**
 
@@ -945,11 +1181,11 @@ Current steps:
 
 Run context:
 - Task: %TASK_SUMMARY%
-- Output shape: %OUTPUT_SHAPE%
+- Output preview: %OUTPUT_PREVIEW%
 - Mode: %MODE%
 %WORKER_STEPS%
 
-Does the run suggest a better version of the steps? If yes, return improved steps. If the current steps are fine, say no change.
+Does the run suggest a better version of the steps? If yes, return improved steps. If the current steps are fine, say no change. Only propose a change when the run clearly revealed a missing, wrong, or better step — do not rephrase working steps.
 
 Return ONE JSON:
 {"improved": true, "steps": "1. ...\\n2. ...\\n3. ..."}
@@ -973,7 +1209,7 @@ export async function evolveSkill(
     .replace('%SKILL_WHEN%', skill.whenToUse)
     .replace('%STEPS%', skill.steps)
     .replace('%TASK_SUMMARY%', trace.promptSummary)
-    .replace('%OUTPUT_SHAPE%', trace.outputShape)
+    .replace('%OUTPUT_PREVIEW%', trace.outputPreview)
     .replace('%MODE%', trace.mode)
     .replace('%WORKER_STEPS%', workerPart);
 
@@ -981,7 +1217,7 @@ export async function evolveSkill(
     prompt: composed, agent: deps.activeAgent, model: deps.activeModel,
     interactive: false, skipPermissions: true,
     context: { workingDir: deps.workingDir },
-  });
+  } as any);
   if (!response.success) return null;
   try {
     const parsed = JSON.parse(stripCodeFences(response.output));
@@ -998,7 +1234,7 @@ export async function evolveSkill(
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-crystallizer 2>&1 | tail -15
 ```
-Expected: 24 tests PASS.
+Expected: 34 tests PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -1006,7 +1242,7 @@ Expected: 24 tests PASS.
 git add packages/core/src/skill-crystallizer.ts packages/core/src/skill-crystallizer.test.ts
 git commit -m "feat(skills): applySkill prompt injection + evolveSkill refinement
 
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -1037,19 +1273,104 @@ Expected: Build succeeds.
 git add packages/core/src/index.ts
 git commit -m "feat(skills): export skill-crystallizer from core barrel
 
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 7: Gateway config — skills block
+### Task 7: WorkspaceManager owns the SkillStore
+
+**Files:**
+- Modify: `packages/core/src/workspace.ts`
+- Modify: `packages/core/src/workspace.test.ts`
+
+Ownership by `WorkspaceManager` — not the gateway — is what makes workspace switching correct for free: the store is re-created alongside `memoryStore` in every place a workspace changes. The gateway always fetches it via `this.workspaceManager.getSkillStore()` (same call pattern as `getMemoryStore()` at `gateway.ts:1103`).
+
+- [ ] **Step 1: Add the field and construct alongside memoryStore**
+
+In `packages/core/src/workspace.ts`:
+
+Add import at the top (next to the `MemoryStore` import at line 6):
+
+```typescript
+import { SkillStore } from './skill-crystallizer';
+```
+
+Add the field next to `private memoryStore: MemoryStore;` (line 76):
+
+```typescript
+  private skillStore: SkillStore;
+```
+
+In the constructor, after `this.memoryStore = new MemoryStore(this.getWorkspacePath());` (line 91):
+
+```typescript
+    this.skillStore = new SkillStore(this.getWorkspacePath());
+```
+
+- [ ] **Step 2: Load alongside memoryStore on workspace load/switch**
+
+After `this.memoryStore = new MemoryStore(workspacePath); await this.memoryStore.load();` (lines 158-159):
+
+```typescript
+    this.skillStore = new SkillStore(workspacePath);
+    await this.skillStore.load();
+```
+
+- [ ] **Step 3: Re-create on workspace rename**
+
+In `renameWorkspace`, after `this.memoryStore = new MemoryStore(this.getWorkspacePath());` (line 320):
+
+```typescript
+      this.skillStore = new SkillStore(this.getWorkspacePath());
+```
+
+- [ ] **Step 4: Add the accessor**
+
+Next to `getMemoryStore(): MemoryStore { return this.memoryStore; }` (line 275):
+
+```typescript
+  getSkillStore(): SkillStore { return this.skillStore; }
+```
+
+- [ ] **Step 5: Add a test**
+
+Append to `packages/core/src/workspace.test.ts` (follow the file's existing setup pattern for constructing a WorkspaceManager; the assertion is what matters):
+
+```typescript
+  it('exposes a per-workspace SkillStore that survives getMemoryStore calls', () => {
+    const store = manager.getSkillStore();
+    expect(store).toBeDefined();
+    expect(manager.getSkillStore()).toBe(store); // stable reference until switch
+  });
+```
+
+- [ ] **Step 6: Run core tests + build**
+
+```bash
+source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core 2>&1 | tail -10 && npm run build -w packages/core 2>&1
+```
+Expected: All PASS, build succeeds.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add packages/core/src/workspace.ts packages/core/src/workspace.test.ts
+git commit -m "feat(skills): WorkspaceManager owns per-workspace SkillStore
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 8: Gateway config — skills block
 
 **Files:**
 - Modify: `packages/gateway/src/config.ts`
 
 - [ ] **Step 1: Add `skills?` to GatewayConfigJson**
 
-In the `GatewayConfigJson` interface, add after the `aide?` block (before `teams?`):
+In the `GatewayConfigJson` interface, add after the `aide?` block (`config.ts:55-58`):
 
 ```typescript
   /** Self-crystallizing skills configuration. All fields optional — defaults are sensible. */
@@ -1066,7 +1387,7 @@ In the `GatewayConfigJson` interface, add after the `aide?` block (before `teams
 
 - [ ] **Step 2: Add to normalize()**
 
-In the `normalize()` function, after the `aide` block (roughly after line 556):
+In the `normalize()` function (`config.ts:528`), after the `aide` block (`config.ts:551-556`):
 
 ```typescript
   if (raw.skills && typeof raw.skills === 'object') {
@@ -1083,10 +1404,13 @@ In the `normalize()` function, after the `aide` block (roughly after line 556):
 
 - [ ] **Step 3: Add accessor to ConfigManager class**
 
-After the existing `getAideAgentAndModel()` method pattern, add:
+Note: `getAideAgentAndModel()`/`getAdvisorAgentAndModel()` live on the `Codey` class, NOT on `ConfigManager`. Add this accessor near ConfigManager's other simple getters (e.g. after `getAgentModel()` at `config.ts:331`):
 
 ```typescript
-  getSkillsConfig(): Required<NonNullable<GatewayConfigJson['skills']>> & { distillModel: string | undefined } {
+  getSkillsConfig(): {
+    enabled: boolean; suggestOnRepeat: number; autoApply: boolean;
+    staleDays: number; weakSkillDays: number; distillModel: string | undefined;
+  } {
     const raw = this.config.skills;
     return {
       enabled: raw?.enabled ?? true,
@@ -1112,130 +1436,177 @@ Expected: Build succeeds.
 git add packages/gateway/src/config.ts
 git commit -m "feat(skills): add skills config block to gateway.json schema
 
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 8: Gateway — SkillStore lifecycle + /skills command
+### Task 9: Persisted per-chat pending suggestion (Chat type + ChatManager)
+
+**Files:**
+- Modify: `packages/core/src/types/chat.ts`
+- Modify: `packages/gateway/src/chats.ts`
+
+Pending suggestions must survive restarts and be scoped per-chat (a global gateway field would let chat B's next message consume chat A's suggestion). This mirrors `pendingTeam` (`chat.ts:111`, `chats.ts:270`).
+
+- [ ] **Step 1: Add the field to the Chat interface**
+
+In `packages/core/src/types/chat.ts`, after `lastAskedOptions?` (line 121), add:
+
+```typescript
+  /** Set when the skill distiller has proposed a new skill and is waiting for
+   *  the user's "yes" / "no" / "rename <name>" reply. Cleared on any resolution. */
+  pendingSkillSuggestion?: {
+    name: string;
+    description: string;
+    whenToUse: string;
+    steps: string;
+  };
+```
+
+- [ ] **Step 2: Add the ChatManager setter**
+
+In `packages/gateway/src/chats.ts`, after `setPendingTeam` (line 270), add:
+
+```typescript
+  /** Set or clear the pending skill suggestion for a chat. Pass null to clear. */
+  setPendingSkillSuggestion(
+    chatId: string,
+    pending: NonNullable<Chat['pendingSkillSuggestion']> | null,
+  ): void {
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    if (pending) chat.pendingSkillSuggestion = pending;
+    else delete chat.pendingSkillSuggestion;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+  }
+```
+
+- [ ] **Step 3: Verify build**
+
+```bash
+source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm run build -w packages/core -w packages/gateway 2>&1
+```
+Expected: Build succeeds.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add packages/core/src/types/chat.ts packages/gateway/src/chats.ts
+git commit -m "feat(skills): persisted per-chat pendingSkillSuggestion state
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 10: Gateway — skill commands + shared helpers
 
 **Files:**
 - Modify: `packages/gateway/src/gateway.ts`
 
+Command surface notes (verified against the code):
+- Bare `/skills` needs NO parseCommand change — the generic fallback at `gateway.ts:3459` (`/^\/(\w+)(?:\s+(.*))?$/`) already yields `{command: 'skills'}`. Only a `handleCommand` case is needed.
+- `/skill forget|restore|rollback <name>` get an explicit regex in `parseCommand` (like `/worker` at `gateway.ts:3467`).
+- `/skill <name> <task>` (explicit invocation, per spec) is a *prompt rewrite*, handled in Task 11/12 at each surface's entry point — not a handleCommand case, so it flows through the normal run path on both surfaces.
+- There is NO `/skill create` command — the spec's creation flow is suggestion + yes/no/rename only.
+
 - [ ] **Step 1: Add imports**
 
-At the top of `packages/gateway/src/gateway.ts`, find the `@codey/core` import block and add:
+At the top of `packages/gateway/src/gateway.ts`, extend the `@codey/core` import block with:
 
 ```typescript
-import { SkillStore, matchSkill, applySkill, distillCandidate, evolveSkill, RunTrace, DistillDeps, DistillResult } from '@codey/core';
+import {
+  SkillEntry, SkillMatch, RunTrace, DistillDeps, DistillResult,
+  matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill,
+} from '@codey/core';
 ```
 
-- [ ] **Step 2: Add fields to Gateway class**
+(Merge into the existing `@codey/core` import statement rather than adding a duplicate import.)
 
-Find the class property declarations (near other `private` fields) and add:
+- [ ] **Step 2: Add fields and constants to the Codey class**
+
+Near the other `private` fields:
 
 ```typescript
-  private skillStore!: SkillStore;
-  private pendingSkillSuggestion: (DistillResult & { chatId: string; channel: ChannelType }) | null = null;
+  /** Pending skill suggestions for the channel surface, keyed `${channel}:${chatId}`.
+   *  (Chat-surface suggestions are persisted on the Chat via ChatManager instead.) */
+  private pendingSkillSuggestions = new Map<string, DistillResult>();
+  private skillRunCounter = 0;
   private lastSkillDistillTime = 0;
   private static SKILL_DISTILL_COOLDOWN_MS = 300_000; // 5 min
+  private static SKILL_GC_EVERY_N_RUNS = 20;
+  private static SKILL_EVOLVE_EVERY_N_USES = 3;
 ```
 
-- [ ] **Step 3: Initialize SkillStore in constructor/init**
+- [ ] **Step 3: Add parseCommand regex for skill subcommands**
 
-Find where the gateway initializes (constructor or `init()`). After workspace is available, add:
-
-```typescript
-    this.skillStore = new SkillStore(this.workspaceManager.getWorkingDir());
-```
-
-And after workspaceManager is loaded (in an async init if one exists):
+In `parseCommand()` (`gateway.ts:3457`), inside the `if (commandMatch)` block, before the `/worker` match (`gateway.ts:3467`):
 
 ```typescript
-    await this.skillStore.load();
-    const skillsCfg = this.configManager.getSkillsConfig();
-    if (skillsCfg.enabled) {
-      this.skillStore.runCollectGarbage({
-        staleDays: skillsCfg.staleDays,
-        weakSkillDays: skillsCfg.weakSkillDays,
-      });
-    }
-```
-
-(If there is no async init, add the `load()` + GC call at the end of the constructor as a fire-and-forget:
-
-```typescript
-    this.skillStore.load().then(() => {
-      const cfg = this.configManager.getSkillsConfig();
-      if (cfg.enabled) this.skillStore.runCollectGarbage({ staleDays: cfg.staleDays, weakSkillDays: cfg.weakSkillDays });
-    }).catch(() => {});
-```
-
-)
-
-- [ ] **Step 4: Add /skills and /skill commands to parseCommand**
-
-In `parseCommand()` (inside the `if (commandMatch)` block), add *before* the worker match:
-
-```typescript
-      // /skill create <name> — manually create a skill (unlikely but supported)
-      // /skill forget <name> — archive a skill
-      // /skill restore <name> — unarchive a skill
-      // /skills — list active skills
-      const skillMatch = text.match(/^\/skill\s+(create\s+(\S+)|forget\s+(\S+)|restore\s+(\S+))/i);
-      if (skillMatch) {
-        if (skillMatch[2]) return { command: 'skill-create', args: [skillMatch[2]], agent: undefined as any, model: undefined, prompt: '' };
-        if (skillMatch[3]) return { command: 'skill-forget', args: [skillMatch[3]], agent: undefined as any, model: undefined, prompt: '' };
-        if (skillMatch[4]) return { command: 'skill-restore', args: [skillMatch[4]], agent: undefined as any, model: undefined, prompt: '' };
+      // /skill forget|restore|rollback <name>
+      const skillSubMatch = text.match(/^\/skill\s+(forget|restore|rollback)\s+(\S+)/i);
+      if (skillSubMatch) {
+        return {
+          command: `skill-${skillSubMatch[1].toLowerCase()}`,
+          args: [skillSubMatch[2]],
+          agent: undefined as any, model: undefined, prompt: '',
+        };
       }
 ```
 
-- [ ] **Step 5: Add command cases to handleCommand**
+- [ ] **Step 4: Add handleCommand cases**
 
-In the `handleCommand` switch statement, add:
+In the `handleCommand` switch (`gateway.ts:1306`):
 
 ```typescript
       case 'skills':
-        await this.cmdSkills(chatId, channel);
+        await this.cmdSkills(message.chatId, message.channel);
         break;
-      case 'skill-create':
-        // handled via suggestion flow — manual creation by name is a no-op since
-        // there's no steps to save. The user should use the suggestion flow.
-        await this.sendResponse({ chatId, channel, text: 'Use the skill suggestion flow — say "yes" when I suggest a skill.' });
+      case 'skill-forget': {
+        const ok = this.workspaceManager.getSkillStore().archive(args[0]);
+        await this.sendResponse({ chatId: message.chatId, channel: message.channel,
+          text: ok ? `🗑️ Skill **${args[0]}** archived. Restore with /skill restore ${args[0]}` : `Skill "${args[0]}" not found.` });
         break;
-      case 'skill-forget':
-        if (args.length > 0) {
-          const archived = this.skillStore.archive(args[0]);
-          await this.sendResponse({ chatId, channel, text: archived ? `🗑️ Skill **${args[0]}** archived.` : `Skill "${args[0]}" not found.` });
-        }
+      }
+      case 'skill-restore': {
+        const ok = this.workspaceManager.getSkillStore().restore(args[0]);
+        await this.sendResponse({ chatId: message.chatId, channel: message.channel,
+          text: ok ? `🔄 Skill **${args[0]}** restored.` : `Skill "${args[0]}" not found.` });
         break;
-      case 'skill-restore':
-        if (args.length > 0) {
-          const restored = this.skillStore.restore(args[0]);
-          await this.sendResponse({ chatId, channel, text: restored ? `🔄 Skill **${args[0]}** restored.` : `Skill "${args[0]}" not found.` });
-        }
+      }
+      case 'skill-rollback': {
+        const store = this.workspaceManager.getSkillStore();
+        const ok = store.rollback(args[0]);
+        const v = store.get(args[0])?.version;
+        await this.sendResponse({ chatId: message.chatId, channel: message.channel,
+          text: ok ? `⏪ Skill **${args[0]}** rolled back to v${v}.` : `Skill "${args[0]}" has no prior version (or was not found).` });
         break;
+      }
 ```
 
-- [ ] **Step 6: Implement cmdSkills helper**
+(Adjust `message.chatId`/`message.channel` to however the surrounding cases access the chat id and channel — follow the neighboring case code exactly.)
 
-Add to the Gateway class:
+- [ ] **Step 5: Implement cmdSkills helper**
+
+Add to the `Codey` class:
 
 ```typescript
   private async cmdSkills(chatId: string, channel: ChannelType): Promise<void> {
-    const active = this.skillStore.getActive();
+    const active = this.workspaceManager.getSkillStore().getActive();
     if (active.length === 0) {
       await this.sendResponse({ chatId, channel, text: 'No active skills. Skills crystallize from repeated work patterns.' });
       return;
     }
     const lines = active.map(s =>
-      `- **${s.name}** (v${s.version}): ${s.description} — used ${s.useCount}×, last ${relativeTime(s.lastUsedAt)}`
+      `- **${s.name}** (v${s.version}): ${s.description} — used ${s.useCount}×, last ${Codey.relativeTime(s.lastUsedAt)}`
     );
     await this.sendResponse({ chatId, channel, text: `📋 **Skills** (${active.length})\n\n${lines.join('\n')}` });
   }
 ```
 
-- [ ] **Step 7: Add relativeTime helper**
+- [ ] **Step 6: Add relativeTime static helper**
 
 ```typescript
   private static relativeTime(ts: number): string {
@@ -1250,254 +1621,366 @@ Add to the Gateway class:
   }
 ```
 
-- [ ] **Step 8: Verify build**
-
-```bash
-source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm run build -w packages/gateway -w packages/core 2>&1
-```
-Expected: Build succeeds (gateway compiles with new imports).
-
-- [ ] **Step 9: Commit**
-
-```bash
-git add packages/gateway/src/gateway.ts
-git commit -m "feat(skills): SkillStore lifecycle + /skills /skill commands in gateway
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
-```
-
----
-
-### Task 9: Gateway — Pre-run skill injection + post-run trace in runOneTurn
-
-**Files:**
-- Modify: `packages/gateway/src/gateway.ts`
-
-- [ ] **Step 1: Add pre-run skill injection in runOneTurn**
-
-In `runOneTurn()`, find the line `let prep = this.prepareAgentTurn(ctxWindow, agent, parsed.prompt, memoryContext);` (around line 1123) and replace with:
-
-```typescript
-    // ── Skill matching (pre-run) ──────────────────────────
-    let appliedSkill: SkillEntry | null = null;
-    const skillsCfg = this.configManager.getSkillsConfig();
-    let runPrompt = parsed.prompt;
-    if (skillsCfg.enabled && runPrompt.trim()) {
-      const matched = matchSkill(runPrompt, this.skillStore.getActive());
-      if (matched && skillsCfg.autoApply) {
-        appliedSkill = matched;
-        runPrompt = applySkill(runPrompt, matched);
-        this.skillStore.recordUse(matched.name);
-        this.logger.info(`[skills] auto-applied: ${matched.name} v${matched.version}`);
-      }
-    }
-
-    let prep = this.prepareAgentTurn(ctxWindow, agent, runPrompt, memoryContext);
-    // keep the rest of buildRequest using runPrompt via prep
-```
-
-- [ ] **Step 2: Add post-run trace recording + distillation**
-
-After the memory auto-extraction block (`memoryStore.extractFromInteraction(...)` around line 1175), add:
-
-```typescript
-    // ── Skill: record trace + distill ─────────────────────
-    if (skillsCfg.enabled && response.success) {
-      const trace: RunTrace = {
-        runId: `solo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        promptSummary: parsed.prompt.slice(0, 200),
-        outputShape: response.output.slice(0, 300),
-        timestamp: Date.now(),
-        mode: 'solo',
-      };
-      this.skillStore.recordTrace(trace);
-
-      // If a skill was applied, check for evolution
-      if (appliedSkill) {
-        const deps = this.getSkillDistillDeps();
-        const evolved = await evolveSkill(deps, appliedSkill, trace);
-        if (evolved) {
-          this.skillStore.bumpVersion(appliedSkill.name, evolved);
-          this.logger.info(`[skills] evolved ${appliedSkill.name} → v${this.skillStore.get(appliedSkill.name)?.version}`);
-        }
-        this.skillStore.recordSuccessSignal(appliedSkill.name, response.success);
-      }
-
-      // Periodic distillation check
-      const now = Date.now();
-      if (now - this.lastSkillDistillTime > Gateway.SKILL_DISTILL_COOLDOWN_MS) {
-        this.lastSkillDistillTime = now;
-        const recent = this.skillStore.getRecentTraces(skillsCfg.suggestOnRepeat + 5);
-        const candidate = await distillCandidate(
-          this.getSkillDistillDeps(),
-          recent,
-          this.skillStore.getAll(),
-          skillsCfg.suggestOnRepeat,
-        );
-        if (candidate) {
-          const suggestText = `🧩 I've done something like this ~${skillsCfg.suggestOnRepeat}× ("${candidate.description}"). Save it as a reusable skill **${candidate.name}**? (reply "yes", "no", or "/skill create ${candidate.name}")`;
-          await this.sendResponse({ chatId, channel, text: suggestText });
-          this.pendingSkillSuggestion = { ...candidate, chatId, channel };
-        }
-      }
-    }
-```
-
-- [ ] **Step 3: Add getSkillDistillDeps helper**
-
-Add to the Gateway class:
+- [ ] **Step 7: Add getSkillDistillDeps helper**
 
 ```typescript
   private getSkillDistillDeps(): DistillDeps {
     const { agent, model } = this.getAdvisorAgentAndModel();
+    const cfg = this.configManager.getSkillsConfig();
+    let resolved = model ?? this.getDefaultModelConfig(agent);
+    if (cfg.distillModel && resolved) {
+      resolved = { ...resolved, model: cfg.distillModel };
+    }
     return {
       agentFactory: this.agentFactory,
       activeAgent: agent,
-      activeModel: model || this.getDefaultModelConfig(agent),
+      activeModel: resolved,
       workingDir: this.workingDir,
     };
   }
 ```
 
-- [ ] **Step 4: Add pending suggestion handler in handleMessage**
+- [ ] **Step 8: Add the shared post-run pass**
 
-In `handleMessage()`, after the `lastAskedOptions` clearing block (after line 978) and *before* the `pending` team check (line 980), add:
+This one method serves both surfaces (channel + chat). It is only ever called fire-and-forget (`void this.afterRunSkillPass(...).catch(...)`) AFTER the user's response has been delivered, so its LLM calls (evolve, distill) never block a run — as the spec requires. GC runs on the 1st post-run pass after startup and every Nth run after (covers the spec's "on workspace load and after every Nth run" without an init-ordering dependency).
 
 ```typescript
-      // ── Pending skill suggestion check ──────────────────
-      if (this.pendingSkillSuggestion) {
-        const s = this.pendingSkillSuggestion;
-        const lower = message.text.trim().toLowerCase();
-        if (lower === 'yes') {
-          this.skillStore.add({ name: s.name, description: s.description, whenToUse: s.whenToUse, steps: s.steps, sourceRunId: 'user-confirmed' });
-          await this.sendResponse({ chatId: s.chatId, channel: s.channel, text: `✅ Skill **${s.name}** saved! Use \`/skills\` to see all.` });
-          this.pendingSkillSuggestion = null;
-          return;
-        } else if (lower === 'no') {
-          await this.sendResponse({ chatId: s.chatId, channel: s.channel, text: 'Got it, I won\'t suggest this one again.' });
-          this.pendingSkillSuggestion = null;
-          return;
+  private async afterRunSkillPass(opts: {
+    trace: RunTrace;
+    appliedSkill: SkillEntry | null;
+    clean: boolean;
+    /** Deliver a one-liner to the user on whatever surface ran the turn. */
+    notify: (text: string) => void | Promise<void>;
+    /** Stash a suggestion so the user's next reply can resolve it. */
+    setPending: (s: DistillResult) => void;
+  }): Promise<void> {
+    const cfg = this.configManager.getSkillsConfig();
+    if (!cfg.enabled) return;
+    const store = this.workspaceManager.getSkillStore();
+
+    if (opts.appliedSkill) {
+      store.recordUse(opts.appliedSkill.name);
+      store.recordSuccessSignal(opts.appliedSkill.name, opts.clean);
+      const entry = store.get(opts.appliedSkill.name);
+      // Gate evolution to every Nth use — one weak trace is not enough signal
+      // to rewrite steps on, and per-run LLM calls would be pure cost.
+      if (opts.clean && entry && entry.useCount % Codey.SKILL_EVOLVE_EVERY_N_USES === 0) {
+        const evolved = await evolveSkill(this.getSkillDistillDeps(), entry, opts.trace);
+        if (evolved) {
+          store.bumpVersion(entry.name, evolved);
+          this.logger.info(`[skills] evolved ${entry.name} → v${entry.version}`);
+          await opts.notify(`⚙︎ evolved skill ${entry.name} → v${entry.version} (rollback with /skill rollback ${entry.name})`);
         }
-        // Otherwise clear pending and fall through to normal handling
-        this.pendingSkillSuggestion = null;
       }
+    }
+
+    if (!opts.clean) return; // failed runs contribute a correction signal, not a trace
+
+    store.recordTrace(opts.trace);
+
+    this.skillRunCounter++;
+    if (this.skillRunCounter % Codey.SKILL_GC_EVERY_N_RUNS === 1) {
+      const n = store.runCollectGarbage({ staleDays: cfg.staleDays, weakSkillDays: cfg.weakSkillDays });
+      if (n > 0) this.logger.info(`[skills] GC archived ${n} skill(s)`);
+    }
+
+    const now = Date.now();
+    if (now - this.lastSkillDistillTime > Codey.SKILL_DISTILL_COOLDOWN_MS) {
+      this.lastSkillDistillTime = now;
+      const recent = store.getRecentTraces(cfg.suggestOnRepeat + 5);
+      const candidate = await distillCandidate(
+        this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
+      );
+      if (candidate) {
+        opts.setPending(candidate);
+        await opts.notify(
+          `🧩 I've done something like this repeatedly ("${candidate.description}"). ` +
+          `Save it as a reusable skill **${candidate.name}**? (reply "yes", "no", or "rename <new-name>")`
+        );
+      }
+    }
+  }
 ```
 
-- [ ] **Step 5: Verify build**
+- [ ] **Step 9: Verify build**
 
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm run build -w packages/gateway -w packages/core 2>&1
 ```
 Expected: Build succeeds.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add packages/gateway/src/gateway.ts
-git commit -m "feat(skills): pre-run injection, post-run trace + distill in runOneTurn
+git commit -m "feat(skills): skill commands + shared afterRunSkillPass in gateway
 
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 10: Gateway — sendToChat (Chat/Mac) integration
+### Task 11: Gateway — channel surface (handleMessage / runOneTurn)
 
 **Files:**
 - Modify: `packages/gateway/src/gateway.ts`
 
-- [ ] **Step 1: Pre-run skill injection in sendToChat**
+- [ ] **Step 1: Handle suggestion replies + explicit invocation in handleMessage**
 
-In `sendToChat()`, find where `prompt` is assigned for the solo path (around line 4105, `prompt = selPrefix + buildChatBootstrapPrompt(...)`). After the solo-advisor injection block (line 4113), add:
+In `handleMessage()` (`gateway.ts:934`), after the `lastAskedOptions` clearing block (~line 978) and *before* the pending team check (~line 980), add:
+
+```typescript
+      // ── Pending skill suggestion (channel surface) ──────────
+      const pendingKey = `${message.channel}:${message.chatId}`;
+      const pendingSkill = this.pendingSkillSuggestions.get(pendingKey);
+      if (pendingSkill) {
+        const reply = message.text.trim().toLowerCase();
+        const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
+        if (reply === 'yes' || renameMatch) {
+          const name = renameMatch ? renameMatch[1] : pendingSkill.name;
+          this.workspaceManager.getSkillStore().add({
+            name, description: pendingSkill.description,
+            whenToUse: pendingSkill.whenToUse, steps: pendingSkill.steps,
+            sourceRunId: 'user-confirmed',
+          });
+          this.pendingSkillSuggestions.delete(pendingKey);
+          await this.sendResponse({ chatId: message.chatId, channel: message.channel,
+            text: `✅ Skill **${name}** saved! Use \`/skills\` to see all.` });
+          return;
+        }
+        if (reply === 'no') {
+          this.workspaceManager.getSkillStore().rejectSuggestion(pendingSkill.name, pendingSkill.description);
+          this.pendingSkillSuggestions.delete(pendingKey);
+          await this.sendResponse({ chatId: message.chatId, channel: message.channel,
+            text: `Got it — I won't suggest "${pendingSkill.name}" again.` });
+          return;
+        }
+        // Any other reply: drop the suggestion and fall through to normal handling.
+        this.pendingSkillSuggestions.delete(pendingKey);
+      }
+
+      // ── Explicit skill invocation: /skill <name> <task> ─────
+      // Rewrites the message into the skill-applied prompt and proceeds as a
+      // normal (non-command) turn. Subcommands are excluded — parseCommand
+      // handles those.
+      const invokeMatch = message.text.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+      if (invokeMatch) {
+        const skill = this.workspaceManager.getSkillStore().getActive()
+          .find(s => s.name === invokeMatch[1]);
+        if (!skill) {
+          await this.sendResponse({ chatId: message.chatId, channel: message.channel,
+            text: `Skill "${invokeMatch[1]}" not found. Use /skills to list active skills.` });
+          return;
+        }
+        message.text = applySkill(invokeMatch[2].trim(), skill);
+      }
+```
+
+(Adjust `message.chatId`/`message.channel` access to match the surrounding code's shape exactly.)
+
+- [ ] **Step 2: Pre-run skill matching in runOneTurn**
+
+In `runOneTurn()`, replace the line `let prep = this.prepareAgentTurn(ctxWindow, agent, parsed.prompt, memoryContext);` (`gateway.ts:1123`) with:
 
 ```typescript
     // ── Skill matching (pre-run) ──────────────────────────
-    let appliedChatSkill: SkillEntry | null = null;
+    // high-confidence match → apply directly; borderline → LLM confirm gate.
+    let appliedSkill: SkillEntry | null = null;
     const skillsCfg = this.configManager.getSkillsConfig();
-    if (skillsCfg.enabled && chat.selection.type !== 'team') {
-      const matched = matchSkill(userText, this.skillStore.getActive());
-      if (matched && skillsCfg.autoApply) {
-        appliedChatSkill = matched;
-        prompt = applySkill(prompt, matched);
-        this.skillStore.recordUse(matched.name);
-        this.logger.info(`[skills] auto-applied (chat): ${matched.name} v${matched.version}`);
+    let runPrompt = parsed.prompt;
+    if (skillsCfg.enabled && skillsCfg.autoApply && runPrompt.trim()) {
+      const match = matchSkill(runPrompt, this.workspaceManager.getSkillStore().getActive());
+      if (match) {
+        const confirmed = match.confidence === 'high'
+          || await confirmMatch(this.getSkillDistillDeps(), runPrompt, match.skill);
+        if (confirmed) {
+          appliedSkill = match.skill;
+          runPrompt = applySkill(runPrompt, match.skill);
+          this.logger.info(`[skills] auto-applied: ${match.skill.name} v${match.skill.version} (${match.confidence})`);
+        }
       }
+    }
+
+    let prep = this.prepareAgentTurn(ctxWindow, agent, runPrompt, memoryContext);
+```
+
+IMPORTANT: there is a retry call to `prepareAgentTurn` at ~`gateway.ts:1145` — update it to pass `runPrompt` as well, so the retry doesn't silently drop the applied skill. The later bookkeeping uses of `parsed.prompt` (`addUserTurn` at 1153, `extractFromInteraction` at 1161) must KEEP using `parsed.prompt` — the user's original text is what belongs in context and memory.
+
+- [ ] **Step 3: Post-run pass — AFTER the response is sent, fire-and-forget**
+
+In `runOneTurn()`, after the `sendResponse(...)` call (`gateway.ts:1182`) — NOT before it — add:
+
+```typescript
+    // ── Skills: post-run pass (fire-and-forget — never blocks the reply) ──
+    if (skillsCfg.enabled) {
+      const trace: RunTrace = {
+        runId: `solo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        promptSummary: parsed.prompt.slice(0, 200),
+        outputPreview: (response.output || '').slice(0, 300),
+        timestamp: Date.now(),
+        mode: 'solo',
+      };
+      void this.afterRunSkillPass({
+        trace,
+        appliedSkill,
+        clean: response.success,
+        notify: (text) => this.sendResponse({ chatId: message.chatId, channel: message.channel, text }),
+        setPending: (s) => this.pendingSkillSuggestions.set(`${message.channel}:${message.chatId}`, s),
+      }).catch(err => this.logger.warn(`[skills] post-run pass failed: ${err}`));
     }
 ```
 
-Note: this variable is scoped within `sendToChat`. Declare `appliedChatSkill` alongside `output`, `tokens`, etc. near the top of the method (around line 3975 where other locals are initialized):
+(Use whatever locals `runOneTurn` already has for the chat id and channel — the same ones the `sendResponse` at 1182 uses.)
 
-```typescript
-    let appliedChatSkill: SkillEntry | null = null;
-```
-
-- [ ] **Step 2: Post-run trace recording in sendToChat**
-
-After the `sink({ type: 'done', ... })` call (around line 4406), add:
-
-```typescript
-      // ── Skill: record trace + distill (Chat/Mac path) ───
-      if (skillsCfg.enabled && output) {
-        const chatTrace: RunTrace = {
-          runId: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          promptSummary: userText.slice(0, 200),
-          outputShape: output.slice(0, 300),
-          workerSequence: teamThinkingByStep ? teamThinkingByStep.map((s: any) => s.worker || s.name || '').filter(Boolean) : undefined,
-          timestamp: Date.now(),
-          mode: teamTurnId ? 'team-sequential' : 'solo',
-        };
-        this.skillStore.recordTrace(chatTrace);
-
-        if (appliedChatSkill) {
-          const deps = this.getSkillDistillDeps();
-          const evolved = await evolveSkill(deps, appliedChatSkill, chatTrace);
-          if (evolved) {
-            this.skillStore.bumpVersion(appliedChatSkill.name, evolved);
-            this.logger.info(`[skills] evolved ${appliedChatSkill.name} → v${this.skillStore.get(appliedChatSkill.name)?.version}`);
-          }
-          this.skillStore.recordSuccessSignal(appliedChatSkill.name, true);
-        }
-
-        // Periodic distillation check (same cooldown as runOneTurn)
-        const now = Date.now();
-        if (now - this.lastSkillDistillTime > Gateway.SKILL_DISTILL_COOLDOWN_MS) {
-          this.lastSkillDistillTime = now;
-          const recent = this.skillStore.getRecentTraces(skillsCfg.suggestOnRepeat + 5);
-          const candidate = await distillCandidate(
-            this.getSkillDistillDeps(), recent, this.skillStore.getAll(), skillsCfg.suggestOnRepeat,
-          );
-          if (candidate) {
-            // For Chat/Mac, send suggestion as an info event
-            sink({
-              type: 'info',
-              chatId,
-              message: `🧩 I've done something like this ~${skillsCfg.suggestOnRepeat}× ("${candidate.description}"). Save it as a reusable skill **${candidate.name}**? (reply "yes" or "no")`,
-            });
-            this.pendingSkillSuggestion = { ...candidate, chatId, channel: '__mac__' as ChannelType };
-          }
-        }
-      }
-```
-
-- [ ] **Step 3: Verify build**
+- [ ] **Step 4: Verify build**
 
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm run build -w packages/gateway -w packages/core 2>&1
 ```
 Expected: Build succeeds.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add packages/gateway/src/gateway.ts
-git commit -m "feat(skills): pre-run injection + post-run trace in sendToChat (Chat/Mac)
+git commit -m "feat(skills): channel-surface skill flow (suggest, invoke, apply, post-run)
 
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 11: Full test suite verification
+### Task 12: Gateway — Chat/Mac surface (sendToChat)
+
+**Files:**
+- Modify: `packages/gateway/src/gateway.ts`
+
+Mac messages enter through `sendToChat` directly (IPC `chats:send` → `inProcessGateway.sendToChat`, `codey-mac/electron/main.ts:2494-2505`); channel messages with a linked chat are routed here too (`gateway.ts:1227`). So this surface needs its own suggestion-reply handling — `handleMessage` never sees these turns. `sendToChat` does not parse slash commands, so command-style management (`/skills`, `/skill forget`, …) remains channel-only for v1; the Mac app's natural surface for that is a Skills panel (follow-up, see YAGNI).
+
+- [ ] **Step 1: Handle suggestion replies early in sendToChat**
+
+In `sendToChat()`, after the `sink` wrapper definition (`gateway.ts:~4023`) and BEFORE the semaphore-acquire block (`gateway.ts:~4025`), add:
+
+```typescript
+    // ── Pending skill suggestion (yes / no / rename <name>) ─────────
+    // Resolved here because Mac turns never pass through handleMessage.
+    if (chat.pendingSkillSuggestion && !isSlashTurn) {
+      const s = chat.pendingSkillSuggestion;
+      const reply = userText.trim().toLowerCase();
+      const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
+      if (reply === 'yes' || reply === 'no' || renameMatch) {
+        const store = this.workspaceManager.getSkillStore();
+        let responseText: string;
+        if (reply === 'no') {
+          store.rejectSuggestion(s.name, s.description);
+          responseText = `Got it — I won't suggest "${s.name}" again.`;
+        } else {
+          const name = renameMatch ? renameMatch[1] : s.name;
+          store.add({ name, description: s.description, whenToUse: s.whenToUse,
+                      steps: s.steps, sourceRunId: 'user-confirmed' });
+          responseText = `✅ Skill **${name}** saved. It will be auto-applied on matching tasks.`;
+        }
+        this.chatManager.setPendingSkillSuggestion(chatId, null);
+        const now = Date.now();
+        this.chatManager.appendMessage(chatId, {
+          id: randomUUID(), role: 'user', content: userTextParam, timestamp: now,
+        });
+        this.chatManager.appendMessage(chatId, {
+          id: randomUUID(), role: 'assistant', content: responseText,
+          timestamp: now, isComplete: true,
+        });
+        sink({ type: 'done', chatId, response: responseText });
+        return { response: responseText, chatId };
+      }
+      // Any other reply: drop the suggestion and continue as a normal turn.
+      this.chatManager.setPendingSkillSuggestion(chatId, null);
+    }
+
+    // ── Explicit skill invocation: /skill <name> <task> ─────────────
+    const skillInvokeMatch = userText.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+    let appliedChatSkill: SkillEntry | null = null;
+    if (skillInvokeMatch) {
+      const skill = this.workspaceManager.getSkillStore().getActive()
+        .find(sk => sk.name === skillInvokeMatch[1]);
+      if (skill) {
+        appliedChatSkill = skill;
+        userText = applySkill(skillInvokeMatch[2].trim(), skill);
+      }
+    }
+```
+
+Match the `done` event's field shape to the existing `sink({ type: 'done', ... })` at `gateway.ts:4406` (include any additional required fields it carries). `randomUUID` is already imported in gateway.ts (used for toolCalls entries).
+
+- [ ] **Step 2: Auto-apply pre-run**
+
+Deeper in `sendToChat`, after the solo-advisor injection block (~`gateway.ts:4113`, where `prompt` has been assigned for the solo path), add:
+
+```typescript
+    // ── Skill matching (pre-run, solo chats only) ─────────────
+    const skillsCfg = this.configManager.getSkillsConfig();
+    if (skillsCfg.enabled && skillsCfg.autoApply && !appliedChatSkill
+        && chat.selection.type !== 'team' && !isSlashTurn) {
+      const match = matchSkill(userText, this.workspaceManager.getSkillStore().getActive());
+      if (match) {
+        const confirmed = match.confidence === 'high'
+          || await confirmMatch(this.getSkillDistillDeps(), userText, match.skill);
+        if (confirmed) {
+          appliedChatSkill = match.skill;
+          prompt = applySkill(prompt, match.skill);
+          this.logger.info(`[skills] auto-applied (chat): ${match.skill.name} v${match.skill.version} (${match.confidence})`);
+        }
+      }
+    }
+```
+
+- [ ] **Step 3: Post-run pass after the done event**
+
+After the `sink({ type: 'done', ... })` call (`gateway.ts:~4406`), add:
+
+```typescript
+      // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
+      if (skillsCfg.enabled && output) {
+        const chatTrace: RunTrace = {
+          runId: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          promptSummary: userText.slice(0, 200),
+          outputPreview: output.slice(0, 300),
+          workerSequence: teamThinkingByStep
+            ? teamThinkingByStep.map((st: any) => st.worker || st.name || '').filter(Boolean)
+            : undefined,
+          timestamp: Date.now(),
+          mode: teamTurnId ? 'team-sequential' : 'solo',
+        };
+        void this.afterRunSkillPass({
+          trace: chatTrace,
+          appliedSkill: appliedChatSkill,
+          clean: true,
+          notify: (text) => { sink({ type: 'info', chatId, message: text }); },
+          setPending: (s) => { this.chatManager.setPendingSkillSuggestion(chatId, s); },
+        }).catch(err => this.logger.warn(`[skills] post-run pass failed: ${err}`));
+      }
+```
+
+(`info` events already flow to the Mac renderer via the global chat event listener — see `onStatus` at `gateway.ts:4159` — and are captured into `toolCalls` for persistence by the sink wrapper.)
+
+- [ ] **Step 4: Verify build**
+
+```bash
+source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm run build -w packages/gateway -w packages/core 2>&1
+```
+Expected: Build succeeds.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/gateway/src/gateway.ts
+git commit -m "feat(skills): chat/Mac-surface skill flow in sendToChat
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 13: Full test suite verification
 
 **Files:** None (verification only)
 
@@ -1506,23 +1989,25 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test 2>&1 | tail -30
 ```
-Expected: All tests PASS. Core tests (~24 skill-crystallizer + ~24 existing = ~48). Gateway tests (existing ~18). Codey-mac tests (existing ~151).
+Expected: All tests PASS (~34 skill-crystallizer + existing core/gateway/codey-mac suites).
 
-- [ ] **Step 2: Verify full build**
+- [ ] **Step 2: Verify full build + lint**
 
 ```bash
-source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm run build 2>&1
+source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm run build 2>&1 && npm run lint 2>&1
 ```
-Expected: Build succeeds.
+Expected: Build succeeds; lint passes (emoji and `⚙︎` are pictographs, not flagged by `scripts/check-non-english.mjs`).
 
 - [ ] **Step 3: Manual smoke test (optional)**
 
 Start gateway: `npm run dev`
-Send `/skills` → expect "No active skills."
-Run a task twice → expect suggestion after second run.
-Reply "yes" → expect skill saved.
-Run similar task → expect auto-apply with `⚙︎ using skill:` prefix.
-Run `cd packages/core && npx vitest run src/skill-crystallizer.test.ts` → all pass.
+1. Send `/skills` on a channel → expect "No active skills."
+2. Run two similar tasks → after the second (cooldown permitting), expect the 🧩 suggestion.
+3. Reply `rename my-skill` → expect skill saved under the new name.
+4. Run a similar task → expect auto-apply logged, and on borderline matches a confirm call first.
+5. `/skill forget my-skill` → archived; `/skill restore my-skill` → back.
+6. Restart the gateway, run one task → traces from before the restart still count toward detection (check `workspaces/<name>/skills/traces.json` exists).
+7. On the Mac app: trigger a suggestion, reply "no" → suggestion resolved in-chat, and the same pattern is not re-suggested (it's in `index.json` → `rejected`).
 
 ---
 
@@ -1530,25 +2015,33 @@ Run `cd packages/core && npx vitest run src/skill-crystallizer.test.ts` → all 
 
 | Spec requirement | Task(s) |
 |-----------------|---------|
-| Skill store with index.json + .md files | Task 1, 2 |
-| Run trace recorder | Task 1, 2 |
+| Skill store: `skills/index.json` + `skills/traces.json` (spec amended, Task 0) | Task 0, 1, 2 |
+| Run trace recorder, persisted across restarts | Task 1, 2, 11, 12 |
 | Distiller — LLM-based pattern detection | Task 3 |
-| Suggested creation (asks before saving) | Task 8, 9 |
-| Auto-apply on match | Task 4, 9, 10 |
-| Self-evolution on use | Task 5, 9, 10 |
-| GC — stale + weak skill archiving | Task 1, 2, 8 |
-| Config block (suggestOnRepeat, staleDays, etc.) | Task 7 |
-| /skills + /skill commands | Task 8 |
-| solo path (runOneTurn) hooks | Task 9 |
-| Chat/Mac path (sendToChat) hooks | Task 10 |
-| Suppress re-suggestions after "no" | Task 9 (pendingSkillSuggestion cleared) |
+| Suggested creation with yes / no / **rename** | Task 10, 11 (channel), 12 (chat/Mac) |
+| "no" suppression (rejected list fed back to distiller) | Task 1, 3, 11, 12 |
+| Auto-apply on match: cheap pre-filter → LLM confirm on borderline | Task 4, 11, 12 |
+| Application never blocks the run (post-run work is fire-and-forget after delivery) | Task 10 (`afterRunSkillPass`), 11, 12 |
+| Self-evolution on use, gated to every Nth use, one-liner surfaced | Task 5, 10 |
+| Version history retained + rollback (`/skill rollback`) | Task 1, 2, 10 |
+| successSignals (cleanRuns / corrections) recorded per applied run | Task 10 (both surfaces via shared pass) |
+| GC — on first run after startup + every Nth run; stale + weak rules | Task 1, 2, 10 |
+| Config block (suggestOnRepeat, staleDays, distillModel, …) | Task 8 |
+| `/skills`, `/skill <name> <task>`, `/skill forget`, `/skill restore` | Task 10, 11 (invoke also on chat: Task 12) |
+| Workspace-scoped, survives workspace switching | Task 7 (WorkspaceManager ownership) |
+| Solo path (runOneTurn) hooks | Task 11 |
+| Chat/Mac path (sendToChat) hooks, incl. suggestion replies | Task 9, 12 |
 
----
+## Known v1 limitations (deliberate)
+
+- **Correction signal is coarse:** `corrections` increments only when an applied run fails (`clean: false`). Detecting "user re-asked / corrected afterward" requires cross-turn analysis — follow-up.
+- **`outputPreview` is a raw prefix** of the response, not a structural analysis of files touched. The field is named honestly so the distill/evolve prompts don't overclaim.
+- **The applied-skill banner lives in the prompt**, so the user sees it via the agent's behavior and the `[skills] auto-applied` log / evolve one-liners, not as a guaranteed prefix on every response. Surfacing a dedicated "using skill" chip in the Mac UI is a follow-up.
 
 ## Out of Scope (explicit YAGNI)
 
 - Embeddings-based similarity (LLM distiller is sufficient for current scale).
 - Cross-workspace / global skills (workspace-scoped only).
 - Sharing/exporting skills between users.
-- `skills/archived/` subdirectory — archived skills stay in index with `archived: true`.
-- Per-skill `.md` files on disk — only `index.json` is persisted for v1; md is a follow-up.
+- Per-skill `.md` files and `skills/archived/` subdirectory — archived skills stay in `index.json` with `archived: true` (spec amended in Task 0 to match).
+- Mac UI for skill management (Skills panel, "using skill" chip) — `sendToChat` doesn't parse slash commands, so management commands are channel-only for v1; suggestions/replies work everywhere.
