@@ -43,6 +43,32 @@ describe('config normalize', () => {
       expect(cm.listApiKeys()).toEqual([]);
     });
   });
+
+  it('getSkillsConfig returns hardcoded defaults when skills block is absent', () => {
+    withTempConfig({}, cm => {
+      const cfg = cm.getSkillsConfig();
+      expect(cfg.enabled).toBe(true);
+      expect(cfg.suggestOnRepeat).toBe(2);
+      expect(cfg.autoApply).toBe(true);
+      expect(cfg.staleDays).toBe(30);
+      expect(cfg.weakSkillDays).toBe(7);
+      expect(cfg.distillModel).toBeUndefined();
+    });
+  });
+
+  it('getSkillsConfig round-trips explicit values from gateway.json', () => {
+    withTempConfig({
+      skills: { enabled: false, suggestOnRepeat: 5, autoApply: false, staleDays: 14, weakSkillDays: 3, distillModel: 'claude-haiku-3' },
+    }, cm => {
+      const cfg = cm.getSkillsConfig();
+      expect(cfg.enabled).toBe(false);
+      expect(cfg.suggestOnRepeat).toBe(5);
+      expect(cfg.autoApply).toBe(false);
+      expect(cfg.staleDays).toBe(14);
+      expect(cfg.weakSkillDays).toBe(3);
+      expect(cfg.distillModel).toBe('claude-haiku-3');
+    });
+  });
 });
 
 describe('api key CRUD', () => {
