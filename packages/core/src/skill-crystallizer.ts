@@ -474,11 +474,74 @@ export async function distillCandidate(
   return null;
 }
 
-export function matchSkill(_task: string, _skills: SkillEntry[]): SkillMatch | null { return null; }
+export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | null {
+  const active = skills.filter(s => !s.archived);
+  if (active.length === 0) return null;
+  const taskTokens = tokenizeLax(task);
+  if (taskTokens.length === 0) return null;
+  let best: SkillMatch | null = null;
+  for (const skill of active) {
+    const skillTokens = tokenizeLax(`${skill.description} ${skill.whenToUse}`);
+    if (skillTokens.length === 0) continue;
+    const intersection = skillTokens.filter(t => taskTokens.includes(t));
+    if (intersection.length < 1) continue;
+    const unionSize = new Set([...taskTokens, ...skillTokens]).size;
+    const score = intersection.length / unionSize;
+    const confidence: SkillMatch['confidence'] =
+      intersection.length >= 2 && score > 0.1 ? 'high' : 'borderline';
+    if (!best || score > best.score) {
+      best = { skill, confidence, score };
+    }
+  }
+  return best;
+}
+
+function tokenizeLax(text: string): string[] {
+  if (!text) return [];
+  const stopWords = new Set([
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'do', 'for',
+    'from', 'has', 'have', 'in', 'is', 'it', 'its', 'of', 'on', 'or',
+    'that', 'the', 'to', 'was', 'were', 'will', 'with', 'you', 'i', 'me',
+    'my', 'we', 'our', 'this',
+  ]);
+  return text.toLowerCase()
+    .split(/[^a-z0-9_\-]+/i)
+    .filter(t => t.length > 1 && !stopWords.has(t));
+}
+
+const MATCH_CONFIRM_PROMPT = `Does the following task match this skill? The skill should only apply when the user is asking for exactly this kind of work.
+
+Skill: %SKILL_NAME%
+Description: %SKILL_DESC%
+When to use: %SKILL_WHEN%
+
+Task: %TASK%
+
+Return ONLY "YES" or "NO".`;
 
 export async function confirmMatch(
-  _deps: DistillDeps, _task: string, _skill: SkillEntry,
-): Promise<boolean> { return false; }
+  deps: DistillDeps,
+  task: string,
+  skill: SkillEntry,
+): Promise<boolean> {
+  // Function replacement: string replacements would corrupt user-derived
+  // content containing $-patterns ($&, $', $$, ...).
+  const sections: Record<string, string> = {
+    '%SKILL_NAME%': skill.name,
+    '%SKILL_DESC%': skill.description,
+    '%SKILL_WHEN%': skill.whenToUse,
+    '%TASK%': task,
+  };
+  const prompt = MATCH_CONFIRM_PROMPT.replace(
+    /%(SKILL_NAME|SKILL_DESC|SKILL_WHEN|TASK)%/g, m => sections[m]);
+  const response = await deps.agentFactory.run(deps.activeAgent, {
+    prompt, agent: deps.activeAgent, model: deps.activeModel,
+    interactive: false, skipPermissions: true,
+    context: { workingDir: deps.workingDir },
+  });
+  if (!response.success) return false;
+  return response.output.trim().toUpperCase() === 'YES';
+}
 
 export function applySkill(task: string, _skill: SkillEntry): string { return task; }
 

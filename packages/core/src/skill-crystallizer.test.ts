@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, distillCandidate, RunTrace, DistillDeps } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -326,5 +326,67 @@ describe('distillCandidate', () => {
       error: null, tokens: { total: 10 },
     }));
     expect(await distillCandidate(tooShort, traces, [], [], 2)).toBeNull();
+  });
+});
+
+function makeSkill(over: Partial<SkillEntry>): SkillEntry {
+  return {
+    name: 'x', description: '', whenToUse: '', steps: 's',
+    version: 1, history: [], useCount: 0, lastUsedAt: Date.now(),
+    successSignals: { cleanRuns: 0, corrections: 0 },
+    sourceRunIds: [], createdAt: Date.now(), archived: false,
+    ...over,
+  };
+}
+
+describe('matchSkill', () => {
+  const skills: SkillEntry[] = [
+    makeSkill({ name: 'release-notes', description: 'Generate release notes', whenToUse: 'user asks for release notes or changelog' }),
+    makeSkill({ name: 'fix-lint', description: 'Fix lint errors', whenToUse: 'user reports lint errors or ESLint failures' }),
+    makeSkill({ name: 'archived-x', description: 'Hidden', whenToUse: 'anything', archived: true }),
+  ];
+
+  it('high-confidence match for multi-keyword overlap', () => {
+    const m = matchSkill('generate release notes from merged PRs', skills);
+    expect(m?.skill.name).toBe('release-notes');
+    expect(m?.confidence).toBe('high');
+  });
+
+  it('borderline match for single-keyword overlap', () => {
+    const m = matchSkill('write a changelog for v2.1', skills);
+    expect(m?.skill.name).toBe('release-notes');
+    expect(m?.confidence).toBe('borderline');
+  });
+
+  it('matches fix-lint for ESLint task', () => {
+    const m = matchSkill('eslint is failing on CI, can you fix?', skills);
+    expect(m?.skill.name).toBe('fix-lint');
+  });
+
+  it('returns null for unrelated task', () => {
+    expect(matchSkill('build a REST API for users', skills)).toBeNull();
+  });
+
+  it('never matches archived skills', () => {
+    expect(matchSkill('do anything at all please', skills)).toBeNull();
+  });
+});
+
+describe('confirmMatch', () => {
+  const skill = makeSkill({ name: 'release-notes', description: 'Generate release notes', whenToUse: 'release notes or changelog' });
+
+  it('returns true on YES', async () => {
+    const deps = fakeDeps(async () => ({ success: true, output: 'YES', error: null, tokens: { total: 5 } }));
+    expect(await confirmMatch(deps, 'write a changelog', skill)).toBe(true);
+  });
+
+  it('returns false on NO', async () => {
+    const deps = fakeDeps(async () => ({ success: true, output: 'NO', error: null, tokens: { total: 5 } }));
+    expect(await confirmMatch(deps, 'build an API', skill)).toBe(false);
+  });
+
+  it('returns false on failed agent call', async () => {
+    const deps = fakeDeps(async () => ({ success: false, output: '', error: 'crash', tokens: { total: 0 } }));
+    expect(await confirmMatch(deps, 'write a changelog', skill)).toBe(false);
   });
 });
