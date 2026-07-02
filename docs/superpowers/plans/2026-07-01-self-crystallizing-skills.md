@@ -78,6 +78,10 @@ Note: `DistillDeps` is fully typed (no `any`) — same pattern as `GenerateDeps`
 
 ```typescript
 // packages/core/src/skill-crystallizer.ts
+//
+// On-disk layout (under <workspace>/skills/):
+//   index.json  — skill manifest: entries with version history, plus the rejected-suggestion list
+//   traces.json — rolling window of recent run traces (capped at RECENT_TRACES_MAX)
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
@@ -228,9 +232,16 @@ export class SkillStore {
     const now = Date.now();
     const existing = this.index.entries.find(e => e.name === params.name);
     if (existing) {
+      if (existing.steps !== params.steps) {
+        existing.history.push({ version: existing.version, steps: existing.steps });
+        if (existing.history.length > HISTORY_MAX) {
+          existing.history = existing.history.slice(-HISTORY_MAX);
+        }
+        existing.version++;
+        existing.steps = params.steps;
+      }
       existing.description = params.description;
       existing.whenToUse = params.whenToUse;
-      existing.steps = params.steps;
       if (params.sourceRunId && !existing.sourceRunIds.includes(params.sourceRunId)) {
         existing.sourceRunIds.push(params.sourceRunId);
       }
@@ -345,8 +356,7 @@ export class SkillStore {
     if (this.runTraces.length > RECENT_TRACES_MAX) {
       this.runTraces = this.runTraces.slice(0, RECENT_TRACES_MAX);
     }
-    this.tracesDirty = true;
-    this.scheduleFlush();
+    this.markTracesDirty();
   }
 
   getRecentTraces(limit: number = 10): RunTrace[] {
@@ -365,7 +375,11 @@ export class SkillStore {
         archived++;
         continue;
       }
-      if (entry.useCount < 2 && now - entry.createdAt > opts.weakSkillDays * 86_400_000) {
+      if (
+        entry.useCount < 2 &&
+        now - entry.createdAt > opts.weakSkillDays * 86_400_000 &&
+        now - entry.lastUsedAt > opts.weakSkillDays * 86_400_000
+      ) {
         entry.archived = true;
         archived++;
       }
@@ -381,6 +395,11 @@ export class SkillStore {
     this.scheduleFlush();
   }
 
+  private markTracesDirty(): void {
+    this.tracesDirty = true;
+    this.scheduleFlush();
+  }
+
   private enqueuePersist(): void {
     this.writeChain = this.writeChain.then(() => this.doPersist()).catch(() => {});
   }
@@ -391,14 +410,17 @@ export class SkillStore {
     const writeTraces = this.tracesDirty;
     this.indexDirty = false;
     this.tracesDirty = false;
+    // Serialize synchronously so later mutations in this tick can't tear the snapshot.
+    const indexJson = writeIndex ? JSON.stringify(this.index, null, 2) : null;
+    const tracesPayload: TracesFile = { version: 1, traces: this.runTraces };
+    const tracesJson = writeTraces ? JSON.stringify(tracesPayload, null, 2) : null;
     try {
       await fsp.mkdir(this.skillsDir, { recursive: true });
-      if (writeIndex) {
-        await atomicWrite(this.indexPath, JSON.stringify(this.index, null, 2));
+      if (indexJson !== null) {
+        await atomicWrite(this.indexPath, indexJson);
       }
-      if (writeTraces) {
-        const payload: TracesFile = { version: 1, traces: this.runTraces };
-        await atomicWrite(this.tracesPath, JSON.stringify(payload, null, 2));
+      if (tracesJson !== null) {
+        await atomicWrite(this.tracesPath, tracesJson);
       }
     } catch {
       this.indexDirty = this.indexDirty || writeIndex;
@@ -543,7 +565,17 @@ describe('SkillStore', () => {
     store.add({ name: 'test', description: 'first', whenToUse: 'w', steps: 's' });
     store.add({ name: 'test', description: 'second', whenToUse: 'w2', steps: 's2' });
     expect(store.getAll().length).toBe(1);
-    expect(store.get('test')!.description).toBe('second');
+    const u = store.get('test')!;
+    expect(u.description).toBe('second');
+    // Changed steps bump the version and retain the old steps in history.
+    expect(u.version).toBe(2);
+    expect(u.history).toEqual([{ version: 1, steps: 's' }]);
+    // Re-adding with identical steps does NOT bump the version.
+    store.add({ name: 'test', description: 'third', whenToUse: 'w3', steps: 's2' });
+    const u2 = store.get('test')!;
+    expect(u2.version).toBe(2);
+    expect(u2.history).toEqual([{ version: 1, steps: 's' }]);
+    expect(u2.description).toBe('third');
   });
 
   it('archive() and restore()', () => {
@@ -652,6 +684,7 @@ describe('SkillStore', () => {
     s1.lastUsedAt = old;
     const s2 = store.add({ name: 'weak', description: 'd', whenToUse: 'w', steps: 's', sourceRunId: 'r2' });
     s2.createdAt = old;
+    s2.lastUsedAt = old;
     const s3 = store.add({ name: 'active', description: 'd', whenToUse: 'w', steps: 's', sourceRunId: 'r3' });
     s3.useCount = 5;
     s3.lastUsedAt = Date.now() - 86_400_000;
