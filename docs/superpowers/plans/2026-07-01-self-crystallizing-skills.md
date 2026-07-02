@@ -1146,7 +1146,7 @@ export async function confirmMatch(
     prompt, agent: deps.activeAgent, model: deps.activeModel,
     interactive: false, skipPermissions: true,
     context: { workingDir: deps.workingDir },
-  } as any);
+  });
   if (!response.success) return false;
   return response.output.trim().toUpperCase() === 'YES';
 }
