@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, distillCandidate, RunTrace, DistillDeps } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -14,7 +14,8 @@ describe('SkillStore', () => {
     await store.load();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await store.flush();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
@@ -193,5 +194,88 @@ describe('SkillStore', () => {
     expect(store.get('old')!.archived).toBe(true);
     expect(store.get('weak')!.archived).toBe(true);
     expect(store.get('active')!.archived).toBe(false);
+  });
+});
+
+function fakeDeps(runImpl: (req: any) => Promise<any>): DistillDeps {
+  return {
+    activeAgent: 'claude-code' as any,
+    activeModel: { provider: 'anthropic', model: 'test' } as any,
+    workingDir: '/tmp',
+    agentFactory: { run: (_agent: any, req: any) => runImpl(req) } as any,
+  };
+}
+
+describe('distillCandidate', () => {
+  it('returns null for empty traces', async () => {
+    const result = await distillCandidate(null as any, [], [], [], 2);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when fewer traces than minRecurrence', async () => {
+    const result = await distillCandidate(null as any,
+      [{ runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' }],
+      [], [], 2);
+    expect(result).toBeNull();
+  });
+
+  it('calls agent with traces and rejected list, parses JSON result', async () => {
+    let calledPrompt = '';
+    const deps = fakeDeps(async (req) => {
+      calledPrompt = req.prompt;
+      return { success: true, output: JSON.stringify({
+        name: 'release-notes',
+        description: 'Generate release notes from merged PRs',
+        whenToUse: 'user asks for release notes or changelog',
+        steps: '1. fetch PRs\n2. group by type\n3. format with links',
+      }), error: null, tokens: { total: 100 } };
+    });
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'Draft release notes', outputPreview: 'markdown list', timestamp: 1, mode: 'solo' },
+      { runId: '2', promptSummary: 'Generate changelog', outputPreview: 'markdown list', timestamp: 2, mode: 'solo' },
+      { runId: '3', promptSummary: 'Write release announcement', outputPreview: 'markdown list', timestamp: 3, mode: 'solo' },
+    ];
+    const rejected = [{ name: 'weekly-digest', description: 'Weekly summary', rejectedAt: 1 }];
+    const result = await distillCandidate(deps, traces, [], rejected, 2);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('release-notes');
+    expect(result!.steps).toContain('fetch PRs');
+    expect(calledPrompt).toContain('Draft release notes');
+    expect(calledPrompt).toContain('release announcement');
+    expect(calledPrompt).toContain('weekly-digest');
+  });
+
+  it('returns null on "NONE" response', async () => {
+    const deps = fakeDeps(async () => ({ success: true, output: 'NONE', error: null, tokens: { total: 10 } }));
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' },
+      { runId: '2', promptSummary: 'z', outputPreview: 'y', timestamp: 1, mode: 'solo' },
+    ];
+    const result = await distillCandidate(deps, traces, [], [], 2);
+    expect(result).toBeNull();
+  });
+
+  it('returns null on unparseable output', async () => {
+    const deps = fakeDeps(async () => ({ success: true, output: 'garbage', error: null, tokens: { total: 10 } }));
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' },
+      { runId: '2', promptSummary: 'z', outputPreview: 'y', timestamp: 1, mode: 'solo' },
+    ];
+    const result = await distillCandidate(deps, traces, [], [], 2);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when result fields are missing or not strings', async () => {
+    const deps = fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({ name: 'valid-name', steps: '1. x' }), // no description/whenToUse
+      error: null, tokens: { total: 10 },
+    }));
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' },
+      { runId: '2', promptSummary: 'z', outputPreview: 'y', timestamp: 1, mode: 'solo' },
+    ];
+    const result = await distillCandidate(deps, traces, [], [], 2);
+    expect(result).toBeNull();
   });
 });

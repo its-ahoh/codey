@@ -373,12 +373,102 @@ function stripCodeFences(s: string): string {
   return m ? m[1].trim() : s.trim();
 }
 
-// ── Stubs (filled in later tasks) ──────────────────────────────
+// ── distillCandidate ───────────────────────────────────────────
+
+const DISTILL_PROMPT = `You analyze coding-agent runs to find recurring work patterns.
+
+Given these recent run traces and existing skills, identify a repeatable sub-process that appears in 2+ runs. If you find one, describe it as a reusable skill. If none, return exactly "NONE".
+
+Recent traces:
+%TRACES%
+
+Existing skills (don't duplicate):
+%SKILLS%
+
+Previously rejected suggestions (the user said no — do NOT re-propose these or close variants):
+%REJECTED%
+
+Return ONE JSON object (no markdown, no prose) or the literal word "NONE":
+{
+  "name": "kebab-case",
+  "description": "one line describing what this skill does",
+  "whenToUse": "when the user asks to...",
+  "steps": "1. ...\\n2. ...\\n3. ..."
+}
+
+Rules:
+- name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
+- Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
+
+function formatTracesForPrompt(traces: RunTrace[]): string {
+  return traces.map(t => {
+    const parts = [`- ${t.promptSummary} [${t.mode}]`];
+    if (t.workerSequence && t.workerSequence.length > 0) {
+      parts.push(`  Steps: ${t.workerSequence.join(' → ')}`);
+    }
+    return parts.join('\n');
+  }).join('\n');
+}
+
+function formatSkillsForPrompt(skills: SkillEntry[]): string {
+  if (skills.length === 0) return '(none)';
+  return skills.map(s => `- ${s.name}: ${s.description}`).join('\n');
+}
+
+function formatRejectedForPrompt(rejected: RejectedSuggestion[]): string {
+  if (rejected.length === 0) return '(none)';
+  return rejected.map(r => `- ${r.name}: ${r.description}`).join('\n');
+}
+
+function tryParseDistill(raw: string): DistillResult | null {
+  const trimmed = raw.trim();
+  if (trimmed === 'NONE' || trimmed === '"NONE"') return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(stripCodeFences(trimmed)); } catch { return null; }
+  const p = parsed as Record<string, unknown>;
+  if (!p || typeof p !== 'object') return null;
+  for (const field of ['name', 'description', 'whenToUse', 'steps'] as const) {
+    if (typeof p[field] !== 'string' || !(p[field] as string).trim()) return null;
+  }
+  return { name: p.name as string, description: p.description as string,
+           whenToUse: p.whenToUse as string, steps: p.steps as string };
+}
 
 export async function distillCandidate(
-  _deps: DistillDeps, _traces: RunTrace[], _existing: SkillEntry[],
-  _rejected: RejectedSuggestion[], _minRecurrence: number,
-): Promise<DistillResult | null> { return null; }
+  deps: DistillDeps,
+  traces: RunTrace[],
+  existing: SkillEntry[],
+  rejected: RejectedSuggestion[],
+  minRecurrence: number,
+): Promise<DistillResult | null> {
+  if (traces.length < minRecurrence) return null;
+
+  const composed = DISTILL_PROMPT
+    .replace('%TRACES%', formatTracesForPrompt(traces))
+    .replace('%SKILLS%', formatSkillsForPrompt(existing.filter(s => !s.archived)))
+    .replace('%REJECTED%', formatRejectedForPrompt(rejected));
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await deps.agentFactory.run(deps.activeAgent, {
+      prompt: attempt === 0 ? composed
+        : `${composed}\n\nReminder: return ONLY the JSON object or the word "NONE". No markdown.`,
+      agent: deps.activeAgent,
+      model: deps.activeModel,
+      interactive: false,
+      skipPermissions: true,
+      context: { workingDir: deps.workingDir },
+    });
+    if (!response.success) continue;
+    const parsed = tryParseDistill(response.output);
+    if (parsed) {
+      if (/^[a-z][a-z0-9-]*$/.test(parsed.name) && parsed.name.length >= 3 && parsed.name.length <= 30) {
+        return parsed;
+      }
+    }
+    if (response.output.trim() === 'NONE') return null;
+  }
+  return null;
+}
 
 export function matchSkill(_task: string, _skills: SkillEntry[]): SkillMatch | null { return null; }
 
