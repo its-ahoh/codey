@@ -4327,6 +4327,79 @@ Example: /model gpt-4.1 write a Python script`;
       }
     };
 
+    // Short-circuit helper for skill-related conversational replies that never
+    // reach an agent: persist both sides of the exchange, announce completion,
+    // and return. Runs BEFORE the semaphore acquire, so there is nothing to
+    // release (mirrors how the workspace-not-found path only releases because
+    // it acquired first).
+    const finishSkillReply = (responseText: string): { response: string; chatId: string } => {
+      const now = Date.now();
+      this.chatManager.appendMessage(chatId, {
+        id: randomUUID(), role: 'user', content: userTextParam, timestamp: now, isComplete: true,
+      });
+      this.chatManager.appendMessage(chatId, {
+        id: randomUUID(), role: 'assistant', content: responseText, timestamp: now, isComplete: true,
+      });
+      sink({ type: 'done', chatId, response: responseText });
+      return { response: responseText, chatId };
+    };
+
+    // ── Pending skill suggestion (yes / no / rename <name>) ─────────
+    // Resolved here because Mac turns never pass through handleMessage.
+    if (chat.pendingSkillSuggestion && !isSlashTurn) {
+      const s = chat.pendingSkillSuggestion;
+      const reply = userText.trim().toLowerCase();
+      const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
+      if (reply === 'yes' || reply === 'no' || renameMatch) {
+        const store = this.workspaceManager.getSkillStore();
+        let responseText: string;
+        if (reply === 'no') {
+          store.rejectSuggestion(s.name, s.description);
+          responseText = `Got it — I won't suggest "${s.name}" again.`;
+        } else {
+          const name = renameMatch ? renameMatch[1] : s.name;
+          store.add({ name, description: s.description, whenToUse: s.whenToUse,
+                      steps: s.steps, sourceRunId: 'user-confirmed' });
+          responseText = `✅ Skill **${name}** saved. It will be auto-applied on matching tasks.`;
+        }
+        this.chatManager.setPendingSkillSuggestion(chatId, null);
+        return finishSkillReply(responseText);
+      }
+      // Any other reply: drop the suggestion and continue as a normal turn.
+      this.chatManager.setPendingSkillSuggestion(chatId, null);
+    }
+
+    // ── Explicit skill invocation ───────────────────────────────────
+    // Channel-origin turns arrive pre-resolved on origin.skillInvoke (parsed
+    // and validated by handleMessage); Mac-origin turns parse `/skill <name>
+    // <task>` here. Either way userText is rewritten to the RAW task so the
+    // persisted user message and downstream bootstrap see the clean text —
+    // the banner is applied exactly once at prompt build (see below).
+    let appliedChatSkill: SkillEntry | null = null;
+    let chatSkillTask: string | null = null;
+    if (origin?.skillInvoke) {
+      appliedChatSkill = origin.skillInvoke.skill;
+      chatSkillTask = origin.skillInvoke.task;
+    } else {
+      const invokeMatch = userText.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+      if (invokeMatch) {
+        if (!this.configManager?.getSkillsConfig()?.enabled) {
+          return finishSkillReply('Skills are disabled.');
+        }
+        const name = invokeMatch[1].toLowerCase();
+        const skill = this.workspaceManager.getSkillStore().getActive()
+          .find(sk => sk.name === name);
+        if (!skill) {
+          return finishSkillReply(`Skill "${name}" not found. Ask me to /skills to see active skills.`);
+        }
+        appliedChatSkill = skill;
+        chatSkillTask = invokeMatch[2].trim();
+      }
+    }
+    if (appliedChatSkill && chatSkillTask !== null) {
+      userText = chatSkillTask;
+    }
+
     // Queue if at capacity
     if ((this.chatSemaphore as any).running >= (this.chatSemaphore as any).max) {
       sink({ type: 'queued', chatId, position: this.chatSemaphore.queueLength + 1 });
@@ -4419,6 +4492,27 @@ Example: /model gpt-4.1 write a Python script`;
     // Solo advisor: when enabled (and not a team), tell the agent how to escalate.
     if (chat.soloAdvisor && chat.selection.type !== 'team') {
       prompt = prompt + '\n\n' + SOLO_ADVISOR_INSTRUCTION;
+    }
+
+    // ── Skill application (pre-run) ─────────────────────────────────
+    // Explicit invoke wins outright (banner applied once, no matching);
+    // otherwise auto-apply matches against active skills — solo chats only.
+    const skillsCfg = this.configManager?.getSkillsConfig();
+    if (appliedChatSkill) {
+      prompt = applySkill(prompt, appliedChatSkill);
+      this.logger.info(`[skills] explicit invoke (chat): ${appliedChatSkill.name} v${appliedChatSkill.version}`);
+    } else if (skillsCfg?.enabled && skillsCfg.autoApply
+        && chat.selection.type !== 'team' && !isSlashTurn) {
+      const match = matchSkill(userText, this.workspaceManager.getSkillStore().getActive());
+      if (match) {
+        const confirmed = match.confidence === 'high'
+          || await confirmMatch(this.getSkillDistillDeps(), userText, match.skill);
+        if (confirmed) {
+          appliedChatSkill = match.skill;
+          prompt = applySkill(prompt, match.skill);
+          this.logger.info(`[skills] auto-applied (chat): ${match.skill.name} v${match.skill.version} (${match.confidence})`);
+        }
+      }
     }
 
     const userMessage: ChatMessage = {
@@ -4566,6 +4660,9 @@ Example: /model gpt-4.1 write a Python script`;
           resumeSessionId = undefined;
           newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
           prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments);
+          // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
+          // the one that carried it (still exactly once per prompt build).
+          if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);
           response = await this.runWithFallback(agent, {
             prompt,
             agent,
@@ -4712,6 +4809,33 @@ Example: /model gpt-4.1 write a Python script`;
       }
 
       sink({ type: 'done', chatId, response: output, thinking: singleAgentResponse?.thinking, tokens, durationSec, title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
+
+      // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
+      if (skillsCfg?.enabled && output) {
+        // Worker sequence for team turns comes from the persisted per-worker
+        // messages (teamThinkingByStep only maps step → thinking text, no names).
+        const workerSequence = teamTurnId
+          ? this.chatManager.get(chatId)?.messages
+              .filter(m => m.teamTurnId === teamTurnId && m.worker)
+              .map(m => m.worker as string)
+          : undefined;
+        const chatTrace: RunTrace = {
+          runId: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          promptSummary: userText.slice(0, 200),
+          outputPreview: output.slice(0, 300),
+          workerSequence: workerSequence && workerSequence.length > 0 ? workerSequence : undefined,
+          timestamp: Date.now(),
+          mode: teamTurnId ? 'team-sequential' : 'solo',
+        };
+        // afterRunSkillPass never rejects (stage-isolated try/catch inside).
+        void this.afterRunSkillPass({
+          trace: chatTrace,
+          appliedSkill: appliedChatSkill,
+          clean: true,
+          notify: (text) => { sink({ type: 'info', chatId, message: text }); },
+          setPending: (s) => { this.chatManager.setPendingSkillSuggestion(chatId, s); },
+        });
+      }
 
       // Mirror this turn to every attached route except the originating one.
       // Mac-origin uses a synthetic '__mac__' channel that matches no real

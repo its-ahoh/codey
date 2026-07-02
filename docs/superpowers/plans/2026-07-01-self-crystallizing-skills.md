@@ -2090,16 +2090,33 @@ In `sendToChat()`, after the `sink` wrapper definition (`gateway.ts:~4023`) and 
       this.chatManager.setPendingSkillSuggestion(chatId, null);
     }
 
-    // ── Explicit skill invocation: /skill <name> <task> ─────────────
-    const skillInvokeMatch = userText.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+    // ── Explicit skill invocation ───────────────────────────────────
+    // Channel-origin turns arrive pre-resolved on origin.skillInvoke; Mac-origin
+    // turns parse `/skill <name> <task>` here. Either way userText is rewritten
+    // to the RAW task (persisted user message + bootstrap see the clean text);
+    // the banner is applied exactly once at prompt build (Step 2).
     let appliedChatSkill: SkillEntry | null = null;
-    if (skillInvokeMatch) {
-      const skill = this.workspaceManager.getSkillStore().getActive()
-        .find(sk => sk.name === skillInvokeMatch[1]);
-      if (skill) {
+    let chatSkillTask: string | null = null;
+    if (origin?.skillInvoke) {
+      appliedChatSkill = origin.skillInvoke.skill;
+      chatSkillTask = origin.skillInvoke.task;
+    } else {
+      const invokeMatch = userText.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+      if (invokeMatch) {
+        if (!this.configManager?.getSkillsConfig()?.enabled) {
+          return finishSkillReply('Skills are disabled.');   // persist + done + return, like the suggestion path
+        }
+        const name = invokeMatch[1].toLowerCase();
+        const skill = this.workspaceManager.getSkillStore().getActive().find(sk => sk.name === name);
+        if (!skill) {
+          return finishSkillReply(`Skill "${name}" not found. Ask me to /skills to see active skills.`);
+        }
         appliedChatSkill = skill;
-        userText = applySkill(skillInvokeMatch[2].trim(), skill);
+        chatSkillTask = invokeMatch[2].trim();
       }
+    }
+    if (appliedChatSkill && chatSkillTask !== null) {
+      userText = chatSkillTask;
     }
 ```
 
@@ -2110,9 +2127,14 @@ Match the `done` event's field shape to the existing `sink({ type: 'done', ... }
 Deeper in `sendToChat`, after the solo-advisor injection block (~`gateway.ts:4113`, where `prompt` has been assigned for the solo path), add:
 
 ```typescript
-    // ── Skill matching (pre-run, solo chats only) ─────────────
-    const skillsCfg = this.configManager.getSkillsConfig();
-    if (skillsCfg.enabled && skillsCfg.autoApply && !appliedChatSkill
+    // ── Skill application (pre-run) ─────────────────────────────────
+    // Explicit invoke wins outright (banner applied once, no matching);
+    // otherwise auto-apply matches against active skills — solo chats only.
+    const skillsCfg = this.configManager?.getSkillsConfig();
+    if (appliedChatSkill) {
+      prompt = applySkill(prompt, appliedChatSkill);
+      this.logger.info(`[skills] explicit invoke (chat): ${appliedChatSkill.name} v${appliedChatSkill.version}`);
+    } else if (skillsCfg?.enabled && skillsCfg.autoApply
         && chat.selection.type !== 'team' && !isSlashTurn) {
       const match = matchSkill(userText, this.workspaceManager.getSkillStore().getActive());
       if (match) {
@@ -2133,14 +2155,19 @@ After the `sink({ type: 'done', ... })` call (`gateway.ts:~4406`), add:
 
 ```typescript
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
-      if (skillsCfg.enabled && output) {
+      if (skillsCfg?.enabled && output) {
+        // Worker sequence for team turns comes from the persisted per-worker
+        // messages (teamThinkingByStep only maps step → thinking text, no names).
+        const workerSequence = teamTurnId
+          ? this.chatManager.get(chatId)?.messages
+              .filter(m => m.teamTurnId === teamTurnId && m.worker)
+              .map(m => m.worker as string)
+          : undefined;
         const chatTrace: RunTrace = {
           runId: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           promptSummary: userText.slice(0, 200),
           outputPreview: output.slice(0, 300),
-          workerSequence: teamThinkingByStep
-            ? teamThinkingByStep.map((st: any) => st.worker || st.name || '').filter(Boolean)
-            : undefined,
+          workerSequence: workerSequence && workerSequence.length > 0 ? workerSequence : undefined,
           timestamp: Date.now(),
           mode: teamTurnId ? 'team-sequential' : 'solo',
         };
