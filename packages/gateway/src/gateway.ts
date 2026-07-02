@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillMatch, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -73,6 +73,15 @@ export class Codey {
   private startTime = Date.now();
   private tuiMode = false;
   private workingDir: string = process.cwd();
+
+  /** Pending skill suggestions for the channel surface, keyed `${channel}:${chatId}`.
+   *  (Chat-surface suggestions are persisted on the Chat via ChatManager instead.) */
+  private pendingSkillSuggestions = new Map<string, DistillResult>();
+  private skillRunCounter = 0;
+  private lastSkillDistillTime = 0;
+  private static SKILL_DISTILL_COOLDOWN_MS = 300_000; // 5 min
+  private static SKILL_GC_EVERY_N_RUNS = 20;
+  private static SKILL_EVOLVE_EVERY_N_USES = 3;
 
   // Pre-compiled regex patterns for parseCommand
   private static readonly REGEX_COMMAND = /^\/(\w+)(?:\s+(.*))?$/;
@@ -1396,6 +1405,29 @@ export class Codey {
       case 'switch':
         await this.cmdSwitchChat(args, message);
         break;
+      case 'skills':
+        await this.cmdSkills(chatId, channel);
+        break;
+      case 'skill-forget': {
+        const ok = this.workspaceManager.getSkillStore().archive(args[0]);
+        await this.sendResponse({ chatId, channel,
+          text: ok ? `🗑️ Skill **${args[0]}** archived. Restore with /skill restore ${args[0]}` : `Skill "${args[0]}" not found.` });
+        break;
+      }
+      case 'skill-restore': {
+        const ok = this.workspaceManager.getSkillStore().restore(args[0]);
+        await this.sendResponse({ chatId, channel,
+          text: ok ? `🔄 Skill **${args[0]}** restored.` : `Skill "${args[0]}" not found.` });
+        break;
+      }
+      case 'skill-rollback': {
+        const store = this.workspaceManager.getSkillStore();
+        const ok = store.rollback(args[0]);
+        const v = store.get(args[0])?.version;
+        await this.sendResponse({ chatId, channel,
+          text: ok ? `⏪ Skill **${args[0]}** rolled back to v${v}.` : `Skill "${args[0]}" has no prior version (or was not found).` });
+        break;
+      }
       default:
         return;
     }
@@ -1563,6 +1595,100 @@ export class Codey {
       channel,
       text: `👥 Teams (available in all workspaces)\n\n${this.workspaceManager.listTeams()}`,
     });
+  }
+
+  private async cmdSkills(chatId: string, channel: ChannelType): Promise<void> {
+    const active = this.workspaceManager.getSkillStore().getActive();
+    if (active.length === 0) {
+      await this.sendResponse({ chatId, channel, text: 'No active skills. Skills crystallize from repeated work patterns.' });
+      return;
+    }
+    const lines = active.map(s =>
+      `- **${s.name}** (v${s.version}): ${s.description} — used ${s.useCount}×, last ${Codey.relativeTime(s.lastUsedAt)}`
+    );
+    await this.sendResponse({ chatId, channel, text: `📋 **Skills** (${active.length})\n\n${lines.join('\n')}` });
+  }
+
+  private static relativeTime(ts: number): string {
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  }
+
+  private getSkillDistillDeps(): DistillDeps {
+    const { agent, model } = this.getAdvisorAgentAndModel();
+    const cfg = this.configManager?.getSkillsConfig();
+    let resolved = model ?? this.getDefaultModelConfig(agent);
+    if (cfg?.distillModel && resolved) {
+      resolved = { ...resolved, model: cfg.distillModel };
+    }
+    return {
+      agentFactory: this.agentFactory,
+      activeAgent: agent,
+      activeModel: resolved,
+      workingDir: this.workingDir,
+    };
+  }
+
+  private async afterRunSkillPass(opts: {
+    trace: RunTrace;
+    appliedSkill: SkillEntry | null;
+    clean: boolean;
+    /** Deliver a one-liner to the user on whatever surface ran the turn. */
+    notify: (text: string) => void | Promise<void>;
+    /** Stash a suggestion so the user's next reply can resolve it. */
+    setPending: (s: DistillResult) => void;
+  }): Promise<void> {
+    const cfg = this.configManager?.getSkillsConfig();
+    if (!cfg || !cfg.enabled) return;
+    const store = this.workspaceManager.getSkillStore();
+
+    if (opts.appliedSkill) {
+      store.recordUse(opts.appliedSkill.name);
+      store.recordSuccessSignal(opts.appliedSkill.name, opts.clean);
+      const entry = store.get(opts.appliedSkill.name);
+      // Gate evolution to every Nth use — one weak trace is not enough signal
+      // to rewrite steps on, and per-run LLM calls would be pure cost.
+      if (opts.clean && entry && entry.useCount % Codey.SKILL_EVOLVE_EVERY_N_USES === 0) {
+        const evolved = await evolveSkill(this.getSkillDistillDeps(), entry, opts.trace);
+        if (evolved) {
+          store.bumpVersion(entry.name, evolved);
+          this.logger.info(`[skills] evolved ${entry.name} → v${entry.version}`);
+          await opts.notify(`⚙︎ evolved skill ${entry.name} → v${entry.version} (rollback with /skill rollback ${entry.name})`);
+        }
+      }
+    }
+
+    if (!opts.clean) return; // failed runs contribute a correction signal, not a trace
+
+    store.recordTrace(opts.trace);
+
+    this.skillRunCounter++;
+    if (this.skillRunCounter % Codey.SKILL_GC_EVERY_N_RUNS === 1) {
+      const n = store.runCollectGarbage({ staleDays: cfg.staleDays, weakSkillDays: cfg.weakSkillDays });
+      if (n > 0) this.logger.info(`[skills] GC archived ${n} skill(s)`);
+    }
+
+    const now = Date.now();
+    if (now - this.lastSkillDistillTime > Codey.SKILL_DISTILL_COOLDOWN_MS) {
+      this.lastSkillDistillTime = now;
+      const recent = store.getRecentTraces(cfg.suggestOnRepeat + 5);
+      const candidate = await distillCandidate(
+        this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
+      );
+      if (candidate) {
+        opts.setPending(candidate);
+        await opts.notify(
+          `🧩 I've done something like this repeatedly ("${candidate.description}"). ` +
+          `Save it as a reusable skill **${candidate.name}**? (reply "yes", "no", or "rename <new-name>")`
+        );
+      }
+    }
   }
 
   private async cmdWorker(args: string[], message: UserMessage, prompt: string): Promise<void> {
@@ -3463,6 +3589,16 @@ Example: /model gpt-4.1 write a Python script`;
       const argsStr = commandMatch[2] || '';
       const args = argsStr.split(/\s+/).filter(Boolean);
       
+      // /skill forget|restore|rollback <name>
+      const skillSubMatch = text.match(/^\/skill\s+(forget|restore|rollback)\s+(\S+)/i);
+      if (skillSubMatch) {
+        return {
+          command: `skill-${skillSubMatch[1].toLowerCase()}`,
+          args: [skillSubMatch[2]],
+          agent: undefined as any, model: undefined, prompt: '',
+        };
+      }
+
       // Check for worker command: /worker architect design something
       const workerMatch = text.match(/\/worker\s+(\w+)\s+(.+)/i);
       if (workerMatch) {
