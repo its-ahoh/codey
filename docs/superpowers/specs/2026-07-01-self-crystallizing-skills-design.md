@@ -53,10 +53,9 @@ New module `packages/core/src/skill-crystallizer.ts`, plus a per-workspace
 ```
 workspaces/<name>/
   skills/
-    index.json             — manifest of active skills
-    <skill-name>.md        — "use when…" header + distilled steps
-    archived/
-      <skill-name>.md      — self-cleaned or user-forgotten skills
+    index.json             — manifest of skills (active + archived) with per-skill
+                             steps, version history, and rejected-suggestion list
+    traces.json            — rolling run-trace history (survives restarts)
 ```
 
 Three moving parts:
@@ -196,3 +195,7 @@ thin wiring layer.
 - Cross-workspace / global skills (workspace-scoped only for v1).
 - Embeddings-based similarity (LLM distiller is enough at current scale).
 - Sharing/exporting skills between users.
+- Per-skill `.md` files on disk — v1 keeps steps + version history inside
+  `index.json` (matches MemoryStore's actual persistence).
+- `skills/archived/` subdirectory — archived skills stay in the index with
+  `archived: true`; restorable via `/skill restore`.
