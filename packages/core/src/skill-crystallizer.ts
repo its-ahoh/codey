@@ -378,7 +378,9 @@ function stripCodeFences(s: string): string {
  *  can't itself be re-substituted. Keys are literals like '%TRACES%' — only
  *  word chars between %, so no regex metacharacters to escape. */
 function fillPrompt(template: string, sections: Record<string, string>): string {
-  const pattern = new RegExp(Object.keys(sections).join('|'), 'g');
+  const keys = Object.keys(sections);
+  if (keys.length === 0) return template;
+  const pattern = new RegExp(keys.join('|'), 'g');
   return template.replace(pattern, m => sections[m]);
 }
 

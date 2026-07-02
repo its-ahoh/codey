@@ -1439,12 +1439,17 @@ After `this.memoryStore = new MemoryStore(workspacePath); await this.memoryStore
     await this.skillStore.load();
 ```
 
-- [ ] **Step 3: Re-create on workspace rename**
+Immediately before replacing the stores, flush the outgoing ones (try/catch-ignore) so a pending 50ms debounced write can't recreate a ghost directory under the previous workspace path.
 
-In `renameWorkspace`, after `this.memoryStore = new MemoryStore(this.getWorkspacePath());` (line 320):
+- [ ] **Step 3: Re-create AND load on workspace rename**
+
+In `renameWorkspace`'s current-workspace branch: flush both outgoing stores BEFORE `fs.promises.rename` (their paths point at the old dir), then after the rename re-create and `await ...load()` both stores. Skipping the load() means the first write clobbers the renamed workspace's `skills/index.json` / memory index with an empty one:
 
 ```typescript
+      this.memoryStore = new MemoryStore(this.getWorkspacePath());
+      await this.memoryStore.load();
       this.skillStore = new SkillStore(this.getWorkspacePath());
+      await this.skillStore.load();
 ```
 
 - [ ] **Step 4: Add the accessor**
@@ -1455,17 +1460,12 @@ Next to `getMemoryStore(): MemoryStore { return this.memoryStore; }` (line 275):
   getSkillStore(): SkillStore { return this.skillStore; }
 ```
 
-- [ ] **Step 5: Add a test**
+- [ ] **Step 5: Add tests**
 
-Append to `packages/core/src/workspace.test.ts` (follow the file's existing setup pattern for constructing a WorkspaceManager; the assertion is what matters):
-
-```typescript
-  it('exposes a per-workspace SkillStore that survives getMemoryStore calls', () => {
-    const store = manager.getSkillStore();
-    expect(store).toBeDefined();
-    expect(manager.getSkillStore()).toBe(store); // stable reference until switch
-  });
-```
+Append a `WorkspaceManager SkillStore` describe to `packages/core/src/workspace.test.ts` (follow the file's existing fixture patterns). Cover:
+- Hydration: seed `<workspace>/skills/index.json` with one valid v1 entry, load, assert `getSkillStore().getActive()` returns it.
+- Rename: rename the active workspace, assert the skill is still active AND that a post-rename `flush()` does not clobber the renamed workspace's `skills/index.json` (regression for Step 3's load()).
+- Per-workspace: after `switchWorkspace` to another workspace, `getSkillStore()` returns a different reference with no skills.
 
 - [ ] **Step 6: Run core tests + build**
 

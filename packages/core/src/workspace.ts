@@ -158,6 +158,10 @@ export class WorkspaceManager {
     const logsDir = this.getLogsDir();
     if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
 
+    // Flush the outgoing stores so a pending debounced write can't fire later
+    // and recreate a ghost directory under the previous workspace path.
+    try { await this.memoryStore.flush(); } catch { /* best-effort */ }
+    try { await this.skillStore.flush(); } catch { /* best-effort */ }
     this.memoryStore = new MemoryStore(workspacePath);
     await this.memoryStore.load();
     this.skillStore = new SkillStore(workspacePath);
@@ -319,12 +323,21 @@ export class WorkspaceManager {
         !path.resolve(dst).startsWith(root + path.sep)) {
       throw new Error('Refusing to rename outside of workspaces root');
     }
+    if (this.currentWorkspace === oldName) {
+      // Drain pending debounced writes BEFORE the directory moves — the old
+      // stores' paths point at src, so a late flush would recreate a ghost
+      // directory there.
+      try { await this.memoryStore.flush(); } catch { /* best-effort */ }
+      try { await this.skillStore.flush(); } catch { /* best-effort */ }
+    }
     await fs.promises.rename(src, dst);
     this.logger.info(`[Workspace] Renamed workspace: ${oldName} -> ${trimmed}`);
     if (this.currentWorkspace === oldName) {
       this.currentWorkspace = trimmed;
       this.memoryStore = new MemoryStore(this.getWorkspacePath());
+      await this.memoryStore.load();
       this.skillStore = new SkillStore(this.getWorkspacePath());
+      await this.skillStore.load();
     }
   }
 
