@@ -119,6 +119,14 @@ export interface Chat {
   workingDirOverride?: string;
   /** Last unanswered choice question in a non-team chat. Cleared on next user message. */
   lastAskedOptions?: { messageId: string; options: string[] };
+  /** Set when the skill distiller has proposed a new skill and is waiting for
+   *  the user's "yes" / "no" / "rename <name>" reply. Cleared on any resolution. */
+  pendingSkillSuggestion?: {
+    name: string;
+    description: string;
+    whenToUse: string;
+    steps: string;
+  };
   /**
    * Warm CLI session for this chat. When set, the next turn for the same
    * coding agent is sent via `--resume <sessionId>` (only the new user text is
