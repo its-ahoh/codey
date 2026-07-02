@@ -278,4 +278,53 @@ describe('distillCandidate', () => {
     const result = await distillCandidate(deps, traces, [], [], 2);
     expect(result).toBeNull();
   });
+
+  it('retries once on garbage then returns the valid second result', async () => {
+    const prompts: string[] = [];
+    const deps = fakeDeps(async (req) => {
+      prompts.push(req.prompt);
+      if (prompts.length === 1) {
+        return { success: true, output: 'garbage', error: null, tokens: { total: 10 } };
+      }
+      return { success: true, output: JSON.stringify({
+        name: 'release-notes',
+        description: 'Generate release notes',
+        whenToUse: 'user asks for release notes',
+        steps: '1. fetch PRs\n2. format',
+      }), error: null, tokens: { total: 100 } };
+    });
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' },
+      { runId: '2', promptSummary: 'z', outputPreview: 'y', timestamp: 1, mode: 'solo' },
+    ];
+    const result = await distillCandidate(deps, traces, [], [], 2);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('release-notes');
+    expect(prompts.length).toBe(2);
+    expect(prompts[1]).toContain('Reminder: return ONLY the JSON');
+  });
+
+  it('returns null when the name fails validation (bad chars or too short)', async () => {
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' },
+      { runId: '2', promptSummary: 'z', outputPreview: 'y', timestamp: 1, mode: 'solo' },
+    ];
+    const badName = fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({
+        name: 'Bad Name', description: 'd', whenToUse: 'w', steps: '1. x',
+      }),
+      error: null, tokens: { total: 10 },
+    }));
+    expect(await distillCandidate(badName, traces, [], [], 2)).toBeNull();
+
+    const tooShort = fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({
+        name: 'ab', description: 'd', whenToUse: 'w', steps: '1. x',
+      }),
+      error: null, tokens: { total: 10 },
+    }));
+    expect(await distillCandidate(tooShort, traces, [], [], 2)).toBeNull();
+  });
 });

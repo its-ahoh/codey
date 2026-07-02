@@ -443,10 +443,14 @@ export async function distillCandidate(
 ): Promise<DistillResult | null> {
   if (traces.length < minRecurrence) return null;
 
-  const composed = DISTILL_PROMPT
-    .replace('%TRACES%', formatTracesForPrompt(traces))
-    .replace('%SKILLS%', formatSkillsForPrompt(existing.filter(s => !s.archived)))
-    .replace('%REJECTED%', formatRejectedForPrompt(rejected));
+  // Function replacement: string replacements would corrupt user-derived
+  // content containing $-patterns ($&, $', $$, ...).
+  const sections: Record<string, string> = {
+    '%TRACES%': formatTracesForPrompt(traces),
+    '%SKILLS%': formatSkillsForPrompt(existing.filter(s => !s.archived)),
+    '%REJECTED%': formatRejectedForPrompt(rejected),
+  };
+  const composed = DISTILL_PROMPT.replace(/%(TRACES|SKILLS|REJECTED)%/g, m => sections[m]);
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await deps.agentFactory.run(deps.activeAgent, {

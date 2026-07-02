@@ -809,6 +809,55 @@ describe('distillCandidate', () => {
     const result = await distillCandidate(deps, traces, [], [], 2);
     expect(result).toBeNull();
   });
+
+  it('retries once on garbage then returns the valid second result', async () => {
+    const prompts: string[] = [];
+    const deps = fakeDeps(async (req) => {
+      prompts.push(req.prompt);
+      if (prompts.length === 1) {
+        return { success: true, output: 'garbage', error: null, tokens: { total: 10 } };
+      }
+      return { success: true, output: JSON.stringify({
+        name: 'release-notes',
+        description: 'Generate release notes',
+        whenToUse: 'user asks for release notes',
+        steps: '1. fetch PRs\n2. format',
+      }), error: null, tokens: { total: 100 } };
+    });
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' },
+      { runId: '2', promptSummary: 'z', outputPreview: 'y', timestamp: 1, mode: 'solo' },
+    ];
+    const result = await distillCandidate(deps, traces, [], [], 2);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('release-notes');
+    expect(prompts.length).toBe(2);
+    expect(prompts[1]).toContain('Reminder: return ONLY the JSON');
+  });
+
+  it('returns null when the name fails validation (bad chars or too short)', async () => {
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' },
+      { runId: '2', promptSummary: 'z', outputPreview: 'y', timestamp: 1, mode: 'solo' },
+    ];
+    const badName = fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({
+        name: 'Bad Name', description: 'd', whenToUse: 'w', steps: '1. x',
+      }),
+      error: null, tokens: { total: 10 },
+    }));
+    expect(await distillCandidate(badName, traces, [], [], 2)).toBeNull();
+
+    const tooShort = fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({
+        name: 'ab', description: 'd', whenToUse: 'w', steps: '1. x',
+      }),
+      error: null, tokens: { total: 10 },
+    }));
+    expect(await distillCandidate(tooShort, traces, [], [], 2)).toBeNull();
+  });
 });
 ```
 
@@ -892,10 +941,14 @@ export async function distillCandidate(
 ): Promise<DistillResult | null> {
   if (traces.length < minRecurrence) return null;
 
-  const composed = DISTILL_PROMPT
-    .replace('%TRACES%', formatTracesForPrompt(traces))
-    .replace('%SKILLS%', formatSkillsForPrompt(existing.filter(s => !s.archived)))
-    .replace('%REJECTED%', formatRejectedForPrompt(rejected));
+  // Function replacement: string replacements would corrupt user-derived
+  // content containing $-patterns ($&, $', $$, ...).
+  const sections: Record<string, string> = {
+    '%TRACES%': formatTracesForPrompt(traces),
+    '%SKILLS%': formatSkillsForPrompt(existing.filter(s => !s.archived)),
+    '%REJECTED%': formatRejectedForPrompt(rejected),
+  };
+  const composed = DISTILL_PROMPT.replace(/%(TRACES|SKILLS|REJECTED)%/g, m => sections[m]);
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await deps.agentFactory.run(deps.activeAgent, {
@@ -927,7 +980,7 @@ Note: if `AgentFactory.run()`'s request type accepts these fields directly, drop
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-crystallizer 2>&1 | tail -15
 ```
-Expected: 21 tests PASS.
+Expected: 23 tests PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -1079,11 +1132,16 @@ export async function confirmMatch(
   task: string,
   skill: SkillEntry,
 ): Promise<boolean> {
-  const prompt = MATCH_CONFIRM_PROMPT
-    .replace('%SKILL_NAME%', skill.name)
-    .replace('%SKILL_DESC%', skill.description)
-    .replace('%SKILL_WHEN%', skill.whenToUse)
-    .replace('%TASK%', task);
+  // Function replacement: string replacements would corrupt user-derived
+  // content containing $-patterns ($&, $', $$, ...).
+  const sections: Record<string, string> = {
+    '%SKILL_NAME%': skill.name,
+    '%SKILL_DESC%': skill.description,
+    '%SKILL_WHEN%': skill.whenToUse,
+    '%TASK%': task,
+  };
+  const prompt = MATCH_CONFIRM_PROMPT.replace(
+    /%(SKILL_NAME|SKILL_DESC|SKILL_WHEN|TASK)%/g, m => sections[m]);
   const response = await deps.agentFactory.run(deps.activeAgent, {
     prompt, agent: deps.activeAgent, model: deps.activeModel,
     interactive: false, skipPermissions: true,
@@ -1099,7 +1157,7 @@ export async function confirmMatch(
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-crystallizer 2>&1 | tail -15
 ```
-Expected: 29 tests PASS.
+Expected: 31 tests PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -1236,15 +1294,21 @@ export async function evolveSkill(
   if (trace.workerSequence && trace.workerSequence.length > 0) {
     workerPart = `- Worker sequence: ${trace.workerSequence.join(' → ')}`;
   }
-  const composed = EVOLVE_PROMPT
-    .replace('%SKILL_NAME%', skill.name)
-    .replace('%SKILL_DESC%', skill.description)
-    .replace('%SKILL_WHEN%', skill.whenToUse)
-    .replace('%STEPS%', skill.steps)
-    .replace('%TASK_SUMMARY%', trace.promptSummary)
-    .replace('%OUTPUT_PREVIEW%', trace.outputPreview)
-    .replace('%MODE%', trace.mode)
-    .replace('%WORKER_STEPS%', workerPart);
+  // Function replacement: string replacements would corrupt user-derived
+  // content containing $-patterns ($&, $', $$, ...).
+  const sections: Record<string, string> = {
+    '%SKILL_NAME%': skill.name,
+    '%SKILL_DESC%': skill.description,
+    '%SKILL_WHEN%': skill.whenToUse,
+    '%STEPS%': skill.steps,
+    '%TASK_SUMMARY%': trace.promptSummary,
+    '%OUTPUT_PREVIEW%': trace.outputPreview,
+    '%MODE%': trace.mode,
+    '%WORKER_STEPS%': workerPart,
+  };
+  const composed = EVOLVE_PROMPT.replace(
+    /%(SKILL_NAME|SKILL_DESC|SKILL_WHEN|STEPS|TASK_SUMMARY|OUTPUT_PREVIEW|MODE|WORKER_STEPS)%/g,
+    m => sections[m]);
 
   const response = await deps.agentFactory.run(deps.activeAgent, {
     prompt: composed, agent: deps.activeAgent, model: deps.activeModel,
@@ -1267,7 +1331,7 @@ export async function evolveSkill(
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-crystallizer 2>&1 | tail -15
 ```
-Expected: 34 tests PASS.
+Expected: 36 tests PASS.
 
 - [ ] **Step 5: Commit**
 
