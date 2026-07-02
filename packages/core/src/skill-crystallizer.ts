@@ -83,7 +83,6 @@ interface TracesFile {
 // ── SkillStore ─────────────────────────────────────────────────────
 
 export class SkillStore {
-  private workspacePath: string;
   private skillsDir: string;
   private indexPath: string;
   private tracesPath: string;
@@ -96,7 +95,6 @@ export class SkillStore {
   private static FLUSH_DEBOUNCE_MS = 50;
 
   constructor(workspacePath: string) {
-    this.workspacePath = workspacePath;
     this.skillsDir = path.join(workspacePath, 'skills');
     this.indexPath = path.join(this.skillsDir, 'index.json');
     this.tracesPath = path.join(this.skillsDir, 'traces.json');

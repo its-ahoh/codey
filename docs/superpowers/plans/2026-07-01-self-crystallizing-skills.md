@@ -2268,6 +2268,8 @@ Start gateway: `npm run dev`
 - **`outputPreview` is a raw prefix** of the response, not a structural analysis of files touched. The field is named honestly so the distill/evolve prompts don't overclaim.
 - **Team questions take precedence over skill suggestions:** a paused team turn skips the post-run pass entirely (its output is a mid-run question, not a finished run), and a pending suggestion is never consumed while a team is paused — the user's reply always reaches the team; the suggestion stays persisted and answerable afterwards.
 - **The applied-skill banner lives in the prompt**, so the user sees it via the agent's behavior and the `[skills] auto-applied` log / evolve one-liners, not as a guaranteed prefix on every response. Surfacing a dedicated "using skill" chip in the Mac UI is a follow-up.
+- **Channel-surface pending suggestions are in-memory** (`pendingSkillSuggestions` map), so they are lost on gateway restart; chat-surface suggestions persist on the chat record (`pendingSkillSuggestion`).
+- **Chat-surface team traces are labeled `team-sequential` regardless of dispatch mode** (auto/parallel runs get the same label), and pure-channel `/team` runs don't feed the detector at all — only solo channel turns and chat-surface turns record traces.
 
 ## Out of Scope (explicit YAGNI)
 

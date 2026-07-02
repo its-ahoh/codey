@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillMatch, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -1376,6 +1376,17 @@ export class Codey {
           text: `❌ ${ev.message}`,
           replyTo: messageId,
         });
+      } else if (ev?.type === 'info' && ev.skillNotice && typeof ev.message === 'string') {
+        // Skill-tagged notices only (🧩 suggestion question / ⚙︎ evolve line).
+        // Untagged info events are tool/status/advisor chatter — too noisy for
+        // channel surfaces. Without this, a pending suggestion persisted on the
+        // linked chat is INVISIBLE to a channel-only user, and their next
+        // literal "yes"/"no" gets silently consumed by the suggestion handler.
+        void this.sendResponse({
+          chatId,
+          channel,
+          text: ev.message,
+        });
       }
       // Ignore stream/tool_* events for channel surfaces.
     };
@@ -1798,6 +1809,10 @@ export class Codey {
     notify: (text: string) => void | Promise<void>;
     /** Stash a suggestion so the user's next reply can resolve it. */
     setPending: (s: DistillResult) => void;
+    /** Skip ONLY the distill/suggest stage (bookkeeping, evolve, trace, and GC
+     *  still run). Set when the turn ended with the agent asking the user a
+     *  question, so a suggestion doesn't hijack the user's answer. */
+    suppressSuggestion?: boolean;
   }): Promise<void> {
     try {
       const cfg = this.configManager?.getSkillsConfig();
@@ -1836,6 +1851,11 @@ export class Codey {
         const n = store.runCollectGarbage({ staleDays: cfg.staleDays, weakSkillDays: cfg.weakSkillDays });
         if (n > 0) this.logger.info(`[skills] GC archived ${n} skill(s)`);
       }
+
+      // Distill/suggest is the last stage, so suppressing it is an early
+      // return. The cooldown is NOT consumed — the next unsuppressed run
+      // can still surface the suggestion.
+      if (opts.suppressSuggestion) return;
 
       try {
         const now = Date.now();
@@ -4828,7 +4848,14 @@ Example: /model gpt-4.1 write a Python script`;
       // with the team's question on the next user turn), and no use/success
       // bookkeeping for an applied skill either — the run isn't finished yet.
       const pausedAfterRun = !!this.chatManager.get(chatId)?.pendingTeam;
-      if (skillsCfg?.enabled && output && !pausedAfterRun) {
+      if (skillsCfg?.enabled && !pausedAfterRun) {
+        // Real success signal: the solo path exposes it on singleAgentResponse
+        // (a failed run reaches here with success:false and output = streamed
+        // partial text or ''). Team paths have no structured flag — they throw
+        // to the catch block on failure — so non-empty output is the signal.
+        // Failed runs still run the pass so an applied skill records a
+        // correction; afterRunSkillPass skips trace/distill itself when !clean.
+        const runSucceeded = singleAgentResponse ? !!singleAgentResponse.success : !!output;
         // Worker sequence for team turns comes from the persisted per-worker
         // messages (teamThinkingByStep only maps step → thinking text, no names).
         const workerSequence = teamTurnId
@@ -4839,7 +4866,7 @@ Example: /model gpt-4.1 write a Python script`;
         const chatTrace: RunTrace = {
           runId: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           promptSummary: userText.slice(0, 200),
-          outputPreview: output.slice(0, 300),
+          outputPreview: (output || '').slice(0, 300),
           workerSequence: workerSequence && workerSequence.length > 0 ? workerSequence : undefined,
           timestamp: Date.now(),
           mode: teamTurnId ? 'team-sequential' : 'solo',
@@ -4848,8 +4875,13 @@ Example: /model gpt-4.1 write a Python script`;
         void this.afterRunSkillPass({
           trace: chatTrace,
           appliedSkill: appliedChatSkill,
-          clean: true,
-          notify: (text) => { sink({ type: 'info', chatId, message: text }); },
+          clean: runSucceeded,
+          // A turn that ended by asking the user something (choice buttons or
+          // a structured AskUserQuestion) must not get a skill suggestion
+          // stacked on top — the user's "yes" would resolve the suggestion
+          // instead of the agent's question. Trace/evolve still run.
+          suppressSuggestion: !!surfacedChoices || !!agentUserQuestion,
+          notify: (text) => { sink({ type: 'info', chatId, message: text, skillNotice: true }); },
           setPending: (s) => { this.chatManager.setPendingSkillSuggestion(chatId, s); },
         });
       }
