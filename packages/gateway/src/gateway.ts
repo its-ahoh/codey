@@ -998,9 +998,14 @@ export class Codey {
       }
 
       // ── Pending skill suggestion (channel surface) ──────────
+      // Precedence mirrors the chat surface (sendToChat): a paused team's
+      // question wins — when `pending` is set this message is the user's
+      // answer to the team, so leave the suggestion persisted for later.
+      // Slash turns also leave it pending rather than silently dropping it;
+      // any other non-yes/no reply still clears it below.
       const pendingSkillKey = `${message.channel}:${message.chatId}`;
       const pendingSkill = this.pendingSkillSuggestions.get(pendingSkillKey);
-      if (pendingSkill) {
+      if (pendingSkill && !pending && !isSlash) {
         const reply = message.text.trim().toLowerCase();
         const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
         if (reply === 'yes' || renameMatch) {
@@ -4346,7 +4351,10 @@ Example: /model gpt-4.1 write a Python script`;
 
     // ── Pending skill suggestion (yes / no / rename <name>) ─────────
     // Resolved here because Mac turns never pass through handleMessage.
-    if (chat.pendingSkillSuggestion && !isSlashTurn) {
+    // A paused team's question takes precedence: when pendingTeam is set this
+    // turn is the user's answer to the team, so leave the suggestion persisted
+    // untouched — it can still be answered after the team resumes/finishes.
+    if (chat.pendingSkillSuggestion && !isSlashTurn && !pendingTeam) {
       const s = chat.pendingSkillSuggestion;
       const reply = userText.trim().toLowerCase();
       const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
@@ -4811,7 +4819,16 @@ Example: /model gpt-4.1 write a Python script`;
       sink({ type: 'done', chatId, response: output, thinking: singleAgentResponse?.thinking, tokens, durationSec, title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
 
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
-      if (skillsCfg?.enabled && output) {
+      // Skip the whole pass when this turn ended PAUSED — i.e. the team run
+      // re-set pendingTeam because a worker asked the user a question. Re-read
+      // the chat: the run itself persists the pause via setPendingTeam, so the
+      // freshest signal is the chat record, not the pre-run `pendingTeam` local.
+      // A paused turn's `output` is the worker's mid-run question: no trace
+      // (bad distillation input), no distill, no suggestion (it would collide
+      // with the team's question on the next user turn), and no use/success
+      // bookkeeping for an applied skill either — the run isn't finished yet.
+      const pausedAfterRun = !!this.chatManager.get(chatId)?.pendingTeam;
+      if (skillsCfg?.enabled && output && !pausedAfterRun) {
         // Worker sequence for team turns comes from the persisted per-worker
         // messages (teamThinkingByStep only maps step → thinking text, no names).
         const workerSequence = teamTurnId

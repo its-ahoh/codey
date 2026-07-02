@@ -1893,7 +1893,9 @@ Then in `handleMessage()` (`gateway.ts:934`), after the `lastAskedOptions` clear
       // ── Pending skill suggestion (channel surface) ──────────
       const pendingKey = `${message.channel}:${message.chatId}`;
       const pendingSkill = this.pendingSkillSuggestions.get(pendingKey);
-      if (pendingSkill) {
+      // Precedence: a paused team's question wins (`pending` set → this reply
+      // answers the team), and slash turns leave the suggestion pending too.
+      if (pendingSkill && !pending && !isSlash) {
         const reply = message.text.trim().toLowerCase();
         const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
         if (reply === 'yes' || renameMatch) {
@@ -2058,7 +2060,9 @@ In `sendToChat()`, after the `sink` wrapper definition (`gateway.ts:~4023`) and 
 ```typescript
     // ── Pending skill suggestion (yes / no / rename <name>) ─────────
     // Resolved here because Mac turns never pass through handleMessage.
-    if (chat.pendingSkillSuggestion && !isSlashTurn) {
+    // A paused team's question takes precedence (!pendingTeam): the answer
+    // goes to the team; the suggestion stays persisted for afterwards.
+    if (chat.pendingSkillSuggestion && !isSlashTurn && !pendingTeam) {
       const s = chat.pendingSkillSuggestion;
       const reply = userText.trim().toLowerCase();
       const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
@@ -2155,7 +2159,11 @@ After the `sink({ type: 'done', ... })` call (`gateway.ts:~4406`), add:
 
 ```typescript
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
-      if (skillsCfg?.enabled && output) {
+      // Skipped entirely when the turn ended paused (pendingTeam re-set by the
+      // run): the output is a mid-run team question — no trace, no distill,
+      // no suggestion, no applied-skill bookkeeping until the run finishes.
+      const pausedAfterRun = !!this.chatManager.get(chatId)?.pendingTeam;
+      if (skillsCfg?.enabled && output && !pausedAfterRun) {
         // Worker sequence for team turns comes from the persisted per-worker
         // messages (teamThinkingByStep only maps step → thinking text, no names).
         const workerSequence = teamTurnId
@@ -2258,6 +2266,7 @@ Start gateway: `npm run dev`
 
 - **Correction signal is coarse:** `corrections` increments only when an applied run fails (`clean: false`). Detecting "user re-asked / corrected afterward" requires cross-turn analysis — follow-up.
 - **`outputPreview` is a raw prefix** of the response, not a structural analysis of files touched. The field is named honestly so the distill/evolve prompts don't overclaim.
+- **Team questions take precedence over skill suggestions:** a paused team turn skips the post-run pass entirely (its output is a mid-run question, not a finished run), and a pending suggestion is never consumed while a team is paused — the user's reply always reaches the team; the suggestion stays persisted and answerable afterwards.
 - **The applied-skill banner lives in the prompt**, so the user sees it via the agent's behavior and the `[skills] auto-applied` log / evolve one-liners, not as a guaranteed prefix on every response. Surfacing a dedicated "using skill" chip in the Mac UI is a follow-up.
 
 ## Out of Scope (explicit YAGNI)
