@@ -1339,7 +1339,7 @@ export async function evolveSkill(
     prompt: composed, agent: deps.activeAgent, model: deps.activeModel,
     interactive: false, skipPermissions: true,
     context: { workingDir: deps.workingDir },
-  } as any);
+  });
   if (!response.success) return null;
   try {
     const parsed = JSON.parse(stripCodeFences(response.output));

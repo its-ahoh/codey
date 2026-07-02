@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, applySkill, evolveSkill } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -406,5 +406,66 @@ describe('confirmMatch', () => {
   it('returns false on failed agent call', async () => {
     const deps = fakeDeps(async () => ({ success: false, output: '', error: 'crash', tokens: { total: 0 } }));
     expect(await confirmMatch(deps, 'write a changelog', skill)).toBe(false);
+  });
+});
+
+describe('applySkill', () => {
+  const skill = makeSkill({
+    name: 'release-notes', description: 'Generate release notes',
+    whenToUse: 'user asks for release notes',
+    steps: '1. fetch merged PRs\n2. group by type\n3. format with links',
+    version: 2,
+  });
+
+  it('prepends banner + steps before task', () => {
+    const result = applySkill('generate release notes for v2.1', skill);
+    expect(result).toContain('using skill: release-notes (v2)');
+    expect(result).toContain('1. fetch merged PRs');
+    expect(result).toContain('generate release notes for v2.1');
+    const skillPos = result.indexOf('1. fetch merged PRs');
+    const taskPos = result.indexOf('generate release notes for v2.1');
+    expect(skillPos).toBeLessThan(taskPos);
+  });
+
+  it('handles empty task', () => {
+    const result = applySkill('', skill);
+    expect(result).toContain('using skill: release-notes');
+  });
+});
+
+describe('evolveSkill', () => {
+  const skill = makeSkill({
+    name: 'release-notes', description: 'Release notes',
+    whenToUse: 'release notes', steps: '1. fetch PRs\n2. group',
+    useCount: 3, successSignals: { cleanRuns: 2, corrections: 1 },
+  });
+  const trace: RunTrace = {
+    runId: 'r2', promptSummary: 'Draft release notes',
+    outputPreview: 'markdown with sections', timestamp: Date.now(), mode: 'solo',
+  };
+
+  it('evolves when agent finds better steps', async () => {
+    const deps = fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({ improved: true, steps: '1. fetch\n2. group\n3. add links\n4. format' }),
+      error: null, tokens: { total: 100 },
+    }));
+    const result = await evolveSkill(deps, skill, trace);
+    expect(result).not.toBeNull();
+    expect(result).toContain('add links');
+  });
+
+  it('returns null when no improvement needed', async () => {
+    const deps = fakeDeps(async () => ({
+      success: true, output: JSON.stringify({ improved: false }), error: null, tokens: { total: 50 },
+    }));
+    const result = await evolveSkill(deps, skill, trace);
+    expect(result).toBeNull();
+  });
+
+  it('returns null on failed agent call', async () => {
+    const deps = fakeDeps(async () => ({ success: false, output: '', error: 'crash', tokens: { total: 0 } }));
+    const result = await evolveSkill(deps, skill, trace);
+    expect(result).toBeNull();
   });
 });

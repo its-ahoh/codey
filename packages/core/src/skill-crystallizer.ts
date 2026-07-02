@@ -549,8 +549,71 @@ export async function confirmMatch(
   return response.output.trim().toUpperCase() === 'YES';
 }
 
-export function applySkill(task: string, _skill: SkillEntry): string { return task; }
+export function applySkill(task: string, skill: SkillEntry): string {
+  const banner = `⚙︎ using skill: ${skill.name} (v${skill.version})\n\nFollow this procedure:\n${skill.steps}\n\n---\nNow execute this task:`;
+  return task ? `${banner} ${task}` : `${banner}\n\nProceed with the procedure above.`;
+}
+
+const EVOLVE_PROMPT = `A skill was just applied to a coding task. Review whether the skill's steps should be improved based on what actually happened.
+
+Skill: %SKILL_NAME%
+Description: %SKILL_DESC%
+When to use: %SKILL_WHEN%
+
+Current steps:
+%STEPS%
+
+Run context:
+- Task: %TASK_SUMMARY%
+- Output preview: %OUTPUT_PREVIEW%
+- Mode: %MODE%
+%WORKER_STEPS%
+
+Does the run suggest a better version of the steps? If yes, return improved steps. If the current steps are fine, say no change. Only propose a change when the run clearly revealed a missing, wrong, or better step — do not rephrase working steps.
+
+Return ONE JSON:
+{"improved": true, "steps": "1. ...\\n2. ...\\n3. ..."}
+or
+{"improved": false}
+
+Output ONLY JSON. No markdown fences, no prose.`;
 
 export async function evolveSkill(
-  _deps: DistillDeps, _skill: SkillEntry, _trace: RunTrace,
-): Promise<string | null> { return null; }
+  deps: DistillDeps,
+  skill: SkillEntry,
+  trace: RunTrace,
+): Promise<string | null> {
+  let workerPart = '';
+  if (trace.workerSequence && trace.workerSequence.length > 0) {
+    workerPart = `- Worker sequence: ${trace.workerSequence.join(' → ')}`;
+  }
+  // Function replacement: string replacements would corrupt user-derived
+  // content containing $-patterns ($&, $', $$, ...).
+  const sections: Record<string, string> = {
+    '%SKILL_NAME%': skill.name,
+    '%SKILL_DESC%': skill.description,
+    '%SKILL_WHEN%': skill.whenToUse,
+    '%STEPS%': skill.steps,
+    '%TASK_SUMMARY%': trace.promptSummary,
+    '%OUTPUT_PREVIEW%': trace.outputPreview,
+    '%MODE%': trace.mode,
+    '%WORKER_STEPS%': workerPart,
+  };
+  const composed = EVOLVE_PROMPT.replace(
+    /%(SKILL_NAME|SKILL_DESC|SKILL_WHEN|STEPS|TASK_SUMMARY|OUTPUT_PREVIEW|MODE|WORKER_STEPS)%/g,
+    m => sections[m]);
+
+  const response = await deps.agentFactory.run(deps.activeAgent, {
+    prompt: composed, agent: deps.activeAgent, model: deps.activeModel,
+    interactive: false, skipPermissions: true,
+    context: { workingDir: deps.workingDir },
+  });
+  if (!response.success) return null;
+  try {
+    const parsed = JSON.parse(stripCodeFences(response.output));
+    if (parsed.improved === true && typeof parsed.steps === 'string' && parsed.steps.trim()) {
+      return parsed.steps.trim();
+    }
+  } catch { /* unparseable — no change */ }
+  return null;
+}

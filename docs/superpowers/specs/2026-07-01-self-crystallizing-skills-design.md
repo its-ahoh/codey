@@ -199,3 +199,4 @@ thin wiring layer.
   `index.json` (matches MemoryStore's actual persistence).
 - `skills/archived/` subdirectory — archived skills stay in the index with
   `archived: true`; restorable via `/skill restore`.
+- CJK-aware tokenization for matchSkill (bigram) — Latin-keyword matching only in v1.
