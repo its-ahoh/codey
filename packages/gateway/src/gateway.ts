@@ -986,6 +986,62 @@ export class Codey {
         this.chatManager.clearLastAskedOptions(pendingChat.id);
       }
 
+      // ── Pending skill suggestion (channel surface) ──────────
+      const pendingSkillKey = `${message.channel}:${message.chatId}`;
+      const pendingSkill = this.pendingSkillSuggestions.get(pendingSkillKey);
+      if (pendingSkill) {
+        const reply = message.text.trim().toLowerCase();
+        const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
+        if (reply === 'yes' || renameMatch) {
+          const name = renameMatch ? renameMatch[1] : pendingSkill.name;
+          this.workspaceManager.getSkillStore().add({
+            name,
+            description: pendingSkill.description,
+            whenToUse: pendingSkill.whenToUse,
+            steps: pendingSkill.steps,
+            sourceRunId: 'user-confirmed',
+          });
+          this.pendingSkillSuggestions.delete(pendingSkillKey);
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: `✅ Skill **${name}** saved! Use \`/skills\` to see all.`,
+          });
+          return;
+        }
+        if (reply === 'no') {
+          this.workspaceManager.getSkillStore().rejectSuggestion(pendingSkill.name, pendingSkill.description);
+          this.pendingSkillSuggestions.delete(pendingSkillKey);
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: `Got it — I won't suggest "${pendingSkill.name}" again.`,
+          });
+          return;
+        }
+        // Any other reply: drop the suggestion and fall through to normal handling.
+        this.pendingSkillSuggestions.delete(pendingSkillKey);
+      }
+
+      // ── Explicit skill invocation: /skill <name> <task> ─────
+      // Rewrites the message into the skill-applied prompt and proceeds as a
+      // normal (non-command) turn. Subcommands are excluded — parseCommand
+      // handles those.
+      const invokeMatch = message.text.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+      if (invokeMatch) {
+        const skill = this.workspaceManager.getSkillStore().getActive()
+          .find(s => s.name === invokeMatch[1]);
+        if (!skill) {
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: `Skill "${invokeMatch[1]}" not found. Use /skills to list active skills.`,
+          });
+          return;
+        }
+        message = { ...message, text: applySkill(invokeMatch[2].trim(), skill) };
+      }
+
       if (pending) {
         if (isSlash) {
           try { this.chatManager.setPendingTeam(message.chatId, null); } catch (_) { /* ignore */ }
@@ -1129,7 +1185,25 @@ export class Codey {
     const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
     const streamed = { active: false };
 
-    let prep = this.prepareAgentTurn(ctxWindow, agent, parsed.prompt, memoryContext);
+    // ── Skill matching (pre-run) ──────────────────────────
+    // high-confidence match → apply directly; borderline → LLM confirm gate.
+    let appliedSkill: SkillEntry | null = null;
+    const skillsCfg = this.configManager?.getSkillsConfig();
+    let runPrompt = parsed.prompt;
+    if (skillsCfg?.enabled && skillsCfg.autoApply && runPrompt.trim()) {
+      const match = matchSkill(runPrompt, this.workspaceManager.getSkillStore().getActive());
+      if (match) {
+        const confirmed = match.confidence === 'high'
+          || await confirmMatch(this.getSkillDistillDeps(), runPrompt, match.skill);
+        if (confirmed) {
+          appliedSkill = match.skill;
+          runPrompt = applySkill(runPrompt, match.skill);
+          this.logger.info(`[skills] auto-applied: ${match.skill.name} v${match.skill.version} (${match.confidence})`);
+        }
+      }
+    }
+
+    let prep = this.prepareAgentTurn(ctxWindow, agent, runPrompt, memoryContext);
     const buildRequest = (p: typeof prep): AgentRequest => ({
       prompt: p.prompt,
       agent,
@@ -1151,7 +1225,7 @@ export class Codey {
     if (!response.success && prep.resumeSessionId) {
       this.logger.warn(`[${agent}] Resume of ${prep.resumeSessionId} failed; retrying with bootstrap`);
       await this.contextManager.clearSessionAnchor(ctxWindow.id);
-      prep = this.prepareAgentTurn(ctxWindow, agent, parsed.prompt, memoryContext);
+      prep = this.prepareAgentTurn(ctxWindow, agent, runPrompt, memoryContext);
       response = await this.runWithFallback(agent, buildRequest(prep));
     }
 
@@ -1199,6 +1273,25 @@ export class Codey {
     // send the reply to every other attached route too.
     if (codeyChatId) {
       await this.fanOutToOtherRoutes(codeyChatId, channel, userId, replyText);
+    }
+
+    // ── Skills: post-run pass (fire-and-forget — never blocks the reply) ──
+    if (skillsCfg?.enabled) {
+      const trace: RunTrace = {
+        runId: `solo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        promptSummary: parsed.prompt.slice(0, 200),
+        outputPreview: (response.output || '').slice(0, 300),
+        timestamp: Date.now(),
+        mode: 'solo',
+      };
+      // afterRunSkillPass never rejects (stage-isolated try/catch inside).
+      void this.afterRunSkillPass({
+        trace,
+        appliedSkill,
+        clean: response.success,
+        notify: (text) => this.sendResponse({ chatId, channel, text }),
+        setPending: (s) => this.pendingSkillSuggestions.set(`${channel}:${chatId}`, s),
+      });
     }
   }
 

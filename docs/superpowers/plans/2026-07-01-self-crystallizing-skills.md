@@ -1917,7 +1917,10 @@ In `handleMessage()` (`gateway.ts:934`), after the `lastAskedOptions` clearing b
             text: `Skill "${invokeMatch[1]}" not found. Use /skills to list active skills.` });
           return;
         }
-        message.text = applySkill(invokeMatch[2].trim(), skill);
+        // handleMessage holds `message` in a reassignable local; reassign with a
+        // spread copy (same pattern as digit → option resolution) rather than
+        // mutating the original UserMessage in place.
+        message = { ...message, text: applySkill(invokeMatch[2].trim(), skill) };
       }
 ```
 
@@ -1931,9 +1934,9 @@ In `runOneTurn()`, replace the line `let prep = this.prepareAgentTurn(ctxWindow,
     // ── Skill matching (pre-run) ──────────────────────────
     // high-confidence match → apply directly; borderline → LLM confirm gate.
     let appliedSkill: SkillEntry | null = null;
-    const skillsCfg = this.configManager.getSkillsConfig();
+    const skillsCfg = this.configManager?.getSkillsConfig(); // configManager is optional on the class
     let runPrompt = parsed.prompt;
-    if (skillsCfg.enabled && skillsCfg.autoApply && runPrompt.trim()) {
+    if (skillsCfg?.enabled && skillsCfg.autoApply && runPrompt.trim()) {
       const match = matchSkill(runPrompt, this.workspaceManager.getSkillStore().getActive());
       if (match) {
         const confirmed = match.confidence === 'high'
@@ -1953,11 +1956,12 @@ IMPORTANT: there is a retry call to `prepareAgentTurn` at ~`gateway.ts:1145` —
 
 - [ ] **Step 3: Post-run pass — AFTER the response is sent, fire-and-forget**
 
-In `runOneTurn()`, after the `sendResponse(...)` call (`gateway.ts:1182`) — NOT before it — add:
+In `runOneTurn()`, after the `sendResponse(...)` call (`gateway.ts:1182`) — NOT before it — and after the
+`fanOutToOtherRoutes` block (so every user-visible send lands first), add:
 
 ```typescript
     // ── Skills: post-run pass (fire-and-forget — never blocks the reply) ──
-    if (skillsCfg.enabled) {
+    if (skillsCfg?.enabled) {
       const trace: RunTrace = {
         runId: `solo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         promptSummary: parsed.prompt.slice(0, 200),
@@ -1970,8 +1974,8 @@ In `runOneTurn()`, after the `sendResponse(...)` call (`gateway.ts:1182`) — NO
         trace,
         appliedSkill,
         clean: response.success,
-        notify: (text) => this.sendResponse({ chatId: message.chatId, channel: message.channel, text }),
-        setPending: (s) => this.pendingSkillSuggestions.set(`${message.channel}:${message.chatId}`, s),
+        notify: (text) => this.sendResponse({ chatId, channel, text }),
+        setPending: (s) => this.pendingSkillSuggestions.set(`${channel}:${chatId}`, s),
       });
     }
 ```
