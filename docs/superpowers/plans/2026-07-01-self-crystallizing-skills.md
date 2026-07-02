@@ -54,6 +54,7 @@ workspaces/<name>/
   `index.json` (matches MemoryStore's actual persistence).
 - `skills/archived/` subdirectory — archived skills stay in the index with
   `archived: true`; restorable via `/skill restore`.
+- CJK-aware tokenization for matchSkill (bigram) — Latin-keyword matching only in v1.
 ```
 
 - [ ] **Step 3: Commit**
@@ -1049,6 +1050,24 @@ describe('matchSkill', () => {
   it('never matches archived skills', () => {
     expect(matchSkill('do anything at all please', skills)).toBeNull();
   });
+
+  it('duplicated words in skill text do not inflate confidence past borderline', () => {
+    const dup = [makeSkill({ name: 'dup', description: 'changelog changelog changelog tool', whenToUse: '' })];
+    const m = matchSkill('write a changelog for v2.1', dup);
+    expect(m?.skill.name).toBe('dup');
+    expect(m?.confidence).toBe('borderline');
+  });
+
+  it('two overlapping tokens diluted by a long description stay borderline (score gate)', () => {
+    const verbose = [makeSkill({
+      name: 'verbose',
+      description: 'release notes alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma',
+      whenToUse: '',
+    })];
+    const m = matchSkill('generate release notes', verbose);
+    expect(m?.skill.name).toBe('verbose');
+    expect(m?.confidence).toBe('borderline');
+  });
 });
 
 describe('confirmMatch', () => {
@@ -1085,11 +1104,13 @@ Replace the stubs:
 export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | null {
   const active = skills.filter(s => !s.archived);
   if (active.length === 0) return null;
-  const taskTokens = tokenizeLax(task);
+  // Dedupe both token lists so repeated words can't inflate the intersection
+  // count past the LLM confirm gate; this also makes the score true Jaccard.
+  const taskTokens = [...new Set(tokenizeLax(task))];
   if (taskTokens.length === 0) return null;
   let best: SkillMatch | null = null;
   for (const skill of active) {
-    const skillTokens = tokenizeLax(`${skill.description} ${skill.whenToUse}`);
+    const skillTokens = [...new Set(tokenizeLax(`${skill.description} ${skill.whenToUse}`))];
     if (skillTokens.length === 0) continue;
     const intersection = skillTokens.filter(t => taskTokens.includes(t));
     if (intersection.length < 1) continue;
@@ -1104,6 +1125,10 @@ export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | nul
   return best;
 }
 
+// Limitation: Latin/alphanumeric keywords only. CJK text produces no tokens,
+// so pure-CJK prompts never auto-match (they simply skip the skill fast-path);
+// mixed-script prompts still match via their Latin keywords. Bigram
+// tokenization for CJK is a possible v2.
 function tokenizeLax(text: string): string[] {
   if (!text) return [];
   const stopWords = new Set([
@@ -1157,7 +1182,7 @@ export async function confirmMatch(
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-crystallizer 2>&1 | tail -15
 ```
-Expected: 31 tests PASS.
+Expected: 33 tests PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -1331,7 +1356,7 @@ export async function evolveSkill(
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test -w packages/core -- skill-crystallizer 2>&1 | tail -15
 ```
-Expected: 36 tests PASS.
+Expected: 38 tests PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -2086,7 +2111,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```bash
 source ~/.nvm/nvm.sh && nvm use v22.17.1 && npm test 2>&1 | tail -30
 ```
-Expected: All tests PASS (~34 skill-crystallizer + existing core/gateway/codey-mac suites).
+Expected: All tests PASS (~38 skill-crystallizer + existing core/gateway/codey-mac suites).
 
 - [ ] **Step 2: Verify full build + lint**
 

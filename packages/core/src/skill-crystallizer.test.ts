@@ -370,6 +370,24 @@ describe('matchSkill', () => {
   it('never matches archived skills', () => {
     expect(matchSkill('do anything at all please', skills)).toBeNull();
   });
+
+  it('duplicated words in skill text do not inflate confidence past borderline', () => {
+    const dup = [makeSkill({ name: 'dup', description: 'changelog changelog changelog tool', whenToUse: '' })];
+    const m = matchSkill('write a changelog for v2.1', dup);
+    expect(m?.skill.name).toBe('dup');
+    expect(m?.confidence).toBe('borderline');
+  });
+
+  it('two overlapping tokens diluted by a long description stay borderline (score gate)', () => {
+    const verbose = [makeSkill({
+      name: 'verbose',
+      description: 'release notes alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma',
+      whenToUse: '',
+    })];
+    const m = matchSkill('generate release notes', verbose);
+    expect(m?.skill.name).toBe('verbose');
+    expect(m?.confidence).toBe('borderline');
+  });
 });
 
 describe('confirmMatch', () => {

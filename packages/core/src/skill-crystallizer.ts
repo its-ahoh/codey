@@ -477,11 +477,13 @@ export async function distillCandidate(
 export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | null {
   const active = skills.filter(s => !s.archived);
   if (active.length === 0) return null;
-  const taskTokens = tokenizeLax(task);
+  // Dedupe both token lists so repeated words can't inflate the intersection
+  // count past the LLM confirm gate; this also makes the score true Jaccard.
+  const taskTokens = [...new Set(tokenizeLax(task))];
   if (taskTokens.length === 0) return null;
   let best: SkillMatch | null = null;
   for (const skill of active) {
-    const skillTokens = tokenizeLax(`${skill.description} ${skill.whenToUse}`);
+    const skillTokens = [...new Set(tokenizeLax(`${skill.description} ${skill.whenToUse}`))];
     if (skillTokens.length === 0) continue;
     const intersection = skillTokens.filter(t => taskTokens.includes(t));
     if (intersection.length < 1) continue;
@@ -496,6 +498,10 @@ export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | nul
   return best;
 }
 
+// Limitation: Latin/alphanumeric keywords only. CJK text produces no tokens,
+// so pure-CJK prompts never auto-match (they simply skip the skill fast-path);
+// mixed-script prompts still match via their Latin keywords. Bigram
+// tokenization for CJK is a possible v2.
 function tokenizeLax(text: string): string[] {
   if (!text) return [];
   const stopWords = new Set([
