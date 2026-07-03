@@ -21,6 +21,7 @@ export default defineConfig({
       'src/chats.workingDirOverride.test.ts',
       'src/chats.pendingSkillSuggestion.test.ts',
       'src/automations/schedule.test.ts',
+      'src/automations/store.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },
