@@ -507,7 +507,7 @@ describe('evolution trail', () => {
 
   it('add() records a created event on new skills', () => {
     store.add({ name: 'rel', description: 'd', whenToUse: 'w', steps: 's1' });
-    const ev = store.get('rel')!.evolution;
+    const ev: SkillEvolutionEvent[] = store.get('rel')!.evolution;
     expect(ev.length).toBe(1);
     expect(ev[0].kind).toBe('created');
     expect(ev[0].toVersion).toBe(1);

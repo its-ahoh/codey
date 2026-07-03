@@ -1046,7 +1046,7 @@ export class Codey {
       // path applies the skill exactly once — even with autoApply off.
       // Subcommands are excluded — parseCommand handles those.
       let skillInvoke: SkillInvoke | undefined;
-      const invokeMatch = message.text.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+      const invokeMatch = message.text.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b|history\b)(\S+)\s+([\s\S]+)/i);
       if (invokeMatch) {
         if (!this.configManager?.getSkillsConfig()?.enabled) {
           await this.sendResponse({
@@ -1591,6 +1591,9 @@ export class Codey {
           text: ok ? `⏪ Skill **${args[0]}** rolled back to v${v}.` : `Skill "${args[0]}" has no prior version (or was not found).` });
         break;
       }
+      case 'skill-history':
+        await this.cmdSkillHistory(chatId, channel, args[0]);
+        break;
       default:
         return;
     }
@@ -1760,6 +1763,27 @@ export class Codey {
     });
   }
 
+  private async cmdSkillHistory(chatId: string, channel: ChannelType, name: string): Promise<void> {
+    const skill = this.workspaceManager.getSkillStore().get(name);
+    if (!skill) {
+      await this.sendResponse({ chatId, channel, text: `Skill "${name}" not found.` });
+      return;
+    }
+    if (!skill.evolution || skill.evolution.length === 0) {
+      await this.sendResponse({ chatId, channel,
+        text: `📜 **${skill.name}** (v${skill.version}) — no recorded evolution events yet.` });
+      return;
+    }
+    const lines = skill.evolution.map(ev => {
+      const trig = ev.trigger ? ` ← "${ev.trigger.promptSummary.slice(0, 80)}"` : '';
+      return `- v${ev.toVersion} ${ev.kind} · ${Codey.relativeTime(ev.at)}${trig}`;
+    });
+    await this.sendResponse({
+      chatId, channel,
+      text: `📜 **${skill.name}** — evolution (v${skill.version} current)\n\n${lines.join('\n')}\n\nCurrent steps (v${skill.version}):\n${skill.steps}`,
+    });
+  }
+
   private async cmdSkills(chatId: string, channel: ChannelType): Promise<void> {
     const active = this.workspaceManager.getSkillStore().getActive();
     if (active.length === 0) {
@@ -1832,7 +1856,10 @@ export class Codey {
             if (evolved) {
               // Known v1 window: a concurrent /skill rollback (or another evolve)
               // between evolveSkill and bumpVersion can be silently overwritten.
-              store.bumpVersion(entry.name, evolved);
+              store.bumpVersion(entry.name, evolved, {
+                runId: opts.trace.runId,
+                promptSummary: opts.trace.promptSummary,
+              });
               this.logger.info(`[skills] evolved ${entry.name} → v${entry.version}`);
               await opts.notify(`⚙︎ evolved skill ${entry.name} → v${entry.version} (rollback with /skill rollback ${entry.name})`);
             }
@@ -3782,7 +3809,7 @@ Example: /model gpt-4.1 write a Python script`;
       const args = argsStr.split(/\s+/).filter(Boolean);
       
       // /skill forget|restore|rollback <name>
-      const skillSubMatch = text.match(/^\/skill\s+(forget|restore|rollback)\s+(\S+)/i);
+      const skillSubMatch = text.match(/^\/skill\s+(forget|restore|rollback|history)\s+(\S+)/i);
       if (skillSubMatch) {
         return {
           command: `skill-${skillSubMatch[1].toLowerCase()}`,
@@ -4409,7 +4436,7 @@ Example: /model gpt-4.1 write a Python script`;
       appliedChatSkill = origin.skillInvoke.skill;
       chatSkillTask = origin.skillInvoke.task;
     } else {
-      const invokeMatch = userText.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+      const invokeMatch = userText.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b|history\b)(\S+)\s+([\s\S]+)/i);
       if (invokeMatch) {
         if (!this.configManager?.getSkillsConfig()?.enabled) {
           return finishSkillReply('Skills are disabled.');
