@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, applySkill, evolveSkill } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, evolveSkill } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -332,7 +332,7 @@ describe('distillCandidate', () => {
 function makeSkill(over: Partial<SkillEntry>): SkillEntry {
   return {
     name: 'x', description: '', whenToUse: '', steps: 's',
-    version: 1, history: [], useCount: 0, lastUsedAt: Date.now(),
+    version: 1, history: [], evolution: [], useCount: 0, lastUsedAt: Date.now(),
     successSignals: { cleanRuns: 0, corrections: 0 },
     sourceRunIds: [], createdAt: Date.now(), archived: false,
     ...over,
@@ -487,5 +487,112 @@ describe('evolveSkill', () => {
     }));
     const result = await evolveSkill(deps, skill, trace);
     expect(result).toBeNull();
+  });
+});
+
+describe('evolution trail', () => {
+  let tmp: string;
+  let store: SkillStore;
+
+  beforeEach(async () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-evo-test-'));
+    store = new SkillStore(tmp);
+    await store.load();
+  });
+
+  afterEach(async () => {
+    await store.flush();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('add() records a created event on new skills', () => {
+    store.add({ name: 'rel', description: 'd', whenToUse: 'w', steps: 's1' });
+    const ev = store.get('rel')!.evolution;
+    expect(ev.length).toBe(1);
+    expect(ev[0].kind).toBe('created');
+    expect(ev[0].toVersion).toBe(1);
+    expect(ev[0].fromVersion).toBeUndefined();
+    expect(ev[0].steps).toBe('s1');
+    expect(ev[0].at).toBeGreaterThan(0);
+  });
+
+  it('upsert with changed steps records an evolved event with trigger', () => {
+    store.add({ name: 'rel', description: 'd', whenToUse: 'w', steps: 's1' });
+    store.add({ name: 'rel', description: 'd2', whenToUse: 'w', steps: 's2',
+                trigger: { runId: 'r9', promptSummary: 'redo notes' } });
+    const ev = store.get('rel')!.evolution;
+    expect(ev.length).toBe(2);
+    expect(ev[1].kind).toBe('evolved');
+    expect(ev[1].fromVersion).toBe(1);
+    expect(ev[1].toVersion).toBe(2);
+    expect(ev[1].trigger).toEqual({ runId: 'r9', promptSummary: 'redo notes' });
+    expect(ev[1].steps).toBe('s2');
+  });
+
+  it('upsert with identical steps records no event', () => {
+    store.add({ name: 'rel', description: 'd', whenToUse: 'w', steps: 's1' });
+    store.add({ name: 'rel', description: 'd2', whenToUse: 'w2', steps: 's1' });
+    expect(store.get('rel')!.evolution.length).toBe(1);
+  });
+
+  it('bumpVersion records an evolved event with trigger', () => {
+    store.add({ name: 'rel', description: 'd', whenToUse: 'w', steps: 's1' });
+    store.bumpVersion('rel', 's2', { runId: 'r1', promptSummary: 'draft notes' });
+    const ev = store.get('rel')!.evolution;
+    expect(ev.length).toBe(2);
+    expect(ev[1]).toMatchObject({
+      kind: 'evolved', fromVersion: 1, toVersion: 2, steps: 's2',
+      trigger: { runId: 'r1', promptSummary: 'draft notes' },
+    });
+  });
+
+  it('rollback records a rolled-back event with restored version and steps', () => {
+    store.add({ name: 'rel', description: 'd', whenToUse: 'w', steps: 's1' });
+    store.bumpVersion('rel', 's2', { runId: 'r1', promptSummary: 'p' });
+    store.rollback('rel');
+    const ev = store.get('rel')!.evolution;
+    expect(ev.length).toBe(3);
+    expect(ev[2]).toMatchObject({ kind: 'rolled-back', fromVersion: 2, toVersion: 1, steps: 's1' });
+    expect(ev[2].trigger).toBeUndefined();
+  });
+
+  it('trail is capped at EVOLUTION_MAX, dropping oldest', () => {
+    store.add({ name: 'rel', description: 'd', whenToUse: 'w', steps: 'v1' });
+    for (let i = 2; i <= EVOLUTION_MAX + 5; i++) {
+      store.bumpVersion('rel', `v${i}`);
+    }
+    const ev = store.get('rel')!.evolution;
+    expect(ev.length).toBe(EVOLUTION_MAX);
+    expect(ev[ev.length - 1].steps).toBe(`v${EVOLUTION_MAX + 5}`);
+    expect(ev[0].kind).toBe('evolved'); // the 'created' event fell off the front
+  });
+
+  it('legacy entries load with evolution: []', async () => {
+    const skillsDir = path.join(tmp, 'skills');
+    fs.mkdirSync(skillsDir, { recursive: true });
+    fs.writeFileSync(path.join(skillsDir, 'index.json'), JSON.stringify({
+      version: 1,
+      entries: [{
+        name: 'legacy', description: 'd', whenToUse: 'w', steps: 's',
+        version: 3, useCount: 1, lastUsedAt: 1, history: [],
+        successSignals: { cleanRuns: 0, corrections: 0 },
+        sourceRunIds: [], createdAt: 1, archived: false,
+      }],
+      rejected: [],
+    }));
+    const store2 = new SkillStore(tmp);
+    await store2.load();
+    expect(store2.get('legacy')!.evolution).toEqual([]);
+  });
+
+  it('events survive a persist/reload round-trip', async () => {
+    store.add({ name: 'rel', description: 'd', whenToUse: 'w', steps: 's1' });
+    store.bumpVersion('rel', 's2', { runId: 'r1', promptSummary: 'p' });
+    await store.flush();
+    const store2 = new SkillStore(tmp);
+    await store2.load();
+    const ev = store2.get('rel')!.evolution;
+    expect(ev.length).toBe(2);
+    expect(ev[1].trigger?.runId).toBe('r1');
   });
 });
