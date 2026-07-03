@@ -22,6 +22,7 @@ export default defineConfig({
       'src/chats.pendingSkillSuggestion.test.ts',
       'src/automations/schedule.test.ts',
       'src/automations/store.test.ts',
+      'src/automations/lease.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },
