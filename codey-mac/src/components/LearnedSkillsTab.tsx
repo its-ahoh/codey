@@ -56,7 +56,11 @@ export const LearnedSkillsTab: React.FC = () => {
     } as const
     if (!confirm(messages[kind])) return
     try {
-      unwrap(await window.codey.learnedSkills[kind](name))
+      // Widen: rollback returns data: number, forget/restore data: void — the
+      // raw union collapses unwrap's generic to void and rejects number.
+      const res: { ok: true; data: unknown } | { ok: false; error: string } =
+        await window.codey.learnedSkills[kind](name)
+      unwrap(res)
       await reload()
       if (expanded === name) setExpanded(null) // trail is stale after a mutation
     } catch (e: any) {
