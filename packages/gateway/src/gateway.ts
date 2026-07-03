@@ -1775,12 +1775,12 @@ export class Codey {
       return;
     }
     const lines = skill.evolution.map(ev => {
-      const trig = ev.trigger ? ` ← "${ev.trigger.promptSummary.slice(0, 80)}"` : '';
+      const trig = ev.trigger ? ` ← "${ev.trigger.promptSummary.replace(/\s+/g, ' ').slice(0, 80)}"` : '';
       return `- v${ev.toVersion} ${ev.kind} · ${Codey.relativeTime(ev.at)}${trig}`;
     });
     await this.sendResponse({
       chatId, channel,
-      text: `📜 **${skill.name}** — evolution (v${skill.version} current)\n\n${lines.join('\n')}\n\nCurrent steps (v${skill.version}):\n${skill.steps}`,
+      text: `📜 **${skill.name}** — evolution (v${skill.version} current${skill.archived ? ' · archived' : ''})\n\n${lines.join('\n')}\n\nCurrent steps (v${skill.version}):\n${skill.steps}`,
     });
   }
 
