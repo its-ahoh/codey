@@ -285,8 +285,12 @@ export interface GatewayConfig {
   advisor?: AdvisorSettings;
   /** Aide (lightweight housekeeping LLM) settings. */
   aide?: AideSettings;
+  /** Which scheduler-lease role this process claims. Daemon wins over embedded.
+   *  Default 'daemon' (the standalone gateway). The Mac app passes 'embedded'. */
+  automationRole?: 'daemon' | 'embedded';
 }
 
 export * from './chat';
 export * from './route';
 export * from './pending-team';
+export * from './automation';

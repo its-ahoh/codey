@@ -93,6 +93,8 @@ export interface Chat {
   id: string;
   title: string;
   workspaceName: string;
+  /** 'automation' marks a hidden system chat owned by an automation; absent = normal user chat. */
+  kind?: 'automation';
   selection: ChatSelection;
   messages: ChatMessage[];
   createdAt: number;
