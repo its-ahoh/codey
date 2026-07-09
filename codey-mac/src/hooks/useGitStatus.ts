@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback } from 'react'
 export interface GitStatus {
   branch: string
   dirty: number
+  defaultBranch?: string
+  ahead?: number | null
 }
 
 export function useGitStatus(workingDir: string | undefined) {

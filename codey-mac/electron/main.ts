@@ -1357,6 +1357,9 @@ app.whenReady().then(async () => {
   )
 
   // ── Git status IPC ────────────────────────────────────────────────
+  // Live git branch watching: one fs.watch per workingDir, ref-counted by renderer subscriptions.
+  const gitWatchers = new Map<string, { watcher: import('fs').FSWatcher; count: number; timer: NodeJS.Timeout | null }>()
+
   ipcMain.handle('git:status', async (_e, workingDir: string) =>
     wrap(async () => {
       if (!workingDir || typeof workingDir !== 'string') return null
@@ -1374,10 +1377,230 @@ app.whenReady().then(async () => {
         ])
         const branch = branchOut.trim() || 'HEAD'
         const dirty = statusOut.split('\n').filter(l => l.trim()).length
-        return { branch, dirty }
+        // Repo default branch (for Create PR gating) — origin/HEAD when set, else 'main'.
+        let defaultBranch = 'main'
+        try {
+          const sym = await run(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+          defaultBranch = sym.trim().replace(/^[^/]+\//, '') || 'main'
+        } catch { /* no origin/HEAD ref; keep 'main' */ }
+        // Commits on this branch that aren't on the default branch; null when unknowable.
+        let ahead: number | null = null
+        try {
+          const cnt = await run(['rev-list', '--count', `origin/${defaultBranch}..HEAD`])
+          const n = parseInt(cnt.trim(), 10)
+          if (!Number.isNaN(n)) ahead = n
+        } catch { /* no remote default ref; leave null */ }
+        return { branch, dirty, defaultBranch, ahead }
       } catch {
         return null
       }
+    })
+  )
+
+  ipcMain.handle('git:branches', async (_e, workingDir: string) =>
+    wrap(async () => {
+      if (!workingDir || typeof workingDir !== 'string') return { current: '', local: [], remote: [] }
+      const { execFile } = await import('child_process')
+      const run = (args: string[]) => new Promise<string>((resolve, reject) => {
+        execFile('git', args, { cwd: workingDir, timeout: 2000 }, (err, stdout) => {
+          if (err) reject(err); else resolve(stdout)
+        })
+      })
+      try {
+        const [curOut, localOut, remoteOut] = await Promise.all([
+          run(['rev-parse', '--abbrev-ref', 'HEAD']),
+          run(['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
+          run(['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
+        ])
+        const current = curOut.trim() || 'HEAD'
+        const local = localOut.split('\n').map(l => l.trim()).filter(Boolean)
+        const remote = remoteOut.split('\n').map(l => l.trim())
+          .filter(l => l && !l.endsWith('/HEAD'))
+        return { current, local, remote }
+      } catch {
+        return { current: '', local: [], remote: [] }
+      }
+    })
+  )
+
+  ipcMain.handle('git:checkout', async (_e, workingDir: string, name: string, opts?: { create?: boolean; track?: boolean }) =>
+    wrap(async () => {
+      if (!workingDir || !name) return { ok: false, error: 'missing args' }
+      const { execFile } = await import('child_process')
+      const run = (args: string[]) => new Promise<{ ok: boolean; stderr: string }>((resolve) => {
+        execFile('git', args, { cwd: workingDir, timeout: 5000 }, (err, _out, stderr) => {
+          resolve({ ok: !err, stderr: stderr || (err ? String(err) : '') })
+        })
+      })
+      const args = opts?.create ? ['checkout', '-b', name]
+        : opts?.track ? ['checkout', '--track', name]
+        : ['checkout', name]
+      const r = await run(args)
+      if (r.ok) return { ok: true }
+      const dirty = /would be overwritten|Your local changes|commit your changes or stash/i.test(r.stderr)
+      return { ok: false, error: r.stderr.trim(), reason: dirty ? 'dirty' as const : undefined }
+    })
+  )
+
+  ipcMain.handle('git:stash', async (_e, workingDir: string, message?: string) =>
+    wrap(async () => {
+      if (!workingDir) return { ok: false, error: 'missing workingDir' }
+      const { execFile } = await import('child_process')
+      const args = ['stash', 'push', '-u']
+      if (message) args.push('-m', message)
+      return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        execFile('git', args, { cwd: workingDir, timeout: 5000 }, (err, _out, stderr) => {
+          if (err) resolve({ ok: false, error: (stderr || String(err)).trim() })
+          else resolve({ ok: true })
+        })
+      })
+    })
+  )
+
+  ipcMain.handle('git:fetch', async (_e, workingDir: string) =>
+    wrap(async () => {
+      if (!workingDir) return { ok: false, error: 'missing workingDir' }
+      const { execFile } = await import('child_process')
+      return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        execFile('git', ['fetch', '--prune'], { cwd: workingDir, timeout: 30000 }, (err, _out, stderr) => {
+          if (err) resolve({ ok: false, error: (stderr || String(err)).trim() })
+          else resolve({ ok: true })
+        })
+      })
+    })
+  )
+
+  ipcMain.handle('git:worktrees', async (_e, workingDir: string) =>
+    wrap(async () => {
+      if (!workingDir) return { list: [] }
+      const { execFile } = await import('child_process')
+      const out = await new Promise<string>((resolve) => {
+        execFile('git', ['worktree', 'list', '--porcelain'], { cwd: workingDir, timeout: 3000 }, (err, stdout) => {
+          resolve(err ? '' : stdout)
+        })
+      })
+      const list: { branch: string; path: string; isMain: boolean }[] = []
+      let cur: { path?: string; branch?: string } = {}
+      for (const line of out.split('\n')) {
+        if (line.startsWith('worktree ')) cur = { path: line.slice('worktree '.length).trim() }
+        else if (line.startsWith('branch ')) cur.branch = line.slice('branch '.length).trim().replace('refs/heads/', '')
+        else if (line.trim() === '' && cur.path) {
+          list.push({ path: cur.path, branch: cur.branch || '(detached)', isMain: list.length === 0 })
+          cur = {}
+        }
+      }
+      if (cur.path) list.push({ path: cur.path, branch: cur.branch || '(detached)', isMain: list.length === 0 })
+      return { list }
+    })
+  )
+
+  ipcMain.handle('git:worktreeAdd', async (_e, workingDir: string, args2: { name: string; path: string }) =>
+    wrap(async () => {
+      if (!workingDir || !args2?.name || !args2?.path) return { ok: false, error: 'missing args' }
+      const { execFile } = await import('child_process')
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const target = pathMod.resolve(args2.path)
+      const container = pathMod.dirname(target)
+      // A branch name that sanitizes to nothing would make `target` the container itself.
+      if (pathMod.basename(target) === 'worktrees' && container.endsWith('.codey')) {
+        return { ok: false, error: 'invalid branch name' }
+      }
+      fsMod.mkdirSync(container, { recursive: true })
+      // In-repo worktrees would otherwise show up in the main repo's `git status`.
+      // Drop a `.gitignore` (`*`) so every worktree checkout is ignored — but only in
+      // the known .codey/worktrees container; never in arbitrary caller-supplied dirs.
+      try {
+        if (container.endsWith(pathMod.join('.codey', 'worktrees'))) {
+          const ignorePath = pathMod.join(container, '.gitignore')
+          if (!fsMod.existsSync(ignorePath)) fsMod.writeFileSync(ignorePath, '*\n')
+        }
+      } catch { /* best-effort; worktree add still proceeds */ }
+      return await new Promise<{ ok: boolean; path?: string; error?: string }>((resolve) => {
+        execFile('git', ['worktree', 'add', target, '-b', args2.name], { cwd: workingDir, timeout: 20000 }, (err, _out, stderr) => {
+          if (err) resolve({ ok: false, error: (stderr || String(err)).trim() })
+          else resolve({ ok: true, path: target })
+        })
+      })
+    })
+  )
+
+  ipcMain.handle('git:createPr', async (_e, workingDir: string, input: { title: string; body?: string }) =>
+    wrap(async () => {
+      if (!workingDir || !input?.title) return { ok: false, error: 'missing args' }
+      const { execFile } = await import('child_process')
+      const run = (cmd: string, args: string[], timeout: number) => new Promise<{ ok: boolean; stdout: string; stderr: string }>((resolve) => {
+        execFile(cmd, args, { cwd: workingDir, timeout }, (err, stdout, stderr) => {
+          resolve({ ok: !err, stdout: stdout || '', stderr: stderr || (err ? String(err) : '') })
+        })
+      })
+      // Resolve current branch
+      const br = await run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], 3000)
+      const branch = br.stdout.trim()
+      if (!branch || branch === 'HEAD') return { ok: false, error: 'Not on a branch' }
+      // Push with upstream (no-op if already pushed; -u is safe to repeat)
+      const push = await run('git', ['push', '-u', 'origin', branch], 60000)
+      if (!push.ok) return { ok: false, error: (push.stderr || 'git push failed').trim() }
+      // Create PR. Finder-launched apps get launchd's minimal PATH, so resolve gh
+      // from the common install locations before falling back to PATH lookup.
+      const fsMod = await import('fs')
+      const gh = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh']
+        .find(p => fsMod.existsSync(p)) || 'gh'
+      const pr = await run(gh, ['pr', 'create', '--title', input.title, '--body', input.body || '', '--head', branch], 60000)
+      if (!pr.ok) {
+        const msg = /ENOENT/.test(pr.stderr)
+          ? 'GitHub CLI (gh) not found — install it with `brew install gh`'
+          : (pr.stderr || 'gh pr create failed').trim()
+        return { ok: false, error: msg }
+      }
+      const url = (pr.stdout.match(/https?:\/\/\S+/) || [])[0] || pr.stdout.trim()
+      return { ok: true, url }
+    })
+  )
+
+  ipcMain.handle('git:watch', async (_e, workingDir: string) =>
+    wrap(async () => {
+      if (!workingDir) return { ok: false }
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const gitDir = pathMod.join(workingDir, '.git')
+      const existing = gitWatchers.get(workingDir)
+      if (existing) { existing.count++; return { ok: true } }
+      try {
+        const emit = () => {
+          const entry = gitWatchers.get(workingDir)
+          if (!entry) return
+          if (entry.timer) clearTimeout(entry.timer)
+          entry.timer = setTimeout(() => sendToRenderer('git:changed', { workingDir }), 200)
+        }
+        // Resolve real git dir: for a linked worktree .git is a file containing "gitdir: <path>"
+        const resolvedGitDir = fsMod.existsSync(gitDir) && fsMod.statSync(gitDir).isDirectory()
+          ? gitDir
+          : (() => {
+              try { return fsMod.readFileSync(gitDir, 'utf8').match(/gitdir:\s*(.+)/)?.[1]?.trim() } catch { return undefined }
+            })()
+        if (!resolvedGitDir) return { ok: false }
+        const watcher = fsMod.watch(resolvedGitDir, { persistent: false }, () => emit())
+        gitWatchers.set(workingDir, { watcher, count: 1, timer: null })
+        return { ok: true }
+      } catch {
+        return { ok: false }
+      }
+    })
+  )
+
+  ipcMain.handle('git:unwatch', async (_e, workingDir: string) =>
+    wrap(async () => {
+      if (!workingDir) return { ok: true }
+      const entry = gitWatchers.get(workingDir)
+      if (!entry) return { ok: true }
+      entry.count--
+      if (entry.count <= 0) {
+        if (entry.timer) clearTimeout(entry.timer)
+        try { entry.watcher.close() } catch { /* ignore */ }
+        gitWatchers.delete(workingDir)
+      }
+      return { ok: true }
     })
   )
 
@@ -2213,6 +2436,13 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       return inProcessGateway.getChatManager().setSoloAdvisor(id, enabled)
+    })
+  )
+
+  ipcMain.handle('chats:setWorkingDir', async (_e, id: string, dir: string | null) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.getChatManager().setWorkingDirOverride(id, dir)
     })
   )
 

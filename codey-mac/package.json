@@ -18,6 +18,8 @@
     "build": "vite build && electron-builder",
     "build:mac": "vite build && electron-builder --mac",
     "build:mac:signed": "vite build && electron-builder --mac --publish never",
+    "notarize:mac": "node build/notarize-dist.js",
+    "dist:mac": "npm run build:mac:signed && node build/notarize-dist.js",
     "preview": "vite preview",
     "test": "vitest run"
   },
@@ -32,6 +34,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@electron/notarize": "^2.2.1",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
@@ -54,15 +57,13 @@
         {
           "target": "dmg",
           "arch": [
-            "arm64",
-            "x64"
+            "arm64"
           ]
         },
         {
           "target": "zip",
           "arch": [
-            "arm64",
-            "x64"
+            "arm64"
           ]
         }
       ],
@@ -73,9 +74,7 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "identity": "ou zixian (N59NN58KB2)",
-      "notarize": {
-        "teamId": "N59NN58KB2"
-      },
+      "notarize": false,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Codey transcribes your speech into text at your cursor when you use voice input.",
         "NSAppleEventsUsageDescription": "Codey pastes transcribed voice text into the focused app via System Events."
