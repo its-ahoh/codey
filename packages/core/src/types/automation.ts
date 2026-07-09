@@ -17,7 +17,9 @@ export type AutomationTarget =
   | { kind: 'team'; teamName: string; workspaceName: string };
 
 export interface AutomationReport {
-  /** Fire an OS notification (delivered by the Mac app when attached). */
+  /** Fire an OS notification (delivered by the Mac app when attached).
+   *  Delivery rides on automation events: a headless daemon with no event
+   *  listener produces no notification. */
   notify: boolean;
   /** Optional chat/channel post, e.g. { platform: 'telegram', target: '<chatId>' }. */
   channel?: { platform: string; target: string };

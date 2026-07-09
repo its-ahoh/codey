@@ -10,6 +10,11 @@ export interface CreateChatInput {
   workspaceName: string;
   selection?: ChatSelection;
   title?: string;
+  /** 'automation' = hidden system chat (excluded from list() by default). */
+  kind?: 'automation';
+  /** Per-chat agent/model overrides, set at creation (used by automations). */
+  agent?: Chat['agent'];
+  model?: string;
 }
 
 /**
@@ -122,9 +127,10 @@ export class ChatManager {
     fs.renameSync(tmp, file);
   }
 
-  list(workspaceName?: string): Chat[] {
+  list(workspaceName?: string, opts?: { includeAutomation?: boolean }): Chat[] {
     this.ensureLoaded();
-    const all = [...this.cache.values()];
+    const all = [...this.cache.values()]
+      .filter(c => opts?.includeAutomation || c.kind !== 'automation');
     const filtered = workspaceName
       ? all.filter(c => c.workspaceName === workspaceName)
       : all;
@@ -147,6 +153,9 @@ export class ChatManager {
       messages: [],
       createdAt: now,
       updatedAt: now,
+      ...(input.kind ? { kind: input.kind } : {}),
+      ...(input.agent ? { agent: input.agent } : {}),
+      ...(input.model ? { model: input.model } : {}),
     };
     this.cache.set(chat.id, chat);
     this.persist(chat);
@@ -324,7 +333,8 @@ export class ChatManager {
     const chat = this.requireChat(chatId);
     chat.messages.push(message);
     chat.updatedAt = Date.now();
-    if (chat.messages.length === 1 && message.role === 'user') {
+    // Automation chats keep their authoritative "Automation: <name>" title.
+    if (chat.messages.length === 1 && message.role === 'user' && chat.kind !== 'automation') {
       chat.title = deriveTitle(message.content);
     }
     this.persist(chat);
