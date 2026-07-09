@@ -1377,7 +1377,20 @@ app.whenReady().then(async () => {
         ])
         const branch = branchOut.trim() || 'HEAD'
         const dirty = statusOut.split('\n').filter(l => l.trim()).length
-        return { branch, dirty }
+        // Repo default branch (for Create PR gating) — origin/HEAD when set, else 'main'.
+        let defaultBranch = 'main'
+        try {
+          const sym = await run(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+          defaultBranch = sym.trim().replace(/^[^/]+\//, '') || 'main'
+        } catch { /* no origin/HEAD ref; keep 'main' */ }
+        // Commits on this branch that aren't on the default branch; null when unknowable.
+        let ahead: number | null = null
+        try {
+          const cnt = await run(['rev-list', '--count', `origin/${defaultBranch}..HEAD`])
+          const n = parseInt(cnt.trim(), 10)
+          if (!Number.isNaN(n)) ahead = n
+        } catch { /* no remote default ref; leave null */ }
+        return { branch, dirty, defaultBranch, ahead }
       } catch {
         return null
       }
@@ -1489,13 +1502,19 @@ app.whenReady().then(async () => {
       const pathMod = await import('path')
       const target = pathMod.resolve(args2.path)
       const container = pathMod.dirname(target)
+      // A branch name that sanitizes to nothing would make `target` the container itself.
+      if (pathMod.basename(target) === 'worktrees' && container.endsWith('.codey')) {
+        return { ok: false, error: 'invalid branch name' }
+      }
       fsMod.mkdirSync(container, { recursive: true })
       // In-repo worktrees would otherwise show up in the main repo's `git status`.
-      // Drop a `.gitignore` (`*`) in the container so every worktree checkout is ignored.
-      // Location-agnostic: works whether the container is the default .codey/worktrees or a custom path.
+      // Drop a `.gitignore` (`*`) so every worktree checkout is ignored — but only in
+      // the known .codey/worktrees container; never in arbitrary caller-supplied dirs.
       try {
-        const ignorePath = pathMod.join(container, '.gitignore')
-        if (!fsMod.existsSync(ignorePath)) fsMod.writeFileSync(ignorePath, '*\n')
+        if (container.endsWith(pathMod.join('.codey', 'worktrees'))) {
+          const ignorePath = pathMod.join(container, '.gitignore')
+          if (!fsMod.existsSync(ignorePath)) fsMod.writeFileSync(ignorePath, '*\n')
+        }
       } catch { /* best-effort; worktree add still proceeds */ }
       return await new Promise<{ ok: boolean; path?: string; error?: string }>((resolve) => {
         execFile('git', ['worktree', 'add', target, '-b', args2.name], { cwd: workingDir, timeout: 20000 }, (err, _out, stderr) => {
@@ -1522,9 +1541,18 @@ app.whenReady().then(async () => {
       // Push with upstream (no-op if already pushed; -u is safe to repeat)
       const push = await run('git', ['push', '-u', 'origin', branch], 60000)
       if (!push.ok) return { ok: false, error: (push.stderr || 'git push failed').trim() }
-      // Create PR
-      const pr = await run('gh', ['pr', 'create', '--title', input.title, '--body', input.body || '', '--head', branch], 60000)
-      if (!pr.ok) return { ok: false, error: (pr.stderr || 'gh pr create failed').trim() }
+      // Create PR. Finder-launched apps get launchd's minimal PATH, so resolve gh
+      // from the common install locations before falling back to PATH lookup.
+      const fsMod = await import('fs')
+      const gh = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh']
+        .find(p => fsMod.existsSync(p)) || 'gh'
+      const pr = await run(gh, ['pr', 'create', '--title', input.title, '--body', input.body || '', '--head', branch], 60000)
+      if (!pr.ok) {
+        const msg = /ENOENT/.test(pr.stderr)
+          ? 'GitHub CLI (gh) not found — install it with `brew install gh`'
+          : (pr.stderr || 'gh pr create failed').trim()
+        return { ok: false, error: msg }
+      }
       const url = (pr.stdout.match(/https?:\/\/\S+/) || [])[0] || pr.stdout.trim()
       return { ok: true, url }
     })

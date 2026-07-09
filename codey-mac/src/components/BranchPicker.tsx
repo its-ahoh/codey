@@ -46,10 +46,11 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
   }
 
   const doSwitchRemote = async (b: string) => {
-    const localName = b.replace(/^[^/]+\//, '')
-    const r = await git.checkout(localName, { track: true })
+    // `git checkout --track` needs the remote-tracking ref (origin/foo), not the local name.
+    const r = await git.checkout(b, { track: true })
     if (r.ok) { setOpen(false); return }
-    if (r.reason === 'dirty') setMode({ kind: 'dirty', target: localName })
+    // On retry after stash, plain `git checkout foo` DWIMs to a tracking branch.
+    if (r.reason === 'dirty') setMode({ kind: 'dirty', target: b.replace(/^[^/]+\//, '') })
   }
 
   const doCreate = async () => {
@@ -80,7 +81,8 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
               <div style={styles.row}>
                 <button style={styles.primary} onClick={async () => {
                   const r = await git.stashAndSwitch(mode.target)
-                  if (r.ok) { setNote('Local changes stashed — restore with `git stash pop`'); setMode({ kind: 'list' }); setOpen(false) }
+                  // Keep the menu open so the stash note is actually visible.
+                  if (r.ok) { setNote('Local changes stashed — restore with `git stash pop`'); setMode({ kind: 'list' }) }
                 }}>Stash & switch</button>
                 <button style={styles.ghost} onClick={() => setMode({ kind: 'list' })}>Cancel</button>
               </div>
