@@ -19,6 +19,9 @@ export interface SkillEntry {
   version: number;
   /** Prior versions of steps, oldest first, capped at HISTORY_MAX. Enables rollback. */
   history: { version: number; steps: string }[];
+  /** Append-only audit trail of version changes, capped at EVOLUTION_MAX.
+   *  Never consumed — rollback pops `history`, not this. */
+  evolution: SkillEvolutionEvent[];
   useCount: number;
   lastUsedAt: number;
   successSignals: { cleanRuns: number; corrections: number };
@@ -78,6 +81,20 @@ export interface SkillMatch {
 export const RECENT_TRACES_MAX = 20;
 export const HISTORY_MAX = 5;
 export const REJECTED_MAX = 20;
+export const EVOLUTION_MAX = 20;
+
+export interface SkillEvolutionEvent {
+  at: number;
+  kind: 'created' | 'evolved' | 'rolled-back';
+  /** Absent for 'created'. */
+  fromVersion?: number;
+  toVersion: number;
+  /** The run that triggered an 'evolved' event; absent for created/rolled-back. */
+  trigger?: { runId: string; promptSummary: string };
+  /** Snapshot of the steps as of this event — the trail alone reconstructs
+   *  every version even after the rollback stack's cap prunes old steps. */
+  steps: string;
+}
 
 interface TracesFile {
   version: 1;
@@ -122,7 +139,7 @@ export class SkillStore {
         if (parsed && parsed.version === 1 && Array.isArray(parsed.entries)) {
           this.index = {
             version: 1,
-            entries: parsed.entries.map(e => ({ ...e, history: e.history ?? [] })),
+            entries: parsed.entries.map(e => ({ ...e, history: e.history ?? [], evolution: e.evolution ?? [] })),
             rejected: Array.isArray(parsed.rejected) ? parsed.rejected : [],
           };
         }
@@ -157,17 +174,23 @@ export class SkillStore {
     whenToUse: string;
     steps: string;
     sourceRunId?: string;
+    trigger?: { runId: string; promptSummary: string };
   }): SkillEntry {
     const now = Date.now();
     const existing = this.index.entries.find(e => e.name === params.name);
     if (existing) {
       if (existing.steps !== params.steps) {
+        const fromVersion = existing.version;
         existing.history.push({ version: existing.version, steps: existing.steps });
         if (existing.history.length > HISTORY_MAX) {
           existing.history = existing.history.slice(-HISTORY_MAX);
         }
         existing.version++;
         existing.steps = params.steps;
+        SkillStore.appendEvolution(existing, {
+          at: now, kind: 'evolved', fromVersion, toVersion: existing.version,
+          trigger: params.trigger, steps: params.steps,
+        });
       }
       existing.description = params.description;
       existing.whenToUse = params.whenToUse;
@@ -184,6 +207,7 @@ export class SkillStore {
       steps: params.steps,
       version: 1,
       history: [],
+      evolution: [{ at: now, kind: 'created', toVersion: 1, steps: params.steps }],
       useCount: 0,
       lastUsedAt: now,
       successSignals: { cleanRuns: 0, corrections: 0 },
@@ -241,15 +265,20 @@ export class SkillStore {
   }
 
   /** Bump version, retaining the outgoing steps in history (capped) for rollback. */
-  bumpVersion(name: string, newSteps: string): boolean {
+  bumpVersion(name: string, newSteps: string, trigger?: { runId: string; promptSummary: string }): boolean {
     const entry = this.index.entries.find(e => e.name === name);
     if (!entry) return false;
+    const fromVersion = entry.version;
     entry.history.push({ version: entry.version, steps: entry.steps });
     if (entry.history.length > HISTORY_MAX) {
       entry.history = entry.history.slice(-HISTORY_MAX);
     }
     entry.version++;
     entry.steps = newSteps;
+    SkillStore.appendEvolution(entry, {
+      at: Date.now(), kind: 'evolved', fromVersion, toVersion: entry.version,
+      trigger, steps: newSteps,
+    });
     this.markIndexDirty();
     return true;
   }
@@ -258,10 +287,15 @@ export class SkillStore {
   rollback(name: string): boolean {
     const entry = this.index.entries.find(e => e.name === name);
     if (!entry) return false;
+    const fromVersion = entry.version;
     const prior = entry.history.pop();
     if (!prior) return false;
     entry.version = prior.version;
     entry.steps = prior.steps;
+    SkillStore.appendEvolution(entry, {
+      at: Date.now(), kind: 'rolled-back', fromVersion,
+      toVersion: prior.version, steps: prior.steps,
+    });
     this.markIndexDirty();
     return true;
   }
@@ -375,6 +409,13 @@ export class SkillStore {
       this.enqueuePersist();
     }, delayMs);
     if (typeof this.flushTimer.unref === 'function') this.flushTimer.unref();
+  }
+
+  private static appendEvolution(entry: SkillEntry, event: SkillEvolutionEvent): void {
+    entry.evolution.push(event);
+    if (entry.evolution.length > EVOLUTION_MAX) {
+      entry.evolution = entry.evolution.slice(-EVOLUTION_MAX);
+    }
   }
 }
 

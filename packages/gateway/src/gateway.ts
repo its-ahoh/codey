@@ -1031,6 +1031,9 @@ export class Codey {
             whenToUse: pendingSkill.whenToUse,
             steps: pendingSkill.steps,
             sourceRunId: 'user-confirmed',
+            // If this upserts an existing skill (evolving its steps), record
+            // what the user confirmed as the evolution's trigger.
+            trigger: { runId: 'user-confirmed', promptSummary: pendingSkill.description },
           });
           this.pendingSkillSuggestions.delete(pendingSkillKey);
           await this.sendResponse({
@@ -1062,7 +1065,7 @@ export class Codey {
       // path applies the skill exactly once — even with autoApply off.
       // Subcommands are excluded — parseCommand handles those.
       let skillInvoke: SkillInvoke | undefined;
-      const invokeMatch = message.text.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+      const invokeMatch = message.text.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b|history\b)(\S+)\s+([\s\S]+)/i);
       if (invokeMatch) {
         if (!this.configManager?.getSkillsConfig()?.enabled) {
           await this.sendResponse({
@@ -1602,7 +1605,7 @@ export class Codey {
         // Bare `/skill` or `/skill <name>` without a task — surface usage
         // instead of silently swallowing the command.
         await this.sendResponse({ chatId, channel,
-          text: 'Usage: /skill <name> <task> — run a task with a saved skill.\nAlso: /skill forget|restore|rollback <name>, /skills to list skills.' });
+          text: 'Usage: /skill <name> <task> — run a task with a saved skill.\nAlso: /skill forget|restore|rollback|history <name>, /skills to list skills.' });
         break;
       }
       case 'skill-forget': {
@@ -1625,6 +1628,11 @@ export class Codey {
         const v = store.get(args[0])?.version;
         await this.sendResponse({ chatId, channel,
           text: ok ? `⏪ Skill **${args[0]}** rolled back to v${v}.` : `Skill "${args[0]}" has no prior version (or was not found).` });
+        break;
+      }
+      case 'skill-history': {
+        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
+        await this.cmdSkillHistory(chatId, channel, store, args[0]);
         break;
       }
       default:
@@ -1796,6 +1804,27 @@ export class Codey {
     });
   }
 
+  private async cmdSkillHistory(chatId: string, channel: ChannelType, store: SkillStore, name: string): Promise<void> {
+    const skill = store.get(name);
+    if (!skill) {
+      await this.sendResponse({ chatId, channel, text: `Skill "${name}" not found.` });
+      return;
+    }
+    if (!skill.evolution || skill.evolution.length === 0) {
+      await this.sendResponse({ chatId, channel,
+        text: `📜 **${skill.name}** (v${skill.version}) — no recorded evolution events yet.` });
+      return;
+    }
+    const lines = skill.evolution.map(ev => {
+      const trig = ev.trigger ? ` ← "${ev.trigger.promptSummary.replace(/\s+/g, ' ').slice(0, 80)}"` : '';
+      return `- v${ev.toVersion} ${ev.kind} · ${Codey.relativeTime(ev.at)}${trig}`;
+    });
+    await this.sendResponse({
+      chatId, channel,
+      text: `📜 **${skill.name}** — evolution (v${skill.version} current${skill.archived ? ' · archived' : ''})\n\n${lines.join('\n')}\n\nCurrent steps (v${skill.version}):\n${skill.steps}`,
+    });
+  }
+
   private async cmdSkills(chatId: string, channel: ChannelType, workspaceName?: string): Promise<void> {
     const store = await this.resolveSkillStore(workspaceName);
     const active = store.getActive();
@@ -1894,7 +1923,10 @@ export class Codey {
             if (evolved) {
               // Known v1 window: a concurrent /skill rollback (or another evolve)
               // between evolveSkill and bumpVersion can be silently overwritten.
-              store.bumpVersion(entry.name, evolved);
+              store.bumpVersion(entry.name, evolved, {
+                runId: opts.trace.runId,
+                promptSummary: opts.trace.promptSummary,
+              });
               this.logger.info(`[skills] evolved ${entry.name} → v${entry.version}`);
               await opts.notify(`⚙︎ evolved skill ${entry.name} → v${entry.version} (rollback with /skill rollback ${entry.name})`);
             }
@@ -3843,8 +3875,8 @@ Example: /model gpt-4.1 write a Python script`;
       const argsStr = commandMatch[2] || '';
       const args = argsStr.split(/\s+/).filter(Boolean);
       
-      // /skill forget|restore|rollback <name>
-      const skillSubMatch = text.match(/^\/skill\s+(forget|restore|rollback)\s+(\S+)/i);
+      // /skill forget|restore|rollback|history <name>
+      const skillSubMatch = text.match(/^\/skill\s+(forget|restore|rollback|history)\s+(\S+)/i);
       if (skillSubMatch) {
         return {
           command: `skill-${skillSubMatch[1].toLowerCase()}`,
@@ -4459,7 +4491,10 @@ Example: /model gpt-4.1 write a Python script`;
             return finishSkillReply(`A skill named "${name}" already exists. Reply "rename <different-name>", "yes", or "no".`);
           }
           store.add({ name, description: s.description, whenToUse: s.whenToUse,
-                      steps: s.steps, sourceRunId: 'user-confirmed' });
+                      steps: s.steps, sourceRunId: 'user-confirmed',
+                      // If this upserts an existing skill (evolving its steps),
+                      // record what the user confirmed as the trigger.
+                      trigger: { runId: 'user-confirmed', promptSummary: s.description } });
           responseText = `✅ Skill **${name}** saved. It will be auto-applied on matching tasks.`;
         }
         this.chatManager.setPendingSkillSuggestion(chatId, null);
@@ -4481,7 +4516,7 @@ Example: /model gpt-4.1 write a Python script`;
       appliedChatSkill = origin.skillInvoke.skill;
       chatSkillTask = origin.skillInvoke.task;
     } else {
-      const invokeMatch = userText.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+      const invokeMatch = userText.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b|history\b)(\S+)\s+([\s\S]+)/i);
       if (invokeMatch) {
         if (!this.configManager?.getSkillsConfig()?.enabled) {
           return finishSkillReply('Skills are disabled.');

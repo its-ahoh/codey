@@ -12,6 +12,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
 import { WorkerManager, WorkspaceManager } from '@codey/core'
+import { listLearnedSkills, learnedSkillHistory, forgetLearnedSkill, restoreLearnedSkill, rollbackLearnedSkill } from './learned-skills'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
@@ -2325,6 +2326,24 @@ app.whenReady().then(async () => {
   ipcMain.handle('skills:reveal', async (_e, dir: string) =>
     wrap(async () => { shell.showItemInFolder(dir) })
   )
+
+  // ── Learned skills (crystallizer SkillStore) — distinct from skills:* above,
+  //    which manages agent-skill directories on disk. ──────────────────────────
+  function learnedSkillStore() {
+    if (!inProcessGateway) throw new Error('Gateway not initialized');
+    // The gateway's OWN workspace manager — not main.ts's workspaceManager singleton.
+    return inProcessGateway.getWorkspaceManager().getSkillStore();
+  }
+  ipcMain.handle('learnedSkills:list', async () =>
+    wrap(async () => listLearnedSkills(learnedSkillStore())));
+  ipcMain.handle('learnedSkills:history', async (_e, name: string) =>
+    wrap(async () => learnedSkillHistory(learnedSkillStore(), name)));
+  ipcMain.handle('learnedSkills:forget', async (_e, name: string) =>
+    wrap(async () => forgetLearnedSkill(learnedSkillStore(), name)));
+  ipcMain.handle('learnedSkills:restore', async (_e, name: string) =>
+    wrap(async () => restoreLearnedSkill(learnedSkillStore(), name)));
+  ipcMain.handle('learnedSkills:rollback', async (_e, name: string) =>
+    wrap(async () => rollbackLearnedSkill(learnedSkillStore(), name)));
 
   // ── Conversations IPC ─────────────────────────────────────────────
   ipcMain.handle('conversations:list', async () =>
