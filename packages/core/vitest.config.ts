@@ -18,6 +18,7 @@ export default defineConfig({
       'src/solo-advisor.test.ts',
       'src/team-graph.test.ts',
       'src/judge.test.ts',
+      'src/skill-crystallizer.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },

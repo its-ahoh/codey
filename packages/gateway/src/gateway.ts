@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -39,6 +39,17 @@ interface DirectoryResolveResult {
 /** Max advisor escalation rounds per single-agent turn (solo advisor). */
 const SOLO_ADVISOR_MAX_ROUNDS = 2;
 
+/** Explicit `/skill <name> <task>` invocation. Threaded per-turn: handleMessage
+ *  attaches it to the queued turn's payload, runOneTurn reads it from the
+ *  payload, and (for channel-linked chats) it rides into sendToChat on the
+ *  `origin` argument. Carrying it WITH the turn — instead of a chat-keyed
+ *  map — means two queued `/skill` messages from the same chat can never
+ *  swap invokes. */
+export interface SkillInvoke {
+  skill: SkillEntry;
+  task: string;
+}
+
 export class Codey {
   private config: GatewayConfig;
   private agentFactory: AgentFactory;
@@ -73,6 +84,17 @@ export class Codey {
   private startTime = Date.now();
   private tuiMode = false;
   private workingDir: string = process.cwd();
+
+  /** Pending skill suggestions for the channel surface, keyed `${channel}:${chatId}`.
+   *  `workspaceName` pins the suggestion to the workspace it was distilled in,
+   *  so a later workspace switch can't save it into the wrong skills store.
+   *  (Chat-surface suggestions are persisted on the Chat via ChatManager instead.) */
+  private pendingSkillSuggestions = new Map<string, { suggestion: DistillResult; workspaceName: string }>();
+  private skillRunCounter = 0;
+  private lastSkillDistillTime = 0;
+  private static SKILL_DISTILL_COOLDOWN_MS = 300_000; // 5 min
+  private static SKILL_GC_EVERY_N_RUNS = 20;
+  private static SKILL_EVOLVE_EVERY_N_USES = 3;
 
   // Pre-compiled regex patterns for parseCommand
   private static readonly REGEX_COMMAND = /^\/(\w+)(?:\s+(.*))?$/;
@@ -530,7 +552,7 @@ export class Codey {
       // No coalescing in this version: process each queued message in order.
       for (const item of batch) {
         if (!item.payload) continue;
-        await this.runOneTurn(item.payload.message, item.payload.parsed);
+        await this.runOneTurn(item.payload.message, item.payload.parsed, item.payload.skillInvoke);
       }
     });
     this.COOLDOWN_MS = config.rateLimitMs || 3000; // Default 3 seconds
@@ -977,6 +999,105 @@ export class Codey {
         this.chatManager.clearLastAskedOptions(pendingChat.id);
       }
 
+      // ── Pending skill suggestion (channel surface) ──────────
+      // Precedence mirrors the chat surface (sendToChat): a paused team's
+      // question wins — when `pending` is set this message is the user's
+      // answer to the team, so leave the suggestion persisted for later.
+      // Slash turns also leave it pending rather than silently dropping it;
+      // any other non-yes/no reply still clears it below.
+      const pendingSkillKey = `${message.channel}:${message.chatId}`;
+      const pendingSkillEntry = this.pendingSkillSuggestions.get(pendingSkillKey);
+      if (pendingSkillEntry && !pending && !isSlash) {
+        const pendingSkill = pendingSkillEntry.suggestion;
+        const reply = message.text.trim().toLowerCase();
+        const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
+        if (reply === 'yes' || renameMatch) {
+          // Save into the workspace the suggestion was distilled in — the
+          // active workspace may have changed since it was surfaced.
+          const store = await this.resolveSkillStore(pendingSkillEntry.workspaceName);
+          const name = renameMatch ? renameMatch[1] : pendingSkill.name;
+          if (renameMatch && store.get(name)) {
+            // Keep the suggestion pending so the user can pick another name.
+            await this.sendResponse({
+              chatId: message.chatId,
+              channel: message.channel,
+              text: `A skill named "${name}" already exists. Reply "rename <different-name>", "yes", or "no".`,
+            });
+            return;
+          }
+          store.add({
+            name,
+            description: pendingSkill.description,
+            whenToUse: pendingSkill.whenToUse,
+            steps: pendingSkill.steps,
+            sourceRunId: 'user-confirmed',
+          });
+          this.pendingSkillSuggestions.delete(pendingSkillKey);
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: `✅ Skill **${name}** saved! Use \`/skills\` to see all.`,
+          });
+          return;
+        }
+        if (reply === 'no') {
+          const store = await this.resolveSkillStore(pendingSkillEntry.workspaceName);
+          store.rejectSuggestion(pendingSkill.name, pendingSkill.description);
+          this.pendingSkillSuggestions.delete(pendingSkillKey);
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: `Got it — I won't suggest "${pendingSkill.name}" again.`,
+          });
+          return;
+        }
+        // Any other reply: drop the suggestion and fall through to normal handling.
+        this.pendingSkillSuggestions.delete(pendingSkillKey);
+      }
+
+      // ── Explicit skill invocation: /skill <name> <task> ─────
+      // Captures the invoke into a local carried WITH this turn (through
+      // processPrompt → queue payload → runOneTurn), and rewrites the message
+      // to the RAW task, so context/memory record the user's text and the run
+      // path applies the skill exactly once — even with autoApply off.
+      // Subcommands are excluded — parseCommand handles those.
+      let skillInvoke: SkillInvoke | undefined;
+      const invokeMatch = message.text.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+      if (invokeMatch) {
+        if (!this.configManager?.getSkillsConfig()?.enabled) {
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: 'Skills are disabled.',
+          });
+          return;
+        }
+        const task = invokeMatch[2].trim();
+        if (task.startsWith('/')) {
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: 'Usage: /skill <name> <task> — the task can\'t start with "/".',
+          });
+          return;
+        }
+        const name = invokeMatch[1].toLowerCase();
+        // Skills are per-workspace: for a channel linked to a Codey chat, look
+        // up the CHAT's workspace, not whichever workspace is loaded.
+        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
+        const skill = store.getActive().find(s => s.name === name);
+        if (!skill) {
+          await this.sendResponse({
+            chatId: message.chatId,
+            channel: message.channel,
+            text: `Skill "${name}" not found. Use /skills to list active skills.`,
+          });
+          return;
+        }
+        skillInvoke = { skill, task };
+        message = { ...message, text: task }; // raw task; run path applies the skill
+      }
+
       if (pending) {
         if (isSlash) {
           try { this.chatManager.setPendingTeam(message.chatId, null); } catch (_) { /* ignore */ }
@@ -1015,7 +1136,7 @@ export class Codey {
       }
 
       // Process as prompt
-      await this.processPrompt(message, parsed);
+      await this.processPrompt(message, parsed, skillInvoke);
 
     } catch (error) {
       this.errors++;
@@ -1063,7 +1184,11 @@ export class Codey {
     return undefined;
   }
 
-  private async processPrompt(message: UserMessage, parsed: ParsedCommand): Promise<void> {
+  private async processPrompt(
+    message: UserMessage,
+    parsed: ParsedCommand,
+    skillInvoke?: SkillInvoke,
+  ): Promise<void> {
     const { userId, chatId, channel } = message;
 
     const codeyChatId = this.resolveChatId(channel as ChannelType, userId);
@@ -1078,11 +1203,15 @@ export class Codey {
       text: parsed.prompt ?? '',
       userId,
       timestamp: Date.now(),
-      payload: { message, parsed },
+      payload: { message, parsed, skillInvoke },
     });
   }
 
-  private async runOneTurn(message: UserMessage, parsed: ParsedCommand): Promise<void> {
+  private async runOneTurn(
+    message: UserMessage,
+    parsed: ParsedCommand,
+    skillInvoke?: SkillInvoke,
+  ): Promise<void> {
     const { userId, chatId, channel, id: messageId } = message;
 
     const codeyChatId = this.resolveChatId(channel as ChannelType, userId);
@@ -1090,7 +1219,7 @@ export class Codey {
     // Channel-side with a linked Codey chat → route through sendToChat so the
     // Codey Chat record is updated and the Mac app sees the events.
     if (codeyChatId) {
-      await this.runChannelTurnViaChat(message, parsed, codeyChatId);
+      await this.runChannelTurnViaChat(message, parsed, codeyChatId, skillInvoke);
       return;
     }
 
@@ -1120,7 +1249,33 @@ export class Codey {
     const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
     const streamed = { active: false };
 
-    let prep = this.prepareAgentTurn(ctxWindow, agent, parsed.prompt, memoryContext);
+    // ── Skill matching (pre-run) ──────────────────────────
+    // Explicit `/skill <name> <task>` invoke (carried on this turn's queue
+    // payload by handleMessage — works even with autoApply off) takes
+    // precedence; otherwise high-confidence match → apply directly;
+    // borderline → LLM confirm gate.
+    let appliedSkill: SkillEntry | null = null;
+    const skillsCfg = this.configManager?.getSkillsConfig();
+    let runPrompt = parsed.prompt;
+    if (skillsCfg?.enabled && skillInvoke) {
+      appliedSkill = skillInvoke.skill;
+      runPrompt = applySkill(skillInvoke.task, skillInvoke.skill);
+      this.logger.info(`[skills] explicit invoke: ${skillInvoke.skill.name} v${skillInvoke.skill.version}`);
+    } else if (skillsCfg?.enabled && skillsCfg.autoApply) {
+      // runPrompt is non-empty here: empty prompts already returned above.
+      const match = matchSkill(runPrompt, this.workspaceManager.getSkillStore().getActive());
+      if (match) {
+        const confirmed = match.confidence === 'high'
+          || await confirmMatch(this.getSkillDistillDeps(), runPrompt, match.skill);
+        if (confirmed) {
+          appliedSkill = match.skill;
+          runPrompt = applySkill(runPrompt, match.skill);
+          this.logger.info(`[skills] auto-applied: ${match.skill.name} v${match.skill.version} (${match.confidence})`);
+        }
+      }
+    }
+
+    let prep = this.prepareAgentTurn(ctxWindow, agent, runPrompt, memoryContext);
     const buildRequest = (p: typeof prep): AgentRequest => ({
       prompt: p.prompt,
       agent,
@@ -1142,7 +1297,7 @@ export class Codey {
     if (!response.success && prep.resumeSessionId) {
       this.logger.warn(`[${agent}] Resume of ${prep.resumeSessionId} failed; retrying with bootstrap`);
       await this.contextManager.clearSessionAnchor(ctxWindow.id);
-      prep = this.prepareAgentTurn(ctxWindow, agent, parsed.prompt, memoryContext);
+      prep = this.prepareAgentTurn(ctxWindow, agent, runPrompt, memoryContext);
       response = await this.runWithFallback(agent, buildRequest(prep));
     }
 
@@ -1191,12 +1346,41 @@ export class Codey {
     if (codeyChatId) {
       await this.fanOutToOtherRoutes(codeyChatId, channel, userId, replyText);
     }
+
+    // ── Skills: post-run pass (fire-and-forget — never blocks the reply) ──
+    if (skillsCfg?.enabled) {
+      const trace: RunTrace = {
+        runId: `solo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        promptSummary: parsed.prompt.slice(0, 200),
+        outputPreview: (response.output || '').slice(0, 300),
+        timestamp: Date.now(),
+        mode: 'solo',
+      };
+      // Capture the store and workspace NOW — the pass is fire-and-forget, so
+      // a workspace switch before it runs must not redirect skill state.
+      const runWorkspace = this.workspaceManager.getCurrentWorkspace();
+      // afterRunSkillPass never rejects (stage-isolated try/catch inside).
+      void this.afterRunSkillPass({
+        trace,
+        appliedSkill,
+        clean: response.success,
+        store: this.workspaceManager.getSkillStore(),
+        // Mirror the chat surface: a turn that ended with the agent asking the
+        // user a question must not get a suggestion stacked on top — the
+        // user's "yes" would resolve the suggestion instead of the question.
+        suppressSuggestion: !!response.userQuestion,
+        notify: (text) => this.sendResponse({ chatId, channel, text }),
+        setPending: (s) => this.pendingSkillSuggestions.set(
+          `${channel}:${chatId}`, { suggestion: s, workspaceName: runWorkspace }),
+      });
+    }
   }
 
   private async runChannelTurnViaChat(
     message: UserMessage,
     parsed: ParsedCommand,
     codeyChatId: string,
+    skillInvoke?: SkillInvoke,
   ): Promise<void> {
     const { chatId, channel, userId, id: messageId } = message;
 
@@ -1219,17 +1403,32 @@ export class Codey {
           text: `❌ ${ev.message}`,
           replyTo: messageId,
         });
+      } else if (ev?.type === 'info' && ev.skillNotice && typeof ev.message === 'string') {
+        // Skill-tagged notices only (🧩 suggestion question / ⚙︎ evolve line).
+        // Untagged info events are tool/status/advisor chatter — too noisy for
+        // channel surfaces. Without this, a pending suggestion persisted on the
+        // linked chat is INVISIBLE to a channel-only user, and their next
+        // literal "yes"/"no" gets silently consumed by the suggestion handler.
+        void this.sendResponse({
+          chatId,
+          channel,
+          text: ev.message,
+        });
       }
       // Ignore stream/tool_* events for channel surfaces.
     };
 
     try {
+      // Task 12: sendToChat receives channel-origin explicit skill invokes on
+      // `origin.skillInvoke` (threaded per-turn from handleMessage, never via
+      // shared state). Its skill pre-run pass should give this precedence over
+      // the matcher, exactly like runOneTurn does.
       await this.sendToChat(
         codeyChatId,
         parsed.prompt ?? message.text ?? '',
         sink,
         undefined,
-        { channel: channel as ChannelType, channelUserId: userId },
+        { channel: channel as ChannelType, channelUserId: userId, skillInvoke },
       );
     } catch (err) {
       this.logger.error(`runChannelTurnViaChat failed: ${(err as Error).message}`);
@@ -1396,6 +1595,38 @@ export class Codey {
       case 'switch':
         await this.cmdSwitchChat(args, message);
         break;
+      case 'skills':
+        await this.cmdSkills(chatId, channel, this.linkedChatWorkspaceName(message));
+        break;
+      case 'skill': {
+        // Bare `/skill` or `/skill <name>` without a task — surface usage
+        // instead of silently swallowing the command.
+        await this.sendResponse({ chatId, channel,
+          text: 'Usage: /skill <name> <task> — run a task with a saved skill.\nAlso: /skill forget|restore|rollback <name>, /skills to list skills.' });
+        break;
+      }
+      case 'skill-forget': {
+        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
+        const ok = store.archive(args[0]);
+        await this.sendResponse({ chatId, channel,
+          text: ok ? `🗑️ Skill **${args[0]}** archived. Restore with /skill restore ${args[0]}` : `Skill "${args[0]}" not found.` });
+        break;
+      }
+      case 'skill-restore': {
+        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
+        const ok = store.restore(args[0]);
+        await this.sendResponse({ chatId, channel,
+          text: ok ? `🔄 Skill **${args[0]}** restored.` : `Skill "${args[0]}" not found.` });
+        break;
+      }
+      case 'skill-rollback': {
+        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
+        const ok = store.rollback(args[0]);
+        const v = store.get(args[0])?.version;
+        await this.sendResponse({ chatId, channel,
+          text: ok ? `⏪ Skill **${args[0]}** rolled back to v${v}.` : `Skill "${args[0]}" has no prior version (or was not found).` });
+        break;
+      }
       default:
         return;
     }
@@ -1563,6 +1794,155 @@ export class Codey {
       channel,
       text: `👥 Teams (available in all workspaces)\n\n${this.workspaceManager.listTeams()}`,
     });
+  }
+
+  private async cmdSkills(chatId: string, channel: ChannelType, workspaceName?: string): Promise<void> {
+    const store = await this.resolveSkillStore(workspaceName);
+    const active = store.getActive();
+    if (active.length === 0) {
+      await this.sendResponse({ chatId, channel, text: 'No active skills. Skills crystallize from repeated work patterns.' });
+      return;
+    }
+    const lines = active.map(s =>
+      `- **${s.name}** (v${s.version}): ${s.description} — used ${s.useCount}×, last ${Codey.relativeTime(s.lastUsedAt)}`
+    );
+    await this.sendResponse({ chatId, channel, text: `📋 **Skills** (${active.length})\n\n${lines.join('\n')}` });
+  }
+
+  private static relativeTime(ts: number): string {
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  }
+
+  private getSkillDistillDeps(): DistillDeps {
+    const { agent, model } = this.getAdvisorAgentAndModel();
+    const cfg = this.configManager?.getSkillsConfig();
+    let resolved = model ?? this.getDefaultModelConfig(agent);
+    if (cfg?.distillModel && resolved) {
+      resolved = { ...resolved, model: cfg.distillModel };
+    }
+    return {
+      agent,
+      model: resolved,
+      // Same plain-runner convention as the Advisor/Aide: bounded, tool-less,
+      // and never with permissions skipped — crystallizer prompts embed user
+      // text and agent output, so they must not reach a tool-capable session.
+      runner: this.advisorRunner,
+    };
+  }
+
+  /** Skills are per-workspace state. Resolve the store for a NAMED workspace
+   *  (a chat's binding), falling back to the active workspace's store when no
+   *  name is given or the lookup fails. */
+  private async resolveSkillStore(workspaceName?: string): Promise<SkillStore> {
+    if (workspaceName) {
+      try {
+        return await this.workspaceManager.getSkillStoreFor(workspaceName);
+      } catch (err) {
+        this.logger.warn(`[skills] store for workspace "${workspaceName}" unavailable — using active workspace: ${(err as Error).message}`);
+      }
+    }
+    return this.workspaceManager.getSkillStore();
+  }
+
+  /** Workspace of the Codey chat linked to a channel message, if any. */
+  private linkedChatWorkspaceName(message: UserMessage): string | undefined {
+    const codeyChatId = this.resolveChatId(message.channel as ChannelType, message.userId);
+    return codeyChatId ? this.chatManager.get(codeyChatId)?.workspaceName : undefined;
+  }
+
+  /** Shared post-run skill pass for both surfaces. Never rejects — every LLM
+   *  stage is isolated in its own try/catch so call sites can be a bare
+   *  `void this.afterRunSkillPass(...)` without a `.catch`. */
+  private async afterRunSkillPass(opts: {
+    trace: RunTrace;
+    appliedSkill: SkillEntry | null;
+    clean: boolean;
+    /** The run's workspace-scoped skill store, resolved by the caller (the
+     *  chat's workspace when the run had a chat binding, else the active one). */
+    store: SkillStore;
+    /** Deliver a one-liner to the user on whatever surface ran the turn. */
+    notify: (text: string) => void | Promise<void>;
+    /** Stash a suggestion so the user's next reply can resolve it. */
+    setPending: (s: DistillResult) => void;
+    /** Skip ONLY the distill/suggest stage (bookkeeping, evolve, trace, and GC
+     *  still run). Set when the turn ended with the agent asking the user a
+     *  question, so a suggestion doesn't hijack the user's answer. */
+    suppressSuggestion?: boolean;
+  }): Promise<void> {
+    try {
+      const cfg = this.configManager?.getSkillsConfig();
+      if (!cfg || !cfg.enabled) return;
+      const store = opts.store;
+
+      if (opts.appliedSkill) {
+        // Bookkeeping stays outside the LLM try block so it always happens.
+        store.recordUse(opts.appliedSkill.name);
+        store.recordSuccessSignal(opts.appliedSkill.name, opts.clean);
+        const entry = store.get(opts.appliedSkill.name);
+        // Gate evolution to every Nth use — one weak trace is not enough signal
+        // to rewrite steps on, and per-run LLM calls would be pure cost.
+        if (opts.clean && entry && entry.useCount % Codey.SKILL_EVOLVE_EVERY_N_USES === 0) {
+          try {
+            const evolved = await evolveSkill(this.getSkillDistillDeps(), entry, opts.trace);
+            if (evolved) {
+              // Known v1 window: a concurrent /skill rollback (or another evolve)
+              // between evolveSkill and bumpVersion can be silently overwritten.
+              store.bumpVersion(entry.name, evolved);
+              this.logger.info(`[skills] evolved ${entry.name} → v${entry.version}`);
+              await opts.notify(`⚙︎ evolved skill ${entry.name} → v${entry.version} (rollback with /skill rollback ${entry.name})`);
+            }
+          } catch (err) {
+            this.logger.warn(`[skills] evolve stage failed: ${err}`);
+          }
+        }
+      }
+
+      if (!opts.clean) return; // failed runs contribute a correction signal, not a trace
+
+      store.recordTrace(opts.trace);
+
+      this.skillRunCounter++;
+      if (this.skillRunCounter % Codey.SKILL_GC_EVERY_N_RUNS === 1) {
+        const n = store.runCollectGarbage({ staleDays: cfg.staleDays, weakSkillDays: cfg.weakSkillDays });
+        if (n > 0) this.logger.info(`[skills] GC archived ${n} skill(s)`);
+      }
+
+      // Distill/suggest is the last stage, so suppressing it is an early
+      // return. The cooldown is NOT consumed — the next unsuppressed run
+      // can still surface the suggestion.
+      if (opts.suppressSuggestion) return;
+
+      try {
+        const now = Date.now();
+        if (now - this.lastSkillDistillTime > Codey.SKILL_DISTILL_COOLDOWN_MS) {
+          const recent = store.getRecentTraces(cfg.suggestOnRepeat + 5);
+          // Nothing to distill yet — skip WITHOUT consuming the cooldown.
+          if (recent.length < cfg.suggestOnRepeat) return;
+          this.lastSkillDistillTime = now;
+          const candidate = await distillCandidate(
+            this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
+          );
+          if (candidate) {
+            opts.setPending(candidate);
+            await opts.notify(
+              `🧩 I've done something like this repeatedly ("${candidate.description}"). ` +
+              `Save it as a reusable skill **${candidate.name}**? (reply "yes", "no", or "rename <new-name>")`
+            );
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`[skills] distill stage failed: ${err}`);
+      }
+    } catch (err) {
+      this.logger.warn(`[skills] post-run pass failed: ${err}`);
+    }
   }
 
   private async cmdWorker(args: string[], message: UserMessage, prompt: string): Promise<void> {
@@ -3463,6 +3843,19 @@ Example: /model gpt-4.1 write a Python script`;
       const argsStr = commandMatch[2] || '';
       const args = argsStr.split(/\s+/).filter(Boolean);
       
+      // /skill forget|restore|rollback <name>
+      const skillSubMatch = text.match(/^\/skill\s+(forget|restore|rollback)\s+(\S+)/i);
+      if (skillSubMatch) {
+        return {
+          command: `skill-${skillSubMatch[1].toLowerCase()}`,
+          // Skill names are stored lowercase (invoke/rename lowercase too).
+          args: [skillSubMatch[2].toLowerCase()],
+          agent: this.getDefaultAgent() as CodingAgent,
+          model: undefined,
+          prompt: '',
+        };
+      }
+
       // Check for worker command: /worker architect design something
       const workerMatch = text.match(/\/worker\s+(\w+)\s+(.+)/i);
       if (workerMatch) {
@@ -3975,7 +4368,10 @@ Example: /model gpt-4.1 write a Python script`;
     // is Mac (no route matches '__mac__'), so all attached channels receive
     // the mirror. Channel-side callers must pass the real channel+userId so
     // we don't echo the message back to the user who typed it.
-    origin?: { channel: ChannelType; channelUserId: string },
+    // `skillInvoke` is an explicit `/skill <name> <task>` invocation threaded
+    // per-turn from the channel surface (Task 12: apply it in this method's
+    // skill pre-run pass, taking precedence over the auto-apply matcher).
+    origin?: { channel: ChannelType; channelUserId: string; skillInvoke?: SkillInvoke },
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
@@ -3989,7 +4385,11 @@ Example: /model gpt-4.1 write a Python script`;
     // cancels the paused run and proceeds normally; otherwise this turn is an
     // answer to the team's question, so map any digit reply to the option text.
     const pendingTeam = chat.pendingTeam;
-    const isSlashTurn = userText.trimStart().startsWith('/');
+    // A channel-origin explicit `/skill` invoke arrives with userText already
+    // rewritten to the raw task (handleMessage stripped the slash), so count
+    // it as a slash turn here: it must cancel a paused team like any other
+    // slash command — NOT be delivered as the answer to the paused worker.
+    const isSlashTurn = userText.trimStart().startsWith('/') || !!origin?.skillInvoke;
     if (pendingTeam) {
       if (isSlashTurn) {
         this.chatManager.setPendingTeam(chatId, null);
@@ -4018,6 +4418,88 @@ Example: /model gpt-4.1 write a Python script`;
         try { this.chatEventListener(ev); } catch { /* swallow */ }
       }
     };
+
+    // Short-circuit helper for skill-related conversational replies that never
+    // reach an agent: persist both sides of the exchange, announce completion,
+    // and return. Runs BEFORE the semaphore acquire, so there is nothing to
+    // release (mirrors how the workspace-not-found path only releases because
+    // it acquired first).
+    const finishSkillReply = (responseText: string): { response: string; chatId: string } => {
+      const now = Date.now();
+      this.chatManager.appendMessage(chatId, {
+        id: randomUUID(), role: 'user', content: userTextParam, timestamp: now, isComplete: true,
+      });
+      this.chatManager.appendMessage(chatId, {
+        id: randomUUID(), role: 'assistant', content: responseText, timestamp: now, isComplete: true,
+      });
+      sink({ type: 'done', chatId, response: responseText });
+      return { response: responseText, chatId };
+    };
+
+    // ── Pending skill suggestion (yes / no / rename <name>) ─────────
+    // Resolved here because Mac turns never pass through handleMessage.
+    // A paused team's question takes precedence: when pendingTeam is set this
+    // turn is the user's answer to the team, so leave the suggestion persisted
+    // untouched — it can still be answered after the team resumes/finishes.
+    if (chat.pendingSkillSuggestion && !isSlashTurn && !pendingTeam) {
+      const s = chat.pendingSkillSuggestion;
+      const reply = userText.trim().toLowerCase();
+      const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
+      if (reply === 'yes' || reply === 'no' || renameMatch) {
+        // Skills are per-workspace: use the CHAT's workspace store.
+        const store = await this.resolveSkillStore(chat.workspaceName);
+        let responseText: string;
+        if (reply === 'no') {
+          store.rejectSuggestion(s.name, s.description);
+          responseText = `Got it — I won't suggest "${s.name}" again.`;
+        } else {
+          const name = renameMatch ? renameMatch[1] : s.name;
+          if (renameMatch && store.get(name)) {
+            // Keep the suggestion pending so the user can pick another name.
+            return finishSkillReply(`A skill named "${name}" already exists. Reply "rename <different-name>", "yes", or "no".`);
+          }
+          store.add({ name, description: s.description, whenToUse: s.whenToUse,
+                      steps: s.steps, sourceRunId: 'user-confirmed' });
+          responseText = `✅ Skill **${name}** saved. It will be auto-applied on matching tasks.`;
+        }
+        this.chatManager.setPendingSkillSuggestion(chatId, null);
+        return finishSkillReply(responseText);
+      }
+      // Any other reply: drop the suggestion and continue as a normal turn.
+      this.chatManager.setPendingSkillSuggestion(chatId, null);
+    }
+
+    // ── Explicit skill invocation ───────────────────────────────────
+    // Channel-origin turns arrive pre-resolved on origin.skillInvoke (parsed
+    // and validated by handleMessage); Mac-origin turns parse `/skill <name>
+    // <task>` here. Either way userText is rewritten to the RAW task so the
+    // persisted user message and downstream bootstrap see the clean text —
+    // the banner is applied exactly once at prompt build (see below).
+    let appliedChatSkill: SkillEntry | null = null;
+    let chatSkillTask: string | null = null;
+    if (origin?.skillInvoke) {
+      appliedChatSkill = origin.skillInvoke.skill;
+      chatSkillTask = origin.skillInvoke.task;
+    } else {
+      const invokeMatch = userText.match(/^\/skill\s+(?!forget\b|restore\b|rollback\b)(\S+)\s+([\s\S]+)/i);
+      if (invokeMatch) {
+        if (!this.configManager?.getSkillsConfig()?.enabled) {
+          return finishSkillReply('Skills are disabled.');
+        }
+        const name = invokeMatch[1].toLowerCase();
+        // Skills are per-workspace: use the CHAT's workspace store.
+        const store = await this.resolveSkillStore(chat.workspaceName);
+        const skill = store.getActive().find(sk => sk.name === name);
+        if (!skill) {
+          return finishSkillReply(`Skill "${name}" not found. Ask me to /skills to see active skills.`);
+        }
+        appliedChatSkill = skill;
+        chatSkillTask = invokeMatch[2].trim();
+      }
+    }
+    if (appliedChatSkill && chatSkillTask !== null) {
+      userText = chatSkillTask;
+    }
 
     // Queue if at capacity
     if ((this.chatSemaphore as any).running >= (this.chatSemaphore as any).max) {
@@ -4111,6 +4593,30 @@ Example: /model gpt-4.1 write a Python script`;
     // Solo advisor: when enabled (and not a team), tell the agent how to escalate.
     if (chat.soloAdvisor && chat.selection.type !== 'team') {
       prompt = prompt + '\n\n' + SOLO_ADVISOR_INSTRUCTION;
+    }
+
+    // ── Skill application (pre-run) ─────────────────────────────────
+    // Explicit invoke wins outright (banner applied once, no matching);
+    // otherwise auto-apply matches against active skills — solo chats only.
+    const skillsCfg = this.configManager?.getSkillsConfig();
+    if (appliedChatSkill) {
+      prompt = applySkill(prompt, appliedChatSkill);
+      this.logger.info(`[skills] explicit invoke (chat): ${appliedChatSkill.name} v${appliedChatSkill.version}`);
+    } else if (skillsCfg?.enabled && skillsCfg.autoApply
+        && chat.selection.type !== 'team' && !isSlashTurn) {
+      // Skills are per-workspace: match against the CHAT's workspace store
+      // (mirrors how workingDir/teams above come from chat.workspaceName).
+      const chatSkillStore = await this.resolveSkillStore(chat.workspaceName);
+      const match = matchSkill(userText, chatSkillStore.getActive());
+      if (match) {
+        const confirmed = match.confidence === 'high'
+          || await confirmMatch(this.getSkillDistillDeps(), userText, match.skill);
+        if (confirmed) {
+          appliedChatSkill = match.skill;
+          prompt = applySkill(prompt, match.skill);
+          this.logger.info(`[skills] auto-applied (chat): ${match.skill.name} v${match.skill.version} (${match.confidence})`);
+        }
+      }
     }
 
     const userMessage: ChatMessage = {
@@ -4258,6 +4764,9 @@ Example: /model gpt-4.1 write a Python script`;
           resumeSessionId = undefined;
           newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
           prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments);
+          // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
+          // the one that carried it (still exactly once per prompt build).
+          if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);
           response = await this.runWithFallback(agent, {
             prompt,
             agent,
@@ -4404,6 +4913,56 @@ Example: /model gpt-4.1 write a Python script`;
       }
 
       sink({ type: 'done', chatId, response: output, thinking: singleAgentResponse?.thinking, tokens, durationSec, title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
+
+      // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
+      // Skip the whole pass when this turn ended PAUSED — i.e. the team run
+      // re-set pendingTeam because a worker asked the user a question. Re-read
+      // the chat: the run itself persists the pause via setPendingTeam, so the
+      // freshest signal is the chat record, not the pre-run `pendingTeam` local.
+      // A paused turn's `output` is the worker's mid-run question: no trace
+      // (bad distillation input), no distill, no suggestion (it would collide
+      // with the team's question on the next user turn), and no use/success
+      // bookkeeping for an applied skill either — the run isn't finished yet.
+      const pausedAfterRun = !!this.chatManager.get(chatId)?.pendingTeam;
+      if (skillsCfg?.enabled && !pausedAfterRun) {
+        // Real success signal: the solo path exposes it on singleAgentResponse
+        // (a failed run reaches here with success:false and output = streamed
+        // partial text or ''). Team paths have no structured flag — they throw
+        // to the catch block on failure — so non-empty output is the signal.
+        // Failed runs still run the pass so an applied skill records a
+        // correction; afterRunSkillPass skips trace/distill itself when !clean.
+        const runSucceeded = singleAgentResponse ? !!singleAgentResponse.success : !!output;
+        // Worker sequence for team turns comes from the persisted per-worker
+        // messages (teamThinkingByStep only maps step → thinking text, no names).
+        const workerSequence = teamTurnId
+          ? this.chatManager.get(chatId)?.messages
+              .filter(m => m.teamTurnId === teamTurnId && m.worker)
+              .map(m => m.worker as string)
+          : undefined;
+        const chatTrace: RunTrace = {
+          runId: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          promptSummary: userText.slice(0, 200),
+          outputPreview: (output || '').slice(0, 300),
+          workerSequence: workerSequence && workerSequence.length > 0 ? workerSequence : undefined,
+          timestamp: Date.now(),
+          mode: teamTurnId ? 'team-sequential' : 'solo',
+        };
+        // afterRunSkillPass never rejects (stage-isolated try/catch inside).
+        void this.afterRunSkillPass({
+          trace: chatTrace,
+          appliedSkill: appliedChatSkill,
+          clean: runSucceeded,
+          // Per-workspace store, resolved from the CHAT's workspace binding.
+          store: await this.resolveSkillStore(chat.workspaceName),
+          // A turn that ended by asking the user something (choice buttons or
+          // a structured AskUserQuestion) must not get a skill suggestion
+          // stacked on top — the user's "yes" would resolve the suggestion
+          // instead of the agent's question. Trace/evolve still run.
+          suppressSuggestion: !!surfacedChoices || !!agentUserQuestion,
+          notify: (text) => { sink({ type: 'info', chatId, message: text, skillNotice: true }); },
+          setPending: (s) => { this.chatManager.setPendingSkillSuggestion(chatId, s); },
+        });
+      }
 
       // Mirror this turn to every attached route except the originating one.
       // Mac-origin uses a synthetic '__mac__' channel that matches no real
