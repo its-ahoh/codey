@@ -66,6 +66,17 @@ describe('tick', () => {
     expect(deps.runTarget).not.toHaveBeenCalled();
   });
 
+  it('one automation with an invalid tz does not starve the others', async () => {
+    seed({ name: 'broken', schedule: { hour: 9, minute: 0, tz: 'Beijing' } }); // Intl throws RangeError
+    const good = seed({ name: 'good' });
+    const logs: string[] = [];
+    await makeEngine({ log: msg => logs.push(msg) }).tick();
+    await new Promise(r => setTimeout(r, 0)); // tick fires runNow without awaiting it
+    expect(deps.runTarget).toHaveBeenCalledTimes(1);
+    expect(store.listRuns(good.id)).toHaveLength(1);
+    expect(logs.some(l => l.includes('schedule eval failed for broken'))).toBe(true);
+  });
+
   it('does nothing without the lease', async () => {
     fs.writeFileSync(path.join(dir, 'scheduler.lock'),
       JSON.stringify({ pid: 999999, role: 'daemon', heartbeatAt: now }));

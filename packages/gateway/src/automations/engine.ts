@@ -66,11 +66,18 @@ export class AutomationEngine {
     // expiry could clobber the leader's concurrent appendRun.
     this.expireParked(now);
     for (const a of this.deps.store.list()) {
-      if (!a.enabled || !a.schedule) continue;
-      if (!shouldFire(a.schedule, a.lastFiredAt, now)) continue;
-      // Record the slot BEFORE running so a crash mid-run can't re-fire it.
-      this.deps.store.recordLastFired(a.id, now);
-      void this.runNow(a.id, 'schedule').catch(err => this.log(`scheduled run failed: ${err?.message}`));
+      // One automation with garbage data (e.g. an invalid tz makes Intl throw
+      // a RangeError inside shouldFire) must not abort the whole tick and
+      // starve every other schedule.
+      try {
+        if (!a.enabled || !a.schedule) continue;
+        if (!shouldFire(a.schedule, a.lastFiredAt, now)) continue;
+        // Record the slot BEFORE running so a crash mid-run can't re-fire it.
+        this.deps.store.recordLastFired(a.id, now);
+        void this.runNow(a.id, 'schedule').catch(err => this.log(`scheduled run failed: ${err?.message}`));
+      } catch (err) {
+        this.log(`schedule eval failed for ${a.name}: ${(err as Error)?.message}`);
+      }
     }
   }
 
