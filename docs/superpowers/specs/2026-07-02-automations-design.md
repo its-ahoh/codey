@@ -55,7 +55,10 @@ Electron main (holds the Codey instance)
     ├── AutomationStore     (~/.codey/automations.json + per-id run history .jsonl)
     ├── AutomationEngine    (schedule loop, runNow, executeAutomation, result routing)
     └── AutomationInterviewer (authoring-time clarification, reuses Aide role)
-         └── runs via a new headless entry point over the existing run paths
+         └── runs each automation's rendered brief as a turn in a hidden
+             system chat (Chat.kind: 'automation'), via the existing
+             sendToChat pipeline — see "Execution: the hidden system chat"
+             below. There is no separate headless entry point.
 ```
 
 ### Scheduler leadership (single scheduler across processes)
@@ -94,10 +97,14 @@ interface Automation {
   name: string;
   enabled: boolean;
 
-  // What it runs
+  // What it runs. `workspaceName` replaces the originally-sketched `workingDir`:
+  // the hidden chat this automation owns (see `chatId` below) is created in
+  // that workspace, and `sendToChat` resolves the actual `workingDir` from the
+  // chat's workspace the same way any normal chat does — there is no parallel
+  // working-directory mechanism for automations.
   target:
-    | { kind: 'prompt'; workingDir?: string; agent?: CodingAgent; model?: ModelConfig }
-    | { kind: 'team';   teamName: string };
+    | { kind: 'prompt'; workspaceName: string; agent?: CodingAgent; model?: string }
+    | { kind: 'team';   teamName: string; workspaceName: string };
 
   // Baked at authoring time (Q6)
   brief: string;                    // frozen, enriched, self-contained instruction block
@@ -124,6 +131,15 @@ interface Automation {
     channel?: { platform: string; target: string };  // optional chat/channel post
   };
 
+  // The hidden system chat (Chat.kind: 'automation') this automation executes
+  // in, created lazily on first run. This chat IS the headless entry point —
+  // every run and every resume is just another turn sent into it via
+  // `sendToChat` with a collecting sink, so team pause/resume
+  // (`chat.pendingTeam` + the existing continuation machinery) and
+  // conversation context work completely unchanged. There is no separate
+  // headless code path (see "Execution: the hidden system chat" below).
+  chatId?: string;
+
   lastFiredAt?: number;             // for missed-slot / double-fire protection
   createdAt: number;
   updatedAt: number;
@@ -142,6 +158,9 @@ interface AutomationRun {
   output?: string;          // capped (e.g. 32KB, truncation marked) — team runs can
                             // produce huge transcripts and the UI reads this file
   error?: string;
+  question?: string;        // pending question when status === 'parked'
+  options?: string[];       // choice options, when the parked question was [ASK_USER:choice]
+  resumedFrom?: string;     // runId of the parked run this record resumed
   reportFailure?: string;   // notify/channel delivery failure, recorded not just logged
   seenAt?: number;          // set when the Mac app has surfaced the result (badge clear)
 }
@@ -163,31 +182,42 @@ fields** on rewrite of both definitions and run records (forward-compatible migr
   - **skip missed slots on restart** — if a scheduled slot elapsed while the process was
     down, **log and skip; never back-fire** (a 3am job must not blast at noon).
 - **Triggers** — `runNow(id, trigger)` (manual, allowed even without the lease) and the
-  schedule path both funnel into one `executeAutomation(automation, trigger)`.
-- **Execution — a new headless entry point.** The existing run paths are not directly
-  callable here: `runTeamTask` is `private` on the gateway and takes a channel-shaped
-  `UserMessage` plus response plumbing, and the chat paths assume a chat to stream into.
-  The gateway therefore exposes `runHeadless(automation, trigger)` which builds a
-  synthetic message from the rendered brief (placeholders substituted from `params`)
-  and a **collecting emitter sink** (a `TeamEmitter` sink that accumulates the
-  transcript instead of streaming to a surface — mirroring what `sendToChat` does for
-  the chat surface):
-  - `kind: 'prompt'` → run through the agent adapter path with the automation's
-    `workingDir`/`agent`/`model`, fully autonomous.
-  - `kind: 'team'` → dispatch through `runTeamTask` (via the headless wrapper) with the
-    brief as the task; flow graphs and the judge work unchanged.
-- **Unattended safety & parked runs** — runs have **no interactive surface bound**. An
-  unexpected `[ASK_USER]` is caught: the run is recorded `parked` with the pending
-  question in `output`, pause state persisted via the existing `TeamEmitter`
-  continuation machinery (keyed by `runId` instead of a chat id), and the user is
-  notified. The engine **never guesses**. A parked run is **resumable**: the run-history
-  detail in the Mac app shows the question with an answer box; the answer feeds the
-  persisted continuation exactly like a chat reply would, and the resumed execution
-  appends a new `resumed` run record linked by `runId`. Parked state survives restarts
-  (it is persisted), but a parked run older than 7 days is expired to `failed` so
-  stale questions don't resume against a changed world.
-- **Concurrency** — reuses the existing `RunSemaphore`. An automation that fires while its
-  previous run is still active (or parked) is **skipped and logged**, not double-queued.
+  schedule path both funnel into `AutomationEngine.execute`, which calls out to a
+  gateway-supplied `runTarget`/`resumeTarget` adapter.
+- **Execution: the hidden system chat.** There is no separate headless entry point.
+  Each automation lazily gets its own hidden system chat (`Chat.kind: 'automation'`,
+  `Automation.chatId`), created on first run in the target's `workspaceName` (with a
+  `team` selection for `kind: 'team'` targets). Every run — scheduled, manual, or
+  resumed — is simply a turn sent into that chat through the existing `sendToChat`
+  pipeline with a collecting sink (`runAutomationTurn` on `Codey`):
+  - `kind: 'prompt'` → `sendToChat` runs the automation's `agent`/`model` override
+    against the rendered brief (placeholders substituted from `params`), fully
+    autonomous, with `workingDir` resolved from the chat's workspace exactly as any
+    normal chat turn resolves it.
+  - `kind: 'team'` → `sendToChat`'s existing team dispatch runs the brief as the task;
+    flow graphs, the judge, and `chat.pendingTeam` pause/resume work unchanged because
+    this is the same code path a real chat uses.
+  - Because the run lives in a real (hidden) chat, conversation context and history
+    carry between runs and across resumes for free — no parallel continuation store
+    was needed.
+- **Unattended safety & parked runs** — runs have **no interactive surface bound**. Two
+  parking paths are detected after each turn (`detectParked`): a `team` target parks via
+  the persisted `chat.pendingTeam` (the existing pause machinery — authoritative for
+  teams); a `prompt` target parks when the single agent's response itself contains an
+  `[ASK_USER]` marker (a solo prompt has no team pause state to consult, so the marker
+  is the signal). Either way the run is recorded `parked` with the pending
+  `question`/`options`, and the user is notified. The engine **never guesses**. A parked
+  run is **resumable**: the run-history detail in the Mac app shows the question with an
+  answer box; the answer is simply the **next turn sent into the same hidden chat**
+  (conversation context carries the original question forward, so no separate
+  continuation keying by `runId` was needed), and the resumed execution appends a new
+  `resumed` run record linked by `runId` via `resumedFrom`. Parked state survives
+  restarts (it is persisted on the chat and in the run record), but a parked run older
+  than 7 days is expired to `failed` so stale questions don't resume against a changed
+  world — see "Hardening" below for the exact expiry and resume-consumption semantics.
+- **Concurrency** — a per-process `active` set skips an automation whose previous run is
+  still in flight; a fresh fire is also skipped while the latest run record is `parked`.
+  See "Hardening" for the v1 limits this accepts.
 - **Result routing** — on finish: append to run-history `.jsonl`; then best-effort
   delivery, with any failure recorded in the run's `reportFailure` (not just logged):
   - `report.notify` → emit `automation-run-finished`; if an Electron main is attached it
@@ -197,6 +227,68 @@ fields** on rewrite of both definitions and run records (forward-compatible migr
     (notification-on-launch for anything unseen and recent).
   - `report.channel` → post summary via channel machinery **if that platform is
     connected in this process**; otherwise record the delivery failure.
+
+### Hardening (from implementation review)
+
+Points below were tightened after an implementation-review pass; each is a one-line
+guarantee the code (and its tests) rely on:
+
+- **Resume consumes the parked record.** After a resume attempt — success or failure —
+  the original run is patched to `resumed`, so it stops being answerable; a second
+  answer against the same `runId` is rejected (`resume()` requires `status === 'parked'`).
+- **Parked expiry is leader-only, idempotent, and observable.** Only the scheduler
+  lease-holder runs `expireParked` (a non-leader running it could clobber the leader's
+  concurrent `appendRun`, since `patchRun` is a whole-file rewrite); expiring an already-
+  expired run is a no-op; and expiry emits `run-finished` with the patched (`failed`)
+  run so the Mac app notifies exactly as it would for any other finish.
+- **Stale `pendingTeam` is cleared before fresh turns, not resumes.** A fresh automation
+  turn (not a resume) clears any stale `chat.pendingTeam` on the hidden chat before
+  calling `sendToChat` — this guards against an expiry/failed-resume desync where the
+  chat still thinks a team is paused but the run record has already moved past `parked`.
+  A resume turn relies on `pendingTeam` being present and does not clear it.
+- **One bad automation can't stall the tick.** The engine tick evaluates each automation
+  in its own `try/catch`; garbage schedule data (e.g. an invalid IANA tz, which makes
+  `Intl` throw a `RangeError` inside `shouldFire`) logs and skips just that automation
+  instead of aborting the whole tick and starving every other schedule.
+- **Skill machinery is gated off for automation chats.** Auto-apply, skill-suggestion
+  resolution, and the post-run crystallizer pass are all skipped when `chat.kind ===
+  'automation'` — an unattended run executes a frozen brief and must not silently pick
+  up or apply skills mid-run. Automation chat titles are also never LLM-rewritten.
+- **`InterviewManager` is defensive about failure and reentrancy.** A session is removed
+  from the in-memory map whether `synthesize` succeeds or throws (a failed interview
+  restarts from scratch rather than retrying into duplicated state); `cancel(sessionId)`
+  lets the Mac app drop an in-progress interview when its editor closes; and `answer()`
+  clears the session's `current` question before awaiting the follow-up check, so a
+  reentrant call for the same session hits the "unknown/no pending question" guard
+  instead of racing.
+- **The Mac IPC boundary validates before the store sees anything.** `automations:create`
+  and `automations:update` run drafts/patches through `validateAutomationDraft` /
+  `validateAutomationPatch` (hour/minute integer-range checks, an `Intl.DateTimeFormat`
+  probe to reject a bad tz, and a `report.notify` boolean check) — bad data is rejected
+  at the IPC handler, before it can reach `AutomationStore` and later starve the
+  scheduler tick.
+- **OS notifications respect global settings and window focus.** Both the launch-time
+  unseen scan and the live `run-finished`/`run-parked` listener gate the actual
+  `Notification` call behind `osNotificationsAllowed()`, which checks the app's global
+  `notifications.enabled` setting and suppresses the OS notification while the main
+  window is focused (the user is already looking at the app). Renderer-side events
+  (`automation-event`, `automation-unseen`) and badges are unaffected by this gate —
+  they always flow, since the renderer needs them to keep its own state in sync.
+- **"Seen" is driven by display, not a separate acknowledgment step.** Simply displaying
+  a run's status — the latest-status badge in the automations list, or opening the run
+  history panel — marks that run `seenAt` via `automations:markSeen`. The launch-time
+  scan only re-notifies runs that are still unseen *and* ended within the last 24h
+  (`findUnseenRuns`), so a daemon-fired run from days ago doesn't resurface.
+- **Accepted v1 limits.** These are known, intentional gaps, not bugs: the `active`-run
+  guard is per-process only, so a second process (e.g. the standalone daemon and the
+  embedded Mac-app gateway both pointed at the same store) can race two `runNow` calls
+  for the same automation concurrently; `AutomationEngine.stop()` clears the tick timer
+  and releases the lease but does not await any in-flight run; the Automations editor
+  only authors daily/every-day schedules (`daysOfWeek` is preserved on an existing
+  automation and round-tripped on save, but there is no UI control to edit which days
+  fire); and a `report.notify`-only automation running on a headless daemon (no attached
+  Electron main) produces no notification surface at all — the run simply waits in
+  history for the Mac app's next launch scan.
 
 ## Authoring flow (the clarification interview)
 
@@ -261,13 +353,17 @@ Vitest, `*.test.ts` colocated per package; runs under `npm test`.
   double-fire within one slot (`lastFiredAt`).
 - Leadership: only the lease holder ticks; embedded holder stands down when a daemon
   claims; stale lock (dead heartbeat) is stolen; non-leader still serves `runNow`.
-- `executeAutomation`: prompt- and team-targets dispatch through the headless entry
-  point to the correct run path (mocked); params substituted into brief placeholders.
-- Unattended safety: `[ASK_USER]` → `parked` + continuation persisted; never guesses;
-  `resume(runId, answer)` continues the run and appends a `resumed` record; parked runs
-  expire to `failed` after 7 days.
+- `execute`: prompt- and team-targets dispatch through the injected `runTarget`/
+  `resumeTarget` adapter (mocked in engine tests; backed by the hidden-chat
+  `runAutomationTurn` in the real gateway) to the correct run path; params substituted
+  into brief placeholders.
+- Unattended safety: `[ASK_USER]` (prompt targets) or `chat.pendingTeam` (team targets)
+  → `parked`, never guesses; `resume(id, runId, answer)` continues the run, patches the
+  original run to `resumed` (so a second answer is rejected), and appends a linked
+  `resumed` record; parked runs expire to `failed` after 7 days, leader-only and
+  idempotent.
 - Concurrency: overlapping fire (active or parked previous run) skipped, not
-  double-queued.
+  double-queued; a single bad automation's schedule data doesn't abort the tick.
 - Result routing: run appended to `.jsonl` with output capped; notify + channel called
   when configured; delivery failure lands in `reportFailure`.
 
@@ -287,3 +383,7 @@ UI stays manual/visual.
 - Event/webhook/message triggers (design storage so they can be added without rework).
 - `/automation` chat command (fast-follow once store + engine exist).
 - Multi-user sharing of automations.
+- Flipping the Mac app's launch-at-login default: `setLoginItemSettings` already exists
+  (`codey-mac/electron/main.ts`) and needed no new work here beyond documenting that a
+  scheduled, app-only (no standalone daemon) automation setup requires it enabled —
+  otherwise nothing fires the schedule while the app isn't running.
