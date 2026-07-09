@@ -86,6 +86,13 @@ contextBridge.exposeInMainWorld('codey', {
     remove: (dir: string) => ipcRenderer.invoke('skills:remove', dir),
     reveal: (dir: string) => ipcRenderer.invoke('skills:reveal', dir),
   },
+  learnedSkills: {
+    list: () => ipcRenderer.invoke('learnedSkills:list'),
+    history: (name: string) => ipcRenderer.invoke('learnedSkills:history', name),
+    forget: (name: string) => ipcRenderer.invoke('learnedSkills:forget', name),
+    restore: (name: string) => ipcRenderer.invoke('learnedSkills:restore', name),
+    rollback: (name: string) => ipcRenderer.invoke('learnedSkills:rollback', name),
+  },
   agents: {
     get: () => ipcRenderer.invoke('agents:get'),
     set: (updates: any) => ipcRenderer.invoke('agents:set', updates),

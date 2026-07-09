@@ -99,6 +99,25 @@ declare global {
         remove: (dir: string) => Promise<IpcResult<void>>
         reveal: (dir: string) => Promise<IpcResult<void>>
       }
+      learnedSkills: {
+        list: () => Promise<IpcResult<Array<{
+          name: string; description: string; version: number; useCount: number;
+          lastUsedAt: number; archived: boolean;
+          successSignals: { cleanRuns: number; corrections: number };
+          canRollback: boolean;
+        }>>>
+        history: (name: string) => Promise<IpcResult<Array<{
+          at: number;
+          kind: 'created' | 'evolved' | 'rolled-back';
+          fromVersion?: number;
+          toVersion: number;
+          trigger?: { runId: string; promptSummary: string };
+          steps: string;
+        }>>>
+        forget: (name: string) => Promise<IpcResult<void>>
+        restore: (name: string) => Promise<IpcResult<void>>
+        rollback: (name: string) => Promise<IpcResult<number>>
+      }
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>>>
         set: (updates: Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>) => Promise<IpcResult<void>>
