@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
@@ -86,8 +86,10 @@ export class Codey {
   private workingDir: string = process.cwd();
 
   /** Pending skill suggestions for the channel surface, keyed `${channel}:${chatId}`.
+   *  `workspaceName` pins the suggestion to the workspace it was distilled in,
+   *  so a later workspace switch can't save it into the wrong skills store.
    *  (Chat-surface suggestions are persisted on the Chat via ChatManager instead.) */
-  private pendingSkillSuggestions = new Map<string, DistillResult>();
+  private pendingSkillSuggestions = new Map<string, { suggestion: DistillResult; workspaceName: string }>();
   private skillRunCounter = 0;
   private lastSkillDistillTime = 0;
   private static SKILL_DISTILL_COOLDOWN_MS = 300_000; // 5 min
@@ -1004,13 +1006,26 @@ export class Codey {
       // Slash turns also leave it pending rather than silently dropping it;
       // any other non-yes/no reply still clears it below.
       const pendingSkillKey = `${message.channel}:${message.chatId}`;
-      const pendingSkill = this.pendingSkillSuggestions.get(pendingSkillKey);
-      if (pendingSkill && !pending && !isSlash) {
+      const pendingSkillEntry = this.pendingSkillSuggestions.get(pendingSkillKey);
+      if (pendingSkillEntry && !pending && !isSlash) {
+        const pendingSkill = pendingSkillEntry.suggestion;
         const reply = message.text.trim().toLowerCase();
         const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
         if (reply === 'yes' || renameMatch) {
+          // Save into the workspace the suggestion was distilled in — the
+          // active workspace may have changed since it was surfaced.
+          const store = await this.resolveSkillStore(pendingSkillEntry.workspaceName);
           const name = renameMatch ? renameMatch[1] : pendingSkill.name;
-          this.workspaceManager.getSkillStore().add({
+          if (renameMatch && store.get(name)) {
+            // Keep the suggestion pending so the user can pick another name.
+            await this.sendResponse({
+              chatId: message.chatId,
+              channel: message.channel,
+              text: `A skill named "${name}" already exists. Reply "rename <different-name>", "yes", or "no".`,
+            });
+            return;
+          }
+          store.add({
             name,
             description: pendingSkill.description,
             whenToUse: pendingSkill.whenToUse,
@@ -1026,7 +1041,8 @@ export class Codey {
           return;
         }
         if (reply === 'no') {
-          this.workspaceManager.getSkillStore().rejectSuggestion(pendingSkill.name, pendingSkill.description);
+          const store = await this.resolveSkillStore(pendingSkillEntry.workspaceName);
+          store.rejectSuggestion(pendingSkill.name, pendingSkill.description);
           this.pendingSkillSuggestions.delete(pendingSkillKey);
           await this.sendResponse({
             chatId: message.chatId,
@@ -1066,8 +1082,10 @@ export class Codey {
           return;
         }
         const name = invokeMatch[1].toLowerCase();
-        const skill = this.workspaceManager.getSkillStore().getActive()
-          .find(s => s.name === name);
+        // Skills are per-workspace: for a channel linked to a Codey chat, look
+        // up the CHAT's workspace, not whichever workspace is loaded.
+        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
+        const skill = store.getActive().find(s => s.name === name);
         if (!skill) {
           await this.sendResponse({
             chatId: message.chatId,
@@ -1338,13 +1356,22 @@ export class Codey {
         timestamp: Date.now(),
         mode: 'solo',
       };
+      // Capture the store and workspace NOW — the pass is fire-and-forget, so
+      // a workspace switch before it runs must not redirect skill state.
+      const runWorkspace = this.workspaceManager.getCurrentWorkspace();
       // afterRunSkillPass never rejects (stage-isolated try/catch inside).
       void this.afterRunSkillPass({
         trace,
         appliedSkill,
         clean: response.success,
+        store: this.workspaceManager.getSkillStore(),
+        // Mirror the chat surface: a turn that ended with the agent asking the
+        // user a question must not get a suggestion stacked on top — the
+        // user's "yes" would resolve the suggestion instead of the question.
+        suppressSuggestion: !!response.userQuestion,
         notify: (text) => this.sendResponse({ chatId, channel, text }),
-        setPending: (s) => this.pendingSkillSuggestions.set(`${channel}:${chatId}`, s),
+        setPending: (s) => this.pendingSkillSuggestions.set(
+          `${channel}:${chatId}`, { suggestion: s, workspaceName: runWorkspace }),
       });
     }
   }
@@ -1569,22 +1596,31 @@ export class Codey {
         await this.cmdSwitchChat(args, message);
         break;
       case 'skills':
-        await this.cmdSkills(chatId, channel);
+        await this.cmdSkills(chatId, channel, this.linkedChatWorkspaceName(message));
         break;
+      case 'skill': {
+        // Bare `/skill` or `/skill <name>` without a task — surface usage
+        // instead of silently swallowing the command.
+        await this.sendResponse({ chatId, channel,
+          text: 'Usage: /skill <name> <task> — run a task with a saved skill.\nAlso: /skill forget|restore|rollback <name>, /skills to list skills.' });
+        break;
+      }
       case 'skill-forget': {
-        const ok = this.workspaceManager.getSkillStore().archive(args[0]);
+        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
+        const ok = store.archive(args[0]);
         await this.sendResponse({ chatId, channel,
           text: ok ? `🗑️ Skill **${args[0]}** archived. Restore with /skill restore ${args[0]}` : `Skill "${args[0]}" not found.` });
         break;
       }
       case 'skill-restore': {
-        const ok = this.workspaceManager.getSkillStore().restore(args[0]);
+        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
+        const ok = store.restore(args[0]);
         await this.sendResponse({ chatId, channel,
           text: ok ? `🔄 Skill **${args[0]}** restored.` : `Skill "${args[0]}" not found.` });
         break;
       }
       case 'skill-rollback': {
-        const store = this.workspaceManager.getSkillStore();
+        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
         const ok = store.rollback(args[0]);
         const v = store.get(args[0])?.version;
         await this.sendResponse({ chatId, channel,
@@ -1760,8 +1796,9 @@ export class Codey {
     });
   }
 
-  private async cmdSkills(chatId: string, channel: ChannelType): Promise<void> {
-    const active = this.workspaceManager.getSkillStore().getActive();
+  private async cmdSkills(chatId: string, channel: ChannelType, workspaceName?: string): Promise<void> {
+    const store = await this.resolveSkillStore(workspaceName);
+    const active = store.getActive();
     if (active.length === 0) {
       await this.sendResponse({ chatId, channel, text: 'No active skills. Skills crystallize from repeated work patterns.' });
       return;
@@ -1791,11 +1828,33 @@ export class Codey {
       resolved = { ...resolved, model: cfg.distillModel };
     }
     return {
-      agentFactory: this.agentFactory,
-      activeAgent: agent,
-      activeModel: resolved,
-      workingDir: this.workingDir,
+      agent,
+      model: resolved,
+      // Same plain-runner convention as the Advisor/Aide: bounded, tool-less,
+      // and never with permissions skipped — crystallizer prompts embed user
+      // text and agent output, so they must not reach a tool-capable session.
+      runner: this.advisorRunner,
     };
+  }
+
+  /** Skills are per-workspace state. Resolve the store for a NAMED workspace
+   *  (a chat's binding), falling back to the active workspace's store when no
+   *  name is given or the lookup fails. */
+  private async resolveSkillStore(workspaceName?: string): Promise<SkillStore> {
+    if (workspaceName) {
+      try {
+        return await this.workspaceManager.getSkillStoreFor(workspaceName);
+      } catch (err) {
+        this.logger.warn(`[skills] store for workspace "${workspaceName}" unavailable — using active workspace: ${(err as Error).message}`);
+      }
+    }
+    return this.workspaceManager.getSkillStore();
+  }
+
+  /** Workspace of the Codey chat linked to a channel message, if any. */
+  private linkedChatWorkspaceName(message: UserMessage): string | undefined {
+    const codeyChatId = this.resolveChatId(message.channel as ChannelType, message.userId);
+    return codeyChatId ? this.chatManager.get(codeyChatId)?.workspaceName : undefined;
   }
 
   /** Shared post-run skill pass for both surfaces. Never rejects — every LLM
@@ -1805,6 +1864,9 @@ export class Codey {
     trace: RunTrace;
     appliedSkill: SkillEntry | null;
     clean: boolean;
+    /** The run's workspace-scoped skill store, resolved by the caller (the
+     *  chat's workspace when the run had a chat binding, else the active one). */
+    store: SkillStore;
     /** Deliver a one-liner to the user on whatever surface ran the turn. */
     notify: (text: string) => void | Promise<void>;
     /** Stash a suggestion so the user's next reply can resolve it. */
@@ -1817,7 +1879,7 @@ export class Codey {
     try {
       const cfg = this.configManager?.getSkillsConfig();
       if (!cfg || !cfg.enabled) return;
-      const store = this.workspaceManager.getSkillStore();
+      const store = opts.store;
 
       if (opts.appliedSkill) {
         // Bookkeeping stays outside the LLM try block so it always happens.
@@ -3786,7 +3848,8 @@ Example: /model gpt-4.1 write a Python script`;
       if (skillSubMatch) {
         return {
           command: `skill-${skillSubMatch[1].toLowerCase()}`,
-          args: [skillSubMatch[2]],
+          // Skill names are stored lowercase (invoke/rename lowercase too).
+          args: [skillSubMatch[2].toLowerCase()],
           agent: this.getDefaultAgent() as CodingAgent,
           model: undefined,
           prompt: '',
@@ -4322,7 +4385,11 @@ Example: /model gpt-4.1 write a Python script`;
     // cancels the paused run and proceeds normally; otherwise this turn is an
     // answer to the team's question, so map any digit reply to the option text.
     const pendingTeam = chat.pendingTeam;
-    const isSlashTurn = userText.trimStart().startsWith('/');
+    // A channel-origin explicit `/skill` invoke arrives with userText already
+    // rewritten to the raw task (handleMessage stripped the slash), so count
+    // it as a slash turn here: it must cancel a paused team like any other
+    // slash command — NOT be delivered as the answer to the paused worker.
+    const isSlashTurn = userText.trimStart().startsWith('/') || !!origin?.skillInvoke;
     if (pendingTeam) {
       if (isSlashTurn) {
         this.chatManager.setPendingTeam(chatId, null);
@@ -4379,13 +4446,18 @@ Example: /model gpt-4.1 write a Python script`;
       const reply = userText.trim().toLowerCase();
       const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
       if (reply === 'yes' || reply === 'no' || renameMatch) {
-        const store = this.workspaceManager.getSkillStore();
+        // Skills are per-workspace: use the CHAT's workspace store.
+        const store = await this.resolveSkillStore(chat.workspaceName);
         let responseText: string;
         if (reply === 'no') {
           store.rejectSuggestion(s.name, s.description);
           responseText = `Got it — I won't suggest "${s.name}" again.`;
         } else {
           const name = renameMatch ? renameMatch[1] : s.name;
+          if (renameMatch && store.get(name)) {
+            // Keep the suggestion pending so the user can pick another name.
+            return finishSkillReply(`A skill named "${name}" already exists. Reply "rename <different-name>", "yes", or "no".`);
+          }
           store.add({ name, description: s.description, whenToUse: s.whenToUse,
                       steps: s.steps, sourceRunId: 'user-confirmed' });
           responseText = `✅ Skill **${name}** saved. It will be auto-applied on matching tasks.`;
@@ -4415,8 +4487,9 @@ Example: /model gpt-4.1 write a Python script`;
           return finishSkillReply('Skills are disabled.');
         }
         const name = invokeMatch[1].toLowerCase();
-        const skill = this.workspaceManager.getSkillStore().getActive()
-          .find(sk => sk.name === name);
+        // Skills are per-workspace: use the CHAT's workspace store.
+        const store = await this.resolveSkillStore(chat.workspaceName);
+        const skill = store.getActive().find(sk => sk.name === name);
         if (!skill) {
           return finishSkillReply(`Skill "${name}" not found. Ask me to /skills to see active skills.`);
         }
@@ -4531,7 +4604,10 @@ Example: /model gpt-4.1 write a Python script`;
       this.logger.info(`[skills] explicit invoke (chat): ${appliedChatSkill.name} v${appliedChatSkill.version}`);
     } else if (skillsCfg?.enabled && skillsCfg.autoApply
         && chat.selection.type !== 'team' && !isSlashTurn) {
-      const match = matchSkill(userText, this.workspaceManager.getSkillStore().getActive());
+      // Skills are per-workspace: match against the CHAT's workspace store
+      // (mirrors how workingDir/teams above come from chat.workspaceName).
+      const chatSkillStore = await this.resolveSkillStore(chat.workspaceName);
+      const match = matchSkill(userText, chatSkillStore.getActive());
       if (match) {
         const confirmed = match.confidence === 'high'
           || await confirmMatch(this.getSkillDistillDeps(), userText, match.skill);
@@ -4876,6 +4952,8 @@ Example: /model gpt-4.1 write a Python script`;
           trace: chatTrace,
           appliedSkill: appliedChatSkill,
           clean: runSucceeded,
+          // Per-workspace store, resolved from the CHAT's workspace binding.
+          store: await this.resolveSkillStore(chat.workspaceName),
           // A turn that ended by asking the user something (choice buttons or
           // a structured AskUserQuestion) must not get a skill suggestion
           // stacked on top — the user's "yes" would resolve the suggestion

@@ -179,6 +179,35 @@ describe('SkillStore', () => {
     expect(store.getRecentTraces(10)[0].runId).toBe('newer');
   });
 
+  it('logs a persist failure once per streak, backs off, and recovers', async () => {
+    const warns: string[] = [];
+    const infos: string[] = [];
+    const logger = {
+      info: (m: string) => { infos.push(m); },
+      warn: (m: string) => { warns.push(m); },
+      error: (_m: string) => {},
+    };
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-skills-fail-'));
+    try {
+      // A FILE where the skills/ directory belongs makes every persist fail.
+      fs.writeFileSync(path.join(dir, 'skills'), 'not a directory');
+      const failing = new SkillStore(dir, logger);
+      failing.add({ name: 'test-skill', description: 'd', whenToUse: 'w', steps: 's' });
+      await failing.flush(); // first attempt fails → logged
+      failing.recordTrace({ runId: 'r', promptSummary: 'p', outputPreview: 'o', timestamp: 1, mode: 'solo' });
+      await failing.flush(); // second attempt fails → same streak, NOT logged again
+      expect(warns.length).toBe(1);
+      expect(warns[0]).toContain('persist');
+      // Repair the disk: the retry succeeds, logs recovery, resets the streak.
+      fs.rmSync(path.join(dir, 'skills'));
+      await failing.flush();
+      expect(fs.existsSync(path.join(dir, 'skills', 'index.json'))).toBe(true);
+      expect(infos.some(m => m.includes('recovered'))).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('runCollectGarbage archives stale and weak skills', () => {
     const old = Date.now() - 31 * 86_400_000;
     const s1 = store.add({ name: 'old', description: 'd', whenToUse: 'w', steps: 's', sourceRunId: 'r1' });
@@ -199,10 +228,9 @@ describe('SkillStore', () => {
 
 function fakeDeps(runImpl: (req: any) => Promise<any>): DistillDeps {
   return {
-    activeAgent: 'claude-code' as any,
-    activeModel: { provider: 'anthropic', model: 'test' } as any,
-    workingDir: '/tmp',
-    agentFactory: { run: (_agent: any, req: any) => runImpl(req) } as any,
+    agent: 'claude-code' as any,
+    model: { provider: 'anthropic', model: 'test' } as any,
+    runner: (req: any) => runImpl(req),
   };
 }
 
@@ -386,6 +414,30 @@ describe('matchSkill', () => {
     })];
     const m = matchSkill('generate release notes', verbose);
     expect(m?.skill.name).toBe('verbose');
+    expect(m?.confidence).toBe('borderline');
+  });
+
+  it('a two-token overlap is never high confidence (must pass the confirm gate)', () => {
+    const changelog = [makeSkill({
+      name: 'generate-changelog',
+      description: 'Generates a changelog from merged PRs',
+      whenToUse: 'user asks for a changelog or release notes',
+    })];
+    // Shares only {merged, prs} with the skill — an incidental overlap that
+    // must NOT auto-apply the changelog procedure to an unrelated task.
+    const m = matchSkill('list merged PRs from last week', changelog);
+    expect(m?.skill.name).toBe('generate-changelog');
+    expect(m?.confidence).toBe('borderline');
+  });
+
+  it('three shared tokens with a diluted Jaccard score stay borderline', () => {
+    const verbose = [makeSkill({
+      name: 'verbose3',
+      description: 'generate release notes alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu',
+      whenToUse: '',
+    })];
+    const m = matchSkill('generate release notes covering the quarterly summary report deck', verbose);
+    expect(m?.skill.name).toBe('verbose3');
     expect(m?.confidence).toBe('borderline');
   });
 });
