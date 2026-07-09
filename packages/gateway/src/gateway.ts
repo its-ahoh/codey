@@ -834,6 +834,10 @@ export class Codey {
   }
 
   private resolveChatWorkingDir(chat: Chat): string {
+    if (chat.workingDirOverride) {
+      if (fs.existsSync(chat.workingDirOverride)) return chat.workingDirOverride;
+      this.logger.warn(`Chat ${chat.id} workingDirOverride=${chat.workingDirOverride} is gone; falling back to workspace dir`);
+    }
     const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
     const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
     if (fs.existsSync(wsConfigPath)) {
@@ -4051,6 +4055,14 @@ Example: /model gpt-4.1 write a Python script`;
       const msg = `Workspace not found: ${chat.workspaceName}`;
       sink({ type: 'error', chatId, message: msg });
       throw new Error(msg);
+    }
+
+    // Per-chat worktree binding: an explicit workingDirOverride wins over the
+    // workspace's workingDir so the agent actually runs in the bound worktree
+    // (mirrors resolveChatWorkingDir's precedence).
+    if (chat.workingDirOverride) {
+      if (fs.existsSync(chat.workingDirOverride)) workingDir = chat.workingDirOverride;
+      else this.logger.warn(`Chat ${chat.id} workingDirOverride=${chat.workingDirOverride} is gone; falling back to workspace dir`);
     }
 
     // Per-chat override takes precedence over the gateway default.
