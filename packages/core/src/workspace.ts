@@ -4,6 +4,7 @@ import * as path from 'path';
 import { CoreLogger } from './types';
 import { WorkerManager } from './workers';
 import { MemoryStore } from './memory';
+import { SkillStore } from './skill-crystallizer';
 import { TeamGraph, validateGraph } from './team-graph';
 
 const defaultLogger: CoreLogger = {
@@ -74,6 +75,13 @@ export class WorkspaceManager {
   private config: WorkspaceJson | null = null;
   private workerManager: WorkerManager;
   private memoryStore: MemoryStore;
+  private skillStore: SkillStore;
+  /** Which workspace `skillStore` belongs to ('' until the first load()). */
+  private skillStoreWorkspace: string = '';
+  /** Loaded SkillStores for NON-active workspaces (chats bound to a workspace
+   *  other than the loaded one). One shared instance per name so two stores
+   *  never race writes over the same skills/ files. */
+  private extraSkillStores: Map<string, SkillStore> = new Map();
   /** User-global memory shared across workspaces. Lazily loaded. */
   private globalMemory: MemoryStore | null = null;
   private teams: Map<string, TeamConfig> = new Map();
@@ -88,8 +96,9 @@ export class WorkspaceManager {
   ) {
     this.workspacesDir = workspacesDir;
     this.workerManager = workerManager;
-    this.memoryStore = new MemoryStore(this.getWorkspacePath());
     this.logger = logger || defaultLogger;
+    this.memoryStore = new MemoryStore(this.getWorkspacePath());
+    this.skillStore = new SkillStore(this.getWorkspacePath(), this.logger);
     this.globalTeamsProvider = globalTeamsProvider || (() => ({}));
   }
 
@@ -155,8 +164,34 @@ export class WorkspaceManager {
     const logsDir = this.getLogsDir();
     if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
 
+    // Flush the outgoing stores so a pending debounced write can't fire later
+    // and recreate a ghost directory under the previous workspace path.
+    try { await this.memoryStore.flush(); } catch { /* best-effort */ }
     this.memoryStore = new MemoryStore(workspacePath);
     await this.memoryStore.load();
+    await this.adoptSkillStore(this.currentWorkspace);
+  }
+
+  /** Make `workspaceName`'s SkillStore the active one. The outgoing store is
+   *  flushed and stashed in `extraSkillStores` (keyed by its workspace) so a
+   *  chat still bound to that workspace keeps using the SAME instance —
+   *  creating a second store over the same skills/ files would race writes. */
+  private async adoptSkillStore(workspaceName: string): Promise<void> {
+    if (this.skillStoreWorkspace === workspaceName) return; // already active & loaded
+    const outgoing = this.skillStore;
+    try { await outgoing.flush(); } catch { /* best-effort */ }
+    if (this.skillStoreWorkspace) {
+      this.extraSkillStores.set(this.skillStoreWorkspace, outgoing);
+    }
+    const cached = this.extraSkillStores.get(workspaceName);
+    if (cached) {
+      this.extraSkillStores.delete(workspaceName);
+      this.skillStore = cached;
+    } else {
+      this.skillStore = new SkillStore(path.join(this.workspacesDir, workspaceName), this.logger);
+      await this.skillStore.load();
+    }
+    this.skillStoreWorkspace = workspaceName;
   }
 
   /**
@@ -273,6 +308,27 @@ export class WorkspaceManager {
   getWorkspacesRoot(): string { return this.workspacesDir; }
   getWorkerManager(): WorkerManager { return this.workerManager; }
   getMemoryStore(): MemoryStore { return this.memoryStore; }
+  getSkillStore(): SkillStore { return this.skillStore; }
+
+  /** SkillStore for a NAMED workspace — skills are per-workspace state, so
+   *  callers acting on behalf of a chat must use the chat's workspace, not
+   *  whichever workspace happens to be loaded. Returns the live store when the
+   *  name matches the active workspace; otherwise lazily loads and caches one
+   *  shared instance per name. Throws if the workspace does not exist. */
+  async getSkillStoreFor(workspaceName: string): Promise<SkillStore> {
+    if (!workspaceName || workspaceName === this.skillStoreWorkspace) return this.skillStore;
+    let store = this.extraSkillStores.get(workspaceName);
+    if (!store) {
+      const dir = path.join(this.workspacesDir, workspaceName);
+      if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+        throw new Error(`Workspace "${workspaceName}" does not exist`);
+      }
+      store = new SkillStore(dir, this.logger);
+      await store.load();
+      this.extraSkillStores.set(workspaceName, store);
+    }
+    return store;
+  }
 
   /**
    * User-global memory store, rooted at `~/.codey/` (override via
@@ -313,11 +369,28 @@ export class WorkspaceManager {
         !path.resolve(dst).startsWith(root + path.sep)) {
       throw new Error('Refusing to rename outside of workspaces root');
     }
+    if (this.currentWorkspace === oldName) {
+      // Drain pending debounced writes BEFORE the directory moves — the old
+      // stores' paths point at src, so a late flush would recreate a ghost
+      // directory there.
+      try { await this.memoryStore.flush(); } catch { /* best-effort */ }
+      try { await this.skillStore.flush(); } catch { /* best-effort */ }
+    }
+    // Same for a cached non-active store bound to the old name.
+    const extraOld = this.extraSkillStores.get(oldName);
+    if (extraOld) {
+      try { await extraOld.flush(); } catch { /* best-effort */ }
+      this.extraSkillStores.delete(oldName);
+    }
     await fs.promises.rename(src, dst);
     this.logger.info(`[Workspace] Renamed workspace: ${oldName} -> ${trimmed}`);
     if (this.currentWorkspace === oldName) {
       this.currentWorkspace = trimmed;
       this.memoryStore = new MemoryStore(this.getWorkspacePath());
+      await this.memoryStore.load();
+      this.skillStore = new SkillStore(this.getWorkspacePath(), this.logger);
+      await this.skillStore.load();
+      this.skillStoreWorkspace = trimmed;
     }
   }
 
@@ -337,6 +410,11 @@ export class WorkspaceManager {
     const wasActive = name === this.currentWorkspace;
     await fs.promises.rm(resolved, { recursive: true, force: true });
     this.logger.info(`[Workspace] Deleted workspace: ${name}`);
+
+    // Drop any cached SkillStore for the deleted workspace so a late debounced
+    // write can't recreate the directory; forget the active store's binding too.
+    this.extraSkillStores.delete(name);
+    if (this.skillStoreWorkspace === name) this.skillStoreWorkspace = '';
 
     if (wasActive) {
       this.currentWorkspace = '';

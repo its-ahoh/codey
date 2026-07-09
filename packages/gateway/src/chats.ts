@@ -278,6 +278,20 @@ export class ChatManager {
     return chat;
   }
 
+  /** Set or clear the pending skill suggestion for a chat. Pass null to clear. */
+  setPendingSkillSuggestion(
+    chatId: string,
+    pending: NonNullable<Chat['pendingSkillSuggestion']> | null,
+  ): void {
+    this.ensureLoaded();
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    if (pending) chat.pendingSkillSuggestion = pending;
+    else delete chat.pendingSkillSuggestion;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+  }
+
   delete(chatId: string): void {
     const chat = this.cache.get(chatId);
     if (!chat) return;

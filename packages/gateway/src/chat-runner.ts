@@ -18,7 +18,7 @@ export type ChatStreamEvent =
   | { type: 'queued'; chatId: string; position: number }
   | { type: 'tool_start'; chatId: string; tool?: string; message: string; input?: Record<string, unknown>; messageId?: string; step?: number }
   | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string; messageId?: string; step?: number }
-  | { type: 'info'; chatId: string; message: string }
+  | { type: 'info'; chatId: string; message: string; skillNotice?: boolean }
   | { type: 'stream'; chatId: string; token: string; messageId?: string; step?: number }
   | { type: 'thinking'; chatId: string; token: string; step?: number; messageId?: string }
   | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: string; model?: string }> }
