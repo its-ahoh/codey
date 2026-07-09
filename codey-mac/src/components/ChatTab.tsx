@@ -464,8 +464,12 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   const { status: gitStatus, refresh: refreshGit } = useGitStatus(workingDir)
   const [showPrModal, setShowPrModal] = useState(false)
   // Derived from the gitStatus useGitStatus already fetches — no extra IPC round-trip.
-  // v1 heuristic: a dirty tree, or any non-default branch, counts as "something to PR".
-  const branchAhead = !!gitStatus && (gitStatus.dirty > 0 || gitStatus.branch !== 'main')
+  // PR-able: on a non-default branch with commits the default branch doesn't have
+  // (ahead is null when there's no remote default ref — fall back to branch check only).
+  const branchAhead = !!gitStatus
+    && gitStatus.branch !== (gitStatus.defaultBranch ?? 'main')
+    && gitStatus.branch !== 'HEAD'
+    && (gitStatus.ahead == null || gitStatus.ahead > 0)
   useEffect(() => {
     if (!isGatewayRunning) return
     ;(async () => {

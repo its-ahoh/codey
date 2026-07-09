@@ -6,8 +6,8 @@
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
-import { AgentFactory } from './agents';
-import { CodingAgent, ModelConfig } from './types';
+import { AideRunner, runAide } from './aide';
+import { CodingAgent, CoreLogger, ModelConfig } from './types';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -54,10 +54,14 @@ export interface RunTrace {
 }
 
 export interface DistillDeps {
-  agentFactory: AgentFactory;
-  activeAgent: CodingAgent;
-  activeModel: ModelConfig | undefined;
-  workingDir: string;
+  agent: CodingAgent;
+  model: ModelConfig | undefined;
+  /** Plain LLM runner, injected the same way as the Advisor/Aide runners.
+   *  Crystallizer prompts embed user text and agent output, so this MUST be
+   *  a tool-less call — never a coding-agent run with permissions skipped. */
+  runner: AideRunner;
+  /** Hard timeout per call in ms. Defaults to the Aide's 30s. */
+  timeoutMs?: number;
 }
 
 export interface DistillResult {
@@ -109,12 +113,18 @@ export class SkillStore {
   private indexDirty = false;
   private tracesDirty = false;
   private flushTimer: NodeJS.Timeout | null = null;
+  /** Consecutive doPersist failures. Logged once per streak, reset on success. */
+  private persistFailStreak = 0;
+  private logger?: CoreLogger;
   private static FLUSH_DEBOUNCE_MS = 50;
+  /** Retry floor after a failed persist — a broken disk must not hot-loop at 50ms. */
+  private static PERSIST_RETRY_MS = 5_000;
 
-  constructor(workspacePath: string) {
+  constructor(workspacePath: string, logger?: CoreLogger) {
     this.skillsDir = path.join(workspacePath, 'skills');
     this.indexPath = path.join(this.skillsDir, 'index.json');
     this.tracesPath = path.join(this.skillsDir, 'traces.json');
+    this.logger = logger;
   }
 
   // ── Lifecycle ────────────────────────────────────────────────
@@ -375,19 +385,29 @@ export class SkillStore {
       if (tracesJson !== null) {
         await atomicWrite(this.tracesPath, tracesJson);
       }
-    } catch {
+      if (this.persistFailStreak > 0) {
+        this.logger?.info(`[SkillStore] persist recovered after ${this.persistFailStreak} failed attempt(s)`);
+        this.persistFailStreak = 0;
+      }
+    } catch (err) {
       this.indexDirty = this.indexDirty || writeIndex;
       this.tracesDirty = this.tracesDirty || writeTraces;
-      this.scheduleFlush();
+      this.persistFailStreak++;
+      // Log once per failure streak (not per retry), and back off to a 5s
+      // floor instead of the 50ms debounce so a persistent failure doesn't spin.
+      if (this.persistFailStreak === 1) {
+        this.logger?.warn(`[SkillStore] persist to ${this.skillsDir} failed (will retry every ${SkillStore.PERSIST_RETRY_MS / 1000}s): ${(err as Error).message}`);
+      }
+      this.scheduleFlush(SkillStore.PERSIST_RETRY_MS);
     }
   }
 
-  private scheduleFlush(): void {
+  private scheduleFlush(delayMs: number = SkillStore.FLUSH_DEBOUNCE_MS): void {
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null;
       this.enqueuePersist();
-    }, SkillStore.FLUSH_DEBOUNCE_MS);
+    }, delayMs);
     if (typeof this.flushTimer.unref === 'function') this.flushTimer.unref();
   }
 
@@ -423,20 +443,23 @@ function fillPrompt(template: string, sections: Record<string, string>): string 
   return template.replace(pattern, m => sections[m]);
 }
 
-async function runCrystallizerLLM(deps: DistillDeps, prompt: string) {
-  return deps.agentFactory.run(deps.activeAgent, {
-    prompt,
-    agent: deps.activeAgent,
-    model: deps.activeModel,
-    // Crystallizer calls are small classification/extraction prompts. Bound
-    // them well below the adapter's 900s default: confirmMatch is awaited on
-    // the user's reply path, so a hung call would otherwise stall the reply
-    // for up to 15 minutes.
-    timeout: 60_000,
-    interactive: false,
-    skipPermissions: true,
-    context: { workingDir: deps.workingDir },
-  });
+/** One bounded, tool-less LLM call via the injected runner — the same
+ *  convention as the Advisor/Aide (30s abort by default, no permissions
+ *  bypass, no working-dir tool access). Crystallizer prompts are small
+ *  classification/extraction tasks over user text and agent output, so they
+ *  must never run through a tool-capable coding-agent session. Returns the
+ *  trimmed output, or null on failure/timeout. */
+async function runCrystallizerLLM(deps: DistillDeps, prompt: string): Promise<string | null> {
+  try {
+    return await runAide(prompt, {
+      agent: deps.agent,
+      model: deps.model,
+      runner: deps.runner,
+      timeoutMs: deps.timeoutMs,
+    });
+  } catch {
+    return null;
+  }
 }
 
 // ── distillCandidate ───────────────────────────────────────────
@@ -518,15 +541,15 @@ export async function distillCandidate(
   for (let attempt = 0; attempt < 2; attempt++) {
     const prompt = attempt === 0 ? composed
       : `${composed}\n\nReminder: return ONLY the JSON object or the word "NONE". No markdown.`;
-    const response = await runCrystallizerLLM(deps, prompt);
-    if (!response.success) continue;
-    const parsed = tryParseDistill(response.output);
+    const output = await runCrystallizerLLM(deps, prompt);
+    if (output === null) continue;
+    const parsed = tryParseDistill(output);
     if (parsed) {
       if (/^[a-z][a-z0-9-]*$/.test(parsed.name) && parsed.name.length >= 3 && parsed.name.length <= 30) {
         return parsed;
       }
     }
-    if (response.output.trim() === 'NONE') return null;
+    if (output.trim() === 'NONE') return null;
   }
   return null;
 }
@@ -546,8 +569,12 @@ export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | nul
     if (intersection.length < 1) continue;
     const unionSize = new Set([...taskTokens, ...skillTokens]).size;
     const score = intersection.length / unionSize;
+    // 'high' (auto-apply without the LLM gate) needs REAL overlap: 3+ shared
+    // keywords and a strong Jaccard. Two-token matches are too easy to hit by
+    // accident (e.g. "merged PRs" alone), so they stay borderline and must
+    // pass the confirmMatch gate before being applied.
     const confidence: SkillMatch['confidence'] =
-      intersection.length >= 2 && score > 0.1 ? 'high' : 'borderline';
+      intersection.length >= 3 && score >= 0.25 ? 'high' : 'borderline';
     if (!best || score > best.score) {
       best = { skill, confidence, score };
     }
@@ -593,9 +620,9 @@ export async function confirmMatch(
     '%SKILL_WHEN%': skill.whenToUse,
     '%TASK%': task,
   });
-  const response = await runCrystallizerLLM(deps, prompt);
-  if (!response.success) return false;
-  return response.output.trim().toUpperCase() === 'YES';
+  const output = await runCrystallizerLLM(deps, prompt);
+  if (output === null) return false;
+  return output.trim().toUpperCase() === 'YES';
 }
 
 export function applySkill(task: string, skill: SkillEntry): string {
@@ -647,10 +674,10 @@ export async function evolveSkill(
     '%WORKER_STEPS%': workerPart,
   });
 
-  const response = await runCrystallizerLLM(deps, composed);
-  if (!response.success) return null;
+  const output = await runCrystallizerLLM(deps, composed);
+  if (output === null) return null;
   try {
-    const parsed = JSON.parse(stripCodeFences(response.output));
+    const parsed = JSON.parse(stripCodeFences(output));
     if (parsed.improved === true && typeof parsed.steps === 'string' && parsed.steps.trim()) {
       return parsed.steps.trim();
     }

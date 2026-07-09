@@ -4,7 +4,7 @@ import { ClaudeCodeAdapter } from './claude-code';
 import { OpenCodeAdapter } from './opencode';
 import { CodexAdapter } from './codex';
 
-export { CodingAgentAdapter } from './base';
+export type { CodingAgentAdapter } from './base';
 export { ClaudeCodeAdapter } from './claude-code';
 export { OpenCodeAdapter } from './opencode';
 export { CodexAdapter } from './codex';

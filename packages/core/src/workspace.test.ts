@@ -201,6 +201,34 @@ describe('WorkspaceManager SkillStore', () => {
     expect(after).not.toBe(before);
     expect(after.getActive()).toEqual([]);
   });
+
+  it('getSkillStoreFor resolves the named workspace, not the active one', async () => {
+    // Active workspace is 'proj' (has the seeded skill); ask for 'other'.
+    const other = await manager.getSkillStoreFor('other');
+    expect(other).not.toBe(manager.getSkillStore());
+    expect(other.getActive()).toEqual([]);
+    // Repeat calls share one instance (no write races over the same files).
+    expect(await manager.getSkillStoreFor('other')).toBe(other);
+    // The active workspace's name resolves to the live store.
+    expect(await manager.getSkillStoreFor('proj')).toBe(manager.getSkillStore());
+    expect((await manager.getSkillStoreFor('proj')).getActive()[0].name).toBe('weekly-digest');
+  });
+
+  it('getSkillStoreFor throws for a nonexistent workspace (no ghost dirs)', async () => {
+    await expect(manager.getSkillStoreFor('nope')).rejects.toThrow('does not exist');
+    expect(fs.existsSync(path.join(wsDir, 'nope'))).toBe(false);
+  });
+
+  it('switching to a workspace already loaded via getSkillStoreFor adopts the same store', async () => {
+    const other = await manager.getSkillStoreFor('other');
+    other.add({ name: 'made-before-switch', description: 'd', whenToUse: 'w', steps: 's' });
+    await manager.switchWorkspace('other');
+    expect(manager.getSkillStore()).toBe(other);
+    expect(manager.getSkillStore().get('made-before-switch')).toBeDefined();
+    // And the old active workspace's store is still reachable by name.
+    const proj = await manager.getSkillStoreFor('proj');
+    expect(proj.getActive()[0].name).toBe('weekly-digest');
+  });
 });
 
 describe('normalizeTeam graph', () => {
