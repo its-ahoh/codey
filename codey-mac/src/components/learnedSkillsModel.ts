@@ -47,5 +47,7 @@ export function timelineRows(events: EvolutionEventLike[], now: number): Timelin
 export function skillActions(s: { archived: boolean; canRollback: boolean }): {
   forget: boolean; restore: boolean; rollback: boolean
 } {
-  return { forget: !s.archived, restore: s.archived, rollback: !s.archived && s.canRollback }
+  // Rollback is gated only on available history — archived skills can roll
+  // back too, matching the gateway's /skill rollback behavior.
+  return { forget: !s.archived, restore: s.archived, rollback: s.canRollback }
 }

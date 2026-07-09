@@ -47,4 +47,9 @@ describe('skillActions', () => {
     expect(skillActions({ archived: true, canRollback: false }))
       .toEqual({ forget: false, restore: true, rollback: false })
   })
+
+  it('allows rollback on archived skills, matching the gateway', () => {
+    expect(skillActions({ archived: true, canRollback: true }))
+      .toEqual({ forget: false, restore: true, rollback: true })
+  })
 })

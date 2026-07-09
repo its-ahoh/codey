@@ -1031,6 +1031,9 @@ export class Codey {
             whenToUse: pendingSkill.whenToUse,
             steps: pendingSkill.steps,
             sourceRunId: 'user-confirmed',
+            // If this upserts an existing skill (evolving its steps), record
+            // what the user confirmed as the evolution's trigger.
+            trigger: { runId: 'user-confirmed', promptSummary: pendingSkill.description },
           });
           this.pendingSkillSuggestions.delete(pendingSkillKey);
           await this.sendResponse({
@@ -4488,7 +4491,10 @@ Example: /model gpt-4.1 write a Python script`;
             return finishSkillReply(`A skill named "${name}" already exists. Reply "rename <different-name>", "yes", or "no".`);
           }
           store.add({ name, description: s.description, whenToUse: s.whenToUse,
-                      steps: s.steps, sourceRunId: 'user-confirmed' });
+                      steps: s.steps, sourceRunId: 'user-confirmed',
+                      // If this upserts an existing skill (evolving its steps),
+                      // record what the user confirmed as the trigger.
+                      trigger: { runId: 'user-confirmed', promptSummary: s.description } });
           responseText = `✅ Skill **${name}** saved. It will be auto-applied on matching tasks.`;
         }
         this.chatManager.setPendingSkillSuggestion(chatId, null);
