@@ -29,6 +29,31 @@ contextBridge.exposeInMainWorld('codey', {
     get: () => ipcRenderer.invoke('globalTeams:get'),
     set: (teams: Record<string, unknown>) => ipcRenderer.invoke('globalTeams:set', teams),
   },
+  automations: {
+    list: () => ipcRenderer.invoke('automations:list'),
+    get: (id: string) => ipcRenderer.invoke('automations:get', id),
+    create: (draft: any) => ipcRenderer.invoke('automations:create', draft),
+    update: (id: string, patch: any) => ipcRenderer.invoke('automations:update', id, patch),
+    delete: (id: string) => ipcRenderer.invoke('automations:delete', id),
+    setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('automations:setEnabled', id, enabled),
+    runNow: (id: string) => ipcRenderer.invoke('automations:runNow', id),
+    resume: (id: string, runId: string, answer: string) => ipcRenderer.invoke('automations:resume', id, runId, answer),
+    history: (id: string, limit?: number) => ipcRenderer.invoke('automations:history', id, limit),
+    markSeen: (id: string, runId: string) => ipcRenderer.invoke('automations:markSeen', id, runId),
+    interviewStart: (goal: string, targetContext: string) => ipcRenderer.invoke('automations:interview:start', goal, targetContext),
+    interviewAnswer: (sessionId: string, text: string) => ipcRenderer.invoke('automations:interview:answer', sessionId, text),
+    interviewCancel: (sessionId: string) => ipcRenderer.invoke('automations:interview:cancel', sessionId),
+    onEvent: (handler: (ev: any) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: any) => handler(ev)
+      ipcRenderer.on('automation-event', listener)
+      return () => ipcRenderer.removeListener('automation-event', listener)
+    },
+    onUnseen: (handler: (msg: { automationId: string; runIds: string[] }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, msg: any) => handler(msg)
+      ipcRenderer.on('automation-unseen', listener)
+      return () => ipcRenderer.removeListener('automation-unseen', listener)
+    },
+  },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
   },

@@ -6,6 +6,8 @@ import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { createCoreStateStore } from './core-state'
 import { decideNotification, createTurnTracker } from './chat-notifications'
+import { decideAutomationNotification, findUnseenRuns } from './automation-notifications'
+import { validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
 
 protocol.registerSchemesAsPrivileged([
@@ -311,6 +313,15 @@ function sendToRenderer(channel: string, ...args: any[]) {
     pendingRendererMessages.push({ channel, args })
     if (pendingRendererMessages.length > 500) pendingRendererMessages.shift()
   }
+}
+// Same gate the chat path applies inside decideNotification (via maybeNotify's
+// ctx): global notifications toggle off → no OS notification; window focused →
+// the user is already looking at the app, so skip the OS notification (the
+// renderer still receives the underlying event either way).
+function osNotificationsAllowed(): boolean {
+  const enabled = ((coreConfigManager?.get() as any)?.notifications?.enabled ?? true) as boolean
+  const focused = mainWindow?.isFocused() ?? false
+  return enabled && !focused
 }
 // Native macOS notifications for background chats. Decisions are pure
 // (chat-notifications.ts); this is the impure shell: focus check, config
@@ -713,6 +724,10 @@ function buildRuntimeConfig(json: any): any {
     // Back-compat: old `dispatcher` block becomes `advisor`.
     advisor: json?.advisor ?? json?.dispatcher,
     aide: json?.aide,
+    // The Mac app is a secondary surface: a standalone `codey-gateway` daemon
+    // (if running) owns the scheduler lease. Embedded yields to it instead of
+    // racing for "who fires this automation".
+    automationRole: 'embedded',
   }
 }
 
@@ -776,7 +791,30 @@ async function bootInProcessCore() {
     // discord, imessage) connect. Done after returning so IPC handler
     // registration in app.whenReady() isn't blocked by network I/O
     // (e.g. Telegram setMyCommands hanging).
-    void inProcessGateway.start().catch((err: any) => {
+    void inProcessGateway.start().then(() => {
+      // Launch scan: surface results fired by the daemon while the app was closed.
+      // Runs only after start() resolves — automations aren't initialized until
+      // the end of Codey.start(), so listAutomations()/listAutomationRuns()
+      // would see nothing beforehand. Its own try/catch keeps a scan failure
+      // from being mislabeled as a gateway.start failure below.
+      try {
+        for (const a of inProcessGateway!.listAutomations()) {
+          const unseen = findUnseenRuns(inProcessGateway!.listAutomationRuns(a.id, 20) as any, Date.now())
+          if (unseen.length === 0) continue
+          sendToRenderer('automation-unseen', { automationId: a.id, runIds: unseen.map((r: any) => r.runId) })
+          if (!osNotificationsAllowed()) continue
+          const d = decideAutomationNotification(a as any, unseen[0] as any)
+          if (d) {
+            new Notification({
+              title: d.title,
+              body: unseen.length > 1 ? `${d.body} (+${unseen.length - 1} more)` : d.body,
+            }).show()
+          }
+        }
+      } catch (err: any) {
+        sendToRenderer('gateway-log', `[core] automation launch scan failed: ${err?.message ?? err}`)
+      }
+    }).catch((err: any) => {
       sendToRenderer('gateway-log', `[core] gateway.start failed: ${err?.message ?? err}`)
     })
     // The voice helper (and any other localhost client) polls /voice/config via
@@ -814,6 +852,19 @@ async function bootInProcessCore() {
     })
     inProcessGateway.setPairingEventListener((ev: any) => {
       sendToRenderer('pairing:event', ev)
+    })
+    // Forward automation lifecycle events to the renderer, and fire an OS
+    // notification for finished/parked runs whose automation opted in via
+    // report.notify (decision logic lives in automation-notifications.ts).
+    inProcessGateway.setAutomationEventListener((ev: any) => {
+      sendToRenderer('automation-event', ev)
+      if ((ev.type === 'run-finished' || ev.type === 'run-parked') && ev.run && osNotificationsAllowed()) {
+        const a = inProcessGateway?.getAutomation(ev.automationId)
+        if (a) {
+          const d = decideAutomationNotification(a as any, ev.run)
+          if (d) new Notification({ title: d.title, body: d.body }).show()
+        }
+      }
     })
     coreStateStore.setReady()
   } catch (err: any) {
@@ -1806,6 +1857,95 @@ app.whenReady().then(async () => {
       )
       if (!result.ok) throw new Error(result.error)
       return result.worker
+    })
+  )
+
+  // ── Automations IPC ───────────────────────────────────────────────
+  ipcMain.handle('automations:list', async () =>
+    wrap(async () => inProcessGateway?.listAutomations() ?? [])
+  )
+
+  ipcMain.handle('automations:get', async (_e, id: string) =>
+    wrap(async () => {
+      const a = inProcessGateway?.getAutomation(id)
+      if (!a) throw new Error(`Automation not found: ${id}`)
+      return a
+    })
+  )
+
+  ipcMain.handle('automations:create', async (_e, draft: any) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      // Reject bad data (garbage tz especially) at the boundary — once stored,
+      // it would make the scheduler's Intl calls throw on every tick.
+      validateAutomationDraft(draft)
+      return inProcessGateway.createAutomation(draft)
+    })
+  )
+
+  ipcMain.handle('automations:update', async (_e, id: string, patch: any) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      validateAutomationPatch(patch)
+      return inProcessGateway.updateAutomation(id, patch)
+    })
+  )
+
+  ipcMain.handle('automations:delete', async (_e, id: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      inProcessGateway.deleteAutomation(id)
+    })
+  )
+
+  ipcMain.handle('automations:setEnabled', async (_e, id: string, enabled: boolean) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      return inProcessGateway.setAutomationEnabled(id, enabled)
+    })
+  )
+
+  ipcMain.handle('automations:runNow', async (_e, id: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      return inProcessGateway.runAutomationNow(id)
+    })
+  )
+
+  ipcMain.handle('automations:resume', async (_e, id: string, runId: string, answer: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      return inProcessGateway.resumeAutomationRun(id, runId, answer)
+    })
+  )
+
+  ipcMain.handle('automations:history', async (_e, id: string, limit?: number) =>
+    wrap(async () => inProcessGateway?.listAutomationRuns(id, limit) ?? [])
+  )
+
+  ipcMain.handle('automations:markSeen', async (_e, id: string, runId: string) =>
+    wrap(async () => {
+      inProcessGateway?.markAutomationRunSeen(id, runId)
+    })
+  )
+
+  ipcMain.handle('automations:interview:start', async (_e, goal: string, targetContext: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      return inProcessGateway.startAutomationInterview(goal, targetContext)
+    })
+  )
+
+  ipcMain.handle('automations:interview:answer', async (_e, sessionId: string, text: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      return inProcessGateway.answerAutomationInterview(sessionId, text)
+    })
+  )
+
+  ipcMain.handle('automations:interview:cancel', async (_e, sessionId: string) =>
+    wrap(async () => {
+      inProcessGateway?.cancelAutomationInterview(sessionId)
     })
   )
 

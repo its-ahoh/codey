@@ -1,7 +1,14 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill } from '@codey/core';
+import * as os from 'os';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, Automation, AutomationRun, AutomationEvent, renderBrief, generateAutomationQuestions, generateAutomationFollowup, synthesizeAutomationBrief } from '@codey/core';
 import { randomUUID } from 'crypto';
+import { AutomationStore } from './automations/store';
+import { AutomationEngine, TargetResult } from './automations/engine';
+import { SchedulerLease } from './automations/lease';
+import { InterviewManager } from './automations/interview';
+import { detectParked } from './automations/parked';
+import { formatRunSummary } from './automations/report';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
 import { AgentFactory } from '@codey/core';
@@ -70,6 +77,10 @@ export class Codey {
   private turnQueue: TurnQueue;
   private chatEventListener: ((ev: any) => void) | undefined;
   private pairingEventListener: ((ev: { type: 'completed'; channel: ChannelKind; channelUserId: string }) => void) | undefined;
+  private automationStore?: AutomationStore;
+  private automationEngine?: AutomationEngine;
+  private automationInterviews?: InterviewManager;
+  private automationEventListener?: (ev: AutomationEvent) => void;
 
   // Rate limiting: userId -> last request timestamp
   private userCooldowns: Map<string, number> = new Map();
@@ -853,6 +864,173 @@ export class Codey {
 
     // Send startup notification to all active channels
     await this.sendStartupNotification();
+
+    // Automations: hidden-chat scheduler + engine, wired last so channels/chat
+    // manager are already up.
+    this.initAutomations();
+  }
+
+  /** Base dir mirrors workspace.ts: CODEY_HOME override, else ~/.codey. */
+  private codeyHome(): string {
+    return process.env.CODEY_HOME ?? path.join(os.homedir(), '.codey');
+  }
+
+  private initAutomations(): void {
+    const base = this.codeyHome();
+    this.automationStore = new AutomationStore(base);
+    const role = this.config.automationRole ?? 'daemon';
+    this.automationEngine = new AutomationEngine({
+      store: this.automationStore,
+      lease: new SchedulerLease(path.join(base, 'automation-scheduler.lock'), role),
+      runTarget: (a) => this.runAutomationTurn(a, renderBrief(a.brief, a.params)),
+      resumeTarget: (a, answer) => this.runAutomationTurn(a, answer, { resume: true }),
+      report: (a, run) => this.deliverAutomationReport(a, run),
+      onEvent: (ev) => { try { this.automationEventListener?.(ev); } catch { /* swallow */ } },
+      log: (msg) => this.logger.info(`[automations] ${msg}`),
+    });
+    this.automationEngine.start();
+    this.automationInterviews = new InterviewManager({
+      generateQuestions: (goal, ctx) => generateAutomationQuestions(goal, ctx, this.getAideOptions()),
+      generateFollowup: (goal, q, ans) => generateAutomationFollowup(goal, q, ans, this.getAideOptions()),
+      synthesize: (goal, qa) => synthesizeAutomationBrief(goal, qa, this.getAideOptions()),
+    });
+  }
+
+  /** The hidden system chat an automation executes in (created lazily). */
+  private async ensureAutomationChat(a: Automation): Promise<string> {
+    // Automation chats are shared across the daemon and embedded gateways;
+    // the in-memory cache may be stale (e.g. the Mac app created the chat
+    // after this daemon booted). Re-read from disk before deciding the chat
+    // is missing — otherwise we'd create a duplicate and clobber a.chatId.
+    if (a.chatId) this.chatManager.reload(a.chatId);
+    if (a.chatId && this.chatManager.get(a.chatId)) return a.chatId;
+    const selection = a.target.kind === 'team'
+      ? { type: 'team' as const, name: a.target.teamName }
+      : { type: 'none' as const };
+    const chat = this.chatManager.create({
+      workspaceName: a.target.workspaceName,
+      title: `Automation: ${a.name}`,
+      selection,
+      kind: 'automation',
+      agent: a.target.kind === 'prompt' ? a.target.agent : undefined,
+      model: a.target.kind === 'prompt' ? a.target.model : undefined,
+    });
+    this.automationStore!.update(a.id, { chatId: chat.id }, Date.now());
+    return chat.id;
+  }
+
+  /**
+   * One headless turn: send `text` into the automation's hidden chat with a
+   * collecting sink, then decide parked/success from the persisted chat state.
+   * Resume is the same call — sendToChat's pendingTeam continuation handles it.
+   */
+  private async runAutomationTurn(a: Automation, text: string, opts?: { resume?: boolean }): Promise<TargetResult> {
+    // Automation chats are shared across the daemon and embedded gateways;
+    // the in-memory cache may be stale. Refresh before the pendingTeam
+    // handling below — an embedded process resuming a daemon-parked run must
+    // see the daemon-persisted pendingTeam, or the answer would be dispatched
+    // as a fresh team task (and its persist would clobber the daemon's file).
+    if (a.chatId) this.chatManager.reload(a.chatId);
+    const chatId = await this.ensureAutomationChat(a);
+    // Fresh runs must not inherit a stale pendingTeam: the engine can mark a
+    // parked run failed (7-day expiry) or consume it via a failed resume (e.g.
+    // sendToChat throws before its own pendingTeam clear) WITHOUT the chat's
+    // pause state being cleared. Left in place, the next fresh brief would be
+    // treated by sendToChat as the "answer" to that dead question and fed into
+    // the team-resume continuation. Resume turns keep it — that continuation
+    // IS the resume mechanism.
+    if (!opts?.resume && this.chatManager.get(chatId)?.pendingTeam) {
+      this.chatManager.setPendingTeam(chatId, null);
+    }
+    const sink: ChatStreamSink = () => { /* headless — response comes from the return value */ };
+    try {
+      const { response } = await this.sendToChat(chatId, text, sink);
+      const parked = detectParked(this.chatManager.get(chatId), a.target, response);
+      return parked ? { output: response, parked } : { output: response };
+    } catch (err) {
+      return { output: '', error: (err as Error).message };
+    }
+  }
+
+  /** Post the run summary to report.channel if configured. Returns failure text. */
+  private async deliverAutomationReport(a: Automation, run: AutomationRun): Promise<string | undefined> {
+    if (!a.report.channel) return undefined;
+    const channel = a.report.channel.platform as ChannelType;
+    const handler = this.handlers.get(channel);
+    if (!handler) return `channel ${a.report.channel.platform} not connected in this process`;
+    try {
+      await this.sendResponse({ chatId: a.report.channel.target, channel, text: formatRunSummary(a, run) });
+      return undefined;
+    } catch (err) {
+      return (err as Error).message;
+    }
+  }
+
+  // ---- Automations public API ----
+
+  listAutomations(): Automation[] { return this.automationStore?.list() ?? []; }
+  getAutomation(id: string): Automation | undefined { return this.automationStore?.get(id); }
+  createAutomation(draft: Parameters<AutomationStore['create']>[0]): Automation {
+    return this.requireAutomationStore().create(draft, Date.now());
+  }
+  updateAutomation(id: string, patch: Partial<Automation>): Automation {
+    // A target change invalidates the hidden chat: its selection, workspace,
+    // and agent/model overrides were frozen at creation from the OLD target.
+    // Delete that chat and clear chatId so the next run lazily creates a
+    // fresh one matching the new target. (store.update Object.assigns the
+    // patch, so chatId becomes undefined and JSON.stringify drops the key
+    // from the persisted document.)
+    if (patch.target) {
+      const prev = this.requireAutomationStore().get(id);
+      if (prev?.chatId) {
+        // reload first so a chat created by the other process is deletable.
+        this.chatManager.reload(prev.chatId);
+        try { this.chatManager.delete(prev.chatId); } catch { /* already gone */ }
+      }
+      patch = { ...patch, chatId: undefined };
+    }
+    return this.requireAutomationStore().update(id, patch, Date.now());
+  }
+  deleteAutomation(id: string): void { this.requireAutomationStore().delete(id); }
+  setAutomationEnabled(id: string, enabled: boolean): Automation {
+    return this.requireAutomationStore().setEnabled(id, enabled, Date.now());
+  }
+  listAutomationRuns(id: string, limit?: number): AutomationRun[] {
+    return this.automationStore?.listRuns(id, limit) ?? [];
+  }
+  markAutomationRunSeen(id: string, runId: string): void {
+    this.automationStore?.markSeen(id, runId, Date.now());
+  }
+  runAutomationNow(id: string): Promise<AutomationRun | null> {
+    return this.requireAutomationEngine().runNow(id, 'manual');
+  }
+  resumeAutomationRun(id: string, runId: string, answer: string): Promise<AutomationRun> {
+    return this.requireAutomationEngine().resume(id, runId, answer);
+  }
+  startAutomationInterview(goal: string, targetContext: string) {
+    return this.requireAutomationInterviews().start(goal, targetContext);
+  }
+  answerAutomationInterview(sessionId: string, text: string) {
+    return this.requireAutomationInterviews().answer(sessionId, text);
+  }
+  cancelAutomationInterview(sessionId: string): void {
+    this.automationInterviews?.cancel(sessionId);
+  }
+  setAutomationEventListener(fn: (ev: AutomationEvent) => void): void {
+    this.automationEventListener = fn;
+  }
+
+  private requireAutomationStore(): AutomationStore {
+    if (!this.automationStore) throw new Error('Automations not initialized (gateway not started)');
+    return this.automationStore;
+  }
+  private requireAutomationEngine(): AutomationEngine {
+    if (!this.automationEngine) throw new Error('Automations not initialized (gateway not started)');
+    return this.automationEngine;
+  }
+  private requireAutomationInterviews(): InterviewManager {
+    if (!this.automationInterviews) throw new Error('Automations not initialized (gateway not started)');
+    return this.automationInterviews;
   }
 
   private resolveChatWorkingDir(chat: Chat): string {
@@ -929,6 +1107,9 @@ export class Codey {
       clearInterval(this.conversationCleanupInterval);
       this.conversationCleanupInterval = undefined;
     }
+    // Note: engine.stop() does not await in-flight runs and releases the
+    // scheduler lease immediately (accepted v1 risk).
+    this.automationEngine?.stop();
     this.contextManager.shutdown();
     for (const handler of this.handlers.values()) {
       await handler.stop();
@@ -4473,7 +4654,9 @@ Example: /model gpt-4.1 write a Python script`;
     // A paused team's question takes precedence: when pendingTeam is set this
     // turn is the user's answer to the team, so leave the suggestion persisted
     // untouched — it can still be answered after the team resumes/finishes.
-    if (chat.pendingSkillSuggestion && !isSlashTurn && !pendingTeam) {
+    // Automation chats never resolve suggestions: an unattended brief starting
+    // with "yes"/"no" must not be consumed as a suggestion reply.
+    if (chat.pendingSkillSuggestion && !isSlashTurn && !pendingTeam && chat.kind !== 'automation') {
       const s = chat.pendingSkillSuggestion;
       const reply = userText.trim().toLowerCase();
       const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
@@ -4638,6 +4821,8 @@ Example: /model gpt-4.1 write a Python script`;
       prompt = applySkill(prompt, appliedChatSkill);
       this.logger.info(`[skills] explicit invoke (chat): ${appliedChatSkill.name} v${appliedChatSkill.version}`);
     } else if (skillsCfg?.enabled && skillsCfg.autoApply
+        // Unattended automation runs execute a frozen brief — never auto-apply skills.
+        && chat.kind !== 'automation'
         && chat.selection.type !== 'team' && !isSlashTurn) {
       // Skills are per-workspace: match against the CHAT's workspace store
       // (mirrors how workingDir/teams above come from chat.workspaceName).
@@ -4669,8 +4854,10 @@ Example: /model gpt-4.1 write a Python script`;
     // with the agent turn; we await it just before the 'done' event. The
     // truncated title set by appendMessage stays visible until then, and acts
     // as the fallback if the Aide fails or returns nothing.
+    // Automation chats keep their authoritative "Automation: <name>" title —
+    // no LLM title generation.
     const titlePromise: Promise<string> | undefined =
-      afterUser.messages.length === 1 && this.isAideConfigured()
+      afterUser.messages.length === 1 && this.isAideConfigured() && chat.kind !== 'automation'
         ? this.generateChatTitleSafe(userText)
         : undefined;
 
@@ -4959,7 +5146,9 @@ Example: /model gpt-4.1 write a Python script`;
       // with the team's question on the next user turn), and no use/success
       // bookkeeping for an applied skill either — the run isn't finished yet.
       const pausedAfterRun = !!this.chatManager.get(chatId)?.pendingTeam;
-      if (skillsCfg?.enabled && !pausedAfterRun) {
+      // Automation chats skip the pass entirely — unattended runs must not
+      // generate skill suggestions (nobody is there to answer them).
+      if (skillsCfg?.enabled && !pausedAfterRun && chat.kind !== 'automation') {
         // Real success signal: the solo path exposes it on singleAgentResponse
         // (a failed run reaches here with success:false and output = streamed
         // partial text or ''). Team paths have no structured flag — they throw

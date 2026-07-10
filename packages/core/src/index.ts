@@ -15,6 +15,7 @@ export * from './advisor-personality';
 export * from './solo-advisor';
 export * from './aide';
 export * from './aide-tasks';
+export * from './aide-automation';
 export * from './task-brief';
 export * from './discussion/files';
 export * from './discussion/control';

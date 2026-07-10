@@ -10,6 +10,8 @@ import { onWorkspacesChanged } from './workspacesChanged'
 
 interface Props {
   onOpenSettings: (tab?: string) => void
+  onOpenAutomations: () => void
+  automationsUnseenCount: number
   activeChatId: string | null
 }
 
@@ -19,7 +21,7 @@ interface WsMenuState {
   y: number
 }
 
-export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId }) => {
+export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, automationsUnseenCount, activeChatId }) => {
   const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces, refreshChats, linkChannel, unlinkChannel } = useChats()
   const [addingWorkspace, setAddingWorkspace] = useState(false)
   const [workspaces, setWorkspaces] = useState<string[]>([])
@@ -379,6 +381,12 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, activeChatId })
           disabled={addingWorkspace}
           title="Pick a folder and create a new workspace + chat"
         >{addingWorkspace ? 'Picking…' : '+ Add Workspace'}</button>
+        <button style={styles.settingsBtn} onClick={onOpenAutomations}>
+          ⏱ Automations
+          {automationsUnseenCount > 0 && (
+            <span style={styles.navBadge}>{automationsUnseenCount > 9 ? '9+' : automationsUnseenCount}</span>
+          )}
+        </button>
         <button style={styles.settingsBtn} onClick={() => onOpenSettings()}>⚙ Settings</button>
       </div>
       {wsMenu && (
@@ -552,6 +560,12 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%', padding: '8px 10px', border: 'none',
     background: 'transparent', color: C.fg2, cursor: 'pointer',
     textAlign: 'left', borderRadius: 6, fontSize: 13,
+    display: 'flex', alignItems: 'center', gap: 6,
+  },
+  navBadge: {
+    marginLeft: 'auto', minWidth: 16, height: 16, padding: '0 4px',
+    borderRadius: 8, background: '#E5484D', color: '#fff',
+    fontSize: 10, fontWeight: 700, lineHeight: '16px', textAlign: 'center',
   },
   menu: {
     position: 'fixed', zIndex: 1000,
