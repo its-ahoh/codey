@@ -288,7 +288,12 @@ guarantee the code (and its tests) rely on:
   automation and round-tripped on save, but there is no UI control to edit which days
   fire); and a `report.notify`-only automation running on a headless daemon (no attached
   Electron main) produces no notification surface at all — the run simply waits in
-  history for the Mac app's next launch scan.
+  history for the Mac app's next launch scan. Two further gaps in the same class:
+  daemon-fired runs are surfaced in the open Mac app only via the launch scan and
+  App-mount recompute (there is no periodic re-scan, so a run the daemon fires while
+  the app sits open shows up on next launch/navigation); and `report.channel` plus
+  prompt-target `agent`/`model` overrides are fully plumbed end to end but have no
+  editor UI yet — they are reachable only by editing `automations.json` directly.
 
 ## Authoring flow (the clarification interview)
 
