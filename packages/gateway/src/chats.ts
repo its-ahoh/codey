@@ -142,6 +142,45 @@ export class ChatManager {
     return this.cache.get(chatId);
   }
 
+  /**
+   * Re-read one chat's file from disk into the cache. Automation chats are
+   * shared across the daemon and embedded (Mac app) gateways — each process
+   * loads chats once, so the in-memory copy can be stale (missing a chat the
+   * other process created, or missing its pendingTeam pause state). If the
+   * chat is not cached, its file is looked up across all workspace dirs
+   * (mirrors ensureLoaded's scan). If the file is gone, the cache entry is
+   * evicted and undefined is returned. Safe to call any time: persist() is
+   * synchronous (write + atomic rename), so this process never has a pending
+   * unflushed change that a reload could clobber.
+   */
+  reload(chatId: string): Chat | undefined {
+    this.ensureLoaded();
+    const cached = this.cache.get(chatId);
+    let candidates: string[];
+    if (cached) {
+      candidates = [this.chatFile(cached.workspaceName, chatId)];
+    } else {
+      let workspaces: string[] = [];
+      try {
+        workspaces = fs.readdirSync(this.workspacesRoot, { withFileTypes: true })
+          .filter(e => e.isDirectory())
+          .map(e => e.name);
+      } catch { /* root gone — treat as no candidates */ }
+      candidates = workspaces.map(ws => this.chatFile(ws, chatId));
+    }
+    for (const file of candidates) {
+      try {
+        const chat = JSON.parse(fs.readFileSync(file, 'utf8')) as Chat;
+        if (chat.id === chatId && chat.workspaceName) {
+          this.cache.set(chat.id, chat);
+          return chat;
+        }
+      } catch { /* missing or unreadable — try next candidate */ }
+    }
+    this.cache.delete(chatId);
+    return undefined;
+  }
+
   create(input: CreateChatInput): Chat {
     this.ensureLoaded();
     const now = Date.now();

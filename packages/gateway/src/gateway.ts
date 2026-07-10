@@ -898,6 +898,11 @@ export class Codey {
 
   /** The hidden system chat an automation executes in (created lazily). */
   private async ensureAutomationChat(a: Automation): Promise<string> {
+    // Automation chats are shared across the daemon and embedded gateways;
+    // the in-memory cache may be stale (e.g. the Mac app created the chat
+    // after this daemon booted). Re-read from disk before deciding the chat
+    // is missing — otherwise we'd create a duplicate and clobber a.chatId.
+    if (a.chatId) this.chatManager.reload(a.chatId);
     if (a.chatId && this.chatManager.get(a.chatId)) return a.chatId;
     const selection = a.target.kind === 'team'
       ? { type: 'team' as const, name: a.target.teamName }
@@ -920,6 +925,12 @@ export class Codey {
    * Resume is the same call — sendToChat's pendingTeam continuation handles it.
    */
   private async runAutomationTurn(a: Automation, text: string, opts?: { resume?: boolean }): Promise<TargetResult> {
+    // Automation chats are shared across the daemon and embedded gateways;
+    // the in-memory cache may be stale. Refresh before the pendingTeam
+    // handling below — an embedded process resuming a daemon-parked run must
+    // see the daemon-persisted pendingTeam, or the answer would be dispatched
+    // as a fresh team task (and its persist would clobber the daemon's file).
+    if (a.chatId) this.chatManager.reload(a.chatId);
     const chatId = await this.ensureAutomationChat(a);
     // Fresh runs must not inherit a stale pendingTeam: the engine can mark a
     // parked run failed (7-day expiry) or consume it via a failed resume (e.g.
@@ -963,6 +974,21 @@ export class Codey {
     return this.requireAutomationStore().create(draft, Date.now());
   }
   updateAutomation(id: string, patch: Partial<Automation>): Automation {
+    // A target change invalidates the hidden chat: its selection, workspace,
+    // and agent/model overrides were frozen at creation from the OLD target.
+    // Delete that chat and clear chatId so the next run lazily creates a
+    // fresh one matching the new target. (store.update Object.assigns the
+    // patch, so chatId becomes undefined and JSON.stringify drops the key
+    // from the persisted document.)
+    if (patch.target) {
+      const prev = this.requireAutomationStore().get(id);
+      if (prev?.chatId) {
+        // reload first so a chat created by the other process is deletable.
+        this.chatManager.reload(prev.chatId);
+        try { this.chatManager.delete(prev.chatId); } catch { /* already gone */ }
+      }
+      patch = { ...patch, chatId: undefined };
+    }
     return this.requireAutomationStore().update(id, patch, Date.now());
   }
   deleteAutomation(id: string): void { this.requireAutomationStore().delete(id); }
