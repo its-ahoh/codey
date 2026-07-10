@@ -10,6 +10,11 @@ export interface CreateChatInput {
   workspaceName: string;
   selection?: ChatSelection;
   title?: string;
+  /** 'automation' = hidden system chat (excluded from list() by default). */
+  kind?: 'automation';
+  /** Per-chat agent/model overrides, set at creation (used by automations). */
+  agent?: Chat['agent'];
+  model?: string;
 }
 
 /**
@@ -122,9 +127,10 @@ export class ChatManager {
     fs.renameSync(tmp, file);
   }
 
-  list(workspaceName?: string): Chat[] {
+  list(workspaceName?: string, opts?: { includeAutomation?: boolean }): Chat[] {
     this.ensureLoaded();
-    const all = [...this.cache.values()];
+    const all = [...this.cache.values()]
+      .filter(c => opts?.includeAutomation || c.kind !== 'automation');
     const filtered = workspaceName
       ? all.filter(c => c.workspaceName === workspaceName)
       : all;
@@ -134,6 +140,45 @@ export class ChatManager {
   get(chatId: string): Chat | undefined {
     this.ensureLoaded();
     return this.cache.get(chatId);
+  }
+
+  /**
+   * Re-read one chat's file from disk into the cache. Automation chats are
+   * shared across the daemon and embedded (Mac app) gateways — each process
+   * loads chats once, so the in-memory copy can be stale (missing a chat the
+   * other process created, or missing its pendingTeam pause state). If the
+   * chat is not cached, its file is looked up across all workspace dirs
+   * (mirrors ensureLoaded's scan). If the file is gone, the cache entry is
+   * evicted and undefined is returned. Safe to call any time: persist() is
+   * synchronous (write + atomic rename), so this process never has a pending
+   * unflushed change that a reload could clobber.
+   */
+  reload(chatId: string): Chat | undefined {
+    this.ensureLoaded();
+    const cached = this.cache.get(chatId);
+    let candidates: string[];
+    if (cached) {
+      candidates = [this.chatFile(cached.workspaceName, chatId)];
+    } else {
+      let workspaces: string[] = [];
+      try {
+        workspaces = fs.readdirSync(this.workspacesRoot, { withFileTypes: true })
+          .filter(e => e.isDirectory())
+          .map(e => e.name);
+      } catch { /* root gone — treat as no candidates */ }
+      candidates = workspaces.map(ws => this.chatFile(ws, chatId));
+    }
+    for (const file of candidates) {
+      try {
+        const chat = JSON.parse(fs.readFileSync(file, 'utf8')) as Chat;
+        if (chat.id === chatId && chat.workspaceName) {
+          this.cache.set(chat.id, chat);
+          return chat;
+        }
+      } catch { /* missing or unreadable — try next candidate */ }
+    }
+    this.cache.delete(chatId);
+    return undefined;
   }
 
   create(input: CreateChatInput): Chat {
@@ -147,6 +192,9 @@ export class ChatManager {
       messages: [],
       createdAt: now,
       updatedAt: now,
+      ...(input.kind ? { kind: input.kind } : {}),
+      ...(input.agent ? { agent: input.agent } : {}),
+      ...(input.model ? { model: input.model } : {}),
     };
     this.cache.set(chat.id, chat);
     this.persist(chat);
@@ -324,7 +372,8 @@ export class ChatManager {
     const chat = this.requireChat(chatId);
     chat.messages.push(message);
     chat.updatedAt = Date.now();
-    if (chat.messages.length === 1 && message.role === 'user') {
+    // Automation chats keep their authoritative "Automation: <name>" title.
+    if (chat.messages.length === 1 && message.role === 'user' && chat.kind !== 'automation') {
       chat.title = deriveTitle(message.content);
     }
     this.persist(chat);

@@ -8,6 +8,8 @@ import { ChatsProvider, useChats } from './hooks/useChats'
 import { QuickQuestionProvider } from './hooks/useQuickQuestion'
 import { useGateway } from './hooks/useGateway'
 import { CoreOfflineBanner } from './components/CoreOfflineBanner'
+import { AutomationsView } from './components/AutomationsView'
+import { unwrap } from './components/settingsAtoms'
 import {
   C,
   applyTheme,
@@ -27,6 +29,11 @@ const Shell: React.FC = () => {
   const { state, createChat, selectChat, refreshWorkspaces } = useChats()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
+  const [automationsOpen, setAutomationsOpen] = useState(false)
+  // Unseen automation-run keys (`${automationId}:${runId}`), for the sidebar
+  // badge. A Set so the one-shot 'automation-unseen' push and the on-mount
+  // recompute from history can both add to it without racing each other.
+  const [unseenRunKeys, setUnseenRunKeys] = useState<Set<string>>(new Set())
   const [leftCollapsed, setLeftCollapsed] = useState<boolean>(
     () => localStorage.getItem('codey.leftPanelCollapsed') === '1'
   )
@@ -73,6 +80,48 @@ const Shell: React.FC = () => {
     return off
   }, [])
 
+  // Addition 3: the nav badge must not rely solely on the one-shot
+  // 'automation-unseen' push (missed if it fires before this mounts, or if
+  // the app was relaunched) — also recompute from history on mount. Both
+  // paths merge into the same Set, whichever arrives.
+  useEffect(() => {
+    let cancelled = false
+    const off = window.codey.automations.onUnseen((msg) => {
+      setUnseenRunKeys(prev => {
+        const next = new Set(prev)
+        for (const runId of msg.runIds) next.add(`${msg.automationId}:${runId}`)
+        return next
+      })
+    })
+    void (async () => {
+      try {
+        const autos = unwrap(await window.codey.automations.list())
+        const perAuto = await Promise.all(autos.map(async a => {
+          try {
+            const runs = unwrap(await window.codey.automations.history(a.id, 50))
+            return runs.filter(r => r.endedAt && !r.seenAt).map(r => `${a.id}:${r.runId}`)
+          } catch {
+            return [] as string[]
+          }
+        }))
+        if (cancelled) return
+        setUnseenRunKeys(prev => {
+          const next = new Set(prev)
+          for (const keys of perAuto) for (const k of keys) next.add(k)
+          return next
+        })
+      } catch {
+        // gateway not ready yet — the push will still arrive when it fires
+      }
+    })()
+    return () => { cancelled = true; off() }
+  }, [])
+
+  const openAutomations = () => {
+    setUnseenRunKeys(new Set())
+    setAutomationsOpen(true)
+  }
+
   useEffect(() => {
     applyTheme(getStoredThemeMode())
     applyPalette(getStoredPalette())
@@ -114,6 +163,8 @@ const Shell: React.FC = () => {
         {!leftCollapsed && (
           <ChatListPanel
             onOpenSettings={(tab) => { setSettingsTab(tab); setSettingsOpen(true) }}
+            onOpenAutomations={openAutomations}
+            automationsUnseenCount={unseenRunKeys.size}
             activeChatId={state.selectedChatId}
           />
         )}
@@ -136,6 +187,7 @@ const Shell: React.FC = () => {
           )}
         </div>
         {settingsOpen && <SettingsOverlay initialTab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); refreshWorkspaces() }} />}
+        {automationsOpen && <AutomationsView onClose={() => setAutomationsOpen(false)} />}
         <VoiceRecorder />
       </div>
       <style>{`

@@ -19,6 +19,7 @@ export default defineConfig({
       'src/team-graph.test.ts',
       'src/judge.test.ts',
       'src/skill-crystallizer.test.ts',
+      'src/aide-automation.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },
