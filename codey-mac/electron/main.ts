@@ -1929,6 +1929,26 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('automations:chat:start', async (_e, mode: 'create' | 'edit', automationId?: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      return inProcessGateway.startAutomationChat(mode, automationId)
+    })
+  )
+
+  ipcMain.handle('automations:chat:send', async (_e, sessionId: string, text: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      return inProcessGateway.sendAutomationChat(sessionId, text)
+    })
+  )
+
+  ipcMain.handle('automations:chat:cancel', async (_e, sessionId: string) =>
+    wrap(async () => {
+      inProcessGateway?.cancelAutomationChat(sessionId)
+    })
+  )
+
   ipcMain.handle('automations:interview:start', async (_e, goal: string, targetContext: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not ready')
