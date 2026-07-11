@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   generateAutomationQuestions, generateAutomationFollowup,
-  synthesizeAutomationBrief, renderBrief,
+  synthesizeAutomationBrief, renderBrief, automationChatTurn,
 } from './aide-automation';
 import type { AideOptions } from './aide';
 import type { AgentRequest, AgentResponse } from './types';
@@ -59,5 +59,45 @@ describe('renderBrief', () => {
   it('leaves unknown placeholders intact and skips the block when all used', () => {
     expect(renderBrief('Hi {{who}}', {})).toBe('Hi {{who}}');
     expect(renderBrief('Hi {{who}}', { who: 'you' })).toBe('Hi you');
+  });
+});
+
+describe('automationChatTurn', () => {
+  const ctx = {
+    workspaces: ['default', 'blog'], teams: ['news'],
+    tz: 'Asia/Shanghai', nowIso: 'Fri Jul 11 2026 10:00:00 GMT+0800', mode: 'create' as const,
+  };
+  const msgs = [{ role: 'user' as const, text: 'post AI news daily' }];
+
+  it('parses a full turn', async () => {
+    const t = await automationChatTurn(msgs, {}, ctx, aide(
+      '{"reply":"Which workspace?","draftPatch":{"name":"AI news"},"suggestions":["default","blog"],"ready":false}'));
+    expect(t).toEqual({
+      reply: 'Which workspace?', draftPatch: { name: 'AI news' },
+      suggestions: ['default', 'blog'], ready: false,
+    });
+  });
+
+  it('defaults optional fields', async () => {
+    const t = await automationChatTurn(msgs, {}, ctx, aide('{"reply":"ok"}'));
+    expect(t.draftPatch).toEqual({});
+    expect(t.suggestions).toEqual([]);
+    expect(t.ready).toBe(false);
+  });
+
+  it('keeps null patch values (they mean "clear the field") and drops unknown keys', async () => {
+    const t = await automationChatTurn(msgs, {}, ctx, aide(
+      '{"reply":"ok","draftPatch":{"schedule":null,"bogus":1}}'));
+    expect(t.draftPatch).toEqual({ schedule: null });
+  });
+
+  it('drops non-string suggestions', async () => {
+    const t = await automationChatTurn(msgs, {}, ctx, aide('{"reply":"ok","suggestions":["a",1,""]}'));
+    expect(t.suggestions).toEqual(['a']);
+  });
+
+  it('throws on malformed JSON and on an empty reply', async () => {
+    await expect(automationChatTurn(msgs, {}, ctx, aide('not json'))).rejects.toThrow();
+    await expect(automationChatTurn(msgs, {}, ctx, aide('{"reply":"  "}'))).rejects.toThrow();
   });
 });
