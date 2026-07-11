@@ -20,6 +20,7 @@ export default defineConfig({
       'src/worker-message-emitter.test.ts',
       'src/chats.workingDirOverride.test.ts',
       'src/chats.pendingSkillSuggestion.test.ts',
+      'src/automations/chat.test.ts',
       'src/automations/schedule.test.ts',
       'src/automations/store.test.ts',
       'src/automations/lease.test.ts',
