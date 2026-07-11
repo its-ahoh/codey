@@ -40,9 +40,9 @@ contextBridge.exposeInMainWorld('codey', {
     resume: (id: string, runId: string, answer: string) => ipcRenderer.invoke('automations:resume', id, runId, answer),
     history: (id: string, limit?: number) => ipcRenderer.invoke('automations:history', id, limit),
     markSeen: (id: string, runId: string) => ipcRenderer.invoke('automations:markSeen', id, runId),
-    interviewStart: (goal: string, targetContext: string) => ipcRenderer.invoke('automations:interview:start', goal, targetContext),
-    interviewAnswer: (sessionId: string, text: string) => ipcRenderer.invoke('automations:interview:answer', sessionId, text),
-    interviewCancel: (sessionId: string) => ipcRenderer.invoke('automations:interview:cancel', sessionId),
+    chatStart: (mode: 'create' | 'edit', automationId?: string) => ipcRenderer.invoke('automations:chat:start', mode, automationId),
+    chatSend: (sessionId: string, text: string) => ipcRenderer.invoke('automations:chat:send', sessionId, text),
+    chatCancel: (sessionId: string) => ipcRenderer.invoke('automations:chat:cancel', sessionId),
     onEvent: (handler: (ev: any) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, ev: any) => handler(ev)
       ipcRenderer.on('automation-event', listener)

@@ -1,81 +1,6 @@
 // packages/core/src/aide-automation.ts
 import { AideOptions, runAideJson } from './aide';
-
-/** One clarification question surfaced by the authoring interview. */
-export interface InterviewQuestion { id: string; question: string; why?: string }
-export interface InterviewAnswer { question: string; answer: string }
-
-const QUESTIONS_PROMPT = (goal: string, targetContext: string) => `You are preparing an UNATTENDED automation. It will run on a schedule with nobody available to answer questions, so every ambiguity must be resolved NOW, at authoring time.
-
-Automation goal:
-${goal}
-
-Execution target:
-${targetContext}
-
-List the questions you would otherwise need answered mid-run: missing specifics, choices, accounts/handles, formats, limits, and edge cases (e.g. "what if there is nothing to report today?"). Ask only what materially changes the run. 3-7 questions.
-
-Respond with ONLY this JSON:
-{"questions":[{"id":"q1","question":"...","why":"one-line reason"}]}`;
-
-const FOLLOWUP_PROMPT = (goal: string, question: string, answer: string) => `An automation is being configured. Goal: ${goal}
-
-You asked: ${question}
-The user answered: ${answer}
-
-If — and only if — this answer opens exactly one NEW concrete gap that would block an unattended run, ask one short follow-up. Otherwise return null.
-
-Respond with ONLY this JSON:
-{"followup":"..." }  or  {"followup":null}`;
-
-const SYNTHESIS_PROMPT = (goal: string, qa: InterviewAnswer[]) => `Fold this automation goal and the clarification answers into a frozen, fully self-contained instruction brief for an UNATTENDED agent run. The brief must stand alone: no references to "the user said" or to this conversation; include concrete values, edge-case handling, and output expectations.
-
-Additionally surface a SMALL set of knobs a user may want to tweak later (account, count, tone, …) as params. In the brief, write each knob as a {{placeholder}} and put its current value in params.
-
-Goal:
-${goal}
-
-Clarifications:
-${qa.map(x => `Q: ${x.question}\nA: ${x.answer}`).join('\n')}
-
-Respond with ONLY this JSON:
-{"brief":"...","params":{"name":"current value"}}`;
-
-export async function generateAutomationQuestions(
-  goal: string, targetContext: string, opts: AideOptions,
-): Promise<InterviewQuestion[]> {
-  const res = await runAideJson<{ questions?: unknown }>(QUESTIONS_PROMPT(goal, targetContext), opts);
-  if (!res || !Array.isArray(res.questions)) return [];
-  return (res.questions as Array<Record<string, unknown>>)
-    .filter(q => typeof q?.question === 'string' && (q.question as string).trim())
-    .map((q, i) => ({
-      id: typeof q.id === 'string' ? q.id : `q${i + 1}`,
-      question: (q.question as string).trim(),
-      why: typeof q.why === 'string' ? q.why : undefined,
-    }));
-}
-
-export async function generateAutomationFollowup(
-  goal: string, question: string, answer: string, opts: AideOptions,
-): Promise<string | null> {
-  const res = await runAideJson<{ followup?: unknown }>(FOLLOWUP_PROMPT(goal, question, answer), opts);
-  return res && typeof res.followup === 'string' && res.followup.trim() ? res.followup.trim() : null;
-}
-
-export async function synthesizeAutomationBrief(
-  goal: string, qa: InterviewAnswer[], opts: AideOptions,
-): Promise<{ brief: string; params: Record<string, string> }> {
-  const res = await runAideJson<{ brief?: unknown; params?: unknown }>(SYNTHESIS_PROMPT(goal, qa), opts);
-  const brief = res && typeof res.brief === 'string' ? res.brief.trim() : '';
-  if (!brief) throw new Error('Aide returned no brief');
-  const params: Record<string, string> = {};
-  if (res!.params && typeof res!.params === 'object') {
-    for (const [k, v] of Object.entries(res!.params as Record<string, unknown>)) {
-      if (typeof v === 'string') params[k] = v;
-    }
-  }
-  return { brief, params };
-}
+import type { AutomationSchedule, AutomationTarget } from './types/automation';
 
 /**
  * Resolve {{placeholders}} from params; params without a placeholder are
@@ -90,4 +15,114 @@ export function renderBrief(brief: string, params: Record<string, string>): stri
   const leftovers = Object.entries(params).filter(([k]) => !used.has(k));
   if (leftovers.length === 0) return out;
   return `${out}\n\nParameters:\n${leftovers.map(([k, v]) => `- ${k}: ${v}`).join('\n')}`;
+}
+
+// ---- Conversational authoring (chat-driven creation/edit) ----
+
+/** Partial automation assembled turn-by-turn during the authoring chat. */
+export interface AutomationDraft {
+  name?: string;
+  target?: AutomationTarget;
+  schedule?: AutomationSchedule;
+  notify?: boolean;
+  brief?: string;
+  params?: Record<string, string>;
+}
+
+export interface AutomationChatContext {
+  workspaces: string[];
+  teams: string[];
+  /** User's IANA zone, e.g. "Asia/Shanghai". */
+  tz: string;
+  /** Current local datetime string, for resolving "every morning" etc. */
+  nowIso: string;
+  mode: 'create' | 'edit';
+}
+
+export interface AutomationChatTurn {
+  reply: string;
+  /** Shallow-merged into the session draft; a null value clears the field. */
+  draftPatch: Partial<AutomationDraft>;
+  /** Quick-reply chips (may be empty). */
+  suggestions: string[];
+  /** All required fields present + no open questions. */
+  ready: boolean;
+}
+
+export type AutomationChatMessage = { role: 'user' | 'assistant'; text: string };
+
+const DRAFT_KEYS = new Set(['name', 'target', 'schedule', 'notify', 'brief', 'params']);
+
+function isValidSchedulePatch(v: unknown): v is AutomationSchedule {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const s = v as Record<string, unknown>;
+  if (typeof s.hour !== 'number' || !Number.isInteger(s.hour) || s.hour < 0 || s.hour > 23) return false;
+  if (typeof s.minute !== 'number' || !Number.isInteger(s.minute) || s.minute < 0 || s.minute > 59) return false;
+  if (typeof s.tz !== 'string' || !s.tz) return false;
+  if (s.daysOfWeek !== undefined) {
+    if (!Array.isArray(s.daysOfWeek)) return false;
+    if (!s.daysOfWeek.every(d => typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 6)) return false;
+  }
+  return true;
+}
+
+function isValidTargetPatch(v: unknown): v is AutomationTarget {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const t = v as Record<string, unknown>;
+  if (t.kind === 'prompt') return typeof t.workspaceName === 'string' && !!t.workspaceName;
+  if (t.kind === 'team') return typeof t.teamName === 'string' && !!t.teamName && typeof t.workspaceName === 'string' && !!t.workspaceName;
+  return false;
+}
+
+const CHAT_TURN_PROMPT = (
+  messages: AutomationChatMessage[], draft: AutomationDraft, ctx: AutomationChatContext,
+) => `You are Codey's automation-setup assistant, configuring an UNATTENDED automation through a short chat. It will run on a schedule with nobody available to answer questions, so every ambiguity that would block a run must be resolved during this conversation.
+
+Environment:
+- Workspaces (the only valid choices): ${ctx.workspaces.join(', ') || '(none)'}
+- Teams (optional execution target): ${ctx.teams.join(', ') || '(none)'}
+- User timezone: ${ctx.tz}; current time: ${ctx.nowIso}
+- Mode: ${ctx.mode === 'edit' ? 'editing an existing automation - only change what the user asks to change' : 'creating a new automation'}
+
+Current draft (gathered so far):
+${JSON.stringify(draft, null, 2)}
+
+Conversation so far:
+${messages.map(m => `${m.role === 'user' ? 'User' : 'You'}: ${m.text}`).join('\n')}
+
+Your job this turn:
+1. Update the draft with anything the user's latest message settles. draftPatch contains ONLY fields that changed; set a field to null to clear it. Draft fields: name (short title), target ({"kind":"prompt","workspaceName":"..."} or {"kind":"team","teamName":"...","workspaceName":"..."}), schedule ({"hour":0-23,"minute":0-59,"daysOfWeek":[0-6] optional,"tz":"${ctx.tz}"} or null for manual-only), notify (boolean), brief (string), params (object of string values).
+2. Reply conversationally and ask about ONE thing at a time - the next most important gap: missing specifics, choices, accounts/handles, formats, limits, edge cases (e.g. "what if there is nothing to report?"), and eventually scheduling. Never ask about something the user already answered, even in passing. If the user revises an earlier choice, just patch it and move on.
+3. When the answer space is enumerable (workspace names, team names, times, yes/no), offer 2-5 short suggestions the user can tap. Only ever suggest workspace/team names that appear in the environment above.
+4. Maintain the brief as you learn: a frozen, fully self-contained instruction block for an unattended agent - no "the user said", concrete values, edge-case handling, expected output. Surface tweakable knobs as {{placeholder}} in the brief with current values in params.
+5. Set ready=true ONLY when name, target and brief are complete, scheduling has been explicitly discussed (a concrete schedule or deliberately manual-only), and you have no open questions. On that turn, reply with a short summary of the full plan and invite the user to confirm or change anything. If they then request changes, patch the draft and set ready accordingly.
+
+Respond with ONLY this JSON:
+{"reply":"...","draftPatch":{},"suggestions":[],"ready":false}`;
+
+export async function automationChatTurn(
+  messages: AutomationChatMessage[],
+  draft: AutomationDraft,
+  context: AutomationChatContext,
+  opts: AideOptions,
+): Promise<AutomationChatTurn> {
+  const res = await runAideJson<Record<string, unknown>>(CHAT_TURN_PROMPT(messages, draft, context), opts);
+  const reply = res && typeof res.reply === 'string' ? res.reply.trim() : '';
+  if (!reply) throw new Error('Aide returned no reply');
+  const draftPatch: Partial<AutomationDraft> = {};
+  if (res!.draftPatch && typeof res!.draftPatch === 'object' && !Array.isArray(res!.draftPatch)) {
+    for (const [k, v] of Object.entries(res!.draftPatch as Record<string, unknown>)) {
+      if (DRAFT_KEYS.has(k)) (draftPatch as Record<string, unknown>)[k] = v;
+    }
+  }
+  if ('schedule' in draftPatch && draftPatch.schedule !== null && !isValidSchedulePatch(draftPatch.schedule)) {
+    delete draftPatch.schedule;
+  }
+  if ('target' in draftPatch && draftPatch.target !== null && !isValidTargetPatch(draftPatch.target)) {
+    delete draftPatch.target;
+  }
+  const suggestions = Array.isArray(res!.suggestions)
+    ? (res!.suggestions as unknown[]).filter((s): s is string => typeof s === 'string' && !!s.trim()).slice(0, 6)
+    : [];
+  return { reply, draftPatch, suggestions, ready: res!.ready === true };
 }
