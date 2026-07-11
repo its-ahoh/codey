@@ -75,12 +75,16 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
       // Re-seed knobs from fresh data unless the user has in-progress edits;
       // otherwise an external edit (e.g. Edit in chat) would leave a stale
       // "Save knobs" that reverts it.
+      // Snapshot the previous baseline before setKnobs: the functional
+      // updater runs deferred, so reading aRef.current inside it would see
+      // `fresh`, not the baseline the user's edits were made against.
+      const prevA = aRef.current
+      aRef.current = fresh
       setKnobs(prev =>
-        prev === null || aRef.current === null || knobsEqual(prev, aRef.current)
+        prev === null || prevA === null || knobsEqual(prev, prevA)
           ? knobsFrom(fresh)
           : prev,
       )
-      aRef.current = fresh
       const freshRuns: AutomationRun[] = unwrap(await window.codey.automations.history(id, 50))
       setRuns(freshRuns)
       // Viewing the one-pager counts as seeing its results.
