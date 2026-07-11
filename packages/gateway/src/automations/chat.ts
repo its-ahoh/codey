@@ -78,6 +78,7 @@ export class AutomationChatManager {
     if (!s) throw new Error(`Unknown automation chat session: ${sessionId}`);
     if (s.inFlight) throw new Error('A turn is already in flight for this session');
     s.inFlight = true;
+    s.touchedAt = this.now();
     try {
       // The user message is committed only after the turn succeeds, so a
       // failed Aide call can be retried by resending the same text.
@@ -86,9 +87,9 @@ export class AutomationChatManager {
         { ...s.draft },
         { ...this.deps.context(), mode: s.mode },
       );
+      if (!this.sessions.has(sessionId)) throw new Error(`Unknown automation chat session: ${sessionId}`);
       s.messages.push({ role: 'user', text }, { role: 'assistant', text: turn.reply });
       applyDraftPatch(s.draft, turn.draftPatch);
-      s.touchedAt = this.now();
       return { sessionId, reply: turn.reply, draft: { ...s.draft }, suggestions: turn.suggestions, ready: turn.ready };
     } finally {
       s.inFlight = false;

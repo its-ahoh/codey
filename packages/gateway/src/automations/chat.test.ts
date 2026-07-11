@@ -89,6 +89,17 @@ describe('send', () => {
     await expect(mgr.send(sessionId, 'x')).rejects.toThrow(/Unknown/);
   });
 
+  it('a send whose session is cancelled mid-turn rejects instead of resolving', async () => {
+    let release!: (v: AutomationChatTurn) => void;
+    const turn = vi.fn(() => new Promise<AutomationChatTurn>(res => { release = res; }));
+    const { mgr } = manager(turn);
+    const { sessionId } = mgr.start('create');
+    const pending = mgr.send(sessionId, 'one');
+    mgr.cancel(sessionId);
+    release(turnResult());
+    await expect(pending).rejects.toThrow(/Unknown/);
+  });
+
   it('sweeps idle sessions past the TTL', async () => {
     let now = 1000;
     const { mgr } = manager(vi.fn(async () => turnResult()), () => now);

@@ -1,12 +1,13 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, Automation, AutomationRun, AutomationEvent, renderBrief, generateAutomationQuestions, generateAutomationFollowup, synthesizeAutomationBrief } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, Automation, AutomationRun, AutomationEvent, renderBrief, generateAutomationQuestions, generateAutomationFollowup, synthesizeAutomationBrief, automationChatTurn } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
 import { SchedulerLease } from './automations/lease';
 import { InterviewManager } from './automations/interview';
+import { AutomationChatManager, ChatStep } from './automations/chat';
 import { detectParked } from './automations/parked';
 import { formatRunSummary } from './automations/report';
 import { ConfigManager } from './config';
@@ -80,6 +81,7 @@ export class Codey {
   private automationStore?: AutomationStore;
   private automationEngine?: AutomationEngine;
   private automationInterviews?: InterviewManager;
+  private automationChats?: AutomationChatManager;
   private automationEventListener?: (ev: AutomationEvent) => void;
 
   // Rate limiting: userId -> last request timestamp
@@ -894,6 +896,15 @@ export class Codey {
       generateFollowup: (goal, q, ans) => generateAutomationFollowup(goal, q, ans, this.getAideOptions()),
       synthesize: (goal, qa) => synthesizeAutomationBrief(goal, qa, this.getAideOptions()),
     });
+    this.automationChats = new AutomationChatManager({
+      turn: (messages, draft, context) => automationChatTurn(messages, draft, context, this.getAideOptions()),
+      context: () => ({
+        workspaces: this.getWorkspaceList(),
+        teams: Object.keys(this.configManager?.getTeams() ?? {}),
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        nowIso: new Date().toString(),
+      }),
+    });
   }
 
   /** The hidden system chat an automation executes in (created lazily). */
@@ -1016,6 +1027,26 @@ export class Codey {
   cancelAutomationInterview(sessionId: string): void {
     this.automationInterviews?.cancel(sessionId);
   }
+  startAutomationChat(mode: 'create' | 'edit', automationId?: string): ChatStep {
+    const mgr = this.requireAutomationChats();
+    if (mode !== 'edit') return mgr.start('create');
+    const a = this.requireAutomationStore().get(automationId ?? '');
+    if (!a) throw new Error(`Automation not found: ${automationId}`);
+    return mgr.start('edit', {
+      name: a.name,
+      target: a.target,
+      schedule: a.schedule,
+      notify: a.report.notify,
+      brief: a.brief,
+      params: a.params,
+    });
+  }
+  sendAutomationChat(sessionId: string, text: string): Promise<ChatStep> {
+    return this.requireAutomationChats().send(sessionId, text);
+  }
+  cancelAutomationChat(sessionId: string): void {
+    this.automationChats?.cancel(sessionId);
+  }
   setAutomationEventListener(fn: (ev: AutomationEvent) => void): void {
     this.automationEventListener = fn;
   }
@@ -1031,6 +1062,10 @@ export class Codey {
   private requireAutomationInterviews(): InterviewManager {
     if (!this.automationInterviews) throw new Error('Automations not initialized (gateway not started)');
     return this.automationInterviews;
+  }
+  private requireAutomationChats(): AutomationChatManager {
+    if (!this.automationChats) throw new Error('Automations not initialized (gateway not started)');
+    return this.automationChats;
   }
 
   private resolveChatWorkingDir(chat: Chat): string {
