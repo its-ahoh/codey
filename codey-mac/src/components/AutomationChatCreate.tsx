@@ -32,9 +32,11 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
   const [briefOpen, setBriefOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
+  const mountedRef = useRef(true)
   useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
   // Cancel the server-side session when the view unmounts.
   useEffect(() => () => {
+    mountedRef.current = false
     const sid = sessionIdRef.current
     if (sid) void window.codey.automations.chatCancel(sid).catch(() => {})
   }, [])
@@ -100,6 +102,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     void (async () => {
       try {
         const step: ChatStep = unwrap(await window.codey.automations.chatStart(mode, automationId))
+        if (!mountedRef.current) { void window.codey.automations.chatCancel(step.sessionId).catch(() => {}); return }
         setSessionId(step.sessionId)
         setMessages([{ role: 'assistant', text: step.reply }])
         setDraft(step.draft)

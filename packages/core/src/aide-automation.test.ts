@@ -66,4 +66,19 @@ describe('automationChatTurn', () => {
     await expect(automationChatTurn(msgs, {}, ctx, aide('not json'))).rejects.toThrow();
     await expect(automationChatTurn(msgs, {}, ctx, aide('{"reply":"  "}'))).rejects.toThrow();
   });
+
+  it('drops a malformed schedule patch but keeps a valid one and null', async () => {
+    const bad = await automationChatTurn(msgs, {}, ctx, aide(
+      '{"reply":"ok","draftPatch":{"schedule":{"hour":"9","minute":0,"tz":"UTC"}}}'));
+    expect(bad.draftPatch).toEqual({});
+    const good = await automationChatTurn(msgs, {}, ctx, aide(
+      '{"reply":"ok","draftPatch":{"schedule":{"hour":9,"minute":0,"tz":"UTC","daysOfWeek":[1,2]}}}'));
+    expect(good.draftPatch).toEqual({ schedule: { hour: 9, minute: 0, tz: 'UTC', daysOfWeek: [1, 2] } });
+  });
+
+  it('drops a malformed target patch', async () => {
+    const t = await automationChatTurn(msgs, {}, ctx, aide(
+      '{"reply":"ok","draftPatch":{"target":{"kind":"team","workspaceName":"w"}}}'));
+    expect(t.draftPatch).toEqual({});
+  });
 });

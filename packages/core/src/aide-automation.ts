@@ -53,6 +53,27 @@ export type AutomationChatMessage = { role: 'user' | 'assistant'; text: string }
 
 const DRAFT_KEYS = new Set(['name', 'target', 'schedule', 'notify', 'brief', 'params']);
 
+function isValidSchedulePatch(v: unknown): v is AutomationSchedule {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const s = v as Record<string, unknown>;
+  if (typeof s.hour !== 'number' || !Number.isInteger(s.hour) || s.hour < 0 || s.hour > 23) return false;
+  if (typeof s.minute !== 'number' || !Number.isInteger(s.minute) || s.minute < 0 || s.minute > 59) return false;
+  if (typeof s.tz !== 'string' || !s.tz) return false;
+  if (s.daysOfWeek !== undefined) {
+    if (!Array.isArray(s.daysOfWeek)) return false;
+    if (!s.daysOfWeek.every(d => typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 6)) return false;
+  }
+  return true;
+}
+
+function isValidTargetPatch(v: unknown): v is AutomationTarget {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const t = v as Record<string, unknown>;
+  if (t.kind === 'prompt') return typeof t.workspaceName === 'string' && !!t.workspaceName;
+  if (t.kind === 'team') return typeof t.teamName === 'string' && !!t.teamName && typeof t.workspaceName === 'string' && !!t.workspaceName;
+  return false;
+}
+
 const CHAT_TURN_PROMPT = (
   messages: AutomationChatMessage[], draft: AutomationDraft, ctx: AutomationChatContext,
 ) => `You are Codey's automation-setup assistant, configuring an UNATTENDED automation through a short chat. It will run on a schedule with nobody available to answer questions, so every ambiguity that would block a run must be resolved during this conversation.
@@ -93,6 +114,12 @@ export async function automationChatTurn(
     for (const [k, v] of Object.entries(res!.draftPatch as Record<string, unknown>)) {
       if (DRAFT_KEYS.has(k)) (draftPatch as Record<string, unknown>)[k] = v;
     }
+  }
+  if ('schedule' in draftPatch && draftPatch.schedule !== null && !isValidSchedulePatch(draftPatch.schedule)) {
+    delete draftPatch.schedule;
+  }
+  if ('target' in draftPatch && draftPatch.target !== null && !isValidTargetPatch(draftPatch.target)) {
+    delete draftPatch.target;
   }
   const suggestions = Array.isArray(res!.suggestions)
     ? (res!.suggestions as unknown[]).filter((s): s is string => typeof s === 'string' && !!s.trim()).slice(0, 6)
