@@ -88,6 +88,50 @@ export function humanizeDelta(ms: number): string {
   return `in ${Math.round(ms / 86_400_000)}d`
 }
 
+export function formatHHMM(hour: number, minute: number): string {
+  return `${pad(hour)}:${pad(minute)}`
+}
+
+/** Staged, directly-editable knobs shown on the one-pager Overview tab. */
+export interface Knobs {
+  params: Record<string, string>
+  scheduleOn: boolean
+  time: string
+  days: number[]
+  notify: boolean
+}
+
+interface KnobSource {
+  params: Record<string, string>
+  schedule?: ScheduleLike
+  report: { notify: boolean }
+}
+
+/** Seed knobs from an automation. Days are sorted so an unsorted persisted
+ *  daysOfWeek can't create a phantom-dirty state. */
+export function knobsFrom(a: KnobSource): Knobs {
+  return {
+    params: { ...a.params },
+    scheduleOn: !!a.schedule,
+    time: a.schedule ? formatHHMM(a.schedule.hour, a.schedule.minute) : '09:00',
+    days: [...(a.schedule?.daysOfWeek ?? [])].sort((x, y) => x - y),
+    notify: a.report.notify,
+  }
+}
+
+/** True when the staged knobs match the automation (nothing to save). */
+export function knobsEqual(k: Knobs, a: KnobSource): boolean {
+  if (JSON.stringify(k.params) !== JSON.stringify(a.params)) return false
+  if (k.scheduleOn !== !!a.schedule) return false
+  if (k.scheduleOn) {
+    if (k.time !== formatHHMM(a.schedule?.hour ?? 0, a.schedule?.minute ?? 0)) return false
+    const kd = [...k.days].sort((x, y) => x - y)
+    const ad = [...(a.schedule?.daysOfWeek ?? [])].sort((x, y) => x - y)
+    if (JSON.stringify(kd) !== JSON.stringify(ad)) return false
+  }
+  return k.notify === a.report.notify
+}
+
 export interface DraftLike {
   name?: string
   brief?: string

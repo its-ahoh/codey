@@ -1,6 +1,6 @@
 // codey-mac/src/components/automationsModel.test.ts
 import { describe, it, expect } from 'vitest'
-import { scheduleSummary, canSchedule, timeOfDayToSchedule, nextRunAt, humanizeDelta, draftComplete } from './automationsModel'
+import { scheduleSummary, canSchedule, timeOfDayToSchedule, nextRunAt, humanizeDelta, draftComplete, formatHHMM, knobsFrom, knobsEqual } from './automationsModel'
 
 describe('scheduleSummary', () => {
   it('renders daily and weekly summaries', () => {
@@ -67,6 +67,81 @@ describe('humanizeDelta', () => {
     expect(humanizeDelta(5 * 60_000)).toBe('in 5m')
     expect(humanizeDelta(14 * 3600_000)).toBe('in 14h')
     expect(humanizeDelta(3 * 86_400_000)).toBe('in 3d')
+  })
+})
+
+describe('formatHHMM', () => {
+  it('zero-pads hour and minute', () => {
+    expect(formatHHMM(9, 5)).toBe('09:05')
+    expect(formatHHMM(0, 0)).toBe('00:00')
+    expect(formatHHMM(23, 59)).toBe('23:59')
+  })
+})
+
+describe('knobsFrom', () => {
+  const base = {
+    params: { topic: 'ai' },
+    schedule: { hour: 9, minute: 5, daysOfWeek: [5, 1, 3], tz: 'UTC' },
+    report: { notify: true },
+  }
+
+  it('maps fields and sorts days', () => {
+    expect(knobsFrom(base)).toEqual({
+      params: { topic: 'ai' },
+      scheduleOn: true,
+      time: '09:05',
+      days: [1, 3, 5],
+      notify: true,
+    })
+  })
+
+  it('defaults for a manual-only automation', () => {
+    expect(knobsFrom({ params: {}, report: { notify: false } })).toEqual({
+      params: {},
+      scheduleOn: false,
+      time: '09:00',
+      days: [],
+      notify: false,
+    })
+  })
+})
+
+describe('knobsEqual', () => {
+  const auto = {
+    params: { topic: 'ai' },
+    schedule: { hour: 9, minute: 5, daysOfWeek: [5, 1, 3], tz: 'UTC' },
+    report: { notify: true },
+  }
+
+  it('is true for knobs seeded from the same automation', () => {
+    expect(knobsEqual(knobsFrom(auto), auto)).toBe(true)
+  })
+
+  it('tolerates unsorted persisted daysOfWeek (no phantom dirty)', () => {
+    const seeded = knobsFrom(auto)
+    expect(seeded.days).toEqual([1, 3, 5])
+    expect(knobsEqual(seeded, auto)).toBe(true)
+  })
+
+  it('is false when a param differs', () => {
+    expect(knobsEqual({ ...knobsFrom(auto), params: { topic: 'ml' } }, auto)).toBe(false)
+  })
+
+  it('is false when time differs', () => {
+    expect(knobsEqual({ ...knobsFrom(auto), time: '10:05' }, auto)).toBe(false)
+  })
+
+  it('is false when notify differs', () => {
+    expect(knobsEqual({ ...knobsFrom(auto), notify: false }, auto)).toBe(false)
+  })
+
+  it('is false when scheduleOn differs', () => {
+    expect(knobsEqual({ ...knobsFrom(auto), scheduleOn: false }, auto)).toBe(false)
+  })
+
+  it('ignores time/days when the schedule is off on both sides', () => {
+    const manual = { params: {}, report: { notify: true } }
+    expect(knobsEqual({ ...knobsFrom(manual), time: '17:00', days: [2] }, manual)).toBe(true)
   })
 })
 

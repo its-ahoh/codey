@@ -1,10 +1,13 @@
 // codey-mac/src/components/AutomationOnePager.tsx
 // One-pager for an existing automation: Overview / Runs tabs, parked banner,
 // inline knobs. Behavioral edits go through "Edit in chat".
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { C } from '../theme'
 import { pillButton, unwrap, inputStyle } from './settingsAtoms'
-import { scheduleSummary, timeOfDayToSchedule, nextRunAt, humanizeDelta } from './automationsModel'
+import {
+  scheduleSummary, timeOfDayToSchedule, nextRunAt, humanizeDelta,
+  knobsFrom, knobsEqual, type Knobs,
+} from './automationsModel'
 import type { Automation, AutomationRun } from '../../../packages/core/src/types/automation'
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -17,23 +20,39 @@ interface Props {
   setError: (e: string | null) => void
 }
 
-interface Knobs {
-  params: Record<string, string>
-  scheduleOn: boolean
-  time: string
-  days: number[]
-  notify: boolean
-}
-
-const knobsFrom = (a: Automation): Knobs => ({
-  params: { ...a.params },
-  scheduleOn: !!a.schedule,
-  time: a.schedule
-    ? `${String(a.schedule.hour).padStart(2, '0')}:${String(a.schedule.minute).padStart(2, '0')}`
-    : '09:00',
-  days: a.schedule?.daysOfWeek ?? [],
-  notify: a.report.notify,
-})
+/** Options + free-text input for answering a parked run's question.
+ *  Shared by the header banner and the Runs-tab rows. */
+const ParkedPrompt: React.FC<{
+  run: AutomationRun
+  resuming: boolean
+  answer: string
+  onAnswerChange: (v: string) => void
+  onResume: (option: string) => void
+}> = ({ run, resuming, answer, onAnswerChange, onResume }) => (
+  <>
+    {run.options && run.options.length > 0 && (
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+        {run.options.map(opt => (
+          <button key={opt} style={pillButton('ghost')} disabled={resuming}
+            onClick={() => onResume(opt)}>{opt}</button>
+        ))}
+      </div>
+    )}
+    <input
+      style={{ ...inputStyle, width: '100%' }}
+      placeholder={resuming ? 'Resuming…' : 'Free-text answer…'}
+      disabled={resuming}
+      value={answer}
+      onChange={e => onAnswerChange(e.target.value)}
+      onKeyDown={e => {
+        if (e.key === 'Enter') {
+          const v = answer.trim()
+          if (v) onResume(v)
+        }
+      }}
+    />
+  </>
+)
 
 export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDeleted, setError }) => {
   const [a, setA] = useState<Automation | null>(null)
@@ -45,12 +64,23 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
   const [deleting, setDeleting] = useState(false)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [resuming, setResuming] = useState<Record<string, boolean>>({})
+  // Last automation the knobs were seeded from — lets refresh() tell "user is
+  // mid-edit" apart from "an external edit changed the automation".
+  const aRef = useRef<Automation | null>(null)
 
   const refresh = useCallback(async () => {
     try {
       const fresh: Automation = unwrap(await window.codey.automations.get(id))
       setA(fresh)
-      setKnobs(prev => prev ?? knobsFrom(fresh))
+      // Re-seed knobs from fresh data unless the user has in-progress edits;
+      // otherwise an external edit (e.g. Edit in chat) would leave a stale
+      // "Save knobs" that reverts it.
+      setKnobs(prev =>
+        prev === null || aRef.current === null || knobsEqual(prev, aRef.current)
+          ? knobsFrom(fresh)
+          : prev,
+      )
+      aRef.current = fresh
       const freshRuns: AutomationRun[] = unwrap(await window.codey.automations.history(id, 50))
       setRuns(freshRuns)
       // Viewing the one-pager counts as seeing its results.
@@ -103,6 +133,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
     setResuming(prev => ({ ...prev, [runId]: true }))
     try {
       unwrap(await window.codey.automations.resume(id, runId, option))
+      setAnswers(prev => { const next = { ...prev }; delete next[runId]; return next })
       void refresh()
     } catch (e: any) {
       setError(e?.message ?? String(e))
@@ -111,15 +142,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
     }
   }
 
-  const knobsDirty = !!a && !!knobs && (
-    JSON.stringify(knobs.params) !== JSON.stringify(a.params) ||
-    knobs.scheduleOn !== !!a.schedule ||
-    (knobs.scheduleOn && (
-      knobs.time !== `${String(a.schedule?.hour ?? 0).padStart(2, '0')}:${String(a.schedule?.minute ?? 0).padStart(2, '0')}` ||
-      JSON.stringify(knobs.days) !== JSON.stringify(a.schedule?.daysOfWeek ?? [])
-    )) ||
-    knobs.notify !== a.report.notify
-  )
+  const knobsDirty = !!a && !!knobs && !knobsEqual(knobs, a)
 
   const saveKnobs = async () => {
     if (!a || !knobs || savingKnobs) return
@@ -132,10 +155,11 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
       const fresh: Automation = unwrap(await window.codey.automations.update(id, {
         params: knobs.params,
         schedule: schedule ?? undefined,
-        report: { notify: knobs.notify },
-      } as any))
+        report: { ...a.report, notify: knobs.notify },
+      }))
       setA(fresh)
       setKnobs(knobsFrom(fresh))
+      aRef.current = fresh
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {
@@ -176,26 +200,12 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
           <div style={{ color: C.fg, fontSize: 12, fontWeight: 500, marginBottom: 6 }}>
             Waiting on you: {latest.question}
           </div>
-          {latest.options && latest.options.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
-              {latest.options.map(opt => (
-                <button key={opt} style={pillButton('ghost')} disabled={!!resuming[latest.runId]}
-                  onClick={() => void resume(latest.runId, opt)}>{opt}</button>
-              ))}
-            </div>
-          )}
-          <input
-            style={{ ...inputStyle, width: '100%' }}
-            placeholder={resuming[latest.runId] ? 'Resuming…' : 'Free-text answer…'}
-            disabled={!!resuming[latest.runId]}
-            value={answers[latest.runId] ?? ''}
-            onChange={e => setAnswers(prev => ({ ...prev, [latest.runId]: e.target.value }))}
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                const v = (answers[latest.runId] ?? '').trim()
-                if (v) void resume(latest.runId, v)
-              }
-            }}
+          <ParkedPrompt
+            run={latest}
+            resuming={!!resuming[latest.runId]}
+            answer={answers[latest.runId] ?? ''}
+            onAnswerChange={v => setAnswers(prev => ({ ...prev, [latest.runId]: v }))}
+            onResume={opt => void resume(latest.runId, opt)}
           />
         </div>
       )}
@@ -276,26 +286,12 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
                 {r.status === 'parked' && r.question && (
                   <div style={{ marginTop: 8 }}>
                     <div style={{ color: C.fg2, fontSize: 12, marginBottom: 6 }}>{r.question}</div>
-                    {r.options && r.options.length > 0 && (
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
-                        {r.options.map(opt => (
-                          <button key={opt} style={pillButton('ghost')} disabled={!!resuming[r.runId]}
-                            onClick={() => void resume(r.runId, opt)}>{opt}</button>
-                        ))}
-                      </div>
-                    )}
-                    <input
-                      style={{ ...inputStyle, width: '100%' }}
-                      placeholder={resuming[r.runId] ? 'Resuming…' : 'Free-text answer…'}
-                      disabled={!!resuming[r.runId]}
-                      value={answers[r.runId] ?? ''}
-                      onChange={e => setAnswers(prev => ({ ...prev, [r.runId]: e.target.value }))}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          const v = (answers[r.runId] ?? '').trim()
-                          if (v) void resume(r.runId, v)
-                        }
-                      }}
+                    <ParkedPrompt
+                      run={r}
+                      resuming={!!resuming[r.runId]}
+                      answer={answers[r.runId] ?? ''}
+                      onAnswerChange={v => setAnswers(prev => ({ ...prev, [r.runId]: v }))}
+                      onResume={opt => void resume(r.runId, opt)}
                     />
                   </div>
                 )}

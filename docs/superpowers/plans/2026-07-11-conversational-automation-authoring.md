@@ -1445,6 +1445,8 @@ git add codey-mac/src/components/AutomationOnePager.tsx
 git commit -m "feat(mac): AutomationOnePager - Overview/Runs tabs, parked banner, inline knobs"
 ```
 
+Post-review deviations applied: report spread-merge fix (channel preservation), knob logic extracted to automationsModel (formatHHMM/knobsFrom/knobsEqual + tests), non-dirty knobs re-seed on refresh, ParkedPrompt extraction, answer cleared after resume.
+
 ---
 
 ### Task 8: Swap `AutomationsView` over + delete the interview flow
