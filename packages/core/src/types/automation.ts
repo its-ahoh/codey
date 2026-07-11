@@ -30,10 +30,10 @@ export interface Automation {
   name: string;
   enabled: boolean;
   target: AutomationTarget;
-  /** Frozen, self-contained instruction block synthesized by the interview.
+  /** Frozen, self-contained instruction block synthesized by the authoring chat.
    *  May contain {{param}} placeholders resolved from `params` at run time. */
   brief: string;
-  /** Surfaced editable knobs. Editing these does not re-open the interview. */
+  /** Surfaced editable knobs. Editing these does not re-open the chat. */
   params: Record<string, string>;
   /** Absent = manual-only. */
   schedule?: AutomationSchedule;

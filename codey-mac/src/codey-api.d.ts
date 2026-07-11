@@ -6,7 +6,7 @@ import type { ApiKeyEntry } from '../../packages/core/src/types/index'
 import type { UpdaterEvent } from './hooks/updaterState'
 import type { CoreState } from '../electron/core-state'
 import type { Automation, AutomationRun, AutomationEvent } from '../../packages/core/src/types/automation'
-import type { InterviewStep } from '../../packages/gateway/src/automations/interview'
+import type { ChatStep } from '../../packages/gateway/src/automations/chat'
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
@@ -69,9 +69,9 @@ declare global {
         resume: (id: string, runId: string, answer: string) => Promise<IpcResult<AutomationRun>>
         history: (id: string, limit?: number) => Promise<IpcResult<AutomationRun[]>>
         markSeen: (id: string, runId: string) => Promise<IpcResult<void>>
-        interviewStart: (goal: string, targetContext: string) => Promise<IpcResult<InterviewStep>>
-        interviewAnswer: (sessionId: string, text: string) => Promise<IpcResult<InterviewStep>>
-        interviewCancel: (sessionId: string) => Promise<IpcResult<void>>
+        chatStart: (mode: 'create' | 'edit', automationId?: string) => Promise<IpcResult<ChatStep>>
+        chatSend: (sessionId: string, text: string) => Promise<IpcResult<ChatStep>>
+        chatCancel: (sessionId: string) => Promise<IpcResult<void>>
         onEvent: (handler: (ev: AutomationEvent) => void) => () => void
         onUnseen: (handler: (msg: { automationId: string; runIds: string[] }) => void) => () => void
       }
