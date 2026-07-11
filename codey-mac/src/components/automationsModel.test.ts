@@ -47,6 +47,18 @@ describe('nextRunAt', () => {
   it('returns null for manual-only', () => {
     expect(nextRunAt(undefined, SH_9AM)).toBeNull()
   })
+  it('crosses a spring-forward transition correctly (DST)', () => {
+    // 2026-03-08 02:00 America/New_York springs forward; 09:00 NY that day is 13:00Z
+    const before = Date.UTC(2026, 2, 8, 1, 0, 0) // 2026-03-07 20:00 NY
+    expect(nextRunAt({ hour: 9, minute: 0, tz: 'America/New_York' }, before))
+      .toBe(Date.UTC(2026, 2, 8, 13, 0, 0))
+  })
+  it('does not skip a calendar day near midnight before spring-forward', () => {
+    // Sat 2026-03-07 23:30 NY; daily 23:00 schedule -> Sunday Mar 8 23:00 EDT = Mar 9 03:00Z
+    const satLate = Date.UTC(2026, 2, 8, 4, 30, 0)
+    expect(nextRunAt({ hour: 23, minute: 0, tz: 'America/New_York' }, satLate))
+      .toBe(Date.UTC(2026, 2, 9, 3, 0, 0))
+  })
 })
 
 describe('humanizeDelta', () => {
@@ -63,6 +75,7 @@ describe('draftComplete', () => {
     expect(draftComplete({})).toBe(false)
     expect(draftComplete({ name: 'n', brief: 'b' })).toBe(false)
     expect(draftComplete({ name: ' ', brief: 'b', target: { workspaceName: 'w' } })).toBe(false)
+    expect(draftComplete({ name: 'n', brief: 'b', target: { workspaceName: ' ' } })).toBe(false)
     expect(draftComplete({ name: 'n', brief: 'b', target: { workspaceName: 'w' } })).toBe(true)
   })
 })

@@ -68,9 +68,11 @@ function zonedInstant(y: number, mo: number, d: number, h: number, min: number, 
 /** Next firing instant strictly after nowMs, or null for manual-only. */
 export function nextRunAt(s: ScheduleLike | undefined, nowMs: number): number | null {
   if (!s) return null
+  const base = localParts(nowMs, s.tz)
   for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
-    const ref = localParts(nowMs + dayOffset * 86_400_000, s.tz)
-    const candidate = zonedInstant(ref.year, ref.month, ref.day, s.hour, s.minute, s.tz)
+    // Iterate calendar days (Date.UTC normalizes day overflow) so a real-time
+    // step across a spring-forward transition can never skip a date.
+    const candidate = zonedInstant(base.year, base.month, base.day + dayOffset, s.hour, s.minute, s.tz)
     if (candidate <= nowMs) continue
     const dow = localParts(candidate, s.tz).dayOfWeek
     if (s.daysOfWeek && s.daysOfWeek.length > 0 && !s.daysOfWeek.includes(dow)) continue
@@ -94,5 +96,5 @@ export interface DraftLike {
 
 /** Client-side gate for the Create/Save button in the authoring chat. */
 export function draftComplete(d: DraftLike): boolean {
-  return !!(d.name?.trim() && d.brief?.trim() && d.target?.workspaceName)
+  return !!(d.name?.trim() && d.brief?.trim() && d.target?.workspaceName?.trim())
 }
