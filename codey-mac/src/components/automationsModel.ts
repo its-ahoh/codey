@@ -18,11 +18,6 @@ export function scheduleSummary(s: ScheduleLike | undefined): string {
   return `${label} ${time}`
 }
 
-/** The interview is the gate: no schedule without a synthesized brief. */
-export function canSchedule(a: { brief: string }): boolean {
-  return a.brief.trim().length > 0
-}
-
 export function timeOfDayToSchedule(hhmm: string, tz: string, daysOfWeek?: number[]): ScheduleLike | null {
   const m = hhmm.match(/^(\d{1,2}):(\d{1,2})$/)
   if (!m) return null

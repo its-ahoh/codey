@@ -1949,26 +1949,6 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('automations:interview:start', async (_e, goal: string, targetContext: string) =>
-    wrap(async () => {
-      if (!inProcessGateway) throw new Error('Gateway not ready')
-      return inProcessGateway.startAutomationInterview(goal, targetContext)
-    })
-  )
-
-  ipcMain.handle('automations:interview:answer', async (_e, sessionId: string, text: string) =>
-    wrap(async () => {
-      if (!inProcessGateway) throw new Error('Gateway not ready')
-      return inProcessGateway.answerAutomationInterview(sessionId, text)
-    })
-  )
-
-  ipcMain.handle('automations:interview:cancel', async (_e, sessionId: string) =>
-    wrap(async () => {
-      inProcessGateway?.cancelAutomationInterview(sessionId)
-    })
-  )
-
   // ── Voice IPC ─────────────────────────────────────────────────────
   ipcMain.handle('voice:transcribed', async (_e, text: string) =>
     wrap(async () => {

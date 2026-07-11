@@ -1,6 +1,6 @@
 // codey-mac/src/components/automationsModel.test.ts
 import { describe, it, expect } from 'vitest'
-import { scheduleSummary, canSchedule, timeOfDayToSchedule, nextRunAt, humanizeDelta, draftComplete, formatHHMM, knobsFrom, knobsEqual } from './automationsModel'
+import { scheduleSummary, timeOfDayToSchedule, nextRunAt, humanizeDelta, draftComplete, formatHHMM, knobsFrom, knobsEqual } from './automationsModel'
 
 describe('scheduleSummary', () => {
   it('renders daily and weekly summaries', () => {
@@ -9,14 +9,6 @@ describe('scheduleSummary', () => {
       .toBe('Mon–Fri 18:30')
     expect(scheduleSummary({ hour: 8, minute: 5, daysOfWeek: [0, 6], tz: 'UTC' })).toBe('Sun, Sat 08:05')
     expect(scheduleSummary(undefined)).toBe('manual')
-  })
-})
-
-describe('canSchedule', () => {
-  it('requires a synthesized brief (spec: interview is the gate)', () => {
-    expect(canSchedule({ brief: '' })).toBe(false)
-    expect(canSchedule({ brief: '  ' })).toBe(false)
-    expect(canSchedule({ brief: 'Post news.' })).toBe(true)
   })
 })
 
