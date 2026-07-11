@@ -133,12 +133,12 @@ export interface AutomationChatTurn {
   ready: boolean;
 }
 
-export type ChatMessage = { role: 'user' | 'assistant'; text: string };
+export type AutomationChatMessage = { role: 'user' | 'assistant'; text: string };
 
 const DRAFT_KEYS = new Set(['name', 'target', 'schedule', 'notify', 'brief', 'params']);
 
 const CHAT_TURN_PROMPT = (
-  messages: ChatMessage[], draft: AutomationDraft, ctx: AutomationChatContext,
+  messages: AutomationChatMessage[], draft: AutomationDraft, ctx: AutomationChatContext,
 ) => `You are Codey's automation-setup assistant, configuring an UNATTENDED automation through a short chat. It will run on a schedule with nobody available to answer questions, so every ambiguity that would block a run must be resolved during this conversation.
 
 Environment:
@@ -164,7 +164,7 @@ Respond with ONLY this JSON:
 {"reply":"...","draftPatch":{},"suggestions":[],"ready":false}`;
 
 export async function automationChatTurn(
-  messages: ChatMessage[],
+  messages: AutomationChatMessage[],
   draft: AutomationDraft,
   context: AutomationChatContext,
   opts: AideOptions,
@@ -326,12 +326,12 @@ Expected: FAIL — cannot resolve `./chat`.
 ```ts
 // packages/gateway/src/automations/chat.ts
 import { randomUUID } from 'crypto';
-import type { AutomationChatContext, AutomationChatTurn, AutomationDraft, ChatMessage } from '@codey/core';
+import type { AutomationChatContext, AutomationChatTurn, AutomationDraft, AutomationChatMessage } from '@codey/core';
 
 export interface ChatManagerDeps {
   /** Bound automationChatTurn with AideOptions pre-applied. */
   turn: (
-    messages: ChatMessage[],
+    messages: AutomationChatMessage[],
     draft: AutomationDraft,
     context: AutomationChatContext,
   ) => Promise<AutomationChatTurn>;
@@ -351,7 +351,7 @@ export interface ChatStep {
 
 interface Session {
   mode: 'create' | 'edit';
-  messages: ChatMessage[];
+  messages: AutomationChatMessage[];
   draft: AutomationDraft;
   inFlight: boolean;
   touchedAt: number;
@@ -436,7 +436,7 @@ function applyDraftPatch(draft: AutomationDraft, patch: Partial<AutomationDraft>
 }
 ```
 
-Note: `ChatMessage` must be exported from core (it is, from Task 1).
+Note: `AutomationChatMessage` must be exported from core (it is, from Task 1).
 
 - [ ] **Step 5: Run tests to verify they pass**
 
