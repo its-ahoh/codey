@@ -145,19 +145,20 @@ describe('dry-run check state', () => {
   });
 
   it('resolveCheck records the verdict and appends the message to the transcript', async () => {
-    const turn = vi.fn(async () => turnResult({ ready: true }));
+    const turn = vi.fn().mockResolvedValue(turnResult({ ready: true }));
     const mgr = new AutomationChatManager({ turn, context: () => CTX });
     const { sessionId } = mgr.start('create');
     await mgr.send(sessionId, 'go');
 
     expect(mgr.resolveCheck(sessionId, 'clean', 'Dry run passed.')).toBe(true);
-    await mgr.send(sessionId, 'next');
+    const next = await mgr.send(sessionId, 'next');
+    expect(next.check).toBe('clean');
     const transcript = turn.mock.calls[1][0];
     expect(transcript.some((m: any) => m.role === 'assistant' && m.text === 'Dry run passed.')).toBe(true);
   });
 
   it('resolveCheck is rejected when the check is not pending or the session is gone', async () => {
-    const turn = vi.fn(async () => turnResult({ ready: true }));
+    const turn = vi.fn().mockResolvedValue(turnResult({ ready: true }));
     const mgr = new AutomationChatManager({ turn, context: () => CTX });
     const { sessionId } = mgr.start('create');
     expect(mgr.resolveCheck(sessionId, 'clean')).toBe(false); // never went pending
@@ -165,5 +166,16 @@ describe('dry-run check state', () => {
     expect(mgr.resolveCheck(sessionId, 'gaps', 'q')).toBe(true);
     expect(mgr.resolveCheck(sessionId, 'clean')).toBe(false); // already resolved
     expect(mgr.resolveCheck('nope', 'clean')).toBe(false);    // unknown session
+  });
+
+  it('a late verdict is rejected after ready dropped and cleared the pending check', async () => {
+    const turn = vi.fn()
+      .mockResolvedValueOnce(turnResult({ ready: true }))
+      .mockResolvedValueOnce(turnResult({ ready: false }));
+    const mgr = new AutomationChatManager({ turn, context: () => CTX });
+    const { sessionId } = mgr.start('create');
+    await mgr.send(sessionId, 'go');       // check -> pending
+    await mgr.send(sessionId, 'actually'); // ready drops, check cleared
+    expect(mgr.resolveCheck(sessionId, 'clean')).toBe(false);
   });
 });

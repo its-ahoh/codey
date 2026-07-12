@@ -101,7 +101,10 @@ export class AutomationChatManager {
       s.wasReady = turn.ready;
       if (!turn.ready) s.check = undefined;
       else if (transition) s.check = 'pending';
-      if (transition) this.deps.onReadyTransition?.(sessionId, { ...s.draft });
+      if (transition) {
+        try { this.deps.onReadyTransition?.(sessionId, { ...s.draft }); }
+        catch { /* dry-run trigger must not fail the turn */ }
+      }
       return { sessionId, reply: turn.reply, draft: { ...s.draft }, suggestions: turn.suggestions, ready: turn.ready, check: s.check };
     } finally {
       s.inFlight = false;
@@ -114,11 +117,12 @@ export class AutomationChatManager {
 
   /**
    * Record a dry-run verdict. Accepted only while the session's check is
-   * still pending - a stale verdict (session gone, superseded, or ready
-   * dropped meanwhile) returns false and must be discarded by the caller.
+   * still pending - rejected (returns false) when the session is gone,
+   * ready dropped back to false, or the check was already resolved; the
+   * caller must discard such a stale verdict.
    * `message` is appended to the transcript so later turns see it.
    */
-  resolveCheck(sessionId: string, check: 'clean' | 'gaps' | 'error', message?: string): boolean {
+  resolveCheck(sessionId: string, check: Exclude<AutomationCheckStatus, 'pending'>, message?: string): boolean {
     const s = this.sessions.get(sessionId);
     if (!s || s.check !== 'pending') return false;
     s.check = check;
