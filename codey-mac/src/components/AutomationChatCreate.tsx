@@ -73,10 +73,11 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
   // channel (session-keyed; the draft is not saved yet, so no automationId).
   useEffect(() => {
     if (!sessionId) return
-    return window.codey.automations.onEvent((ev: any) => {
-      if (ev?.type !== 'chat-check' || ev.sessionId !== sessionId) return
-      setCheck(ev.check)
-      if (ev.message) setMessages(ms => [...ms, { role: 'assistant', text: ev.message }])
+    return window.codey.automations.onEvent(ev => {
+      if (ev.type !== 'chat-check' || ev.sessionId !== sessionId) return
+      applyCheck(ev.check)
+      const msg = ev.message
+      if (msg) setMessages(ms => [...ms, { role: 'assistant', text: msg }])
     })
   }, [sessionId])
 
@@ -225,7 +226,9 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
           <SummaryRow label="Notify" value={draft.notify === undefined ? undefined : draft.notify ? 'on' : 'off'} placeholder="notify…" />
           {(() => {
             const cl = checkLabel(check)
-            return cl ? <SummaryRow label="Check" value={cl.text} placeholder="" /> : null
+            if (!cl) return null
+            const toneColor = { good: C.green, warn: C.yellow, dim: C.fg3 }[cl.tone]
+            return <SummaryRow label="Check" value={cl.text} placeholder="" valueColor={toneColor} />
           })()}
           {draft.params && Object.keys(draft.params).length > 0 && (
             <SummaryRow
@@ -258,11 +261,11 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
   )
 }
 
-const SummaryRow: React.FC<{ label: string; value?: string; placeholder: string }> = ({ label, value, placeholder }) => (
+const SummaryRow: React.FC<{ label: string; value?: string; placeholder: string; valueColor?: string }> = ({ label, value, placeholder, valueColor }) => (
   <div style={{ display: 'flex', gap: 8, fontSize: 12, margin: '3px 0' }}>
     <span style={{ color: C.fg3, width: 56, flexShrink: 0 }}>{label}</span>
     {value ? (
-      <span style={{ color: C.fg2, wordBreak: 'break-word' }}>{value}</span>
+      <span style={{ color: valueColor ?? C.fg2, wordBreak: 'break-word' }}>{value}</span>
     ) : (
       <span style={dim}>{placeholder}</span>
     )}
