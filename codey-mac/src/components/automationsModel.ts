@@ -137,3 +137,18 @@ export interface DraftLike {
 export function draftComplete(d: DraftLike): boolean {
   return !!(d.name?.trim() && d.brief?.trim() && d.target?.workspaceName?.trim())
 }
+
+export type CheckTone = 'dim' | 'good' | 'warn'
+
+/** Status-row label for the authoring dry-run check; null hides the row. */
+export function checkLabel(
+  check: 'pending' | 'clean' | 'gaps' | 'error' | undefined,
+): { text: string; tone: CheckTone } | null {
+  switch (check) {
+    case 'pending': return { text: 'checking…', tone: 'dim' }
+    case 'clean': return { text: '✓ unattended-ready', tone: 'good' }
+    case 'gaps': return { text: '⚠ may need input during runs', tone: 'warn' }
+    case 'error': return { text: 'check failed', tone: 'dim' }
+    default: return null
+  }
+}

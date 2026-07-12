@@ -1,6 +1,6 @@
 // codey-mac/src/components/automationsModel.test.ts
 import { describe, it, expect } from 'vitest'
-import { scheduleSummary, timeOfDayToSchedule, nextRunAt, humanizeDelta, draftComplete, formatHHMM, knobsFrom, knobsEqual } from './automationsModel'
+import { scheduleSummary, timeOfDayToSchedule, nextRunAt, humanizeDelta, draftComplete, formatHHMM, knobsFrom, knobsEqual, checkLabel } from './automationsModel'
 
 describe('scheduleSummary', () => {
   it('renders daily and weekly summaries', () => {
@@ -144,5 +144,15 @@ describe('draftComplete', () => {
     expect(draftComplete({ name: ' ', brief: 'b', target: { workspaceName: 'w' } })).toBe(false)
     expect(draftComplete({ name: 'n', brief: 'b', target: { workspaceName: ' ' } })).toBe(false)
     expect(draftComplete({ name: 'n', brief: 'b', target: { workspaceName: 'w' } })).toBe(true)
+  })
+})
+
+describe('checkLabel', () => {
+  it('maps each check state to its status-row label', () => {
+    expect(checkLabel('pending')).toEqual({ text: 'checking…', tone: 'dim' })
+    expect(checkLabel('clean')).toEqual({ text: '✓ unattended-ready', tone: 'good' })
+    expect(checkLabel('gaps')).toEqual({ text: '⚠ may need input during runs', tone: 'warn' })
+    expect(checkLabel('error')).toEqual({ text: 'check failed', tone: 'dim' })
+    expect(checkLabel(undefined)).toBeNull()
   })
 })
