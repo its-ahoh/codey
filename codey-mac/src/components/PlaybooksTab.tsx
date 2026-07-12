@@ -15,7 +15,7 @@ interface Summary {
 }
 
 export const PlaybooksTab: React.FC = () => {
-  const [skills, setSkills] = useState<Summary[]>([])
+  const [playbooks, setPlaybooks] = useState<Summary[]>([])
   const [expanded, setExpanded] = useState<string | null>(null)
   const [trail, setTrail] = useState<TimelineRow[]>([])
   const [openSteps, setOpenSteps] = useState<number | null>(null)
@@ -26,7 +26,7 @@ export const PlaybooksTab: React.FC = () => {
     setLoading(true)
     setError(null)
     try {
-      setSkills(unwrap(await window.codey.playbooks.list()))
+      setPlaybooks(unwrap(await window.codey.playbooks.list()))
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {
@@ -169,7 +169,7 @@ export const PlaybooksTab: React.FC = () => {
       )}
       {loading ? (
         <div style={{ color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 20 }}>Loading…</div>
-      ) : skills.length === 0 ? (
+      ) : playbooks.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '36px 20px', color: C.fg3, fontSize: 13 }}>
           <div style={{ fontSize: 28, marginBottom: 12, opacity: 0.4 }}>🧩</div>
           <div style={{ fontWeight: 500, color: C.fg2, marginBottom: 4 }}>No playbooks yet</div>
@@ -177,7 +177,7 @@ export const PlaybooksTab: React.FC = () => {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {skills.map(renderCard)}
+          {playbooks.map(renderCard)}
         </div>
       )}
     </div>

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
+import { OverlayWindow } from './OverlayWindow'
 import { pillButton, unwrap } from './settingsAtoms'
 import { scheduleSummary } from './automationsModel'
 import { AutomationChatCreate } from './AutomationChatCreate'
@@ -44,28 +45,17 @@ export const AutomationsView: React.FC<Props> = ({ onClose }) => {
     return off
   }, [refresh])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && panel.kind === 'list') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, panel.kind])
+  const atList = panel.kind === 'list'
 
   return (
-    <div style={styles.backdrop} onClick={panel.kind === 'list' ? onClose : undefined}>
-      <div style={styles.window} onClick={e => e.stopPropagation()}>
-        <div style={styles.titleBar}>
-          <button
-            onClick={panel.kind === 'list' ? onClose : () => setPanel({ kind: 'list' })}
-            style={styles.closeBtn}
-            title={panel.kind === 'list' ? 'Close (Esc)' : 'Back'}
-            aria-label={panel.kind === 'list' ? 'Close' : 'Back'}
-          >
-            <span style={styles.closeDot} />
-          </button>
-          <div style={styles.titleText}>Automations</div>
-          <div style={{ width: 60 }} />
-        </div>
-        <div style={styles.body}>
+    <OverlayWindow
+      title="Automations"
+      onClose={atList ? onClose : () => setPanel({ kind: 'list' })}
+      closeTitle={atList ? 'Close (Esc)' : 'Back'}
+      closeAriaLabel={atList ? 'Close' : 'Back'}
+      onDismiss={atList ? onClose : null}
+    >
+      <div style={styles.body}>
           {error && <div style={styles.errorBanner}>{error}</div>}
           {panel.kind === 'list' && (
             <AutomationList
@@ -99,9 +89,8 @@ export const AutomationsView: React.FC<Props> = ({ onClose }) => {
               setError={setError}
             />
           )}
-        </div>
       </div>
-    </div>
+    </OverlayWindow>
   )
 }
 
@@ -228,35 +217,6 @@ const rowStyle: React.CSSProperties = {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  backdrop: {
-    position: 'absolute', inset: 0,
-    background: 'rgba(0,0,0,0.55)',
-    backdropFilter: 'blur(3px)',
-    WebkitBackdropFilter: 'blur(3px)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: 50,
-  },
-  window: {
-    width: 'min(900px, 92%)',
-    height: 'min(620px, 88%)',
-    background: C.bg,
-    border: `1px solid ${C.border2}`,
-    borderRadius: 10,
-    boxShadow: '0 24px 60px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.3)',
-    display: 'flex', flexDirection: 'column',
-    overflow: 'hidden',
-  },
-  titleBar: {
-    height: 40, flexShrink: 0, display: 'flex', alignItems: 'center',
-    borderBottom: `1px solid ${C.border}`, padding: '0 12px',
-  },
-  closeBtn: {
-    width: 24, height: 24, borderRadius: '50%', border: 'none',
-    background: 'transparent', cursor: 'pointer',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-  },
-  closeDot: { width: 12, height: 12, borderRadius: '50%', background: C.red },
-  titleText: { flex: 1, textAlign: 'center', color: C.fg, fontSize: 13, fontWeight: 600 },
   body: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   errorBanner: {
     margin: '10px 20px 0', background: C.dangerBg ?? (C.red + '22'), color: C.dangerFg ?? C.red,

@@ -29,21 +29,21 @@ export function listPlaybooks(store: SkillStore): PlaybookSummary[] {
 
 export function playbookHistory(store: SkillStore, name: string): SkillEvolutionEvent[] {
   const skill = store.get(name);
-  if (!skill) throw new Error(`Skill not found: ${name}`);
+  if (!skill) throw new Error(`Playbook not found: ${name}`);
   return [...skill.evolution];
 }
 
 export function forgetPlaybook(store: SkillStore, name: string): void {
-  if (!store.archive(name)) throw new Error(`Skill not found: ${name}`);
+  if (!store.archive(name)) throw new Error(`Playbook not found: ${name}`);
 }
 
 export function restorePlaybook(store: SkillStore, name: string): void {
-  if (!store.restore(name)) throw new Error(`Skill not found: ${name}`);
+  if (!store.restore(name)) throw new Error(`Playbook not found: ${name}`);
 }
 
 export function rollbackPlaybook(store: SkillStore, name: string): number {
   if (!store.rollback(name)) {
-    throw new Error(`Skill "${name}" has no prior version (or was not found).`);
+    throw new Error(`Playbook "${name}" has no prior version (or was not found).`);
   }
   return store.get(name)!.version;
 }
