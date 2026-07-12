@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
+import { OverlayWindow } from './OverlayWindow'
 import { StatusTab } from './StatusTab'
 import { SettingsTab } from './SettingsTab'
 import { AgentsTab } from './AgentsTab'
@@ -10,17 +11,12 @@ import { C } from '../theme'
 import { AppearanceTab } from './AppearanceTab'
 import { WhisperTab } from './WhisperTab'
 import { ApiKeysTab } from './ApiKeysTab'
-import { SkillsTab } from './SkillsTab'
-import { LearnedSkillsTab } from './LearnedSkillsTab'
-
-type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings' | 'agents' | 'whisper' | 'apiKeys' | 'skills' | 'learned-skills'
+type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings' | 'agents' | 'whisper' | 'apiKeys'
 const TABS: { key: Tab; label: string; icon: string; description: string }[] = [
   { key: 'general',    label: 'General',    icon: '⚙', description: 'Theme & visual options' },
   { key: 'apiKeys',    label: 'API Keys',   icon: '⚿', description: 'Shared API keys' },
   { key: 'settings',   label: 'AI Models',  icon: '✦', description: 'Default agent & model' },
   { key: 'agents',     label: 'Agents',     icon: '✺', description: 'CLI install & env vars' },
-  { key: 'skills',     label: 'Skills',     icon: '✶', description: 'Claude Code skills' },
-  { key: 'learned-skills', label: 'Learned', icon: '🧩', description: 'Skills Codey crystallized from your work' },
   { key: 'whisper',    label: 'Whisper',    icon: '◐', description: 'Voice input & hotkey' },
   { key: 'workspaces', label: 'Workspaces', icon: '◫', description: 'Project directories' },
   { key: 'workers',    label: 'Workers',    icon: '☰', description: 'Personalities' },
@@ -36,25 +32,11 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
   )
   const { isRunning, status, logs } = useGateway()
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   const activeTab = TABS.find(t => t.key === tab)!
 
   return (
-    <div style={styles.backdrop} onClick={onClose}>
-      <div style={styles.window} onClick={e => e.stopPropagation()}>
-        <div style={styles.titleBar}>
-          <button onClick={onClose} style={styles.closeBtn} title="Close (Esc)" aria-label="Close">
-            <span style={styles.closeDot} />
-          </button>
-          <div style={styles.titleText}>Settings</div>
-          <div style={{ width: 60 }} />
-        </div>
-        <div style={styles.body}>
+    <OverlayWindow title="Settings" onClose={onClose}>
+      <div style={styles.body}>
           <aside style={styles.sidebar}>
             {TABS.map(t => {
               const active = tab === t.key
@@ -88,54 +70,15 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
               {tab === 'teams'      && <TeamsTab />}
               {tab === 'settings'   && <SettingsTab isGatewayRunning={isRunning} />}
               {tab === 'agents'     && <AgentsTab isGatewayRunning={isRunning} />}
-              {tab === 'skills'     && <SkillsTab />}
-              {tab === 'learned-skills' && <LearnedSkillsTab />}
               {tab === 'whisper'    && <WhisperTab isGatewayRunning={isRunning} />}
             </div>
           </main>
-        </div>
       </div>
-    </div>
+    </OverlayWindow>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  backdrop: {
-    position: 'absolute', inset: 0,
-    background: 'rgba(0,0,0,0.55)',
-    backdropFilter: 'blur(3px)',
-    WebkitBackdropFilter: 'blur(3px)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: 50,
-  },
-  window: {
-    width: 'min(900px, 92%)',
-    height: 'min(620px, 88%)',
-    background: C.bg,
-    border: `1px solid ${C.border2}`,
-    borderRadius: 10,
-    boxShadow: '0 24px 60px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.3)',
-    display: 'flex', flexDirection: 'column',
-    overflow: 'hidden',
-  },
-  titleBar: {
-    display: 'flex', alignItems: 'center',
-    height: 36, padding: '0 12px',
-    background: C.surface,
-    borderBottom: `1px solid ${C.border}`,
-    flexShrink: 0,
-  },
-  closeBtn: {
-    width: 14, height: 14, borderRadius: '50%',
-    background: '#FF5F57', border: '1px solid #E0443E',
-    cursor: 'pointer', padding: 0,
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-  },
-  closeDot: { display: 'block' },
-  titleText: {
-    flex: 1, textAlign: 'center',
-    fontSize: 13, fontWeight: 600, color: C.fg2,
-  },
   body: { flex: 1, display: 'flex', overflow: 'hidden' },
   sidebar: {
     width: 200, flexShrink: 0,

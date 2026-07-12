@@ -11,6 +11,7 @@ import { onWorkspacesChanged } from './workspacesChanged'
 interface Props {
   onOpenSettings: (tab?: string) => void
   onOpenAutomations: () => void
+  onOpenTools: () => void
   automationsUnseenCount: number
   activeChatId: string | null
 }
@@ -21,7 +22,7 @@ interface WsMenuState {
   y: number
 }
 
-export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, automationsUnseenCount, activeChatId }) => {
+export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, onOpenTools, automationsUnseenCount, activeChatId }) => {
   const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces, refreshChats, linkChannel, unlinkChannel } = useChats()
   const [addingWorkspace, setAddingWorkspace] = useState(false)
   const [workspaces, setWorkspaces] = useState<string[]>([])
@@ -237,6 +238,15 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
 
   return (
     <div style={{ ...styles.root, width: narrow ? 180 : 240 }}>
+      <div style={styles.topNav}>
+        <button style={styles.settingsBtn} onClick={onOpenAutomations}>
+          ⏱ Automations
+          {automationsUnseenCount > 0 && (
+            <span style={styles.navBadge}>{automationsUnseenCount > 9 ? '9+' : automationsUnseenCount}</span>
+          )}
+        </button>
+        <button style={styles.settingsBtn} onClick={onOpenTools} title="Skills & playbooks">🛠 Tools</button>
+      </div>
       <div style={styles.scroll}>
         {groupNames.length === 0 && (
           <div style={styles.empty}>No chats yet. Click "New Chat".</div>
@@ -381,12 +391,6 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
           disabled={addingWorkspace}
           title="Pick a folder and create a new workspace + chat"
         >{addingWorkspace ? 'Picking…' : '+ Add Workspace'}</button>
-        <button style={styles.settingsBtn} onClick={onOpenAutomations}>
-          ⏱ Automations
-          {automationsUnseenCount > 0 && (
-            <span style={styles.navBadge}>{automationsUnseenCount > 9 ? '9+' : automationsUnseenCount}</span>
-          )}
-        </button>
         <button style={styles.settingsBtn} onClick={() => onOpenSettings()}>⚙ Settings</button>
       </div>
       {wsMenu && (
@@ -556,6 +560,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer', fontSize: 14, padding: '0 4px',
   },
   footer: { padding: 8, borderTop: `1px solid ${C.border}` },
+  topNav: { padding: 8, borderBottom: `1px solid ${C.border}` },
   settingsBtn: {
     width: '100%', padding: '8px 10px', border: 'none',
     background: 'transparent', color: C.fg2, cursor: 'pointer',
