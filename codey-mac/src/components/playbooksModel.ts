@@ -1,4 +1,4 @@
-// Pure view helpers for LearnedSkillsTab — kept renderer-free so vitest (node env) can test them.
+// Pure view helpers for PlaybooksTab — kept renderer-free so vitest (node env) can test them.
 
 export interface EvolutionEventLike {
   at: number
@@ -44,7 +44,7 @@ export function timelineRows(events: EvolutionEventLike[], now: number): Timelin
   }))
 }
 
-export function skillActions(s: { archived: boolean; canRollback: boolean }): {
+export function playbookActions(s: { archived: boolean; canRollback: boolean }): {
   forget: boolean; restore: boolean; rollback: boolean
 } {
   // Rollback is gated only on available history — archived skills can roll

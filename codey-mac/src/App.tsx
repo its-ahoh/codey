@@ -9,6 +9,7 @@ import { QuickQuestionProvider } from './hooks/useQuickQuestion'
 import { useGateway } from './hooks/useGateway'
 import { CoreOfflineBanner } from './components/CoreOfflineBanner'
 import { AutomationsView } from './components/AutomationsView'
+import { ToolsView } from './components/ToolsView'
 import { unwrap } from './components/settingsAtoms'
 import {
   C,
@@ -30,6 +31,7 @@ const Shell: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
   const [automationsOpen, setAutomationsOpen] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
   // Unseen automation-run keys (`${automationId}:${runId}`), for the sidebar
   // badge. A Set so the one-shot 'automation-unseen' push and the on-mount
   // recompute from history can both add to it without racing each other.
@@ -164,6 +166,7 @@ const Shell: React.FC = () => {
           <ChatListPanel
             onOpenSettings={(tab) => { setSettingsTab(tab); setSettingsOpen(true) }}
             onOpenAutomations={openAutomations}
+            onOpenTools={() => setToolsOpen(true)}
             automationsUnseenCount={unseenRunKeys.size}
             activeChatId={state.selectedChatId}
           />
@@ -188,6 +191,7 @@ const Shell: React.FC = () => {
         </div>
         {settingsOpen && <SettingsOverlay initialTab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); refreshWorkspaces() }} />}
         {automationsOpen && <AutomationsView onClose={() => setAutomationsOpen(false)} />}
+        {toolsOpen && <ToolsView onClose={() => setToolsOpen(false)} />}
         <VoiceRecorder />
       </div>
       <style>{`

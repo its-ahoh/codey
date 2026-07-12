@@ -10,17 +10,12 @@ import { C } from '../theme'
 import { AppearanceTab } from './AppearanceTab'
 import { WhisperTab } from './WhisperTab'
 import { ApiKeysTab } from './ApiKeysTab'
-import { SkillsTab } from './SkillsTab'
-import { LearnedSkillsTab } from './LearnedSkillsTab'
-
-type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings' | 'agents' | 'whisper' | 'apiKeys' | 'skills' | 'learned-skills'
+type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings' | 'agents' | 'whisper' | 'apiKeys'
 const TABS: { key: Tab; label: string; icon: string; description: string }[] = [
   { key: 'general',    label: 'General',    icon: '⚙', description: 'Theme & visual options' },
   { key: 'apiKeys',    label: 'API Keys',   icon: '⚿', description: 'Shared API keys' },
   { key: 'settings',   label: 'AI Models',  icon: '✦', description: 'Default agent & model' },
   { key: 'agents',     label: 'Agents',     icon: '✺', description: 'CLI install & env vars' },
-  { key: 'skills',     label: 'Skills',     icon: '✶', description: 'Claude Code skills' },
-  { key: 'learned-skills', label: 'Learned', icon: '🧩', description: 'Skills Codey crystallized from your work' },
   { key: 'whisper',    label: 'Whisper',    icon: '◐', description: 'Voice input & hotkey' },
   { key: 'workspaces', label: 'Workspaces', icon: '◫', description: 'Project directories' },
   { key: 'workers',    label: 'Workers',    icon: '☰', description: 'Personalities' },
@@ -88,8 +83,6 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
               {tab === 'teams'      && <TeamsTab />}
               {tab === 'settings'   && <SettingsTab isGatewayRunning={isRunning} />}
               {tab === 'agents'     && <AgentsTab isGatewayRunning={isRunning} />}
-              {tab === 'skills'     && <SkillsTab />}
-              {tab === 'learned-skills' && <LearnedSkillsTab />}
               {tab === 'whisper'    && <WhisperTab isGatewayRunning={isRunning} />}
             </div>
           </main>
