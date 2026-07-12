@@ -990,11 +990,22 @@ export class Codey {
    * is refused rather than executed.
    */
   private async runDryRunPrompt(workspaceName: string, prompt: string): Promise<string> {
+    // workspaceName is LLM output; a hallucinated name must fail visibly
+    // (DryRunManager maps the throw to an 'error' verdict) instead of
+    // silently dry-running against the gateway's own working dir.
+    if (!this.getWorkspaceList().includes(workspaceName)) {
+      throw new Error(`Unknown workspace: ${workspaceName}`);
+    }
     const workingDir = this.resolveWorkspaceWorkingDir(workspaceName);
-    const agent = (this.config.defaultAgent ?? 'claude-code') as CodingAgent;
+    const agent = this.getDefaultAgent();
+    const model = this.getDefaultModelConfig(agent);
+    // Plain agentFactory.run, not runWithFallback: fallback churn is not
+    // wanted for a background nicety - a failure just becomes an 'error'
+    // verdict in the authoring panel.
     const response = await this.agentFactory.run(agent, {
       prompt,
       agent,
+      model,
       context: { workingDir },
     });
     if (!response.success) throw new Error(response.error || 'dry-run agent failed');
