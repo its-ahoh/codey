@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import type { AutomationChatContext, AutomationChatTurn, AutomationDraft, AutomationChatMessage } from '@codey/core';
+import type { AutomationChatContext, AutomationChatTurn, AutomationDraft, AutomationChatMessage, AutomationCheckStatus } from '@codey/core';
 
 export interface ChatManagerDeps {
   /** Bound automationChatTurn with AideOptions pre-applied. */
@@ -10,6 +10,8 @@ export interface ChatManagerDeps {
   ) => Promise<AutomationChatTurn>;
   /** Live grounding lists - re-read per turn so new workspaces/teams appear. */
   context: () => Omit<AutomationChatContext, 'mode'>;
+  /** Fired when a session's ready flag rises false->true (dry-run trigger). */
+  onReadyTransition?: (sessionId: string, draft: AutomationDraft) => void;
   now?: () => number;
 }
 
@@ -20,6 +22,8 @@ export interface ChatStep {
   draft: AutomationDraft;
   suggestions: string[];
   ready: boolean;
+  /** Dry-run check state; undefined until the first ready transition. */
+  check?: AutomationCheckStatus;
 }
 
 interface Session {
@@ -28,6 +32,8 @@ interface Session {
   draft: AutomationDraft;
   inFlight: boolean;
   touchedAt: number;
+  wasReady: boolean;
+  check?: AutomationCheckStatus;
 }
 
 export const SESSION_TTL_MS = 30 * 60_000;
@@ -67,6 +73,7 @@ export class AutomationChatManager {
       draft: { ...initialDraft },
       inFlight: false,
       touchedAt: this.now(),
+      wasReady: false,
     };
     this.sessions.set(sessionId, s);
     return { sessionId, reply, draft: { ...s.draft }, suggestions: [], ready: false };
@@ -90,7 +97,12 @@ export class AutomationChatManager {
       if (!this.sessions.has(sessionId)) throw new Error(`Unknown automation chat session: ${sessionId}`);
       s.messages.push({ role: 'user', text }, { role: 'assistant', text: turn.reply });
       applyDraftPatch(s.draft, turn.draftPatch);
-      return { sessionId, reply: turn.reply, draft: { ...s.draft }, suggestions: turn.suggestions, ready: turn.ready };
+      const transition = turn.ready && !s.wasReady;
+      s.wasReady = turn.ready;
+      if (!turn.ready) s.check = undefined;
+      else if (transition) s.check = 'pending';
+      if (transition) this.deps.onReadyTransition?.(sessionId, { ...s.draft });
+      return { sessionId, reply: turn.reply, draft: { ...s.draft }, suggestions: turn.suggestions, ready: turn.ready, check: s.check };
     } finally {
       s.inFlight = false;
     }
@@ -98,6 +110,20 @@ export class AutomationChatManager {
 
   cancel(sessionId: string): void {
     this.sessions.delete(sessionId);
+  }
+
+  /**
+   * Record a dry-run verdict. Accepted only while the session's check is
+   * still pending - a stale verdict (session gone, superseded, or ready
+   * dropped meanwhile) returns false and must be discarded by the caller.
+   * `message` is appended to the transcript so later turns see it.
+   */
+  resolveCheck(sessionId: string, check: 'clean' | 'gaps' | 'error', message?: string): boolean {
+    const s = this.sessions.get(sessionId);
+    if (!s || s.check !== 'pending') return false;
+    s.check = check;
+    if (message) s.messages.push({ role: 'assistant', text: message });
+    return true;
   }
 }
 

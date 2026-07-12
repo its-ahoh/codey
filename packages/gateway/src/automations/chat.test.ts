@@ -109,3 +109,61 @@ describe('send', () => {
     await expect(mgr.send(sessionId, 'x')).rejects.toThrow(/Unknown/);
   });
 });
+
+describe('dry-run check state', () => {
+  it('sets check=pending and fires onReadyTransition only on a false->true ready transition', async () => {
+    const onReadyTransition = vi.fn();
+    const turn = vi.fn()
+      .mockResolvedValueOnce(turnResult({ ready: true, draftPatch: { name: 'N' } }))
+      .mockResolvedValueOnce(turnResult({ ready: true }));
+    const mgr = new AutomationChatManager({ turn, context: () => CTX, onReadyTransition });
+    const { sessionId } = mgr.start('create');
+
+    const first = await mgr.send(sessionId, 'go');
+    expect(first.check).toBe('pending');
+    expect(onReadyTransition).toHaveBeenCalledTimes(1);
+    expect(onReadyTransition).toHaveBeenCalledWith(sessionId, { name: 'N' });
+
+    const second = await mgr.send(sessionId, 'still ready');
+    expect(onReadyTransition).toHaveBeenCalledTimes(1); // no re-trigger while ready stays true
+    expect(second.check).toBe('pending');               // state carries over
+  });
+
+  it('clears check when ready drops back to false, and re-triggers on the next rise', async () => {
+    const onReadyTransition = vi.fn();
+    const turn = vi.fn()
+      .mockResolvedValueOnce(turnResult({ ready: true }))
+      .mockResolvedValueOnce(turnResult({ ready: false }))
+      .mockResolvedValueOnce(turnResult({ ready: true }));
+    const mgr = new AutomationChatManager({ turn, context: () => CTX, onReadyTransition });
+    const { sessionId } = mgr.start('create');
+    await mgr.send(sessionId, 'a');
+    const dropped = await mgr.send(sessionId, 'b');
+    expect(dropped.check).toBeUndefined();
+    await mgr.send(sessionId, 'c');
+    expect(onReadyTransition).toHaveBeenCalledTimes(2);
+  });
+
+  it('resolveCheck records the verdict and appends the message to the transcript', async () => {
+    const turn = vi.fn(async () => turnResult({ ready: true }));
+    const mgr = new AutomationChatManager({ turn, context: () => CTX });
+    const { sessionId } = mgr.start('create');
+    await mgr.send(sessionId, 'go');
+
+    expect(mgr.resolveCheck(sessionId, 'clean', 'Dry run passed.')).toBe(true);
+    await mgr.send(sessionId, 'next');
+    const transcript = turn.mock.calls[1][0];
+    expect(transcript.some((m: any) => m.role === 'assistant' && m.text === 'Dry run passed.')).toBe(true);
+  });
+
+  it('resolveCheck is rejected when the check is not pending or the session is gone', async () => {
+    const turn = vi.fn(async () => turnResult({ ready: true }));
+    const mgr = new AutomationChatManager({ turn, context: () => CTX });
+    const { sessionId } = mgr.start('create');
+    expect(mgr.resolveCheck(sessionId, 'clean')).toBe(false); // never went pending
+    await mgr.send(sessionId, 'go');
+    expect(mgr.resolveCheck(sessionId, 'gaps', 'q')).toBe(true);
+    expect(mgr.resolveCheck(sessionId, 'clean')).toBe(false); // already resolved
+    expect(mgr.resolveCheck('nope', 'clean')).toBe(false);    // unknown session
+  });
+});
