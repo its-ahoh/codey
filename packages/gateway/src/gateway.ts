@@ -896,7 +896,16 @@ export class Codey {
       classify: (output) => classifyDryRun(output, this.getAideOptions()),
       teamContext: (_workspaceName, teamName) => {
         const team = (this.configManager?.getTeams() ?? {})[teamName];
-        return team ? JSON.stringify(team, null, 2) : undefined;
+        if (!team) return undefined;
+        const members = Array.isArray(team) ? team : team.members;
+        const wm = this.workspaceManager.getWorkerManager();
+        const personas = members.map(m => {
+          const w = wm.getWorker(m);
+          return w
+            ? `### ${m}\n${w.personality.role}`.trim()
+            : `### ${m}\n(worker definition not found)`;
+        }).join('\n\n');
+        return `Team config:\n${JSON.stringify(team, null, 2)}\n\nWorker roles:\n${personas}`;
       },
       onResult: (sessionId, verdict) => this.onDryRunResult(sessionId, verdict),
       log: (msg) => this.logger.info(`[automations] ${msg}`),
@@ -1028,6 +1037,7 @@ export class Codey {
         check: verdict.status,
         questions: verdict.status === 'gaps' ? verdict.questions : undefined,
         message,
+        detail: verdict.status === 'error' ? verdict.message : undefined,
       });
     } catch { /* swallow - listener failures must not break the chat */ }
   }

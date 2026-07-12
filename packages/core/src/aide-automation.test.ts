@@ -102,6 +102,7 @@ describe('CHAT_TURN_PROMPT readiness gate', () => {
     expect(captured).not.toMatch(/scheduling has been explicitly discussed/i);
     expect(captured).toMatch(/scheduling is NOT required for ready/i);
     expect(captured).not.toMatch(/and eventually scheduling/i);
+    expect(captured).toMatch(/dry-run findings/i);
   });
 });
 

@@ -25,6 +25,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [ready, setReady] = useState(false)
   const [check, setCheck] = useState<ChatStep['check']>(undefined)
+  const [checkDetail, setCheckDetail] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [failedText, setFailedText] = useState<string | null>(null)
   const [sessionLost, setSessionLost] = useState(false)
@@ -76,6 +77,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     return window.codey.automations.onEvent(ev => {
       if (ev.type !== 'chat-check' || ev.sessionId !== sessionId) return
       applyCheck(ev.check)
+      setCheckDetail(ev.detail)
       const msg = ev.message
       if (msg) setMessages(ms => [...ms, { role: 'assistant', text: msg }])
     })
@@ -123,6 +125,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     setSuggestions([])
     setReady(false)
     setCheck(undefined)
+    setCheckDetail(undefined)
     void (async () => {
       try {
         const step: ChatStep = unwrap(await window.codey.automations.chatStart(mode, automationId))
@@ -228,7 +231,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
             const cl = checkLabel(check)
             if (!cl) return null
             const toneColor = { good: C.green, warn: C.yellow, dim: C.fg3 }[cl.tone]
-            return <SummaryRow label="Check" value={cl.text} placeholder="" valueColor={toneColor} />
+            return <SummaryRow label="Check" value={cl.text} placeholder="" valueColor={toneColor} title={check === 'error' ? checkDetail : undefined} />
           })()}
           {draft.params && Object.keys(draft.params).length > 0 && (
             <SummaryRow
@@ -261,11 +264,11 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
   )
 }
 
-const SummaryRow: React.FC<{ label: string; value?: string; placeholder: string; valueColor?: string }> = ({ label, value, placeholder, valueColor }) => (
+const SummaryRow: React.FC<{ label: string; value?: string; placeholder: string; valueColor?: string; title?: string }> = ({ label, value, placeholder, valueColor, title }) => (
   <div style={{ display: 'flex', gap: 8, fontSize: 12, margin: '3px 0' }}>
     <span style={{ color: C.fg3, width: 56, flexShrink: 0 }}>{label}</span>
     {value ? (
-      <span style={{ color: valueColor ?? C.fg2, wordBreak: 'break-word' }}>{value}</span>
+      <span style={{ color: valueColor ?? C.fg2, wordBreak: 'break-word' }} title={title}>{value}</span>
     ) : (
       <span style={dim}>{placeholder}</span>
     )}

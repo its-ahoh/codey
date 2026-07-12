@@ -89,4 +89,6 @@ export type AutomationEvent =
       /** Assistant message the gateway appended to the session, so the
        *  renderer can show it without waiting for the next turn. */
       message?: string;
+      /** Failure detail when check === 'error' (tooltip only, not a chat message). */
+      detail?: string;
     };
