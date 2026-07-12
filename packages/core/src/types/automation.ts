@@ -84,7 +84,7 @@ export type AutomationEvent =
        *  pending is signaled by the ChatStep that triggered the check). */
       type: 'chat-check';
       sessionId: string;
-      check: 'clean' | 'gaps' | 'error';
+      check: Exclude<AutomationCheckStatus, 'pending'>;
       questions?: string[];
       /** Assistant message the gateway appended to the session, so the
        *  renderer can show it without waiting for the next turn. */

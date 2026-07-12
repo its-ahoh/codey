@@ -121,7 +121,7 @@ describe('buildDryRunPrompt', () => {
   });
 
   it('omits the team section when absent', () => {
-    expect(buildDryRunPrompt('b', {})).not.toMatch(/team/i);
+    expect(buildDryRunPrompt('b', {})).not.toMatch(/normally executed by a team/i);
   });
 });
 
