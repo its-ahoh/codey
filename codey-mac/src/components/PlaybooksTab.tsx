@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import { pillButton, unwrap } from './settingsAtoms'
-import { timelineRows, skillActions, relativeTime, TimelineRow } from './learnedSkillsModel'
+import { timelineRows, playbookActions, relativeTime, TimelineRow } from './playbooksModel'
 
 interface Summary {
   name: string
@@ -14,8 +14,8 @@ interface Summary {
   canRollback: boolean
 }
 
-export const LearnedSkillsTab: React.FC = () => {
-  const [skills, setSkills] = useState<Summary[]>([])
+export const PlaybooksTab: React.FC = () => {
+  const [playbooks, setPlaybooks] = useState<Summary[]>([])
   const [expanded, setExpanded] = useState<string | null>(null)
   const [trail, setTrail] = useState<TimelineRow[]>([])
   const [openSteps, setOpenSteps] = useState<number | null>(null)
@@ -26,7 +26,7 @@ export const LearnedSkillsTab: React.FC = () => {
     setLoading(true)
     setError(null)
     try {
-      setSkills(unwrap(await window.codey.learnedSkills.list()))
+      setPlaybooks(unwrap(await window.codey.playbooks.list()))
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {
@@ -39,7 +39,7 @@ export const LearnedSkillsTab: React.FC = () => {
   const toggleExpand = useCallback(async (name: string) => {
     if (expanded === name) { setExpanded(null); return }
     try {
-      const events = unwrap(await window.codey.learnedSkills.history(name))
+      const events = unwrap(await window.codey.playbooks.history(name))
       setTrail(timelineRows(events, Date.now()))
       setOpenSteps(null)
       setExpanded(name)
@@ -50,8 +50,8 @@ export const LearnedSkillsTab: React.FC = () => {
 
   const act = useCallback(async (kind: 'forget' | 'restore' | 'rollback', name: string) => {
     const messages = {
-      forget: `Archive skill "${name}"? It stops being applied but can be restored.`,
-      restore: `Restore skill "${name}"?`,
+      forget: `Archive playbook "${name}"? It stops being applied but can be restored.`,
+      restore: `Restore playbook "${name}"?`,
       rollback: `Roll back "${name}" to its previous version?`,
     } as const
     if (!confirm(messages[kind])) return
@@ -59,7 +59,7 @@ export const LearnedSkillsTab: React.FC = () => {
       // Widen: rollback returns data: number, forget/restore data: void — the
       // raw union collapses unwrap's generic to void and rejects number.
       const res: { ok: true; data: unknown } | { ok: false; error: string } =
-        await window.codey.learnedSkills[kind](name)
+        await window.codey.playbooks[kind](name)
       unwrap(res)
       await reload()
       if (expanded === name) setExpanded(null) // trail is stale after a mutation
@@ -107,7 +107,7 @@ export const LearnedSkillsTab: React.FC = () => {
   )
 
   const renderCard = (s: Summary) => {
-    const actions = skillActions(s)
+    const actions = playbookActions(s)
     const isExpanded = expanded === s.name
     return (
       <div key={s.name} style={{ ...cardStyle, opacity: s.archived ? 0.65 : 1 }}>
@@ -169,15 +169,15 @@ export const LearnedSkillsTab: React.FC = () => {
       )}
       {loading ? (
         <div style={{ color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 20 }}>Loading…</div>
-      ) : skills.length === 0 ? (
+      ) : playbooks.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '36px 20px', color: C.fg3, fontSize: 13 }}>
           <div style={{ fontSize: 28, marginBottom: 12, opacity: 0.4 }}>🧩</div>
-          <div style={{ fontWeight: 500, color: C.fg2, marginBottom: 4 }}>No learned skills yet</div>
-          <div style={{ fontSize: 12 }}>Skills crystallize from repeated work patterns.</div>
+          <div style={{ fontWeight: 500, color: C.fg2, marginBottom: 4 }}>No playbooks yet</div>
+          <div style={{ fontSize: 12 }}>Playbooks crystallize from your repeated work patterns.</div>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {skills.map(renderCard)}
+          {playbooks.map(renderCard)}
         </div>
       )}
     </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { relativeTime, timelineRows, skillActions } from './learnedSkillsModel'
+import { relativeTime, timelineRows, playbookActions } from './playbooksModel'
 
 const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000
 
@@ -40,16 +40,16 @@ describe('timelineRows', () => {
   })
 })
 
-describe('skillActions', () => {
+describe('playbookActions', () => {
   it('derives which action buttons are enabled', () => {
-    expect(skillActions({ archived: false, canRollback: true }))
+    expect(playbookActions({ archived: false, canRollback: true }))
       .toEqual({ forget: true, restore: false, rollback: true })
-    expect(skillActions({ archived: true, canRollback: false }))
+    expect(playbookActions({ archived: true, canRollback: false }))
       .toEqual({ forget: false, restore: true, rollback: false })
   })
 
   it('allows rollback on archived skills, matching the gateway', () => {
-    expect(skillActions({ archived: true, canRollback: true }))
+    expect(playbookActions({ archived: true, canRollback: true }))
       .toEqual({ forget: false, restore: true, rollback: true })
   })
 })

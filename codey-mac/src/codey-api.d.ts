@@ -118,7 +118,7 @@ declare global {
         remove: (dir: string) => Promise<IpcResult<void>>
         reveal: (dir: string) => Promise<IpcResult<void>>
       }
-      learnedSkills: {
+      playbooks: {
         list: () => Promise<IpcResult<Array<{
           name: string; description: string; version: number; useCount: number;
           lastUsedAt: number; archived: boolean;
