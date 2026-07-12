@@ -126,3 +126,57 @@ export async function automationChatTurn(
     : [];
   return { reply, draftPatch, suggestions, ready: res!.ready === true };
 }
+
+// ---- Authoring-time dry-run (verify a brief can run unattended) ----
+
+export type DryRunVerdict =
+  | { status: 'clean' }
+  | { status: 'gaps'; questions: string[] }
+  | { status: 'error'; message: string };
+
+/**
+ * Wrap a rendered brief in a no-act preamble. The agent walks the brief in
+ * the real workspace but must not act; its output is classified by
+ * classifyDryRun. Team targets are never dispatched as teams - their
+ * definitions are inlined as context instead.
+ */
+export function buildDryRunPrompt(
+  brief: string,
+  params: Record<string, string>,
+  teamContext?: string,
+): string {
+  const rendered = renderBrief(brief, params);
+  const teamBlock = teamContext
+    ? `\nThis brief is normally executed by a team; its definitions, for context:\n${teamContext}\n`
+    : '';
+  return `DRY RUN - do not perform any real actions (no messages sent, no files changed, no external side effects). Walk through the brief below step by step as if executing it unattended. Report:
+(a) anything missing or ambiguous you would need to ask a human about,
+(b) anything in the workspace that contradicts the brief.
+If nothing blocks unattended execution, say so explicitly.
+${teamBlock}
+Brief:
+${rendered}`;
+}
+
+const CLASSIFY_DRY_RUN_PROMPT = (output: string) => `An agent just performed a DRY RUN of an automation brief and reported the following. Decide whether anything would block fully unattended execution.
+
+Agent report:
+${output}
+
+Respond with ONLY this JSON:
+- Nothing blocks unattended execution: {"verdict":"clean"}
+- Something blocks it: {"verdict":"gaps","questions":["<one concrete question per blocking item, phrased to the automation's owner>"]}`;
+
+/** Classify dry-run output. Throws on malformed/unusable classification -
+ *  callers map a throw to an 'error' verdict, never to 'gaps'. */
+export async function classifyDryRun(output: string, opts: AideOptions): Promise<DryRunVerdict> {
+  const res = await runAideJson<Record<string, unknown>>(CLASSIFY_DRY_RUN_PROMPT(output), opts);
+  if (res?.verdict === 'clean') return { status: 'clean' };
+  if (res?.verdict === 'gaps') {
+    const questions = Array.isArray(res.questions)
+      ? (res.questions as unknown[]).filter((q): q is string => typeof q === 'string' && !!q.trim())
+      : [];
+    if (questions.length > 0) return { status: 'gaps', questions };
+  }
+  throw new Error('Unrecognized dry-run classification');
+}
