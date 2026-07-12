@@ -22,11 +22,14 @@ export interface DryRunDeps {
  */
 export class DryRunManager {
   private generations = new Map<string, number>();
+  /** Monotonic, never reset - a gen freed by cancel()/delivery is never
+   *  reissued, so a surviving stale run can never match a newer start(). */
+  private nextGen = 1;
 
   constructor(private deps: DryRunDeps) {}
 
   start(sessionId: string, draft: AutomationDraft): void {
-    const gen = (this.generations.get(sessionId) ?? 0) + 1;
+    const gen = this.nextGen++;
     this.generations.set(sessionId, gen);
     void this.run(sessionId, gen, draft);
   }
@@ -54,6 +57,7 @@ export class DryRunManager {
       return;
     }
     this.generations.delete(sessionId);
-    this.deps.onResult(sessionId, verdict);
+    try { this.deps.onResult(sessionId, verdict); }
+    catch (err) { this.deps.log?.(`dry-run onResult failed: ${(err as Error).message}`); }
   }
 }

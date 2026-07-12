@@ -95,6 +95,29 @@ describe('DryRunManager', () => {
     expect(onResult).toHaveBeenCalledWith('s1', { status: 'gaps', questions: ['second output'] });
   });
 
+  it('a run surviving a cancel-then-restart cannot deliver a stale verdict', async () => {
+    let releaseFirst!: (v: string) => void;
+    let releaseSecond!: (v: string) => void;
+    const execute = vi.fn()
+      .mockImplementationOnce(() => new Promise<string>(res => { releaseFirst = res; }))
+      .mockImplementationOnce(() => new Promise<string>(res => { releaseSecond = res; }));
+    const onResult = vi.fn();
+    const mgr = new DryRunManager({
+      execute,
+      classify: vi.fn().mockImplementation(async (o: string) => ({ status: 'gaps' as const, questions: [o] })),
+      teamContext: () => undefined, onResult,
+    });
+    mgr.start('s1', draft());
+    mgr.cancel('s1');
+    mgr.start('s1', draft({ brief: 'v2' }));
+    releaseFirst('first output'); // stale run resolves while the new run is in flight
+    await flush();
+    releaseSecond('second output');
+    await flush();
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onResult).toHaveBeenCalledWith('s1', { status: 'gaps', questions: ['second output'] });
+  });
+
   it('cancel drops an in-flight result', async () => {
     let release!: (v: string) => void;
     const onResult = vi.fn();
