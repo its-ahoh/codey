@@ -82,3 +82,25 @@ describe('automationChatTurn', () => {
     expect(t.draftPatch).toEqual({});
   });
 });
+
+describe('CHAT_TURN_PROMPT readiness gate', () => {
+  const ctx = {
+    workspaces: ['default'], teams: [],
+    tz: 'UTC', nowIso: 'now', mode: 'create' as const,
+  };
+
+  it('does not require scheduling discussion for ready=true', async () => {
+    let captured = '';
+    const opts: AideOptions = {
+      agent: 'claude-code',
+      runner: async (req: AgentRequest): Promise<AgentResponse> => {
+        captured = req.prompt;
+        return { success: true, output: '{"reply":"ok"}' } as AgentResponse;
+      },
+    };
+    await automationChatTurn([{ role: 'user', text: 'hi' }], {}, ctx, opts);
+    expect(captured).not.toMatch(/scheduling has been explicitly discussed/i);
+    expect(captured).toMatch(/scheduling is NOT required for ready/i);
+    expect(captured).not.toMatch(/and eventually scheduling/i);
+  });
+});
