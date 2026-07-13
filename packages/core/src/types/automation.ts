@@ -69,9 +69,26 @@ export interface AutomationRun {
   seenAt?: number;
 }
 
-export interface AutomationEvent {
-  type: 'run-started' | 'run-finished' | 'run-parked';
-  automationId: string;
-  runId: string;
-  run?: AutomationRun;
-}
+/** Status of the authoring-time dry-run check for a chat session. */
+export type AutomationCheckStatus = 'pending' | 'clean' | 'gaps' | 'error';
+
+export type AutomationEvent =
+  | {
+      type: 'run-started' | 'run-finished' | 'run-parked';
+      automationId: string;
+      runId: string;
+      run?: AutomationRun;
+    }
+  | {
+      /** Dry-run verdict for an authoring chat session (never 'pending' -
+       *  pending is signaled by the ChatStep that triggered the check). */
+      type: 'chat-check';
+      sessionId: string;
+      check: Exclude<AutomationCheckStatus, 'pending'>;
+      questions?: string[];
+      /** Assistant message the gateway appended to the session, so the
+       *  renderer can show it without waiting for the next turn. */
+      message?: string;
+      /** Failure detail when check === 'error' (tooltip only, not a chat message). */
+      detail?: string;
+    };

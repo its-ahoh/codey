@@ -92,10 +92,10 @@ ${messages.map(m => `${m.role === 'user' ? 'User' : 'You'}: ${m.text}`).join('\n
 
 Your job this turn:
 1. Update the draft with anything the user's latest message settles. draftPatch contains ONLY fields that changed; set a field to null to clear it. Draft fields: name (short title), target ({"kind":"prompt","workspaceName":"..."} or {"kind":"team","teamName":"...","workspaceName":"..."}), schedule ({"hour":0-23,"minute":0-59,"daysOfWeek":[0-6] optional,"tz":"${ctx.tz}"} or null for manual-only), notify (boolean), brief (string), params (object of string values).
-2. Reply conversationally and ask about ONE thing at a time - the next most important gap: missing specifics, choices, accounts/handles, formats, limits, edge cases (e.g. "what if there is nothing to report?"), and eventually scheduling. Never ask about something the user already answered, even in passing. If the user revises an earlier choice, just patch it and move on.
+2. Reply conversationally and ask about ONE thing at a time - the next most important gap: missing specifics, choices, accounts/handles, formats, limits, edge cases (e.g. "what if there is nothing to report?"). Never ask about something the user already answered, even in passing. If the user revises an earlier choice, just patch it and move on. Patch schedule whenever the user's message settles timing, but do not steer the conversation toward scheduling.
 3. When the answer space is enumerable (workspace names, team names, times, yes/no), offer 2-5 short suggestions the user can tap. Only ever suggest workspace/team names that appear in the environment above.
 4. Maintain the brief as you learn: a frozen, fully self-contained instruction block for an unattended agent - no "the user said", concrete values, edge-case handling, expected output. Surface tweakable knobs as {{placeholder}} in the brief with current values in params.
-5. Set ready=true ONLY when name, target and brief are complete, scheduling has been explicitly discussed (a concrete schedule or deliberately manual-only), and you have no open questions. On that turn, reply with a short summary of the full plan and invite the user to confirm or change anything. If they then request changes, patch the draft and set ready accordingly.
+5. Set ready=true ONLY when name, target and brief are complete and you have no open questions about the task itself. Scheduling is NOT required for ready: on the ready turn, reply with a short summary of the full plan, and if no schedule is set, mention once that it will run manually unless they set a schedule now or later from the automation's page. If they then request changes, patch the draft and set ready accordingly. If the conversation contains dry-run findings ("Dry run found things to pin down") that the user has not yet fully addressed, treat them as open questions: keep ready=false until each is resolved.
 
 Respond with ONLY this JSON:
 {"reply":"...","draftPatch":{},"suggestions":[],"ready":false}`;
@@ -125,4 +125,58 @@ export async function automationChatTurn(
     ? (res!.suggestions as unknown[]).filter((s): s is string => typeof s === 'string' && !!s.trim()).slice(0, 6)
     : [];
   return { reply, draftPatch, suggestions, ready: res!.ready === true };
+}
+
+// ---- Authoring-time dry-run (verify a brief can run unattended) ----
+
+export type DryRunVerdict =
+  | { status: 'clean' }
+  | { status: 'gaps'; questions: string[] }
+  | { status: 'error'; message: string };
+
+/**
+ * Wrap a rendered brief in a no-act preamble. The agent walks the brief in
+ * the real workspace but must not act; its output is classified by
+ * classifyDryRun. Team targets are never dispatched as teams - their
+ * definitions are inlined as context instead.
+ */
+export function buildDryRunPrompt(
+  brief: string,
+  params: Record<string, string>,
+  teamContext?: string,
+): string {
+  const rendered = renderBrief(brief, params);
+  const teamBlock = teamContext
+    ? `\nThis brief is normally executed by a team; its definitions, for context:\n${teamContext}\n`
+    : '';
+  return `DRY RUN - do not perform any real actions (no messages sent, no files changed, no external side effects). Walk through the brief below step by step as if executing it unattended. Report:
+(a) anything missing or ambiguous you would need to ask a human about,
+(b) anything in the workspace that contradicts the brief.
+If nothing blocks unattended execution, say so explicitly.
+${teamBlock}
+Brief:
+${rendered}`;
+}
+
+const CLASSIFY_DRY_RUN_PROMPT = (output: string) => `An agent just performed a DRY RUN of an automation brief and reported the following. Decide whether anything would block fully unattended execution.
+
+Agent report:
+${output}
+
+Respond with ONLY this JSON:
+- Nothing blocks unattended execution: {"verdict":"clean"}
+- Something blocks it: {"verdict":"gaps","questions":["<one concrete question per blocking item, phrased to the automation's owner>"]}`;
+
+/** Classify dry-run output. Throws on malformed/unusable classification -
+ *  callers map a throw to an 'error' verdict, never to 'gaps'. */
+export async function classifyDryRun(output: string, opts: AideOptions): Promise<DryRunVerdict> {
+  const res = await runAideJson<Record<string, unknown>>(CLASSIFY_DRY_RUN_PROMPT(output), opts);
+  if (res?.verdict === 'clean') return { status: 'clean' };
+  if (res?.verdict === 'gaps') {
+    const questions = Array.isArray(res.questions)
+      ? (res.questions as unknown[]).filter((q): q is string => typeof q === 'string' && !!q.trim())
+      : [];
+    if (questions.length > 0) return { status: 'gaps', questions };
+  }
+  throw new Error('Unrecognized dry-run classification');
 }

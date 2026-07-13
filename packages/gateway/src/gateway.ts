@@ -1,12 +1,13 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
 import { SchedulerLease } from './automations/lease';
 import { AutomationChatManager, ChatStep } from './automations/chat';
+import { DryRunManager } from './automations/dry-run';
 import { detectParked } from './automations/parked';
 import { formatRunSummary } from './automations/report';
 import { ConfigManager } from './config';
@@ -80,6 +81,7 @@ export class Codey {
   private automationStore?: AutomationStore;
   private automationEngine?: AutomationEngine;
   private automationChats?: AutomationChatManager;
+  private automationDryRuns?: DryRunManager;
   private automationEventListener?: (ev: AutomationEvent) => void;
 
   // Rate limiting: userId -> last request timestamp
@@ -889,6 +891,25 @@ export class Codey {
       log: (msg) => this.logger.info(`[automations] ${msg}`),
     });
     this.automationEngine.start();
+    this.automationDryRuns = new DryRunManager({
+      execute: (workspaceName, prompt) => this.runDryRunPrompt(workspaceName, prompt),
+      classify: (output) => classifyDryRun(output, this.getAideOptions()),
+      teamContext: (_workspaceName, teamName) => {
+        const team = (this.configManager?.getTeams() ?? {})[teamName];
+        if (!team) return undefined;
+        const members = Array.isArray(team) ? team : team.members;
+        const wm = this.workspaceManager.getWorkerManager();
+        const personas = members.map(m => {
+          const w = wm.getWorker(m);
+          return w
+            ? `### ${m}\n${w.personality.role}`.trim()
+            : `### ${m}\n(worker definition not found)`;
+        }).join('\n\n');
+        return `Team config:\n${JSON.stringify(team, null, 2)}\n\nWorker roles:\n${personas}`;
+      },
+      onResult: (sessionId, verdict) => this.onDryRunResult(sessionId, verdict),
+      log: (msg) => this.logger.info(`[automations] ${msg}`),
+    });
     this.automationChats = new AutomationChatManager({
       turn: (messages, draft, context) => automationChatTurn(messages, draft, context, this.getAideOptions()),
       context: () => ({
@@ -897,6 +918,7 @@ export class Codey {
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         nowIso: new Date().toString(),
       }),
+      onReadyTransition: (sessionId, draft) => this.automationDryRuns!.start(sessionId, draft),
     });
   }
 
@@ -970,6 +992,56 @@ export class Codey {
     }
   }
 
+  /**
+   * One-shot no-act agent run for the authoring dry-run. Deliberately NOT
+   * skipPermissions: headless default-deny is the belt to the preamble's
+   * suspenders - the agent can read the workspace but a stray write attempt
+   * is refused rather than executed.
+   */
+  private async runDryRunPrompt(workspaceName: string, prompt: string): Promise<string> {
+    // workspaceName is LLM output; a hallucinated name must fail visibly
+    // (DryRunManager maps the throw to an 'error' verdict) instead of
+    // silently dry-running against the gateway's own working dir.
+    if (!this.getWorkspaceList().includes(workspaceName)) {
+      throw new Error(`Unknown workspace: ${workspaceName}`);
+    }
+    const workingDir = this.resolveWorkspaceWorkingDir(workspaceName);
+    const agent = this.getDefaultAgent();
+    const model = this.getDefaultModelConfig(agent);
+    // Plain agentFactory.run, not runWithFallback: fallback churn is not
+    // wanted for a background nicety - a failure just becomes an 'error'
+    // verdict in the authoring panel.
+    const response = await this.agentFactory.run(agent, {
+      prompt,
+      agent,
+      model,
+      context: { workingDir },
+    });
+    if (!response.success) throw new Error(response.error || 'dry-run agent failed');
+    return response.output;
+  }
+
+  /** Deliver a dry-run verdict into the chat session and to the renderer. */
+  private onDryRunResult(sessionId: string, verdict: DryRunVerdict): void {
+    const message = verdict.status === 'clean'
+      ? 'Dry run passed - this can run unattended. Save when ready.'
+      : verdict.status === 'gaps'
+        ? `Dry run found things to pin down:\n${verdict.questions.map(q => `- ${q}`).join('\n')}`
+        : undefined; // errors surface only in the summary-panel status
+    const accepted = this.automationChats?.resolveCheck(sessionId, verdict.status, message) ?? false;
+    if (!accepted) return; // session gone or check superseded
+    try {
+      this.automationEventListener?.({
+        type: 'chat-check',
+        sessionId,
+        check: verdict.status,
+        questions: verdict.status === 'gaps' ? verdict.questions : undefined,
+        message,
+        detail: verdict.status === 'error' ? verdict.message : undefined,
+      });
+    } catch { /* swallow - listener failures must not break the chat */ }
+  }
+
   // ---- Automations public API ----
 
   listAutomations(): Automation[] { return this.automationStore?.list() ?? []; }
@@ -1030,6 +1102,7 @@ export class Codey {
   }
   cancelAutomationChat(sessionId: string): void {
     this.automationChats?.cancel(sessionId);
+    this.automationDryRuns?.cancel(sessionId);
   }
   setAutomationEventListener(fn: (ev: AutomationEvent) => void): void {
     this.automationEventListener = fn;
@@ -1053,8 +1126,13 @@ export class Codey {
       if (fs.existsSync(chat.workingDirOverride)) return chat.workingDirOverride;
       this.logger.warn(`Chat ${chat.id} workingDirOverride=${chat.workingDirOverride} is gone; falling back to workspace dir`);
     }
+    return this.resolveWorkspaceWorkingDir(chat.workspaceName);
+  }
+
+  /** workspace.json workingDir if present, else the gateway working dir. */
+  private resolveWorkspaceWorkingDir(workspaceName: string): string {
     const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
-    const wsConfigPath = path.join(workspacesRoot, chat.workspaceName, 'workspace.json');
+    const wsConfigPath = path.join(workspacesRoot, workspaceName, 'workspace.json');
     if (fs.existsSync(wsConfigPath)) {
       try {
         const wsConfig = JSON.parse(fs.readFileSync(wsConfigPath, 'utf-8'));

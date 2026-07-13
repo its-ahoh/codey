@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { C } from '../theme'
 import { pillButton, unwrap, inputStyle } from './settingsAtoms'
-import { scheduleSummary, draftComplete } from './automationsModel'
+import { scheduleSummary, draftComplete, checkLabel } from './automationsModel'
 import type { AutomationDraft } from '../../../packages/core/src/aide-automation'
 import type { ChatStep } from '../../../packages/gateway/src/automations/chat'
 
@@ -24,6 +24,8 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
   const [draft, setDraft] = useState<AutomationDraft>({})
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [ready, setReady] = useState(false)
+  const [check, setCheck] = useState<ChatStep['check']>(undefined)
+  const [checkDetail, setCheckDetail] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [failedText, setFailedText] = useState<string | null>(null)
   const [sessionLost, setSessionLost] = useState(false)
@@ -31,6 +33,14 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
   const [saving, setSaving] = useState(false)
   const [briefOpen, setBriefOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+
+  // A chat-check push event can beat the in-flight send() response, whose
+  // stale 'pending' would otherwise overwrite the verdict; a legitimate
+  // re-arm always passes through an undefined step first since ready must
+  // drop before it can rise again.
+  const applyCheck = (incoming: ChatStep['check']) =>
+    setCheck(prev =>
+      incoming === 'pending' && prev !== undefined && prev !== 'pending' ? prev : incoming)
 
   const mountedRef = useRef(true)
   useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
@@ -52,12 +62,26 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
         setDraft(step.draft)
         setSuggestions(step.suggestions)
         setReady(step.ready)
+        applyCheck(step.check)
       } catch (e: any) {
         setError(e?.message ?? String(e))
       }
     })()
     return () => { cancelled = true }
   }, [mode, automationId, setError])
+
+  // Dry-run verdicts arrive as chat-check events on the automation-event
+  // channel (session-keyed; the draft is not saved yet, so no automationId).
+  useEffect(() => {
+    if (!sessionId) return
+    return window.codey.automations.onEvent(ev => {
+      if (ev.type !== 'chat-check' || ev.sessionId !== sessionId) return
+      applyCheck(ev.check)
+      setCheckDetail(ev.detail)
+      const msg = ev.message
+      if (msg) setMessages(ms => [...ms, { role: 'assistant', text: msg }])
+    })
+  }, [sessionId])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
@@ -77,6 +101,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
       setDraft(step.draft)
       setSuggestions(step.suggestions)
       setReady(step.ready)
+      applyCheck(step.check)
     } catch (e: any) {
       // Unknown session = gateway restarted or the session hit its TTL —
       // only starting over helps. Anything else is retryable in place.
@@ -99,6 +124,8 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     setDraft({})
     setSuggestions([])
     setReady(false)
+    setCheck(undefined)
+    setCheckDetail(undefined)
     void (async () => {
       try {
         const step: ChatStep = unwrap(await window.codey.automations.chatStart(mode, automationId))
@@ -108,6 +135,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
         setDraft(step.draft)
         setSuggestions(step.suggestions)
         setReady(step.ready)
+        applyCheck(step.check)
       } catch (e: any) {
         setError(e?.message ?? String(e))
       }
@@ -199,6 +227,12 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
           <SummaryRow label="Runs" value={draft.schedule ? scheduleSummary(draft.schedule) : ready ? 'manual' : undefined} placeholder="schedule…" />
           <SummaryRow label="Where" value={targetText} placeholder="workspace…" />
           <SummaryRow label="Notify" value={draft.notify === undefined ? undefined : draft.notify ? 'on' : 'off'} placeholder="notify…" />
+          {(() => {
+            const cl = checkLabel(check)
+            if (!cl) return null
+            const toneColor = { good: C.green, warn: C.yellow, dim: C.fg3 }[cl.tone]
+            return <SummaryRow label="Check" value={cl.text} placeholder="" valueColor={toneColor} title={check === 'error' ? checkDetail : undefined} />
+          })()}
           {draft.params && Object.keys(draft.params).length > 0 && (
             <SummaryRow
               label="Knobs"
@@ -230,11 +264,11 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
   )
 }
 
-const SummaryRow: React.FC<{ label: string; value?: string; placeholder: string }> = ({ label, value, placeholder }) => (
+const SummaryRow: React.FC<{ label: string; value?: string; placeholder: string; valueColor?: string; title?: string }> = ({ label, value, placeholder, valueColor, title }) => (
   <div style={{ display: 'flex', gap: 8, fontSize: 12, margin: '3px 0' }}>
     <span style={{ color: C.fg3, width: 56, flexShrink: 0 }}>{label}</span>
     {value ? (
-      <span style={{ color: C.fg2, wordBreak: 'break-word' }}>{value}</span>
+      <span style={{ color: valueColor ?? C.fg2, wordBreak: 'break-word' }} title={title}>{value}</span>
     ) : (
       <span style={dim}>{placeholder}</span>
     )}

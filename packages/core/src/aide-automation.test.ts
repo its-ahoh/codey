@@ -1,6 +1,6 @@
 // packages/core/src/aide-automation.test.ts
 import { describe, it, expect } from 'vitest';
-import { renderBrief, automationChatTurn } from './aide-automation';
+import { renderBrief, automationChatTurn, buildDryRunPrompt, classifyDryRun } from './aide-automation';
 import type { AideOptions } from './aide';
 import type { AgentRequest, AgentResponse } from './types';
 
@@ -80,5 +80,66 @@ describe('automationChatTurn', () => {
     const t = await automationChatTurn(msgs, {}, ctx, aide(
       '{"reply":"ok","draftPatch":{"target":{"kind":"team","workspaceName":"w"}}}'));
     expect(t.draftPatch).toEqual({});
+  });
+});
+
+describe('CHAT_TURN_PROMPT readiness gate', () => {
+  const ctx = {
+    workspaces: ['default'], teams: [],
+    tz: 'UTC', nowIso: 'now', mode: 'create' as const,
+  };
+
+  it('does not require scheduling discussion for ready=true', async () => {
+    let captured = '';
+    const opts: AideOptions = {
+      agent: 'claude-code',
+      runner: async (req: AgentRequest): Promise<AgentResponse> => {
+        captured = req.prompt;
+        return { success: true, output: '{"reply":"ok"}' } as AgentResponse;
+      },
+    };
+    await automationChatTurn([{ role: 'user', text: 'hi' }], {}, ctx, opts);
+    expect(captured).not.toMatch(/scheduling has been explicitly discussed/i);
+    expect(captured).toMatch(/scheduling is NOT required for ready/i);
+    expect(captured).not.toMatch(/and eventually scheduling/i);
+    expect(captured).toMatch(/dry-run findings/i);
+  });
+});
+
+describe('buildDryRunPrompt', () => {
+  it('renders params into the brief and wraps it in a no-act preamble', () => {
+    const p = buildDryRunPrompt('Post {{count}} items.', { count: '5' });
+    expect(p).toContain('Post 5 items.');
+    expect(p).toMatch(/DRY RUN/);
+    expect(p).toMatch(/do not perform any real actions/i);
+    expect(p).not.toContain('{{count}}');
+  });
+
+  it('inlines team context when provided', () => {
+    const p = buildDryRunPrompt('b', {}, '{"members":["a","b"]}');
+    expect(p).toContain('{"members":["a","b"]}');
+    expect(p).toMatch(/normally executed by a team/i);
+  });
+
+  it('omits the team section when absent', () => {
+    expect(buildDryRunPrompt('b', {})).not.toMatch(/normally executed by a team/i);
+  });
+});
+
+describe('classifyDryRun', () => {
+  it('parses a clean verdict', async () => {
+    await expect(classifyDryRun('all good', aide('{"verdict":"clean"}')))
+      .resolves.toEqual({ status: 'clean' });
+  });
+
+  it('parses gaps with questions, dropping non-strings', async () => {
+    await expect(classifyDryRun('out', aide('{"verdict":"gaps","questions":["Which repo?",1,""]}')))
+      .resolves.toEqual({ status: 'gaps', questions: ['Which repo?'] });
+  });
+
+  it('treats gaps without questions and unknown verdicts as errors', async () => {
+    await expect(classifyDryRun('out', aide('{"verdict":"gaps","questions":[]}'))).rejects.toThrow();
+    await expect(classifyDryRun('out', aide('{"verdict":"maybe"}'))).rejects.toThrow();
+    await expect(classifyDryRun('out', aide('not json'))).rejects.toThrow();
   });
 });
