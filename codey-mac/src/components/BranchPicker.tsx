@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState, useEffect } from 'react'
 import { C } from '../theme'
 import { useGitBranches } from '../hooks/useGitBranches'
 import { filterBranches, defaultWorktreePath, partitionWorktrees } from './branchPickerModel'
+import { UIIcon } from './UIIcons'
 
 interface Props {
   workingDir: string | undefined
@@ -67,10 +68,10 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <button style={styles.pill} onClick={() => setOpen(o => { if (!o) setNote(null); return !o })} title="Branch & worktree">
-        <span>⎇ {s?.branch ?? '—'}</span>
+        <UIIcon name="code" size={14} /><span>{s?.branch ?? '—'}</span>
         {s && s.dirty > 0 && <span style={styles.dirty}>+{s.dirty}</span>}
-        {boundLabel && <span style={styles.wt}>🌳 {boundLabel}</span>}
-        <span style={styles.caret}>▾</span>
+        {boundLabel && <span style={styles.wt}><UIIcon name="workspace" size={13} />{boundLabel}</span>}
+        <span style={styles.caret}>⌄</span>
       </button>
 
       {open && (
@@ -108,7 +109,7 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
               <div style={styles.scroll}>
                 {localFiltered.map(b => (
                   <button key={b} style={styles.item} disabled={b === s?.branch} onClick={() => doSwitch(b)}>
-                    {b === s?.branch ? '✓ ' : ''}{b}
+                    {b === s?.branch && <UIIcon name="check" size={13} />}{b}
                   </button>
                 ))}
                 {remoteFiltered.length > 0 && <div style={styles.divider}>Remote</div>}
@@ -120,12 +121,12 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
                 {others.length > 0 && <div style={styles.divider}>Worktrees</div>}
                 {main && (
                   <button style={styles.item} onClick={() => { onBindWorktree(null); setOpen(false) }}>
-                    {!boundWorktreePath ? '✓ ' : ''}{main.branch} (main)
+                    {!boundWorktreePath && <UIIcon name="check" size={13} />}{main.branch} (main)
                   </button>
                 )}
                 {others.map(w => (
                   <button key={w.path} style={styles.item} onClick={() => { onBindWorktree(w.path); setOpen(false) }}>
-                    {w.path === boundWorktreePath ? '✓ ' : ''}🌳 {w.branch}
+                    {w.path === boundWorktreePath && <UIIcon name="check" size={13} />}<UIIcon name="workspace" size={13} />{w.branch}
                   </button>
                 ))}
               </div>
@@ -145,19 +146,19 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
 
 const styles: Record<string, React.CSSProperties> = {
   pill: { display: 'inline-flex', alignItems: 'center', gap: 6, color: C.fg2, fontSize: 11,
-    background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 4, padding: '2px 6px',
+    background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 7, padding: '5px 8px',
     fontFamily: 'SF Mono, Menlo, monospace', cursor: 'pointer', flexShrink: 0, maxWidth: 260,
     overflow: 'hidden', whiteSpace: 'nowrap' },
   dirty: { color: C.yellow, opacity: 0.85 },
-  wt: { color: C.green },
+  wt: { color: C.green, display: 'inline-flex', alignItems: 'center', gap: 3 },
   caret: { color: C.fg3 },
-  menu: { position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 20, width: 280,
+  menu: { position: 'absolute', top: 'calc(100% + 7px)', left: 0, zIndex: 20, width: 300,
     background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
-    boxShadow: '0 8px 24px rgba(0,0,0,0.35)', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 },
+    boxShadow: '0 14px 30px rgba(0,0,0,0.26)', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 },
   section: { display: 'flex', flexDirection: 'column', gap: 8 },
   scroll: { maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column' },
   item: { textAlign: 'left', background: 'transparent', border: 'none', color: C.fg, fontSize: 12,
-    padding: '6px 8px', borderRadius: 6, cursor: 'pointer' },
+    padding: '6px 8px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 },
   divider: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: C.fg3, padding: '8px 8px 2px' },
   input: { background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6, color: C.fg,
     fontSize: 12, padding: '5px 8px', outline: 'none' },

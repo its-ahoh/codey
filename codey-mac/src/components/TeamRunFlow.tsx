@@ -9,6 +9,7 @@ import { deriveWorkerRuns, deriveWorkerRunsFromGroup, synthesizeChainGraph, node
 import { ToolCallList } from './ToolCallList'
 import { C, useEffectiveTheme } from '../theme'
 import { Markdown } from './Markdown'
+import { UIIcon } from './UIIcons'
 
 interface Props {
   turn: ChatMessage
@@ -21,7 +22,7 @@ interface Props {
   onClose: () => void
 }
 
-const secondaryBtn = { fontSize: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 12px', cursor: 'pointer' } as const
+const secondaryBtn = { fontSize: 12, background: C.surface3, color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 8, padding: '7px 11px', cursor: 'pointer' } as const
 
 function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, group, onClose }: Props) {
   const effectiveTheme = useEffectiveTheme()
@@ -71,14 +72,15 @@ function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, group, o
   const [showThinking, setShowThinking] = useState(false)
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: '90vw', height: '85vh', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderBottom: `1px solid ${C.border}` }}>
-          <strong style={{ flex: 1 }}>Workflow run</strong>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(9,12,20,0.65)', backdropFilter: 'blur(10px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '90vw', height: '85vh', background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 16, boxShadow: '0 30px 90px rgba(0,0,0,0.48)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface2 }}>
+          <span style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="activity" size={16} /></span>
+          <div style={{ flex: 1 }}><div style={{ fontWeight: 750, color: C.fg }}>Team run</div><div style={{ fontSize: 11, color: C.fg3, marginTop: 2 }}>{runs.length} worker {runs.length === 1 ? 'step' : 'steps'} captured</div></div>
           <button onClick={onClose} style={secondaryBtn}>Close</button>
         </div>
         <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-          <div style={{ flex: 1.4, minWidth: 0, borderRight: `1px solid ${C.border}` }}>
+          <div style={{ flex: 1.4, minWidth: 0, borderRight: `1px solid ${C.border}`, background: C.bg }}>
             <ReactFlow
               nodes={nodes} edges={edges}
               nodeTypes={nodeTypes} edgeTypes={edgeTypes}
@@ -89,12 +91,11 @@ function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, group, o
               colorMode={effectiveTheme}
             />
           </div>
-          <div style={{ flex: 1, minWidth: 260, padding: 16, overflowY: 'auto' }}>
+          <div style={{ flex: 1, minWidth: 280, padding: 18, overflowY: 'auto', background: C.surface }}>
             {sel ? (
               <>
-                <div style={{ fontWeight: 600, color: C.fg, marginBottom: 2 }}>{sel.worker}</div>
-                <div style={{ fontSize: 11, color: C.fg2, marginBottom: 12 }}>Step {sel.step} · {sel.status}</div>
-                <div style={{ fontSize: 11, textTransform: 'uppercase', color: C.fg3, marginBottom: 6 }}>Output</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 13 }}><span style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', background: sel.status === 'failed' ? C.dangerBg : C.accentDim, color: sel.status === 'failed' ? C.red : C.accent }}><UIIcon name={sel.status === 'failed' ? 'activity' : 'bot'} size={15} /></span><div><div style={{ fontWeight: 700, color: C.fg }}>{sel.worker}</div><div style={{ fontSize: 11, color: C.fg3 }}>Step {sel.step} · {sel.status}</div></div></div>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: 'uppercase', color: C.fg3, marginBottom: 7 }}>Output</div>
                 <Markdown variant="assistant">{sel.output || '(no output yet)'}</Markdown>
                 <div style={{ fontSize: 11, textTransform: 'uppercase', color: C.fg3, margin: '14px 0 6px' }}>Tool calls</div>
                 <ToolCallList toolCalls={selToolCalls} emptyHint="(no tool calls)" minimal />

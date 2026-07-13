@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { apiService } from '../services/api'
 import { C } from '../theme'
 import { sectionStyle, fieldStyle, inputStyle, selectStyle, pillButton, Section, unwrap } from './settingsAtoms'
+import { UIIcon } from './UIIcons'
 
 interface SettingsTabProps {
   isGatewayRunning: boolean
@@ -164,10 +165,10 @@ export const EnvEditor: React.FC<{
             onClick={() => removeRow(idx)}
             style={{ ...pillButton('ghost'), color: C.red }}
             title="Remove"
-          >✕</button>
+          ><UIIcon name="trash" size={13} /></button>
         </div>
       ))}
-      <button onClick={addRow} style={pillButton('ghost')}>+ Add variable</button>
+      <button onClick={addRow} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="add" size={14} />Add variable</button>
     </div>
   )
 }
@@ -233,7 +234,7 @@ const ModelRow: React.FC<{
               color: C.fg3,
               fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
-              🔑 {entry.apiKeyRef}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><UIIcon name="key" size={13} />{entry.apiKeyRef}</span>
             </div>
           )}
         </div>
@@ -400,7 +401,7 @@ const FallbackList: React.FC<{
               {i === 0 ? (
                 <span style={{ width: 28, fontSize: 10, color: C.fg3, textAlign: 'center' }} title="The default agent — drag a row above to replace it">—</span>
               ) : (
-                <button onClick={() => remove(i)} style={pillButton('danger')}>✕</button>
+                <button onClick={() => remove(i)} style={{ ...pillButton('danger'), display: 'inline-flex', alignItems: 'center' }} aria-label="Remove fallback"><UIIcon name="trash" size={13} /></button>
               )}
             </div>
             {dropIdx === order.length && i === order.length - 1 && dragIdx !== null && dragIdx !== i && (

@@ -9,6 +9,7 @@ import { TeamGraph, validateGraph } from '../../../packages/core/src/team-graph'
 import { toFlow, fromFlow, newNodeId } from './flowEditorModel'
 import { nodeTypes, edgeTypes, EDGE_COLOR, resolveColor, rfNodeType } from './flowGraph'
 import { C, useEffectiveTheme } from '../theme'
+import { UIIcon } from './UIIcons'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -175,18 +176,19 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
   // then reversed, which never assigned one).
   const selIsBranch = sel ? (nodes.find(n => n.id === sel.source)?.data as any)?.type === 'condition' : false
 
-  const secondaryBtn = { fontSize: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 12px', cursor: 'pointer' } as const
+  const secondaryBtn = { fontSize: 12, background: C.surface3, color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 8, padding: '7px 10px', cursor: 'pointer' } as const
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: '90vw', height: '85vh', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderBottom: `1px solid ${C.border}` }}>
-          <strong style={{ flex: 1 }}>Workflow — {teamName}</strong>
-          <label style={{ fontSize: 12, color: C.fg }}>max hops <input type="number" min={1} value={maxHops} onChange={e => setMaxHops(Math.max(1, Number(e.target.value) || 1))} style={{ width: 56, marginLeft: 6, background: C.surface3, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 4, padding: '2px 6px', colorScheme: effectiveTheme, WebkitAppearance: 'textfield' }} /></label>
-          <button onClick={reverseAllEdges} title="Flip the direction of every edge" style={secondaryBtn}>⇄ Reverse all</button>
-          <button onClick={() => setShowRaw(s => !s)} style={secondaryBtn}>{showRaw ? 'Canvas' : 'Raw config'}</button>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(9,12,20,0.65)', backdropFilter: 'blur(10px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '90vw', height: '85vh', background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 16, boxShadow: '0 30px 90px rgba(0,0,0,0.48)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface2 }}>
+          <span style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="activity" size={16} /></span>
+          <div style={{ flex: 1 }}><div style={{ fontWeight: 750, color: C.fg }}>Workflow canvas</div><div style={{ fontSize: 11, color: C.fg3, marginTop: 2 }}>{teamName}</div></div>
+          <label style={{ fontSize: 11, color: C.fg3, display: 'flex', alignItems: 'center', gap: 5 }}>Max hops <input type="number" min={1} value={maxHops} onChange={e => setMaxHops(Math.max(1, Number(e.target.value) || 1))} style={{ width: 48, background: C.surface3, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 6px', colorScheme: effectiveTheme, WebkitAppearance: 'textfield' }} /></label>
+          <button onClick={reverseAllEdges} title="Flip the direction of every edge" style={secondaryBtn}>Reverse all</button>
+          <button onClick={() => setShowRaw(s => !s)} style={secondaryBtn}>{showRaw ? 'Canvas' : 'Config'}</button>
           {justSaved && <span style={{ fontSize: 12, color: C.green }}>Saved ✓</span>}
-          <button onClick={save} style={{ fontSize: 12, color: C.onAccent, background: C.accent, border: 'none', borderRadius: 6, padding: '4px 12px' }}>Save</button>
+          <button onClick={save} style={{ fontSize: 12, fontWeight: 700, color: C.onAccent, background: C.accent, border: 'none', borderRadius: 8, padding: '7px 12px' }}>Save</button>
           <button onClick={onClose} style={secondaryBtn}>Close</button>
         </div>
         {problems.length > 0 && (
@@ -194,21 +196,21 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
         )}
         <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
           {!showRaw && (
-            <div style={{ width: 160, borderRight: `1px solid ${C.border}`, padding: 10, overflowY: 'auto' }}>
-              <div style={{ fontSize: 11, color: C.fg3, marginBottom: 6 }}>Workers</div>
+            <div style={{ width: 190, borderRight: `1px solid ${C.border}`, padding: 12, overflowY: 'auto', background: C.surface2 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: 'uppercase', color: C.fg3, marginBottom: 8 }}>Add to canvas</div>
               {workerNames.map(w => (
                 <button key={w} draggable
                   onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'worker', worker: w }))}
                   onClick={() => addWorker(w)}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 4, fontSize: 12, padding: '8px 8px', minHeight: 40, background: C.surface3, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, cursor: 'pointer' }}>
-                  <div style={{ fontWeight: 600 }}>+ {w}</div>
+                  style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 6, fontSize: 12, padding: '9px', minHeight: 42, background: C.surface, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 9, cursor: 'pointer' }}>
+                  <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}><UIIcon name="bot" size={14} />{w}</div>
                   {workerRoles[w] && <div style={{ fontSize: 10, color: C.fg2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{workerRoles[w]}</div>}
                 </button>
               ))}
               <button draggable
                 onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'condition' }))}
                 onClick={() => addCondition()}
-                style={{ display: 'block', width: '100%', marginTop: 8, fontSize: 12, padding: '6px', background: C.surface3, color: C.fg, border: `1px dashed ${C.accent}`, borderRadius: 6, cursor: 'pointer' }}>◇ + Condition</button>
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', marginTop: 10, fontSize: 12, padding: '8px', background: C.accentDim, color: C.accent, border: `1px dashed ${C.accent}`, borderRadius: 9, cursor: 'pointer' }}><UIIcon name="sparkle" size={14} />Add decision</button>
             </div>
           )}
           {showRaw ? (

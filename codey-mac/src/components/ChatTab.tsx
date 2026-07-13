@@ -4,7 +4,6 @@ import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { Markdown } from './Markdown'
-import { RouteIcons } from './RouteIcons'
 import { PairingModal } from './PairingModal'
 import { consumePendingPairing } from './pendingPairing'
 import { ChatContextPanel } from './ChatContextPanel'
@@ -23,6 +22,7 @@ import { getDraft, setDraft } from './chatDrafts'
 import { useGitStatus } from '../hooks/useGitStatus'
 import { BranchPicker } from './BranchPicker'
 import { CreatePrModal } from './CreatePrModal'
+import { UIIcon } from './UIIcons'
 
 interface Props {
   chatId: string
@@ -352,6 +352,11 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   // didn't exist yet we open the modal; once it does, auto-link this chat.
   const pendingLinkChannelRef = useRef<null | 'telegram' | 'discord' | 'imessage'>(null)
   const [linkMenuOpen, setLinkMenuOpen] = useState(false)
+  const [editorMenuOpen, setEditorMenuOpen] = useState(false)
+  const [editors, setEditors] = useState<Array<{ id: string; name: string; installed: boolean }>>([])
+  const [editorsLoaded, setEditorsLoaded] = useState(false)
+  const [openingEditor, setOpeningEditor] = useState<string | null>(null)
+  const [runSettingsOpen, setRunSettingsOpen] = useState(false)
   const [followLatest, setFollowLatest] = useState(true)
   // Selected option labels for the active multi-select AskUserQuestion. Reset
   // whenever a new message arrives (the prompt is always the last message).
@@ -461,6 +466,28 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   // worktree) when set, otherwise the workspace's repo root. Git status and the
   // header BranchPicker both operate on this effective dir.
   const workingDir = chat?.workingDirOverride || workspaceDir
+
+  const openEditorMenu = async () => {
+    const nextOpen = !editorMenuOpen
+    setEditorMenuOpen(nextOpen)
+    if (!nextOpen || editorsLoaded) return
+    const result = await window.codey.editors.list()
+    if (result.ok) setEditors(result.data)
+    setEditorsLoaded(true)
+  }
+
+  const openInEditor = async (editor: { id: string; name: string }) => {
+    if (!workingDir) return
+    setOpeningEditor(editor.id)
+    const result = await window.codey.editors.open(editor.id, workingDir)
+    setOpeningEditor(null)
+    if (!result.ok) {
+      alert(`Couldn’t open ${editor.name}: ${result.error}`)
+      return
+    }
+    setEditorMenuOpen(false)
+  }
+
   const { status: gitStatus, refresh: refreshGit } = useGitStatus(workingDir)
   const [showPrModal, setShowPrModal] = useState(false)
   // Derived from the gitStatus useGitStatus already fetches — no extra IPC round-trip.
@@ -933,7 +960,9 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
         </div>
       )}
       <div style={styles.header}>
-        <span style={styles.workspaceTag}>{chat.workspaceName}</span>
+        <div style={styles.headerIdentity}>
+          <span style={styles.workspaceTag}><UIIcon name="workspace" size={13} />{chat.workspaceName}</span>
+        </div>
         <BranchPicker
           workingDir={workingDir}
           repoRoot={workspaceDir}
@@ -943,74 +972,131 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
             await setChatWorkingDir(chat.id, path)
           }}
         />
-        <select value={selectionValue} onChange={e => onSelectionChange(e.target.value)} style={{ ...styles.workerSelect, marginLeft: 'auto' }}>
-          <option value="none">No worker</option>
-          {workers.length > 0 && (
-            <optgroup label="Workers">
-              {workers.map(w => <option key={w.name} value={`worker:${w.name}`}>{w.name}</option>)}
-            </optgroup>
+        <div style={{ ...styles.openInWrap, marginLeft: 'auto' }}>
+          <button
+            onClick={() => void openEditorMenu()}
+            style={styles.openInButton}
+            disabled={!workingDir}
+            title={workingDir ? 'Open this project in an editor' : 'Project directory is unavailable'}
+          >
+            <UIIcon name="code" size={14} />
+            <span>Open in</span>
+            <span style={{ display: 'inline-flex', transform: editorMenuOpen ? 'rotate(-90deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={12} /></span>
+          </button>
+          {editorMenuOpen && (
+            <>
+              <div onClick={() => setEditorMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
+              <div style={styles.editorMenu} onClick={event => event.stopPropagation()}>
+                {!editorsLoaded ? (
+                  <div style={styles.editorMenuEmpty}>Checking installed editors…</div>
+                ) : editors.filter(editor => editor.installed).length > 0 ? (
+                  editors.filter(editor => editor.installed).map(editor => (
+                    <button
+                      key={editor.id}
+                      style={styles.editorMenuItem}
+                      disabled={openingEditor !== null}
+                      onClick={() => void openInEditor(editor)}
+                    >
+                      <UIIcon name="code" size={14} />
+                      <span>{openingEditor === editor.id ? `Opening ${editor.name}…` : editor.name}</span>
+                    </button>
+                  ))
+                ) : (
+                  <div style={styles.editorMenuEmpty}>No supported editor found in Applications.</div>
+                )}
+              </div>
+            </>
           )}
-          {teamNames.length > 0 && (
-            <optgroup label="Teams">
-              {teamNames.map(n => <option key={n} value={`team:${n}`}>{n}</option>)}
-            </optgroup>
+        </div>
+        <div style={styles.runSettingsWrap}>
+          <button
+            onClick={() => setRunSettingsOpen(open => !open)}
+            style={styles.runSettingsButton}
+            title="Configure worker, agent, model, and advisor"
+          >
+            <UIIcon name="tools" size={14} />
+            <span>Run settings</span>
+            <span style={{ display: 'inline-flex', transform: runSettingsOpen ? 'rotate(-90deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={12} /></span>
+          </button>
+          {runSettingsOpen && (
+            <>
+              <div onClick={() => setRunSettingsOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
+              <div style={styles.runSettingsMenu} onClick={event => event.stopPropagation()}>
+                <label style={styles.runSettingGroup}>
+                  <span style={styles.runSettingLabel}>Worker</span>
+                  <select value={selectionValue} onChange={e => void onSelectionChange(e.target.value)} style={styles.runSettingSelect}>
+                    <option value="none">No worker</option>
+                    {workers.length > 0 && (
+                      <optgroup label="Workers">
+                        {workers.map(w => <option key={w.name} value={`worker:${w.name}`}>{w.name}</option>)}
+                      </optgroup>
+                    )}
+                    {teamNames.length > 0 && (
+                      <optgroup label="Teams">
+                        {teamNames.map(n => <option key={n} value={`team:${n}`}>{n}</option>)}
+                      </optgroup>
+                    )}
+                  </select>
+                </label>
+                {chat.selection.type === 'team' ? (
+                  <div style={styles.runSettingsHint}>Teams choose their own agent routing.</div>
+                ) : (
+                  <>
+                    <label style={styles.runSettingGroup}>
+                      <span style={styles.runSettingLabel}>Agent</span>
+                      <select
+                        value={chat.agent ?? ''}
+                        onChange={e => void onAgentChange(e.target.value)}
+                        style={styles.runSettingSelect}
+                        title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : workerAgent ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
+                      >
+                        <option value="">{effectiveAgent}</option>
+                        {AGENT_NAMES.filter(n => enabledAgents.includes(n) || n === chat.agent).map(n => (
+                          <option key={n} value={n}>{n}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={styles.runSettingGroup}>
+                      <span style={styles.runSettingLabel}>Model</span>
+                      <select
+                        value={chat.model ?? ''}
+                        onChange={e => void onModelChange(e.target.value)}
+                        style={styles.runSettingSelect}
+                        title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : workerModel ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
+                        disabled={modelsForAgent.length === 0}
+                      >
+                        <option value="">{effectiveModel ?? '(default)'}</option>
+                        {modelsForAgent.map(m => (
+                          <option key={m.model} value={m.model}>{m.model}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      onClick={() => void setSoloAdvisor(chat.id, !(chat.soloAdvisor ?? false))}
+                      style={{ ...styles.advisorSetting, ...(chat.soloAdvisor ? styles.advisorSettingActive : undefined) }}
+                      title={chat.soloAdvisor
+                        ? 'Advisor is on — a stronger model can help when the selected model gets stuck'
+                        : 'Enable a stronger advisor model for help when the selected model gets stuck'}
+                      role="switch"
+                      aria-checked={chat.soloAdvisor ?? false}
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="sparkle" size={14} />Advisor</span>
+                      <span>{chat.soloAdvisor ? 'On' : 'Off'}</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
           )}
-        </select>
-        {chat.selection.type !== 'team' && (
-          <>
-            <select
-              value={chat.agent ?? ''}
-              onChange={e => onAgentChange(e.target.value)}
-              style={styles.workerSelect}
-              title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : workerAgent ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
-            >
-              <option value="">{`Agent: ${effectiveAgent}`}</option>
-              {AGENT_NAMES.filter(n => enabledAgents.includes(n) || n === chat.agent).map(n => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-            <select
-              value={chat.model ?? ''}
-              onChange={e => onModelChange(e.target.value)}
-              style={styles.workerSelect}
-              title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : workerModel ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
-              disabled={modelsForAgent.length === 0}
-            >
-              <option value="">{`Model: ${effectiveModel ?? '(default)'}`}</option>
-              {modelsForAgent.map(m => (
-                <option key={m.model} value={m.model}>{m.model}</option>
-              ))}
-            </select>
-            <button
-              onClick={() => setSoloAdvisor(chat.id, !(chat.soloAdvisor ?? false))}
-              style={{
-                ...styles.workerSelect,
-                cursor: 'pointer',
-                display: 'inline-flex', alignItems: 'center', gap: 5,
-                color: chat.soloAdvisor ? C.accent : C.fg3,
-                border: `1px solid ${chat.soloAdvisor ? C.accent : C.border2}`,
-                background: chat.soloAdvisor ? C.accentDim : C.surface3,
-                fontWeight: chat.soloAdvisor ? 600 : 400,
-              }}
-              title={chat.soloAdvisor
-                ? 'Advisor: ON — when the model gets stuck, a stronger advisor model gives it hints to continue'
-                : 'Advisor: OFF — click to let a stronger advisor model help when the model gets stuck'}
-              role="switch"
-              aria-checked={chat.soloAdvisor ?? false}
-              aria-label="Advisor"
-            >
-              💡 Advisor
-            </button>
-          </>
-        )}
-        <RouteIcons routes={chat.routes} />
+        </div>
         <div style={{ position: 'relative' }}>
           <button
             onClick={() => setLinkMenuOpen(o => !o)}
             style={styles.linkBtn}
             title={chat.routes?.length ? 'Manage channel links' : 'Link to a channel'}
+            aria-label="More actions"
           >
-            {chat.routes?.length ? '🔗' : '🔗+'}
+            <UIIcon name="more" size={17} />
           </button>
           {linkMenuOpen && (
             <>
@@ -1078,7 +1164,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
           title={panelOpen ? 'Hide context panel (⌘\\)' : 'Show context panel (⌘\\)'}
           aria-label={panelOpen ? 'Hide context panel' : 'Show context panel'}
         >
-          <PanelRightIcon color={C.fg} filled={panelOpen} />
+          <UIIcon name="panel" color={C.fg} filled={panelOpen} />
         </button>
       </div>
 
@@ -1558,11 +1644,12 @@ const styles: Record<string, React.CSSProperties> = {
   outer: { display: 'flex', flexDirection: 'row', height: '100%', minHeight: 0, position: 'relative' },
   container: { display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0, position: 'relative' },
   header: {
-    padding: '10px 16px', borderBottom: `1px solid ${C.border}`,
+    padding: '10px 18px', borderBottom: `1px solid ${C.border}`,
     display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
-    flexWrap: 'wrap', rowGap: 6,
+    flexWrap: 'wrap', rowGap: 8, background: C.surface,
   },
-  workspaceTag: { color: C.fg3, fontSize: 11, flexShrink: 0 },
+  headerIdentity: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
+  workspaceTag: { color: C.fg2, fontSize: 11, fontWeight: 650, flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 5 },
   gitBadge: {
     color: C.fg3, fontSize: 11, flexShrink: 0,
     background: C.surface3, border: `1px solid ${C.border2}`,
@@ -1573,9 +1660,46 @@ const styles: Record<string, React.CSSProperties> = {
   workerSelect: {
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6,
     color: C.fg2, fontSize: 12, padding: '4px 8px', outline: 'none',
-    flexShrink: 0, maxWidth: 200,
+    flexShrink: 0, maxWidth: 180,
   },
-  messages: { flex: 1, overflowY: 'auto', padding: 16 },
+  openInWrap: { position: 'relative', flexShrink: 0 },
+  openInButton: {
+    border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 8px', background: C.surface3,
+    color: C.fg2, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5,
+  },
+  runSettingsWrap: { position: 'relative', flexShrink: 0 },
+  runSettingsButton: {
+    border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 8px', background: C.surface3,
+    color: C.fg2, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5,
+  },
+  runSettingsMenu: {
+    position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 1000, minWidth: 244,
+    padding: 10, borderRadius: 9, background: C.surface2, border: `1px solid ${C.border2}`,
+    boxShadow: '0 12px 28px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', gap: 9,
+  },
+  runSettingGroup: { display: 'flex', flexDirection: 'column', gap: 4 },
+  runSettingLabel: { color: C.fg3, fontSize: 10, fontWeight: 700, letterSpacing: 0.45, textTransform: 'uppercase' },
+  runSettingSelect: {
+    width: '100%', minWidth: 0, background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6,
+    color: C.fg2, fontSize: 12, padding: '6px 8px', outline: 'none',
+  },
+  runSettingsHint: { padding: '4px 0', color: C.fg3, fontSize: 11, lineHeight: 1.4 },
+  advisorSetting: {
+    width: '100%', border: `1px solid ${C.border2}`, borderRadius: 6, padding: '7px 8px', background: C.surface3,
+    color: C.fg3, cursor: 'pointer', fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+  },
+  advisorSettingActive: { border: `1px solid ${C.accent}`, background: C.accentDim, color: C.accent, fontWeight: 600 },
+  editorMenu: {
+    position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 1000, minWidth: 205,
+    padding: 4, borderRadius: 9, background: C.surface2, border: `1px solid ${C.border2}`,
+    boxShadow: '0 12px 28px rgba(0,0,0,0.3)',
+  },
+  editorMenuItem: {
+    width: '100%', border: 'none', borderRadius: 6, padding: '8px 9px', background: 'transparent', color: C.fg2,
+    cursor: 'pointer', fontSize: 12, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8,
+  },
+  editorMenuEmpty: { color: C.fg3, fontSize: 11, lineHeight: 1.4, padding: '8px 9px', maxWidth: 220 },
+  messages: { flex: 1, overflowY: 'auto', padding: '22px max(22px, 5%)', background: C.bg },
   typingRow: { display: 'flex', alignItems: 'center', gap: 8, color: C.fg3, fontSize: 13, marginBottom: 12 },
   tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, paddingLeft: 4, paddingRight: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   tsMeta: { color: C.fg3, opacity: 0.55, fontVariantNumeric: 'tabular-nums' },
@@ -1585,9 +1709,9 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6, padding: '1px 6px', fontSize: 10,
     maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
-  inputContainer: { padding: '10px 14px 12px', borderTop: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 },
+  inputContainer: { padding: '12px max(16px, 4%) 16px', borderTop: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, background: C.surface },
   composer: {
-    background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 12,
+    background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 14,
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
     position: 'relative' as const,
   },
@@ -1602,17 +1726,18 @@ const styles: Record<string, React.CSSProperties> = {
     width: 26, height: 3, borderRadius: 2, background: C.fg3,
     transition: 'opacity 0.12s ease',
   },
-  composerRow: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: 6 },
+  composerRow: { display: 'flex', gap: 8, alignItems: 'flex-end', padding: 7 },
   input: {
     flex: 1, background: 'transparent', border: 'none', borderRadius: 8,
-    color: C.fg, fontSize: 13, padding: '10px 6px 8px', outline: 'none', resize: 'none',
+    color: C.fg, fontSize: 13, padding: '11px 6px 9px', outline: 'none', resize: 'none',
     lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
   },
   sendButton: {
-    width: 36, height: 36, borderRadius: 9, border: 'none',
+    width: 38, height: 38, borderRadius: 11, border: 'none',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, transition: 'background 0.15s',
   },
+  iconButtonPlus: { fontSize: 12, lineHeight: 1, marginLeft: 1, color: C.accent, fontWeight: 700 },
   orphanBanner: { padding: '8px 12px', background: C.warningBg, color: C.warningFg, fontSize: 12, borderTop: `1px solid ${C.border}` },
   dropOverlay: {
     position: 'absolute' as const, inset: 8, zIndex: 10,

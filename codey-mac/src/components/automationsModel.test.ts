@@ -150,8 +150,8 @@ describe('draftComplete', () => {
 describe('checkLabel', () => {
   it('maps each check state to its status-row label', () => {
     expect(checkLabel('pending')).toEqual({ text: 'checking…', tone: 'dim' })
-    expect(checkLabel('clean')).toEqual({ text: '✓ unattended-ready', tone: 'good' })
-    expect(checkLabel('gaps')).toEqual({ text: '⚠ may need input during runs', tone: 'warn' })
+    expect(checkLabel('clean')).toEqual({ text: 'unattended-ready', tone: 'good' })
+    expect(checkLabel('gaps')).toEqual({ text: 'may need input during runs', tone: 'warn' })
     expect(checkLabel('error')).toEqual({ text: 'check failed', tone: 'dim' })
     expect(checkLabel(undefined)).toBeNull()
   })

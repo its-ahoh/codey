@@ -1140,6 +1140,22 @@ async function wrap<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
   catch (e: any) { return { ok: false, error: e?.message ?? String(e) } }
 }
 
+const supportedEditors = [
+  { id: 'vscode', name: 'Visual Studio Code', app: 'Visual Studio Code.app' },
+  { id: 'cursor', name: 'Cursor', app: 'Cursor.app' },
+  { id: 'windsurf', name: 'Windsurf', app: 'Windsurf.app' },
+  { id: 'zed', name: 'Zed', app: 'Zed.app' },
+  { id: 'sublime', name: 'Sublime Text', app: 'Sublime Text.app' },
+  { id: 'nova', name: 'Nova', app: 'Nova.app' },
+  { id: 'xcode', name: 'Xcode', app: 'Xcode.app' },
+] as const
+
+async function findEditorApp(editor: typeof supportedEditors[number]): Promise<string | null> {
+  const fsMod = await import('fs')
+  const candidates = [join('/Applications', editor.app), join(app.getPath('home'), 'Applications', editor.app)]
+  return candidates.find(candidate => fsMod.existsSync(candidate)) ?? null
+}
+
 function parseSkillFrontmatter(md: string): { name: string; description: string } {
   const fmMatch = md.match(/^---[ \t]*\n([\s\S]*?)\n---/)
   if (!fmMatch) return { name: '', description: '' }
@@ -1800,6 +1816,32 @@ app.whenReady().then(async () => {
         }
       } catch {}
       shell.showItemInFolder(target)
+    })
+  )
+
+  ipcMain.handle('editors:list', async () =>
+    wrap(async () => Promise.all(supportedEditors.map(async editor => ({
+      id: editor.id,
+      name: editor.name,
+      installed: !!await findEditorApp(editor),
+    }))))
+  )
+
+  ipcMain.handle('editors:open', async (_e, editorId: string, workingDir: string) =>
+    wrap(async () => {
+      const editor = supportedEditors.find(candidate => candidate.id === editorId)
+      if (!editor) throw new Error('Unsupported editor')
+      if (!workingDir || typeof workingDir !== 'string') throw new Error('A project directory is required')
+      const fsMod = await import('fs')
+      if (!fsMod.existsSync(workingDir) || !fsMod.statSync(workingDir).isDirectory()) {
+        throw new Error('Project directory is unavailable')
+      }
+      const appPath = await findEditorApp(editor)
+      if (!appPath) throw new Error(`${editor.name} is not installed`)
+      const { execFile } = await import('child_process')
+      await new Promise<void>((resolve, reject) => {
+        execFile('open', ['-a', appPath, workingDir], (error) => error ? reject(error) : resolve())
+      })
     })
   )
 

@@ -54,6 +54,10 @@ declare global {
       dialog: {
         pickDirectory: () => Promise<IpcResult<string | null>>
       }
+      editors: {
+        list: () => Promise<IpcResult<Array<{ id: string; name: string; installed: boolean }>>>
+        open: (editorId: string, workingDir: string) => Promise<IpcResult<void>>
+      }
       globalTeams: {
         get: () => Promise<IpcResult<Record<string, TeamConfigRaw>>>
         set: (teams: Record<string, TeamConfigRaw>) => Promise<IpcResult<void>>

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { C } from '../theme'
 import { pillButton, unwrap } from './settingsAtoms'
+import { UIIcon } from './UIIcons'
 import type { SkillEntry, SkillsListResult } from '../codey-api'
 
 type AgentFilter = 'claude-code' | 'opencode' | 'codex'
@@ -16,7 +17,7 @@ const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
   'opencode': '~/.config/opencode/skills/',
 }
 
-export const SkillsTab: React.FC = () => {
+export const SkillsTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 }) => {
   const [data, setData] = useState<SkillsListResult>({ skills: [], projectDir: null })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -32,6 +33,16 @@ export const SkillsTab: React.FC = () => {
   const [copyMenuOpen, setCopyMenuOpen] = useState(false)
   const copyRef = useRef<HTMLDivElement>(null)
   const initDone = useRef(false)
+
+  // The primary action lives in the parent Tools tab bar; this counter gives
+  // that button a clean way to open the existing install form without a second
+  // competing "Add Skill" control in the content area.
+  useEffect(() => {
+    if (addRequest > 0) {
+      setAdding(true)
+      setAddInput('')
+    }
+  }, [addRequest])
 
   const reload = useCallback(async (agent: AgentFilter) => {
     setLoading(true)
@@ -187,7 +198,7 @@ export const SkillsTab: React.FC = () => {
           }}>
             {skill.scope === 'user' ? 'User' : 'Project'}
           </span>
-          <button onClick={() => setSelected(null)} style={iconBtn} title="Close">✕</button>
+          <button onClick={() => setSelected(null)} style={{ ...iconBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Close" aria-label="Close"><UIIcon name="trash" size={14} /></button>
         </div>
 
         {skill.description && (
@@ -207,7 +218,7 @@ export const SkillsTab: React.FC = () => {
             color: copyState.status === 'error' ? C.red : copyState.status === 'done' ? C.accent : C.fg3,
           }}>
             {copyState.status === 'copying' && `Copying to ${copyState.label}…`}
-            {copyState.status === 'done' && `✓ Copied to ${copyState.label}`}
+            {copyState.status === 'done' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><UIIcon name="check" size={14} />Copied to {copyState.label}</span>}
             {copyState.status === 'error' && copyState.msg}
           </div>
         )}
@@ -252,13 +263,11 @@ export const SkillsTab: React.FC = () => {
             )}
           </div>
           <span style={{ flex: 1 }} />
-          <button onClick={() => handleReveal(skill.dir)} style={pillButton('ghost')}>↗ Reveal in Finder</button>
+          <button onClick={() => handleReveal(skill.dir)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="folder" size={14} />Reveal in Finder</button>
           <button
             onClick={() => { const s = skill; setSelected(null); void handleRemove(s) }}
             style={{ ...pillButton('ghost'), color: C.red }}
-          >
-            ✕ Remove
-          </button>
+          ><UIIcon name="trash" size={14} />Remove</button>
         </div>
       </div>
     </div>
@@ -346,11 +355,7 @@ export const SkillsTab: React.FC = () => {
             <button onClick={() => { setAdding(false); setAddInput(''); setError(null) }} style={pillButton('ghost')}>Cancel</button>
           </div>
         </div>
-      ) : (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-          <button onClick={() => setAdding(true)} style={pillButton('primary')}>+ Add Skill</button>
-        </div>
-      )}
+      ) : null}
 
       {loading ? (
         <div style={{ color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 20 }}>Loading…</div>
@@ -359,7 +364,7 @@ export const SkillsTab: React.FC = () => {
           textAlign: 'center', padding: '36px 20px',
           color: C.fg3, fontSize: 13,
         }}>
-          <div style={{ fontSize: 28, marginBottom: 12, opacity: 0.4 }}>✶</div>
+          <div style={{ width: 52, height: 52, margin: '0 auto 12px', borderRadius: 16, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="sparkle" size={24} /></div>
           <div style={{ fontWeight: 500, color: C.fg2, marginBottom: 4 }}>No skills installed</div>
           <div style={{ fontSize: 12 }}>
             Skills are loaded from <code style={{ background: C.surface3, padding: '1px 5px', borderRadius: 4 }}>{AGENT_SKILL_HINTS[agentFilter]}</code>

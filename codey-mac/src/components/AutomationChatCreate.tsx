@@ -305,7 +305,7 @@ const panelStyle: React.CSSProperties = {
 
 const panelLabel: React.CSSProperties = {
   color: C.fg3, fontSize: 11, fontWeight: 600,
-  textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4,
+  marginBottom: 4,
 }
 
 const briefBox: React.CSSProperties = {

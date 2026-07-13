@@ -1,0 +1,54 @@
+import React from 'react'
+
+export type IconName =
+  | 'activity' | 'add' | 'archive' | 'bot' | 'chat' | 'check' | 'chevron' | 'close'
+  | 'code' | 'folder' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'play' | 'plus'
+  | 'refresh' | 'server' | 'settings' | 'sparkle' | 'tools' | 'trash' | 'users' | 'workspace'
+
+interface Props {
+  name: IconName
+  size?: number
+  strokeWidth?: number
+  filled?: boolean
+  color?: string
+}
+
+/** Small, neutral SVG icons used by the app shell. Keeping them in one place
+ * avoids the inconsistent emoji rendering that made navigation harder to scan. */
+export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, filled = false, color }) => {
+  const common = { fill: 'none', stroke: 'currentColor', strokeWidth, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  const paths: Record<IconName, React.ReactNode> = {
+    activity: <><path {...common} d="M3 12h4l3-7 4 14 3-7h4" /></>,
+    add: <><circle {...common} cx="12" cy="12" r="9" /><path {...common} d="M12 8v8M8 12h8" /></>,
+    archive: <><path {...common} d="M4 7h16v13H4zM3 4h18v3H3zM9 12h6" /></>,
+    bot: <><rect {...common} x="4" y="7" width="16" height="13" rx="3" /><path {...common} d="M12 3v4M9 13h.01M15 13h.01M8 17h8" /><circle fill="currentColor" cx="9" cy="13" r="1" /><circle fill="currentColor" cx="15" cy="13" r="1" /></>,
+    chat: <><path {...common} d="M20 11.5a7.5 7.5 0 01-8 7.5 8.7 8.7 0 01-3.3-.65L4 20l1.55-3.9A7.3 7.3 0 014 11.5 7.5 7.5 0 0112 4a7.5 7.5 0 018 7.5z" /></>,
+    check: <path {...common} d="M5 12.5l4.2 4.2L19 7" />,
+    chevron: <path {...common} d="M9 18l6-6-6-6" />,
+    close: <path {...common} d="M6 6l12 12M18 6L6 18" />,
+    code: <><path {...common} d="M8 9l-3 3 3 3M16 9l3 3-3 3M14 6l-4 12" /></>,
+    folder: <path {...common} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />,
+    key: <><circle {...common} cx="7.5" cy="15.5" r="3.5" /><path {...common} d="M10 13l8-8M15 6l3 3M13 8l3 3" /></>,
+    link: <><path {...common} d="M10 13a5 5 0 007.07.07l2-2a5 5 0 00-7.07-7.07l-1.15 1.15" /><path {...common} d="M14 11a5 5 0 00-7.07-.07l-2 2A5 5 0 0012 20l1.15-1.15" /></>,
+    mic: <><rect {...common} x="8" y="3" width="8" height="12" rx="4" /><path {...common} d="M5 11a7 7 0 0014 0M12 18v3M8 21h8" /></>,
+    more: <><circle fill="currentColor" cx="5" cy="12" r="1.5" /><circle fill="currentColor" cx="12" cy="12" r="1.5" /><circle fill="currentColor" cx="19" cy="12" r="1.5" /></>,
+    panel: <><rect {...common} x="3" y="3" width="18" height="18" rx="2" /><path {...common} d="M15 3v18" />{filled && <path fill="currentColor" stroke="none" d="M15 3h6v18h-6z" />}</>,
+    play: <path {...common} d="M8 5l11 7-11 7z" />,
+    plus: <path {...common} d="M12 5v14M5 12h14" />,
+    refresh: <><path {...common} d="M20 11a8 8 0 00-14.7-4.4L3 9" /><path {...common} d="M3 4v5h5M4 13a8 8 0 0014.7 4.4L21 15" /><path {...common} d="M21 20v-5h-5" /></>,
+    server: <><rect {...common} x="3" y="4" width="18" height="6" rx="2" /><rect {...common} x="3" y="14" width="18" height="6" rx="2" /><path {...common} d="M7 7h.01M7 17h.01" /></>,
+    settings: <><circle {...common} cx="12" cy="12" r="3" /><path {...common} d="M19.4 15a1.7 1.7 0 00.34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 00-1.88-.34 1.7 1.7 0 00-1.03 1.56v.08h-3v-.08A1.7 1.7 0 0010.68 18.7a1.7 1.7 0 00-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 007.02 15a1.7 1.7 0 00-1.56-1.03h-.08v-3h.08A1.7 1.7 0 007.02 9.94 1.7 1.7 0 006.68 8.06l-.06-.06 2.12-2.12.06.06a1.7 1.7 0 001.88.34 1.7 1.7 0 001.03-1.56v-.08h3v.08a1.7 1.7 0 001.03 1.56 1.7 1.7 0 001.88-.34l.06-.06 2.12 2.12-.06.06a1.7 1.7 0 00-.34 1.88 1.7 1.7 0 001.56 1.03h.08v3h-.08A1.7 1.7 0 0019.4 15z" /></>,
+    sparkle: <path {...common} d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5L12 3zM19 16l.7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7L19 16z" />,
+    tools: <><path {...common} d="M14.7 6.3a4.3 4.3 0 01-5.5 5.5L4 17v3h3l5.2-5.2a4.3 4.3 0 005.5-5.5l-2.5 2.5-2-2 2.5-2.5z" /></>,
+    trash: <><path {...common} d="M4 7h16M10 11v5M14 11v5M9 7l1-3h4l1 3M6 7l1 13h10l1-13" /></>,
+    users: <><path {...common} d="M16 20v-1.5a4.5 4.5 0 00-4.5-4.5h-4A4.5 4.5 0 003 18.5V20M9.5 10a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM17 11a3 3 0 000-6M21 20v-1.5A4.5 4.5 0 0017.5 14" /></>,
+    workspace: <><rect {...common} x="3" y="4" width="18" height="16" rx="2" /><path {...common} d="M3 9h18M8 14h3" /></>,
+  }
+  return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={color ? { color } : undefined}>{paths[name]}</svg>
+}
+
+export const CodeyMark: React.FC<{ size?: number }> = ({ size = 28 }) => (
+  <div style={{ width: size, height: size, borderRadius: Math.round(size * .3), background: 'var(--accent)', color: 'var(--onAccent)', display: 'grid', placeItems: 'center', boxShadow: '0 5px 14px var(--accentDim)', flexShrink: 0 }}>
+    <UIIcon name="code" size={Math.round(size * .65)} strokeWidth={2.15} />
+  </div>
+)

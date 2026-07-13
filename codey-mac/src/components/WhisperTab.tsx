@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { C } from '../theme'
 import { HotkeyRecorder } from './HotkeyRecorder'
+import { UIIcon } from './UIIcons'
 
 interface WhisperTabProps {
   isGatewayRunning: boolean
@@ -438,9 +439,9 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
         const downloadErrorForThis = dlState.msg && !dlState.active && !selectedDownloaded
         const note = LOCAL_MODELS.find(m => m.value === voice.localModel)?.note ?? ''
 
-        // Three states per model: ⚡ warmed (instant), ✓ downloaded but not
-        // warmed (first use = 30-90s compile), ⬇ not downloaded.
-        const prefixFor = (m: string) => isWarmed(m) ? '⚡ ' : isDownloaded(m) ? '✓ ' : '⬇ '
+        // Three states per model: warmed (instant), downloaded but not warmed
+        // (first use = 30-90s compile), or not downloaded.
+        const prefixFor = (m: string) => isWarmed(m) ? 'Ready · ' : isDownloaded(m) ? 'Downloaded · ' : 'Not downloaded · '
 
         let statusLine: React.ReactNode = note
         let statusColor: string = C.fg3
@@ -454,7 +455,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
           statusLine = `Compiling for your Mac… ${warmElapsed}s (one-time, ~30-90s on first use)`
           statusColor = C.accent
         } else if (selectedWarmed) {
-          statusLine = '⚡ Ready — instant load on next Fn press'
+          statusLine = 'Ready — instant load on next Fn press'
           statusColor = C.green
         } else if (selectedDownloaded) {
           statusLine = 'Downloaded. First Fn press will compile model for your Mac (30-90s, one-time).'
@@ -486,13 +487,14 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
                     opacity: dlState.active || selectedDownloaded ? 0.7 : 1,
                     cursor: dlState.active || selectedDownloaded ? 'default' : 'pointer',
                     minWidth: 120,
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                   }}
                 >
                   {selectedDownloaded
-                    ? (selectedWarmed ? '⚡ Ready' : '✓ Downloaded')
+                    ? <>{selectedWarmed ? <UIIcon name="check" size={14} /> : <UIIcon name="archive" size={14} />}{selectedWarmed ? 'Ready' : 'Downloaded'}</>
                     : downloadingThis
                       ? `Downloading… ${Math.round(dlState.fraction * 100)}%`
-                      : 'Download'}
+                      : <><UIIcon name="archive" size={14} />Download</>}
                 </button>
                 {selectedDownloaded && !downloadingThis && !warmingThis && (
                   <button

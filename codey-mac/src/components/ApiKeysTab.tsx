@@ -3,6 +3,7 @@ import { C } from '../theme'
 import {
   inputStyle, pillButton, unwrap,
 } from './settingsAtoms'
+import { UIIcon } from './UIIcons'
 
 interface ApiKeyEntry { name: string; apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string }
 
@@ -34,6 +35,7 @@ const ApiRow: React.FC<{
     const hasAnthropicUrl = !!entry.anthropicBaseUrl
     const hasOpenaiUrl = !!entry.openaiBaseUrl
     const hasAnyUrl = hasAnthropicUrl || hasOpenaiUrl
+    const keyTail = entry.apiKey.trim().slice(-4)
     const urlLineStyle: React.CSSProperties = {
       color: C.fg3, fontSize: 11,
       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -49,7 +51,16 @@ const ApiRow: React.FC<{
           <div style={{ fontWeight: 600, fontSize: 13 }}>
             {entry.name}
           </div>
-          <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>🔑</div>
+          <div
+            style={{
+              color: C.fg3, fontSize: 11, marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '3px 7px', borderRadius: 7, background: C.surface3, border: `1px solid ${C.border2}`,
+            }}
+            title={keyTail ? `API key ending in ${keyTail}` : 'API key saved'}
+          >
+            <UIIcon name="key" size={13} />
+            <span>{keyTail ? `Key · •••• ${keyTail}` : 'Key saved'}</span>
+          </div>
           {hasAnyUrl ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginTop: 2 }}>
               {hasAnthropicUrl && (
