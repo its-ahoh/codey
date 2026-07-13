@@ -2,6 +2,7 @@ import React from 'react'
 import { C } from '../theme'
 import { statusMeta, formatAgo, type SidecarView, type StatusTone } from './taskHudView'
 import { createPrButtonState } from './createPrModel'
+import { UIIcon } from './UIIcons'
 
 interface Props {
   view: SidecarView
@@ -55,7 +56,7 @@ export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, width, b
         title={collapsed ? 'Expand status' : 'Collapse status'}
         aria-expanded={!collapsed}
       >
-        <span style={styles.headerLabel}>Status</span>
+        <span style={styles.headerLabel}><UIIcon name="activity" size={13} />Task status</span>
         <div style={styles.headerRight}>
           {loading && <span style={styles.headerLoading}>updating…</span>}
           <svg
@@ -115,7 +116,7 @@ export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, width, b
             </div>
           )}
 
-          <div style={styles.footer}>Open panel →</div>
+          <div style={styles.footer}>Open task panel →</div>
         </>
       )}
     </div>
@@ -127,18 +128,18 @@ const styles: Record<string, React.CSSProperties> = {
     // Floats over the chat in the top-right corner — does not take layout space.
     position: 'absolute', top: 52, right: 16, zIndex: 6,
     maxHeight: 'calc(100% - 68px)',
-    background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12,
-    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-    display: 'flex', flexDirection: 'column', gap: 10,
-    padding: '12px 13px', overflowY: 'auto', cursor: 'pointer',
+    background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 14,
+    boxShadow: '0 14px 32px rgba(0,0,0,0.28)',
+    display: 'flex', flexDirection: 'column', gap: 11,
+    padding: '13px 14px', overflowY: 'auto', cursor: 'pointer',
   },
   header: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     cursor: 'pointer', userSelect: 'none',
     // Stretch the click target across the full card width.
-    margin: '-12px -13px 0', padding: '12px 13px 8px',
+    margin: '-13px -14px 0', padding: '13px 14px 9px',
   },
-  headerLabel: { fontSize: 10, fontWeight: 600, letterSpacing: 0.6, textTransform: 'uppercase', color: C.fg3 },
+  headerLabel: { fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: C.fg3, display: 'inline-flex', alignItems: 'center', gap: 5 },
   headerRight: { display: 'flex', alignItems: 'center', gap: 8 },
   headerLoading: { fontSize: 10, color: C.fg3, fontStyle: 'italic' },
   chevron: { color: C.fg2, display: 'block', flex: 'none', transition: 'transform 0.15s ease' },

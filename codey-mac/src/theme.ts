@@ -39,6 +39,9 @@ interface Palette {
   // warning (orange) surfaces — orphan banners, gateway-stopped notice
   warningBg: string
   warningFg: string
+  // translucent surface used by the persistent navigation rail
+  sidebarBg: string
+  sidebarBorder: string
 }
 
 // ============================================================================
@@ -48,24 +51,24 @@ interface Palette {
 
 // ---- Classic: the original macOS-style look (Apple blue + neutral grays) ----
 export const classicDark: Palette = {
-  bg:        '#141414',
-  surface:   '#1e1e1e',
-  surface2:  '#252525',
-  surface3:  '#2d2d2d',
-  border:    '#2e2e2e',
-  border2:   '#383838',
-  fg:        '#f0f0f0',
-  fg2:       '#a0a0a0',
-  fg3:       '#606060',
-  accent:    '#0A84FF',
-  accentDim: '#0A84FF22',
+  bg:        '#10131b',
+  surface:   '#171b26',
+  surface2:  '#1d2230',
+  surface3:  '#262d3d',
+  border:    '#293144',
+  border2:   '#374159',
+  fg:        '#f2f5fb',
+  fg2:       '#aeb8cc',
+  fg3:       '#71809b',
+  accent:    '#6d7cff',
+  accentDim: '#6d7cff22',
   green:     '#32D74B',
   red:       '#FF453A',
   yellow:    '#FFD60A',
-  userBg:    '#0A84FF',
+  userBg:    '#6475f5',
   onAccent:  '#ffffff',
-  aiBg:      '#252525',
-  scrollbar: '#3a3a3a',
+  aiBg:      '#1b2030',
+  scrollbar: '#3b465e',
   dangerBg:      '#3a1a1a',
   dangerBorder:  '#6a2a2a',
   dangerFg:      '#ff8080',
@@ -77,27 +80,29 @@ export const classicDark: Palette = {
   logFg:         '#6a9955',
   warningBg:     '#ff950033',
   warningFg:     '#ffb84d',
+  sidebarBg:     'rgba(23, 27, 38, 0.76)',
+  sidebarBorder: 'rgba(84, 100, 132, 0.44)',
 }
 
 export const classicLight: Palette = {
-  bg:        '#ffffff',
-  surface:   '#f5f5f7',
-  surface2:  '#ebebef',
-  surface3:  '#e1e1e6',
-  border:    '#d2d2d7',
-  border2:   '#c7c7cc',
-  fg:        '#1d1d1f',
-  fg2:       '#6e6e73',
-  fg3:       '#8e8e93',
-  accent:    '#0A84FF',
-  accentDim: '#0A84FF22',
+  bg:        '#f6f7fb',
+  surface:   '#ffffff',
+  surface2:  '#f9faff',
+  surface3:  '#edf0f7',
+  border:    '#e0e5f0',
+  border2:   '#d3dae9',
+  fg:        '#172033',
+  fg2:       '#536078',
+  fg3:       '#7f8aa1',
+  accent:    '#5265e8',
+  accentDim: '#5265e81c',
   green:     '#34C759',
   red:       '#FF3B30',
   yellow:    '#FFCC00',
-  userBg:    '#0A84FF',
+  userBg:    '#5265e8',
   onAccent:  '#ffffff',
-  aiBg:      '#f5f5f7',
-  scrollbar: '#c7c7cc',
+  aiBg:      '#ffffff',
+  scrollbar: '#cbd3e1',
   dangerBg:      '#FFE5E5',
   dangerBorder:  '#FFB3B3',
   dangerFg:      '#C92A2A',
@@ -109,6 +114,8 @@ export const classicLight: Palette = {
   logFg:         '#28792B',
   warningBg:     '#FFE9C4',
   warningFg:     '#A85D00',
+  sidebarBg:     'rgba(255, 255, 255, 0.76)',
+  sidebarBorder: 'rgba(211, 218, 233, 0.76)',
 }
 
 // ---- Terminal: warm paper + terminal green; matches the Codey landing page ----
@@ -142,6 +149,8 @@ export const terminalDark: Palette = {
   logFg:         '#2BE69B',
   warningBg:     '#3A2E16',
   warningFg:     '#F0B86B',
+  sidebarBg:     'rgba(28, 26, 22, 0.78)',
+  sidebarBorder: 'rgba(74, 68, 56, 0.58)',
 }
 
 export const terminalLight: Palette = {
@@ -174,6 +183,8 @@ export const terminalLight: Palette = {
   logFg:         '#54F0B0',
   warningBg:     '#F7EBCF',
   warningFg:     '#8A5A14',
+  sidebarBg:     'rgba(251, 248, 241, 0.78)',
+  sidebarBorder: 'rgba(216, 207, 188, 0.72)',
 }
 
 export type PaletteName = 'classic' | 'terminal'

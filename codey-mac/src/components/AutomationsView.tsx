@@ -5,6 +5,7 @@ import { pillButton, unwrap } from './settingsAtoms'
 import { scheduleSummary } from './automationsModel'
 import { AutomationChatCreate } from './AutomationChatCreate'
 import { AutomationOnePager } from './AutomationOnePager'
+import { UIIcon } from './UIIcons'
 import type { Automation, AutomationRun, AutomationTarget } from '../../../packages/core/src/types/automation'
 
 interface Props { onClose: () => void }
@@ -50,6 +51,7 @@ export const AutomationsView: React.FC<Props> = ({ onClose }) => {
   return (
     <OverlayWindow
       title="Automations"
+      icon="activity"
       onClose={atList ? onClose : () => setPanel({ kind: 'list' })}
       closeTitle={atList ? 'Close (Esc)' : 'Back'}
       closeAriaLabel={atList ? 'Close' : 'Back'}
@@ -154,26 +156,28 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
     t.kind === 'team' ? `team: ${t.teamName} (${t.workspaceName})` : `prompt: ${t.workspaceName}`
 
   return (
-    <div style={{ padding: '16px 20px', flex: 1, overflowY: 'auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <button style={pillButton('primary')} onClick={onNew}>+ New automation</button>
+    <div style={styles.list}>
+      <div style={styles.listTop}>
+        <div><div style={styles.listTitle}>Automations</div><div style={styles.listSub}>Let Codey run routine work on a schedule.</div></div>
+        {automations.length > 0 && (
+          <button style={{ ...pillButton('primary'), display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={onNew}><UIIcon name="add" size={15} />New automation</button>
+        )}
       </div>
       {loading ? (
-        <div style={{ color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 20 }}>Loading…</div>
+        <div style={styles.loading}>Loading automations…</div>
       ) : automations.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '36px 20px', color: C.fg3, fontSize: 13 }}>
-          <div style={{ fontSize: 28, marginBottom: 12, opacity: 0.4 }}>⏱</div>
-          <div style={{ fontWeight: 500, color: C.fg2, marginBottom: 4 }}>No automations yet</div>
-          <div style={{ fontSize: 12 }}>
-            Create one by chatting with Codey - it will pin down every detail, then run unattended.
-          </div>
+        <div style={styles.emptyState}>
+          <span style={styles.emptyIcon}><UIIcon name="activity" size={27} /></span>
+          <div style={styles.emptyTitle}>Put routine work on autopilot</div>
+          <div style={styles.emptyText}>Create an automation by chatting with Codey, then let it run unattended.</div>
+          <button style={{ ...pillButton('primary'), marginTop: 16, display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={onNew}><UIIcon name="add" size={15} />Create automation</button>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {automations.map(a => {
             const last = lastStatus[a.id]
             return (
-              <div key={a.id} style={rowStyle}>
+              <div key={a.id} style={{ ...rowStyle, borderColor: a.enabled ? C.border2 : C.border }}>
                 <input
                   type="checkbox"
                   checked={a.enabled}
@@ -183,6 +187,7 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
                 />
                 <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => onOpen(a.id)}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', background: a.enabled ? C.accentDim : C.surface3, color: a.enabled ? C.accent : C.fg3 }}><UIIcon name="activity" size={15} /></span>
                     <span style={{ color: C.fg, fontSize: 13, fontWeight: 600 }}>{a.name}</span>
                     <span style={{ color: C.fg3, fontSize: 11 }}>{scheduleSummary(a.schedule)}</span>
                   </div>
@@ -194,9 +199,9 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                  <button style={pillButton('ghost')} onClick={() => onOpen(a.id)}>Open</button>
-                  <button style={pillButton('ghost')} disabled={!!runningIds[a.id]} onClick={() => void runNow(a.id)}>
-                    {runningIds[a.id] ? 'Running…' : 'Run now'}
+                  <button style={pillButton('ghost')} onClick={() => onOpen(a.id)}>Details</button>
+                  <button style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 5 }} disabled={!!runningIds[a.id]} onClick={() => void runNow(a.id)}>
+                    <UIIcon name="play" size={13} />{runningIds[a.id] ? 'Running…' : 'Run'}
                   </button>
                 </div>
               </div>
@@ -212,8 +217,8 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
 
 const rowStyle: React.CSSProperties = {
   display: 'flex', gap: 10, alignItems: 'flex-start',
-  background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10,
-  padding: '12px 14px',
+  background: C.surface, border: `1px solid ${C.border}`, borderRadius: 13,
+  padding: '14px 15px', boxShadow: '0 5px 14px rgba(0,0,0,0.06)',
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -222,4 +227,13 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '10px 20px 0', background: C.dangerBg ?? (C.red + '22'), color: C.dangerFg ?? C.red,
     padding: 10, borderRadius: 8, fontSize: 12,
   },
+  list: { padding: '22px 24px', flex: 1, overflowY: 'auto', background: C.bg },
+  listTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 20 },
+  listTitle: { color: C.fg, fontSize: 17, fontWeight: 750, letterSpacing: '-0.02em' },
+  listSub: { color: C.fg3, fontSize: 12, marginTop: 4 },
+  loading: { color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 46 },
+  emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', maxWidth: 320, margin: '70px auto 0' },
+  emptyIcon: { width: 60, height: 60, display: 'grid', placeItems: 'center', borderRadius: 18, background: C.accentDim, color: C.accent, border: `1px solid ${C.accent}` },
+  emptyTitle: { color: C.fg, fontSize: 15, fontWeight: 700, marginTop: 15 },
+  emptyText: { color: C.fg2, fontSize: 12, lineHeight: 1.55, marginTop: 6 },
 }

@@ -1,6 +1,7 @@
 import React from 'react'
 import { C } from '../theme'
 import { useUpdater } from '../hooks/useUpdater'
+import { UIIcon } from './UIIcons'
 
 export const UpdateButton: React.FC = () => {
   const { state, download, install } = useUpdater()
@@ -10,7 +11,7 @@ export const UpdateButton: React.FC = () => {
   if (state.phase === 'available') {
     return (
       <button style={styles.action} onClick={() => download()} title={`Download version ${state.version}`}>
-        ↑ Update to v{state.version}
+        <UIIcon name="refresh" size={14} />Update to v{state.version}
       </button>
     )
   }
@@ -22,16 +23,16 @@ export const UpdateButton: React.FC = () => {
   // phase === 'ready'
   return (
     <button style={styles.action} onClick={() => install()} title="Restart and install the update">
-      Restart to update
+      <UIIcon name="refresh" size={14} />Restart to update
     </button>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
   action: {
-    width: '100%', padding: '8px 10px', border: 'none', marginBottom: 4,
+    width: '100%', padding: '8px 10px', border: `1px solid ${C.accent}`, marginBottom: 4,
     background: C.accentDim, color: C.fg, cursor: 'pointer',
-    textAlign: 'left', borderRadius: 6, fontSize: 13, fontWeight: 600,
+    textAlign: 'left', borderRadius: 8, fontSize: 12, fontWeight: 650, display: 'flex', alignItems: 'center', gap: 7,
   },
   progress: {
     width: '100%', padding: '8px 10px', marginBottom: 4,

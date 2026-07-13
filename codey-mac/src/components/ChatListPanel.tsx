@@ -7,6 +7,7 @@ import { RouteIcons } from './RouteIcons'
 import { UpdateButton } from './UpdateButton'
 import { setPendingPairing } from './pendingPairing'
 import { onWorkspacesChanged } from './workspacesChanged'
+import { UIIcon } from './UIIcons'
 
 interface Props {
   onOpenSettings: (tab?: string) => void
@@ -89,8 +90,11 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
     if (lastWorkspace) localStorage.setItem('codey.lastWorkspace', lastWorkspace)
   }, [lastWorkspace])
 
+  const selectedWorkspace = activeChatId ? state.chats[activeChatId]?.workspaceName : undefined
+  const newChatWorkspace = selectedWorkspace || lastWorkspace
+
   const handleNewChat = async (workspaceName?: string) => {
-    const target = workspaceName || lastWorkspace
+    const target = workspaceName || selectedWorkspace || lastWorkspace
     if (!target) return
     const chat = await createChat(target)
     setLastWorkspace(chat.workspaceName)
@@ -238,16 +242,36 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
 
   return (
     <div style={{ ...styles.root, width: narrow ? 180 : 240 }}>
-      <div style={styles.topNav}>
-        <button style={styles.settingsBtn} onClick={onOpenAutomations}>
-          ⏱ Automations
+      <div style={styles.brandArea}>
+        <button
+          style={styles.newChatBtn}
+          onClick={() => handleNewChat()}
+          disabled={!newChatWorkspace}
+          title={newChatWorkspace ? `New chat in ${newChatWorkspace}` : 'No workspace available'}
+        >
+          <UIIcon name="add" size={16} strokeWidth={2.1} />
+          <span>New chat</span>
+          {newChatWorkspace && <span style={styles.newChatWorkspace}>{newChatWorkspace}</span>}
+        </button>
+      </div>
+      <div style={styles.functionSection}>
+        <div style={styles.sectionLabel}>Quick access</div>
+        <div style={styles.topNav}>
+        <button style={styles.navButton} onClick={onOpenAutomations}>
+          <span style={styles.navIcon}><UIIcon name="activity" size={16} /></span>
+          <span>Automations</span>
           {automationsUnseenCount > 0 && (
             <span style={styles.navBadge}>{automationsUnseenCount > 9 ? '9+' : automationsUnseenCount}</span>
           )}
         </button>
-        <button style={styles.settingsBtn} onClick={onOpenTools} title="Skills & playbooks">🛠 Tools</button>
+        <button style={styles.navButton} onClick={onOpenTools} title="Skills & playbooks">
+          <span style={styles.navIcon}><UIIcon name="tools" size={16} /></span><span>Tools</span>
+        </button>
+        </div>
       </div>
-      <div style={styles.scroll}>
+      <div style={styles.chatSection}>
+        <div style={styles.chatSectionHeader}><span>Chats</span><span>{state.order.length}</span></div>
+        <div style={styles.scroll}>
         {groupNames.length === 0 && (
           <div style={styles.empty}>No chats yet. Click "New Chat".</div>
         )}
@@ -288,7 +312,8 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                 }}
                 onDragEnd={() => { setDraggingWs(null); setDragOverWs(null) }}
               >
-                <span style={styles.chevron}>{collapsed ? '📁︎' : '📂︎'}</span>
+                <span style={{ ...styles.chevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={13} /></span>
+                <span style={styles.workspaceIcon}><UIIcon name="folder" size={14} /></span>
                 {renamingWs === ws ? (
                   <input
                     autoFocus
@@ -312,7 +337,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                   style={styles.groupAddBtn}
                   onClick={(e) => { e.stopPropagation(); handleNewChat(ws) }}
                   title={`New chat in "${ws}"`}
-                >+</button>
+                ><UIIcon name="plus" size={15} /></button>
               </div>
               {!collapsed && groups[ws].map(chat => {
                 const active = chat.id === activeChatId
@@ -324,7 +349,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                   <div
                     key={chat.id}
                     title={orphaned ? 'Workspace deleted' : undefined}
-                    style={{ ...styles.item, background: active ? C.accentDim : 'transparent', opacity: orphaned ? 0.5 : 1 }}
+                    style={{ ...styles.item, background: active ? C.accentDim : 'transparent', borderColor: active ? C.accent : 'transparent', opacity: orphaned ? 0.5 : 1 }}
                     onClick={() => !isRenaming && selectChat(chat.id)}
                     onDoubleClick={(e) => {
                       e.stopPropagation()
@@ -338,6 +363,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                       setChatMenu({ chat, x: e.clientX, y: e.clientY })
                     }}
                   >
+                    <span style={{ ...styles.chatIcon, color: active ? C.accent : C.fg3 }}><UIIcon name="chat" size={14} /></span>
                     {isRenaming ? (
                       <input
                         autoFocus
@@ -374,7 +400,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                           }
                         }}
                         title="Delete chat"
-                      >×</button>
+                      ><UIIcon name="trash" size={13} /></button>
                     )}
                   </div>
                 )
@@ -382,16 +408,20 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
             </div>
           )
         })}
+        </div>
       </div>
-      <div style={styles.footer}>
+      <div style={styles.manageSection}>
+        <div style={styles.sectionLabel}>Workspace</div>
+        <div style={styles.footer}>
         <UpdateButton />
         <button
-          style={styles.settingsBtn}
+          style={styles.footerButton}
           onClick={handleAddWorkspace}
           disabled={addingWorkspace}
           title="Pick a folder and create a new workspace + chat"
-        >{addingWorkspace ? 'Picking…' : '+ Add Workspace'}</button>
-        <button style={styles.settingsBtn} onClick={() => onOpenSettings()}>⚙ Settings</button>
+        ><UIIcon name="workspace" size={15} />{addingWorkspace ? 'Picking…' : 'Add workspace'}</button>
+        <button style={styles.footerButton} onClick={() => onOpenSettings()}><UIIcon name="settings" size={15} />Settings</button>
+        </div>
       </div>
       {wsMenu && (
         <div
@@ -400,25 +430,25 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
           onClick={(e) => e.stopPropagation()}
         >
           <div style={styles.menuHeader}>{wsMenu.workspace}</div>
-          <button style={styles.menuItem} onClick={() => handleNewChat(wsMenu.workspace).then(closeWsMenu)}>+ New chat</button>
+          <button style={styles.menuItem} onClick={() => handleNewChat(wsMenu.workspace).then(closeWsMenu)}><UIIcon name="add" size={14} />New chat</button>
           <button
             style={{ ...styles.menuItem, opacity: wsMenu.workspace === 'default' ? 0.4 : 1 }}
             disabled={wsMenu.workspace === 'default'}
             onClick={() => beginRenameWs(wsMenu.workspace)}
-          >✎ Rename…</button>
+          ><UIIcon name="code" size={14} />Rename…</button>
           <button
             style={styles.menuItem}
             onClick={() => setAsGateway(wsMenu.workspace)}
             disabled={wsMenu.workspace === gatewayWorkspace}
-          >★ Set as Gateway default</button>
-          <button style={styles.menuItem} onClick={() => revealWs(wsMenu.workspace)}>↗ Reveal in Finder</button>
-          <button style={styles.menuItem} onClick={() => editMemoryWs(wsMenu.workspace)}>✦ Edit memory…</button>
+          ><UIIcon name="server" size={14} />Set as Gateway default</button>
+          <button style={styles.menuItem} onClick={() => revealWs(wsMenu.workspace)}><UIIcon name="folder" size={14} />Reveal in Finder</button>
+          <button style={styles.menuItem} onClick={() => editMemoryWs(wsMenu.workspace)}><UIIcon name="sparkle" size={14} />Edit memory…</button>
           <div style={styles.menuSep} />
           <button
             style={{ ...styles.menuItem, color: C.red, opacity: wsMenu.workspace === 'default' ? 0.4 : 1 }}
             disabled={wsMenu.workspace === 'default'}
             onClick={() => deleteWs(wsMenu.workspace)}
-          >✕ Delete workspace</button>
+          ><UIIcon name="trash" size={14} />Delete workspace</button>
         </div>
       )}
       {chatMenu && (
@@ -433,7 +463,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
               <button
                 style={styles.menuItem}
                 onClick={() => setChatMenuView('connect')}
-              >🔗 Connect to channel...</button>
+              ><UIIcon name="link" size={14} />Connect to channel...</button>
               <button
                 style={styles.menuItem}
                 onClick={() => {
@@ -442,7 +472,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                   setRenamingId(c.id)
                   setRenameValue(c.title)
                 }}
-              >✎ Rename…</button>
+              ><UIIcon name="code" size={14} />Rename…</button>
               <button
                 style={styles.menuItem}
                 onClick={async () => {
@@ -460,7 +490,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                     await deleteChat(c.id)
                   }
                 }}
-              >✕ Delete chat</button>
+              ><UIIcon name="trash" size={14} />Delete chat</button>
             </>
           ) : (
             <>
@@ -506,12 +536,23 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
 const styles: Record<string, React.CSSProperties> = {
   root: {
     width: 240,
-    background: C.surface,
-    borderRight: `1px solid ${C.border}`,
+    background: C.sidebarBg,
+    borderRight: `1px solid ${C.sidebarBorder}`,
     display: 'flex',
     flexDirection: 'column',
     flexShrink: 0,
+    gap: 8,
+    padding: 8,
+    backdropFilter: 'blur(22px) saturate(1.2)',
+    WebkitBackdropFilter: 'blur(22px) saturate(1.2)',
   },
+  brandArea: { padding: '4px' },
+  newChatBtn: {
+    width: '100%', border: 'none', borderRadius: 9, padding: '9px 10px',
+    background: C.accent, color: C.onAccent, cursor: 'pointer', fontSize: 12, fontWeight: 700,
+    display: 'flex', alignItems: 'center', gap: 7, boxShadow: `0 6px 16px ${C.accentDim}`,
+  },
+  newChatWorkspace: { marginLeft: 'auto', minWidth: 0, maxWidth: 92, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.72, fontWeight: 550, fontSize: 10 },
   header: { padding: '10px 12px', borderBottom: `1px solid ${C.border}` },
   newBtn: {
     width: '100%',
@@ -523,6 +564,10 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 12,
   },
+  functionSection: { padding: 8, borderRadius: 12, background: C.surface2, border: `1px solid ${C.sidebarBorder}` },
+  chatSection: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 12, background: C.surface2, border: `1px solid ${C.sidebarBorder}` },
+  chatSectionHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 11px 7px', color: C.fg3, fontSize: 10, fontWeight: 750, letterSpacing: 0.75, textTransform: 'uppercase', borderBottom: `1px solid ${C.border}` },
+  sectionLabel: { color: C.fg3, fontSize: 10, fontWeight: 750, letterSpacing: 0.75, textTransform: 'uppercase', margin: '1px 4px 6px' },
   scroll: { flex: 1, overflowY: 'auto', padding: 6 },
   empty: { color: C.fg3, fontSize: 12, padding: 12, textAlign: 'center' },
   groupHeader: {
@@ -530,24 +575,26 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '6px 8px', color: C.fg3, fontSize: 13, fontWeight: 600,
     cursor: 'pointer', userSelect: 'none',
   },
+  workspaceIcon: { color: C.fg3, display: 'inline-flex', flexShrink: 0 },
   groupHeaderDropTarget: { boxShadow: `inset 0 2px 0 ${C.accent}` },
   groupHeaderDragging: { opacity: 0.45 },
   groupName: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   groupAddBtn: {
-    background: 'transparent', border: 'none', color: C.fg3,
-    cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 4px',
+    background: C.surface3, border: `1px solid ${C.border2}`, color: C.fg2,
+    cursor: 'pointer', lineHeight: 1, padding: 3, borderRadius: 5, display: 'inline-flex',
   },
   gatewayBadge: {
     width: 8, height: 8, borderRadius: '50%',
     background: C.green, boxShadow: `0 0 6px ${C.green}`,
     flexShrink: 0,  
   },
-  chevron: { display: 'inline-block', fontSize: 12, lineHeight: 1, transition: 'transform 0.15s ease' },
+  chevron: { display: 'inline-flex', color: C.fg3, transition: 'transform 0.15s ease' },
   item: {
     display: 'flex', alignItems: 'center', gap: 6,
-    padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
-    fontSize: 12, color: C.fg2, margin: '1px 2px',
+    padding: '7px 9px', borderRadius: 8, cursor: 'pointer',
+    fontSize: 12, color: C.fg2, margin: '2px 2px', border: '1px solid transparent',
   },
+  chatIcon: { display: 'inline-flex', flexShrink: 0 },
   title: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   renameInput: {
     flex: 1, background: C.surface3, border: `1px solid ${C.border2}`,
@@ -557,16 +604,18 @@ const styles: Record<string, React.CSSProperties> = {
   unreadDot: { width: 6, height: 6, borderRadius: '50%', background: C.accent, flexShrink: 0 },
   xBtn: {
     background: 'transparent', border: 'none', color: C.fg3,
-    cursor: 'pointer', fontSize: 14, padding: '0 4px',
+    cursor: 'pointer', padding: 3, display: 'inline-flex', borderRadius: 4,
   },
-  footer: { padding: 8, borderTop: `1px solid ${C.border}` },
-  topNav: { padding: 8, borderBottom: `1px solid ${C.border}` },
-  settingsBtn: {
-    width: '100%', padding: '8px 10px', border: 'none',
-    background: 'transparent', color: C.fg2, cursor: 'pointer',
-    textAlign: 'left', borderRadius: 6, fontSize: 13,
-    display: 'flex', alignItems: 'center', gap: 6,
+  manageSection: { padding: 8, borderRadius: 12, background: C.surface2, border: `1px solid ${C.sidebarBorder}` },
+  footer: { display: 'flex', flexDirection: 'column', gap: 2 },
+  topNav: { display: 'flex', flexDirection: 'column', gap: 2 },
+  navButton: {
+    width: '100%', padding: '8px 9px', border: 'none', background: 'transparent', color: C.fg2,
+    cursor: 'pointer', textAlign: 'left', borderRadius: 7, fontSize: 12, fontWeight: 600,
+    display: 'flex', alignItems: 'center', gap: 8,
   },
+  navIcon: { width: 25, height: 25, borderRadius: 7, background: C.surface3, color: C.accent, display: 'grid', placeItems: 'center' },
+  footerButton: { width: '100%', padding: '7px 8px', border: 'none', background: 'transparent', color: C.fg2, cursor: 'pointer', textAlign: 'left', borderRadius: 7, fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 },
   navBadge: {
     marginLeft: 'auto', minWidth: 16, height: 16, padding: '0 4px',
     borderRadius: 8, background: '#E5484D', color: '#fff',
@@ -589,7 +638,7 @@ const styles: Record<string, React.CSSProperties> = {
   menuItem: {
     background: 'transparent', border: 'none', textAlign: 'left',
     padding: '6px 10px', borderRadius: 4, color: C.fg2,
-    fontSize: 12, cursor: 'pointer',
+    fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7,
   },
   menuSep: { height: 1, background: C.border, margin: '4px 0' },
 }

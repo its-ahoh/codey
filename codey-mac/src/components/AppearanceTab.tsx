@@ -210,33 +210,33 @@ export const AppearanceTab: React.FC = () => {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  wrap:  { padding: '20px', display: 'flex', flexDirection: 'column', gap: 14 },
-  row:   { display: 'flex', alignItems: 'center', gap: 16 },
+  wrap:  { padding: '24px', display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 720 },
+  row:   { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '13px 14px', borderRadius: 11, background: C.surface, border: `1px solid ${C.border}` },
   label: { fontSize: 13, color: C.fg, width: 80 },
   // Toggle/hotkey settings stacked with dividers so each row's label and
   // control read as a distinct line instead of a packed block.
   settingsGroup: {
     display: 'flex', flexDirection: 'column',
-    border: `1px solid ${C.border}`, borderRadius: 8,
-    background: C.surface2, overflow: 'hidden',
+    border: `1px solid ${C.border}`, borderRadius: 12,
+    background: C.surface, overflow: 'hidden', boxShadow: '0 5px 14px rgba(0,0,0,0.05)',
   },
   settingRow: {
     display: 'flex', alignItems: 'center', gap: 16,
-    padding: '14px 14px', borderTop: `1px solid ${C.border}`,
+    padding: '16px 16px', borderTop: `1px solid ${C.border}`,
   },
   settingDesc: { fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 3, lineHeight: 1.4 },
   segmented: {
     display: 'inline-flex',
     background: C.surface2,
     border: `1px solid ${C.border}`,
-    borderRadius: 6,
+    borderRadius: 8,
     padding: 2,
     gap: 2,
   },
   segBtn: {
     border: 'none',
-    borderRadius: 4,
-    padding: '5px 14px',
+    borderRadius: 6,
+    padding: '6px 14px',
     fontSize: 12,
     fontWeight: 500,
     cursor: 'pointer',
@@ -245,13 +245,13 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.surface2,
     color: C.fg,
     border: `1px solid ${C.border}`,
-    borderRadius: 6,
-    padding: '6px 10px',
+    borderRadius: 8,
+    padding: '8px 10px',
     fontSize: 12,
     fontWeight: 500,
     cursor: 'pointer',
     minWidth: 140,
   },
-  hint: { fontSize: 11, color: C.fg3, marginLeft: 96 },
+  hint: { fontSize: 11, color: C.fg3, margin: '-8px 0 0 14px' },
   value: { fontSize: 13, color: C.fg2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
 }

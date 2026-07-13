@@ -146,8 +146,8 @@ export function checkLabel(
 ): { text: string; tone: CheckTone } | null {
   switch (check) {
     case 'pending': return { text: 'checking…', tone: 'dim' }
-    case 'clean': return { text: '✓ unattended-ready', tone: 'good' }
-    case 'gaps': return { text: '⚠ may need input during runs', tone: 'warn' }
+    case 'clean': return { text: 'unattended-ready', tone: 'good' }
+    case 'gaps': return { text: 'may need input during runs', tone: 'warn' }
     case 'error': return { text: 'check failed', tone: 'dim' }
     default: return null
   }

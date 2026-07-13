@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import { pillButton, unwrap } from './settingsAtoms'
 import { timelineRows, playbookActions, relativeTime, TimelineRow } from './playbooksModel'
+import { UIIcon } from './UIIcons'
 
 interface Summary {
   name: string
@@ -141,7 +142,7 @@ export const PlaybooksTab: React.FC = () => {
           <div style={{ color: C.fg3, fontSize: 11, display: 'flex', gap: 12 }}>
             <span>used {s.useCount}×</span>
             <span>last {relativeTime(s.lastUsedAt, Date.now())}</span>
-            <span title="Clean runs / corrections">✓{s.successSignals.cleanRuns} ✗{s.successSignals.corrections}</span>
+            <span title="Clean runs / corrections" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><UIIcon name="check" size={12} />{s.successSignals.cleanRuns}<UIIcon name="close" size={11} />{s.successSignals.corrections}</span>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
@@ -152,7 +153,7 @@ export const PlaybooksTab: React.FC = () => {
             <button onClick={() => void act('restore', s.name)} style={pillButton('primary')}>Restore</button>
           )}
           {actions.rollback && (
-            <button onClick={() => void act('rollback', s.name)} style={pillButton('ghost')}>⏪ Roll back</button>
+            <button onClick={() => void act('rollback', s.name)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="refresh" size={14} />Roll back</button>
           )}
         </div>
         {isExpanded && renderTimeline()}
@@ -171,7 +172,7 @@ export const PlaybooksTab: React.FC = () => {
         <div style={{ color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 20 }}>Loading…</div>
       ) : playbooks.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '36px 20px', color: C.fg3, fontSize: 13 }}>
-          <div style={{ fontSize: 28, marginBottom: 12, opacity: 0.4 }}>🧩</div>
+          <div style={{ width: 52, height: 52, margin: '0 auto 12px', borderRadius: 16, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="archive" size={24} /></div>
           <div style={{ fontWeight: 500, color: C.fg2, marginBottom: 4 }}>No playbooks yet</div>
           <div style={{ fontSize: 12 }}>Playbooks crystallize from your repeated work patterns.</div>
         </div>

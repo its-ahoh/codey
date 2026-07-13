@@ -8,6 +8,7 @@ import { ChatsProvider, useChats } from './hooks/useChats'
 import { QuickQuestionProvider } from './hooks/useQuickQuestion'
 import { useGateway } from './hooks/useGateway'
 import { CoreOfflineBanner } from './components/CoreOfflineBanner'
+import { CodeyMark, UIIcon } from './components/UIIcons'
 import { AutomationsView } from './components/AutomationsView'
 import { ToolsView } from './components/ToolsView'
 import { unwrap } from './components/settingsAtoms'
@@ -140,8 +141,8 @@ const Shell: React.FC = () => {
   return (
     <div style={styles.root}>
       <div style={styles.titleBar}>
-        <div style={styles.titleBarDragArea}>
-          <div style={{ width: 76 }} />
+          <div style={styles.titleBarDragArea}>
+            <div style={{ width: 76 }} />
           <button
             type="button"
             onClick={toggleLeftPanel}
@@ -156,6 +157,7 @@ const Shell: React.FC = () => {
             </svg>
           </button>
           <div style={styles.titleCenter}>
+            <CodeyMark size={22} />
             {activeChat && <span style={styles.appName} title={activeChat.title}>{activeChat.title}</span>}
           </div>
         </div>
@@ -183,9 +185,11 @@ const Shell: React.FC = () => {
           )}
           {!activeChat && (
             <div style={styles.emptyMain}>
-              {state.order.length === 0
-                ? 'No chats yet. Click "New Chat" on the left to start.'
-                : 'Select a chat on the left.'}
+              <div style={styles.emptyCard}>
+                <div style={styles.emptyIcon}><UIIcon name="chat" size={30} /></div>
+                <div style={styles.emptyTitle}>{state.order.length === 0 ? 'Start your first chat' : 'Pick up where you left off'}</div>
+                <div style={styles.emptyCopy}>{state.order.length === 0 ? 'Create a chat from the sidebar to give Codey a task.' : 'Choose a conversation from the sidebar.'}</div>
+              </div>
             </div>
           )}
         </div>
@@ -227,6 +231,9 @@ ${paletteToCssVars(terminalDark)}
   ::-webkit-scrollbar-thumb { background: ${C.scrollbar}; border-radius: 3px; }
   textarea, input, select, button { font-family: inherit; }
   input, select, textarea { color: ${C.fg}; }
+  button { transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease; }
+  button:not(:disabled):active { transform: scale(0.97); }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid ${C.accent}; outline-offset: 2px; }
   @keyframes codey-pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
     50% { opacity: 0.4; transform: scale(0.8); }
@@ -253,7 +260,9 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitAppRegion: 'drag',
   },
   titleBarDragArea: { flex: 1, display: 'flex', alignItems: 'center', height: '100%' },
-  titleCenter: { flex: 1, textAlign: 'center', paddingLeft: 4, paddingRight: 4, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' },
+  titleCenter: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, paddingLeft: 4, paddingRight: 4, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' },
+  productName: { color: C.fg, fontSize: 13, fontWeight: 700, letterSpacing: '-0.01em' },
+  titleDivider: { color: C.fg3, fontSize: 13 },
   appName: { color: C.fg2, fontSize: 13, fontWeight: 500 },
   sidebarToggle: {
     background: 'transparent', border: 'none', cursor: 'pointer',
@@ -264,7 +273,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   body: { flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' },
   content: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
-  emptyMain: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.fg3 },
+  emptyMain: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.fg3, padding: 24 },
+  emptyCard: { display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: 270, textAlign: 'center' },
+  emptyIcon: { width: 62, height: 62, borderRadius: 20, display: 'grid', placeItems: 'center', color: C.accent, background: C.accentDim, border: `1px solid ${C.accent}` },
+  emptyTitle: { color: C.fg, fontSize: 16, fontWeight: 700, marginTop: 14 },
+  emptyCopy: { color: C.fg2, fontSize: 12, lineHeight: 1.5, marginTop: 6 },
 }
 
 export default App

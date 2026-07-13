@@ -9,6 +9,7 @@ import {
   knobsFrom, knobsEqual, type Knobs,
 } from './automationsModel'
 import type { Automation, AutomationRun } from '../../../packages/core/src/types/automation'
+import { UIIcon } from './UIIcons'
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -186,16 +187,16 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
           <div style={{ color: C.fg, fontSize: 15, fontWeight: 600 }}>{a.name}</div>
           <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>{subtitle}</div>
         </div>
-        <button style={pillButton('primary')} disabled={running} onClick={() => void runNow()}>
-          {running ? 'Running…' : 'Run now'}
+        <button style={{ ...pillButton('primary'), display: 'inline-flex', alignItems: 'center', gap: 6 }} disabled={running} onClick={() => void runNow()}>
+          <UIIcon name="play" size={14} />{running ? 'Running…' : 'Run now'}
         </button>
-        <button style={pillButton('ghost')} onClick={onEditInChat}>Edit in chat</button>
+        <button style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={onEditInChat}><UIIcon name="chat" size={14} />Edit in chat</button>
         <label style={{ color: C.fg3, fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
           <input type="checkbox" checked={a.enabled} onChange={() => void toggleEnabled()} />
           Enabled
         </label>
-        <button style={pillButton('danger')} disabled={deleting} onClick={() => void del()}>
-          {deleting ? 'Deleting…' : 'Delete'}
+        <button style={{ ...pillButton('danger'), display: 'inline-flex', alignItems: 'center', gap: 6 }} disabled={deleting} onClick={() => void del()}>
+          <UIIcon name="trash" size={14} />{deleting ? 'Deleting…' : 'Delete'}
         </button>
       </div>
 
@@ -215,8 +216,8 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
       )}
 
       <div style={tabBar}>
-        <button style={tabStyle(tab === 'overview')} onClick={() => setTab('overview')}>Overview</button>
-        <button style={tabStyle(tab === 'runs')} onClick={() => setTab('runs')}>Runs ({runs.length})</button>
+        <button style={{ ...tabStyle(tab === 'overview'), display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => setTab('overview')}><UIIcon name="activity" size={13} />Overview</button>
+        <button style={{ ...tabStyle(tab === 'runs'), display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => setTab('runs')}><UIIcon name="archive" size={13} />Runs ({runs.length})</button>
       </div>
 
       {tab === 'overview' && knobs && (

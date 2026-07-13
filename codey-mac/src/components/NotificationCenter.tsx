@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { C } from '../theme'
 import { useChats } from '../hooks/useChats'
 import { deriveNotifications, type InFlightLike } from './notificationLogic'
+import { UIIcon } from './UIIcons'
 
 const STATUS_LABEL: Record<InFlightLike['agentStatus'], string> = {
   idle: 'Idle',
@@ -46,10 +47,7 @@ export const NotificationCenter: React.FC = () => {
         aria-label="Notifications"
         style={styles.bellButton}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-        </svg>
+        <span style={styles.bellGlyph}><UIIcon name="activity" size={16} /></span>
         {hasInProgress && <span style={styles.pulseDot} />}
         {unreadCount > 0 && (
           <span style={styles.badge}>{unreadCount > 9 ? '9+' : unreadCount}</span>
@@ -118,12 +116,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   bellButton: {
     position: 'relative',
-    background: 'transparent',
-    border: 'none',
     cursor: 'pointer',
-    color: C.fg3,
-    padding: 4,
-    borderRadius: 4,
+    color: C.fg2,
+    padding: 6,
+    borderRadius: 8,
+    background: C.surface3,
+    border: `1px solid ${C.border2}`,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -155,16 +153,16 @@ const styles: Record<string, React.CSSProperties> = {
   },
   panel: {
     position: 'absolute',
-    top: 30,
+    top: 38,
     right: 0,
     width: 300,
     maxHeight: 420,
     overflowY: 'auto',
-    background: C.surface,
-    border: `1px solid ${C.border}`,
-    borderRadius: 8,
-    boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-    padding: 6,
+    background: C.surface2,
+    border: `1px solid ${C.border2}`,
+    borderRadius: 12,
+    boxShadow: '0 14px 32px rgba(0,0,0,0.28)',
+    padding: 8,
     zIndex: 1000,
   },
   empty: {
@@ -186,10 +184,11 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'flex-start',
     gap: 8,
-    padding: '8px',
-    borderRadius: 6,
+    padding: '9px',
+    borderRadius: 8,
     cursor: 'pointer',
   },
+  bellGlyph: { display: 'inline-flex' },
   itemPulse: {
     marginTop: 5,
     width: 6,

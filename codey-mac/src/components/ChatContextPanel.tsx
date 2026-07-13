@@ -795,7 +795,7 @@ const styles: Record<string, React.CSSProperties> = {
   root: {
     position: 'relative',
     height: '100%',
-    background: C.surface2,
+    background: C.surface,
     borderLeft: `1px solid ${C.border}`,
     display: 'flex',
     flexDirection: 'column',
@@ -809,29 +809,29 @@ const styles: Record<string, React.CSSProperties> = {
   },
   header: {
     display: 'flex', alignItems: 'center', gap: 8,
-    padding: '10px 12px', borderBottom: `1px solid ${C.border}`,
+    padding: '13px 14px', borderBottom: `1px solid ${C.border}`,
     flexShrink: 0,
   },
   tabs: {
-    display: 'flex', gap: 2,
-    padding: '6px 8px 0',
+    display: 'flex', gap: 4,
+    padding: '8px 10px',
     borderBottom: `1px solid ${C.border}`,
-    flexShrink: 0,
+    flexShrink: 0, background: C.surface2,
   },
   tab: {
     flex: 1, minWidth: 0, textAlign: 'center', whiteSpace: 'nowrap',
     // Clip to ellipsis when the panel is narrow so labels never overlap.
     overflow: 'hidden', textOverflow: 'ellipsis',
-    background: 'transparent', border: 'none',
+    background: 'transparent', border: '1px solid transparent',
     color: C.fg3, fontSize: 11, fontWeight: 600,
     letterSpacing: 0.4, textTransform: 'uppercase',
-    padding: '6px 4px', cursor: 'pointer',
+    padding: '7px 5px', cursor: 'pointer', borderRadius: 7,
     // Persistent gray underline under every tab (visible from first open);
     // the active tab overrides the color with the accent.
-    borderBottom: `2px solid ${C.border2}`, marginBottom: -1,
+    borderBottom: '1px solid transparent', marginBottom: 0,
   },
   tabActive: {
-    color: C.fg, borderBottomColor: C.accent,
+    color: C.fg, background: C.accentDim, borderColor: C.accent,
   },
   headerMeta: { flex: 1, display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 },
   headerSubLine: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
@@ -849,7 +849,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent', border: 'none', color: C.fg2,
     fontSize: 18, lineHeight: 1, padding: '0 4px', cursor: 'pointer',
   },
-  body: { flex: 1, overflowY: 'auto', padding: '8px 12px' },
+  body: { flex: 1, overflowY: 'auto', padding: '14px' },
   section: { marginBottom: 14 },
   sectionTitle: {
     color: C.fg3, fontSize: 10, fontWeight: 600, letterSpacing: 0.6,

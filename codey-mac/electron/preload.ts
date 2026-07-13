@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('codey', {
   dialog: {
     pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),
   },
+  editors: {
+    list: () => ipcRenderer.invoke('editors:list'),
+    open: (editorId: string, workingDir: string) => ipcRenderer.invoke('editors:open', editorId, workingDir),
+  },
   globalTeams: {
     get: () => ipcRenderer.invoke('globalTeams:get'),
     set: (teams: Record<string, unknown>) => ipcRenderer.invoke('globalTeams:set', teams),
