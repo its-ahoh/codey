@@ -49,15 +49,6 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
     setWsOrder(next)
     localStorage.setItem('codey.workspaceOrder', JSON.stringify(next))
   }
-  // Shrink the panel on narrow windows so the conversation column keeps
-  // breathing room. Matches the threshold used in ChatTab for the context panel.
-  const [narrow, setNarrow] = useState<boolean>(() => window.innerWidth < 600)
-  useEffect(() => {
-    const onResize = () => setNarrow(window.innerWidth < 600)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-
   const refreshWs = useCallback(() => {
     apiService.getCurrentWorkspace()
       .then(setGatewayWorkspace)
@@ -241,7 +232,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   }
 
   return (
-    <div style={{ ...styles.root, width: narrow ? 180 : 240 }}>
+    <div style={styles.root}>
       <div style={styles.brandArea}>
         <button
           style={styles.newChatBtn}
@@ -535,7 +526,8 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
 
 const styles: Record<string, React.CSSProperties> = {
   root: {
-    width: 240,
+    width: '100%',
+    height: '100%',
     background: C.sidebarBg,
     borderRight: `1px solid ${C.sidebarBorder}`,
     display: 'flex',

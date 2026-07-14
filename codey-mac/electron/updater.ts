@@ -28,7 +28,12 @@ export function initAutoUpdater(notify: Notify, isPackaged: boolean, log: Log): 
   autoUpdater.autoInstallOnAppQuit = false
 
   const emit: Notify = (payload) => {
-    lastState = payload
+    // `downloaded` is a durable state: keep it available to a renderer that
+    // mounts later, even if a periodic check/error fires before that mount.
+    // `checking` is transient and should never replace a useful backfill.
+    if (payload.type !== 'checking' && (lastState?.type !== 'downloaded' || payload.type === 'downloaded')) {
+      lastState = payload
+    }
     notify(payload)
   }
 
@@ -39,7 +44,7 @@ export function initAutoUpdater(notify: Notify, isPackaged: boolean, log: Log): 
   autoUpdater.on('update-downloaded', (info) => emit({ type: 'downloaded', version: info.version }))
   autoUpdater.on('error', (err) => {
     log(`[updater] error: ${err?.message ?? err}`)
-    emit({ type: 'error' })
+    emit({ type: 'error', message: err?.message ?? String(err) })
   })
 
   const check = () => {

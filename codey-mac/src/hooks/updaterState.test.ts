@@ -22,9 +22,10 @@ describe('updaterReducer', () => {
       .toEqual({ phase: 'ready', version: '0.6.4' })
   })
 
-  it('reverts to idle on error', () => {
+  it('shows an actionable error on download failure', () => {
     const state: UpdaterState = { phase: 'downloading', percent: 10 }
-    expect(updaterReducer(state, { type: 'error' })).toEqual({ phase: 'idle' })
+    expect(updaterReducer(state, { type: 'error', message: 'signature invalid' }))
+      .toEqual({ phase: 'error', message: 'signature invalid' })
   })
 
   it('leaves an in-progress download untouched on a stray checking event', () => {
@@ -35,5 +36,12 @@ describe('updaterReducer', () => {
   it('keeps a shown available button during a periodic re-check', () => {
     const state: UpdaterState = { phase: 'available', version: '0.6.4' }
     expect(updaterReducer(state, { type: 'checking' })).toEqual(state)
+  })
+
+  it('does not let stale or periodic events hide a downloaded update', () => {
+    const state: UpdaterState = { phase: 'ready', version: '0.6.4' }
+    expect(updaterReducer(state, { type: 'not-available' })).toEqual(state)
+    expect(updaterReducer(state, { type: 'available', version: '0.6.4' })).toEqual(state)
+    expect(updaterReducer(state, { type: 'error', message: 'network unavailable' })).toEqual(state)
   })
 })
