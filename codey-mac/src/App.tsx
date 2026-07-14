@@ -26,6 +26,11 @@ import {
   terminalDark,
 } from './theme'
 
+const clampLeftPanelWidth = (width: number) => {
+  const max = Math.max(180, Math.min(480, window.innerWidth - 320))
+  return Math.min(max, Math.max(180, width))
+}
+
 const Shell: React.FC = () => {
   const { isRunning, coreState, relaunchApp } = useGateway()
   const { state, createChat, selectChat, refreshWorkspaces } = useChats()
@@ -40,6 +45,10 @@ const Shell: React.FC = () => {
   const [leftCollapsed, setLeftCollapsed] = useState<boolean>(
     () => localStorage.getItem('codey.leftPanelCollapsed') === '1'
   )
+  const [leftPanelWidth, setLeftPanelWidth] = useState<number>(() => {
+    const stored = Number(localStorage.getItem('codey.leftPanelWidth'))
+    return clampLeftPanelWidth(Number.isFinite(stored) ? stored : 280)
+  })
 
   const activeChat = state.selectedChatId ? state.chats[state.selectedChatId] : null
 
@@ -47,6 +56,37 @@ const Shell: React.FC = () => {
     setLeftCollapsed((prev) => {
       const next = !prev
       localStorage.setItem('codey.leftPanelCollapsed', next ? '1' : '0')
+      return next
+    })
+  }
+
+  const resizeLeftPanel = (clientX: number) => {
+    const next = clampLeftPanelWidth(clientX)
+    setLeftPanelWidth(next)
+    return next
+  }
+
+  const startLeftPanelResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const onMove = (event: PointerEvent) => resizeLeftPanel(event.clientX)
+    const onUp = (event: PointerEvent) => {
+      const next = resizeLeftPanel(event.clientX)
+      localStorage.setItem('codey.leftPanelWidth', String(next))
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const nudgeLeftPanel = (delta: number) => {
+    setLeftPanelWidth((current) => {
+      const next = clampLeftPanelWidth(current + delta)
+      localStorage.setItem('codey.leftPanelWidth', String(next))
       return next
     })
   }
@@ -165,13 +205,30 @@ const Shell: React.FC = () => {
       </div>
       <div style={styles.body}>
         {!leftCollapsed && (
-          <ChatListPanel
-            onOpenSettings={(tab) => { setSettingsTab(tab); setSettingsOpen(true) }}
-            onOpenAutomations={openAutomations}
-            onOpenTools={() => setToolsOpen(true)}
-            automationsUnseenCount={unseenRunKeys.size}
-            activeChatId={state.selectedChatId}
-          />
+          <div style={{ ...styles.sidebarShell, width: leftPanelWidth }}>
+            <ChatListPanel
+              onOpenSettings={(tab) => { setSettingsTab(tab); setSettingsOpen(true) }}
+              onOpenAutomations={openAutomations}
+              onOpenTools={() => setToolsOpen(true)}
+              automationsUnseenCount={unseenRunKeys.size}
+              activeChatId={state.selectedChatId}
+            />
+            <div
+              role="separator"
+              aria-label="Resize sidebar"
+              aria-orientation="vertical"
+              aria-valuemin={180}
+              aria-valuemax={480}
+              aria-valuenow={leftPanelWidth}
+              tabIndex={0}
+              onPointerDown={startLeftPanelResize}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeLeftPanel(-10) }
+                if (e.key === 'ArrowRight') { e.preventDefault(); nudgeLeftPanel(10) }
+              }}
+              style={styles.sidebarResizeHandle}
+            />
+          </div>
         )}
         <div style={styles.content}>
           <CoreOfflineBanner state={coreState} onRelaunch={relaunchApp} />
@@ -272,6 +329,11 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitAppRegion: 'no-drag',
   },
   body: { flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' },
+  sidebarShell: { position: 'relative', height: '100%', flexShrink: 0 },
+  sidebarResizeHandle: {
+    position: 'absolute', top: 0, right: -3, width: 7, height: '100%', zIndex: 5,
+    cursor: 'col-resize',
+  },
   content: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
   emptyMain: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.fg3, padding: 24 },
   emptyCard: { display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: 270, textAlign: 'center' },

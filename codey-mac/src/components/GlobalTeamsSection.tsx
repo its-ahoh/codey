@@ -15,10 +15,10 @@ type DispatchMode = 'all' | 'auto' | 'parallel'
 interface TeamState { members: string[]; dispatch: DispatchMode; graph?: TeamGraph }
 type TeamsState = Record<string, TeamState>
 
-const DISPATCH: { id: DispatchMode; label: string; desc: string; icon: 'activity' | 'sparkle' | 'users' }[] = [
-  { id: 'all', label: 'Sequential', desc: 'Pass work forward in a deliberate order.', icon: 'activity' },
-  { id: 'auto', label: 'Adaptive', desc: 'Advisor chooses the right specialists.', icon: 'sparkle' },
-  { id: 'parallel', label: 'Roundtable', desc: 'Specialists discuss work together.', icon: 'users' },
+const DISPATCH: { id: DispatchMode; label: string; desc: string; detail: string; icon: 'activity' | 'sparkle' | 'users' }[] = [
+  { id: 'all', label: 'Sequential', desc: 'Best for ordered handoffs.', detail: 'Workers run in a deliberate order. Each worker receives the work produced before it, and an optional workflow can add branches or loops.', icon: 'activity' },
+  { id: 'auto', label: 'Adaptive', desc: 'Best when the right specialists vary.', detail: 'The Advisor chooses the relevant workers for each task and can send work back for another pass when a revision is needed.', icon: 'sparkle' },
+  { id: 'parallel', label: 'Roundtable', desc: 'Best for multiple perspectives.', detail: 'Workers contribute concurrently while the Advisor moderates the discussion, tracks shared progress, and decides when the team is done.', icon: 'users' },
 ]
 
 const labelStyle: CSSProperties = { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: C.fg3, marginBottom: 6 }
@@ -110,6 +110,7 @@ export default function GlobalTeamsSection() {
   const [createPrompt, setCreatePrompt] = useState('')
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [dispatchHelpOpen, setDispatchHelpOpen] = useState(false)
 
   const submitCreate = async () => {
     if (!creatingFor || !createPrompt.trim() || createBusy) return
@@ -156,15 +157,25 @@ export default function GlobalTeamsSection() {
           </div>
 
           <div style={styles.cardBody}>
-            {/* Dispatch: segmented control + description */}
-            <div style={labelStyle}>Dispatch mode</div>
+            {/* Compact dispatch selector. Detailed guidance lives in one shared
+                help dialog instead of being repeated in every team card. */}
+            <div style={styles.dispatchLabelRow}>
+              <div style={{ ...labelStyle, marginBottom: 0 }}>Dispatch mode</div>
+              <button
+                type="button"
+                onClick={() => setDispatchHelpOpen(true)}
+                aria-label="Explain dispatch modes"
+                title="What is the difference?"
+                style={styles.dispatchHelpBtn}
+              >?</button>
+            </div>
             <div style={styles.modeGrid}>
               {DISPATCH.map(d => {
                 const on = team.dispatch === d.id
                 return (
                   <button key={d.id} onClick={() => setDispatch(name, d.id)} style={{ ...styles.modeCard, ...(on ? styles.modeCardActive : {}) }}>
                     <span style={{ ...styles.modeIcon, color: on ? C.onAccent : C.accent, background: on ? 'rgba(255,255,255,0.16)' : C.accentDim }}><UIIcon name={d.icon} size={15} /></span>
-                    <span style={styles.modeWords}><span style={{ fontWeight: 700 }}>{d.label}</span><span style={{ ...styles.modeDesc, color: on ? 'rgba(255,255,255,0.78)' : C.fg3 }}>{d.desc}</span></span>
+                    <span style={{ fontWeight: 700, color: on ? C.onAccent : C.fg2 }}>{d.label}</span>
                   </button>
                 )
               })}
@@ -234,11 +245,11 @@ export default function GlobalTeamsSection() {
             {/* Flow (Sequential only) */}
             {team.dispatch === 'all' && (
               <div style={styles.workflowRow}>
-                <span style={styles.workflowIcon}><UIIcon name="activity" size={15} /></span>
-                <div style={{ flex: 1 }}><div style={styles.workflowTitle}>Workflow canvas</div><div style={styles.workflowSub}>{team.graph ? `${team.graph.nodes.filter(n => n.type === 'worker').length} worker nodes wired` : 'Add branches and loops when a linear handoff is not enough.'}</div></div>
+                <span style={styles.workflowIcon}><UIIcon name="activity" size={14} /></span>
+                <div style={{ flex: 1, minWidth: 0 }}><span style={styles.workflowTitle}>Workflow</span><span style={styles.workflowSub}> · {team.graph ? `${team.graph.nodes.filter(n => n.type === 'worker').length} steps` : 'Linear order'}</span></div>
                 <button onClick={() => setEditingFlow(name)}
-                  style={{ ...styles.workflowBtn, background: team.graph ? C.accent : C.accentDim, color: team.graph ? C.onAccent : C.accent }}>
-                  <UIIcon name={team.graph ? 'code' : 'add'} size={13} />{team.graph ? 'Edit workflow' : 'Add workflow'}
+                  style={styles.workflowBtn}>
+                  {team.graph ? 'Edit' : 'Customize'}<UIIcon name="chevron" size={12} />
                 </button>
               </div>
             )}
@@ -264,6 +275,40 @@ export default function GlobalTeamsSection() {
                 style={{ padding: '6px 14px', background: createBusy ? C.fg3 : C.accent, color: C.onAccent, border: 'none', borderRadius: 6, cursor: createBusy ? 'wait' : 'pointer', fontSize: 12, fontWeight: 600 }}>
                 {createBusy ? 'Generating…' : 'Create & Add'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {dispatchHelpOpen && (
+        <div
+          onClick={() => setDispatchHelpOpen(false)}
+          style={styles.modalBackdrop}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dispatch-help-title"
+            onClick={e => e.stopPropagation()}
+            style={styles.dispatchHelpDialog}
+          >
+            <div style={styles.dispatchHelpHeader}>
+              <div>
+                <div id="dispatch-help-title" style={styles.dispatchHelpTitle}>Dispatch modes</div>
+                <div style={styles.dispatchHelpIntro}>Choose how workers collaborate on a team task.</div>
+              </div>
+              <button type="button" onClick={() => setDispatchHelpOpen(false)} aria-label="Close" style={styles.modalCloseBtn}><UIIcon name="close" size={15} /></button>
+            </div>
+            <div style={styles.dispatchHelpList}>
+              {DISPATCH.map(d => (
+                <div key={d.id} style={styles.dispatchHelpItem}>
+                  <span style={styles.dispatchHelpIcon}><UIIcon name={d.icon} size={17} /></span>
+                  <div>
+                    <div style={styles.dispatchHelpMode}>{d.label}</div>
+                    <div style={styles.dispatchHelpDesc}>{d.detail}</div>
+                    <div style={styles.dispatchHelpBest}>{d.desc}</div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -301,16 +346,28 @@ const styles: Record<string, CSSProperties> = {
   memberCount: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: C.fg3, background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 12, padding: '4px 7px' },
   deleteBtn: { width: 28, height: 28, display: 'grid', placeItems: 'center', background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer', borderRadius: 7 },
   cardBody: { padding: 15 },
-  modeGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 18 },
-  modeCard: { display: 'flex', alignItems: 'flex-start', gap: 8, textAlign: 'left', padding: '10px', minHeight: 74, background: C.surface2, color: C.fg2, border: `1px solid ${C.border}`, borderRadius: 10, cursor: 'pointer' },
+  dispatchLabelRow: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 },
+  dispatchHelpBtn: { width: 18, height: 18, display: 'grid', placeItems: 'center', padding: 0, borderRadius: '50%', border: `1px solid ${C.border2}`, background: C.surface3, color: C.fg2, cursor: 'pointer', fontSize: 11, fontWeight: 750, lineHeight: 1 },
+  modeGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 7, marginBottom: 18 },
+  modeCard: { display: 'flex', alignItems: 'center', gap: 7, textAlign: 'left', padding: '7px 9px', minHeight: 42, background: C.surface2, color: C.fg2, border: `1px solid ${C.border}`, borderRadius: 9, cursor: 'pointer', fontSize: 11 },
   modeCardActive: { background: C.accent, color: C.onAccent, borderColor: C.accent, boxShadow: `0 7px 15px ${C.accentDim}` },
-  modeIcon: { width: 27, height: 27, flexShrink: 0, borderRadius: 8, display: 'grid', placeItems: 'center' },
-  modeWords: { display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11 },
-  modeDesc: { fontSize: 10, fontWeight: 400, lineHeight: 1.3 },
+  modeIcon: { width: 25, height: 25, flexShrink: 0, borderRadius: 7, display: 'grid', placeItems: 'center' },
   memberHint: { color: C.fg3, fontSize: 12, padding: '5px 2px' },
-  workflowRow: { marginTop: 17, padding: '12px', border: `1px solid ${C.border}`, background: C.surface2, borderRadius: 11, display: 'flex', alignItems: 'center', gap: 10 },
-  workflowIcon: { width: 31, height: 31, borderRadius: 9, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent },
-  workflowTitle: { color: C.fg, fontSize: 12, fontWeight: 700 },
-  workflowSub: { color: C.fg3, fontSize: 10, marginTop: 2 },
-  workflowBtn: { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 10px', fontSize: 11, fontWeight: 700, border: 'none', borderRadius: 8, cursor: 'pointer' },
+  workflowRow: { marginTop: 14, paddingTop: 11, borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 },
+  workflowIcon: { width: 25, height: 25, borderRadius: 7, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent },
+  workflowTitle: { color: C.fg2, fontSize: 11, fontWeight: 700 },
+  workflowSub: { color: C.fg3, fontSize: 10 },
+  workflowBtn: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '5px 7px', fontSize: 10, fontWeight: 680, color: C.accent, background: 'transparent', border: 'none', borderRadius: 7, cursor: 'pointer' },
+  modalBackdrop: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.48)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 1000 },
+  dispatchHelpDialog: { width: 'min(520px, 100%)', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,0.28)', overflow: 'hidden' },
+  dispatchHelpHeader: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, padding: '17px 18px 14px', borderBottom: `1px solid ${C.border}` },
+  dispatchHelpTitle: { color: C.fg, fontSize: 15, fontWeight: 750 },
+  dispatchHelpIntro: { color: C.fg3, fontSize: 11, marginTop: 3 },
+  modalCloseBtn: { width: 28, height: 28, display: 'grid', placeItems: 'center', padding: 0, background: C.surface2, color: C.fg2, border: `1px solid ${C.border}`, borderRadius: 8, cursor: 'pointer' },
+  dispatchHelpList: { display: 'flex', flexDirection: 'column', gap: 9, padding: 14 },
+  dispatchHelpItem: { display: 'grid', gridTemplateColumns: '34px 1fr', gap: 10, padding: 11, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10 },
+  dispatchHelpIcon: { width: 34, height: 34, display: 'grid', placeItems: 'center', borderRadius: 9, background: C.accentDim, color: C.accent },
+  dispatchHelpMode: { color: C.fg, fontSize: 12, fontWeight: 750 },
+  dispatchHelpDesc: { color: C.fg2, fontSize: 11, lineHeight: 1.45, marginTop: 3 },
+  dispatchHelpBest: { color: C.accent, fontSize: 10, fontWeight: 650, marginTop: 5 },
 }

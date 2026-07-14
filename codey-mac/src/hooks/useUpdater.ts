@@ -16,6 +16,7 @@ export function useUpdater() {
 
   return {
     state,
+    check: () => window.codey.updater.check(),
     download: () => window.codey.updater.download(),
     install: () => window.codey.updater.install(),
   }
