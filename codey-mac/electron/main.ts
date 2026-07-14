@@ -9,6 +9,8 @@ import { decideNotification, createTurnTracker } from './chat-notifications'
 import { decideAutomationNotification, findUnseenRuns } from './automation-notifications'
 import { validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
+import { resolveUserPath, samePath, scanSkillsDir, uniqueSkills } from './skills'
+import type { ScannedSkill } from './skills'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -1154,40 +1156,6 @@ async function findEditorApp(editor: typeof supportedEditors[number]): Promise<s
   const fsMod = await import('fs')
   const candidates = [join('/Applications', editor.app), join(app.getPath('home'), 'Applications', editor.app)]
   return candidates.find(candidate => fsMod.existsSync(candidate)) ?? null
-}
-
-function parseSkillFrontmatter(md: string): { name: string; description: string } {
-  const fmMatch = md.match(/^---[ \t]*\n([\s\S]*?)\n---/)
-  if (!fmMatch) return { name: '', description: '' }
-  const fm = fmMatch[1]
-  const nameMatch = fm.match(/^name:[ \t]*(.+)$/m)
-  const descMatch = fm.match(/^description:[ \t]*(.+)$/m)
-  return {
-    name: (nameMatch?.[1] ?? '').trim(),
-    description: (descMatch?.[1] ?? '').trim(),
-  }
-}
-
-function scanSkillsDir(
-  fsMod: typeof import('fs'),
-  pathMod: typeof import('path'),
-  dir: string,
-  scope: 'user' | 'project',
-): Array<{ name: string; description: string; scope: string; dir: string }> {
-  if (!fsMod.existsSync(dir)) return []
-  const result: Array<{ name: string; description: string; scope: string; dir: string }> = []
-  for (const entry of fsMod.readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue
-    const skillDir = pathMod.join(dir, entry.name)
-    const skillMdPath = pathMod.join(skillDir, 'SKILL.md')
-    if (!fsMod.existsSync(skillMdPath)) continue
-    try {
-      const md = fsMod.readFileSync(skillMdPath, 'utf-8')
-      const { name, description } = parseSkillFrontmatter(md)
-      result.push({ name: name || entry.name, description, scope, dir: skillDir })
-    } catch { /* skip unreadable skill */ }
-  }
-  return result
 }
 
 function createAppMenu() {
@@ -2404,8 +2372,25 @@ app.whenReady().then(async () => {
   // ── Skills IPC ────────────────────────────────────────────────────
   const skillPaths: Record<string, { userDirs: string[]; projectSubdirs: string[] }> = {
     'claude-code': { userDirs: ['.claude/skills'], projectSubdirs: ['.claude/skills'] },
-    'codex':       { userDirs: ['.codex/skills'], projectSubdirs: ['.codex/skills'] },
-    'opencode':    { userDirs: ['.config/opencode/skills'], projectSubdirs: ['.opencode/skills'] },
+    // Codex and OpenCode also discover the cross-agent .agents convention.
+    'codex':       { userDirs: ['.codex/skills', '.agents/skills'], projectSubdirs: ['.codex/skills', '.agents/skills'] },
+    'opencode':    { userDirs: ['.config/opencode/skills', '.opencode/skills', '.agents/skills'], projectSubdirs: ['.opencode/skills', '.agents/skills'] },
+  }
+
+  function configuredUserSkillDirs(agentKey: string, home: string, pathMod: typeof import('path')): string[] {
+    const paths = skillPaths[agentKey] ?? skillPaths['claude-code']
+    const env = coreConfigManager?.get().agents?.[agentKey as keyof ReturnType<ConfigManager['get']>['agents']]?.env ?? {}
+    const configured: string[] = []
+    if (agentKey === 'claude-code' && env.CLAUDE_CONFIG_DIR) {
+      configured.push(pathMod.join(resolveUserPath(pathMod, env.CLAUDE_CONFIG_DIR, home), 'skills'))
+    }
+    if (agentKey === 'codex' && env.CODEX_HOME) {
+      configured.push(pathMod.join(resolveUserPath(pathMod, env.CODEX_HOME, home), 'skills'))
+    }
+    if (agentKey === 'opencode' && env.XDG_CONFIG_HOME) {
+      configured.push(pathMod.join(resolveUserPath(pathMod, env.XDG_CONFIG_HOME, home), 'opencode', 'skills'))
+    }
+    return [...configured, ...paths.userDirs.map(rel => pathMod.join(home, rel))]
   }
 
   function getWorkingDir(fsMod: typeof import('fs'), pathMod: typeof import('path')): string | null {
@@ -2429,9 +2414,9 @@ app.whenReady().then(async () => {
       const agentKey = agent ?? 'claude-code'
       const paths = skillPaths[agentKey] ?? skillPaths['claude-code']
 
-      const skills: Array<{ name: string; description: string; scope: string; dir: string }> = []
-      for (const rel of paths.userDirs) {
-        skills.push(...scanSkillsDir(fsMod, pathMod, pathMod.join(home, rel), 'user'))
+      const skills: ScannedSkill[] = []
+      for (const dir of configuredUserSkillDirs(agentKey, home, pathMod)) {
+        skills.push(...scanSkillsDir(fsMod, pathMod, dir, 'user'))
       }
 
       let projectDir: string | null = null
@@ -2444,7 +2429,7 @@ app.whenReady().then(async () => {
         }
       }
 
-      return { skills, projectDir }
+      return { skills: uniqueSkills(fsMod, pathMod, skills), projectDir }
     })
   )
 
@@ -2456,8 +2441,9 @@ app.whenReady().then(async () => {
       const agentKey = payload.agent ?? 'claude-code'
       const paths = skillPaths[agentKey] ?? skillPaths['claude-code']
 
+      const home = osMod.homedir()
       const getTargetRoot = async (): Promise<string> => {
-        if (payload.scope === 'user') return pathMod.join(osMod.homedir(), paths.userDirs[0])
+        if (payload.scope === 'user') return configuredUserSkillDirs(agentKey, home, pathMod)[0]
         if (!workspaceManager) throw new Error('No workspace manager')
         const wsName = workspaceManager.getCurrentWorkspace()
         if (!wsName) throw new Error('No active workspace')
@@ -2472,13 +2458,39 @@ app.whenReady().then(async () => {
       await fsMod.promises.mkdir(targetRoot, { recursive: true })
 
       if (payload.localDir) {
-        const src = payload.localDir
+        const src = resolveUserPath(pathMod, payload.localDir, home)
         if (!fsMod.existsSync(src) || !fsMod.statSync(src).isDirectory()) throw new Error(`Not a directory: ${src}`)
-        const name = pathMod.basename(src)
-        const dest = pathMod.join(targetRoot, name)
-        if (fsMod.existsSync(dest)) throw new Error(`Skill already exists: ${name}`)
-        await fsMod.promises.cp(src, dest, { recursive: true })
-        return { name, dir: dest }
+        if (samePath(fsMod, pathMod, src, targetRoot)) {
+          return { name: pathMod.basename(targetRoot), dir: targetRoot }
+        }
+        const rootSkillFile = pathMod.join(src, 'SKILL.md')
+
+        // A selected agent skills root is a collection, not one giant skill.
+        // Import its discovered children individually and never create the
+        // invalid <root>/skills self-copy that fs.cp rejects with EINVAL.
+        const sources = fsMod.existsSync(rootSkillFile)
+          ? [{ name: pathMod.basename(src), dir: src }]
+          : scanSkillsDir(fsMod, pathMod, src, 'user').map(skill => ({ name: pathMod.basename(skill.dir), dir: skill.dir }))
+        if (sources.length === 0) throw new Error(`No SKILL.md found in: ${src}`)
+
+        for (const source of sources) {
+          const dest = pathMod.join(targetRoot, source.name)
+          if (!samePath(fsMod, pathMod, source.dir, dest) && fsMod.existsSync(dest)) {
+            throw new Error(`Skill already exists: ${source.name}`)
+          }
+        }
+
+        const installed: Array<{ name: string; dir: string }> = []
+        for (const source of sources) {
+          const dest = pathMod.join(targetRoot, source.name)
+          if (samePath(fsMod, pathMod, source.dir, dest)) {
+            installed.push({ name: source.name, dir: dest })
+            continue
+          }
+          await fsMod.promises.cp(source.dir, dest, { recursive: true })
+          installed.push({ name: source.name, dir: dest })
+        }
+        return installed.length === 1 ? installed[0] : { name: `${installed.length} skills`, dir: targetRoot }
       }
 
       if (payload.gitUrl) {

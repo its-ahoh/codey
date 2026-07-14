@@ -198,7 +198,7 @@ export const SkillsTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 })
           }}>
             {skill.scope === 'user' ? 'User' : 'Project'}
           </span>
-          <button onClick={() => setSelected(null)} style={{ ...iconBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Close" aria-label="Close"><UIIcon name="trash" size={14} /></button>
+          <button onClick={() => setSelected(null)} style={{ ...iconBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Close" aria-label="Close"><UIIcon name="close" size={14} /></button>
         </div>
 
         {skill.description && (
@@ -274,104 +274,150 @@ export const SkillsTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 })
   )
 
   return (
-    <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto', position: 'relative' }}>
+    <div style={styles.root}>
       {selected && renderDetail(selected)}
-      {/* Agent filter bar */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
-        {AGENTS.map(a => {
-          const selected = agentFilter === a.key
-          const isActive = activeAgent === a.key
-          return (
-            <button
-              key={a.key}
-              onClick={() => setAgentFilter(a.key)}
-              style={{
-                padding: '6px 14px', borderRadius: 7, fontSize: 12, fontWeight: 600,
-                border: selected ? `1px solid ${C.accent}` : `1px solid ${C.border2}`,
-                cursor: 'pointer',
-                background: selected ? C.accentDim : 'transparent',
-                color: selected ? C.accent : C.fg3,
-                position: 'relative',
-              }}
-            >
-              {a.label}
-              {isActive && <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.6 }}>active</span>}
-            </button>
-          )
-        })}
+      <div style={styles.agentHeader}>
+        <div style={{ minWidth: 0 }}>
+          <div style={styles.eyebrow}>Coding agent</div>
+          <div style={styles.agentSwitcher} role="tablist" aria-label="Coding agent">
+            {AGENTS.map(a => {
+              const isSelected = agentFilter === a.key
+              const isActive = activeAgent === a.key
+              return (
+                <button
+                  key={a.key}
+                  role="tab"
+                  aria-selected={isSelected}
+                  onClick={() => setAgentFilter(a.key)}
+                  style={{ ...styles.agentButton, ...(isSelected ? styles.agentButtonSelected : undefined) }}
+                >
+                  {isActive && <span style={styles.activeDot} title="Default agent" />}
+                  {a.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+        <div style={styles.agentMeta}>
+          <span>{loading ? 'Scanning…' : `${data.skills.length} skill${data.skills.length === 1 ? '' : 's'}`}</span>
+          <button
+            onClick={() => void reload(agentFilter)}
+            disabled={loading}
+            style={{ ...styles.iconButton, opacity: loading ? 0.5 : 1 }}
+            title="Rescan skills"
+            aria-label="Rescan skills"
+          ><UIIcon name="refresh" size={14} /></button>
+        </div>
       </div>
 
       {error && (
-        <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 12, fontSize: 12 }}>
+        <div style={styles.errorBanner}>
           {error}
         </div>
       )}
 
-      {/* Add skill form / button */}
       {adding ? (
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14, marginBottom: 16 }}>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-            {(['user', 'project'] as const).map(s => (
-              <button
-                key={s}
-                onClick={() => setAddScope(s)}
-                style={{ ...pillButton(addScope === s ? 'primary' : 'ghost'), opacity: s === 'project' && !data.projectDir ? 0.4 : 1 }}
-                disabled={s === 'project' && !data.projectDir}
-                title={s === 'project' && !data.projectDir ? 'No active workspace' : undefined}
-              >
-                {s === 'user' ? 'User' : 'Project'}
-              </button>
-            ))}
-            <span style={{ flex: 1 }} />
-            {(['localDir', 'gitUrl'] as const).map(src => (
-              <button
-                key={src}
-                onClick={() => { setAddSource(src); setAddInput('') }}
-                style={pillButton(addSource === src ? 'primary' : 'ghost')}
-              >
-                {src === 'localDir' ? 'Local Folder' : 'Git URL'}
-              </button>
-            ))}
+        <section style={styles.installCard} aria-label="Install skill">
+          <div style={styles.installHeader}>
+            <div>
+              <div style={styles.installTitle}>Install a skill</div>
+              <div style={styles.installSubtitle}>Add it to {AGENTS.find(a => a.key === agentFilter)?.label}</div>
+            </div>
+            <button
+              onClick={() => { setAdding(false); setAddInput(''); setError(null) }}
+              style={styles.iconButton}
+              title="Cancel"
+              aria-label="Cancel"
+            ><UIIcon name="close" size={15} /></button>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              type="text"
-              placeholder={addSource === 'localDir' ? '/path/to/skill-folder' : 'https://github.com/user/my-skill'}
-              value={addInput}
-              onChange={e => setAddInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') void handleInstall() }}
-              style={{
-                flex: 1, background: 'transparent', border: `1px solid ${C.border2}`,
-                borderRadius: 7, color: C.fg, fontSize: 13, padding: '6px 10px', outline: 'none',
-              }}
-              autoFocus
-            />
-            {addSource === 'localDir' && (
-              <button onClick={handleBrowse} style={pillButton('ghost')}>Browse</button>
-            )}
-            <button onClick={handleInstall} style={pillButton('primary')} disabled={installing || !addInput.trim()}>
-              {installing ? 'Installing…' : 'Install'}
+
+          <div style={styles.optionRow}>
+            <div style={styles.optionGroup}>
+              <span style={styles.optionLabel}>Install to</span>
+              <div style={styles.smallSwitcher}>
+                {(['user', 'project'] as const).map(s => {
+                  const unavailable = s === 'project' && !data.projectDir
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => setAddScope(s)}
+                      style={{
+                        ...styles.smallSwitchButton,
+                        ...(addScope === s ? styles.smallSwitchButtonSelected : undefined),
+                        opacity: unavailable ? 0.38 : 1,
+                      }}
+                      disabled={unavailable}
+                      title={unavailable ? 'No active workspace' : s === 'user' ? 'Available across projects' : 'Only this project'}
+                    >
+                      {s === 'user' ? 'User' : 'Project'}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div style={styles.optionGroup}>
+              <span style={styles.optionLabel}>Source</span>
+              <div style={styles.smallSwitcher}>
+                {(['localDir', 'gitUrl'] as const).map(src => (
+                  <button
+                    key={src}
+                    onClick={() => { setAddSource(src); setAddInput('') }}
+                    style={{ ...styles.smallSwitchButton, ...(addSource === src ? styles.smallSwitchButtonSelected : undefined) }}
+                  >
+                    {src === 'localDir' ? 'Local folder' : 'Git URL'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <label style={styles.pathLabel} htmlFor="skill-source-input">
+            {addSource === 'localDir' ? 'Skill folder' : 'Repository URL'}
+          </label>
+          <div style={styles.installInputRow}>
+            <div style={styles.pathInputShell}>
+              <span style={styles.pathIcon}><UIIcon name={addSource === 'localDir' ? 'folder' : 'link'} size={15} /></span>
+              <input
+                id="skill-source-input"
+                type="text"
+                placeholder={addSource === 'localDir' ? '~/.claude/skills/my-skill' : 'https://github.com/user/my-skill.git'}
+                value={addInput}
+                onChange={e => setAddInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') void handleInstall() }}
+                style={styles.pathInput}
+                autoFocus
+              />
+              {addSource === 'localDir' && (
+                <button onClick={handleBrowse} style={styles.browseButton}>Choose…</button>
+              )}
+            </div>
+            <button
+              onClick={handleInstall}
+              style={{ ...styles.installButton, opacity: installing || !addInput.trim() ? 0.45 : 1 }}
+              disabled={installing || !addInput.trim()}
+            >
+              {installing ? 'Installing…' : <><UIIcon name="add" size={14} />Install skill</>}
             </button>
-            <button onClick={() => { setAdding(false); setAddInput(''); setError(null) }} style={pillButton('ghost')}>Cancel</button>
           </div>
-        </div>
+          <div style={styles.destinationHint}>
+            Destination: <code style={styles.inlineCode}>{addScope === 'project' && data.projectDir ? data.projectDir : AGENT_SKILL_HINTS[agentFilter]}</code>
+          </div>
+        </section>
       ) : null}
 
       {loading ? (
-        <div style={{ color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 20 }}>Loading…</div>
+        <div style={styles.loadingState}><span style={styles.loadingDot} />Scanning skill directories…</div>
       ) : data.skills.length === 0 ? (
-        <div style={{
-          textAlign: 'center', padding: '36px 20px',
-          color: C.fg3, fontSize: 13,
-        }}>
+        <div style={styles.emptyState}>
           <div style={{ width: 52, height: 52, margin: '0 auto 12px', borderRadius: 16, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="sparkle" size={24} /></div>
-          <div style={{ fontWeight: 500, color: C.fg2, marginBottom: 4 }}>No skills installed</div>
-          <div style={{ fontSize: 12 }}>
-            Skills are loaded from <code style={{ background: C.surface3, padding: '1px 5px', borderRadius: 4 }}>{AGENT_SKILL_HINTS[agentFilter]}</code>
+          <div style={{ fontWeight: 650, color: C.fg, marginBottom: 5 }}>No skills found for {AGENTS.find(a => a.key === agentFilter)?.label}</div>
+          <div style={{ fontSize: 12, lineHeight: 1.55 }}>
+            Add a skill or place one in <code style={styles.inlineCode}>{AGENT_SKILL_HINTS[agentFilter]}</code>
           </div>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+        <div style={styles.skillGrid}>
           {data.skills.map(renderCard)}
         </div>
       )}
@@ -407,4 +453,112 @@ const iconBtn: React.CSSProperties = {
   background: 'transparent', color: C.fg3,
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   fontSize: 13, fontWeight: 600,
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  root: { height: '100%', overflowY: 'auto', position: 'relative' },
+  agentHeader: {
+    display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+    gap: 16, marginBottom: 18, flexWrap: 'wrap',
+  },
+  eyebrow: {
+    color: C.fg3, fontSize: 10, fontWeight: 750, letterSpacing: 0.75,
+    textTransform: 'uppercase', marginBottom: 7,
+  },
+  agentSwitcher: {
+    display: 'inline-flex', alignItems: 'center', padding: 3, gap: 2,
+    borderRadius: 10, background: C.surface, border: `1px solid ${C.border}`,
+  },
+  agentButton: {
+    minHeight: 32, padding: '6px 12px', borderRadius: 7, border: 'none',
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    color: C.fg3, background: 'transparent', cursor: 'pointer',
+    fontSize: 12, fontWeight: 650,
+  },
+  agentButtonSelected: {
+    color: C.fg, background: C.surface3, boxShadow: `inset 0 0 0 1px ${C.border2}`,
+  },
+  activeDot: {
+    width: 6, height: 6, borderRadius: '50%', background: C.accent,
+    boxShadow: `0 0 0 3px ${C.accentDim}`, flexShrink: 0,
+  },
+  agentMeta: {
+    display: 'flex', alignItems: 'center', gap: 8, color: C.fg3,
+    fontSize: 11, paddingBottom: 1,
+  },
+  iconButton: {
+    width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.border}`,
+    display: 'inline-grid', placeItems: 'center', padding: 0,
+    color: C.fg3, background: C.surface, cursor: 'pointer', flexShrink: 0,
+  },
+  errorBanner: {
+    background: C.dangerBg, color: C.dangerFg, border: `1px solid ${C.dangerBorder}`,
+    padding: '9px 11px', borderRadius: 9, marginBottom: 14, fontSize: 12,
+  },
+  installCard: {
+    background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12,
+    padding: 16, marginBottom: 18, boxShadow: '0 8px 28px rgba(0,0,0,0.08)',
+  },
+  installHeader: {
+    display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+    gap: 12, marginBottom: 15,
+  },
+  installTitle: { color: C.fg, fontSize: 13, fontWeight: 720, marginBottom: 3 },
+  installSubtitle: { color: C.fg3, fontSize: 11 },
+  optionRow: { display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap', marginBottom: 14 },
+  optionGroup: { display: 'flex', alignItems: 'center', gap: 9 },
+  optionLabel: { color: C.fg3, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' },
+  smallSwitcher: {
+    display: 'inline-flex', alignItems: 'center', padding: 2, gap: 2,
+    borderRadius: 8, background: C.bg, border: `1px solid ${C.border}`,
+  },
+  smallSwitchButton: {
+    minHeight: 27, border: 'none', borderRadius: 6, padding: '4px 10px',
+    background: 'transparent', color: C.fg3, cursor: 'pointer',
+    fontSize: 11, fontWeight: 650,
+  },
+  smallSwitchButtonSelected: { background: C.accentDim, color: C.accent },
+  pathLabel: {
+    display: 'block', color: C.fg3, fontSize: 10, fontWeight: 700,
+    letterSpacing: 0.25, marginBottom: 6,
+  },
+  installInputRow: { display: 'flex', gap: 9, alignItems: 'stretch', flexWrap: 'wrap' },
+  pathInputShell: {
+    display: 'flex', alignItems: 'center', flex: '1 1 420px', minWidth: 220,
+    border: `1px solid ${C.border2}`, borderRadius: 9, background: C.bg,
+    overflow: 'hidden', minHeight: 38,
+  },
+  pathIcon: { display: 'inline-flex', color: C.fg3, marginLeft: 11, flexShrink: 0 },
+  pathInput: {
+    flex: 1, minWidth: 80, border: 'none', outline: 'none', background: 'transparent',
+    color: C.fg, fontSize: 12, padding: '9px 10px', fontFamily: 'inherit',
+  },
+  browseButton: {
+    alignSelf: 'stretch', border: 'none', borderLeft: `1px solid ${C.border}`,
+    padding: '0 12px', background: C.surface3, color: C.fg2,
+    fontSize: 11, fontWeight: 650, cursor: 'pointer', flexShrink: 0,
+  },
+  installButton: {
+    minHeight: 38, border: 'none', borderRadius: 9, padding: '8px 14px',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+    background: C.accent, color: C.onAccent, cursor: 'pointer',
+    fontSize: 12, fontWeight: 750, flexShrink: 0,
+  },
+  destinationHint: { marginTop: 8, color: C.fg3, fontSize: 10, lineHeight: 1.5 },
+  inlineCode: {
+    background: C.surface3, color: C.fg2, padding: '2px 5px',
+    borderRadius: 4, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    wordBreak: 'break-all',
+  },
+  loadingState: {
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+    color: C.fg3, fontSize: 12, padding: '42px 20px',
+  },
+  loadingDot: { width: 7, height: 7, borderRadius: '50%', background: C.accent },
+  emptyState: {
+    textAlign: 'center', padding: '44px 20px', color: C.fg3,
+    fontSize: 13, border: `1px dashed ${C.border2}`, borderRadius: 12,
+    background: C.surface,
+  },
+  skillGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 },
 }
