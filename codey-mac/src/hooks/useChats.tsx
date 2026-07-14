@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react'
 import { apiService } from '../services/api'
 import type { Chat, ChatSelection, ChatMessage, ToolCallEntry, FileAttachment, TaskBrief } from '../types'
 import type { ChatStreamEvent } from '../../../packages/gateway/src/chat-runner'
@@ -378,7 +378,7 @@ interface ChatsContextValue {
   unlinkChannel: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<void>
   sendMessage: (chatId: string, text: string, attachments?: FileAttachment[]) => Promise<void>
   stopChat: (chatId: string) => Promise<void>
-  resolvePermission: (chatId: string, allow: boolean) => void
+  resolvePermission: (chatId: string, allow: boolean) => Promise<void>
   clearRestore: (chatId: string) => void
   toggleWorkspace: (workspaceName: string) => void
   refreshWorkspaces: () => Promise<void>
@@ -406,6 +406,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   })
 
   const pendingAssistantId = useRef<Record<string, string>>({})
+  const resolvingPermissions = useRef<Set<string>>(new Set())
   // Chats whose externally-initiated turn we are mid-adopting (chats.get in
   // flight). Prevents duplicate fetches and lets a fast terminal event cancel
   // a pending adoption (see onEvent).
@@ -570,6 +571,26 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return off
   }, [])
 
+  const sendMessage = useCallback(async (chatId: string, text: string, attachments?: FileAttachment[]) => {
+    const assistantMessageId = `asst-${Date.now()}-${Math.random()}`
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}-${Math.random()}`,
+      role: 'user',
+      content: text,
+      timestamp: Date.now(),
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
+      isComplete: true,
+    }
+    pendingAssistantId.current[chatId] = assistantMessageId
+    dispatch({ type: 'startSend', chatId, userMessage, assistantMessageId })
+    try {
+      await apiService.chats.send(chatId, text, attachments)
+    } catch (err) {
+      dispatch({ type: 'errorSend', chatId, assistantMessageId, error: `Error: ${(err as Error).message}` })
+      delete pendingAssistantId.current[chatId]
+    }
+  }, [])
+
   const value = useMemo<ChatsContextValue>(() => ({
     state,
     async createChat(workspaceName) {
@@ -633,34 +654,29 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const chat = await apiService.unlinkChat(chatId, channel, channelUserId)
       dispatch({ type: 'upsert', chat })
     },
-    async sendMessage(chatId, text, attachments) {
-      const assistantMessageId = `asst-${Date.now()}-${Math.random()}`
-      const userMessage: ChatMessage = {
-        id: `user-${Date.now()}-${Math.random()}`,
-        role: 'user',
-        content: text,
-        timestamp: Date.now(),
-        attachments: attachments && attachments.length > 0 ? attachments : undefined,
-        isComplete: true,
-      }
-      pendingAssistantId.current[chatId] = assistantMessageId
-      dispatch({ type: 'startSend', chatId, userMessage, assistantMessageId })
-      try {
-        await apiService.chats.send(chatId, text, attachments)
-      } catch (err) {
-        dispatch({ type: 'errorSend', chatId, assistantMessageId, error: `Error: ${(err as Error).message}` })
-        delete pendingAssistantId.current[chatId]
-      }
-    },
+    sendMessage,
     async stopChat(chatId) {
       try { await apiService.chats.stop(chatId) } catch { /* nothing in flight */ }
     },
-    resolvePermission(chatId, allow) {
-      if (allow) {
-        const toolNames = state.pendingPermissions[chatId]
-        if (toolNames) window.codey?.permissions?.addAllowed?.(toolNames, chatId).catch(() => {})
+    async resolvePermission(chatId, allow) {
+      if (!allow) {
+        dispatch({ type: 'dismissPermission', chatId })
+        return
       }
-      dispatch({ type: 'dismissPermission', chatId })
+      const toolNames = state.pendingPermissions[chatId]
+      if (!toolNames?.length) return
+      if (resolvingPermissions.current.has(chatId)) return
+      resolvingPermissions.current.add(chatId)
+      try {
+        const result = await window.codey.permissions.addAllowed(toolNames, chatId)
+        if (!result.ok) throw new Error(result.error)
+        dispatch({ type: 'dismissPermission', chatId })
+        // Claude Code has already ended the denied turn. Resume its warm session
+        // with an explicit continuation after the allow-list write completes.
+        await sendMessage(chatId, 'Continue the previous task now that the requested permissions have been granted.')
+      } finally {
+        resolvingPermissions.current.delete(chatId)
+      }
     },
     clearRestore(chatId) { dispatch({ type: 'clearRestore', chatId }) },
     toggleWorkspace(workspaceName) { dispatch({ type: 'toggleWorkspace', workspaceName }) },
@@ -676,7 +692,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const chats = await apiService.chats.list()
       dispatch({ type: 'loaded', chats })
     },
-  }), [state])
+  }), [state, sendMessage])
 
   return <ChatsContext.Provider value={value}>{children}</ChatsContext.Provider>
 }

@@ -23,6 +23,7 @@ import { useGitStatus } from '../hooks/useGitStatus'
 import { BranchPicker } from './BranchPicker'
 import { CreatePrModal } from './CreatePrModal'
 import { UIIcon } from './UIIcons'
+import { chatInputHistory, moveInInputHistory } from './chatInputHistory'
 
 interface Props {
   chatId: string
@@ -331,6 +332,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   // Seed from the per-chat draft store so unsent text/attachments survive the
   // remount that happens when switching chats (App.tsx keys ChatTab by chat id).
   const [input, setInput] = useState(() => getDraft(chatId).text)
+  const [inputHistoryIndex, setInputHistoryIndex] = useState<number | null>(null)
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   const [teamNames, setTeamNames] = useState<string[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
@@ -563,6 +565,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   useEffect(() => {
     setDraft(chatId, { text: input, attachments: pendingAttachments })
   }, [chatId, input, pendingAttachments])
+  useEffect(() => { setInputHistoryIndex(null) }, [chatId, chat?.messages.length])
   // When a turn is interrupted, lift the original prompt back into the input
   // and focus the textarea so the user can edit/resend without retyping.
   const restoreText = state.pendingRestores[chatId]
@@ -884,6 +887,28 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
         e.preventDefault()
         setInput('')
         return
+      }
+    }
+    if (!e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      // Start history navigation only from a blank composer. Once navigation
+      // has started, both arrows continue to move through this chat's prompts.
+      if (inputHistoryIndex !== null || input.length === 0) {
+        const moved = moveInInputHistory(
+          chatInputHistory(chat.messages),
+          inputHistoryIndex,
+          e.key === 'ArrowUp' ? 'up' : 'down',
+        )
+        if (moved) {
+          e.preventDefault()
+          setInputHistoryIndex(moved.index)
+          setInput(moved.value)
+          requestAnimationFrame(() => {
+            const ta = taRef.current
+            if (!ta) return
+            try { ta.setSelectionRange(ta.value.length, ta.value.length) } catch { /* unsupported */ }
+          })
+          return
+        }
       }
     }
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1382,8 +1407,10 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                       Needs permission: {state.pendingPermissions[chatId].join(', ')}
                     </span>
                     <div style={styles.permissionActions}>
-                      <button style={styles.permissionAllow} onClick={() => resolvePermission(chatId, true)}>Allow</button>
-                      <button style={styles.permissionDeny} onClick={() => resolvePermission(chatId, false)}>Deny</button>
+                      <button style={styles.permissionAllow} onClick={() => {
+                        void resolvePermission(chatId, true).catch(err => alert(`Couldn’t grant permission: ${(err as Error).message}`))
+                      }}>Allow &amp; continue</button>
+                      <button style={styles.permissionDeny} onClick={() => { void resolvePermission(chatId, false) }}>Deny</button>
                     </div>
                   </div>
                 )
@@ -1508,7 +1535,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
             <textarea
               ref={taRef}
               value={input}
-              onChange={e => setInput(e.target.value)}
+              onChange={e => { setInputHistoryIndex(null); setInput(e.target.value) }}
               onKeyDown={handleKey}
               onInput={e => {
                 if (composerHeight != null) return // manual height pinned
