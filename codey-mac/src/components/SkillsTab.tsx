@@ -148,7 +148,7 @@ export const SkillsTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 })
           color: C.fg, fontSize: 13, fontWeight: 600,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1,
         }}>
-          {skill.name}
+          {skill.qualifiedName}
         </span>
         <span style={{
           fontSize: 9, fontWeight: 600, letterSpacing: 0.3,
@@ -156,7 +156,7 @@ export const SkillsTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 })
           background: skill.scope === 'user' ? C.accentDim : C.surface3,
           color: skill.scope === 'user' ? C.accent : C.fg3,
         }}>
-          {skill.scope === 'user' ? 'User' : 'Project'}
+          {skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
         </span>
       </div>
       {skill.description && (
@@ -189,14 +189,14 @@ export const SkillsTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 })
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <span style={{ color: C.fg, fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }}>{skill.name}</span>
+          <span style={{ color: C.fg, fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }}>{skill.qualifiedName}</span>
           <span style={{
             fontSize: 10, fontWeight: 600, letterSpacing: 0.3,
             padding: '2px 6px', borderRadius: 4,
             background: skill.scope === 'user' ? C.accentDim : C.surface3,
             color: skill.scope === 'user' ? C.accent : C.fg3,
           }}>
-            {skill.scope === 'user' ? 'User' : 'Project'}
+            {skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
           </span>
           <button onClick={() => setSelected(null)} style={{ ...iconBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Close" aria-label="Close"><UIIcon name="close" size={14} /></button>
         </div>
@@ -264,10 +264,12 @@ export const SkillsTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 })
           </div>
           <span style={{ flex: 1 }} />
           <button onClick={() => handleReveal(skill.dir)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="folder" size={14} />Reveal in Finder</button>
-          <button
-            onClick={() => { const s = skill; setSelected(null); void handleRemove(s) }}
-            style={{ ...pillButton('ghost'), color: C.red }}
-          ><UIIcon name="trash" size={14} />Remove</button>
+          {!skill.managedBy && (
+            <button
+              onClick={() => { const s = skill; setSelected(null); void handleRemove(s) }}
+              style={{ ...pillButton('ghost'), color: C.red }}
+            ><UIIcon name="trash" size={14} />Remove</button>
+          )}
         </div>
       </div>
     </div>

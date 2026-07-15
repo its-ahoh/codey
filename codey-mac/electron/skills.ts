@@ -5,6 +5,8 @@ export type SkillScope = 'user' | 'project'
 
 export interface ScannedSkill {
   name: string
+  qualifiedName: string
+  managedBy?: string
   description: string
   scope: SkillScope
   dir: string
@@ -36,6 +38,23 @@ function isDirectory(fsMod: typeof Fs, dir: string): boolean {
   try { return fsMod.statSync(dir).isDirectory() } catch { return false }
 }
 
+/** Preserve the collection namespace for skills nested below a shared root. */
+export function qualifySkillName(
+  pathMod: typeof Path,
+  root: string,
+  skillDir: string,
+  name: string,
+): string {
+  if (name.includes(':')) return name
+  const parts = pathMod.relative(pathMod.resolve(root), pathMod.resolve(skillDir))
+    .split(pathMod.sep)
+    .filter(Boolean)
+  if (parts.length < 2) return name
+  const collection = parts[0]
+  if (!collection || collection.startsWith('.') || collection === 'skills') return name
+  return `${collection}:${name}`
+}
+
 /**
  * Discover skills below an agent's configured root. Nested roots are supported
  * (for example Codex's .system skills); once SKILL.md is found, that directory
@@ -48,8 +67,9 @@ export function scanSkillsDir(
   scope: SkillScope,
 ): ScannedSkill[] {
   if (!isDirectory(fsMod, dir)) return []
+  const root = pathMod.resolve(dir)
   const result: ScannedSkill[] = []
-  const pending = [pathMod.resolve(dir)]
+  const pending = [root]
   const visited = new Set<string>()
 
   while (pending.length > 0) {
@@ -64,7 +84,14 @@ export function scanSkillsDir(
       try {
         const md = fsMod.readFileSync(skillMdPath, 'utf-8')
         const { name, description } = parseSkillFrontmatter(md)
-        result.push({ name: name || pathMod.basename(current), description, scope, dir: current })
+        const resolvedName = name || pathMod.basename(current)
+        result.push({
+          name: resolvedName,
+          qualifiedName: qualifySkillName(pathMod, root, current, resolvedName),
+          description,
+          scope,
+          dir: current,
+        })
       } catch { /* skip unreadable skill */ }
       continue
     }
@@ -79,6 +106,36 @@ export function scanSkillsDir(
   }
 
   return result.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** Discover Claude plugin skills using the installed plugin id as namespace. */
+export function scanClaudePluginSkills(
+  fsMod: typeof Fs,
+  pathMod: typeof Path,
+  manifestPath: string,
+): ScannedSkill[] {
+  let manifest: any
+  try { manifest = JSON.parse(fsMod.readFileSync(manifestPath, 'utf-8')) } catch { return [] }
+  if (!manifest?.plugins || typeof manifest.plugins !== 'object') return []
+
+  const result: ScannedSkill[] = []
+  for (const [pluginId, rawInstalls] of Object.entries(manifest.plugins)) {
+    const collection = pluginId.split('@')[0]?.trim()
+    if (!collection || !Array.isArray(rawInstalls)) continue
+    for (const raw of rawInstalls) {
+      const install = raw as { installPath?: unknown; scope?: unknown }
+      if (typeof install.installPath !== 'string') continue
+      const scope: SkillScope = install.scope === 'project' ? 'project' : 'user'
+      for (const skill of scanSkillsDir(fsMod, pathMod, install.installPath, scope)) {
+        result.push({
+          ...skill,
+          qualifiedName: skill.name.includes(':') ? skill.name : `${collection}:${skill.name}`,
+          managedBy: pluginId,
+        })
+      }
+    }
+  }
+  return result.sort((a, b) => a.qualifiedName.localeCompare(b.qualifiedName))
 }
 
 export function samePath(fsMod: typeof Fs, pathMod: typeof Path, a: string, b: string): boolean {

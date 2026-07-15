@@ -9,7 +9,7 @@ import { decideNotification, createTurnTracker } from './chat-notifications'
 import { decideAutomationNotification, findUnseenRuns } from './automation-notifications'
 import { validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
-import { resolveUserPath, samePath, scanSkillsDir, uniqueSkills } from './skills'
+import { resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, uniqueSkills } from './skills'
 import type { ScannedSkill } from './skills'
 
 protocol.registerSchemesAsPrivileged([
@@ -2423,6 +2423,17 @@ app.whenReady().then(async () => {
     for (const dir of configuredUserSkillDirs(agentKey, home, pathMod)) {
       skills.push(...scanSkillsDir(fsMod, pathMod, dir, 'user'))
     }
+    if (agentKey === 'claude-code') {
+      const env = coreConfigManager?.get().agents?.['claude-code']?.env ?? {}
+      const configRoot = env.CLAUDE_CONFIG_DIR
+        ? resolveUserPath(pathMod, env.CLAUDE_CONFIG_DIR, home)
+        : pathMod.join(home, '.claude')
+      skills.push(...scanClaudePluginSkills(
+        fsMod,
+        pathMod,
+        pathMod.join(configRoot, 'plugins', 'installed_plugins.json'),
+      ))
+    }
 
     let projectDir: string | null = null
     const workingDir = getWorkingDir(fsMod, pathMod)
@@ -2449,7 +2460,7 @@ app.whenReady().then(async () => {
         source: 'gateway',
       }
       const skills: SlashCommand[] = skillResult.skills.map(skill => ({
-        name: skill.name,
+        name: skill.qualifiedName,
         description: skill.description || 'Agent skill',
         source: 'skill',
       }))
@@ -2457,8 +2468,13 @@ app.whenReady().then(async () => {
       // agent's own commands. A Set keeps the menu stable when a skill and an
       // agent command happen to share a name.
       const seen = new Set<string>()
+      const skillAliases = new Set(skills.flatMap(command => {
+        const separator = command.name.lastIndexOf(':')
+        return separator >= 0 ? [command.name.slice(separator + 1).toLowerCase()] : []
+      }))
       return [qq, ...skills, ...discovered].filter(command => {
         const key = command.name.toLowerCase()
+        if (command.source === 'agent' && skillAliases.has(key)) return false
         if (seen.has(key)) return false
         seen.add(key)
         return true
@@ -2505,12 +2521,20 @@ app.whenReady().then(async () => {
         }
         const rootSkillFile = pathMod.join(src, 'SKILL.md')
 
-        // A selected agent skills root is a collection, not one giant skill.
-        // Import its discovered children individually and never create the
-        // invalid <root>/skills self-copy that fs.cp rejects with EINVAL.
-        const sources = fsMod.existsSync(rootSkillFile)
-          ? [{ name: pathMod.basename(src), dir: src }]
-          : scanSkillsDir(fsMod, pathMod, src, 'user').map(skill => ({ name: pathMod.basename(skill.dir), dir: skill.dir }))
+        const discovered = fsMod.existsSync(rootSkillFile)
+          ? []
+          : scanSkillsDir(fsMod, pathMod, src, 'user')
+
+        // Preserve a named collection directory (for example `superpowers`)
+        // so its namespace survives installation. A generic `skills/` root is
+        // still imported child-by-child and never copied into itself.
+        const sourceName = pathMod.basename(src)
+        const preserveCollection = discovered.length > 0
+          && sourceName !== 'skills'
+          && !sourceName.startsWith('.')
+        const sources = fsMod.existsSync(rootSkillFile) || preserveCollection
+          ? [{ name: sourceName, dir: src }]
+          : discovered.map(skill => ({ name: pathMod.basename(skill.dir), dir: skill.dir }))
         if (sources.length === 0) throw new Error(`No SKILL.md found in: ${src}`)
 
         for (const source of sources) {

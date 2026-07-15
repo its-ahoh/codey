@@ -57,6 +57,9 @@ export const AppearanceTab: React.FC = () => {
   }, [])
 
   const toggleSkipPerms = (v: boolean) => {
+    if (v && !skipPerms && !window.confirm(
+      'Enable Skip permissions?\n\nAgents will be able to run shell commands, edit files, and make network requests without asking for confirmation.',
+    )) return
     setSkipPerms(v)
     window.codey?.config?.set?.({ gateway: { skipPermissions: v } }).catch(() => { /* ignore */ })
   }

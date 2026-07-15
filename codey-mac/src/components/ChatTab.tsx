@@ -1465,7 +1465,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                     <div style={styles.permissionActions}>
                       <button style={styles.permissionAllow} onClick={() => {
                         void resolvePermission(chatId, true).catch(err => alert(`Couldn’t grant permission: ${(err as Error).message}`))
-                      }}>Allow &amp; continue</button>
+                      }}>Accept</button>
                       <button style={styles.permissionDeny} onClick={() => { void resolvePermission(chatId, false) }}>Deny</button>
                     </div>
                   </div>
