@@ -1446,12 +1446,20 @@ app.whenReady().then(async () => {
         const [curOut, localOut, remoteOut] = await Promise.all([
           run(['rev-parse', '--abbrev-ref', 'HEAD']),
           run(['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
-          run(['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
+          run(['for-each-ref', '--format=%(refname:short)%09%(symref)', 'refs/remotes']),
         ])
         const current = curOut.trim() || 'HEAD'
         const local = localOut.split('\n').map(l => l.trim()).filter(Boolean)
-        const remote = remoteOut.split('\n').map(l => l.trim())
-          .filter(l => l && !l.endsWith('/HEAD'))
+        // %(refname:short) renders refs/remotes/origin/HEAD as the misleading
+        // bare label "origin" on some Git versions. Include %(symref) so those
+        // symbolic aliases can be removed without hiding real branches.
+        const remote = remoteOut.split('\n')
+          .map(line => {
+            const [name, symref] = line.split('\t')
+            return { name: name?.trim(), symref: symref?.trim() }
+          })
+          .filter(ref => ref.name && !ref.symref && !ref.name.endsWith('/HEAD'))
+          .map(ref => ref.name!)
         return { current, local, remote }
       } catch {
         return { current: '', local: [], remote: [] }
@@ -1497,12 +1505,24 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!workingDir) return { ok: false, error: 'missing workingDir' }
       const { execFile } = await import('child_process')
-      return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-        execFile('git', ['fetch', '--prune'], { cwd: workingDir, timeout: 30000 }, (err, _out, stderr) => {
-          if (err) resolve({ ok: false, error: (stderr || String(err)).trim() })
-          else resolve({ ok: true })
+      const run = (args: string[], timeout = 30000) => new Promise<{ ok: boolean; stdout: string; error?: string }>((resolve) => {
+        execFile('git', args, { cwd: workingDir, timeout }, (err, stdout, stderr) => {
+          if (err) resolve({ ok: false, stdout: stdout || '', error: (stderr || String(err)).trim() })
+          else resolve({ ok: true, stdout: stdout || '' })
         })
       })
+      const remotesResult = await run(['remote'], 3000)
+      if (!remotesResult.ok) return { ok: false, error: remotesResult.error }
+      const remotes = remotesResult.stdout.split('\n').map(remote => remote.trim()).filter(Boolean)
+      if (remotes.length === 0) return { ok: true }
+
+      // Explicitly fetch every head. Plain `git fetch --all` still honors a
+      // single-branch clone's narrow refspec and leaves the picker incomplete.
+      const results = await Promise.all(remotes.map(remote =>
+        run(['fetch', '--prune', remote, `+refs/heads/*:refs/remotes/${remote}/*`])
+      ))
+      const failed = results.find(result => !result.ok)
+      return failed ? { ok: false, error: failed.error } : { ok: true }
     })
   )
 

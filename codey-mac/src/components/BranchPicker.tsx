@@ -67,7 +67,16 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <button style={styles.pill} onClick={() => setOpen(o => { if (!o) setNote(null); return !o })} title="Branch & worktree">
+      <button style={styles.pill} onClick={() => setOpen(o => {
+        if (!o) {
+          setNote(null)
+          // A branch may have been created by Codex/Terminal while the app was
+          // in the background. Refresh at the moment the user opens the menu
+          // instead of relying only on the .git watcher or 5s polling fallback.
+          void git.refresh()
+        }
+        return !o
+      })} title="Branch & worktree">
         <UIIcon name="code" size={14} /><span>{s?.branch ?? '—'}</span>
         {s && s.dirty > 0 && <span style={styles.dirty}>+{s.dirty}</span>}
         {boundLabel && <span style={styles.wt}><UIIcon name="workspace" size={13} />{boundLabel}</span>}
@@ -107,12 +116,13 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
               <input placeholder="Filter branches…" value={query}
                 onChange={e => setQuery(e.target.value)} style={styles.input} />
               <div style={styles.scroll}>
+                {localFiltered.length > 0 && <div style={styles.divider}>Local · {s?.local.length ?? 0}</div>}
                 {localFiltered.map(b => (
                   <button key={b} style={styles.item} disabled={b === s?.branch} onClick={() => doSwitch(b)}>
                     {b === s?.branch && <UIIcon name="check" size={13} />}{b}
                   </button>
                 ))}
-                {remoteFiltered.length > 0 && <div style={styles.divider}>Remote</div>}
+                {remoteFiltered.length > 0 && <div style={styles.divider}>Remote · {s?.remote.length ?? 0}</div>}
                 {remoteFiltered.map(b => (
                   <button key={b} style={styles.item} onClick={() => doSwitchRemote(b)}>
                     {b}
