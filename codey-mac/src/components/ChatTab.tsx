@@ -1754,20 +1754,22 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0, maxWidth: 180,
   },
   openInWrap: { position: 'relative', flexShrink: 0 },
-  openInSplit: { display: 'inline-flex', alignItems: 'stretch' },
+  openInSplit: { display: 'inline-flex', alignItems: 'stretch', height: 32 },
   openInPrimary: {
     border: `1px solid ${C.border2}`, borderRadius: '6px 0 0 6px', padding: '4px 8px', background: C.surface3,
     color: C.fg2, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5,
+    height: 32, boxSizing: 'border-box',
   },
   openInDropdown: {
     border: `1px solid ${C.border2}`, borderLeft: 'none', borderRadius: '0 6px 6px 0', padding: '4px 6px', background: C.surface3,
     color: C.fg3, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    height: 32, boxSizing: 'border-box',
   },
   runSettingsWrap: { position: 'relative', flexShrink: 0 },
   runSettingsButton: {
     border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 8px', background: C.surface3,
     color: C.fg2, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 7,
-    maxWidth: 310, textAlign: 'left',
+    maxWidth: 310, textAlign: 'left', height: 32, boxSizing: 'border-box',
   },
   runSettingsButtonSummary: { color: C.fg2, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   runSettingsMenu: {
@@ -2026,6 +2028,11 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 12,
     color: C.fg,
+    height: 32,
+    boxSizing: 'border-box',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   linkMenu: {
     position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 1000,
