@@ -145,7 +145,7 @@ declare global {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>>>
         set: (updates: Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>) => Promise<IpcResult<void>>
         checkInstalled: () => Promise<IpcResult<Record<string, { installed: boolean; path?: string }>>>
-        slashCommands: (agent: string) => Promise<IpcResult<Array<{ name: string; description: string; source: 'agent' | 'gateway' }>>>
+        slashCommands: (agent: string) => Promise<IpcResult<Array<{ name: string; description: string; source: 'agent' | 'gateway' | 'skill' }>>>
       }
       chats: {
         upload: (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer) =>

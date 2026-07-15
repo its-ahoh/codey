@@ -534,7 +534,7 @@ async function detectInstalledAgents(): Promise<Record<string, { installed: bool
 interface SlashCommand {
   name: string
   description: string
-  source: 'agent' | 'gateway'
+  source: 'agent' | 'gateway' | 'skill'
 }
 
 const BUILTIN_SLASH: Record<string, SlashCommand[]> = {
@@ -2356,19 +2356,6 @@ app.whenReady().then(async () => {
     wrap(async () => detectInstalledAgents())
   )
 
-  ipcMain.handle('agents:slashCommands', async (_e, agent: string) =>
-    wrap(async () => {
-      const discovered = await discoverSlashCommands(agent)
-      const qq: SlashCommand = {
-        name: 'qq',
-        description: 'Quick Question — ask about this chat without affecting it',
-        source: 'gateway',
-      }
-      // Avoid a duplicate if a future discovery ever yields one.
-      return [qq, ...discovered.filter(c => c.name !== 'qq')]
-    })
-  )
-
   // ── Skills IPC ────────────────────────────────────────────────────
   const skillPaths: Record<string, { userDirs: string[]; projectSubdirs: string[] }> = {
     'claude-code': { userDirs: ['.claude/skills'], projectSubdirs: ['.claude/skills'] },
@@ -2405,31 +2392,64 @@ app.whenReady().then(async () => {
     } catch { return null }
   }
 
+  async function listAgentSkills(agentKey: string): Promise<{ skills: ScannedSkill[]; projectDir: string | null }> {
+    const fsMod = await import('fs')
+    const pathMod = await import('path')
+    const osMod = await import('os')
+    const home = osMod.homedir()
+    const paths = skillPaths[agentKey] ?? skillPaths['claude-code']
+
+    const skills: ScannedSkill[] = []
+    for (const dir of configuredUserSkillDirs(agentKey, home, pathMod)) {
+      skills.push(...scanSkillsDir(fsMod, pathMod, dir, 'user'))
+    }
+
+    let projectDir: string | null = null
+    const workingDir = getWorkingDir(fsMod, pathMod)
+    if (workingDir) {
+      for (const rel of paths.projectSubdirs) {
+        const dir = pathMod.join(workingDir, rel)
+        if (!projectDir) projectDir = dir
+        skills.push(...scanSkillsDir(fsMod, pathMod, dir, 'project'))
+      }
+    }
+
+    return { skills: uniqueSkills(fsMod, pathMod, skills), projectDir }
+  }
+
+  ipcMain.handle('agents:slashCommands', async (_e, agent: string) =>
+    wrap(async () => {
+      const [discovered, skillResult] = await Promise.all([
+        discoverSlashCommands(agent),
+        listAgentSkills(agent),
+      ])
+      const qq: SlashCommand = {
+        name: 'qq',
+        description: 'Quick Question — ask about this chat without affecting it',
+        source: 'gateway',
+      }
+      const skills: SlashCommand[] = skillResult.skills.map(skill => ({
+        name: skill.name,
+        description: skill.description || 'Agent skill',
+        source: 'skill',
+      }))
+      // Gateway commands take precedence, then installed skills, then the
+      // agent's own commands. A Set keeps the menu stable when a skill and an
+      // agent command happen to share a name.
+      const seen = new Set<string>()
+      return [qq, ...skills, ...discovered].filter(command => {
+        const key = command.name.toLowerCase()
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    })
+  )
+
   ipcMain.handle('skills:list', async (_e, agent?: string) =>
     wrap(async () => {
-      const fsMod = await import('fs')
-      const pathMod = await import('path')
-      const osMod = await import('os')
-      const home = osMod.homedir()
       const agentKey = agent ?? 'claude-code'
-      const paths = skillPaths[agentKey] ?? skillPaths['claude-code']
-
-      const skills: ScannedSkill[] = []
-      for (const dir of configuredUserSkillDirs(agentKey, home, pathMod)) {
-        skills.push(...scanSkillsDir(fsMod, pathMod, dir, 'user'))
-      }
-
-      let projectDir: string | null = null
-      const workingDir = getWorkingDir(fsMod, pathMod)
-      if (workingDir) {
-        for (const rel of paths.projectSubdirs) {
-          const dir = pathMod.join(workingDir, rel)
-          if (!projectDir) projectDir = dir
-          skills.push(...scanSkillsDir(fsMod, pathMod, dir, 'project'))
-        }
-      }
-
-      return { skills: uniqueSkills(fsMod, pathMod, skills), projectDir }
+      return listAgentSkills(agentKey)
     })
   )
 

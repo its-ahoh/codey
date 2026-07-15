@@ -47,6 +47,16 @@ interface DirectoryResolveResult {
 /** Max advisor escalation rounds per single-agent turn (solo advisor). */
 const SOLO_ADVISOR_MAX_ROUNDS = 2;
 
+/** A failed run may be retried this many times before fallback routing starts. */
+export const MAX_NETWORK_RETRIES = 5;
+
+/** Keep retries narrow: agent/config/permission failures must not be repeated. */
+export function isRetryableNetworkFailure(response: AgentResponse): boolean {
+  if (response.success) return false;
+  const text = `${response.error ?? ''}\n${response.output ?? ''}`.toLowerCase();
+  return /(?:\btimeout\b|timed out|deadline exceeded|etimedout|econnreset|econnrefused|enotfound|eai_again|socket hang up|fetch failed|network (?:error|unavailable)|connection (?:closed|lost|reset|refused|error)|temporarily unavailable|service unavailable|gateway timeout|\b(?:408|429|500|502|503|504)\b)/i.test(text);
+}
+
 /** Explicit `/skill <name> <task>` invocation. Threaded per-turn: handleMessage
  *  attaches it to the queued turn's payload, runOneTurn reads it from the
  *  payload, and (for channel-linked chats) it rides into sendToChat on the
@@ -3505,7 +3515,7 @@ Example: /model gpt-4.1 write a Python script`;
       const wmModel = workerManager.getWorkerModel(memberName);
       const modelConfig = wmModel ? this.getModelConfig(codingAgent, wmModel) : (opts.fallbackModel ?? this.getDefaultModelConfig(codingAgent));
       await emitter.status(`🔄 Worker **${worker.name}** is working...`);
-      emitter.beginWorker?.({ step: i + 1, worker: worker.name });
+      emitter.beginWorker?.({ step: i + 1, worker: worker.name, agent: codingAgent, model: modelConfig?.model });
       const roster = members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
       const nextName = members[i + 1];
       const nextWorker = nextName
@@ -3720,7 +3730,7 @@ Example: /model gpt-4.1 write a Python script`;
         ? this.getModelConfig(codingAgent, wmModel)
         : (opts?.fallbackModel ?? this.getDefaultModelConfig(codingAgent));
       await emitter.status(`🔄 Step ${++stepIndex}: **${worker.name}** is working...`);
-      emitter.beginWorker?.({ step: stepIndex, worker: worker.name });
+      emitter.beginWorker?.({ step: stepIndex, worker: worker.name, agent: codingAgent, model: modelConfig?.model });
 
       const roster = graph.nodes
         .filter(n => n.type === 'worker' && n.worker)
@@ -3933,7 +3943,12 @@ Example: /model gpt-4.1 write a Python script`;
       }
       // Pre-create one stub message per worker so streaming events are routed
       // per-worker. Serial modes use beginWorker; parallel pre-creates them all.
-      workerMsgs.teamStart(team.members.map((w, i) => ({ step: i + 1, worker: w })));
+      workerMsgs.teamStart(team.members.map((w, i) => ({
+        step: i + 1,
+        worker: w,
+        agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
+        model: (chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent))?.model,
+      })));
       const workerStep = new Map<string, number>(team.members.map((w, i) => [w, i + 1]));
 
       const runner = new ParallelTeamRunner({
@@ -4045,7 +4060,19 @@ Example: /model gpt-4.1 write a Python script`;
             // (beginWorker below). Don't also echo a "### Step N" header into the
             // turn's main message — that produced a second, redundant copy of the
             // whole run in a different format.
-            workerMsgs.beginWorker({ step: msg.step, worker: msg.worker, reason: msg.reason });
+            const wm = this.workspaceManager.getWorkerManager();
+            const workerAgent = (wm.getWorkerCodingAgent(msg.worker) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+            const workerModelName = wm.getWorkerModel(msg.worker);
+            const workerModel = workerModelName
+              ? this.getModelConfig(workerAgent, workerModelName)
+              : (chatModel ?? this.getDefaultModelConfig(workerAgent));
+            workerMsgs.beginWorker({
+              step: msg.step,
+              worker: msg.worker,
+              reason: msg.reason,
+              agent: workerAgent,
+              model: workerModel?.model,
+            });
           } else {
             sink({ type: 'info', chatId, message: msg.summary });
           }
@@ -4247,8 +4274,39 @@ Example: /model gpt-4.1 write a Python script`;
     return out;
   }
 
+  private async waitForNetworkRetry(ms: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return;
+    await new Promise<void>(resolve => {
+      const timer = setTimeout(done, ms);
+      const onAbort = () => done();
+      function done() {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  private async runAgentWithNetworkRetry(agent: CodingAgent, request: AgentRequest): Promise<AgentResponse> {
+    let response = await this.agentFactory.run(agent, request);
+    for (let retry = 1; retry <= MAX_NETWORK_RETRIES; retry++) {
+      if (request.signal?.aborted || !isRetryableNetworkFailure(response)) break;
+      // 1s, 2s, 4s, 8s, 8s: enough breathing room for transient outages
+      // without leaving the chat apparently frozen for a long time.
+      const delayMs = Math.min(1000 * 2 ** (retry - 1), 8000);
+      const message = `Network error — retrying ${retry}/${MAX_NETWORK_RETRIES} in ${delayMs / 1000}s`;
+      this.logger.warn(`${agent}: ${message}`);
+      request.onStatus?.({ type: 'info', message });
+      await this.waitForNetworkRetry(delayMs, request.signal);
+      if (request.signal?.aborted) break;
+      response = await this.agentFactory.run(agent, request);
+    }
+    return response;
+  }
+
   private async runWithFallback(agent: CodingAgent, request: AgentRequest): Promise<AgentResponse> {
-    const response = await this.agentFactory.run(agent, request);
+    const response = await this.runAgentWithNetworkRetry(agent, request);
     if (response.success) return response;
 
     // User-initiated abort — do NOT churn through every fallback agent,
@@ -4301,7 +4359,7 @@ Example: /model gpt-4.1 write a Python script`;
 
       const label = `${entry.agent}(${resolvedModel.model})`;
       this.logger.warn(`Agent ${agent} failed, trying ${label}...`);
-      const fallbackResponse = await this.agentFactory.run(entry.agent, {
+      const fallbackResponse = await this.runAgentWithNetworkRetry(entry.agent, {
         ...request,
         agent: entry.agent,
         model: resolvedModel,
@@ -5188,6 +5246,12 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
 
+      // Fallback metadata already carries the exact successful identity as
+      // "agent(model)". Persist that identity instead of the failed primary;
+      // otherwise use the configured agent/model for this turn.
+      const fallbackIdentity = singleAgentResponse?.fallback?.to.match(/^([^()]+)\((.+)\)$/);
+      const responseAgent = (fallbackIdentity?.[1] ?? agent) as CodingAgent;
+      const responseModel = fallbackIdentity?.[2] ?? model?.model;
       const assistantMessage: ChatMessage = {
         id: randomUUID(),
         role: 'assistant',
@@ -5199,6 +5263,8 @@ Example: /model gpt-4.1 write a Python script`;
         isComplete: true,
         tokens,
         durationSec,
+        agent: responseAgent,
+        ...(responseModel ? { model: responseModel } : {}),
         ...(surfacedChoices ? { choices: surfacedChoices } : {}),
         ...(agentUserQuestion ? { userQuestion: agentUserQuestion } : {}),
         ...(singleAgentResponse?.fallback ? { fallback: singleAgentResponse.fallback } : {}),
@@ -5227,7 +5293,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
 
-      sink({ type: 'done', chatId, response: output, thinking: singleAgentResponse?.thinking, tokens, durationSec, title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
+      sink({ type: 'done', chatId, response: output, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
 
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
       // Skip the whole pass when this turn ended PAUSED — i.e. the team run
@@ -5313,6 +5379,8 @@ Example: /model gpt-4.1 write a Python script`;
         timestamp: Date.now(),
         toolCalls,
         isComplete: true,
+        agent,
+        ...(model?.model ? { model: model.model } : {}),
       };
       this.chatManager.appendMessage(chatId, assistantMessage);
       sink({ type: 'error', chatId, message });

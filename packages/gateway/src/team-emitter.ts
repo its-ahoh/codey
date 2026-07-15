@@ -1,4 +1,4 @@
-import { ChannelType } from '@codey/core';
+import { ChannelType, CodingAgent } from '@codey/core';
 import type { WorkerMessageEmitter } from './worker-message-emitter';
 
 /** Surface-agnostic sink for team continuation output. */
@@ -12,7 +12,7 @@ export interface TeamEmitter {
   /** Per-worker streamed thinking token. */
   onThinking(token: string, step: number): void;
   /** Begin a per-worker chat message (chat surface only). */
-  beginWorker?(args: { step: number; worker: string; reason?: string }): void;
+  beginWorker?(args: { step: number; worker: string; reason?: string; agent?: CodingAgent; model?: string }): void;
   /** Finalize the active per-worker chat message (chat surface only). */
   endWorker?(status: 'done' | 'failed' | 'askedUser'): void;
   /** Accumulated assistant transcript (chat surface); '' for channels. */
@@ -45,7 +45,7 @@ export class ChatEmitter implements TeamEmitter {
     if (this.workerMsgs) { this.workerMsgs.onThinking(token, step); return; }
     try { this.sink({ type: 'thinking', chatId: this.chatId, token, step }); } catch { /* swallow */ }
   }
-  beginWorker(args: { step: number; worker: string; reason?: string }): void { this.workerMsgs?.beginWorker(args); }
+  beginWorker(args: { step: number; worker: string; reason?: string; agent?: CodingAgent; model?: string }): void { this.workerMsgs?.beginWorker(args); }
   endWorker(status: 'done' | 'failed' | 'askedUser'): void { this.workerMsgs?.endWorker(status); }
   get transcript(): string { return this.parts.join('\n\n'); }
   get choices(): string[] | undefined { return this._choices; }

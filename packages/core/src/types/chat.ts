@@ -30,6 +30,10 @@ export interface ChatMessage {
   tokens?: number;
   /** Wall-clock seconds the agent took to produce the response. */
   durationSec?: number;
+  /** Agent/model that produced this assistant message. Stored per turn so
+   * historical labels remain accurate after the chat configuration changes. */
+  agent?: 'claude-code' | 'opencode' | 'codex';
+  model?: string;
   /**
    * Present when this turn was produced by a fallback agent after the primary
    * failed. Rendered as a small badge in the message footer. `from`/`to` are

@@ -9,6 +9,7 @@ export default defineConfig({
     // added to this list.
     include: [
       'src/config.test.ts',
+      'src/gateway.network-retry.test.ts',
       'src/digit-mapping.test.ts',
       'src/team-pause.test.ts',
       'src/chats.discussion.test.ts',

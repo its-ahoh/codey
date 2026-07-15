@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatSelection, FileAttachment } from '../types'
 import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
@@ -312,6 +312,7 @@ const TeamRunGroup: React.FC<{
             onClick={() => onSelectTurn(m.id)}>
             <div style={styles.teamWorkerHead}>
               <span style={styles.teamStepLabel}>Step {m.step}: {m.worker}</span>
+              {m.model && <span style={styles.modelBadge} title={`${m.agent ?? 'Agent'} model`}>{m.model}</span>}
               {m.workerStatus === 'failed' && <span style={styles.teamWorkerFailed}>failed</span>}
               {running && <span style={styles.teamStepRunning}>● running</span>}
             </div>
@@ -341,7 +342,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   const [agentDefaultModels, setAgentDefaultModels] = useState<Record<string, string | undefined>>({})
   const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>(() => getDraft(chatId).attachments)
   const [isDragging, setIsDragging] = useState(false)
-  const [slashCommands, setSlashCommands] = useState<Array<{ name: string; description: string; source: 'agent' | 'gateway' }>>([])
+  const [slashCommands, setSlashCommands] = useState<Array<{ name: string; description: string; source: 'agent' | 'gateway' | 'skill' }>>([])
   const [slashIdx, setSlashIdx] = useState(0)
   const slashMenuRef = useRef<HTMLDivElement>(null)
   const [panelTab, setPanelTab] = useState<ContextPanelTab>('current')
@@ -358,6 +359,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   const [editors, setEditors] = useState<Array<{ id: string; name: string; installed: boolean }>>([])
   const [editorsLoaded, setEditorsLoaded] = useState(false)
   const [openingEditor, setOpeningEditor] = useState<string | null>(null)
+  const [preferredEditorId, setPreferredEditorId] = useState(() => localStorage.getItem('codey.preferredEditor') ?? '')
   const [runSettingsOpen, setRunSettingsOpen] = useState(false)
   const [followLatest, setFollowLatest] = useState(true)
   // Selected option labels for the active multi-select AskUserQuestion. Reset
@@ -469,13 +471,28 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   // header BranchPicker both operate on this effective dir.
   const workingDir = chat?.workingDirOverride || workspaceDir
 
-  const openEditorMenu = async () => {
-    const nextOpen = !editorMenuOpen
-    setEditorMenuOpen(nextOpen)
-    if (!nextOpen || editorsLoaded) return
+  const loadEditors = useCallback(async () => {
+    if (editorsLoaded) return editors
     const result = await window.codey.editors.list()
-    if (result.ok) setEditors(result.data)
+    const next = result.ok ? result.data : []
+    if (result.ok) setEditors(next)
     setEditorsLoaded(true)
+    return next
+  }, [editors, editorsLoaded])
+
+  useEffect(() => { void loadEditors() }, [])
+
+  useEffect(() => {
+    if (!editorsLoaded) return
+    const installed = editors.filter(editor => editor.installed)
+    if (installed.length === 0 || installed.some(editor => editor.id === preferredEditorId)) return
+    setPreferredEditorId(installed[0].id)
+    localStorage.setItem('codey.preferredEditor', installed[0].id)
+  }, [editors, editorsLoaded, preferredEditorId])
+
+  const toggleEditorMenu = async () => {
+    if (!editorsLoaded) await loadEditors()
+    setEditorMenuOpen(open => !open)
   }
 
   const openInEditor = async (editor: { id: string; name: string }) => {
@@ -487,7 +504,15 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
       alert(`Couldn’t open ${editor.name}: ${result.error}`)
       return
     }
+    setPreferredEditorId(editor.id)
+    localStorage.setItem('codey.preferredEditor', editor.id)
     setEditorMenuOpen(false)
+  }
+
+  const openPreferredEditor = async () => {
+    const available = (editorsLoaded ? editors : await loadEditors()).filter(editor => editor.installed)
+    const preferred = available.find(editor => editor.id === preferredEditorId) ?? available[0]
+    if (preferred) await openInEditor(preferred)
   }
 
   const { status: gitStatus, refresh: refreshGit } = useGitStatus(workingDir)
@@ -710,6 +735,18 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
     })
     return () => { stale = true }
   }, [effectiveAgent])
+
+  // Skills can be installed while this chat remains mounted behind Settings.
+  // Re-scan when the slash menu is opened so newly loaded skills appear
+  // immediately without requiring an agent switch or app restart.
+  useEffect(() => {
+    if (input !== '/') return
+    let stale = false
+    window.codey.agents.slashCommands(effectiveAgent).then(r => {
+      if (!stale && r.ok) setSlashCommands(r.data)
+    })
+    return () => { stale = true }
+  }, [input, effectiveAgent])
 
   useEffect(() => { setSlashIdx(0) }, [input])
   useEffect(() => {
@@ -958,6 +995,14 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
 
   const panelWorkerName = chat.selection.type === 'worker' ? chat.selection.name : undefined
   const panelTeamName = chat.selection.type === 'team' ? chat.selection.name : undefined
+  const runSettingsSummary = chat.selection.type === 'team'
+    ? `${chat.selection.name ?? 'Team'} · per-runner routing`
+    : [
+        chat.selection.type === 'worker' ? chat.selection.name : null,
+        effectiveAgent,
+        effectiveModel ?? 'default model',
+        chat.soloAdvisor ? 'Advisor on' : null,
+      ].filter(Boolean).join(' · ')
   const [panelTeamGraph, setPanelTeamGraph] = useState<import('../../../packages/core/src/team-graph').TeamGraph | undefined>(undefined)
   useEffect(() => {
     if (!panelTeamName) { setPanelTeamGraph(undefined); return }
@@ -998,16 +1043,28 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
           }}
         />
         <div style={{ ...styles.openInWrap, marginLeft: 'auto' }}>
-          <button
-            onClick={() => void openEditorMenu()}
-            style={styles.openInButton}
-            disabled={!workingDir}
-            title={workingDir ? 'Open this project in an editor' : 'Project directory is unavailable'}
-          >
-            <UIIcon name="code" size={14} />
-            <span>Open in</span>
-            <span style={{ display: 'inline-flex', transform: editorMenuOpen ? 'rotate(-90deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={12} /></span>
-          </button>
+          <div style={styles.openInSplit}>
+            <button
+              onClick={() => void openPreferredEditor()}
+              style={styles.openInPrimary}
+              disabled={!workingDir || openingEditor !== null || (editorsLoaded && !editors.some(editor => editor.installed))}
+              title={workingDir ? 'Open this project in the preferred editor' : 'Project directory is unavailable'}
+            >
+              <UIIcon name="code" size={14} />
+              <span>{openingEditor
+                ? 'Opening…'
+                : editors.find(editor => editor.id === preferredEditorId && editor.installed)?.name ?? 'Open in'}</span>
+            </button>
+            <button
+              onClick={() => void toggleEditorMenu()}
+              style={styles.openInDropdown}
+              disabled={!workingDir}
+              title="Choose another editor"
+              aria-label="Choose another editor"
+            >
+              <span style={{ display: 'inline-flex', transform: editorMenuOpen ? 'rotate(-90deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={12} /></span>
+            </button>
+          </div>
           {editorMenuOpen && (
             <>
               <div onClick={() => setEditorMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
@@ -1022,7 +1079,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                       disabled={openingEditor !== null}
                       onClick={() => void openInEditor(editor)}
                     >
-                      <UIIcon name="code" size={14} />
+                      <UIIcon name={editor.id === preferredEditorId ? 'check' : 'code'} size={14} />
                       <span>{openingEditor === editor.id ? `Opening ${editor.name}…` : editor.name}</span>
                     </button>
                   ))
@@ -1039,8 +1096,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
             style={styles.runSettingsButton}
             title="Configure worker, agent, model, and advisor"
           >
-            <UIIcon name="tools" size={14} />
-            <span>Run settings</span>
+            <span style={styles.runSettingsButtonSummary}>{runSettingsSummary}</span>
             <span style={{ display: 'inline-flex', transform: runSettingsOpen ? 'rotate(-90deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={12} /></span>
           </button>
           {runSettingsOpen && (
@@ -1075,7 +1131,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                         style={styles.runSettingSelect}
                         title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : workerAgent ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
                       >
-                        <option value="">{effectiveAgent}</option>
+                        <option value="">Inherit ({effectiveAgent})</option>
                         {AGENT_NAMES.filter(n => enabledAgents.includes(n) || n === chat.agent).map(n => (
                           <option key={n} value={n}>{n}</option>
                         ))}
@@ -1090,7 +1146,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                         title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : workerModel ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
                         disabled={modelsForAgent.length === 0}
                       >
-                        <option value="">{effectiveModel ?? '(default)'}</option>
+                        <option value="">Inherit ({effectiveModel ?? 'agent default'})</option>
                         {modelsForAgent.map(m => (
                           <option key={m.model} value={m.model}>{m.model}</option>
                         ))}
@@ -1418,6 +1474,14 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
               <div style={styles.tsLabel}>
                 <span>{fmtTime(msg.timestamp)}</span>
                 <span style={styles.tsRight}>
+                  {msg.role === 'assistant' && msg.model && (
+                    <span
+                      style={styles.modelBadge}
+                      title={`${msg.agent ?? 'Agent'} model`}
+                    >
+                      {msg.model}
+                    </span>
+                  )}
                   {msg.fallback && (
                     <span
                       style={styles.fallbackBadge}
@@ -1690,15 +1754,22 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0, maxWidth: 180,
   },
   openInWrap: { position: 'relative', flexShrink: 0 },
-  openInButton: {
-    border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 8px', background: C.surface3,
+  openInSplit: { display: 'inline-flex', alignItems: 'stretch' },
+  openInPrimary: {
+    border: `1px solid ${C.border2}`, borderRadius: '6px 0 0 6px', padding: '4px 8px', background: C.surface3,
     color: C.fg2, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5,
+  },
+  openInDropdown: {
+    border: `1px solid ${C.border2}`, borderLeft: 'none', borderRadius: '0 6px 6px 0', padding: '4px 6px', background: C.surface3,
+    color: C.fg3, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   },
   runSettingsWrap: { position: 'relative', flexShrink: 0 },
   runSettingsButton: {
     border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 8px', background: C.surface3,
-    color: C.fg2, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5,
+    color: C.fg2, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 7,
+    maxWidth: 310, textAlign: 'left',
   },
+  runSettingsButtonSummary: { color: C.fg2, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   runSettingsMenu: {
     position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 1000, minWidth: 244,
     padding: 10, borderRadius: 9, background: C.surface2, border: `1px solid ${C.border2}`,
@@ -1731,6 +1802,12 @@ const styles: Record<string, React.CSSProperties> = {
   tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, paddingLeft: 4, paddingRight: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   tsMeta: { color: C.fg3, opacity: 0.55, fontVariantNumeric: 'tabular-nums' },
   tsRight: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
+  modelBadge: {
+    color: C.fg3, background: C.surface3, border: `1px solid ${C.border2}`,
+    borderRadius: 5, padding: '1px 6px', fontSize: 10,
+    fontFamily: 'SF Mono, Menlo, monospace',
+    maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
   fallbackBadge: {
     color: C.warningFg, background: C.warningBg,
     borderRadius: 6, padding: '1px 6px', fontSize: 10,
