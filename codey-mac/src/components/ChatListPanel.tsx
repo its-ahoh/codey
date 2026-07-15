@@ -268,6 +268,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
         )}
         {groupNames.map(ws => {
           const collapsed = !!state.collapsedWorkspaces[ws]
+          const unreadCount = groups[ws].reduce(
+            (count, chat) => count + (state.unreadChats[chat.id] ? 1 : 0),
+            0,
+          )
           return (
             <div key={ws}>
               <div
@@ -323,6 +327,13 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                 )}
                 {ws === gatewayWorkspace && (
                   <span style={styles.gatewayBadge} title="Gateway default workspace — receives messages from chat platforms"/>
+                )}
+                {unreadCount > 0 && (
+                  <span
+                    style={styles.unreadDot}
+                    title={`${unreadCount} unread chat${unreadCount === 1 ? '' : 's'}`}
+                    aria-label={`${unreadCount} unread chat${unreadCount === 1 ? '' : 's'}`}
+                  />
                 )}
                 <button
                   style={styles.groupAddBtn}
