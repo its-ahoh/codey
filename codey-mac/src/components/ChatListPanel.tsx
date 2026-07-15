@@ -439,7 +439,6 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
         </div>
       </div>
       <div style={styles.manageSection}>
-        <div style={styles.sectionLabel}>Workspace</div>
         <div style={styles.footer}>
         <UpdateButton />
         <button
