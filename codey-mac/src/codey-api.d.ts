@@ -12,6 +12,8 @@ type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
 export interface SkillEntry {
   name: string
+  qualifiedName: string
+  managedBy?: string
   description: string
   scope: 'user' | 'project'
   dir: string

@@ -2,7 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { resolveUserPath, samePath, scanSkillsDir, uniqueSkills } from './skills'
+import { qualifySkillName, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, uniqueSkills } from './skills'
 
 const roots: string[] = []
 const temp = () => {
@@ -27,7 +27,54 @@ describe('agent skill discovery', () => {
     fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\r\nname: "Image Gen"\r\ndescription: Makes images\r\n---\r\n')
     fs.writeFileSync(path.join(skill, 'references', 'SKILL.md'), '---\nname: wrong\n---\n')
     expect(scanSkillsDir(fs, path, root, 'user')).toEqual([
-      { name: 'Image Gen', description: 'Makes images', scope: 'user', dir: skill },
+      { name: 'Image Gen', qualifiedName: 'Image Gen', description: 'Makes images', scope: 'user', dir: skill },
+    ])
+  })
+
+  it('keeps a nested skill collection prefix in its command name', () => {
+    const root = temp()
+    const skill = path.join(root, 'superpowers', 'skills', 'brainstorming')
+    fs.mkdirSync(skill, { recursive: true })
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: brainstorming\ndescription: Explore ideas\n---\n')
+
+    expect(scanSkillsDir(fs, path, root, 'user')).toEqual([
+      {
+        name: 'brainstorming',
+        qualifiedName: 'superpowers:brainstorming',
+        description: 'Explore ideas',
+        scope: 'user',
+        dir: skill,
+      },
+    ])
+  })
+
+  it('does not duplicate an explicit namespace from frontmatter', () => {
+    expect(qualifySkillName(path, '/skills', '/skills/superpowers/brainstorming', 'superpowers:brainstorming'))
+      .toBe('superpowers:brainstorming')
+  })
+
+  it('uses the Claude plugin id as the skill collection namespace', () => {
+    const root = temp()
+    const installPath = path.join(root, 'cache', 'superpowers', '4.1.1')
+    const skill = path.join(installPath, 'skills', 'brainstorming')
+    fs.mkdirSync(skill, { recursive: true })
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: brainstorming\n---\n')
+    const manifest = path.join(root, 'installed_plugins.json')
+    fs.writeFileSync(manifest, JSON.stringify({
+      plugins: {
+        'superpowers@superpowers-marketplace': [{ scope: 'user', installPath }],
+      },
+    }))
+
+    expect(scanClaudePluginSkills(fs, path, manifest)).toEqual([
+      {
+        name: 'brainstorming',
+        qualifiedName: 'superpowers:brainstorming',
+        managedBy: 'superpowers@superpowers-marketplace',
+        description: '',
+        scope: 'user',
+        dir: skill,
+      },
     ])
   })
 

@@ -80,7 +80,9 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
         <UIIcon name="code" size={14} /><span>{s?.branch ?? '—'}</span>
         {s && s.dirty > 0 && <span style={styles.dirty}>+{s.dirty}</span>}
         {boundLabel && <span style={styles.wt}><UIIcon name="workspace" size={13} />{boundLabel}</span>}
-        <span style={styles.caret}>⌄</span>
+        <span style={{ ...styles.caret, transform: open ? 'rotate(-90deg)' : 'rotate(90deg)' }}>
+          <UIIcon name="chevron" size={12} />
+        </span>
       </button>
 
       {open && (
@@ -161,7 +163,17 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden', whiteSpace: 'nowrap' },
   dirty: { color: C.yellow, opacity: 0.85 },
   wt: { color: C.green, display: 'inline-flex', alignItems: 'center', gap: 3 },
-  caret: { color: C.fg3 },
+  caret: {
+    color: C.fg3,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 14,
+    height: 14,
+    flexShrink: 0,
+    transformOrigin: 'center',
+    transition: 'transform 0.15s ease',
+  },
   menu: { position: 'absolute', top: 'calc(100% + 7px)', left: 0, zIndex: 20, width: 300,
     background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
     boxShadow: '0 14px 30px rgba(0,0,0,0.26)', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 },
