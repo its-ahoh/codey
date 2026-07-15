@@ -272,6 +272,14 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
             (count, chat) => count + (state.unreadChats[chat.id] ? 1 : 0),
             0,
           )
+          const runningCount = groups[ws].reduce(
+            (count, chat) => count + (state.inFlight[chat.id] ? 1 : 0),
+            0,
+          )
+          const attentionCount = groups[ws].reduce(
+            (count, chat) => count + (state.pendingPermissions[chat.id] ? 1 : 0),
+            0,
+          )
           return (
             <div key={ws}>
               <div
@@ -323,17 +331,35 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                     style={styles.renameInput}
                   />
                 ) : (
-                  <span style={styles.groupName}>{ws}</span>
+                  <span style={styles.groupIdentity}>
+                    <span style={styles.groupName}>{ws}</span>
+                    {ws === gatewayWorkspace && (
+                      <span style={styles.gatewayTag} title="Gateway default workspace — receives messages from chat platforms">
+                        Gateway
+                      </span>
+                    )}
+                  </span>
                 )}
-                {ws === gatewayWorkspace && (
-                  <span style={styles.gatewayBadge} title="Gateway default workspace — receives messages from chat platforms"/>
+                {attentionCount > 0 && (
+                  <span
+                    style={styles.attentionBadge}
+                    title={`${attentionCount} chat${attentionCount === 1 ? '' : 's'} need attention`}
+                    aria-label={`${attentionCount} chat${attentionCount === 1 ? '' : 's'} need attention`}
+                  >!</span>
+                )}
+                {runningCount > 0 && (
+                  <span
+                    style={styles.runningBadge}
+                    title={`${runningCount} chat${runningCount === 1 ? '' : 's'} running`}
+                    aria-label={`${runningCount} chat${runningCount === 1 ? '' : 's'} running`}
+                  ><UIIcon name="activity" size={12} /></span>
                 )}
                 {unreadCount > 0 && (
                   <span
-                    style={styles.unreadDot}
+                    style={styles.workspaceUnreadBadge}
                     title={`${unreadCount} unread chat${unreadCount === 1 ? '' : 's'}`}
                     aria-label={`${unreadCount} unread chat${unreadCount === 1 ? '' : 's'}`}
-                  />
+                  >{unreadCount}</span>
                 )}
                 <button
                   style={styles.groupAddBtn}
@@ -581,15 +607,30 @@ const styles: Record<string, React.CSSProperties> = {
   workspaceIcon: { color: C.fg3, display: 'inline-flex', flexShrink: 0 },
   groupHeaderDropTarget: { boxShadow: `inset 0 2px 0 ${C.accent}` },
   groupHeaderDragging: { opacity: 0.45 },
-  groupName: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  groupIdentity: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
+  groupName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   groupAddBtn: {
     background: C.surface3, border: `1px solid ${C.border2}`, color: C.fg2,
     cursor: 'pointer', lineHeight: 1, padding: 3, borderRadius: 5, display: 'inline-flex',
   },
-  gatewayBadge: {
-    width: 8, height: 8, borderRadius: '50%',
-    background: C.green, boxShadow: `0 0 6px ${C.green}`,
-    flexShrink: 0,  
+  gatewayTag: {
+    color: C.fg3, background: C.surface3, border: `1px solid ${C.border2}`,
+    borderRadius: 4, padding: '1px 5px', fontSize: 9, fontWeight: 650,
+    lineHeight: 1.35, flexShrink: 0,
+  },
+  attentionBadge: {
+    width: 16, height: 16, borderRadius: 5, display: 'inline-flex', alignItems: 'center',
+    justifyContent: 'center', background: `${C.red}22`, color: C.red, fontSize: 11,
+    fontWeight: 800, flexShrink: 0,
+  },
+  runningBadge: {
+    width: 16, height: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    color: C.green, flexShrink: 0, animation: 'codey-pulse-dot 1.2s infinite',
+  },
+  workspaceUnreadBadge: {
+    minWidth: 16, height: 16, borderRadius: 8, padding: '0 4px', boxSizing: 'border-box',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    background: C.accent, color: C.onAccent, fontSize: 9, fontWeight: 750, flexShrink: 0,
   },
   chevron: { display: 'inline-flex', color: C.fg3, transition: 'transform 0.15s ease' },
   item: {
