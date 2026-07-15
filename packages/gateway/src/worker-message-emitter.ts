@@ -12,7 +12,7 @@ export interface WorkerMessageStore {
 
 interface Buf { messageId: string; step: number; worker: string; content: string; toolCalls: ToolCallEntry[]; thinking: string; }
 
-export interface BeginWorkerArgs { step: number; worker: string; reason?: string; agent?: string; model?: string; }
+export interface BeginWorkerArgs { step: number; worker: string; reason?: string; agent?: ChatMessage['agent']; model?: string; }
 
 /**
  * Owns the per-worker chat-message lifecycle for a single team run. All
@@ -34,9 +34,9 @@ export class WorkerMessageEmitter {
   ) {}
 
   /** Pre-create one stub per worker (parallel). Emits team_start. */
-  teamStart(workers: Array<{ step: number; worker: string; agent?: string; model?: string }>): void {
+  teamStart(workers: Array<{ step: number; worker: string; agent?: ChatMessage['agent']; model?: string }>): void {
     const list = workers.map(w => {
-      const buf = this.createStub(w.step, w.worker);
+      const buf = this.createStub(w.step, w.worker, undefined, w.agent, w.model);
       this.byWorker.set(w.worker, buf);
       return { messageId: buf.messageId, step: w.step, worker: w.worker, agent: w.agent, model: w.model };
     });
@@ -46,7 +46,7 @@ export class WorkerMessageEmitter {
   /** Start a worker (serial). Flushes any still-active worker as done first. */
   beginWorker(args: BeginWorkerArgs): string {
     if (this.active) this.endWorker('done');
-    const buf = this.createStub(args.step, args.worker, args.reason);
+    const buf = this.createStub(args.step, args.worker, args.reason, args.agent, args.model);
     this.active = buf;
     this.sink({ type: 'worker_start', chatId: this.chatId, teamTurnId: this.meta.teamTurnId, messageId: buf.messageId, step: args.step, worker: args.worker, reason: args.reason, agent: args.agent, model: args.model });
     return buf.messageId;
@@ -99,7 +99,7 @@ export class WorkerMessageEmitter {
     return worker ? (this.byWorker.get(worker) ?? null) : this.active;
   }
 
-  private createStub(step: number, worker: string, reason?: string): Buf {
+  private createStub(step: number, worker: string, reason?: string, agent?: ChatMessage['agent'], model?: string): Buf {
     const messageId = this.newId();
     const buf: Buf = { messageId, step, worker, content: '', toolCalls: [], thinking: '' };
     const stub: ChatMessage = {
@@ -107,6 +107,8 @@ export class WorkerMessageEmitter {
       toolCalls: [], isComplete: false,
       teamTurnId: this.meta.teamTurnId, teamName: this.meta.teamName, teamMode: this.meta.mode,
       step, worker, workerStatus: 'running',
+      ...(agent ? { agent } : {}),
+      ...(model ? { model } : {}),
       ...(reason ? { advisorReason: reason } : {}),
     };
     this.store.appendMessage(this.chatId, stub);

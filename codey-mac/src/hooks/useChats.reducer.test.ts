@@ -29,9 +29,9 @@ function baseState(): State {
 describe('team reducer routing', () => {
   it('workerStart appends a running worker message with the backend id', () => {
     let s = baseState();
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'pm', reason: 'kickoff' });
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'pm', reason: 'kickoff', agent: 'codex', model: 'gpt-5' });
     const m = s.chats.c1.messages.find(x => x.id === 'w1')!;
-    expect(m).toMatchObject({ id: 'w1', role: 'assistant', teamTurnId: 'tt1', worker: 'pm', workerStatus: 'running', advisorReason: 'kickoff' });
+    expect(m).toMatchObject({ id: 'w1', role: 'assistant', teamTurnId: 'tt1', worker: 'pm', workerStatus: 'running', advisorReason: 'kickoff', agent: 'codex', model: 'gpt-5' });
   });
 
   it('streamToken/toolCall route to the event messageId, not the single inFlight id', () => {

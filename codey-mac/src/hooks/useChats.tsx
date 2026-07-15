@@ -42,7 +42,7 @@ type Action =
   | { type: 'thinkingToken'; chatId: string; token: string; step?: number; messageId?: string }
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: 'working' | 'writing'; messageId?: string }
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback'] }
+  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback'] }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
@@ -51,16 +51,16 @@ type Action =
   | { type: 'patchTaskBrief'; chatId: string; brief: TaskBrief }
   | { type: 'permissionRequest'; chatId: string; toolNames: string[] }
   | { type: 'dismissPermission'; chatId: string }
-  | { type: 'teamStart'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string }> }
-  | { type: 'workerStart'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; reason?: string }
+  | { type: 'teamStart'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string }> }
+  | { type: 'workerStart'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
   | { type: 'workerEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser' }
 
 function reorder(order: string[], chatId: string): string[] {
   return [chatId, ...order.filter(id => id !== chatId)]
 }
 
-function mkWorkerStub(teamTurnId: string, teamName: string, mode: ChatMessage['teamMode'], id: string, step: number, worker: string, reason?: string): ChatMessage {
-  return { id, role: 'assistant', content: '', timestamp: Date.now(), toolCalls: [], isComplete: false, teamTurnId, teamName, teamMode: mode, step, worker, workerStatus: 'running', advisorReason: reason }
+function mkWorkerStub(teamTurnId: string, teamName: string, mode: ChatMessage['teamMode'], id: string, step: number, worker: string, reason?: string, agent?: ChatMessage['agent'], model?: string): ChatMessage {
+  return { id, role: 'assistant', content: '', timestamp: Date.now(), toolCalls: [], isComplete: false, teamTurnId, teamName, teamMode: mode, step, worker, workerStatus: 'running', advisorReason: reason, agent, model }
 }
 
 export function reducer(state: State, action: Action): State {
@@ -261,7 +261,7 @@ export function reducer(state: State, action: Action): State {
     case 'teamStart': {
       const chat = state.chats[action.chatId]
       if (!chat) return state
-      const stubs = (action.workers ?? []).map(w => mkWorkerStub(action.teamTurnId, action.teamName, action.mode, w.messageId, w.step, w.worker))
+      const stubs = (action.workers ?? []).map(w => mkWorkerStub(action.teamTurnId, action.teamName, action.mode, w.messageId, w.step, w.worker, undefined, w.agent, w.model))
       if (stubs.length === 0) return state
       const existing = new Set(chat.messages.map(m => m.id))
       const messages = [...chat.messages, ...stubs.filter(s => !existing.has(s.id))]
@@ -273,7 +273,7 @@ export function reducer(state: State, action: Action): State {
       if (chat.messages.some(m => m.id === action.messageId)) return state
       const teamName = chat.messages.find(m => m.teamTurnId === action.teamTurnId)?.teamName ?? (chat.selection.type === 'team' ? chat.selection.name ?? '' : '')
       const mode = chat.messages.find(m => m.teamTurnId === action.teamTurnId)?.teamMode ?? 'auto'
-      const stub = mkWorkerStub(action.teamTurnId, teamName, mode, action.messageId, action.step, action.worker, action.reason)
+      const stub = mkWorkerStub(action.teamTurnId, teamName, mode, action.messageId, action.step, action.worker, action.reason, action.agent, action.model)
       return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages: [...chat.messages, stub], updatedAt: Date.now() } } }
     }
     case 'workerEnd': {
@@ -295,7 +295,7 @@ export function reducer(state: State, action: Action): State {
       if (!chat) return state
       const messages = chat.messages.map(m =>
         m.id === action.assistantMessageId
-          ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
+          ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
           : m
       )
       const updatedChat: Chat = { ...chat, messages, updatedAt: Date.now() }
@@ -504,7 +504,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           dispatch({ type: 'teamStart', chatId: ev.chatId, teamTurnId: ev.teamTurnId, teamName: ev.teamName, mode: ev.mode, workers: ev.workers })
           break
         case 'worker_start':
-          dispatch({ type: 'workerStart', chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, step: ev.step, worker: ev.worker, reason: ev.reason })
+          dispatch({ type: 'workerStart', chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, step: ev.step, worker: ev.worker, agent: ev.agent, model: ev.model, reason: ev.reason })
           break
         case 'worker_end':
           dispatch({ type: 'workerEnd', chatId: ev.chatId, messageId: ev.messageId, step: ev.step, status: ev.status })
@@ -520,6 +520,8 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               content: ev.response,
               tokens: ev.tokens,
               durationSec: ev.durationSec,
+              agent: ev.agent,
+              model: ev.model,
               title: ev.title,
               choices: ev.choices,
               userQuestion: ev.userQuestion,

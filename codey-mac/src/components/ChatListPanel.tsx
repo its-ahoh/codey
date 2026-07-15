@@ -584,7 +584,7 @@ const styles: Record<string, React.CSSProperties> = {
   item: {
     display: 'flex', alignItems: 'center', gap: 6,
     padding: '7px 9px', borderRadius: 8, cursor: 'pointer',
-    fontSize: 12, color: C.fg2, margin: '2px 2px', border: '1px solid transparent',
+    fontSize: 12, color: C.fg2, margin: '2px 2px 2px 20px', border: '1px solid transparent',
   },
   chatIcon: { display: 'inline-flex', flexShrink: 0 },
   title: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },

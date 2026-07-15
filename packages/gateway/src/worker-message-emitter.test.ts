@@ -22,9 +22,9 @@ function harness() {
 describe('WorkerMessageEmitter — serial', () => {
   it('begin appends a running stub and emits worker_start with the same id', () => {
     const h = harness();
-    const id = h.em.beginWorker({ step: 1, worker: 'pm', reason: 'kickoff' });
+    const id = h.em.beginWorker({ step: 1, worker: 'pm', reason: 'kickoff', agent: 'codex', model: 'gpt-5' });
     expect(id).toBe('id-1');
-    expect(h.appended[0]).toMatchObject({ id: 'id-1', role: 'assistant', workerStatus: 'running', teamTurnId: 'tt1', step: 1, worker: 'pm', advisorReason: 'kickoff' });
+    expect(h.appended[0]).toMatchObject({ id: 'id-1', role: 'assistant', workerStatus: 'running', teamTurnId: 'tt1', step: 1, worker: 'pm', advisorReason: 'kickoff', agent: 'codex', model: 'gpt-5' });
     expect(h.events[0]).toMatchObject({ type: 'worker_start', messageId: 'id-1', step: 1, worker: 'pm', reason: 'kickoff' });
   });
 
