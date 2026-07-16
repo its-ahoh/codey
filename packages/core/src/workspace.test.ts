@@ -112,6 +112,27 @@ function makeWM(): TestWM {
   return new TestWM(workers, '/tmp/ws');
 }
 
+describe('WorkspaceManager workspace ordering', () => {
+  it('lists workspaces by date added, newest first', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-order-'));
+    const wsDir = path.join(root, 'workspaces');
+    fs.mkdirSync(path.join(wsDir, 'older'), { recursive: true });
+    fs.mkdirSync(path.join(wsDir, 'newer'), { recursive: true });
+    fs.writeFileSync(
+      path.join(wsDir, 'older', 'workspace.json'),
+      JSON.stringify({ workingDir: root, createdAt: '2026-01-01T00:00:00.000Z' }),
+    );
+    fs.writeFileSync(
+      path.join(wsDir, 'newer', 'workspace.json'),
+      JSON.stringify({ workingDir: root, createdAt: '2026-02-01T00:00:00.000Z' }),
+    );
+
+    const manager = new WorkspaceManager(new WorkerManager(path.join(root, 'workers')), wsDir);
+    expect(manager.listWorkspaces()).toEqual(['newer', 'older']);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
 const validGraph = {
   entry: 'start',
   maxHops: 5,
