@@ -8,6 +8,7 @@ import { UpdateButton } from './UpdateButton'
 import { setPendingPairing } from './pendingPairing'
 import { onWorkspacesChanged } from './workspacesChanged'
 import { UIIcon } from './UIIcons'
+import { moveWorkspace, reconcileWorkspaceOrder } from './workspaceOrder'
 
 interface Props {
   onOpenSettings: (tab?: string) => void
@@ -36,6 +37,14 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   const [wsRenameValue, setWsRenameValue] = useState('')
   const [chatMenu, setChatMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [chatMenuView, setChatMenuView] = useState<'main' | 'connect'>('main')
+  const [wsOrder, setWsOrder] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('codey.workspaceOrder') || '[]')
+      return Array.isArray(saved) ? saved : []
+    } catch { return [] }
+  })
+  const [draggingWs, setDraggingWs] = useState<string | null>(null)
+  const [dragOverWs, setDragOverWs] = useState<string | null>(null)
   const refreshWs = useCallback(() => {
     apiService.getCurrentWorkspace()
       .then(setGatewayWorkspace)
@@ -43,6 +52,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
     apiService.getWorkspaces()
       .then(w => {
         setWorkspaces(w)
+        setWsOrder(prev => reconcileWorkspaceOrder(prev, w))
         setLastWorkspace(prev => {
           if (prev && w.includes(prev)) return prev
           const stored = localStorage.getItem('codey.lastWorkspace')
@@ -67,6 +77,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   useEffect(() => {
     if (lastWorkspace) localStorage.setItem('codey.lastWorkspace', lastWorkspace)
   }, [lastWorkspace])
+
+  useEffect(() => {
+    localStorage.setItem('codey.workspaceOrder', JSON.stringify(wsOrder))
+  }, [wsOrder])
 
   const selectedWorkspace = activeChatId ? state.chats[activeChatId]?.workspaceName : undefined
   const newChatWorkspace = selectedWorkspace || lastWorkspace
@@ -99,6 +113,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
       await apiService.renameWorkspace(oldName, newName)
       const fresh = await apiService.getWorkspaces()
       setWorkspaces(fresh)
+      setWsOrder(prev => reconcileWorkspaceOrder(
+        prev.map(name => name === oldName ? newName : name),
+        fresh,
+      ))
       await refreshWorkspaces()
       // Rename cascades to the chats' workspaceName on the backend; reload them
       // so they regroup under the new name instead of stranding the old group.
@@ -120,6 +138,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
       await apiService.deleteWorkspace(ws)
       const fresh = await apiService.getWorkspaces()
       setWorkspaces(fresh)
+      setWsOrder(prev => reconcileWorkspaceOrder(prev, fresh))
       await refreshWorkspaces()
       // Deleting a workspace also deletes its chats; drop them from the store so
       // the group disappears instead of lingering until a reload.
@@ -179,6 +198,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
       const name = await apiService.createWorkspaceFromDir(dir)
       const fresh = await apiService.getWorkspaces()
       setWorkspaces(fresh)
+      setWsOrder(prev => reconcileWorkspaceOrder(prev, fresh))
       await refreshWorkspaces()
       const chat = await createChat(name)
       setLastWorkspace(chat.workspaceName)
@@ -198,14 +218,18 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   for (const ws of workspaces) {
     if (!groups[ws]) groups[ws] = []
   }
-  // The workspace manager returns newest-added first. Chats whose workspace
-  // has since been deleted remain grouped after the live workspaces.
-  const orderIndex = new Map(workspaces.map((name, index) => [name, index]))
+  // The backend supplies the newest-added-first default. wsOrder preserves any
+  // drag override, while reconciliation inserts newly added workspaces on top.
+  const orderIndex = new Map(wsOrder.map((name, index) => [name, index]))
   const groupNames = Object.keys(groups).sort((a, b) => {
     const ia = orderIndex.get(a) ?? Number.MAX_SAFE_INTEGER
     const ib = orderIndex.get(b) ?? Number.MAX_SAFE_INTEGER
     return ia !== ib ? ia - ib : a.localeCompare(b)
   })
+
+  const reorderWs = (dragged: string, target: string) => {
+    setWsOrder(prev => moveWorkspace(prev, dragged, target))
+  }
 
   return (
     <div style={styles.root}>
@@ -261,12 +285,34 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
               <div
                 style={{
                   ...styles.groupHeader,
+                  ...(dragOverWs === ws && draggingWs && draggingWs !== ws ? styles.groupHeaderDropTarget : null),
+                  ...(draggingWs === ws ? styles.groupHeaderDragging : null),
                 }}
+                draggable={renamingWs !== ws}
                 onClick={() => renamingWs === ws ? null : toggleWorkspace(ws)}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   setWsMenu({ workspace: ws, x: e.clientX, y: e.clientY })
                 }}
+                onDragStart={(e) => {
+                  setDraggingWs(ws)
+                  e.dataTransfer.effectAllowed = 'move'
+                  try { e.dataTransfer.setData('text/plain', ws) } catch { /* ignore */ }
+                }}
+                onDragOver={(e) => {
+                  if (!draggingWs) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  if (dragOverWs !== ws) setDragOverWs(ws)
+                }}
+                onDragLeave={() => { if (dragOverWs === ws) setDragOverWs(null) }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  if (draggingWs) reorderWs(draggingWs, ws)
+                  setDraggingWs(null)
+                  setDragOverWs(null)
+                }}
+                onDragEnd={() => { setDraggingWs(null); setDragOverWs(null) }}
               >
                 <span style={{ ...styles.chevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={13} /></span>
                 <span style={styles.workspaceIcon}><UIIcon name={collapsed ? 'folder' : 'folder-open'} size={16} /></span>
@@ -561,6 +607,8 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer', userSelect: 'none',
   },
   workspaceIcon: { color: C.fg3, display: 'inline-flex', flexShrink: 0 },
+  groupHeaderDropTarget: { boxShadow: `inset 0 2px 0 ${C.accent}` },
+  groupHeaderDragging: { opacity: 0.45 },
   groupIdentity: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
   groupName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   groupAddBtn: {
