@@ -2,7 +2,7 @@ import React from 'react'
 
 export type IconName =
   | 'activity' | 'add' | 'archive' | 'bot' | 'chat' | 'check' | 'chevron' | 'close'
-  | 'code' | 'folder' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'play' | 'plus'
+  | 'code' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'play' | 'plus'
   | 'refresh' | 'server' | 'settings' | 'sparkle' | 'tools' | 'trash' | 'users' | 'workspace'
 
 interface Props {
@@ -28,6 +28,7 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     close: <path {...common} d="M6 6l12 12M18 6L6 18" />,
     code: <><path {...common} d="M8 9l-3 3 3 3M16 9l3 3-3 3M14 6l-4 12" /></>,
     folder: <path {...common} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />,
+    'folder-open': <><path {...common} d="M3 18V7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v1" /><path {...common} d="M3.2 19h15.2a2 2 0 001.94-1.51l1.25-5A2 2 0 0019.65 10H8l-2 3H3" /></>,
     key: <><circle {...common} cx="7.5" cy="15.5" r="3.5" /><path {...common} d="M10 13l8-8M15 6l3 3M13 8l3 3" /></>,
     link: <><path {...common} d="M10 13a5 5 0 007.07.07l2-2a5 5 0 00-7.07-7.07l-1.15 1.15" /><path {...common} d="M14 11a5 5 0 00-7.07-.07l-2 2A5 5 0 0012 20l1.15-1.15" /></>,
     mic: <><rect {...common} x="8" y="3" width="8" height="12" rx="4" /><path {...common} d="M5 11a7 7 0 0014 0M12 18v3M8 21h8" /></>,
@@ -37,9 +38,9 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     plus: <path {...common} d="M12 5v14M5 12h14" />,
     refresh: <><path {...common} d="M20 11a8 8 0 00-14.7-4.4L3 9" /><path {...common} d="M3 4v5h5M4 13a8 8 0 0014.7 4.4L21 15" /><path {...common} d="M21 20v-5h-5" /></>,
     server: <><rect {...common} x="3" y="4" width="18" height="6" rx="2" /><rect {...common} x="3" y="14" width="18" height="6" rx="2" /><path {...common} d="M7 7h.01M7 17h.01" /></>,
-    settings: <><circle {...common} cx="12" cy="12" r="3" /><path {...common} d="M19.4 15a1.7 1.7 0 00.34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 00-1.88-.34 1.7 1.7 0 00-1.03 1.56v.08h-3v-.08A1.7 1.7 0 0010.68 18.7a1.7 1.7 0 00-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 007.02 15a1.7 1.7 0 00-1.56-1.03h-.08v-3h.08A1.7 1.7 0 007.02 9.94 1.7 1.7 0 006.68 8.06l-.06-.06 2.12-2.12.06.06a1.7 1.7 0 001.88.34 1.7 1.7 0 001.03-1.56v-.08h3v.08a1.7 1.7 0 001.03 1.56 1.7 1.7 0 001.88-.34l.06-.06 2.12 2.12-.06.06a1.7 1.7 0 00-.34 1.88 1.7 1.7 0 001.56 1.03h.08v3h-.08A1.7 1.7 0 0019.4 15z" /></>,
+    settings: <><path {...common} d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.09a2 2 0 011 1.74v.5a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.38a2 2 0 00-.73-2.73l-.15-.09a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z" /><circle {...common} cx="12" cy="12" r="3" /></>,
     sparkle: <path {...common} d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5L12 3zM19 16l.7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7L19 16z" />,
-    tools: <><path {...common} d="M14.7 6.3a4.3 4.3 0 01-5.5 5.5L4 17v3h3l5.2-5.2a4.3 4.3 0 005.5-5.5l-2.5 2.5-2-2 2.5-2.5z" /></>,
+    tools: <path {...common} d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94z" />,
     trash: <><path {...common} d="M4 7h16M10 11v5M14 11v5M9 7l1-3h4l1 3M6 7l1 13h10l1-13" /></>,
     users: <><path {...common} d="M16 20v-1.5a4.5 4.5 0 00-4.5-4.5h-4A4.5 4.5 0 003 18.5V20M9.5 10a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM17 11a3 3 0 000-6M21 20v-1.5A4.5 4.5 0 0017.5 14" /></>,
     workspace: <><rect {...common} x="3" y="4" width="18" height="16" rx="2" /><path {...common} d="M3 9h18M8 14h3" /></>,

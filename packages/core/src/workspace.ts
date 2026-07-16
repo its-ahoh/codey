@@ -49,6 +49,8 @@ export interface TeamConfig {
 
 export interface WorkspaceJson {
   workingDir: string;
+  /** ISO timestamp recorded when the workspace was first added to Codey. */
+  createdAt?: string;
   /**
    * Names of global teams enabled for this workspace. Definitions live in the
    * gateway-level team library; this is just the opt-in list.
@@ -136,7 +138,7 @@ export class WorkspaceManager {
         fs.mkdirSync(fallbackPath, { recursive: true });
         fs.writeFileSync(
           path.join(fallbackPath, 'workspace.json'),
-          JSON.stringify({ workingDir: process.cwd() }, null, 2),
+          JSON.stringify({ workingDir: process.cwd(), createdAt: new Date().toISOString() }, null, 2),
         );
         this.currentWorkspace = fallback;
       }
@@ -290,7 +292,7 @@ export class WorkspaceManager {
     const workspacePath = path.join(this.workspacesDir, name);
     fs.mkdirSync(workspacePath, { recursive: true });
 
-    const config: WorkspaceJson = { workingDir: dir };
+    const config: WorkspaceJson = { workingDir: dir, createdAt: new Date().toISOString() };
     fs.writeFileSync(path.join(workspacePath, 'workspace.json'), JSON.stringify(config, null, 2));
     fs.writeFileSync(path.join(workspacePath, 'memory.md'), `# ${name} — Project Memory\n`);
 
@@ -436,7 +438,24 @@ export class WorkspaceManager {
       // filters out stray dirs (logs/, memory/) that may have leaked into
       // the workspaces root.
       return fs.existsSync(path.join(dir, 'workspace.json'));
-    });
+    }).map(name => {
+      const dir = path.join(this.workspacesDir, name);
+      const configPath = path.join(dir, 'workspace.json');
+      let addedAt = 0;
+      try {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as WorkspaceJson;
+        const parsed = config.createdAt ? Date.parse(config.createdAt) : NaN;
+        if (Number.isFinite(parsed)) addedAt = parsed;
+      } catch { /* keep the filesystem fallback below */ }
+      // Existing workspaces predate createdAt. Directory birth time is the
+      // closest durable equivalent to the date they were added.
+      if (!addedAt) {
+        const stat = fs.statSync(dir);
+        addedAt = stat.birthtimeMs || stat.ctimeMs;
+      }
+      return { name, addedAt };
+    }).sort((a, b) => b.addedAt - a.addedAt || a.name.localeCompare(b.name))
+      .map(({ name }) => name);
   }
 
   getTeam(name: string): TeamConfig | undefined {

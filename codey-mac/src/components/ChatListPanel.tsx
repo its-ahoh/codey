@@ -8,6 +8,7 @@ import { UpdateButton } from './UpdateButton'
 import { setPendingPairing } from './pendingPairing'
 import { onWorkspacesChanged } from './workspacesChanged'
 import { UIIcon } from './UIIcons'
+import { moveWorkspace, reconcileWorkspaceOrder } from './workspaceOrder'
 
 interface Props {
   onOpenSettings: (tab?: string) => void
@@ -36,19 +37,14 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   const [wsRenameValue, setWsRenameValue] = useState('')
   const [chatMenu, setChatMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [chatMenuView, setChatMenuView] = useState<'main' | 'connect'>('main')
-  // User-defined workspace ordering (drag to reorder). Persisted locally; names
-  // not in the list fall back to alphabetical after the ordered ones.
   const [wsOrder, setWsOrder] = useState<string[]>(() => {
-    try { const v = JSON.parse(localStorage.getItem('codey.workspaceOrder') || '[]'); return Array.isArray(v) ? v : [] }
-    catch { return [] }
+    try {
+      const saved = JSON.parse(localStorage.getItem('codey.workspaceOrder') || '[]')
+      return Array.isArray(saved) ? saved : []
+    } catch { return [] }
   })
   const [draggingWs, setDraggingWs] = useState<string | null>(null)
   const [dragOverWs, setDragOverWs] = useState<string | null>(null)
-
-  const persistWsOrder = (next: string[]) => {
-    setWsOrder(next)
-    localStorage.setItem('codey.workspaceOrder', JSON.stringify(next))
-  }
   const refreshWs = useCallback(() => {
     apiService.getCurrentWorkspace()
       .then(setGatewayWorkspace)
@@ -56,6 +52,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
     apiService.getWorkspaces()
       .then(w => {
         setWorkspaces(w)
+        setWsOrder(prev => reconcileWorkspaceOrder(prev, w))
         setLastWorkspace(prev => {
           if (prev && w.includes(prev)) return prev
           const stored = localStorage.getItem('codey.lastWorkspace')
@@ -80,6 +77,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   useEffect(() => {
     if (lastWorkspace) localStorage.setItem('codey.lastWorkspace', lastWorkspace)
   }, [lastWorkspace])
+
+  useEffect(() => {
+    localStorage.setItem('codey.workspaceOrder', JSON.stringify(wsOrder))
+  }, [wsOrder])
 
   const selectedWorkspace = activeChatId ? state.chats[activeChatId]?.workspaceName : undefined
   const newChatWorkspace = selectedWorkspace || lastWorkspace
@@ -112,6 +113,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
       await apiService.renameWorkspace(oldName, newName)
       const fresh = await apiService.getWorkspaces()
       setWorkspaces(fresh)
+      setWsOrder(prev => reconcileWorkspaceOrder(
+        prev.map(name => name === oldName ? newName : name),
+        fresh,
+      ))
       await refreshWorkspaces()
       // Rename cascades to the chats' workspaceName on the backend; reload them
       // so they regroup under the new name instead of stranding the old group.
@@ -133,6 +138,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
       await apiService.deleteWorkspace(ws)
       const fresh = await apiService.getWorkspaces()
       setWorkspaces(fresh)
+      setWsOrder(prev => reconcileWorkspaceOrder(prev, fresh))
       await refreshWorkspaces()
       // Deleting a workspace also deletes its chats; drop them from the store so
       // the group disappears instead of lingering until a reload.
@@ -192,6 +198,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
       const name = await apiService.createWorkspaceFromDir(dir)
       const fresh = await apiService.getWorkspaces()
       setWorkspaces(fresh)
+      setWsOrder(prev => reconcileWorkspaceOrder(prev, fresh))
       await refreshWorkspaces()
       const chat = await createChat(name)
       setLastWorkspace(chat.workspaceName)
@@ -211,24 +218,17 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   for (const ws of workspaces) {
     if (!groups[ws]) groups[ws] = []
   }
-  // Order by the user's saved arrangement; unknown names sort alphabetically
-  // after the explicitly-ordered ones.
-  const orderIndex = (name: string) => {
-    const i = wsOrder.indexOf(name)
-    return i === -1 ? Number.MAX_SAFE_INTEGER : i
-  }
+  // The backend supplies the newest-added-first default. wsOrder preserves any
+  // drag override, while reconciliation inserts newly added workspaces on top.
+  const orderIndex = new Map(wsOrder.map((name, index) => [name, index]))
   const groupNames = Object.keys(groups).sort((a, b) => {
-    const ia = orderIndex(a), ib = orderIndex(b)
+    const ia = orderIndex.get(a) ?? Number.MAX_SAFE_INTEGER
+    const ib = orderIndex.get(b) ?? Number.MAX_SAFE_INTEGER
     return ia !== ib ? ia - ib : a.localeCompare(b)
   })
 
   const reorderWs = (dragged: string, target: string) => {
-    if (dragged === target) return
-    const without = groupNames.filter(n => n !== dragged)
-    const idx = without.indexOf(target)
-    if (idx === -1) return
-    without.splice(idx, 0, dragged)
-    persistWsOrder(without)
+    setWsOrder(prev => moveWorkspace(prev, dragged, target))
   }
 
   return (
@@ -297,7 +297,6 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                 onDragStart={(e) => {
                   setDraggingWs(ws)
                   e.dataTransfer.effectAllowed = 'move'
-                  // Some platforms require data to be set for drag to initiate.
                   try { e.dataTransfer.setData('text/plain', ws) } catch { /* ignore */ }
                 }}
                 onDragOver={(e) => {
@@ -316,7 +315,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                 onDragEnd={() => { setDraggingWs(null); setDragOverWs(null) }}
               >
                 <span style={{ ...styles.chevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={13} /></span>
-                <span style={styles.workspaceIcon}><UIIcon name="folder" size={14} /></span>
+                <span style={styles.workspaceIcon}><UIIcon name={collapsed ? 'folder' : 'folder-open'} size={16} /></span>
                 {renamingWs === ws ? (
                   <input
                     autoFocus
@@ -334,8 +333,12 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                   <span style={styles.groupIdentity}>
                     <span style={styles.groupName}>{ws}</span>
                     {ws === gatewayWorkspace && (
-                      <span style={styles.gatewayTag} title="Gateway default workspace — receives messages from chat platforms">
-                        Gateway
+                      <span
+                        style={styles.gatewayIcon}
+                        title="Gateway default workspace — receives messages from chat platforms"
+                        aria-label="Gateway default workspace"
+                      >
+                        <UIIcon name="server" size={12} strokeWidth={2} />
                       </span>
                     )}
                   </span>
@@ -352,7 +355,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                     style={styles.runningBadge}
                     title={`${runningCount} chat${runningCount === 1 ? '' : 's'} running`}
                     aria-label={`${runningCount} chat${runningCount === 1 ? '' : 's'} running`}
-                  ><UIIcon name="activity" size={12} /></span>
+                  />
                 )}
                 {unreadCount > 0 && (
                   <span
@@ -612,10 +615,10 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.surface3, border: `1px solid ${C.border2}`, color: C.fg2,
     cursor: 'pointer', lineHeight: 1, padding: 3, borderRadius: 5, display: 'inline-flex',
   },
-  gatewayTag: {
-    color: C.fg3, background: C.surface3, border: `1px solid ${C.border2}`,
-    borderRadius: 4, padding: '1px 5px', fontSize: 9, fontWeight: 650,
-    lineHeight: 1.35, flexShrink: 0,
+  gatewayIcon: {
+    color: C.accent, background: C.accentDim, border: `1px solid ${C.accent}55`,
+    borderRadius: 5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: 18, height: 18, boxSizing: 'border-box', flexShrink: 0,
   },
   attentionBadge: {
     width: 16, height: 16, borderRadius: 5, display: 'inline-flex', alignItems: 'center',
@@ -623,8 +626,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 800, flexShrink: 0,
   },
   runningBadge: {
-    width: 16, height: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    color: C.green, flexShrink: 0, animation: 'codey-pulse-dot 1.2s infinite',
+    width: 7, height: 7, borderRadius: '50%', background: C.green,
+    flexShrink: 0, animation: 'codey-pulse-dot 1.2s infinite',
   },
   workspaceUnreadBadge: {
     minWidth: 16, height: 16, borderRadius: 8, padding: '0 4px', boxSizing: 'border-box',
