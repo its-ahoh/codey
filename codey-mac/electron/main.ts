@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen, session } from 'electron'
 import { join } from 'path'
 import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
 import { pathToFileURL } from 'url'
@@ -11,6 +11,12 @@ import { validateAutomationDraft, validateAutomationPatch } from './automation-v
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, uniqueSkills } from './skills'
 import type { ScannedSkill } from './skills'
+import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
+import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
+import { BrowserControlPermissionGate } from './browser-control-permission'
+import { BrowserSitePermissionManager } from './browser-site-permissions'
+import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLabel, type BrowserPasskeyPickerRequest } from './browser-webauthn'
+import { BrowserExtensionManager } from './browser-extensions'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -39,8 +45,43 @@ let workspaceManager: WorkspaceManager | null = null
 let coreConfigManager: ConfigManager | null = null
 let apiServer: ApiServer | null = null
 let activeApiPort: number | null = null
+const browserController = new BrowserController(
+  () => mainWindow,
+  state => sendToRenderer('browser:state', state),
+  download => sendToRenderer('browser:download', download),
+  () => join(app.getPath('downloads'), 'Codey'),
+)
+let browserAgentBridge: BrowserAgentBridge | null = null
+let browserControlPermission: BrowserControlPermissionGate | null = null
+let browserSitePermissions: BrowserSitePermissionManager | null = null
+let browserExtensionManager: BrowserExtensionManager | null = null
+
+function handleBrowserLoginWait(event: BrowserLoginWaitEvent): void {
+  sendToRenderer('browser:loginWait', event)
+  if (event.status !== 'changed') return
+
+  const gateway = inProcessGateway
+  if (!gateway?.getChatManager().get(event.chatId)) {
+    sendToRenderer('gateway-log', `[browser] cannot resume missing chat ${event.chatId}`)
+    return
+  }
+  const continuation = 'The Codey Browser login status changed. Re-check the current page, retry the website step that was blocked by authentication, and continue the previous task. Do not repeat actions that already succeeded.'
+  // sendToChat uses the normal chat semaphore. If the original agent is still
+  // finishing its "waiting for login" response, this continuation queues and
+  // begins only after that turn has released the chat.
+  void gateway.sendToChat(event.chatId, continuation, () => { /* global listener mirrors events */ }).catch((error: any) => {
+    sendToRenderer('gateway-log', `[browser] login retry failed for chat ${event.chatId}: ${error?.message ?? error}`)
+  })
+}
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+const isDistributionSmokeTest = process.argv.includes('--codey-distribution-smoke')
+
+function browserAgentCliPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'browser-agent-cli.cjs')
+    : join(app.getAppPath(), 'electron', 'browser-agent-cli.cjs')
+}
 
 // Single-instance guard: a second launch (vite restart leaving a stale main
 // process alive, double `npm run dev`, app.relaunch races) must not boot a
@@ -1189,7 +1230,59 @@ function createAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+async function pickBrowserPasskey(request: BrowserPasskeyPickerRequest): Promise<string | null> {
+  const buttons = request.accounts.map((account, index) => passkeyAccountLabel(account, index).slice(0, 100))
+  const cancelId = buttons.length
+  const options: Electron.MessageBoxOptions = {
+    type: 'question',
+    title: 'Choose a passkey',
+    message: `Choose a passkey for ${request.relyingPartyId}`,
+    detail: 'Codey will ask macOS to confirm your identity with Touch ID.',
+    buttons: [...buttons, 'Cancel'],
+    defaultId: 0,
+    cancelId,
+    noLink: true,
+  }
+  const result = mainWindow && !mainWindow.isDestroyed()
+    ? await dialog.showMessageBox(mainWindow, options)
+    : await dialog.showMessageBox(options)
+  return result.response >= 0 && result.response < request.accounts.length
+    ? request.accounts[result.response].credentialId
+    : null
+}
+
 app.whenReady().then(async () => {
+  if (isDistributionSmokeTest) {
+    console.log('CODEY_DIST_SMOKE_OK')
+    app.quit()
+    return
+  }
+
+  const browserSession = session.fromPartition(BROWSER_PARTITION, { cache: true })
+  browserSitePermissions = new BrowserSitePermissionManager(
+    join(app.getPath('userData'), 'browser-site-permissions.json'),
+    state => sendToRenderer('browser:sitePermission', state),
+  )
+  browserController.setSitePermissionManager(browserSitePermissions)
+  browserExtensionManager = new BrowserExtensionManager(
+    browserSession,
+    join(app.getPath('userData'), 'browser-extensions.json'),
+  )
+  try {
+    await browserExtensionManager.initialize()
+  } catch (error) {
+    console.warn(`[browser] extensions unavailable: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (canConfigureBrowserWebAuthn()) {
+    configureBrowserWebAuthn(app, browserSession, pickBrowserPasskey, error => {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn(`[browser] WebAuthn unavailable: ${message}`)
+      sendToRenderer('gateway-log', `[browser] WebAuthn unavailable: ${message}`)
+    })
+  } else {
+    console.warn('[browser] Native Touch ID disabled: Codey is not signed with the required keychain entitlement')
+  }
+
   protocol.handle('codey-asset', async (request) => {
     try {
       const url = new URL(request.url)
@@ -1224,6 +1317,133 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:relaunch', async () =>
     wrap(async () => { app.relaunch(); app.quit() })
   )
+  // Browser content lives in a native WebContentsView rather than in the React
+  // renderer. Keeping this API narrow prevents remote pages from gaining any
+  // Node or Codey privileges while still allowing the trusted app shell to
+  // position and control the view.
+  const fromMainRenderer = (event: Electron.IpcMainInvokeEvent) =>
+    !!mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents
+  const browserCall = <T>(event: Electron.IpcMainInvokeEvent, fn: () => Promise<T> | T) =>
+    wrap(async () => {
+      if (!fromMainRenderer(event)) throw new Error('Browser controls are only available to the Codey window')
+      return await fn()
+    })
+  ipcMain.handle('browser:getState', event => browserCall(event, () => browserController.getState()))
+  ipcMain.handle('browser:show', (event, bounds: BrowserBounds) => browserCall(event, () => browserController.show(bounds)))
+  ipcMain.handle('browser:hide', event => browserCall(event, () => browserController.hide()))
+  ipcMain.handle('browser:setBounds', (event, bounds: BrowserBounds) => browserCall(event, () => browserController.setBounds(bounds)))
+  ipcMain.handle('browser:navigate', (event, url: string) => browserCall(event, () => browserController.navigate(url)))
+  ipcMain.handle('browser:back', event => browserCall(event, () => browserController.back()))
+  ipcMain.handle('browser:forward', event => browserCall(event, () => browserController.forward()))
+  ipcMain.handle('browser:reload', event => browserCall(event, () => browserController.reload()))
+  ipcMain.handle('browser:stop', event => browserCall(event, () => browserController.stop()))
+  ipcMain.handle('browser:getPageContext', event => browserCall(event, () => browserController.getPageContext()))
+  ipcMain.handle('browser:downloads', event => browserCall(event, () => browserController.listDownloads()))
+  ipcMain.handle('browser:tabs', event => browserCall(event, () => browserController.listTabs()))
+  ipcMain.handle('browser:newTab', (event, url?: string) => browserCall(event, () => browserController.newTab(url)))
+  ipcMain.handle('browser:switchTab', (event, id: string) => browserCall(event, () => browserController.switchTab(id)))
+  ipcMain.handle('browser:closeTab', (event, id: string) => browserCall(event, () => browserController.closeTab(id)))
+  ipcMain.handle('browser:resetSession', event => browserCall(event, async () => {
+    const state = await browserController.resetSession()
+    browserSitePermissions?.clear()
+    browserControlPermission?.revoke()
+    return state
+  }))
+  ipcMain.handle('browser:extensions:list', event => browserCall(event, () => {
+    if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')
+    return browserExtensionManager.list()
+  }))
+  ipcMain.handle('browser:extensions:discoverChrome', event => browserCall(event, () => {
+    if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')
+    return browserExtensionManager.discoverChrome()
+  }))
+  ipcMain.handle('browser:extensions:pick', event => browserCall(event, async () => {
+    if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')
+    const result = await dialog.showOpenDialog(mainWindow ?? (undefined as any), {
+      title: 'Load unpacked browser extension',
+      buttonLabel: 'Review Extension',
+      properties: ['openDirectory'],
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+    return browserExtensionManager.inspect(result.filePaths[0])
+  }))
+  ipcMain.handle('browser:extensions:install', (event, extensionPath: string) => browserCall(event, () => {
+    if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')
+    return browserExtensionManager.install(extensionPath)
+  }))
+  ipcMain.handle('browser:extensions:importFromChrome', (event, extensionPath: string) => browserCall(event, () => {
+    if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')
+    return browserExtensionManager.importFromChrome(extensionPath)
+  }))
+  ipcMain.handle('browser:extensions:setEnabled', (event, key: string, enabled: boolean) => browserCall(event, () => {
+    if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')
+    return browserExtensionManager.setEnabled(String(key || ''), !!enabled)
+  }))
+  ipcMain.handle('browser:extensions:reload', (event, key: string) => browserCall(event, () => {
+    if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')
+    return browserExtensionManager.reload(String(key || ''))
+  }))
+  ipcMain.handle('browser:extensions:remove', (event, key: string) => browserCall(event, () => {
+    if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')
+    return browserExtensionManager.remove(String(key || ''))
+  }))
+  ipcMain.handle('browser:controlPermission:get', event => browserCall(event, () =>
+    browserControlPermission?.getState() ?? { approved: false, pending: null }
+  ))
+  ipcMain.handle('browser:controlPermission:approve', event => browserCall(event, () => {
+    if (!browserControlPermission) throw new Error('Browser control permission is unavailable')
+    return browserControlPermission.approve()
+  }))
+  ipcMain.handle('browser:controlPermission:deny', event => browserCall(event, () => {
+    if (!browserControlPermission) throw new Error('Browser control permission is unavailable')
+    return browserControlPermission.deny()
+  }))
+  ipcMain.handle('browser:controlPermission:revoke', event => browserCall(event, () => {
+    if (!browserControlPermission) throw new Error('Browser control permission is unavailable')
+    return browserControlPermission.revoke()
+  }))
+  ipcMain.handle('browser:sitePermission:get', event => browserCall(event, () =>
+    browserSitePermissions?.getState() ?? { pending: null, savedSiteCount: 0 }
+  ))
+  ipcMain.handle('browser:sitePermission:allowForSession', (event, id: string) => browserCall(event, () => {
+    if (!browserSitePermissions) throw new Error('Website permissions are unavailable')
+    return browserSitePermissions.allowForSession(String(id || ''))
+  }))
+  ipcMain.handle('browser:sitePermission:alwaysAllow', (event, id: string) => browserCall(event, () => {
+    if (!browserSitePermissions) throw new Error('Website permissions are unavailable')
+    return browserSitePermissions.alwaysAllow(String(id || ''))
+  }))
+  ipcMain.handle('browser:sitePermission:block', (event, id: string) => browserCall(event, () => {
+    if (!browserSitePermissions) throw new Error('Website permissions are unavailable')
+    return browserSitePermissions.block(String(id || ''))
+  }))
+
+  // Coding agents run as separate CLI processes. Give their shell tools a
+  // private Unix-socket command bridge to the same persistent WebContentsView.
+  // The bearer token is inherited only by agent subprocesses; it is never
+  // exposed to remote page content or the renderer.
+  browserControlPermission = new BrowserControlPermissionGate(
+    join(app.getPath('userData'), 'browser-control-permission.json'),
+    state => sendToRenderer('browser:controlPermission', state),
+  )
+  browserAgentBridge = new BrowserAgentBridge(browserController, url => {
+    mainWindow?.show()
+    sendToRenderer('browser:agentOpen', { url })
+  }, request => {
+    mainWindow?.show()
+    sendToRenderer('browser:agentOpen', { url: request.url })
+    return browserControlPermission!.request(request)
+  }, handleBrowserLoginWait)
+  try {
+    const bridge = await browserAgentBridge.start()
+    process.env.CODEY_BROWSER_SOCKET = bridge.socketPath
+    process.env.CODEY_BROWSER_TOKEN = bridge.token
+    process.env.CODEY_BROWSER_CLI = browserAgentCliPath()
+    process.env.CODEY_BROWSER_RUNTIME = process.execPath
+  } catch (error: any) {
+    sendToRenderer('gateway-log', `[browser] agent bridge failed to start: ${error?.message ?? error}`)
+    browserAgentBridge = null
+  }
   ipcMain.handle('capture:pickFiles', async () =>
     wrap(async () => {
       capturePickingFiles = true
@@ -2914,6 +3134,13 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  // Detach the browser surface but let Electron own final WebContents teardown.
+  // Closing child contents while the native window is already quitting can race
+  // Chromium's view destruction and terminate the browser process with SIGTRAP.
+  browserController.destroy({ closeContents: false })
+  browserControlPermission?.dispose()
+  browserSitePermissions?.dispose()
+  void browserAgentBridge?.stop()
   try { globalShortcut.unregisterAll() } catch { /* nothing to unregister */ }
   stopVoiceHelper()
 })

@@ -90,7 +90,7 @@ const TERMINAL_TYPES = new Set(['done', 'error', 'stopped'])
 // Per-chat turn state: dedupes notifications (one per turn) and tells the
 // action-button handler whether a new turn is already running (stale button).
 export interface TurnTracker {
-  observe(ev: { type: string; chatId: string }): void
+  observe(ev: { type: string; chatId: string; skillNotice?: boolean }): void
   markNotified(chatId: string): void
   alreadyNotified(chatId: string): boolean
   isInFlight(chatId: string): boolean
@@ -101,6 +101,9 @@ export function createTurnTracker(): TurnTracker {
   const inFlight = new Set<string>()
   return {
     observe(ev) {
+      // Skill suggestions/evolution notices are emitted by the fire-and-forget
+      // post-run pass after `done`. They are notices, not a new running turn.
+      if (ev.type === 'info' && ev.skillNotice) return
       if (TERMINAL_TYPES.has(ev.type)) {
         inFlight.delete(ev.chatId)
       } else {

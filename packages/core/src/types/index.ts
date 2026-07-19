@@ -147,6 +147,18 @@ export interface AgentRequest {
    * the claude-code adapter today; other adapters rely on prompt instructions.
    */
   allowedTools?: string[];
+  /**
+   * Advertise Codey's user-visible browser command to this agent turn when
+   * the Mac app has supplied a private bridge. Set only for task-performing
+   * agents/workers, not advisors or housekeeping calls.
+   */
+  browserTools?: boolean;
+  /**
+   * Originating Codey chat for deferred browser work such as waiting for the
+   * user to finish a login. Never inferred from whichever chat is selected in
+   * the UI, because the user may switch chats while the watcher is active.
+   */
+  browserChatId?: string;
 }
 
 export interface StatusUpdate {

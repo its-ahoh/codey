@@ -59,6 +59,26 @@ function reorder(order: string[], chatId: string): string[] {
   return [chatId, ...order.filter(id => id !== chatId)]
 }
 
+const EXTERNAL_TURN_EVENTS = new Set([
+  'tool_start', 'tool_end', 'info', 'stream', 'thinking',
+  'team_start', 'worker_start', 'worker_end',
+])
+
+/**
+ * Decide whether a live event proves that a turn started outside the renderer.
+ * Post-run skill notices deliberately arrive after `done`; treating one as a
+ * new turn creates an assistant stub that can never receive a terminal event.
+ */
+export function shouldAdoptExternalTurn(
+  ev: ChatStreamEvent,
+  hasPendingAssistant: boolean,
+  adoptionInProgress: boolean,
+): boolean {
+  if (hasPendingAssistant || adoptionInProgress) return false
+  if (ev.type === 'info' && ev.skillNotice) return false
+  return EXTERNAL_TURN_EVENTS.has(ev.type)
+}
+
 function mkWorkerStub(teamTurnId: string, teamName: string, mode: ChatMessage['teamMode'], id: string, step: number, worker: string, reason?: string, agent?: ChatMessage['agent'], model?: string): ChatMessage {
   return { id, role: 'assistant', content: '', timestamp: Date.now(), toolCalls: [], isComplete: false, teamTurnId, teamName, teamMode: mode, step, worker, workerStatus: 'running', advisorReason: reason, agent, model }
 }
@@ -447,13 +467,11 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // below would be dropped until 'done'. On the first live event, fetch the
       // chat (its user message is already persisted) and open an inFlight entry
       // so streaming/tool events render and the "working" indicator shows.
-      if (
-        (ev.type === 'tool_start' || ev.type === 'tool_end' || ev.type === 'info' ||
-         ev.type === 'stream' || ev.type === 'thinking' ||
-         ev.type === 'team_start' || ev.type === 'worker_start' || ev.type === 'worker_end') &&
-        !pendingAssistantId.current[ev.chatId] &&
-        !adopting.current.has(ev.chatId)
-      ) {
+      if (shouldAdoptExternalTurn(
+        ev,
+        !!pendingAssistantId.current[ev.chatId],
+        adopting.current.has(ev.chatId),
+      )) {
         adopting.current.add(ev.chatId)
         apiService.chats.get(ev.chatId)
           .then(chat => {
@@ -489,12 +507,21 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           })
           break
         case 'info':
-          dispatch({
-            type: 'toolCall',
-            chatId: ev.chatId,
-            entry: { id: `tc-${Date.now()}-${Math.random()}`, type: 'info', message: ev.message },
-            status: 'working',
-          })
+          if (ev.skillNotice) {
+            // The post-run pass mutates/persists the completed assistant's
+            // toolCalls before emitting this notice. Refresh that completed
+            // message; never manufacture a new in-flight assistant turn.
+            apiService.chats.get(ev.chatId)
+              .then(chat => dispatch({ type: 'upsert', chat }))
+              .catch(() => {})
+          } else {
+            dispatch({
+              type: 'toolCall',
+              chatId: ev.chatId,
+              entry: { id: `tc-${Date.now()}-${Math.random()}`, type: 'info', message: ev.message },
+              status: 'working',
+            })
+          }
           break
         case 'stream':
           dispatch({ type: 'streamToken', chatId: ev.chatId, token: ev.token, messageId: ev.messageId })

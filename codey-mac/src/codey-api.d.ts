@@ -31,6 +31,105 @@ export interface ModelEntry {
   provider?: string
 }
 
+export interface BrowserBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface BrowserState {
+  url: string
+  title: string
+  loading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+  error: string | null
+}
+
+export interface BrowserPageContext {
+  url: string
+  title: string
+  description: string
+  text: string
+  performance: {
+    domContentLoadedMs: number | null
+    loadMs: number | null
+    transferBytes: number | null
+  }
+}
+
+export interface BrowserControlPermissionState {
+  approved: boolean
+  pending: { command: string; url: string } | null
+}
+
+export type BrowserSitePermission = 'camera' | 'microphone' | 'geolocation' | 'notifications'
+
+export interface BrowserSitePermissionState {
+  pending: {
+    id: string
+    origin: string
+    hostname: string
+    permissions: BrowserSitePermission[]
+  } | null
+  savedSiteCount: number
+}
+
+export interface BrowserDownload {
+  id: string
+  name: string
+  path: string
+  url: string
+  status: 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+  receivedBytes: number
+  totalBytes: number
+  startedAt: number
+  finishedAt?: number
+}
+
+export interface BrowserTab {
+  id: string
+  title: string
+  url: string
+  active: boolean
+}
+
+export interface BrowserLoginWaitEvent {
+  id: string
+  chatId: string
+  status: 'watching' | 'changed' | 'expired'
+  startedAt: number
+  expiresAt: number
+  url: string
+  title: string
+  reason?: string
+}
+
+export interface BrowserExtensionCandidate {
+  path: string
+  name: string
+  version: string
+  description: string
+  permissions: string[]
+  hostPermissions: string[]
+  warnings: string[]
+}
+
+export interface BrowserExtensionEntry extends BrowserExtensionCandidate {
+  key: string
+  enabled: boolean
+  runtimeId: string | null
+  error: string | null
+}
+
+export interface ChromeBrowserExtensionCandidate extends BrowserExtensionCandidate {
+  extensionId: string
+  profile: string
+  compatible: boolean
+  incompatibilities: string[]
+}
+
 declare global {
   interface Window {
     codey: {
@@ -244,6 +343,52 @@ declare global {
       }
       app: {
         version: () => Promise<string>
+      }
+      browser: {
+        getState: () => Promise<IpcResult<BrowserState>>
+        show: (bounds: BrowserBounds) => Promise<IpcResult<BrowserState>>
+        hide: () => Promise<IpcResult<void>>
+        setBounds: (bounds: BrowserBounds) => Promise<IpcResult<void>>
+        navigate: (url: string) => Promise<IpcResult<BrowserState>>
+        back: () => Promise<IpcResult<BrowserState>>
+        forward: () => Promise<IpcResult<BrowserState>>
+        reload: () => Promise<IpcResult<BrowserState>>
+        stop: () => Promise<IpcResult<BrowserState>>
+        getPageContext: () => Promise<IpcResult<BrowserPageContext>>
+        downloads: () => Promise<IpcResult<BrowserDownload[]>>
+        tabs: () => Promise<IpcResult<BrowserTab[]>>
+        newTab: (url?: string) => Promise<IpcResult<BrowserState>>
+        switchTab: (id: string) => Promise<IpcResult<BrowserState>>
+        closeTab: (id: string) => Promise<IpcResult<BrowserState>>
+        resetSession: () => Promise<IpcResult<BrowserState>>
+        extensions: {
+          list: () => Promise<IpcResult<BrowserExtensionEntry[]>>
+          discoverChrome: () => Promise<IpcResult<ChromeBrowserExtensionCandidate[]>>
+          pick: () => Promise<IpcResult<BrowserExtensionCandidate | null>>
+          install: (path: string) => Promise<IpcResult<BrowserExtensionEntry[]>>
+          importFromChrome: (path: string) => Promise<IpcResult<BrowserExtensionEntry[]>>
+          setEnabled: (key: string, enabled: boolean) => Promise<IpcResult<BrowserExtensionEntry[]>>
+          reload: (key: string) => Promise<IpcResult<BrowserExtensionEntry[]>>
+          remove: (key: string) => Promise<IpcResult<BrowserExtensionEntry[]>>
+        }
+        controlPermission: {
+          get: () => Promise<IpcResult<BrowserControlPermissionState>>
+          approve: () => Promise<IpcResult<BrowserControlPermissionState>>
+          deny: () => Promise<IpcResult<BrowserControlPermissionState>>
+          revoke: () => Promise<IpcResult<BrowserControlPermissionState>>
+        }
+        sitePermission: {
+          get: () => Promise<IpcResult<BrowserSitePermissionState>>
+          allowForSession: (id: string) => Promise<IpcResult<BrowserSitePermissionState>>
+          alwaysAllow: (id: string) => Promise<IpcResult<BrowserSitePermissionState>>
+          block: (id: string) => Promise<IpcResult<BrowserSitePermissionState>>
+        }
+        onState: (handler: (state: BrowserState) => void) => () => void
+        onAgentOpen: (handler: (message: { url: string }) => void) => () => void
+        onControlPermission: (handler: (state: BrowserControlPermissionState) => void) => () => void
+        onSitePermission: (handler: (state: BrowserSitePermissionState) => void) => () => void
+        onLoginWait: (handler: (event: BrowserLoginWaitEvent) => void) => () => void
+        onDownload: (handler: (download: BrowserDownload) => void) => () => void
       }
       updater: {
         check: () => Promise<IpcResult<void>>

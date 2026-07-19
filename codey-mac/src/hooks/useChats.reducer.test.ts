@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reducer, type State } from './useChats'
+import { reducer, shouldAdoptExternalTurn, type State } from './useChats'
 import type { Chat } from '../types'
 
 const emptyState = (): State => ({
@@ -85,5 +85,18 @@ describe('reducer: adoptInFlight (externally-initiated turns)', () => {
     const s2 = reducer(s1, { type: 'adoptInFlight', chat, assistantMessageId: 'a2' })
     expect(s2).toBe(s1) // unchanged reference
     expect(s2.chats['c1'].messages).toHaveLength(2) // not a second stub
+  })
+
+  it('does not adopt a post-run skill notice as a new turn', () => {
+    expect(shouldAdoptExternalTurn(
+      { type: 'info', chatId: 'c1', message: 'Save this skill?', skillNotice: true },
+      false,
+      false,
+    )).toBe(false)
+    expect(shouldAdoptExternalTurn(
+      { type: 'stream', chatId: 'c1', token: 'hello' },
+      false,
+      false,
+    )).toBe(true)
   })
 })

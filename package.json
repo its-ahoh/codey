@@ -2,6 +2,9 @@
   "name": "codey-monorepo",
   "private": true,
   "version": "0.9.5",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "description": "Codey — a gateway that routes prompts from chat platforms to coding agents",
   "license": "MIT",
   "repository": {

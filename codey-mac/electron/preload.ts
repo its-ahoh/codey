@@ -278,6 +278,78 @@ contextBridge.exposeInMainWorld('codey', {
   app: {
     version: () => ipcRenderer.invoke('app:version'),
   },
+  browser: {
+    getState: () => ipcRenderer.invoke('browser:getState'),
+    show: (bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke('browser:show', bounds),
+    hide: () => ipcRenderer.invoke('browser:hide'),
+    setBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke('browser:setBounds', bounds),
+    navigate: (url: string) => ipcRenderer.invoke('browser:navigate', url),
+    back: () => ipcRenderer.invoke('browser:back'),
+    forward: () => ipcRenderer.invoke('browser:forward'),
+    reload: () => ipcRenderer.invoke('browser:reload'),
+    stop: () => ipcRenderer.invoke('browser:stop'),
+    getPageContext: () => ipcRenderer.invoke('browser:getPageContext'),
+    downloads: () => ipcRenderer.invoke('browser:downloads'),
+    tabs: () => ipcRenderer.invoke('browser:tabs'),
+    newTab: (url?: string) => ipcRenderer.invoke('browser:newTab', url),
+    switchTab: (id: string) => ipcRenderer.invoke('browser:switchTab', id),
+    closeTab: (id: string) => ipcRenderer.invoke('browser:closeTab', id),
+    resetSession: () => ipcRenderer.invoke('browser:resetSession'),
+    extensions: {
+      list: () => ipcRenderer.invoke('browser:extensions:list'),
+      discoverChrome: () => ipcRenderer.invoke('browser:extensions:discoverChrome'),
+      pick: () => ipcRenderer.invoke('browser:extensions:pick'),
+      install: (path: string) => ipcRenderer.invoke('browser:extensions:install', path),
+      importFromChrome: (path: string) => ipcRenderer.invoke('browser:extensions:importFromChrome', path),
+      setEnabled: (key: string, enabled: boolean) => ipcRenderer.invoke('browser:extensions:setEnabled', key, enabled),
+      reload: (key: string) => ipcRenderer.invoke('browser:extensions:reload', key),
+      remove: (key: string) => ipcRenderer.invoke('browser:extensions:remove', key),
+    },
+    controlPermission: {
+      get: () => ipcRenderer.invoke('browser:controlPermission:get'),
+      approve: () => ipcRenderer.invoke('browser:controlPermission:approve'),
+      deny: () => ipcRenderer.invoke('browser:controlPermission:deny'),
+      revoke: () => ipcRenderer.invoke('browser:controlPermission:revoke'),
+    },
+    sitePermission: {
+      get: () => ipcRenderer.invoke('browser:sitePermission:get'),
+      allowForSession: (id: string) => ipcRenderer.invoke('browser:sitePermission:allowForSession', id),
+      alwaysAllow: (id: string) => ipcRenderer.invoke('browser:sitePermission:alwaysAllow', id),
+      block: (id: string) => ipcRenderer.invoke('browser:sitePermission:block', id),
+    },
+    onState: (handler: (state: any) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: any) => handler(state)
+      ipcRenderer.on('browser:state', listener)
+      return () => ipcRenderer.removeListener('browser:state', listener)
+    },
+    onAgentOpen: (handler: (message: { url: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, message: { url: string }) => handler(message)
+      ipcRenderer.on('browser:agentOpen', listener)
+      return () => ipcRenderer.removeListener('browser:agentOpen', listener)
+    },
+    onControlPermission: (handler: (state: any) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: any) => handler(state)
+      ipcRenderer.on('browser:controlPermission', listener)
+      return () => ipcRenderer.removeListener('browser:controlPermission', listener)
+    },
+    onSitePermission: (handler: (state: any) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: any) => handler(state)
+      ipcRenderer.on('browser:sitePermission', listener)
+      return () => ipcRenderer.removeListener('browser:sitePermission', listener)
+    },
+    onLoginWait: (handler: (event: any) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, event: any) => handler(event)
+      ipcRenderer.on('browser:loginWait', listener)
+      return () => ipcRenderer.removeListener('browser:loginWait', listener)
+    },
+    onDownload: (handler: (download: any) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, download: any) => handler(download)
+      ipcRenderer.on('browser:download', listener)
+      return () => ipcRenderer.removeListener('browser:download', listener)
+    },
+  },
   updater: {
     check: () => ipcRenderer.invoke('updater:check'),
     download: () => ipcRenderer.invoke('updater:download'),

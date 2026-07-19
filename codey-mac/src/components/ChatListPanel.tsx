@@ -13,7 +13,9 @@ import { moveWorkspace, reconcileWorkspaceOrder } from './workspaceOrder'
 interface Props {
   onOpenSettings: (tab?: string) => void
   onOpenAutomations: () => void
+  onOpenBrowser: () => void
   onOpenTools: () => void
+  onSelectChat: () => void
   automationsUnseenCount: number
   activeChatId: string | null
 }
@@ -24,7 +26,7 @@ interface WsMenuState {
   y: number
 }
 
-export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, onOpenTools, automationsUnseenCount, activeChatId }) => {
+export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, onOpenBrowser, onOpenTools, onSelectChat, automationsUnseenCount, activeChatId }) => {
   const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces, refreshChats, linkChannel, unlinkChannel } = useChats()
   const [addingWorkspace, setAddingWorkspace] = useState(false)
   const [workspaces, setWorkspaces] = useState<string[]>([])
@@ -255,6 +257,9 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
             <span style={styles.navBadge}>{automationsUnseenCount > 9 ? '9+' : automationsUnseenCount}</span>
           )}
         </button>
+        <button style={styles.navButton} onClick={onOpenBrowser} title="Browse the web in Codey">
+          <span style={styles.navIcon}><UIIcon name="globe" size={16} /></span><span>Browser</span>
+        </button>
         <button style={styles.navButton} onClick={onOpenTools} title="Skills & playbooks">
           <span style={styles.navIcon}><UIIcon name="tools" size={16} /></span><span>Tools</span>
         </button>
@@ -381,7 +386,11 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                     key={chat.id}
                     title={orphaned ? 'Workspace deleted' : undefined}
                     style={{ ...styles.item, background: active ? C.accentDim : 'transparent', borderColor: active ? C.accent : 'transparent', opacity: orphaned ? 0.5 : 1 }}
-                    onClick={() => !isRenaming && selectChat(chat.id)}
+                    onClick={() => {
+                      if (isRenaming) return
+                      onSelectChat()
+                      selectChat(chat.id)
+                    }}
                     onDoubleClick={(e) => {
                       e.stopPropagation()
                       setRenamingId(chat.id)
@@ -543,6 +552,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                         return
                       }
                       setPendingPairing(c.id, ch)
+                      onSelectChat()
                       selectChat(c.id)
                       window.dispatchEvent(new Event('pendingPairing'))
                     }}

@@ -14,12 +14,14 @@
     "build:helper": "cd ../voice && make helper",
     "prebuild": "npm run build:helper",
     "prebuild:mac": "npm run build:helper",
+    "prebuild:mac:local": "npm run build:helper",
     "prebuild:mac:signed": "npm run build:helper",
     "build": "vite build && electron-builder",
     "build:mac": "vite build && electron-builder --mac",
+    "build:mac:local": "vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --publish never --config.directories.output=release-local --config.mac.identity=null && codesign --force --deep --sign - --options runtime --entitlements build/entitlements.mac.local.plist release-local/mac-arm64/Codey.app",
     "build:mac:signed": "vite build && electron-builder --mac --publish never",
     "notarize:mac": "node build/notarize-dist.js",
-    "dist:mac": "npm run build:mac:signed && node build/notarize-dist.js",
+    "dist:mac": "node build/dist-mac.js",
     "preview": "vite preview",
     "test": "vitest run"
   },
@@ -38,8 +40,8 @@
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
-    "electron": "28.3.3",
-    "electron-builder": "^24.9.0",
+    "electron": "41.10.2",
+    "electron-builder": "26.15.3",
     "typescript": "^5.3.0",
     "vite": "^5.0.0",
     "vite-plugin-electron": "^0.28.0",
@@ -72,11 +74,13 @@
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "identity": "ou zixian (N59NN58KB2)",
       "notarize": false,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Codey transcribes your speech into text at your cursor when you use voice input.",
+        "NSCameraUsageDescription": "Codey lets websites use your camera only after you approve the site permission.",
+        "NSLocationUsageDescription": "Codey lets websites use your location only after you approve the site permission.",
         "NSAppleEventsUsageDescription": "Codey pastes transcribed voice text into the focused app via System Events."
       }
     },
@@ -109,6 +113,10 @@
       {
         "from": "../voice/CodeyVoice",
         "to": "CodeyVoice"
+      },
+      {
+        "from": "electron/browser-agent-cli.cjs",
+        "to": "browser-agent-cli.cjs"
       }
     ]
   }
