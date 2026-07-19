@@ -15,12 +15,13 @@ describe('normalizeBrowserUrl', () => {
   })
 
   it('turns natural-language input into a search', () => {
+    const nonLatinQuery = '\u5c0f\u7ea2\u4e66'
     expect(normalizeBrowserUrl('electron browser sessions')).toBe(
       'https://www.google.com/search?q=electron%20browser%20sessions',
     )
     expect(normalizeBrowserUrl('weather')).toBe('https://www.google.com/search?q=weather')
-    expect(normalizeBrowserUrl('小红书')).toBe(
-      `https://www.google.com/search?q=${encodeURIComponent('小红书')}`,
+    expect(normalizeBrowserUrl(nonLatinQuery)).toBe(
+      `https://www.google.com/search?q=${encodeURIComponent(nonLatinQuery)}`,
     )
   })
 

@@ -141,8 +141,8 @@ export function normalizeBrowserUrl(input: string): string {
     candidate = `http://${candidate}`
   } else if (!/^[a-z][a-z\d+.-]*:/i.test(candidate)) {
     // Match omnibox behavior: a bare word is a search, while a dotted host is
-    // treated as an address. This also prevents non-Latin queries such as
-    // `小红书` from being converted to a nonexistent punycode hostname.
+    // treated as an address. This also prevents non-Latin search queries from
+    // being converted to nonexistent punycode hostnames.
     const host = candidate.split(/[/?#]/, 1)[0]
     if (!host.includes('.') && !/^\[[0-9a-f:]+\](?::\d+)?$/i.test(host)) return search()
     candidate = `https://${candidate}`
@@ -391,12 +391,12 @@ export class BrowserController {
       }
       const controls = Array.from(document.querySelectorAll('input, button, a[href], [role="button"], [role="link"]')).filter(visible)
       const label = el => (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase()
-      const loginWords = /\\b(sign[ -]?in|log[ -]?in|continue with|authenticate|verification)\\b|登录|登入|iniciar sesi[oó]n|connexion/i
-      const logoutWords = /\\b(sign[ -]?out|log[ -]?out|my account|account menu|profile menu)\\b|退出登录|登出/i
+      const loginWords = /\\b(sign[ -]?in|log[ -]?in|continue with|authenticate|verification)\\b|\\u767b\\u5f55|\\u767b\\u5165|iniciar sesi[oó]n|connexion/i
+      const logoutWords = /\\b(sign[ -]?out|log[ -]?out|my account|account menu|profile menu)\\b|\\u9000\\u51fa\\u767b\\u5f55|\\u767b\\u51fa/i
       const passwordFields = controls.filter(el => el instanceof HTMLInputElement && el.type === 'password').length
       const identityFields = controls.filter(el => el instanceof HTMLInputElement && (
         ['email', 'username'].includes(el.autocomplete) || el.type === 'email'
-        || /email|user(name)?|phone|account|邮箱|用户名/i.test(el.name + ' ' + el.id + ' ' + el.placeholder)
+        || /email|user(name)?|phone|account|\\u90ae\\u7bb1|\\u7528\\u6237\\u540d/i.test(el.name + ' ' + el.id + ' ' + el.placeholder)
       )).length
       const loginActions = controls.filter(el => loginWords.test(label(el))).length
       const logoutActions = controls.filter(el => logoutWords.test(label(el))).length
