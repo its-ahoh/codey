@@ -98,6 +98,7 @@ export class AutomationStore {
       raw.automations = raw.automations.filter(a => a.id !== id);
     });
     try { fs.unlinkSync(this.runFile(id)); } catch { /* no history yet */ }
+    try { fs.rmSync(this.runLogDir(id), { recursive: true, force: true }); } catch { /* no logs yet */ }
   }
 
   setEnabled(id: string, enabled: boolean, now: number): Automation {
@@ -135,6 +136,35 @@ export class AutomationStore {
     }
     runs.reverse();
     return limit !== undefined ? runs.slice(0, limit) : runs;
+  }
+
+  // ---- run activity logs ----
+
+  private runLogDir(id: string): string {
+    return path.join(this.runsDir, id);
+  }
+
+  private runLogFile(id: string, runId: string): string {
+    return path.join(this.runLogDir(id), `${runId}.log`);
+  }
+
+  /** IDs come over IPC — refuse anything that could escape runsDir. */
+  private static isSafeId(s: string): boolean {
+    return /^[\w-]+$/.test(s);
+  }
+
+  /** Append one activity-log line. Failures are the caller's to swallow —
+   *  logging must never fail a run. */
+  appendRunLog(id: string, runId: string, line: string): void {
+    if (!AutomationStore.isSafeId(id) || !AutomationStore.isSafeId(runId)) return;
+    fs.mkdirSync(this.runLogDir(id), { recursive: true });
+    fs.appendFileSync(this.runLogFile(id, runId), line + '\n', 'utf8');
+  }
+
+  /** Full activity log for a run, or undefined if none was written. */
+  readRunLog(id: string, runId: string): string | undefined {
+    if (!AutomationStore.isSafeId(id) || !AutomationStore.isSafeId(runId)) return undefined;
+    try { return fs.readFileSync(this.runLogFile(id, runId), 'utf8'); } catch { return undefined; }
   }
 
   /** Read-patch-rewrite (atomic). Caps retained history at MAX_HISTORY_REWRITE. */
