@@ -5,16 +5,15 @@ import { mdToPlainText, truncate } from './chat-notifications'
 
 export type NotifyMode = 'all' | 'failure' | 'success' | 'none'
 
-/** Legacy automations stored notify as a boolean: true → 'all', false → 'none'. */
+/** Anything unrecognized (including pre-mode boolean values) means 'none'. */
 export function normalizeNotifyMode(v: unknown): NotifyMode {
-  if (v === false) return 'none'
-  return v === 'failure' || v === 'success' || v === 'none' ? v : 'all'
+  return v === 'all' || v === 'failure' || v === 'success' ? v : 'none'
 }
 
 export interface AutomationLike {
   id: string
   name: string
-  report: { notify: NotifyMode | boolean }
+  report: { notify: NotifyMode }
 }
 export interface RunLike {
   runId: string

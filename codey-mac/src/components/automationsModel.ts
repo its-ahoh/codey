@@ -45,14 +45,7 @@ export const NOTIFY_OPTIONS: ReadonlyArray<{ value: NotifyMode; label: string }>
   { value: 'none', label: 'Never' },
 ]
 
-/** Legacy automations stored notify as a boolean: true → 'all', false → 'none'. */
-export function normalizeNotifyMode(v: unknown): NotifyMode {
-  if (v === false) return 'none'
-  return v === 'failure' || v === 'success' || v === 'none' ? v : 'all'
-}
-
-export function notifyLabel(v: unknown): string {
-  const mode = normalizeNotifyMode(v)
+export function notifyLabel(mode: NotifyMode): string {
   return NOTIFY_OPTIONS.find(o => o.value === mode)!.label.toLowerCase()
 }
 
@@ -134,7 +127,7 @@ export interface Knobs {
 interface KnobSource {
   params: Record<string, string>
   schedule?: ScheduleLike
-  report: { notify: NotifyMode | boolean }
+  report: { notify: NotifyMode }
 }
 
 /** Seed knobs from an automation. Days are sorted so an unsorted persisted
@@ -145,7 +138,7 @@ export function knobsFrom(a: KnobSource): Knobs {
     scheduleOn: !!a.schedule,
     times: a.schedule ? a.schedule.times.map(t => formatHHMM(t.hour, t.minute)) : ['09:00'],
     days: [...(a.schedule?.daysOfWeek ?? [])].sort((x, y) => x - y),
-    notify: normalizeNotifyMode(a.report.notify),
+    notify: a.report.notify,
   }
 }
 
@@ -161,7 +154,7 @@ export function knobsEqual(k: Knobs, a: KnobSource): boolean {
     const ad = [...(a.schedule?.daysOfWeek ?? [])].sort((x, y) => x - y)
     if (JSON.stringify(kd) !== JSON.stringify(ad)) return false
   }
-  return k.notify === normalizeNotifyMode(a.report.notify)
+  return k.notify === a.report.notify
 }
 
 export interface DraftLike {

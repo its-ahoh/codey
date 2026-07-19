@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { decideAutomationNotification, findUnseenRuns } from './automation-notifications'
 
 const auto = (over: any = {}) => ({
-  id: 'a1', name: 'Morning news', report: { notify: true }, ...over,
+  id: 'a1', name: 'Morning news', report: { notify: 'all' }, ...over,
 })
 const run = (over: any = {}) => ({
   runId: 'r1', startedAt: 1000, endedAt: 2000, status: 'success',
@@ -10,15 +10,14 @@ const run = (over: any = {}) => ({
 })
 
 describe('decideAutomationNotification', () => {
-  it('notifies on finished runs when notify is "all" (or legacy true)', () => {
+  it('notifies on finished runs when notify is "all"', () => {
     const d = decideAutomationNotification(auto(), run())
     expect(d).toMatchObject({ title: expect.stringContaining('Morning news') })
     expect(d!.body).toContain('Posted 5 items.')
-    expect(decideAutomationNotification(auto({ report: { notify: 'all' } }), run())).not.toBeNull()
   })
-  it('returns null when notify is "none" (or legacy false)', () => {
-    expect(decideAutomationNotification(auto({ report: { notify: false } }), run())).toBeNull()
+  it('returns null when notify is "none" or unrecognized (pre-mode boolean)', () => {
     expect(decideAutomationNotification(auto({ report: { notify: 'none' } }), run())).toBeNull()
+    expect(decideAutomationNotification(auto({ report: { notify: true } }), run())).toBeNull()
   })
   it('"failure" notifies on failed and parked runs only', () => {
     const a = auto({ report: { notify: 'failure' } })

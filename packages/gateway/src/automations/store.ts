@@ -60,10 +60,11 @@ export class AutomationStore {
 
   list(): Automation[] {
     const automations = this.loadRaw().automations as unknown as Automation[];
-    // Read-side migration: pre-mode files stored notify as a boolean and
-    // schedules as a single {hour, minute}. The raw values are left on disk
-    // untouched until the next definition write. A garbage schedule drops to
-    // manual-only rather than reaching the scheduler's Intl calls.
+    // Read-side migration: pre-mode files stored notify as a boolean (any
+    // unrecognized value normalizes to 'none') and schedules as a single
+    // {hour, minute}. The raw values are left on disk untouched until the
+    // next definition write. A garbage schedule drops to manual-only rather
+    // than reaching the scheduler's Intl calls.
     for (const a of automations) {
       if (a.report) a.report.notify = normalizeNotifyMode(a.report.notify);
       if (a.schedule) a.schedule = normalizeSchedule(a.schedule);

@@ -79,7 +79,7 @@ Conversation so far:
 ${messages.map(m => `${m.role === 'user' ? 'User' : 'You'}: ${m.text}`).join('\n')}
 
 Your job this turn:
-1. Update the draft with anything the user's latest message settles. draftPatch contains ONLY fields that changed; set a field to null to clear it. Draft fields: name (short title), target ({"kind":"prompt","workspaceName":"..."} or {"kind":"team","teamName":"...","workspaceName":"..."}), schedule ({"times":[{"hour":0-23,"minute":0-59},...],"daysOfWeek":[0-6] optional,"tz":"${ctx.tz}"} or null for manual-only; times holds one entry per firing time, so "9am and 6pm" is [{"hour":9,"minute":0},{"hour":18,"minute":0}]), notify ("all" | "failure" | "success" | "none" - which run outcomes fire an OS notification; default "all"), brief (string), params (object of string values).
+1. Update the draft with anything the user's latest message settles. draftPatch contains ONLY fields that changed; set a field to null to clear it. Draft fields: name (short title), target ({"kind":"prompt","workspaceName":"..."} or {"kind":"team","teamName":"...","workspaceName":"..."}), schedule ({"times":[{"hour":0-23,"minute":0-59},...],"daysOfWeek":[0-6] optional,"tz":"${ctx.tz}"} or null for manual-only; times holds one entry per firing time, so "9am and 6pm" is [{"hour":9,"minute":0},{"hour":18,"minute":0}]), notify ("all" | "failure" | "success" | "none" - which run outcomes fire an OS notification; default "none"), brief (string), params (object of string values).
 2. Reply conversationally and ask about ONE thing at a time - the next most important gap: missing specifics, choices, accounts/handles, formats, limits, edge cases (e.g. "what if there is nothing to report?"). Never ask about something the user already answered, even in passing. If the user revises an earlier choice, just patch it and move on. Patch schedule whenever the user's message settles timing, but do not steer the conversation toward scheduling.
 3. When the answer space is enumerable (workspace names, team names, times, yes/no), offer 2-5 short suggestions the user can tap. Only ever suggest workspace/team names that appear in the environment above.
 4. Maintain the brief as you learn: a frozen, fully self-contained instruction block for an unattended agent - no "the user said", concrete values, edge-case handling, expected output. Surface tweakable knobs as {{placeholder}} in the brief with current values in params.
@@ -114,12 +114,9 @@ export async function automationChatTurn(
   if ('target' in draftPatch && draftPatch.target !== null && !isValidTargetPatch(draftPatch.target)) {
     delete draftPatch.target;
   }
-  if ('notify' in draftPatch && draftPatch.notify !== null) {
-    // The model may still answer in the old boolean shape.
-    const v: unknown = draftPatch.notify;
-    if (v === true) draftPatch.notify = 'all';
-    else if (v === false) draftPatch.notify = 'none';
-    else if (!NOTIFY_MODES.includes(v as AutomationNotifyMode)) delete draftPatch.notify;
+  if ('notify' in draftPatch && draftPatch.notify !== null
+      && !NOTIFY_MODES.includes(draftPatch.notify as AutomationNotifyMode)) {
+    delete draftPatch.notify;
   }
   const suggestions = Array.isArray(res!.suggestions)
     ? (res!.suggestions as unknown[]).filter((s): s is string => typeof s === 'string' && !!s.trim()).slice(0, 6)

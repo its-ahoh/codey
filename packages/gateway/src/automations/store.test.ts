@@ -42,10 +42,10 @@ describe('definitions', () => {
     expect(new AutomationStore(dir).get(a.id)?.brief).toContain('{{account}}');
   });
 
-  it('normalizes legacy boolean notify on read', () => {
+  it('normalizes unrecognized notify values (e.g. pre-mode booleans) to none on read', () => {
     store.create(draft({ report: { notify: true as any } }), 111);
     store.create(draft({ report: { notify: false as any } }), 111);
-    expect(store.list().map(a => a.report.notify)).toEqual(['all', 'none']);
+    expect(store.list().map(a => a.report.notify)).toEqual(['none', 'none']);
   });
 
   it('normalizes a legacy single-time schedule on read', () => {

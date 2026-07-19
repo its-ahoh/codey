@@ -30,7 +30,7 @@ describe('validateSchedule', () => {
 
 describe('validateAutomationDraft / validateAutomationPatch', () => {
   it('requires a valid report.notify on create, only present fields on update', () => {
-    expect(() => validateAutomationDraft({ report: { notify: true } })).not.toThrow() // legacy boolean
+    expect(() => validateAutomationDraft({ report: { notify: true } })).toThrow(/report\.notify/) // booleans are not modes
     for (const mode of ['all', 'failure', 'success', 'none']) {
       expect(() => validateAutomationDraft({ report: { notify: mode } })).not.toThrow()
     }

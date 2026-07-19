@@ -43,9 +43,8 @@ export function validateSchedule(schedule: unknown): void {
   }
 }
 
-/** Booleans are the legacy notify shape; the store normalizes them on read. */
 function validNotify(v: unknown): boolean {
-  return typeof v === 'boolean' || v === 'all' || v === 'failure' || v === 'success' || v === 'none'
+  return v === 'all' || v === 'failure' || v === 'success' || v === 'none'
 }
 
 function validateReport(report: unknown): void {

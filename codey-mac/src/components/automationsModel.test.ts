@@ -91,10 +91,10 @@ describe('knobsFrom', () => {
   const base = {
     params: { topic: 'ai' },
     schedule: { times: [t(9, 5), t(18, 0)], daysOfWeek: [5, 1, 3], tz: 'UTC' },
-    report: { notify: true },
+    report: { notify: 'all' as const },
   }
 
-  it('maps fields, sorts days, and normalizes legacy boolean notify', () => {
+  it('maps fields and sorts days', () => {
     expect(knobsFrom(base)).toEqual({
       params: { topic: 'ai' },
       scheduleOn: true,
@@ -105,7 +105,7 @@ describe('knobsFrom', () => {
   })
 
   it('defaults for a manual-only automation', () => {
-    expect(knobsFrom({ params: {}, report: { notify: false } })).toEqual({
+    expect(knobsFrom({ params: {}, report: { notify: 'none' } })).toEqual({
       params: {},
       scheduleOn: false,
       times: ['09:00'],
@@ -123,7 +123,7 @@ describe('knobsEqual', () => {
   const auto = {
     params: { topic: 'ai' },
     schedule: { times: [t(9, 5), t(18, 0)], daysOfWeek: [5, 1, 3], tz: 'UTC' },
-    report: { notify: true },
+    report: { notify: 'all' as const },
   }
 
   it('is true for knobs seeded from the same automation', () => {
@@ -153,16 +153,12 @@ describe('knobsEqual', () => {
     expect(knobsEqual({ ...knobsFrom(auto), notify: 'none' }, auto)).toBe(false)
   })
 
-  it('treats legacy boolean notify as its mode equivalent (no phantom dirty)', () => {
-    expect(knobsEqual(knobsFrom(auto), { ...auto, report: { notify: 'all' } })).toBe(true)
-  })
-
   it('is false when scheduleOn differs', () => {
     expect(knobsEqual({ ...knobsFrom(auto), scheduleOn: false }, auto)).toBe(false)
   })
 
   it('ignores times/days when the schedule is off on both sides', () => {
-    const manual = { params: {}, report: { notify: true } }
+    const manual = { params: {}, report: { notify: 'all' as const } }
     expect(knobsEqual({ ...knobsFrom(manual), times: ['17:00'], days: [2] }, manual)).toBe(true)
   })
 })

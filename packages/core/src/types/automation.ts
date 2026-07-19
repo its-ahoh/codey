@@ -66,10 +66,10 @@ export type AutomationNotifyMode = 'all' | 'failure' | 'success' | 'none';
 
 export const NOTIFY_MODES: readonly AutomationNotifyMode[] = ['all', 'failure', 'success', 'none'];
 
-/** Legacy stored values are booleans: true → 'all', false → 'none'. */
+/** Anything unrecognized (including pre-mode boolean values) falls back to
+ *  'none' — the default is no notification. */
 export function normalizeNotifyMode(v: unknown): AutomationNotifyMode {
-  if (v === false) return 'none';
-  return NOTIFY_MODES.includes(v as AutomationNotifyMode) ? (v as AutomationNotifyMode) : 'all';
+  return NOTIFY_MODES.includes(v as AutomationNotifyMode) ? (v as AutomationNotifyMode) : 'none';
 }
 
 export interface AutomationReport {

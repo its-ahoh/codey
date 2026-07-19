@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { C } from '../theme'
 import { pillButton, unwrap, inputStyle } from './settingsAtoms'
 import { Markdown } from './Markdown'
-import { scheduleSummary, draftComplete, checkLabel, normalizeNotifyMode, notifyLabel } from './automationsModel'
+import { scheduleSummary, draftComplete, checkLabel, notifyLabel } from './automationsModel'
 import type { AutomationDraft } from '../../../packages/core/src/aide-automation'
 import type { ChatStep } from '../../../packages/gateway/src/automations/chat'
 
@@ -163,7 +163,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
         brief: draft.brief!,
         params: draft.params ?? {},
         schedule: draft.schedule ?? undefined,
-        report: { notify: normalizeNotifyMode(draft.notify) },
+        report: { notify: draft.notify ?? 'none' },
       }
       if (mode === 'edit' && automationId) {
         unwrap(await window.codey.automations.update(automationId, payload as any))
