@@ -615,26 +615,36 @@ export class BrowserController {
   async fill(ref: string, value: string): Promise<BrowserActionResult> {
     this.assertRef(ref)
     const contents = this.requirePage()
+    // Select through the DOM, then insert through Chromium's native editing
+    // pipeline. Assigning textContent/value only changes the rendered DOM and
+    // leaves stateful editors (Draft.js, ProseMirror, X's composer, etc.)
+    // unaware of the new text.
     await contents.executeJavaScript(`(() => {
       const el = document.querySelector('[data-codey-ref="${ref}"]')
       if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
       if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Element ${ref} is disabled')
-      const value = ${JSON.stringify(value)}
       el.focus()
       if (el.isContentEditable) {
-        el.textContent = value
+        const selection = window.getSelection()
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        selection?.removeAllRanges()
+        selection?.addRange(range)
       } else if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-        const prototype = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
-        const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
-        if (!setter) throw new Error('Element ${ref} cannot be filled')
-        setter.call(el, value)
+        el.select()
       } else {
         throw new Error('Element ${ref} is not a text field')
       }
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }))
-      el.dispatchEvent(new Event('change', { bubbles: true }))
       return true
     })()`, true)
+    if (value) {
+      contents.insertText(value)
+    } else {
+      // insertText('') does not replace the active selection, so preserve the
+      // expected "fill with empty text" behavior through the same native path.
+      contents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
+      contents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
+    }
     return this.actionResult(`Filled ${ref}`)
   }
 
@@ -680,8 +690,8 @@ export class BrowserController {
       })()`, true)
     }
     const parts = key.split('+').filter(Boolean)
-    const keyCode = parts.pop()
-    if (!keyCode) throw new Error('A key is required')
+    const requestedKey = parts.pop()
+    if (!requestedKey) throw new Error('A key is required')
     const modifiers = parts.map(part => part.toLowerCase()).map(part => {
       if (part === 'cmd' || part === 'command' || part === 'meta') return 'meta'
       if (part === 'ctrl' || part === 'control') return 'control'
@@ -689,9 +699,11 @@ export class BrowserController {
       if (part === 'shift') return 'shift'
       throw new Error(`Unsupported key modifier: ${part}`)
     }) as Array<'meta' | 'control' | 'alt' | 'shift'>
+    const keyCode = [' ', 'space', 'spacebar'].includes(requestedKey.toLowerCase()) ? 'Space' : requestedKey
     contents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
-    if (keyCode.length === 1 && modifiers.length === 0) {
-      contents.sendInputEvent({ type: 'char', keyCode })
+    const printable = keyCode === 'Space' ? ' ' : keyCode.length === 1 && modifiers.length === 0 ? keyCode : undefined
+    if (printable !== undefined) {
+      contents.sendInputEvent({ type: 'char', keyCode: printable, modifiers })
     }
     contents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
     return this.actionResult(`Pressed ${key}${ref ? ` on ${ref}` : ''}`)
