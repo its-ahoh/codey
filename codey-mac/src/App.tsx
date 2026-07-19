@@ -11,6 +11,8 @@ import { CoreOfflineBanner } from './components/CoreOfflineBanner'
 import { CodeyMark, UIIcon } from './components/UIIcons'
 import { AutomationsView } from './components/AutomationsView'
 import { ToolsView } from './components/ToolsView'
+import { BrowserPanel } from './components/BrowserPanel'
+import type { BrowserLoginWaitEvent } from './codey-api'
 import { unwrap } from './components/settingsAtoms'
 import {
   C,
@@ -33,11 +35,13 @@ const clampLeftPanelWidth = (width: number) => {
 
 const Shell: React.FC = () => {
   const { isRunning, coreState, relaunchApp } = useGateway()
-  const { state, createChat, selectChat, openChatById, refreshWorkspaces } = useChats()
+  const { state, createChat, selectChat, openChatById, refreshWorkspaces, sendMessage } = useChats()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
   const [automationsOpen, setAutomationsOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [browserOpen, setBrowserOpen] = useState(false)
+  const [browserLoginWait, setBrowserLoginWait] = useState<BrowserLoginWaitEvent | null>(null)
   // Unseen automation-run keys (`${automationId}:${runId}`), for the sidebar
   // badge. A Set so the one-shot 'automation-unseen' push and the on-mount
   // recompute from history can both add to it without racing each other.
@@ -51,6 +55,61 @@ const Shell: React.FC = () => {
   })
 
   const activeChat = state.selectedChatId ? state.chats[state.selectedChatId] : null
+
+  useEffect(() => {
+    setBrowserOpen(false)
+  }, [state.selectedChatId])
+
+  useEffect(() => {
+    return window.codey.browser.onAgentOpen(() => {
+      setSettingsOpen(false)
+      setAutomationsOpen(false)
+      setToolsOpen(false)
+      setBrowserOpen(true)
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.codey.browser.onControlPermission(permission => {
+      if (!permission.pending) return
+      setSettingsOpen(false)
+      setAutomationsOpen(false)
+      setToolsOpen(false)
+      setBrowserOpen(true)
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.codey.browser.onLoginWait(event => {
+      setBrowserLoginWait(event)
+      setSettingsOpen(false)
+      setAutomationsOpen(false)
+      setToolsOpen(false)
+      setBrowserOpen(true)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (browserLoginWait?.status !== 'changed') return
+    const timer = window.setTimeout(() => setBrowserLoginWait(current =>
+      current?.id === browserLoginWait.id ? null : current
+    ), 8000)
+    return () => window.clearTimeout(timer)
+  }, [browserLoginWait])
+
+  const confirmExpiredLogin = async (event: BrowserLoginWaitEvent) => {
+    await sendMessage(
+      event.chatId,
+      'I have finished signing in to the Codey Browser. Re-check the current page, retry the blocked website step, and continue the previous task.',
+    )
+    setBrowserLoginWait(current => current?.id === event.id ? null : current)
+  }
+
+  const openSettings = (tab?: string) => {
+    setBrowserOpen(false)
+    setSettingsTab(tab)
+    setSettingsOpen(true)
+  }
 
   const toggleLeftPanel = () => {
     setLeftCollapsed((prev) => {
@@ -101,7 +160,7 @@ const Shell: React.FC = () => {
         if (ws) createChat(ws)
       } else if (e.key === ',') {
         e.preventDefault()
-        setSettingsOpen(true)
+        openSettings()
       } else if (e.key === '\\') {
         e.preventDefault()
         toggleLeftPanel()
@@ -117,8 +176,7 @@ const Shell: React.FC = () => {
 
   useEffect(() => {
     const off = window.codey.notify.onOpenSettings(() => {
-      setSettingsTab('general')
-      setSettingsOpen(true)
+      openSettings('general')
     })
     return off
   }, [])
@@ -161,8 +219,16 @@ const Shell: React.FC = () => {
   }, [])
 
   const openAutomations = () => {
+    setBrowserOpen(false)
     setUnseenRunKeys(new Set())
     setAutomationsOpen(true)
+  }
+
+  const openBrowser = () => {
+    setSettingsOpen(false)
+    setAutomationsOpen(false)
+    setToolsOpen(false)
+    setBrowserOpen(true)
   }
 
   useEffect(() => {
@@ -198,7 +264,11 @@ const Shell: React.FC = () => {
           </button>
           <div style={styles.titleCenter}>
             <CodeyMark size={22} />
-            {activeChat && <span style={styles.appName} title={activeChat.title}>{activeChat.title}</span>}
+            {(browserOpen || activeChat) && (
+              <span style={styles.appName} title={browserOpen ? 'Browser' : activeChat?.title}>
+                {browserOpen ? 'Browser' : activeChat?.title}
+              </span>
+            )}
           </div>
         </div>
         <NotificationCenter />
@@ -207,9 +277,11 @@ const Shell: React.FC = () => {
         {!leftCollapsed && (
           <div style={{ ...styles.sidebarShell, width: leftPanelWidth }}>
             <ChatListPanel
-              onOpenSettings={(tab) => { setSettingsTab(tab); setSettingsOpen(true) }}
+              onOpenSettings={openSettings}
               onOpenAutomations={openAutomations}
-              onOpenTools={() => setToolsOpen(true)}
+              onOpenBrowser={openBrowser}
+              onOpenTools={() => { setBrowserOpen(false); setToolsOpen(true) }}
+              onSelectChat={() => setBrowserOpen(false)}
               automationsUnseenCount={unseenRunKeys.size}
               activeChatId={state.selectedChatId}
             />
@@ -232,7 +304,14 @@ const Shell: React.FC = () => {
         )}
         <div style={styles.content}>
           <CoreOfflineBanner state={coreState} onRelaunch={relaunchApp} />
-          {activeChat && (
+          {browserOpen && <BrowserPanel
+            chatId={activeChat?.id}
+            loginWait={browserLoginWait}
+            onConfirmLoginWait={event => { void confirmExpiredLogin(event) }}
+            onDismissLoginWait={() => setBrowserLoginWait(null)}
+            onClose={() => setBrowserOpen(false)}
+          />}
+          {!browserOpen && activeChat && (
             <div
               key={activeChat.id}
               style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
@@ -240,7 +319,7 @@ const Shell: React.FC = () => {
               <ChatTab chatId={activeChat.id} isGatewayRunning={isRunning} coreFailed={coreState.phase === 'failed'} />
             </div>
           )}
-          {!activeChat && (
+          {!browserOpen && !activeChat && (
             <div style={styles.emptyMain}>
               <div style={styles.emptyCard}>
                 <div style={styles.emptyIcon}><UIIcon name="chat" size={30} /></div>

@@ -5,13 +5,18 @@
 export interface ChatTrayState { inFlight: boolean; needsAttention: boolean }
 export type TrayStateMap = Record<string, ChatTrayState>
 
-export interface TrayEvent { type: string; chatId: string; userQuestion?: unknown }
+export interface TrayEvent { type: string; chatId: string; userQuestion?: unknown; skillNotice?: boolean }
 
 const TERMINAL = new Set(['done', 'error', 'stopped'])
 
 export function applyEvent(state: TrayStateMap, ev: TrayEvent): TrayStateMap {
   if (!ev || typeof ev.chatId !== 'string') return state
   const id = ev.chatId
+  if (ev.type === 'info' && ev.skillNotice) {
+    // This is a post-completion suggestion that needs a reply, not evidence
+    // that another agent turn is running.
+    return { ...state, [id]: { inFlight: false, needsAttention: true } }
+  }
   if (!TERMINAL.has(ev.type)) {
     // Any non-terminal event = a (new) turn is running; clear stale attention.
     return { ...state, [id]: { inFlight: true, needsAttention: false } }

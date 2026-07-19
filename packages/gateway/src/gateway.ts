@@ -192,6 +192,7 @@ export class Codey {
     onStatus?: (update: any) => void;
     signal?: AbortSignal;
     workingDir?: string;
+    browserChatId?: string;
     interactive?: boolean;
     skipPermissions?: boolean;
   }): Promise<{ response: AgentResponse; usedResume: boolean }> {
@@ -206,6 +207,8 @@ export class Codey {
       agent: opts.codingAgent,
       model: opts.modelConfig,
       context: { workingDir: opts.workingDir ?? this.workingDir },
+      browserTools: true,
+      browserChatId: opts.browserChatId,
       onStream: opts.onStream,
       onThinking: opts.onThinking,
       onStatus: opts.onStatus,
@@ -1593,6 +1596,7 @@ export class Codey {
       skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       onStream: onStream ? (text: string) => { streamed.active = true; onStream(text); } : undefined,
       context: { workingDir: this.workingDir },
+      browserTools: true,
       resumeSessionId: p.resumeSessionId,
       newSessionId: p.newSessionId,
     });
@@ -2680,6 +2684,7 @@ Example: /model gpt-4.1 write a Python script`;
           agent,
           model: this.getDefaultModelConfig(agent),
           context: { workingDir: this.workingDir },
+          browserTools: true,
         })
       )
     );
@@ -3903,6 +3908,7 @@ Example: /model gpt-4.1 write a Python script`;
     ): Promise<{ success: boolean; output: string; error?: string; thinking?: string }> => {
       const { response } = await this.runWorkerStep({
         conversationId: teamConv,
+        browserChatId: chatId,
         workerName,
         task: prompt,
         blackboard,
@@ -3985,6 +3991,8 @@ Example: /model gpt-4.1 write a Python script`;
           agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
           model: chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent),
           context: { workingDir },
+          browserTools: true,
+          browserChatId: chatId,
           onStream: (text: string) => workerMsgs.onStream(text, workerName),
           onThinking: (text: string) => workerMsgs.onThinking(text, workerStep.get(workerName) ?? 0, workerName),
           onStatus: (update: any) => {
@@ -4573,6 +4581,7 @@ Example: /model gpt-4.1 write a Python script`;
       agent,
       model,
       context: { workingDir: this.workingDir },
+      browserTools: true,
       onStream,
       onStatus,
       resumeSessionId: p.resumeSessionId,
@@ -5141,6 +5150,8 @@ Example: /model gpt-4.1 write a Python script`;
           agent,
           model,
           context: { workingDir },
+          browserTools: true,
+          browserChatId: chatId,
           skipPermissions: this.getSkipPermissions(),
           onStream,
           onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
@@ -5166,6 +5177,8 @@ Example: /model gpt-4.1 write a Python script`;
             agent,
             model,
             context: { workingDir },
+            browserTools: true,
+            browserChatId: chatId,
             skipPermissions: this.getSkipPermissions(),
             onStream,
             onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
@@ -5210,6 +5223,8 @@ Example: /model gpt-4.1 write a Python script`;
             agent,
             model,
             context: { workingDir },
+            browserTools: true,
+            browserChatId: chatId,
             skipPermissions: this.getSkipPermissions(),
             onStream,
             onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),

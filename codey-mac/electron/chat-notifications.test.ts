@@ -143,4 +143,12 @@ describe('createTurnTracker', () => {
     expect(t.isInFlight('c2')).toBe(true)
     expect(t.isInFlight('c1')).toBe(false)
   })
+
+  it('does not reopen a completed turn for a post-run skill notice', () => {
+    const t = createTurnTracker()
+    t.observe({ type: 'stream', chatId: 'c1' })
+    t.observe({ type: 'done', chatId: 'c1' })
+    t.observe({ type: 'info', chatId: 'c1', skillNotice: true })
+    expect(t.isInFlight('c1')).toBe(false)
+  })
 })

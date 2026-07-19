@@ -39,6 +39,13 @@ describe('applyEvent', () => {
     expect(s.c1).toEqual({ inFlight: true, needsAttention: false })
   })
 
+  it('treats a post-run skill notice as attention, not a running turn', () => {
+    let s = applyEvent({}, ev('stream', 'c1'))
+    s = applyEvent(s, ev('done', 'c1'))
+    s = applyEvent(s, ev('info', 'c1', { skillNotice: true }))
+    expect(s.c1).toEqual({ inFlight: false, needsAttention: true })
+  })
+
   it('is immutable — does not mutate the input map', () => {
     const before = {}
     applyEvent(before, ev('stream', 'c1'))
