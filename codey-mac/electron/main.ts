@@ -1942,6 +1942,13 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('automations:runChat', async (_e, id: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      return { chatId: await inProcessGateway.ensureAutomationRunChat(id) }
+    })
+  )
+
   ipcMain.handle('automations:resume', async (_e, id: string, runId: string, answer: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not ready')

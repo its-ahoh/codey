@@ -3,10 +3,10 @@
 // inline knobs. Behavioral edits go through "Edit in chat".
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { C } from '../theme'
-import { pillButton, unwrap, inputStyle } from './settingsAtoms'
+import { pillButton, unwrap, inputStyle, selectStyle } from './settingsAtoms'
 import {
-  scheduleSummary, timeOfDayToSchedule, nextRunAt, humanizeDelta,
-  knobsFrom, knobsEqual, type Knobs,
+  scheduleSummary, timesToSchedule, nextRunAt, humanizeDelta,
+  knobsFrom, knobsEqual, NOTIFY_OPTIONS, type Knobs, type NotifyMode,
 } from './automationsModel'
 import type { Automation, AutomationRun } from '../../../packages/core/src/types/automation'
 import { UIIcon } from './UIIcons'
@@ -17,6 +17,7 @@ const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 interface Props {
   id: string
   onEditInChat: () => void
+  onOpenRunChat: (chatId: string) => void
   onDeleted: () => void
   setError: (e: string | null) => void
 }
@@ -55,7 +56,7 @@ const ParkedPrompt: React.FC<{
   </>
 )
 
-export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDeleted, setError }) => {
+export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRunChat, onDeleted, setError }) => {
   const [a, setA] = useState<Automation | null>(null)
   const [tab, setTab] = useState<'overview' | 'runs'>('overview')
   const [runs, setRuns] = useState<AutomationRun[]>([])
@@ -102,8 +103,12 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
   const runNow = async () => {
     setRunning(true)
     try {
-      unwrap(await window.codey.automations.runNow(id))
-      void refresh()
+      // Resolve the run chat first, then fire the run without awaiting it and
+      // jump to that chat so the user watches progress live. The outcome still
+      // lands in run history and notifications.
+      const { chatId } = unwrap(await window.codey.automations.runChat(id))
+      void window.codey.automations.runNow(id).catch(() => { /* surfaced via run history */ })
+      onOpenRunChat(chatId)
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {
@@ -154,7 +159,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
     setSavingKnobs(true)
     try {
       const schedule = knobs.scheduleOn
-        ? timeOfDayToSchedule(knobs.time, a.schedule?.tz ?? TZ, knobs.days.length ? knobs.days : undefined)
+        ? timesToSchedule(knobs.times, a.schedule?.tz ?? TZ, knobs.days.length ? knobs.days : undefined)
         : undefined
       if (knobs.scheduleOn && !schedule) throw new Error('Invalid time')
       const fresh: Automation = unwrap(await window.codey.automations.update(id, {
@@ -239,8 +244,20 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
               onChange={e => setKnobs({ ...knobs, scheduleOn: e.target.checked })} />
             {knobs.scheduleOn && (
               <>
-                <input type="time" style={inputStyle} value={knobs.time}
-                  onChange={e => setKnobs({ ...knobs, time: e.target.value })} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {knobs.times.map((t, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                      <input type="time" style={inputStyle} value={t}
+                        onChange={e => setKnobs({ ...knobs, times: knobs.times.map((x, j) => j === i ? e.target.value : x) })} />
+                      {knobs.times.length > 1 && (
+                        <button style={{ ...pillButton('ghost'), padding: '2px 7px' }} title="Remove this time"
+                          onClick={() => setKnobs({ ...knobs, times: knobs.times.filter((_, j) => j !== i) })}>×</button>
+                      )}
+                    </div>
+                  ))}
+                  <button style={{ ...pillButton('ghost'), alignSelf: 'flex-start', padding: '2px 7px', fontSize: 10 }}
+                    onClick={() => setKnobs({ ...knobs, times: [...knobs.times, '12:00'] })}>+ time</button>
+                </div>
                 <div style={{ display: 'flex', gap: 4 }}>
                   {DAY.map((d, i) => (
                     <button key={d}
@@ -257,8 +274,10 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onDelete
           </div>
           <div style={knobRow}>
             <span style={knobKey}>notify</span>
-            <input type="checkbox" checked={knobs.notify}
-              onChange={e => setKnobs({ ...knobs, notify: e.target.checked })} />
+            <select style={selectStyle} value={knobs.notify}
+              onChange={e => setKnobs({ ...knobs, notify: e.target.value as NotifyMode })}>
+              {NOTIFY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
           </div>
           {knobsDirty && (
             <button style={{ ...pillButton('primary'), marginTop: 8 }} disabled={savingKnobs} onClick={() => void saveKnobs()}>

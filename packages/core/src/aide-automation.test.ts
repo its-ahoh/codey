@@ -67,13 +67,26 @@ describe('automationChatTurn', () => {
     await expect(automationChatTurn(msgs, {}, ctx, aide('{"reply":"  "}'))).rejects.toThrow();
   });
 
-  it('drops a malformed schedule patch but keeps a valid one and null', async () => {
-    const bad = await automationChatTurn(msgs, {}, ctx, aide(
+  it('coerces near-miss schedule patches instead of dropping them', async () => {
+    // Numeric-string hour in the legacy single shape: coerced, not lost.
+    const legacy = await automationChatTurn(msgs, {}, ctx, aide(
       '{"reply":"ok","draftPatch":{"schedule":{"hour":"9","minute":0,"tz":"UTC"}}}'));
-    expect(bad.draftPatch).toEqual({});
+    expect(legacy.draftPatch).toEqual({ schedule: { times: [{ hour: 9, minute: 0 }], tz: 'UTC' } });
+    // Missing tz falls back to the user's zone; times are sorted.
+    const noTz = await automationChatTurn(msgs, {}, ctx, aide(
+      '{"reply":"ok","draftPatch":{"schedule":{"times":[{"hour":18,"minute":30},{"hour":9,"minute":0}]}}}'));
+    expect(noTz.draftPatch).toEqual({
+      schedule: { times: [{ hour: 9, minute: 0 }, { hour: 18, minute: 30 }], tz: 'Asia/Shanghai' },
+    });
     const good = await automationChatTurn(msgs, {}, ctx, aide(
-      '{"reply":"ok","draftPatch":{"schedule":{"hour":9,"minute":0,"tz":"UTC","daysOfWeek":[1,2]}}}'));
-    expect(good.draftPatch).toEqual({ schedule: { hour: 9, minute: 0, tz: 'UTC', daysOfWeek: [1, 2] } });
+      '{"reply":"ok","draftPatch":{"schedule":{"times":[{"hour":9,"minute":0}],"tz":"UTC","daysOfWeek":[1,2]}}}'));
+    expect(good.draftPatch).toEqual({ schedule: { times: [{ hour: 9, minute: 0 }], daysOfWeek: [1, 2], tz: 'UTC' } });
+  });
+
+  it('drops an unusable schedule patch', async () => {
+    const bad = await automationChatTurn(msgs, {}, ctx, aide(
+      '{"reply":"ok","draftPatch":{"schedule":{"hour":99,"minute":0,"tz":"UTC"}}}'));
+    expect(bad.draftPatch).toEqual({});
   });
 
   it('drops a malformed target patch', async () => {

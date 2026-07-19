@@ -3,10 +3,17 @@
 // renders decisions with the Notification API.
 import { mdToPlainText, truncate } from './chat-notifications'
 
+export type NotifyMode = 'all' | 'failure' | 'success' | 'none'
+
+/** Anything unrecognized (including pre-mode boolean values) means 'none'. */
+export function normalizeNotifyMode(v: unknown): NotifyMode {
+  return v === 'all' || v === 'failure' || v === 'success' ? v : 'none'
+}
+
 export interface AutomationLike {
   id: string
   name: string
-  report: { notify: boolean }
+  report: { notify: NotifyMode }
 }
 export interface RunLike {
   runId: string
@@ -24,7 +31,14 @@ const MAX_BODY = 180
 export const UNSEEN_WINDOW_MS = 24 * 3600_000
 
 export function decideAutomationNotification(a: AutomationLike, run: RunLike): AutomationNotification | null {
-  if (!a.report.notify) return null
+  const mode = normalizeNotifyMode(a.report.notify)
+  if (mode === 'none') return null
+  // Parked runs block until answered, so 'failure' surfaces them too.
+  const wanted =
+    mode === 'all' ||
+    (mode === 'failure' && (run.status === 'failed' || run.status === 'parked')) ||
+    (mode === 'success' && run.status === 'success')
+  if (!wanted) return null
   const title =
     run.status === 'parked' ? `⏸ ${a.name} needs an answer` :
     run.status === 'failed' ? `❌ ${a.name} failed` :

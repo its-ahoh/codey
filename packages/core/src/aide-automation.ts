@@ -1,6 +1,7 @@
 // packages/core/src/aide-automation.ts
 import { AideOptions, runAideJson } from './aide';
-import type { AutomationSchedule, AutomationTarget } from './types/automation';
+import type { AutomationNotifyMode, AutomationSchedule, AutomationTarget } from './types/automation';
+import { NOTIFY_MODES, normalizeSchedule } from './types/automation';
 
 /**
  * Resolve {{placeholders}} from params; params without a placeholder are
@@ -24,7 +25,7 @@ export interface AutomationDraft {
   name?: string;
   target?: AutomationTarget;
   schedule?: AutomationSchedule;
-  notify?: boolean;
+  notify?: AutomationNotifyMode;
   brief?: string;
   params?: Record<string, string>;
 }
@@ -53,19 +54,6 @@ export type AutomationChatMessage = { role: 'user' | 'assistant'; text: string }
 
 const DRAFT_KEYS = new Set(['name', 'target', 'schedule', 'notify', 'brief', 'params']);
 
-function isValidSchedulePatch(v: unknown): v is AutomationSchedule {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
-  const s = v as Record<string, unknown>;
-  if (typeof s.hour !== 'number' || !Number.isInteger(s.hour) || s.hour < 0 || s.hour > 23) return false;
-  if (typeof s.minute !== 'number' || !Number.isInteger(s.minute) || s.minute < 0 || s.minute > 59) return false;
-  if (typeof s.tz !== 'string' || !s.tz) return false;
-  if (s.daysOfWeek !== undefined) {
-    if (!Array.isArray(s.daysOfWeek)) return false;
-    if (!s.daysOfWeek.every(d => typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 6)) return false;
-  }
-  return true;
-}
-
 function isValidTargetPatch(v: unknown): v is AutomationTarget {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   const t = v as Record<string, unknown>;
@@ -91,7 +79,7 @@ Conversation so far:
 ${messages.map(m => `${m.role === 'user' ? 'User' : 'You'}: ${m.text}`).join('\n')}
 
 Your job this turn:
-1. Update the draft with anything the user's latest message settles. draftPatch contains ONLY fields that changed; set a field to null to clear it. Draft fields: name (short title), target ({"kind":"prompt","workspaceName":"..."} or {"kind":"team","teamName":"...","workspaceName":"..."}), schedule ({"hour":0-23,"minute":0-59,"daysOfWeek":[0-6] optional,"tz":"${ctx.tz}"} or null for manual-only), notify (boolean), brief (string), params (object of string values).
+1. Update the draft with anything the user's latest message settles. draftPatch contains ONLY fields that changed; set a field to null to clear it. Draft fields: name (short title), target ({"kind":"prompt","workspaceName":"..."} or {"kind":"team","teamName":"...","workspaceName":"..."}), schedule ({"times":[{"hour":0-23,"minute":0-59},...],"daysOfWeek":[0-6] optional,"tz":"${ctx.tz}"} or null for manual-only; times holds one entry per firing time, so "9am and 6pm" is [{"hour":9,"minute":0},{"hour":18,"minute":0}]), notify ("all" | "failure" | "success" | "none" - which run outcomes fire an OS notification; default "none"), brief (string), params (object of string values).
 2. Reply conversationally and ask about ONE thing at a time - the next most important gap: missing specifics, choices, accounts/handles, formats, limits, edge cases (e.g. "what if there is nothing to report?"). Never ask about something the user already answered, even in passing. If the user revises an earlier choice, just patch it and move on. Patch schedule whenever the user's message settles timing, but do not steer the conversation toward scheduling.
 3. When the answer space is enumerable (workspace names, team names, times, yes/no), offer 2-5 short suggestions the user can tap. Only ever suggest workspace/team names that appear in the environment above.
 4. Maintain the brief as you learn: a frozen, fully self-contained instruction block for an unattended agent - no "the user said", concrete values, edge-case handling, expected output. Surface tweakable knobs as {{placeholder}} in the brief with current values in params.
@@ -115,11 +103,20 @@ export async function automationChatTurn(
       if (DRAFT_KEYS.has(k)) (draftPatch as Record<string, unknown>)[k] = v;
     }
   }
-  if ('schedule' in draftPatch && draftPatch.schedule !== null && !isValidSchedulePatch(draftPatch.schedule)) {
-    delete draftPatch.schedule;
+  if ('schedule' in draftPatch && draftPatch.schedule !== null) {
+    // Coerce rather than drop: a schedule the user settled in conversation
+    // must not silently vanish because the model emitted a near-miss shape
+    // (numeric strings, missing tz, legacy single {hour,minute}).
+    const coerced = normalizeSchedule(draftPatch.schedule, context.tz);
+    if (coerced) draftPatch.schedule = coerced;
+    else delete draftPatch.schedule;
   }
   if ('target' in draftPatch && draftPatch.target !== null && !isValidTargetPatch(draftPatch.target)) {
     delete draftPatch.target;
+  }
+  if ('notify' in draftPatch && draftPatch.notify !== null
+      && !NOTIFY_MODES.includes(draftPatch.notify as AutomationNotifyMode)) {
+    delete draftPatch.notify;
   }
   const suggestions = Array.isArray(res!.suggestions)
     ? (res!.suggestions as unknown[]).filter((s): s is string => typeof s === 'string' && !!s.trim()).slice(0, 6)

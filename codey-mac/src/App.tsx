@@ -33,7 +33,7 @@ const clampLeftPanelWidth = (width: number) => {
 
 const Shell: React.FC = () => {
   const { isRunning, coreState, relaunchApp } = useGateway()
-  const { state, createChat, selectChat, refreshWorkspaces } = useChats()
+  const { state, createChat, selectChat, openChatById, refreshWorkspaces } = useChats()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
   const [automationsOpen, setAutomationsOpen] = useState(false)
@@ -251,7 +251,12 @@ const Shell: React.FC = () => {
           )}
         </div>
         {settingsOpen && <SettingsOverlay initialTab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); refreshWorkspaces() }} />}
-        {automationsOpen && <AutomationsView onClose={() => setAutomationsOpen(false)} />}
+        {automationsOpen && (
+          <AutomationsView
+            onClose={() => setAutomationsOpen(false)}
+            onOpenRunChat={(chatId) => { setAutomationsOpen(false); void openChatById(chatId) }}
+          />
+        )}
         {toolsOpen && <ToolsView onClose={() => setToolsOpen(false)} />}
         <VoiceRecorder />
       </div>

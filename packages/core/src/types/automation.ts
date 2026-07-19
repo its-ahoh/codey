@@ -1,26 +1,82 @@
 import type { CodingAgent } from './index';
 
-/** Structured time-of-day schedule (spec decision #10 — not a cron string). */
-export interface AutomationSchedule {
-  /** 0-23, in `tz`. */
+/** One firing time within a day, in the schedule's `tz`. */
+export interface AutomationScheduleTime {
+  /** 0-23. */
   hour: number;
   /** 0-59. */
   minute: number;
+}
+
+/** Structured time-of-day schedule (spec decision #10 — not a cron string). */
+export interface AutomationSchedule {
+  /** One or more firing times per active day (unique, sorted). */
+  times: AutomationScheduleTime[];
   /** 0=Sun … 6=Sat. Absent = every day. */
   daysOfWeek?: number[];
   /** IANA zone, e.g. "Asia/Shanghai". */
   tz: string;
 }
 
+function coerceScheduleTime(v: unknown): AutomationScheduleTime | undefined {
+  const t = v as { hour?: unknown; minute?: unknown };
+  const hour = typeof t?.hour === 'string' ? Number(t.hour) : t?.hour;
+  const minute = typeof t?.minute === 'string' ? Number(t.minute) : t?.minute;
+  if (typeof hour !== 'number' || !Number.isInteger(hour) || hour < 0 || hour > 23) return undefined;
+  if (typeof minute !== 'number' || !Number.isInteger(minute) || minute < 0 || minute > 59) return undefined;
+  return { hour, minute };
+}
+
+/**
+ * Coerce a schedule-shaped value to the current schema, or undefined if it
+ * can't be one. Accepts the legacy single {hour, minute} shape (pre-`times`
+ * files) and numeric strings; dedupes and sorts times. `tz` is NOT defaulted
+ * here — callers with a known zone pass `fallbackTz`.
+ */
+export function normalizeSchedule(v: unknown, fallbackTz?: string): AutomationSchedule | undefined {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+  const s = v as { times?: unknown; daysOfWeek?: unknown; tz?: unknown; hour?: unknown; minute?: unknown };
+  const rawTimes = Array.isArray(s.times) ? s.times : [s];
+  const times: AutomationScheduleTime[] = [];
+  for (const raw of rawTimes) {
+    const t = coerceScheduleTime(raw);
+    if (!t) return undefined;
+    if (!times.some(x => x.hour === t.hour && x.minute === t.minute)) times.push(t);
+  }
+  if (times.length === 0) return undefined;
+  times.sort((a, b) => (a.hour * 60 + a.minute) - (b.hour * 60 + b.minute));
+  const tz = typeof s.tz === 'string' && s.tz ? s.tz : fallbackTz;
+  if (!tz) return undefined;
+  let daysOfWeek: number[] | undefined;
+  if (s.daysOfWeek !== undefined) {
+    if (!Array.isArray(s.daysOfWeek)) return undefined;
+    if (!s.daysOfWeek.every(d => typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 6)) return undefined;
+    daysOfWeek = s.daysOfWeek as number[];
+  }
+  return { times, ...(daysOfWeek !== undefined ? { daysOfWeek } : {}), tz };
+}
+
 export type AutomationTarget =
   | { kind: 'prompt'; workspaceName: string; agent?: CodingAgent; model?: string }
   | { kind: 'team'; teamName: string; workspaceName: string };
 
+/** When to fire an OS notification for a run. 'failure' includes parked
+ *  runs — they block until answered, so they count as needing attention. */
+export type AutomationNotifyMode = 'all' | 'failure' | 'success' | 'none';
+
+export const NOTIFY_MODES: readonly AutomationNotifyMode[] = ['all', 'failure', 'success', 'none'];
+
+/** Anything unrecognized (including pre-mode boolean values) falls back to
+ *  'none' — the default is no notification. */
+export function normalizeNotifyMode(v: unknown): AutomationNotifyMode {
+  return NOTIFY_MODES.includes(v as AutomationNotifyMode) ? (v as AutomationNotifyMode) : 'none';
+}
+
 export interface AutomationReport {
-  /** Fire an OS notification (delivered by the Mac app when attached).
+  /** OS notification policy (delivered by the Mac app when attached).
    *  Delivery rides on automation events: a headless daemon with no event
    *  listener produces no notification. */
-  notify: boolean;
+  notify: AutomationNotifyMode;
   /** Optional chat/channel post, e.g. { platform: 'telegram', target: '<chatId>' }. */
   channel?: { platform: string; target: string };
 }

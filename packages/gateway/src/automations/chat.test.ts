@@ -65,7 +65,7 @@ describe('send', () => {
   it('a null patch value clears the field', async () => {
     const turn = vi.fn(async () => turnResult({ draftPatch: { schedule: null } as any }));
     const { mgr } = manager(turn);
-    const { sessionId } = mgr.start('edit', { schedule: { hour: 9, minute: 0, tz: 'UTC' } });
+    const { sessionId } = mgr.start('edit', { schedule: { times: [{ hour: 9, minute: 0 }], tz: 'UTC' } });
     const step = await mgr.send(sessionId, 'make it manual');
     expect('schedule' in step.draft).toBe(false);
   });

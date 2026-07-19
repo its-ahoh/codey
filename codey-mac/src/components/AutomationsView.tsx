@@ -8,7 +8,11 @@ import { AutomationOnePager } from './AutomationOnePager'
 import { UIIcon } from './UIIcons'
 import type { Automation, AutomationRun, AutomationTarget } from '../../../packages/core/src/types/automation'
 
-interface Props { onClose: () => void }
+interface Props {
+  onClose: () => void
+  /** Open the hidden chat a run executes in, to monitor its progress. */
+  onOpenRunChat: (chatId: string) => void
+}
 
 type Panel =
   | { kind: 'list' }
@@ -16,7 +20,7 @@ type Panel =
   | { kind: 'chat-edit'; id: string }
   | { kind: 'view'; id: string }
 
-export const AutomationsView: React.FC<Props> = ({ onClose }) => {
+export const AutomationsView: React.FC<Props> = ({ onClose, onOpenRunChat }) => {
   const [panel, setPanel] = useState<Panel>({ kind: 'list' })
   const [automations, setAutomations] = useState<Automation[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -66,6 +70,7 @@ export const AutomationsView: React.FC<Props> = ({ onClose }) => {
               onRefresh={refresh}
               onNew={() => setPanel({ kind: 'create' })}
               onOpen={(id) => setPanel({ kind: 'view', id })}
+              onOpenRunChat={onOpenRunChat}
               setError={setError}
             />
           )}
@@ -78,7 +83,6 @@ export const AutomationsView: React.FC<Props> = ({ onClose }) => {
                 setPanel(panel.kind === 'chat-edit' ? { kind: 'view', id: panel.id } : { kind: 'list' })
                 void refresh()
               }}
-              onCancel={() => setPanel(panel.kind === 'chat-edit' ? { kind: 'view', id: panel.id } : { kind: 'list' })}
               setError={setError}
             />
           )}
@@ -87,6 +91,7 @@ export const AutomationsView: React.FC<Props> = ({ onClose }) => {
               key={panel.id}
               id={panel.id}
               onEditInChat={() => setPanel({ kind: 'chat-edit', id: panel.id })}
+              onOpenRunChat={onOpenRunChat}
               onDeleted={() => { setPanel({ kind: 'list' }); void refresh() }}
               setError={setError}
             />
@@ -104,10 +109,11 @@ interface ListProps {
   onRefresh: () => void
   onNew: () => void
   onOpen: (id: string) => void
+  onOpenRunChat: (chatId: string) => void
   setError: (e: string | null) => void
 }
 
-const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, onNew, onOpen, setError }) => {
+const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, onNew, onOpen, onOpenRunChat, setError }) => {
   const [lastStatus, setLastStatus] = useState<Record<string, AutomationRun | undefined>>({})
   const [runningIds, setRunningIds] = useState<Record<string, boolean>>({})
 
@@ -144,7 +150,12 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
   const runNow = async (id: string) => {
     setRunningIds(prev => ({ ...prev, [id]: true }))
     try {
-      unwrap(await window.codey.automations.runNow(id))
+      // Resolve the run chat first, then fire the run without awaiting it and
+      // jump to that chat so the user watches progress live. The outcome still
+      // lands in run history and notifications.
+      const { chatId } = unwrap(await window.codey.automations.runChat(id))
+      void window.codey.automations.runNow(id).catch(() => { /* surfaced via run history */ })
+      onOpenRunChat(chatId)
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {

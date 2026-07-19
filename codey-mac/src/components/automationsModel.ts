@@ -1,14 +1,15 @@
 // codey-mac/src/components/automationsModel.ts
 // Pure helpers for the Automations view — kept separate for unit tests.
 
-export interface ScheduleLike { hour: number; minute: number; daysOfWeek?: number[]; tz: string }
+export interface ScheduleTimeLike { hour: number; minute: number }
+export interface ScheduleLike { times: ScheduleTimeLike[]; daysOfWeek?: number[]; tz: string }
 
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const pad = (n: number) => String(n).padStart(2, '0')
 
 export function scheduleSummary(s: ScheduleLike | undefined): string {
   if (!s) return 'manual'
-  const time = `${pad(s.hour)}:${pad(s.minute)}`
+  const time = s.times.map(t => `${pad(t.hour)}:${pad(t.minute)}`).join(', ')
   if (!s.daysOfWeek || s.daysOfWeek.length === 0 || s.daysOfWeek.length === 7) return `daily ${time}`
   const days = [...s.daysOfWeek].sort((a, b) => a - b)
   const contiguous = days.length > 2 && days.every((d, i) => i === 0 || d === days[i - 1] + 1)
@@ -18,12 +19,34 @@ export function scheduleSummary(s: ScheduleLike | undefined): string {
   return `${label} ${time}`
 }
 
-export function timeOfDayToSchedule(hhmm: string, tz: string, daysOfWeek?: number[]): ScheduleLike | null {
-  const m = hhmm.match(/^(\d{1,2}):(\d{1,2})$/)
-  if (!m) return null
-  const hour = Number(m[1]); const minute = Number(m[2])
-  if (hour > 23 || minute > 59) return null
-  return { hour, minute, tz, ...(daysOfWeek && daysOfWeek.length ? { daysOfWeek } : {}) }
+/** Build a schedule from "HH:MM" strings; null when empty or any is invalid. */
+export function timesToSchedule(hhmms: string[], tz: string, daysOfWeek?: number[]): ScheduleLike | null {
+  if (hhmms.length === 0) return null
+  const times: ScheduleTimeLike[] = []
+  for (const hhmm of hhmms) {
+    const m = hhmm.match(/^(\d{1,2}):(\d{1,2})$/)
+    if (!m) return null
+    const hour = Number(m[1]); const minute = Number(m[2])
+    if (hour > 23 || minute > 59) return null
+    if (!times.some(t => t.hour === hour && t.minute === minute)) times.push({ hour, minute })
+  }
+  times.sort((a, b) => (a.hour * 60 + a.minute) - (b.hour * 60 + b.minute))
+  return { times, tz, ...(daysOfWeek && daysOfWeek.length ? { daysOfWeek } : {}) }
+}
+
+// ---- Notify mode ----
+
+export type NotifyMode = 'all' | 'failure' | 'success' | 'none'
+
+export const NOTIFY_OPTIONS: ReadonlyArray<{ value: NotifyMode; label: string }> = [
+  { value: 'all', label: 'All runs' },
+  { value: 'failure', label: 'Failures only' },
+  { value: 'success', label: 'Successes only' },
+  { value: 'none', label: 'Never' },
+]
+
+export function notifyLabel(mode: NotifyMode): string {
+  return NOTIFY_OPTIONS.find(o => o.value === mode)!.label.toLowerCase()
 }
 
 // ---- One-pager helpers ----
@@ -67,11 +90,15 @@ export function nextRunAt(s: ScheduleLike | undefined, nowMs: number): number | 
   for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
     // Iterate calendar days (Date.UTC normalizes day overflow) so a real-time
     // step across a spring-forward transition can never skip a date.
-    const candidate = zonedInstant(base.year, base.month, base.day + dayOffset, s.hour, s.minute, s.tz)
-    if (candidate <= nowMs) continue
-    const dow = localParts(candidate, s.tz).dayOfWeek
-    if (s.daysOfWeek && s.daysOfWeek.length > 0 && !s.daysOfWeek.includes(dow)) continue
-    return candidate
+    const candidates = s.times
+      .map(t => zonedInstant(base.year, base.month, base.day + dayOffset, t.hour, t.minute, s.tz))
+      .filter(c => c > nowMs)
+      .sort((a, b) => a - b)
+    for (const candidate of candidates) {
+      const dow = localParts(candidate, s.tz).dayOfWeek
+      if (s.daysOfWeek && s.daysOfWeek.length > 0 && !s.daysOfWeek.includes(dow)) continue
+      return candidate
+    }
   }
   return null
 }
@@ -91,15 +118,16 @@ export function formatHHMM(hour: number, minute: number): string {
 export interface Knobs {
   params: Record<string, string>
   scheduleOn: boolean
-  time: string
+  /** "HH:MM" strings, one per daily firing time. */
+  times: string[]
   days: number[]
-  notify: boolean
+  notify: NotifyMode
 }
 
 interface KnobSource {
   params: Record<string, string>
   schedule?: ScheduleLike
-  report: { notify: boolean }
+  report: { notify: NotifyMode }
 }
 
 /** Seed knobs from an automation. Days are sorted so an unsorted persisted
@@ -108,7 +136,7 @@ export function knobsFrom(a: KnobSource): Knobs {
   return {
     params: { ...a.params },
     scheduleOn: !!a.schedule,
-    time: a.schedule ? formatHHMM(a.schedule.hour, a.schedule.minute) : '09:00',
+    times: a.schedule ? a.schedule.times.map(t => formatHHMM(t.hour, t.minute)) : ['09:00'],
     days: [...(a.schedule?.daysOfWeek ?? [])].sort((x, y) => x - y),
     notify: a.report.notify,
   }
@@ -119,7 +147,9 @@ export function knobsEqual(k: Knobs, a: KnobSource): boolean {
   if (JSON.stringify(k.params) !== JSON.stringify(a.params)) return false
   if (k.scheduleOn !== !!a.schedule) return false
   if (k.scheduleOn) {
-    if (k.time !== formatHHMM(a.schedule?.hour ?? 0, a.schedule?.minute ?? 0)) return false
+    const kt = [...k.times].sort()
+    const at = (a.schedule?.times ?? []).map(t => formatHHMM(t.hour, t.minute)).sort()
+    if (JSON.stringify(kt) !== JSON.stringify(at)) return false
     const kd = [...k.days].sort((x, y) => x - y)
     const ad = [...(a.schedule?.daysOfWeek ?? [])].sort((x, y) => x - y)
     if (JSON.stringify(kd) !== JSON.stringify(ad)) return false
