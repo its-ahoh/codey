@@ -14,7 +14,7 @@ const draft = (over: Partial<Automation> = {}) => ({
   target: { kind: 'prompt' as const, workspaceName: 'default' },
   brief: 'Post top AI news to {{account}}.',
   params: { account: '@jack' },
-  report: { notify: true },
+  report: { notify: 'all' as const },
   ...over,
 });
 
@@ -40,6 +40,17 @@ describe('definitions', () => {
   it('persists across instances', () => {
     const a = store.create(draft(), 111);
     expect(new AutomationStore(dir).get(a.id)?.brief).toContain('{{account}}');
+  });
+
+  it('normalizes legacy boolean notify on read', () => {
+    store.create(draft({ report: { notify: true as any } }), 111);
+    store.create(draft({ report: { notify: false as any } }), 111);
+    expect(store.list().map(a => a.report.notify)).toEqual(['all', 'none']);
+  });
+
+  it('normalizes a legacy single-time schedule on read', () => {
+    const a = store.create(draft({ schedule: { hour: 9, minute: 30, tz: 'UTC' } as any }), 111);
+    expect(store.get(a.id)?.schedule).toEqual({ times: [{ hour: 9, minute: 30 }], tz: 'UTC' });
   });
 
   it('update patches and bumps updatedAt', () => {

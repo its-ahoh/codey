@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('codey', {
     delete: (id: string) => ipcRenderer.invoke('automations:delete', id),
     setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('automations:setEnabled', id, enabled),
     runNow: (id: string) => ipcRenderer.invoke('automations:runNow', id),
+    runChat: (id: string) => ipcRenderer.invoke('automations:runChat', id),
     resume: (id: string, runId: string, answer: string) => ipcRenderer.invoke('automations:resume', id, runId, answer),
     history: (id: string, limit?: number) => ipcRenderer.invoke('automations:history', id, limit),
     markSeen: (id: string, runId: string) => ipcRenderer.invoke('automations:markSeen', id, runId),

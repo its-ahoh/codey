@@ -72,6 +72,7 @@ declare global {
         delete: (id: string) => Promise<IpcResult<void>>
         setEnabled: (id: string, enabled: boolean) => Promise<IpcResult<Automation>>
         runNow: (id: string) => Promise<IpcResult<AutomationRun | null>>
+        runChat: (id: string) => Promise<IpcResult<{ chatId: string }>>
         resume: (id: string, runId: string, answer: string) => Promise<IpcResult<AutomationRun>>
         history: (id: string, limit?: number) => Promise<IpcResult<AutomationRun[]>>
         markSeen: (id: string, runId: string) => Promise<IpcResult<void>>

@@ -10,13 +10,27 @@ const run = (over: any = {}) => ({
 })
 
 describe('decideAutomationNotification', () => {
-  it('notifies on finished runs when report.notify is on', () => {
+  it('notifies on finished runs when notify is "all" (or legacy true)', () => {
     const d = decideAutomationNotification(auto(), run())
     expect(d).toMatchObject({ title: expect.stringContaining('Morning news') })
     expect(d!.body).toContain('Posted 5 items.')
+    expect(decideAutomationNotification(auto({ report: { notify: 'all' } }), run())).not.toBeNull()
   })
-  it('returns null when notify is off', () => {
+  it('returns null when notify is "none" (or legacy false)', () => {
     expect(decideAutomationNotification(auto({ report: { notify: false } }), run())).toBeNull()
+    expect(decideAutomationNotification(auto({ report: { notify: 'none' } }), run())).toBeNull()
+  })
+  it('"failure" notifies on failed and parked runs only', () => {
+    const a = auto({ report: { notify: 'failure' } })
+    expect(decideAutomationNotification(a, run())).toBeNull()
+    expect(decideAutomationNotification(a, run({ status: 'failed', error: 'boom' }))).not.toBeNull()
+    expect(decideAutomationNotification(a, run({ status: 'parked', question: 'Which account?' }))).not.toBeNull()
+  })
+  it('"success" notifies on successful runs only', () => {
+    const a = auto({ report: { notify: 'success' } })
+    expect(decideAutomationNotification(a, run())).not.toBeNull()
+    expect(decideAutomationNotification(a, run({ status: 'failed', error: 'boom' }))).toBeNull()
+    expect(decideAutomationNotification(a, run({ status: 'parked', question: 'Which account?' }))).toBeNull()
   })
   it('surfaces the parked question', () => {
     const d = decideAutomationNotification(auto(), run({ status: 'parked', question: 'Which account?' }))

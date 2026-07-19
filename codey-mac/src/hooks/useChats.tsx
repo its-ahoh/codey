@@ -366,6 +366,8 @@ interface ChatsContextValue {
   state: State
   createChat: (workspaceName: string) => Promise<Chat>
   selectChat: (chatId: string | null) => void
+  /** Fetch a chat by id (works for hidden automation chats) and select it. */
+  openChatById: (chatId: string) => Promise<void>
   renameChat: (chatId: string, title: string) => Promise<void>
   deleteChat: (chatId: string) => Promise<void>
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
@@ -602,6 +604,13 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return chat
     },
     selectChat(chatId) { dispatch({ type: 'select', chatId }) },
+    async openChatById(chatId) {
+      // Automation chats are excluded from chats.list(), so fetch directly
+      // and upsert before selecting — selection needs the chat in state.
+      const chat = await apiService.chats.get(chatId)
+      dispatch({ type: 'upsert', chat })
+      dispatch({ type: 'select', chatId })
+    },
     async renameChat(chatId, title) {
       const chat = await apiService.chats.rename(chatId, title)
       dispatch({ type: 'upsert', chat })

@@ -3,7 +3,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { C } from '../theme'
 import { pillButton, unwrap, inputStyle } from './settingsAtoms'
-import { scheduleSummary, draftComplete, checkLabel } from './automationsModel'
+import { Markdown } from './Markdown'
+import { scheduleSummary, draftComplete, checkLabel, normalizeNotifyMode, notifyLabel } from './automationsModel'
 import type { AutomationDraft } from '../../../packages/core/src/aide-automation'
 import type { ChatStep } from '../../../packages/gateway/src/automations/chat'
 
@@ -11,13 +12,18 @@ interface Props {
   mode: 'create' | 'edit'
   automationId?: string
   onDone: () => void
-  onCancel: () => void
   setError: (e: string | null) => void
 }
 
 interface Bubble { role: 'user' | 'assistant'; text: string }
 
-export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDone, onCancel, setError }) => {
+const SendIcon: React.FC<{ color: string }> = ({ color }) => (
+  <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 2L11 13M22 2L15 22 11 13 2 9l20-7z" />
+  </svg>
+)
+
+export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDone, setError }) => {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const sessionIdRef = useRef<string | null>(null)
   const [messages, setMessages] = useState<Bubble[]>([])
@@ -157,7 +163,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
         brief: draft.brief!,
         params: draft.params ?? {},
         schedule: draft.schedule ?? undefined,
-        report: { notify: draft.notify ?? true },
+        report: { notify: normalizeNotifyMode(draft.notify) },
       }
       if (mode === 'edit' && automationId) {
         unwrap(await window.codey.automations.update(automationId, payload as any))
@@ -182,7 +188,9 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <div ref={scrollRef} style={chatScroll}>
           {messages.map((m, i) => (
-            <div key={i} style={m.role === 'user' ? bubbleUser : bubbleAssistant}>{m.text}</div>
+            m.role === 'user'
+              ? <div key={i} style={bubbleUser}>{m.text}</div>
+              : <div key={i} style={{ ...bubbleAssistant, whiteSpace: 'normal' }}><Markdown>{m.text}</Markdown></div>
           ))}
           {busy && <div style={{ ...bubbleAssistant, color: C.fg3, fontStyle: 'italic' }}>Thinking…</div>}
           {failedText !== null && (
@@ -215,7 +223,18 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
             placeholder={sessionId ? 'Message…' : 'Starting…'}
             disabled={!sessionId || busy}
           />
-          <button style={pillButton('ghost')} onClick={onCancel}>Cancel</button>
+          {(() => {
+            const canSend = !!sessionId && !busy && !!input.trim()
+            return (
+              <button
+                style={{ ...sendButtonStyle, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
+                onClick={submit}
+                disabled={!canSend}
+              >
+                <SendIcon color={canSend ? C.onAccent : C.fg3} />
+              </button>
+            )
+          })()}
         </div>
       </div>
 
@@ -226,7 +245,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
           </div>
           <SummaryRow label="Runs" value={draft.schedule ? scheduleSummary(draft.schedule) : ready ? 'manual' : undefined} placeholder="schedule…" />
           <SummaryRow label="Where" value={targetText} placeholder="workspace…" />
-          <SummaryRow label="Notify" value={draft.notify === undefined ? undefined : draft.notify ? 'on' : 'off'} placeholder="notify…" />
+          <SummaryRow label="Notify" value={draft.notify === undefined ? undefined : notifyLabel(draft.notify)} placeholder="notify…" />
           {(() => {
             const cl = checkLabel(check)
             if (!cl) return null
@@ -276,6 +295,12 @@ const SummaryRow: React.FC<{ label: string; value?: string; placeholder: string;
 )
 
 const dim: React.CSSProperties = { color: C.fg3, opacity: 0.55, fontStyle: 'italic' }
+
+const sendButtonStyle: React.CSSProperties = {
+  width: 38, height: 38, borderRadius: 11, border: 'none',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  flexShrink: 0, transition: 'background 0.15s',
+}
 
 const chatScroll: React.CSSProperties = {
   flex: 1, overflowY: 'auto', padding: '16px 20px',

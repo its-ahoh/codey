@@ -5,7 +5,7 @@ import type { AutomationSchedule } from '@codey/core';
 // 2026-07-02T09:00:00 in Asia/Shanghai is 2026-07-02T01:00:00Z
 const SH_9AM = Date.UTC(2026, 6, 2, 1, 0, 0);
 const sched = (over: Partial<AutomationSchedule> = {}): AutomationSchedule =>
-  ({ hour: 9, minute: 0, tz: 'Asia/Shanghai', ...over });
+  ({ times: [{ hour: 9, minute: 0 }], tz: 'Asia/Shanghai', ...over });
 
 describe('localParts', () => {
   it('converts an instant into tz-local wall-clock parts', () => {
@@ -30,6 +30,14 @@ describe('shouldFire', () => {
   });
   it('fires again the next day', () => {
     expect(shouldFire(sched(), SH_9AM, SH_9AM + 24 * 3600_000)).toBe(true);
+  });
+  it('fires at each time of a multi-time schedule, independently', () => {
+    const multi = sched({ times: [{ hour: 9, minute: 0 }, { hour: 18, minute: 0 }] });
+    const SH_6PM = SH_9AM + 9 * 3600_000;
+    expect(shouldFire(multi, undefined, SH_9AM)).toBe(true);
+    // The 09:00 fire does not consume the 18:00 slot of the same day.
+    expect(shouldFire(multi, SH_9AM, SH_6PM)).toBe(true);
+    expect(shouldFire(multi, undefined, SH_9AM + 3600_000)).toBe(false);
   });
   it('never back-fires: a missed slot simply does not match', () => {
     // Process restarts at 12:00 having missed the 09:00 slot.

@@ -1090,6 +1090,13 @@ export class Codey {
   runAutomationNow(id: string): Promise<AutomationRun | null> {
     return this.requireAutomationEngine().runNow(id, 'manual');
   }
+  /** Chat this automation's runs execute in (created lazily) — lets the Mac
+   *  app open it to monitor a run's progress while it streams. */
+  ensureAutomationRunChat(id: string): Promise<string> {
+    const a = this.requireAutomationStore().get(id);
+    if (!a) throw new Error(`Automation not found: ${id}`);
+    return this.ensureAutomationChat(a);
+  }
   resumeAutomationRun(id: string, runId: string, answer: string): Promise<AutomationRun> {
     return this.requireAutomationEngine().resume(id, runId, answer);
   }
