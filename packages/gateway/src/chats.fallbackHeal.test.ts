@@ -1,11 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ChatManager } from './chats';
 
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
 function tmpRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chats-'));
+  roots.push(root);
   fs.mkdirSync(path.join(root, 'ws'), { recursive: true });
   return root;
 }

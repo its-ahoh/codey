@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -12,6 +12,7 @@ describe('ChatManager.setWorkingDirOverride', () => {
     fs.mkdirSync(path.join(root, 'ws'), { recursive: true });
     mgr = new ChatManager(root);
   });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
   it('sets and clears the override', () => {
     const chat = mgr.create({ workspaceName: 'ws' });
