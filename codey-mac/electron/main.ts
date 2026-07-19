@@ -1960,6 +1960,10 @@ app.whenReady().then(async () => {
     wrap(async () => inProcessGateway?.listAutomationRuns(id, limit) ?? [])
   )
 
+  ipcMain.handle('automations:runLog', async (_e, id: string, runId: string) =>
+    wrap(async () => inProcessGateway?.getAutomationRunLog(id, runId) ?? null)
+  )
+
   ipcMain.handle('automations:markSeen', async (_e, id: string, runId: string) =>
     wrap(async () => {
       inProcessGateway?.markAutomationRunSeen(id, runId)

@@ -153,7 +153,7 @@ describe('resume', () => {
     const a = seed();
     store.appendRun(a.id, { runId: 'r0', startedAt: now, status: 'parked', trigger: 'schedule', question: 'q' });
     await makeEngine().resume(a.id, 'r0', 'use option a');
-    expect(deps.resumeTarget).toHaveBeenCalledWith(expect.objectContaining({ id: a.id }), 'use option a');
+    expect(deps.resumeTarget).toHaveBeenCalledWith(expect.objectContaining({ id: a.id }), 'use option a', expect.any(String));
     const [latest] = store.listRuns(a.id);
     expect(latest).toMatchObject({ status: 'resumed', resumedFrom: 'r0', output: 'resumed ok' });
   });

@@ -10,6 +10,7 @@ import {
 } from './automationsModel'
 import type { Automation, AutomationRun } from '../../../packages/core/src/types/automation'
 import { UIIcon } from './UIIcons'
+import { Markdown } from './Markdown'
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -66,6 +67,10 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
   const [deleting, setDeleting] = useState(false)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [resuming, setResuming] = useState<Record<string, boolean>>({})
+  // Per-run activity log expander: open flags + lazily fetched text
+  // (undefined = not fetched, null = fetched but no log exists).
+  const [logOpen, setLogOpen] = useState<Record<string, boolean>>({})
+  const [logText, setLogText] = useState<Record<string, string | null>>({})
   // Last automation the knobs were seeded from — lets refresh() tell "user is
   // mid-edit" apart from "an external edit changed the automation".
   const aRef = useRef<Automation | null>(null)
@@ -135,6 +140,18 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
     } catch (e: any) {
       setError(e?.message ?? String(e))
       setDeleting(false)
+    }
+  }
+
+  const toggleLog = async (runId: string) => {
+    const opening = !logOpen[runId]
+    setLogOpen(prev => ({ ...prev, [runId]: opening }))
+    if (!opening || logText[runId] !== undefined) return
+    try {
+      const text = unwrap(await window.codey.automations.runLog(id, runId))
+      setLogText(prev => ({ ...prev, [runId]: text }))
+    } catch {
+      setLogText(prev => ({ ...prev, [runId]: null }))
     }
   }
 
@@ -319,8 +336,18 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
                     />
                   </div>
                 )}
-                {r.output && <pre style={preStyle}>{r.output}</pre>}
+                {r.output && <div style={outputStyle}><Markdown variant="assistant">{r.output}</Markdown></div>}
                 {r.error && <pre style={{ ...preStyle, color: C.red }}>{r.error}</pre>}
+                <button style={logToggleStyle} onClick={() => void toggleLog(r.runId)}>
+                  {logOpen[r.runId] ? 'Hide full log' : 'Full log'}
+                </button>
+                {logOpen[r.runId] && (
+                  logText[r.runId] === undefined
+                    ? <div style={{ color: C.fg3, fontSize: 11, marginTop: 6 }}>Loading…</div>
+                    : logText[r.runId]
+                      ? <pre style={{ ...preStyle, maxHeight: 260, overflowY: 'auto' }}>{logText[r.runId]}</pre>
+                      : <div style={{ color: C.fg3, fontSize: 11, marginTop: 6 }}>No activity log for this run.</div>
+                )}
               </div>
             ))}
           </div>
@@ -370,6 +397,17 @@ const setupRow: React.CSSProperties = {
 
 const cardStyle: React.CSSProperties = {
   background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: '12px 14px',
+}
+
+const logToggleStyle: React.CSSProperties = {
+  marginTop: 8, padding: '3px 10px', fontSize: 11, borderRadius: 6, cursor: 'pointer',
+  border: `1px solid ${C.border2}`, background: 'transparent', color: C.fg2,
+}
+
+const outputStyle: React.CSSProperties = {
+  marginTop: 8, padding: '8px 10px', borderRadius: 6,
+  background: C.codeBg ?? C.surface3, color: C.codeFg ?? C.fg2,
+  fontSize: 12, lineHeight: 1.5, wordBreak: 'break-word',
 }
 
 const preStyle: React.CSSProperties = {

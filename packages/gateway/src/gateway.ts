@@ -10,6 +10,7 @@ import { AutomationChatManager, ChatStep } from './automations/chat';
 import { DryRunManager } from './automations/dry-run';
 import { detectParked } from './automations/parked';
 import { formatRunSummary } from './automations/report';
+import { formatRunLogEvent } from './automations/run-log';
 import { ConfigManager } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
 import { AgentFactory } from '@codey/core';
@@ -894,8 +895,8 @@ export class Codey {
     this.automationEngine = new AutomationEngine({
       store: this.automationStore,
       lease: new SchedulerLease(path.join(base, 'automation-scheduler.lock'), role),
-      runTarget: (a) => this.runAutomationTurn(a, renderBrief(a.brief, a.params)),
-      resumeTarget: (a, answer) => this.runAutomationTurn(a, answer, { resume: true }),
+      runTarget: (a, runId) => this.runAutomationTurn(a, renderBrief(a.brief, a.params), { runId }),
+      resumeTarget: (a, answer, runId) => this.runAutomationTurn(a, answer, { resume: true, runId }),
       report: (a, run) => this.deliverAutomationReport(a, run),
       onEvent: (ev) => { try { this.automationEventListener?.(ev); } catch { /* swallow */ } },
       log: (msg) => this.logger.info(`[automations] ${msg}`),
@@ -960,7 +961,7 @@ export class Codey {
    * collecting sink, then decide parked/success from the persisted chat state.
    * Resume is the same call — sendToChat's pendingTeam continuation handles it.
    */
-  private async runAutomationTurn(a: Automation, text: string, opts?: { resume?: boolean }): Promise<TargetResult> {
+  private async runAutomationTurn(a: Automation, text: string, opts?: { resume?: boolean; runId?: string }): Promise<TargetResult> {
     // Automation chats are shared across the daemon and embedded gateways;
     // the in-memory cache may be stale. Refresh before the pendingTeam
     // handling below — an embedded process resuming a daemon-parked run must
@@ -978,7 +979,16 @@ export class Codey {
     if (!opts?.resume && this.chatManager.get(chatId)?.pendingTeam) {
       this.chatManager.setPendingTeam(chatId, null);
     }
-    const sink: ChatStreamSink = () => { /* headless — response comes from the return value */ };
+    // Headless — the response comes from the return value, but the event
+    // stream is the run's activity log (tool calls, worker steps, errors).
+    const runId = opts?.runId;
+    const sink: ChatStreamSink = runId
+      ? (e) => {
+          const line = formatRunLogEvent(e, Date.now());
+          if (!line) return;
+          try { this.automationStore?.appendRunLog(a.id, runId, line); } catch { /* logging must never fail the run */ }
+        }
+      : () => { /* dry-run and other unlogged turns */ };
     try {
       const { response } = await this.sendToChat(chatId, text, sink);
       const parked = detectParked(this.chatManager.get(chatId), a.target, response);
@@ -1086,6 +1096,10 @@ export class Codey {
   }
   markAutomationRunSeen(id: string, runId: string): void {
     this.automationStore?.markSeen(id, runId, Date.now());
+  }
+  /** Per-run activity log (tool calls, worker steps), or undefined if none. */
+  getAutomationRunLog(id: string, runId: string): string | undefined {
+    return this.automationStore?.readRunLog(id, runId);
   }
   runAutomationNow(id: string): Promise<AutomationRun | null> {
     return this.requireAutomationEngine().runNow(id, 'manual');

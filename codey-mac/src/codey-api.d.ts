@@ -75,6 +75,7 @@ declare global {
         runChat: (id: string) => Promise<IpcResult<{ chatId: string }>>
         resume: (id: string, runId: string, answer: string) => Promise<IpcResult<AutomationRun>>
         history: (id: string, limit?: number) => Promise<IpcResult<AutomationRun[]>>
+        runLog: (id: string, runId: string) => Promise<IpcResult<string | null>>
         markSeen: (id: string, runId: string) => Promise<IpcResult<void>>
         chatStart: (mode: 'create' | 'edit', automationId?: string) => Promise<IpcResult<ChatStep>>
         chatSend: (sessionId: string, text: string) => Promise<IpcResult<ChatStep>>

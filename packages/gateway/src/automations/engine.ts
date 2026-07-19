@@ -15,10 +15,12 @@ export interface TargetResult { output: string; parked?: ParkedInfo; error?: str
 export interface EngineDeps {
   store: AutomationStore;
   lease: SchedulerLease;
-  /** Execute the automation's rendered brief headlessly (gateway adapter). */
-  runTarget: (a: Automation) => Promise<TargetResult>;
-  /** Feed an answer into the parked continuation (gateway adapter). */
-  resumeTarget: (a: Automation, answer: string) => Promise<TargetResult>;
+  /** Execute the automation's rendered brief headlessly (gateway adapter).
+   *  `runId` identifies the run for per-run activity logging. */
+  runTarget: (a: Automation, runId: string) => Promise<TargetResult>;
+  /** Feed an answer into the parked continuation (gateway adapter).
+   *  `runId` is the NEW (resuming) run's id, not the parked one's. */
+  resumeTarget: (a: Automation, answer: string, runId: string) => Promise<TargetResult>;
   /** Deliver report.channel / prep notify. Returns a failure description or undefined. */
   report: (a: Automation, run: AutomationRun) => Promise<string | undefined>;
   onEvent?: (ev: AutomationEvent) => void;
@@ -88,7 +90,7 @@ export class AutomationEngine {
     if (this.active.has(id)) { this.log(`skip ${a.name}: previous run still active`); return null; }
     const latest = this.deps.store.listRuns(id, 1)[0];
     if (latest?.status === 'parked') { this.log(`skip ${a.name}: parked run awaiting an answer`); return null; }
-    return this.execute(a, trigger, res => this.deps.runTarget(res));
+    return this.execute(a, trigger, (auto, runId) => this.deps.runTarget(auto, runId));
   }
 
   /** Answer a parked run's question; appends a linked 'resumed' record. */
@@ -98,7 +100,7 @@ export class AutomationEngine {
     const parked = this.deps.store.listRuns(id).find(r => r.runId === runId);
     if (!parked || parked.status !== 'parked') throw new Error(`Run ${runId} is not parked`);
     if (this.active.has(id)) throw new Error(`Automation ${a.name} already has an active run`);
-    const run = await this.execute(a, parked.trigger, auto => this.deps.resumeTarget(auto, answer), runId);
+    const run = await this.execute(a, parked.trigger, (auto, newRunId) => this.deps.resumeTarget(auto, answer, newRunId), runId);
     // The attempt consumed the parked continuation whether it succeeded or
     // failed, so the original run must stop being answerable — the "not
     // parked" rejection above then also catches second answers.
@@ -109,7 +111,7 @@ export class AutomationEngine {
   private async execute(
     a: Automation,
     trigger: 'manual' | 'schedule',
-    exec: (a: Automation) => Promise<TargetResult>,
+    exec: (a: Automation, runId: string) => Promise<TargetResult>,
     resumedFrom?: string,
   ): Promise<AutomationRun> {
     this.active.add(a.id);
@@ -118,7 +120,7 @@ export class AutomationEngine {
     };
     this.emit({ type: 'run-started', automationId: a.id, runId: run.runId });
     try {
-      const res = await exec(a);
+      const res = await exec(a, run.runId);
       run.output = capOutput(res.output ?? '');
       if (res.parked) {
         run.status = 'parked';
