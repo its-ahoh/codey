@@ -1445,6 +1445,7 @@ app.whenReady().then(async () => {
     const bridge = await browserAgentBridge.start()
     process.env.CODEY_BROWSER_SOCKET = bridge.socketPath
     process.env.CODEY_BROWSER_TOKEN = bridge.token
+    // Retained for the still-shipped standalone browser-agent-cli.cjs; agents now use CODEY_BROWSER_MCP.
     process.env.CODEY_BROWSER_CLI = browserAgentCliPath()
     process.env.CODEY_BROWSER_MCP = browserMcpServerPath()
     process.env.CODEY_BROWSER_RUNTIME = process.execPath

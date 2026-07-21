@@ -112,6 +112,14 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // pin CLAUDE_CONFIG_DIR / ANTHROPIC_AUTH_TOKEN explicitly when needed.
       if (request.extraEnv) Object.assign(env, request.extraEnv);
 
+      // MCP tool calls can legitimately block for minutes (e.g. the browser
+      // permission gate waits for the user). Default to generous timeouts,
+      // but let explicit user env win.
+      if (request.mcpServers && Object.keys(request.mcpServers).length > 0) {
+        if (!env.MCP_TIMEOUT) env.MCP_TIMEOUT = '60000';
+        if (!env.MCP_TOOL_TIMEOUT) env.MCP_TOOL_TIMEOUT = '600000';
+      }
+
       // Ensure common bin paths are available (Electron apps may have minimal PATH)
       const homedir = process.env.HOME || '';
       const extraPaths = [

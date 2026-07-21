@@ -36,6 +36,10 @@ export function writeClaudeMcpConfig(
  * authenticates a same-user 0600 unix socket, so argv adds no access an
  * observer would not already have; Codex has no file-based per-spawn
  * MCP config to use instead.
+ *
+ * Also sets generous startup/tool timeouts per server: MCP tool calls can
+ * legitimately block for minutes (e.g. the browser permission gate waits
+ * for the user), well past codex's default tool timeout.
  */
 export function codexMcpArgs(servers: Record<string, McpServerSpec>): string[] {
   const args: string[] = [];
@@ -47,6 +51,8 @@ export function codexMcpArgs(servers: Record<string, McpServerSpec>): string[] {
       .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
       .join(',');
     args.push('-c', `${key}.env={${envBody}}`);
+    args.push('-c', `${key}.startup_timeout_sec=60`);
+    args.push('-c', `${key}.tool_timeout_sec=600`);
   }
   return args;
 }
@@ -54,6 +60,8 @@ export function codexMcpArgs(servers: Record<string, McpServerSpec>): string[] {
 /**
  * OpenCode reads extra config from the file named by OPENCODE_CONFIG. The
  * fragment only declares mcp servers; opencode merges it with its own config.
+ * Note: opencode exposes no per-tool MCP timeout knob in its config fragment;
+ * long permission-gated calls rely on its default.
  */
 export function writeOpenCodeMcpConfig(
   servers: Record<string, McpServerSpec>,

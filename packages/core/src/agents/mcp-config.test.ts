@@ -37,6 +37,8 @@ describe('codexMcpArgs', () => {
       '-c', 'mcp_servers."codey-browser".command="/app/Codey"',
       '-c', 'mcp_servers."codey-browser".args=["/app/browser-mcp-server.cjs"]',
       '-c', 'mcp_servers."codey-browser".env={ELECTRON_RUN_AS_NODE="1",CODEY_BROWSER_TOKEN="tok"}',
+      '-c', 'mcp_servers."codey-browser".startup_timeout_sec=60',
+      '-c', 'mcp_servers."codey-browser".tool_timeout_sec=600',
     ]);
   });
 
@@ -44,6 +46,7 @@ describe('codexMcpArgs', () => {
     const args = codexMcpArgs({ bare: { command: '/bin/x', args: [], env: {} } });
     expect(args).toContain('mcp_servers."bare".env={}');
     expect(args).toContain('mcp_servers."bare".args=[]');
+    expect(args).toContain('mcp_servers."bare".tool_timeout_sec=600');
   });
 });
 
