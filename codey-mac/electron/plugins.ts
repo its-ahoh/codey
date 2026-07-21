@@ -17,6 +17,11 @@ export const PLUGINS: Array<Omit<PluginInfo, 'enabled'>> = [
   },
 ]
 
+/** True when the id names a registered plugin. Guards IPC writes. */
+export function isKnownPlugin(id: string): boolean {
+  return PLUGINS.some(plugin => plugin.id === id)
+}
+
 export function listPlugins(config: { plugins?: Record<string, { enabled?: boolean }> } | undefined): PluginInfo[] {
   return PLUGINS.map(plugin => ({
     ...plugin,
