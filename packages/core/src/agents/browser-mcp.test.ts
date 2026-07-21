@@ -59,4 +59,15 @@ describe('addCodeyBrowserMcp', () => {
     const request = addCodeyBrowserMcp(base(), true, env);
     expect(request.mcpServers?.['codey-browser'].env).not.toHaveProperty('CODEY_BROWSER_CHAT_ID');
   });
+
+  it('excludes turns with no working directory', () => {
+    const request = addCodeyBrowserMcp({ ...base(), context: {} as any }, true, env);
+    expect(request.mcpServers).toBeUndefined();
+  });
+
+  it('does nothing when only the MCP server path is missing from env', () => {
+    const { CODEY_BROWSER_MCP: _omitted, ...partial } = env as Record<string, string>;
+    const request = addCodeyBrowserMcp(base(), true, partial as NodeJS.ProcessEnv);
+    expect(request.mcpServers).toBeUndefined();
+  });
 });
