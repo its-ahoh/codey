@@ -1,6 +1,7 @@
 // packages/core/src/aide-automation.ts
 import { AideOptions, runAideJson } from './aide';
 import type { AutomationNotifyMode, AutomationSchedule, AutomationTarget } from './types/automation';
+import type { CodingAgent } from './types/index';
 import { NOTIFY_MODES, normalizeSchedule } from './types/automation';
 
 /**
@@ -33,6 +34,9 @@ export interface AutomationDraft {
 export interface AutomationChatContext {
   workspaces: string[];
   teams: string[];
+  /** Available execution overrides for prompt targets. */
+  agents?: CodingAgent[];
+  models?: string[];
   /** User's IANA zone, e.g. "Asia/Shanghai". */
   tz: string;
   /** Current local datetime string, for resolving "every morning" etc. */
@@ -57,7 +61,11 @@ const DRAFT_KEYS = new Set(['name', 'target', 'schedule', 'notify', 'brief', 'pa
 function isValidTargetPatch(v: unknown): v is AutomationTarget {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   const t = v as Record<string, unknown>;
-  if (t.kind === 'prompt') return typeof t.workspaceName === 'string' && !!t.workspaceName;
+  if (t.kind === 'prompt') {
+    const agentOk = t.agent === undefined || t.agent === 'claude-code' || t.agent === 'opencode' || t.agent === 'codex';
+    const modelOk = t.model === undefined || (typeof t.model === 'string' && !!t.model.trim());
+    return typeof t.workspaceName === 'string' && !!t.workspaceName && agentOk && modelOk;
+  }
   if (t.kind === 'team') return typeof t.teamName === 'string' && !!t.teamName && typeof t.workspaceName === 'string' && !!t.workspaceName;
   return false;
 }
@@ -69,6 +77,8 @@ const CHAT_TURN_PROMPT = (
 Environment:
 - Workspaces (the only valid choices): ${ctx.workspaces.join(', ') || '(none)'}
 - Teams (optional execution target): ${ctx.teams.join(', ') || '(none)'}
+- Agent overrides: ${ctx.agents?.join(', ') || '(use gateway default)'}
+- Model overrides: ${ctx.models?.join(', ') || '(use agent default)'}
 - User timezone: ${ctx.tz}; current time: ${ctx.nowIso}
 - Mode: ${ctx.mode === 'edit' ? 'editing an existing automation - only change what the user asks to change' : 'creating a new automation'}
 
@@ -79,7 +89,7 @@ Conversation so far:
 ${messages.map(m => `${m.role === 'user' ? 'User' : 'You'}: ${m.text}`).join('\n')}
 
 Your job this turn:
-1. Update the draft with anything the user's latest message settles. draftPatch contains ONLY fields that changed; set a field to null to clear it. Draft fields: name (short title), target ({"kind":"prompt","workspaceName":"..."} or {"kind":"team","teamName":"...","workspaceName":"..."}), schedule ({"times":[{"hour":0-23,"minute":0-59},...],"daysOfWeek":[0-6] optional,"tz":"${ctx.tz}"} or null for manual-only; times holds one entry per firing time, so "9am and 6pm" is [{"hour":9,"minute":0},{"hour":18,"minute":0}]), notify ("all" | "failure" | "success" | "none" - which run outcomes fire an OS notification; default "none"), brief (string), params (object of string values).
+1. Update the draft with anything the user's latest message settles. draftPatch contains ONLY fields that changed; set a field to null to clear it. Draft fields: name (short title), target ({"kind":"prompt","workspaceName":"...","agent":"optional","model":"optional"} or {"kind":"team","teamName":"...","workspaceName":"..."}), schedule ({"slots":[{"hour":0-23,"minute":0-59,"daysOfWeek":[0-6] optional},...],"tz":"${ctx.tz}"} or null for manual-only). Each slot owns its weekdays; absent daysOfWeek means every day. Example: Mon-Wed at 9pm plus Thu-Fri at noon is {"slots":[{"hour":21,"minute":0,"daysOfWeek":[1,2,3]},{"hour":12,"minute":0,"daysOfWeek":[4,5]}],"tz":"${ctx.tz}"}. notify ("all" | "failure" | "success" | "none" - which run outcomes fire an OS notification; default "none"), brief (string), params (object of string values).
 2. Reply conversationally and ask about ONE thing at a time - the next most important gap: missing specifics, choices, accounts/handles, formats, limits, edge cases (e.g. "what if there is nothing to report?"). Never ask about something the user already answered, even in passing. If the user revises an earlier choice, just patch it and move on. Patch schedule whenever the user's message settles timing, but do not steer the conversation toward scheduling.
 3. When the answer space is enumerable (workspace names, team names, times, yes/no), offer 2-5 short suggestions the user can tap. Only ever suggest workspace/team names that appear in the environment above.
 4. Maintain the brief as you learn: a frozen, fully self-contained instruction block for an unattended agent - no "the user said", concrete values, edge-case handling, expected output. Surface tweakable knobs as {{placeholder}} in the brief with current values in params.

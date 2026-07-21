@@ -23,8 +23,8 @@ describe('DryRunManager', () => {
     await flush();
 
     expect(execute).toHaveBeenCalledTimes(1);
-    const [ws, prompt] = execute.mock.calls[0];
-    expect(ws).toBe('default');
+    const [target, prompt] = execute.mock.calls[0];
+    expect(target).toEqual({ kind: 'prompt', workspaceName: 'default' });
     expect(prompt).toMatch(/DRY RUN/);
     expect(prompt).toContain('Post 5 items.');
     expect(classify).toHaveBeenCalledWith('agent output');
@@ -43,8 +43,20 @@ describe('DryRunManager', () => {
     await flush();
 
     expect(teamContext).toHaveBeenCalledWith('blog', 'news');
-    expect(execute.mock.calls[0][0]).toBe('blog');
+    expect(execute.mock.calls[0][0]).toEqual({ kind: 'team', teamName: 'news', workspaceName: 'blog' });
     expect(execute.mock.calls[0][1]).toContain('{"members":["a"]}');
+  });
+
+  it('passes prompt agent/model overrides through to execution', async () => {
+    const execute = vi.fn().mockResolvedValue('out');
+    const mgr = new DryRunManager({
+      execute, classify: vi.fn().mockResolvedValue({ status: 'clean' as const }),
+      teamContext: () => undefined, onResult: vi.fn(),
+    });
+    const target = { kind: 'prompt' as const, workspaceName: 'default', agent: 'codex' as const, model: 'gpt-x' };
+    mgr.start('s1', draft({ target }));
+    await flush();
+    expect(execute.mock.calls[0][0]).toEqual(target);
   });
 
   it('maps execute/classify failures to an error verdict, never gaps', async () => {

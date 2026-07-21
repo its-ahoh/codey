@@ -51,8 +51,10 @@ export function shouldFire(
   now: number,
 ): boolean {
   const p = localParts(now, schedule.tz);
-  if (!schedule.times.some(t => t.hour === p.hour && t.minute === p.minute)) return false;
-  if (schedule.daysOfWeek && !schedule.daysOfWeek.includes(p.dayOfWeek)) return false;
+  const matches = schedule.slots.some(slot =>
+    slot.hour === p.hour && slot.minute === p.minute
+    && (!slot.daysOfWeek?.length || slot.daysOfWeek.includes(p.dayOfWeek)));
+  if (!matches) return false;
   if (lastFiredAt !== undefined && slotId(lastFiredAt, schedule.tz) === slotId(now, schedule.tz)) return false;
   return true;
 }

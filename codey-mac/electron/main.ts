@@ -7,7 +7,7 @@ import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { createCoreStateStore } from './core-state'
 import { decideNotification, createTurnTracker } from './chat-notifications'
 import { decideAutomationNotification, findUnseenRuns } from './automation-notifications'
-import { validateAutomationDraft, validateAutomationPatch } from './automation-validate'
+import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, uniqueSkills } from './skills'
 import type { ScannedSkill } from './skills'
@@ -2201,6 +2201,28 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not ready')
       return inProcessGateway.sendAutomationChat(sessionId, text)
+    })
+  )
+
+  ipcMain.handle('automations:chat:patch', async (_e, sessionId: string, patch: any) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      validateAutomationChatPatch(patch)
+      return inProcessGateway.patchAutomationChat(sessionId, patch)
+    })
+  )
+
+  ipcMain.handle('automations:chat:retryCheck', async (_e, sessionId: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      return inProcessGateway.retryAutomationChatCheck(sessionId)
+    })
+  )
+
+  ipcMain.handle('automations:chat:save', async (_e, sessionId: string, allowUnchecked?: boolean) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      return inProcessGateway.saveAutomationChat(sessionId, allowUnchecked === true)
     })
   )
 
