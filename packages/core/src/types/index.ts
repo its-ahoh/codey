@@ -99,6 +99,13 @@ export interface FallbackConfig {
   order: FallbackEntry[];
 }
 
+/** Definition of one MCP server an adapter should expose to the spawned CLI. */
+export interface McpServerSpec {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
 export interface AgentRequest {
   prompt: string;
   agent: CodingAgent;
@@ -159,6 +166,12 @@ export interface AgentRequest {
    * the UI, because the user may switch chats while the watcher is active.
    */
   browserChatId?: string;
+  /**
+   * MCP servers to expose to this agent turn. Populated by AgentFactory from
+   * enabled plugins; each adapter serializes the record into its CLI's native
+   * MCP configuration mechanism. Absent when no plugin applies.
+   */
+  mcpServers?: Record<string, McpServerSpec>;
 }
 
 export interface StatusUpdate {
