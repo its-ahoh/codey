@@ -39,6 +39,12 @@ describe('codexMcpArgs', () => {
       '-c', 'mcp_servers."codey-browser".env={ELECTRON_RUN_AS_NODE="1",CODEY_BROWSER_TOKEN="tok"}',
     ]);
   });
+
+  it('emits an empty inline table for servers with no env', () => {
+    const args = codexMcpArgs({ bare: { command: '/bin/x', args: [], env: {} } });
+    expect(args).toContain('mcp_servers."bare".env={}');
+    expect(args).toContain('mcp_servers."bare".args=[]');
+  });
 });
 
 describe('writeOpenCodeMcpConfig', () => {

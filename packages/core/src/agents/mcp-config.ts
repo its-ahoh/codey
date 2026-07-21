@@ -12,7 +12,12 @@ export function writeClaudeMcpConfig(
 ): { args: string[]; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-mcp-'));
   const file = path.join(dir, 'mcp.json');
-  fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }));
+  try {
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }));
+  } catch (error) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    throw error;
+  }
   return {
     args: ['--mcp-config', file],
     cleanup: () => {
@@ -25,6 +30,12 @@ export function writeClaudeMcpConfig(
  * Codex takes MCP servers as `-c` TOML overrides. JSON string/array encoding
  * is valid TOML for these value shapes; server names are quoted because they
  * may contain dashes.
+ *
+ * Note: env values (including the bridge token) land in argv, which is
+ * visible to same-user processes via ps. This is deliberate: the token only
+ * authenticates a same-user 0600 unix socket, so argv adds no access an
+ * observer would not already have; Codex has no file-based per-spawn
+ * MCP config to use instead.
  */
 export function codexMcpArgs(servers: Record<string, McpServerSpec>): string[] {
   const args: string[] = [];
@@ -58,7 +69,12 @@ export function writeOpenCodeMcpConfig(
       environment: spec.env,
     };
   }
-  fs.writeFileSync(file, JSON.stringify({ mcp }));
+  try {
+    fs.writeFileSync(file, JSON.stringify({ mcp }));
+  } catch (error) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    throw error;
+  }
   return {
     env: { OPENCODE_CONFIG: file },
     cleanup: () => {
