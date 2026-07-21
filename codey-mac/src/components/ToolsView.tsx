@@ -10,10 +10,10 @@ interface Props { onClose: () => void }
 
 type Tab = 'skills' | 'playbooks' | 'plugins'
 
-const TABS: { key: Tab; label: string; icon: IconName; description: string }[] = [
-  { key: 'skills',  label: 'Skills',  icon: 'sparkle', description: 'Reusable capabilities' },
-  { key: 'playbooks', label: 'Playbooks', icon: 'archive', description: 'Learned work patterns' },
-  { key: 'plugins', label: 'Plugins', icon: 'tools', description: 'Optional agent capabilities' },
+const TABS: { key: Tab; label: string; icon: IconName }[] = [
+  { key: 'skills',  label: 'Skills',  icon: 'sparkle' },
+  { key: 'playbooks', label: 'Playbooks', icon: 'archive' },
+  { key: 'plugins', label: 'Plugins', icon: 'tools' },
 ]
 
 export const ToolsView: React.FC<Props> = ({ onClose }) => {
@@ -33,7 +33,7 @@ export const ToolsView: React.FC<Props> = ({ onClose }) => {
                 ...styles.tabBtn,
                 ...(active ? styles.tabBtnActive : null),
               }}
-            ><UIIcon name={t.icon} size={15} /> <span>{t.label}</span><span style={styles.tabDesc}>{t.description}</span></button>
+            ><UIIcon name={t.icon} size={15} /> <span>{t.label}</span></button>
           )
         })}
         <span style={styles.tabSpacer} />
@@ -65,7 +65,6 @@ const styles: Record<string, React.CSSProperties> = {
   tabBtnActive: {
     background: C.accentDim, color: C.fg, border: `1px solid ${C.accent}`,
   },
-  tabDesc: { color: C.fg3, fontSize: 10, fontWeight: 400 },
   tabSpacer: { flex: 1 },
   addSkillBtn: { display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', borderRadius: 9, padding: '9px 12px', color: C.onAccent, background: C.accent, cursor: 'pointer', fontSize: 12, fontWeight: 700, boxShadow: `0 5px 13px ${C.accentDim}` },
   body: { flex: 1, overflowY: 'auto', padding: 20, background: C.bg },
