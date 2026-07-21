@@ -15,7 +15,7 @@ const TABS: { key: Tab; label: string; icon: IconName }[] = [
   { key: 'skills',  label: 'Skills',  icon: 'sparkle' },
   { key: 'playbooks', label: 'Playbooks', icon: 'archive' },
   { key: 'plugins', label: 'Plugins', icon: 'tools' },
-  { key: 'mcp', label: 'MCP', icon: 'server' },
+  { key: 'mcp', label: 'MCPs', icon: 'server' },
 ]
 
 export const ToolsView: React.FC<Props> = ({ onClose }) => {
