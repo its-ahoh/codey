@@ -69,7 +69,9 @@ export const PluginsTab: React.FC = () => {
             <div style={styles.cardName}>{plugin.name}</div>
             <div style={styles.cardDesc}>{plugin.description}</div>
           </div>
-          <Toggle on={plugin.enabled} onChange={() => { if (busy !== plugin.id) void toggle(plugin) }} />
+          <div style={busy === plugin.id ? styles.toggleBusy : undefined}>
+            <Toggle on={plugin.enabled} onChange={() => { if (busy !== plugin.id) void toggle(plugin) }} />
+          </div>
         </div>
       ))}
     </div>
@@ -91,4 +93,5 @@ const styles: Record<string, React.CSSProperties> = {
   cardBody: { flex: 1, minWidth: 0 },
   cardName: { color: C.fg, fontSize: 13, fontWeight: 700, marginBottom: 3 },
   cardDesc: { color: C.fg3, fontSize: 11.5, lineHeight: 1.45 },
+  toggleBusy: { opacity: 0.5, cursor: 'wait', pointerEvents: 'none' },
 }
