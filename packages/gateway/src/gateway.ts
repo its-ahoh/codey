@@ -561,6 +561,10 @@ export class Codey {
     this.agentFactory.setPluginEnabledProvider((plugin) =>
       plugin === 'browser' && this.configManager?.isPluginEnabled('browser') === true
     );
+    // User-configured external MCP servers ride the same live-read pattern.
+    this.agentFactory.setExternalMcpProvider(() =>
+      this.configManager?.getEnabledExternalMcpServers()
+    );
     this.logger = logger || Logger.getInstance();
     this.contextManager = new ContextManager({
       maxTokenBudget: config.context?.maxTokenBudget ?? 12000,

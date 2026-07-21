@@ -10,6 +10,7 @@ export default defineConfig({
     include: [
       'src/config.test.ts',
       'src/plugins-config.test.ts',
+      'src/external-mcp-config.test.ts',
       'src/gateway.network-retry.test.ts',
       'src/digit-mapping.test.ts',
       'src/team-pause.test.ts',
