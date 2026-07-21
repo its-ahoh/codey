@@ -2527,7 +2527,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('mcp:list', async () =>
     wrap(async () => {
       const servers = (coreConfigManager?.get() as any)?.mcpServers ?? {}
-      return Object.entries(servers).map(([name, cfg]) => ({ name, ...(cfg as object) }))
+      return Object.entries(servers)
+        // A hand-edited codey-browser entry can never reach agents; hide it here too.
+        .filter(([name]) => name !== 'codey-browser')
+        .map(([name, cfg]) => ({ name, ...(cfg as object) }))
     })
   )
 

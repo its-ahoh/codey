@@ -41,7 +41,7 @@ const toForm = (server: ExternalMcpServer): FormState => ({
   url: server.url ?? '',
 })
 
-export const McpTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 }) => {
+export const McpTab: React.FC = () => {
   const [servers, setServers] = useState<ExternalMcpServer[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -63,13 +63,6 @@ export const McpTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 }) =>
   }, [])
 
   useEffect(() => { void reload() }, [reload])
-
-  useEffect(() => {
-    if (addRequest > 0) {
-      setForm(EMPTY_FORM)
-      setEditing(null)
-    }
-  }, [addRequest])
 
   const toggle = async (server: ExternalMcpServer) => {
     setBusy(server.name)
@@ -100,13 +93,19 @@ export const McpTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 }) =>
 
   const save = async () => {
     if (!form) return
+    const name = form.name.trim()
+    // Adding under an existing name would silently overwrite (and disable) it.
+    if (!editing && servers.some(s => s.name === name)) {
+      setError(`A server named "${name}" already exists — edit it instead.`)
+      return
+    }
     setSaving(true)
     setError(null)
     try {
       const env = parseEnvLines(form.env)
       const existing = editing ? servers.find(s => s.name === editing) : undefined
       unwrap(await window.codey.mcp.save({
-        name: form.name.trim(),
+        name,
         transport: form.transport,
         command: form.command,
         args: parseArgsLine(form.args),
