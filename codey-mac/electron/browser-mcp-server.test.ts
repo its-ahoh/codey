@@ -3,6 +3,7 @@ import * as http from 'http'
 import * as os from 'os'
 import * as path from 'path'
 import { randomBytes } from 'crypto'
+import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 
 // The server is plain CJS so the packaged app can run it without a build step.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -173,5 +174,128 @@ describe('tool routing', () => {
   it('unknown tools return a JSON-RPC error', async () => {
     const res = await call('browser_nope', {})
     expect(res.error).toBeDefined()
+  })
+})
+
+describe('stdio loop (child process)', () => {
+  let child: ChildProcessWithoutNullStreams | null = null
+
+  afterEach(() => {
+    if (child && !child.killed) child.kill()
+    child = null
+  })
+
+  function spawnServerChild(): ChildProcessWithoutNullStreams {
+    const modulePath = require.resolve('./browser-mcp-server.cjs')
+    const proc = spawn(process.execPath, [modulePath], { env: { ...process.env } })
+    child = proc
+    return proc
+  }
+
+  function collectLines(proc: ChildProcessWithoutNullStreams, count: number, timeoutMs = 5000): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      let buf = ''
+      const lines: string[] = []
+      const timer = setTimeout(() => {
+        cleanup()
+        reject(new Error(`Timed out waiting for ${count} lines; got: ${JSON.stringify(lines)}`))
+      }, timeoutMs)
+      const onData = (chunk: Buffer) => {
+        buf += chunk.toString('utf8')
+        let idx
+        while ((idx = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, idx)
+          buf = buf.slice(idx + 1)
+          if (line.trim()) lines.push(line)
+          if (lines.length >= count) {
+            cleanup()
+            resolve(lines)
+            return
+          }
+        }
+      }
+      function cleanup() {
+        clearTimeout(timer)
+        proc.stdout.off('data', onData)
+      }
+      proc.stdout.on('data', onData)
+    })
+  }
+
+  it('handles split/partial framing and ignores malformed lines without crashing', async () => {
+    const proc = spawnServerChild()
+
+    const initReq = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
+    const splitPoint = Math.floor(initReq.length / 2)
+    const part1 = initReq.slice(0, splitPoint)
+    const part2 = initReq.slice(splitPoint) + '\n'
+    const toolsListReq = JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) + '\n'
+    const readStateReq = JSON.stringify({
+      jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: { name: 'browser_read', arguments: { mode: 'state' } },
+    }) + '\n'
+
+    const linesPromise = collectLines(proc, 3)
+    proc.stdin.write(part1)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    proc.stdin.write(part2 + 'not json\n' + toolsListReq + readStateReq)
+
+    const lines = await linesPromise
+    const byId = new Map<number, any>()
+    for (const line of lines) {
+      const parsed = JSON.parse(line)
+      byId.set(parsed.id, parsed)
+    }
+    expect(byId.get(1).result.protocolVersion).toBe('2024-11-05')
+    expect(byId.get(2).result.tools.length).toBe(8)
+    expect(byId.get(3).result.content[0].text).toContain('/state')
+    expect(proc.killed).toBe(false)
+  })
+
+  it('does not serialize concurrent requests: a fast call can resolve before a slow one', async () => {
+    const delayedSocketPath = path.join(os.tmpdir(), `codey-mcp-test-delay-${randomBytes(5).toString('hex')}.sock`)
+    const delayedServer = http.createServer((req, res) => {
+      let raw = ''
+      req.setEncoding('utf8')
+      req.on('data', c => { raw += c })
+      req.on('end', () => {
+        const route = (req.url || '/').split('?')[0]
+        const respond = () => {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true, route }))
+        }
+        if (route === '/wait') {
+          setTimeout(respond, 300)
+        } else {
+          respond()
+        }
+      })
+    })
+    await new Promise<void>(resolve => delayedServer.listen(delayedSocketPath, resolve))
+
+    try {
+      process.env.CODEY_BROWSER_SOCKET = delayedSocketPath
+      const proc = spawnServerChild()
+
+      const waitReq = JSON.stringify({
+        jsonrpc: '2.0', id: 10, method: 'tools/call',
+        params: { name: 'browser_wait', arguments: { for: 'text', value: 'Done' } },
+      }) + '\n'
+      const readStateReq = JSON.stringify({
+        jsonrpc: '2.0', id: 11, method: 'tools/call',
+        params: { name: 'browser_read', arguments: { mode: 'state' } },
+      }) + '\n'
+
+      const linesPromise = collectLines(proc, 2)
+      proc.stdin.write(waitReq)
+      proc.stdin.write(readStateReq)
+
+      const lines = await linesPromise
+      const parsed = lines.map(line => JSON.parse(line))
+      expect(parsed[0].id).toBe(11)
+      expect(parsed[1].id).toBe(10)
+    } finally {
+      await new Promise<void>(resolve => delayedServer.close(() => resolve()))
+    }
   })
 })

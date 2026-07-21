@@ -37,7 +37,7 @@ const TOOLS = [
   },
   {
     name: 'browser_interact',
-    description: `Interact with the page. Element actions (click, fill, select, check, uncheck, press, hover, submit) take a ref from browser_read snapshot. Coordinate actions (click_at, drag, scroll_at) use CSS viewport pixels — scale screenshot pixels by the viewport size. ${SAFETY}`,
+    description: `Interact with the page. Element actions (click, fill, select, check, uncheck, press, hover, submit) take a ref from browser_read snapshot. Coordinate actions (click_at, drag, scroll_at) use CSS viewport pixels — scale screenshot pixels by the viewport size. ${SAFETY} drag starts at x,y and ends at toX,toY. scroll takes deltas only; scroll_at anchors the scroll/zoom at x,y.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -182,6 +182,7 @@ async function callTool(name, args) {
     case 'browser_read': {
       const mode = String(a.mode || '')
       if (mode === 'screenshot') {
+        // Screenshots ride one NDJSON line (multi-MB base64). MCP stdio clients read unbounded lines; if a client ever caps line length, add a size guard here.
         const { buffer, headers } = await bridgeRequest('GET', '/screenshot', undefined, true)
         const viewport = `Viewport: ${headers['x-codey-viewport-width']}x${headers['x-codey-viewport-height']} CSS px, device scale ${headers['x-codey-device-scale-factor']}. Coordinates for browser_interact are CSS viewport pixels.`
         return {
@@ -254,7 +255,7 @@ async function handleMessage(message) {
   if (method.startsWith('notifications/')) return null
   if (method === 'initialize') {
     return reply({
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion: (params && typeof params.protocolVersion === 'string') ? params.protocolVersion : PROTOCOL_VERSION,
       capabilities: { tools: {} },
       serverInfo: { name: 'codey-browser', version: '1.0.0' },
     })
@@ -278,6 +279,8 @@ async function handleMessage(message) {
 }
 
 function startStdioLoop() {
+  process.on('uncaughtException', err => { try { process.stderr.write(`codey-browser mcp: ${err && err.stack || err}\n`) } catch { /* ignore */ } })
+
   let buffer = ''
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', chunk => {
@@ -289,14 +292,19 @@ function startStdioLoop() {
       if (!line) continue
       let message
       try { message = JSON.parse(line) } catch { continue }
-      void handleMessage(message).then(response => {
-        if (response) process.stdout.write(JSON.stringify(response) + '\n')
-      })
+      void handleMessage(message)
+        .then(response => {
+          if (response) process.stdout.write(JSON.stringify(response) + '\n')
+        })
+        .catch(error => {
+          const id = message && message.id !== undefined ? message.id : null
+          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32603, message: String(error && error.message || error) } }) + '\n')
+        })
     }
   })
   process.stdin.on('end', () => process.exit(0))
 }
 
-module.exports = { TOOLS, callTool, handleMessage }
+module.exports = { TOOLS, callTool, handleMessage, startStdioLoop }
 
 if (require.main === module) startStdioLoop()
