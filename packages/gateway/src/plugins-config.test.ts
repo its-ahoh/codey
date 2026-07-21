@@ -35,6 +35,7 @@ describe('plugins config', () => {
     fs.writeFileSync(file, JSON.stringify({ plugins: { browser: { enabled: 'yes' } } }));
     const mgr = new ConfigManager(file);
     expect(mgr.isPluginEnabled('browser')).toBe(false);
+    expect(mgr.get().plugins?.browser?.enabled).toBe(false);
   });
 
   it('merges plugins updates without clobbering other plugin entries', () => {

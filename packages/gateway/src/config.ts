@@ -422,7 +422,6 @@ export class ConfigManager extends EventEmitter {
     return this.config.plugins?.[name]?.enabled === true;
   }
 
-
   // ── Channels ───────────────────────────────────────────────────────
   getTelegramConfig() { return this.config.channels.telegram; }
   getDiscordConfig() { return this.config.channels.discord; }
