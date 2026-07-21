@@ -15,7 +15,7 @@ export default defineConfig({
       'src/task-brief.test.ts',
       'src/aide-tasks.test.ts',
       'src/agents/thinking-stream.test.ts',
-      'src/agents/browser-tools.test.ts',
+      'src/agents/browser-mcp.test.ts',
       'src/solo-advisor.test.ts',
       'src/team-graph.test.ts',
       'src/judge.test.ts',
