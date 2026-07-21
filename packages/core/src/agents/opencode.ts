@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { AgentRequest, AgentResponse } from '../types';
 import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
+import { writeOpenCodeMcpConfig } from './mcp-config';
 
 interface OpenCodeEvent {
   type: string;
@@ -58,6 +59,13 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
         args.push('--model', request.model.model);
       }
 
+      let mcpCleanup: (() => void) | undefined;
+      let mcpEnv: Record<string, string> = {};
+      if (request.mcpServers && Object.keys(request.mcpServers).length > 0) {
+        const mcp = writeOpenCodeMcpConfig(request.mcpServers);
+        mcpEnv = mcp.env;
+        mcpCleanup = mcp.cleanup;
+      }
       args.push(request.prompt);
 
       this.debug(`[opencode] Spawning: opencode ${args.slice(0, -1).join(' ')} "<prompt>"`);
@@ -66,6 +74,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       // OpenCode is provider-agnostic; default to openai if apiType unset.
       const env = applyModelEnv({ ...process.env }, request.model, 'openai');
       if (request.extraEnv) Object.assign(env, request.extraEnv);
+      Object.assign(env, mcpEnv);
       const childProcess: ChildProcess = spawn('opencode', args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: request.context?.workingDir || undefined,
@@ -74,6 +83,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       this.activeProcess = childProcess;
 
       childProcess.on('close', () => {
+        mcpCleanup?.();
         this.activeProcess = undefined;
       });
 
@@ -215,6 +225,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       });
 
       childProcess.on('error', (err: Error) => {
+        mcpCleanup?.();
         const duration = Math.round((Date.now() - startTime) / 1000);
         this.debug(`[opencode] Spawn error: ${err.message}`);
         const spawnError = new AgentSpawnError(this.name, err.message);

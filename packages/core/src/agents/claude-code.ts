@@ -3,6 +3,7 @@ import { AgentRequest, AgentResponse, AgentStateEntry, StatusUpdate } from '../t
 import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
 import { thinkingDeltaFrom } from './thinking-stream';
+import { writeClaudeMcpConfig } from './mcp-config';
 
 interface StreamEvent {
   type: string;
@@ -91,6 +92,13 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         args.push('--model', request.model.model);
       }
 
+      let mcpCleanup: (() => void) | undefined;
+      if (request.mcpServers && Object.keys(request.mcpServers).length > 0) {
+        const mcp = writeClaudeMcpConfig(request.mcpServers);
+        args.push(...mcp.args);
+        mcpCleanup = mcp.cleanup;
+      }
+
       // -p with prompt must be last (matches tested CLI format)
       args.push('-p', request.prompt);
 
@@ -128,6 +136,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       this.activeProcess = childProcess;
 
       childProcess.on('close', () => {
+        mcpCleanup?.();
         this.activeProcess = undefined;
       });
 
@@ -391,6 +400,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       });
 
       childProcess.on('error', (err: Error) => {
+        mcpCleanup?.();
         const duration = Math.round((Date.now() - startTime) / 1000);
         this.debug(`[claude-code] Spawn error: ${err.message}`);
         const spawnError = new AgentSpawnError(this.name, err.message);
