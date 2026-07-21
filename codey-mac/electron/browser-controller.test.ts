@@ -52,6 +52,7 @@ describe('BrowserController agent controls', () => {
       getTitle: vi.fn(() => 'Example Dashboard'),
       executeJavaScript: vi.fn(async (_script: string) => executeResult),
       sendInputEvent: vi.fn(),
+      insertText: vi.fn(),
       debugger: {
         isAttached: vi.fn(() => debuggerAttached),
         attach: vi.fn(() => { debuggerAttached = true }),
@@ -136,12 +137,34 @@ describe('BrowserController agent controls', () => {
     expect(script).not.toContain('sessionStorage')
   })
 
-  it('safely embeds field values and dispatches the page-side fill script', async () => {
+  it('fills through Chromium native editing so stateful editors receive the text', async () => {
     const { controller, contents } = setup(true)
     await controller.fill('e4', `Jack's "post"`)
     const script = contents.executeJavaScript.mock.calls[0][0]
-    expect(script).toContain(`Jack's \\"post\\"`)
-    expect(script).toContain("dispatchEvent(new InputEvent('input'")
+    expect(script).toContain('range.selectNodeContents(el)')
+    expect(script).toContain('el.select()')
+    expect(script).not.toContain(`Jack's`)
+    expect(contents.insertText).toHaveBeenCalledWith(`Jack's "post"`)
+  })
+
+  it('sends a character event for the space key', async () => {
+    const { controller, contents } = setup(true)
+    await controller.press('Space', 'e4')
+    expect(contents.sendInputEvent.mock.calls.map(call => call[0])).toEqual([
+      { type: 'keyDown', keyCode: 'Space', modifiers: [] },
+      { type: 'char', keyCode: ' ', modifiers: [] },
+      { type: 'keyUp', keyCode: 'Space', modifiers: [] },
+    ])
+  })
+
+  it('clears a field through native editing when fill receives empty text', async () => {
+    const { controller, contents } = setup(true)
+    await controller.fill('e4', '')
+    expect(contents.insertText).not.toHaveBeenCalled()
+    expect(contents.sendInputEvent.mock.calls.map(call => call[0])).toEqual([
+      { type: 'keyDown', keyCode: 'Backspace' },
+      { type: 'keyUp', keyCode: 'Backspace' },
+    ])
   })
 
   it('supports coordinate clicks and drag gestures for maps and canvases', async () => {
