@@ -89,6 +89,14 @@ export interface GatewayConfigJson {
     /** WhisperKit model variant for local mode (e.g. openai_whisper-large-v3-turbo). */
     localModel: string;
   };
+  /**
+   * Optional capability packs ("plugins") exposed to agents as MCP servers.
+   * Everything is off by default; the user enables plugins explicitly in the
+   * Mac app's Tools → Plugins tab.
+   */
+  plugins?: {
+    browser?: { enabled: boolean };
+  };
   notifications?: { enabled?: boolean };
   capture?: { hotkey?: string };
   ui?: { launchAtLogin?: boolean; dockless?: boolean };
@@ -192,6 +200,9 @@ export class ConfigManager extends EventEmitter {
     if (partial.advisor !== undefined) this.config.advisor = partial.advisor;
     if (partial.aide !== undefined) this.config.aide = partial.aide;
     if (partial.teams !== undefined) this.config.teams = partial.teams;
+    if (partial.plugins !== undefined) {
+      this.config.plugins = { ...this.config.plugins, ...partial.plugins };
+    }
     if (partial.voice !== undefined) this.config.voice = partial.voice;
     if (partial.notifications !== undefined) {
       this.config.notifications = { ...this.config.notifications, ...partial.notifications };
@@ -406,6 +417,11 @@ export class ConfigManager extends EventEmitter {
     return this.config.agents[agent as keyof typeof this.config.agents];
   }
 
+  /** True only when the user has explicitly enabled the named plugin. */
+  isPluginEnabled(name: 'browser'): boolean {
+    return this.config.plugins?.[name]?.enabled === true;
+  }
+
 
   // ── Channels ───────────────────────────────────────────────────────
   getTelegramConfig() { return this.config.channels.telegram; }
@@ -608,6 +624,11 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
   }
   if (raw.teams && typeof raw.teams === 'object') {
     out.teams = raw.teams as Record<string, TeamConfigRaw>;
+  }
+  if (raw.plugins && typeof raw.plugins === 'object') {
+    out.plugins = {
+      browser: { enabled: raw.plugins.browser?.enabled === true },
+    };
   }
   if (raw.voice && typeof raw.voice === 'object') {
     out.voice = raw.voice;
