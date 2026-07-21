@@ -10,7 +10,7 @@ export interface ChatManagerDeps {
   ) => Promise<AutomationChatTurn>;
   /** Live grounding lists - re-read per turn so new workspaces/teams appear. */
   context: () => Omit<AutomationChatContext, 'mode'>;
-  /** Fired when a session's ready flag rises false->true (dry-run trigger). */
+  /** Fired when a complete draft needs a new unattended dry-run check. */
   onReadyTransition?: (sessionId: string, draft: AutomationDraft) => void;
   now?: () => number;
 }
@@ -24,6 +24,8 @@ export interface ChatStep {
   ready: boolean;
   /** Dry-run check state; undefined until the first ready transition. */
   check?: AutomationCheckStatus;
+  /** Live choices used by the structured editor. */
+  context: Omit<AutomationChatContext, 'mode' | 'nowIso'>;
 }
 
 interface Session {
@@ -32,8 +34,10 @@ interface Session {
   draft: AutomationDraft;
   inFlight: boolean;
   touchedAt: number;
-  wasReady: boolean;
+  sourceAutomationId?: string;
   check?: AutomationCheckStatus;
+  /** Execution configuration covered by the current check. */
+  checkFingerprint?: string;
 }
 
 export const SESSION_TTL_MS = 30 * 60_000;
@@ -63,7 +67,7 @@ export class AutomationChatManager {
   }
 
   /** Fixed opener - no Aide call, so opening the panel is instant. */
-  start(mode: 'create' | 'edit', initialDraft: AutomationDraft = {}): ChatStep {
+  start(mode: 'create' | 'edit', initialDraft: AutomationDraft = {}, sourceAutomationId?: string): ChatStep {
     this.sweep();
     const sessionId = randomUUID();
     const reply = OPENER[mode];
@@ -73,10 +77,10 @@ export class AutomationChatManager {
       draft: { ...initialDraft },
       inFlight: false,
       touchedAt: this.now(),
-      wasReady: false,
+      sourceAutomationId,
     };
     this.sessions.set(sessionId, s);
-    return { sessionId, reply, draft: { ...s.draft }, suggestions: [], ready: false };
+    return this.step(sessionId, s, reply, [], false);
   }
 
   async send(sessionId: string, text: string): Promise<ChatStep> {
@@ -97,15 +101,9 @@ export class AutomationChatManager {
       if (!this.sessions.has(sessionId)) throw new Error(`Unknown automation chat session: ${sessionId}`);
       s.messages.push({ role: 'user', text }, { role: 'assistant', text: turn.reply });
       applyDraftPatch(s.draft, turn.draftPatch);
-      const transition = turn.ready && !s.wasReady;
-      s.wasReady = turn.ready;
-      if (!turn.ready) s.check = undefined;
-      else if (transition) s.check = 'pending';
-      if (transition) {
-        try { this.deps.onReadyTransition?.(sessionId, { ...s.draft }); }
-        catch { /* dry-run trigger must not fail the turn */ }
-      }
-      return { sessionId, reply: turn.reply, draft: { ...s.draft }, suggestions: turn.suggestions, ready: turn.ready, check: s.check };
+      const ready = turn.ready && draftComplete(s.draft);
+      this.reconcileCheck(sessionId, s, ready);
+      return this.step(sessionId, s, turn.reply, turn.suggestions, ready);
     } finally {
       s.inFlight = false;
     }
@@ -113,6 +111,45 @@ export class AutomationChatManager {
 
   cancel(sessionId: string): void {
     this.sessions.delete(sessionId);
+  }
+
+  /** Apply deterministic form edits to the same draft the assistant sees. */
+  patch(sessionId: string, patch: Partial<AutomationDraft>): ChatStep {
+    this.sweep();
+    const s = this.sessions.get(sessionId);
+    if (!s) throw new Error(`Unknown automation chat session: ${sessionId}`);
+    if (s.inFlight) throw new Error('A turn is already in flight for this session');
+    s.touchedAt = this.now();
+    applyDraftPatch(s.draft, patch);
+    const ready = draftComplete(s.draft);
+    this.reconcileCheck(sessionId, s, ready);
+    return this.step(sessionId, s, '', [], ready);
+  }
+
+  retryCheck(sessionId: string): ChatStep {
+    this.sweep();
+    const s = this.sessions.get(sessionId);
+    if (!s) throw new Error(`Unknown automation chat session: ${sessionId}`);
+    const ready = draftComplete(s.draft);
+    if (!ready) throw new Error('Automation draft is incomplete');
+    s.check = undefined;
+    s.checkFingerprint = undefined;
+    this.reconcileCheck(sessionId, s, true);
+    return this.step(sessionId, s, '', [], true);
+  }
+
+  /** Return a server-owned draft only when it is safe to persist. */
+  finalize(sessionId: string, allowUnchecked = false): {
+    mode: 'create' | 'edit'; sourceAutomationId?: string; draft: AutomationDraft;
+  } {
+    this.sweep();
+    const s = this.sessions.get(sessionId);
+    if (!s) throw new Error(`Unknown automation chat session: ${sessionId}`);
+    if (!draftComplete(s.draft)) throw new Error('Automation draft is incomplete');
+    if (s.check !== 'clean' && !(allowUnchecked && s.check === 'error')) {
+      throw new Error(s.check === 'pending' ? 'Unattended check is still running' : 'Automation must pass its unattended check');
+    }
+    return { mode: s.mode, sourceAutomationId: s.sourceAutomationId, draft: { ...s.draft } };
   }
 
   /**
@@ -129,6 +166,37 @@ export class AutomationChatManager {
     if (message) s.messages.push({ role: 'assistant', text: message });
     return true;
   }
+
+  private reconcileCheck(sessionId: string, s: Session, ready: boolean): void {
+    if (!ready) {
+      s.check = undefined;
+      s.checkFingerprint = undefined;
+      return;
+    }
+    const fingerprint = executionFingerprint(s.draft);
+    if (s.checkFingerprint === fingerprint && s.check) return;
+    s.check = 'pending';
+    s.checkFingerprint = fingerprint;
+    try { this.deps.onReadyTransition?.(sessionId, { ...s.draft }); }
+    catch { /* dry-run trigger must not fail the edit */ }
+  }
+
+  private step(sessionId: string, s: Session, reply: string, suggestions: string[], ready: boolean): ChatStep {
+    const { workspaces, teams, agents, models, tz } = this.deps.context();
+    return {
+      sessionId, reply, draft: { ...s.draft }, suggestions, ready, check: s.check,
+      context: { workspaces, teams, agents, models, tz },
+    };
+  }
+}
+
+export function draftComplete(draft: AutomationDraft): boolean {
+  if (!draft.name?.trim() || !draft.brief?.trim() || !draft.target?.workspaceName?.trim()) return false;
+  return draft.target.kind !== 'team' || !!draft.target.teamName?.trim();
+}
+
+function executionFingerprint(draft: AutomationDraft): string {
+  return JSON.stringify({ target: draft.target, brief: draft.brief?.trim(), params: draft.params ?? {} });
 }
 
 /** Shallow merge; an explicit null clears the field. */

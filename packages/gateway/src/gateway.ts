@@ -906,7 +906,7 @@ export class Codey {
     });
     this.automationEngine.start();
     this.automationDryRuns = new DryRunManager({
-      execute: (workspaceName, prompt) => this.runDryRunPrompt(workspaceName, prompt),
+      execute: (target, prompt) => this.runDryRunPrompt(target, prompt),
       classify: (output) => classifyDryRun(output, this.getAideOptions()),
       teamContext: (_workspaceName, teamName) => {
         const team = (this.configManager?.getTeams() ?? {})[teamName];
@@ -929,6 +929,8 @@ export class Codey {
       context: () => ({
         workspaces: this.getWorkspaceList(),
         teams: Object.keys(this.configManager?.getTeams() ?? {}),
+        agents: ['claude-code', 'opencode', 'codex'] as CodingAgent[],
+        models: (this.configManager?.listModels() ?? this.config.models ?? []).map(m => m.model),
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         nowIso: new Date().toString(),
       }),
@@ -1021,7 +1023,8 @@ export class Codey {
    * suspenders - the agent can read the workspace but a stray write attempt
    * is refused rather than executed.
    */
-  private async runDryRunPrompt(workspaceName: string, prompt: string): Promise<string> {
+  private async runDryRunPrompt(target: Automation['target'], prompt: string): Promise<string> {
+    const workspaceName = target.workspaceName;
     // workspaceName is LLM output; a hallucinated name must fail visibly
     // (DryRunManager maps the throw to an 'error' verdict) instead of
     // silently dry-running against the gateway's own working dir.
@@ -1029,8 +1032,14 @@ export class Codey {
       throw new Error(`Unknown workspace: ${workspaceName}`);
     }
     const workingDir = this.resolveWorkspaceWorkingDir(workspaceName);
-    const agent = this.getDefaultAgent();
-    const model = this.getDefaultModelConfig(agent);
+    // A prompt automation may override both agent and model. The check must
+    // use that same execution configuration or its verdict is misleading.
+    // Team checks remain a no-act analysis run with the gateway default; the
+    // team definition is already inlined into the prompt above.
+    const agent = target.kind === 'prompt' && target.agent ? target.agent : this.getDefaultAgent();
+    const model = target.kind === 'prompt' && target.model
+      ? this.getModelConfig(agent, target.model)
+      : this.getDefaultModelConfig(agent);
     // Plain agentFactory.run, not runWithFallback: fallback churn is not
     // wanted for a background nicety - a failure just becomes an 'error'
     // verdict in the authoring panel.
@@ -1070,6 +1079,7 @@ export class Codey {
   listAutomations(): Automation[] { return this.automationStore?.list() ?? []; }
   getAutomation(id: string): Automation | undefined { return this.automationStore?.get(id); }
   createAutomation(draft: Parameters<AutomationStore['create']>[0]): Automation {
+    this.validateAutomationTargetReferences(draft.target);
     return this.requireAutomationStore().create(draft, Date.now());
   }
   updateAutomation(id: string, patch: Partial<Automation>): Automation {
@@ -1079,8 +1089,10 @@ export class Codey {
     // fresh one matching the new target. (store.update Object.assigns the
     // patch, so chatId becomes undefined and JSON.stringify drops the key
     // from the persisted document.)
-    if (patch.target) {
-      const prev = this.requireAutomationStore().get(id);
+    const prev = this.requireAutomationStore().get(id);
+    const targetChanged = !!patch.target && JSON.stringify(patch.target) !== JSON.stringify(prev?.target);
+    if (patch.target) this.validateAutomationTargetReferences(patch.target);
+    if (targetChanged) {
       if (prev?.chatId) {
         // reload first so a chat created by the other process is deletable.
         this.chatManager.reload(prev.chatId);
@@ -1088,9 +1100,20 @@ export class Codey {
       }
       patch = { ...patch, chatId: undefined };
     }
+    // Renderer edits commonly change only notification policy. Preserve a
+    // configured channel instead of replacing the entire report object.
+    if (patch.report && prev?.report) patch = { ...patch, report: { ...prev.report, ...patch.report } };
     return this.requireAutomationStore().update(id, patch, Date.now());
   }
-  deleteAutomation(id: string): void { this.requireAutomationStore().delete(id); }
+  deleteAutomation(id: string): void {
+    const a = this.requireAutomationStore().get(id);
+    if (!a) throw new Error(`Automation not found: ${id}`);
+    if (a.chatId) {
+      this.chatManager.reload(a.chatId);
+      try { this.chatManager.delete(a.chatId); } catch { /* already gone */ }
+    }
+    this.requireAutomationStore().delete(id);
+  }
   setAutomationEnabled(id: string, enabled: boolean): Automation {
     return this.requireAutomationStore().setEnabled(id, enabled, Date.now());
   }
@@ -1129,10 +1152,29 @@ export class Codey {
       notify: a.report.notify,
       brief: a.brief,
       params: a.params,
-    });
+    }, a.id);
   }
   sendAutomationChat(sessionId: string, text: string): Promise<ChatStep> {
     return this.requireAutomationChats().send(sessionId, text);
+  }
+  patchAutomationChat(sessionId: string, patch: Parameters<AutomationChatManager['patch']>[1]): ChatStep {
+    return this.requireAutomationChats().patch(sessionId, patch);
+  }
+  retryAutomationChatCheck(sessionId: string): ChatStep {
+    return this.requireAutomationChats().retryCheck(sessionId);
+  }
+  saveAutomationChat(sessionId: string, allowUnchecked = false): Automation {
+    const { mode, sourceAutomationId, draft } = this.requireAutomationChats().finalize(sessionId, allowUnchecked);
+    const payload = {
+      name: draft.name!.trim(), target: draft.target!, brief: draft.brief!.trim(),
+      params: draft.params ?? {}, schedule: draft.schedule,
+      report: { notify: draft.notify ?? 'none' },
+    };
+    const saved = mode === 'edit'
+      ? this.updateAutomation(sourceAutomationId!, payload)
+      : this.createAutomation({ ...payload, enabled: true });
+    this.cancelAutomationChat(sessionId);
+    return saved;
   }
   cancelAutomationChat(sessionId: string): void {
     this.automationChats?.cancel(sessionId);
@@ -1140,6 +1182,15 @@ export class Codey {
   }
   setAutomationEventListener(fn: (ev: AutomationEvent) => void): void {
     this.automationEventListener = fn;
+  }
+
+  private validateAutomationTargetReferences(target: Automation['target']): void {
+    if (!this.getWorkspaceList().includes(target.workspaceName)) {
+      throw new Error(`Unknown automation workspace: ${target.workspaceName}`);
+    }
+    if (target.kind === 'team' && !(target.teamName in (this.configManager?.getTeams() ?? {}))) {
+      throw new Error(`Unknown automation team: ${target.teamName}`);
+    }
   }
 
   private requireAutomationStore(): AutomationStore {

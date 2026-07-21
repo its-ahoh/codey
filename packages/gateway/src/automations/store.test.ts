@@ -50,7 +50,24 @@ describe('definitions', () => {
 
   it('normalizes a legacy single-time schedule on read', () => {
     const a = store.create(draft({ schedule: { hour: 9, minute: 30, tz: 'UTC' } as any }), 111);
-    expect(store.get(a.id)?.schedule).toEqual({ times: [{ hour: 9, minute: 30 }], tz: 'UTC' });
+    expect(store.get(a.id)?.schedule).toEqual({ slots: [{ hour: 9, minute: 30 }], tz: 'UTC' });
+  });
+
+  it('canonicalizes empty/all weekdays to daily and deduplicates partial weekdays', () => {
+    const empty = store.create(draft({ schedule: { times: [{ hour: 9, minute: 0 }], daysOfWeek: [], tz: 'UTC' } as any }), 111);
+    const all = store.create(draft({ schedule: { times: [{ hour: 9, minute: 0 }], daysOfWeek: [6, 5, 4, 3, 2, 1, 0], tz: 'UTC' } as any }), 111);
+    const partial = store.create(draft({ schedule: { times: [{ hour: 9, minute: 0 }], daysOfWeek: [5, 1, 5], tz: 'UTC' } as any }), 111);
+    expect(store.get(empty.id)?.schedule?.slots[0].daysOfWeek).toBeUndefined();
+    expect(store.get(all.id)?.schedule?.slots[0].daysOfWeek).toBeUndefined();
+    expect(store.get(partial.id)?.schedule?.slots[0].daysOfWeek).toEqual([1, 5]);
+  });
+
+  it('refuses to treat corrupt storage as an empty first run', () => {
+    const file = path.join(dir, 'automations.json');
+    fs.writeFileSync(file, '{broken');
+    expect(() => store.list()).toThrow(/corrupt.*refusing to overwrite/i);
+    expect(() => store.create(draft(), 111)).toThrow(/corrupt.*refusing to overwrite/i);
+    expect(fs.readFileSync(file, 'utf8')).toBe('{broken');
   });
 
   it('update patches and bumps updatedAt', () => {
@@ -81,6 +98,14 @@ describe('definitions', () => {
     expect(fs.existsSync(path.join(dir, 'automation-runs', `${a.id}.jsonl`))).toBe(false);
   });
 
+  it('rejects unsafe or nonexistent ids before deleting files', () => {
+    const sibling = path.join(dir, 'keep-me');
+    fs.mkdirSync(sibling);
+    expect(() => store.delete('../keep-me')).toThrow(/Invalid.*id/);
+    expect(() => store.delete('not-a-real-id')).toThrow(/not found/);
+    expect(fs.existsSync(sibling)).toBe(true);
+  });
+
   it('setEnabled + recordLastFired persist', () => {
     const a = store.create(draft(), 111);
     store.setEnabled(a.id, false, 222);
@@ -92,6 +117,10 @@ describe('definitions', () => {
 });
 
 describe('run history', () => {
+  it('rejects path traversal ids', () => {
+    expect(() => store.listRuns('../outside')).toThrow(/Invalid.*id/);
+    expect(() => store.patchRun('../outside', 'run', { status: 'failed' })).toThrow(/Invalid.*id/);
+  });
   it('appends and lists newest-first with limit', () => {
     const a = store.create(draft(), 111);
     store.appendRun(a.id, run({ runId: 'r1', startedAt: 1 }));

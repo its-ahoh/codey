@@ -1,10 +1,10 @@
 // packages/gateway/src/automations/dry-run.ts
 import { buildDryRunPrompt } from '@codey/core';
-import type { AutomationDraft, DryRunVerdict } from '@codey/core';
+import type { AutomationDraft, AutomationTarget, DryRunVerdict } from '@codey/core';
 
 export interface DryRunDeps {
   /** One-shot no-act prompt execution in a workspace (agent-adapter path). */
-  execute: (workspaceName: string, prompt: string) => Promise<string>;
+  execute: (target: AutomationTarget, prompt: string) => Promise<string>;
   /** Aide classification of the agent's dry-run report. */
   classify: (output: string) => Promise<DryRunVerdict>;
   /** Team definitions to inline for team targets (undefined = none found). */
@@ -47,7 +47,7 @@ export class DryRunManager {
         ? this.deps.teamContext(draft.target.workspaceName, draft.target.teamName)
         : undefined;
       const prompt = buildDryRunPrompt(draft.brief, draft.params ?? {}, team);
-      const output = await this.deps.execute(draft.target.workspaceName, prompt);
+      const output = await this.deps.execute(draft.target, prompt);
       verdict = await this.deps.classify(output);
     } catch (err) {
       verdict = { status: 'error', message: (err as Error).message };

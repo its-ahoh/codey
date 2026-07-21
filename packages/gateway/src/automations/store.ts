@@ -37,8 +37,14 @@ export class AutomationStore {
     try {
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       if (raw && Array.isArray(raw.automations)) return raw;
-    } catch { /* first run or unreadable — start fresh */ }
-    return { automations: [] };
+      throw new Error(`Automation store has an invalid root shape: ${this.file}`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { automations: [] };
+      if (err instanceof SyntaxError) {
+        throw new Error(`Automation store is corrupt; refusing to overwrite ${this.file}: ${err.message}`);
+      }
+      throw err;
+    }
   }
 
   private writeRaw(raw: Record<string, unknown>): void {
@@ -78,7 +84,12 @@ export class AutomationStore {
 
   create(draft: AutomationDraft, now: number): Automation {
     return this.mutate(raw => {
-      const a = { ...draft, id: randomUUID(), createdAt: now, updatedAt: now } as Automation;
+      const normalizedSchedule = draft.schedule ? normalizeSchedule(draft.schedule) : undefined;
+      const a = {
+        ...draft,
+        schedule: normalizedSchedule,
+        id: randomUUID(), createdAt: now, updatedAt: now,
+      } as Automation;
       raw.automations.push(a as unknown as Record<string, unknown>);
       return a;
     });
@@ -88,13 +99,23 @@ export class AutomationStore {
     return this.mutate(raw => {
       const cur = raw.automations.find(a => a.id === id);
       if (!cur) throw new Error(`Automation not found: ${id}`);
+      if ('schedule' in patch) {
+        const normalized = patch.schedule ? normalizeSchedule(patch.schedule) : undefined;
+        patch = { ...patch, schedule: normalized };
+      } else if (cur.schedule) {
+        // Any write is also a migration opportunity, so changing an unrelated
+        // field on a legacy automation cannot return the old schedule shape.
+        cur.schedule = normalizeSchedule(cur.schedule);
+      }
       Object.assign(cur, patch, { updatedAt: now });
       return cur as unknown as Automation;
     });
   }
 
   delete(id: string): void {
+    AutomationStore.assertSafeId(id);
     this.mutate(raw => {
+      if (!raw.automations.some(a => a.id === id)) throw new Error(`Automation not found: ${id}`);
       raw.automations = raw.automations.filter(a => a.id !== id);
     });
     try { fs.unlinkSync(this.runFile(id)); } catch { /* no history yet */ }
@@ -117,6 +138,7 @@ export class AutomationStore {
   // ---- run history ----
 
   private runFile(id: string): string {
+    AutomationStore.assertSafeId(id);
     return path.join(this.runsDir, `${id}.jsonl`);
   }
 
@@ -127,6 +149,7 @@ export class AutomationStore {
 
   /** Newest-first. Skips unparseable lines. */
   listRuns(id: string, limit?: number): AutomationRun[] {
+    AutomationStore.assertSafeId(id);
     let text: string;
     try { text = fs.readFileSync(this.runFile(id), 'utf8'); } catch { return []; }
     const runs: AutomationRun[] = [];
@@ -150,7 +173,11 @@ export class AutomationStore {
 
   /** IDs come over IPC — refuse anything that could escape runsDir. */
   private static isSafeId(s: string): boolean {
-    return /^[\w-]+$/.test(s);
+    return typeof s === 'string' && /^[\w-]+$/.test(s);
+  }
+
+  private static assertSafeId(s: string): void {
+    if (!AutomationStore.isSafeId(s)) throw new Error(`Invalid automation or run id: ${String(s)}`);
   }
 
   /** Append one activity-log line. Failures are the caller's to swallow —
@@ -169,6 +196,8 @@ export class AutomationStore {
 
   /** Read-patch-rewrite (atomic). Caps retained history at MAX_HISTORY_REWRITE. */
   patchRun(id: string, runId: string, patch: Partial<AutomationRun>): void {
+    AutomationStore.assertSafeId(id);
+    AutomationStore.assertSafeId(runId);
     const oldestFirst = this.listRuns(id).reverse().slice(-MAX_HISTORY_REWRITE);
     let found = false;
     const lines = oldestFirst.map(r => {

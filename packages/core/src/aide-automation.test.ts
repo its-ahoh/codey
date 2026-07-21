@@ -71,16 +71,16 @@ describe('automationChatTurn', () => {
     // Numeric-string hour in the legacy single shape: coerced, not lost.
     const legacy = await automationChatTurn(msgs, {}, ctx, aide(
       '{"reply":"ok","draftPatch":{"schedule":{"hour":"9","minute":0,"tz":"UTC"}}}'));
-    expect(legacy.draftPatch).toEqual({ schedule: { times: [{ hour: 9, minute: 0 }], tz: 'UTC' } });
+    expect(legacy.draftPatch).toEqual({ schedule: { slots: [{ hour: 9, minute: 0 }], tz: 'UTC' } });
     // Missing tz falls back to the user's zone; times are sorted.
     const noTz = await automationChatTurn(msgs, {}, ctx, aide(
       '{"reply":"ok","draftPatch":{"schedule":{"times":[{"hour":18,"minute":30},{"hour":9,"minute":0}]}}}'));
     expect(noTz.draftPatch).toEqual({
-      schedule: { times: [{ hour: 9, minute: 0 }, { hour: 18, minute: 30 }], tz: 'Asia/Shanghai' },
+      schedule: { slots: [{ hour: 9, minute: 0 }, { hour: 18, minute: 30 }], tz: 'Asia/Shanghai' },
     });
     const good = await automationChatTurn(msgs, {}, ctx, aide(
       '{"reply":"ok","draftPatch":{"schedule":{"times":[{"hour":9,"minute":0}],"tz":"UTC","daysOfWeek":[1,2]}}}'));
-    expect(good.draftPatch).toEqual({ schedule: { times: [{ hour: 9, minute: 0 }], daysOfWeek: [1, 2], tz: 'UTC' } });
+    expect(good.draftPatch).toEqual({ schedule: { slots: [{ hour: 9, minute: 0, daysOfWeek: [1, 2] }], tz: 'UTC' } });
   });
 
   it('drops an unusable schedule patch', async () => {

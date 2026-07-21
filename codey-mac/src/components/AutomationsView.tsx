@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import { OverlayWindow } from './OverlayWindow'
 import { pillButton, unwrap } from './settingsAtoms'
-import { scheduleSummary } from './automationsModel'
+import { humanizeDelta, nextRunAt, scheduleSummary } from './automationsModel'
 import { AutomationChatCreate } from './AutomationChatCreate'
 import { AutomationOnePager } from './AutomationOnePager'
 import { UIIcon } from './UIIcons'
@@ -163,13 +163,25 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
     }
   }
 
-  const targetLabel = (t: AutomationTarget) =>
-    t.kind === 'team' ? `team: ${t.teamName} (${t.workspaceName})` : `prompt: ${t.workspaceName}`
+  const targetLabel = (t: AutomationTarget) => t.kind === 'team'
+    ? `Team · ${t.teamName} · ${t.workspaceName}`
+    : [t.workspaceName, t.agent && `${t.agent}${t.model ? ` · ${t.model}` : ''}`].filter(Boolean).join(' · ')
+
+  const attentionCount = automations.filter(a => {
+    const status = lastStatus[a.id]?.status
+    return status === 'failed' || status === 'parked'
+  }).length
+  const activeCount = automations.filter(a => a.enabled).length
+  const scheduledCount = automations.filter(a => a.enabled && a.schedule).length
+  const ordered = [...automations].sort((a, b) => {
+    const attention = (automation: Automation) => ['failed', 'parked'].includes(lastStatus[automation.id]?.status ?? '') ? 1 : 0
+    return attention(b) - attention(a) || Number(b.enabled) - Number(a.enabled) || b.updatedAt - a.updatedAt
+  })
 
   return (
     <div style={styles.list}>
       <div style={styles.listTop}>
-        <div><div style={styles.listTitle}>Automations</div><div style={styles.listSub}>Let Codey run routine work on a schedule.</div></div>
+        <div><div style={styles.listTitle}>Your automations</div><div style={styles.listSub}>Scheduled and manual workflows managed in one place.</div></div>
         {automations.length > 0 && (
           <button style={{ ...pillButton('primary'), display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={onNew}><UIIcon name="add" size={15} />New automation</button>
         )}
@@ -184,53 +196,104 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
           <button style={{ ...pillButton('primary'), marginTop: 16, display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={onNew}><UIIcon name="add" size={15} />Create automation</button>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {automations.map(a => {
+        <>
+          <div style={styles.listSummary}>
+            <ListStat value={activeCount} label="Active" tone={C.green} />
+            <ListStat value={scheduledCount} label="Scheduled" tone={C.accent} />
+            <ListStat value={attentionCount} label="Need attention" tone={attentionCount ? C.yellow : C.fg3} />
+          </div>
+          <div style={styles.cardList}>
+          {ordered.map(a => {
             const last = lastStatus[a.id]
+            const health = listHealth(a, last)
+            const next = a.enabled && a.schedule ? nextRunAt(a.schedule, Date.now()) : null
             return (
-              <div key={a.id} style={{ ...rowStyle, borderColor: a.enabled ? C.border2 : C.border }}>
-                <input
-                  type="checkbox"
-                  checked={a.enabled}
-                  onChange={() => void toggle(a)}
-                  title={a.enabled ? 'Enabled' : 'Disabled'}
-                  style={{ marginTop: 3 }}
-                />
-                <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => onOpen(a.id)}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', background: a.enabled ? C.accentDim : C.surface3, color: a.enabled ? C.accent : C.fg3 }}><UIIcon name="activity" size={15} /></span>
-                    <span style={{ color: C.fg, fontSize: 13, fontWeight: 600 }}>{a.name}</span>
-                    <span style={{ color: C.fg3, fontSize: 11 }}>{scheduleSummary(a.schedule)}</span>
+              <div key={a.id} style={{ ...rowStyle, opacity: a.enabled ? 1 : .76 }}>
+                <span style={{ ...statusRail, background: health.color }} />
+                <button style={cardMain} onClick={() => onOpen(a.id)}>
+                  <span style={automationIcon(a.enabled)}><UIIcon name={a.target.kind === 'team' ? 'users' : 'activity'} size={16} /></span>
+                  <span style={cardCopy}>
+                    <span style={nameRow}>
+                      <strong style={automationName}>{a.name}</strong>
+                      <span style={statusPill(health.color)}><span style={{ ...statusDot, background: health.color }} />{health.label}</span>
+                    </span>
+                    <span style={scheduleLine}>
+                      <UIIcon name="activity" size={12} />
+                      <span>{scheduleSummary(a.schedule)}</span>
+                      {a.schedule && <span style={timezoneText}>{a.schedule.tz}</span>}
+                    </span>
+                    <span style={targetLine}>{targetLabel(a.target)}</span>
+                  </span>
+                </button>
+                <div style={cardAside}>
+                  <div style={runRecency}>
+                    <span style={runRecencyLabel}>{last ? 'Last run' : next ? 'Next run' : 'Run history'}</span>
+                    <strong style={{ color: last?.status === 'failed' ? C.red : C.fg2, fontSize: 10.5 }}>
+                      {last ? runStatusText(last) : next ? humanizeDelta(next - Date.now()) : 'Not run yet'}
+                    </strong>
+                    {last && <span style={runDate}>{new Date(last.startedAt).toLocaleString()}</span>}
                   </div>
-                  <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>{targetLabel(a.target)}</div>
-                  {last && (
-                    <div style={{ color: last.status === 'failed' ? C.red : C.fg3, fontSize: 11, marginTop: 2 }}>
-                      last run: {last.status}{last.reportFailure ? ' - report delivery failed' : ''}
-                    </div>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                  <button style={pillButton('ghost')} onClick={() => onOpen(a.id)}>Details</button>
-                  <button style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 5 }} disabled={!!runningIds[a.id]} onClick={() => void runNow(a.id)}>
-                    <UIIcon name="play" size={13} />{runningIds[a.id] ? 'Running…' : 'Run'}
+                  <label style={enableToggle} title={a.enabled ? 'Pause automation' : 'Enable automation'}>
+                    <input type="checkbox" checked={a.enabled} onChange={() => void toggle(a)} />
+                    {a.enabled ? 'On' : 'Off'}
+                  </label>
+                  <button style={runButton} disabled={!!runningIds[a.id]} onClick={() => void runNow(a.id)}>
+                    <UIIcon name="play" size={12} />{runningIds[a.id] ? 'Starting…' : 'Run'}
                   </button>
+                  <button style={openButton} title="Open details" aria-label={`Open ${a.name}`} onClick={() => onOpen(a.id)}><UIIcon name="chevron" size={15} /></button>
                 </div>
               </div>
             )
           })}
-        </div>
+          </div>
+        </>
       )}
     </div>
   )
 }
 
+const ListStat: React.FC<{ value: number; label: string; tone: string }> = ({ value, label, tone }) => (
+  <div style={listStat}><strong style={{ color: tone, fontSize: 15 }}>{value}</strong><span>{label}</span></div>
+)
+
+function listHealth(a: Automation, last?: AutomationRun): { label: string; color: string } {
+  if (!a.enabled) return { label: 'Paused', color: C.fg3 }
+  if (last?.status === 'parked') return { label: 'Needs input', color: C.yellow }
+  if (last?.status === 'failed') return { label: 'Needs attention', color: C.red }
+  return { label: a.schedule ? 'Scheduled' : 'Ready', color: C.green }
+}
+
+function runStatusText(run: AutomationRun): string {
+  if (run.reportFailure) return 'Delivery failed'
+  return { success: 'Completed', failed: 'Failed', parked: 'Needs input', resumed: 'Resumed' }[run.status]
+}
+
 // ---------------------------------------------------------------------------
 
 const rowStyle: React.CSSProperties = {
-  display: 'flex', gap: 10, alignItems: 'flex-start',
+  display: 'flex', alignItems: 'stretch', position: 'relative', overflow: 'hidden',
   background: C.surface, border: `1px solid ${C.border}`, borderRadius: 13,
-  padding: '14px 15px', boxShadow: '0 5px 14px rgba(0,0,0,0.06)',
+  boxShadow: '0 5px 14px rgba(0,0,0,0.05)',
 }
+const statusRail: React.CSSProperties = { width: 3, flexShrink: 0 }
+const cardMain: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 11, padding: '13px 14px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', color: 'inherit' }
+const automationIcon = (enabled: boolean): React.CSSProperties => ({ width: 34, height: 34, flexShrink: 0, display: 'grid', placeItems: 'center', borderRadius: 10, background: enabled ? C.accentDim : C.surface3, color: enabled ? C.accent : C.fg3 })
+const cardCopy: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }
+const nameRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }
+const automationName: React.CSSProperties = { color: C.fg, fontSize: 13, fontWeight: 720, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const statusPill = (color: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, padding: '2px 6px', borderRadius: 999, color, background: C.surface3, fontSize: 9, fontWeight: 700 })
+const statusDot: React.CSSProperties = { width: 5, height: 5, borderRadius: 999 }
+const scheduleLine: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, color: C.fg2, fontSize: 10.5, minWidth: 0 }
+const timezoneText: React.CSSProperties = { color: C.fg3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const targetLine: React.CSSProperties = { color: C.fg3, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const cardAside: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, padding: '10px 11px 10px 6px' }
+const runRecency: React.CSSProperties = { width: 130, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1, paddingRight: 5 }
+const runRecencyLabel: React.CSSProperties = { color: C.fg3, fontSize: 8.5, fontWeight: 750, textTransform: 'uppercase', letterSpacing: .45 }
+const runDate: React.CSSProperties = { color: C.fg3, fontSize: 8.5, whiteSpace: 'nowrap' }
+const enableToggle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, color: C.fg3, fontSize: 9.5, cursor: 'pointer', padding: '5px 6px' }
+const runButton: React.CSSProperties = { ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 9px', fontSize: 10.5 }
+const openButton: React.CSSProperties = { width: 28, height: 28, display: 'grid', placeItems: 'center', border: 'none', borderRadius: 8, background: 'transparent', color: C.fg3, cursor: 'pointer' }
+const listStat: React.CSSProperties = { display: 'flex', alignItems: 'baseline', gap: 6, color: C.fg3, fontSize: 10.5, padding: '7px 11px', borderRight: `1px solid ${C.border}` }
 
 const styles: Record<string, React.CSSProperties> = {
   body: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
@@ -242,6 +305,8 @@ const styles: Record<string, React.CSSProperties> = {
   listTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 20 },
   listTitle: { color: C.fg, fontSize: 17, fontWeight: 750, letterSpacing: '-0.02em' },
   listSub: { color: C.fg3, fontSize: 12, marginTop: 4 },
+  listSummary: { display: 'inline-flex', alignItems: 'center', border: `1px solid ${C.border}`, borderRadius: 10, background: C.surface, overflow: 'hidden', marginBottom: 12 },
+  cardList: { display: 'flex', flexDirection: 'column', gap: 8 },
   loading: { color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 46 },
   emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', maxWidth: 320, margin: '70px auto 0' },
   emptyIcon: { width: 60, height: 60, display: 'grid', placeItems: 'center', borderRadius: 18, background: C.accentDim, color: C.accent, border: `1px solid ${C.accent}` },

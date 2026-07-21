@@ -1,37 +1,52 @@
 // codey-mac/src/components/automationsModel.ts
 // Pure helpers for the Automations view — kept separate for unit tests.
 
-export interface ScheduleTimeLike { hour: number; minute: number }
-export interface ScheduleLike { times: ScheduleTimeLike[]; daysOfWeek?: number[]; tz: string }
+export interface ScheduleSlotLike { hour: number; minute: number; daysOfWeek?: number[] }
+export interface ScheduleLike { slots: ScheduleSlotLike[]; tz: string }
+export interface ScheduleSlotInput { time: string; days: number[] }
 
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const pad = (n: number) => String(n).padStart(2, '0')
 
 export function scheduleSummary(s: ScheduleLike | undefined): string {
   if (!s) return 'manual'
-  const time = s.times.map(t => `${pad(t.hour)}:${pad(t.minute)}`).join(', ')
-  if (!s.daysOfWeek || s.daysOfWeek.length === 0 || s.daysOfWeek.length === 7) return `daily ${time}`
-  const days = [...s.daysOfWeek].sort((a, b) => a - b)
-  const contiguous = days.length > 2 && days.every((d, i) => i === 0 || d === days[i - 1] + 1)
-  const label = contiguous
-    ? `${DAY[days[0]]}–${DAY[days[days.length - 1]]}`
-    : days.map(d => DAY[d]).join(', ')
-  return `${label} ${time}`
+  const groups = new Map<string, { days: number[]; times: string[] }>()
+  for (const slot of s.slots) {
+    const days = [...(slot.daysOfWeek ?? [])].sort((a, b) => a - b)
+    const key = days.join(',')
+    const group = groups.get(key) ?? { days, times: [] }
+    group.times.push(`${pad(slot.hour)}:${pad(slot.minute)}`)
+    groups.set(key, group)
+  }
+  return [...groups.values()].map(group => `${dayLabel(group.days)} ${group.times.join(', ')}`).join(' · ')
 }
 
-/** Build a schedule from "HH:MM" strings; null when empty or any is invalid. */
-export function timesToSchedule(hhmms: string[], tz: string, daysOfWeek?: number[]): ScheduleLike | null {
-  if (hhmms.length === 0) return null
-  const times: ScheduleTimeLike[] = []
-  for (const hhmm of hhmms) {
-    const m = hhmm.match(/^(\d{1,2}):(\d{1,2})$/)
+function dayLabel(days: number[]): string {
+  if (days.length === 0 || days.length === 7) return 'daily'
+  const contiguous = days.length > 1 && days.every((d, i) => i === 0 || d === days[i - 1] + 1)
+  return contiguous
+    ? `${DAY[days[0]]}–${DAY[days[days.length - 1]]}`
+    : days.map(d => DAY[d]).join(', ')
+}
+
+/** Build a schedule from linked time/day inputs; null when any slot is invalid. */
+export function slotsToSchedule(inputs: ScheduleSlotInput[], tz: string): ScheduleLike | null {
+  if (inputs.length === 0) return null
+  const slots: ScheduleSlotLike[] = []
+  for (const input of inputs) {
+    const m = input.time.match(/^(\d{1,2}):(\d{1,2})$/)
     if (!m) return null
     const hour = Number(m[1]); const minute = Number(m[2])
     if (hour > 23 || minute > 59) return null
-    if (!times.some(t => t.hour === hour && t.minute === minute)) times.push({ hour, minute })
+    const days = [...new Set(input.days)].sort((a, b) => a - b)
+    if (!days.every(day => Number.isInteger(day) && day >= 0 && day <= 6)) return null
+    const slot = { hour, minute, ...(days.length && days.length < 7 ? { daysOfWeek: days } : {}) }
+    const key = `${hour}:${minute}:${slot.daysOfWeek?.join(',') ?? '*'}`
+    if (!slots.some(existing => `${existing.hour}:${existing.minute}:${existing.daysOfWeek?.join(',') ?? '*'}` === key)) slots.push(slot)
   }
-  times.sort((a, b) => (a.hour * 60 + a.minute) - (b.hour * 60 + b.minute))
-  return { times, tz, ...(daysOfWeek && daysOfWeek.length ? { daysOfWeek } : {}) }
+  slots.sort((a, b) => (a.hour * 60 + a.minute) - (b.hour * 60 + b.minute)
+    || (a.daysOfWeek?.join(',') ?? '').localeCompare(b.daysOfWeek?.join(',') ?? ''))
+  return { slots, tz }
 }
 
 // ---- Notify mode ----
@@ -90,14 +105,14 @@ export function nextRunAt(s: ScheduleLike | undefined, nowMs: number): number | 
   for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
     // Iterate calendar days (Date.UTC normalizes day overflow) so a real-time
     // step across a spring-forward transition can never skip a date.
-    const candidates = s.times
-      .map(t => zonedInstant(base.year, base.month, base.day + dayOffset, t.hour, t.minute, s.tz))
-      .filter(c => c > nowMs)
-      .sort((a, b) => a - b)
+    const candidates = s.slots
+      .map(slot => ({ slot, instant: zonedInstant(base.year, base.month, base.day + dayOffset, slot.hour, slot.minute, s.tz) }))
+      .filter(candidate => candidate.instant > nowMs)
+      .sort((a, b) => a.instant - b.instant)
     for (const candidate of candidates) {
-      const dow = localParts(candidate, s.tz).dayOfWeek
-      if (s.daysOfWeek && s.daysOfWeek.length > 0 && !s.daysOfWeek.includes(dow)) continue
-      return candidate
+      const dow = localParts(candidate.instant, s.tz).dayOfWeek
+      if (candidate.slot.daysOfWeek?.length && !candidate.slot.daysOfWeek.includes(dow)) continue
+      return candidate.instant
     }
   }
   return null
@@ -118,9 +133,7 @@ export function formatHHMM(hour: number, minute: number): string {
 export interface Knobs {
   params: Record<string, string>
   scheduleOn: boolean
-  /** "HH:MM" strings, one per daily firing time. */
-  times: string[]
-  days: number[]
+  slots: ScheduleSlotInput[]
   notify: NotifyMode
 }
 
@@ -131,13 +144,14 @@ interface KnobSource {
 }
 
 /** Seed knobs from an automation. Days are sorted so an unsorted persisted
- *  daysOfWeek can't create a phantom-dirty state. */
+ *  weekday order can't create a phantom-dirty state. */
 export function knobsFrom(a: KnobSource): Knobs {
   return {
     params: { ...a.params },
     scheduleOn: !!a.schedule,
-    times: a.schedule ? a.schedule.times.map(t => formatHHMM(t.hour, t.minute)) : ['09:00'],
-    days: [...(a.schedule?.daysOfWeek ?? [])].sort((x, y) => x - y),
+    slots: a.schedule
+      ? a.schedule.slots.map(slot => ({ time: formatHHMM(slot.hour, slot.minute), days: [...(slot.daysOfWeek ?? [])].sort((x, y) => x - y) }))
+      : [{ time: '09:00', days: [] }],
     notify: a.report.notify,
   }
 }
@@ -147,12 +161,11 @@ export function knobsEqual(k: Knobs, a: KnobSource): boolean {
   if (JSON.stringify(k.params) !== JSON.stringify(a.params)) return false
   if (k.scheduleOn !== !!a.schedule) return false
   if (k.scheduleOn) {
-    const kt = [...k.times].sort()
-    const at = (a.schedule?.times ?? []).map(t => formatHHMM(t.hour, t.minute)).sort()
-    if (JSON.stringify(kt) !== JSON.stringify(at)) return false
-    const kd = [...k.days].sort((x, y) => x - y)
-    const ad = [...(a.schedule?.daysOfWeek ?? [])].sort((x, y) => x - y)
-    if (JSON.stringify(kd) !== JSON.stringify(ad)) return false
+    const canonical = (slots: ScheduleSlotInput[]) => slots
+      .map(slot => ({ time: slot.time, days: [...slot.days].sort((x, y) => x - y) }))
+      .sort((x, y) => x.time.localeCompare(y.time) || x.days.join(',').localeCompare(y.days.join(',')))
+    const actual = (a.schedule?.slots ?? []).map(slot => ({ time: formatHHMM(slot.hour, slot.minute), days: [...(slot.daysOfWeek ?? [])] }))
+    if (JSON.stringify(canonical(k.slots)) !== JSON.stringify(canonical(actual))) return false
   }
   return k.notify === a.report.notify
 }
@@ -160,12 +173,15 @@ export function knobsEqual(k: Knobs, a: KnobSource): boolean {
 export interface DraftLike {
   name?: string
   brief?: string
-  target?: { workspaceName?: string }
+  target?: { kind?: 'prompt' | 'team'; workspaceName?: string; teamName?: string }
 }
 
 /** Client-side gate for the Create/Save button in the authoring chat. */
 export function draftComplete(d: DraftLike): boolean {
-  return !!(d.name?.trim() && d.brief?.trim() && d.target?.workspaceName?.trim())
+  return !!(
+    d.name?.trim() && d.brief?.trim() && d.target?.workspaceName?.trim()
+    && (d.target.kind !== 'team' || d.target.teamName?.trim())
+  )
 }
 
 export type CheckTone = 'dim' | 'good' | 'warn'
@@ -175,10 +191,10 @@ export function checkLabel(
   check: 'pending' | 'clean' | 'gaps' | 'error' | undefined,
 ): { text: string; tone: CheckTone } | null {
   switch (check) {
-    case 'pending': return { text: 'checking…', tone: 'dim' }
-    case 'clean': return { text: 'unattended-ready', tone: 'good' }
-    case 'gaps': return { text: 'may need input during runs', tone: 'warn' }
-    case 'error': return { text: 'check failed', tone: 'dim' }
+    case 'pending': return { text: 'Checking setup…', tone: 'dim' }
+    case 'clean': return { text: 'Ready to run unattended', tone: 'good' }
+    case 'gaps': return { text: 'Needs clarification', tone: 'warn' }
+    case 'error': return { text: 'Check couldn’t run', tone: 'dim' }
     default: return null
   }
 }

@@ -1,59 +1,65 @@
 import type { CodingAgent } from './index';
 
-/** One firing time within a day, in the schedule's `tz`. */
-export interface AutomationScheduleTime {
+/** One independently configured firing slot in the schedule's `tz`. */
+export interface AutomationScheduleSlot {
   /** 0-23. */
   hour: number;
   /** 0-59. */
   minute: number;
+  /** 0=Sun … 6=Sat. Absent = every day. */
+  daysOfWeek?: number[];
 }
 
 /** Structured time-of-day schedule (spec decision #10 — not a cron string). */
 export interface AutomationSchedule {
-  /** One or more firing times per active day (unique, sorted). */
-  times: AutomationScheduleTime[];
-  /** 0=Sun … 6=Sat. Absent = every day. */
-  daysOfWeek?: number[];
+  /** One or more independently scheduled time/day combinations. */
+  slots: AutomationScheduleSlot[];
   /** IANA zone, e.g. "Asia/Shanghai". */
   tz: string;
 }
 
-function coerceScheduleTime(v: unknown): AutomationScheduleTime | undefined {
-  const t = v as { hour?: unknown; minute?: unknown };
+function normalizeDays(v: unknown): number[] | undefined | null {
+  if (v === undefined) return undefined;
+  if (!Array.isArray(v) || !v.every(d => typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 6)) return null;
+  const unique = [...new Set(v as number[])].sort((a, b) => a - b);
+  return unique.length === 0 || unique.length === 7 ? undefined : unique;
+}
+
+function coerceScheduleSlot(v: unknown, fallbackDays?: number[]): AutomationScheduleSlot | undefined {
+  const t = v as { hour?: unknown; minute?: unknown; daysOfWeek?: unknown };
   const hour = typeof t?.hour === 'string' ? Number(t.hour) : t?.hour;
   const minute = typeof t?.minute === 'string' ? Number(t.minute) : t?.minute;
   if (typeof hour !== 'number' || !Number.isInteger(hour) || hour < 0 || hour > 23) return undefined;
   if (typeof minute !== 'number' || !Number.isInteger(minute) || minute < 0 || minute > 59) return undefined;
-  return { hour, minute };
+  const days = normalizeDays(t.daysOfWeek === undefined ? fallbackDays : t.daysOfWeek);
+  if (days === null) return undefined;
+  return { hour, minute, ...(days ? { daysOfWeek: days } : {}) };
 }
 
 /**
- * Coerce a schedule-shaped value to the current schema, or undefined if it
- * can't be one. Accepts the legacy single {hour, minute} shape (pre-`times`
- * files) and numeric strings; dedupes and sorts times. `tz` is NOT defaulted
- * here — callers with a known zone pass `fallbackTz`.
+ * Coerce a schedule-shaped value to the current slot schema, or undefined if
+ * it can't be one. Accepts legacy {times, daysOfWeek} schedules and the oldest
+ * single {hour, minute} shape. `tz` is not defaulted unless supplied.
  */
 export function normalizeSchedule(v: unknown, fallbackTz?: string): AutomationSchedule | undefined {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
-  const s = v as { times?: unknown; daysOfWeek?: unknown; tz?: unknown; hour?: unknown; minute?: unknown };
-  const rawTimes = Array.isArray(s.times) ? s.times : [s];
-  const times: AutomationScheduleTime[] = [];
-  for (const raw of rawTimes) {
-    const t = coerceScheduleTime(raw);
-    if (!t) return undefined;
-    if (!times.some(x => x.hour === t.hour && x.minute === t.minute)) times.push(t);
+  const s = v as { slots?: unknown; times?: unknown; daysOfWeek?: unknown; tz?: unknown; hour?: unknown; minute?: unknown };
+  const legacyDays = normalizeDays(s.daysOfWeek);
+  if (legacyDays === null) return undefined;
+  const rawSlots = Array.isArray(s.slots) ? s.slots : Array.isArray(s.times) ? s.times : [s];
+  const slots: AutomationScheduleSlot[] = [];
+  for (const raw of rawSlots) {
+    const slot = coerceScheduleSlot(raw, legacyDays);
+    if (!slot) return undefined;
+    const key = `${slot.hour}:${slot.minute}:${slot.daysOfWeek?.join(',') ?? '*'}`;
+    if (!slots.some(x => `${x.hour}:${x.minute}:${x.daysOfWeek?.join(',') ?? '*'}` === key)) slots.push(slot);
   }
-  if (times.length === 0) return undefined;
-  times.sort((a, b) => (a.hour * 60 + a.minute) - (b.hour * 60 + b.minute));
+  if (slots.length === 0) return undefined;
+  slots.sort((a, b) => (a.hour * 60 + a.minute) - (b.hour * 60 + b.minute)
+    || (a.daysOfWeek?.join(',') ?? '').localeCompare(b.daysOfWeek?.join(',') ?? ''));
   const tz = typeof s.tz === 'string' && s.tz ? s.tz : fallbackTz;
   if (!tz) return undefined;
-  let daysOfWeek: number[] | undefined;
-  if (s.daysOfWeek !== undefined) {
-    if (!Array.isArray(s.daysOfWeek)) return undefined;
-    if (!s.daysOfWeek.every(d => typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 6)) return undefined;
-    daysOfWeek = s.daysOfWeek as number[];
-  }
-  return { times, ...(daysOfWeek !== undefined ? { daysOfWeek } : {}), tz };
+  return { slots, tz };
 }
 
 export type AutomationTarget =

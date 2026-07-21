@@ -25,7 +25,7 @@ const seed = (over: Partial<Automation> = {}) =>
     name: 'a', enabled: true,
     target: { kind: 'prompt', workspaceName: 'w' },
     brief: 'do it', params: {}, report: { notify: 'none' as const },
-    schedule: { times: [{ hour: 9, minute: 0 }], tz: 'Asia/Shanghai' },
+    schedule: { slots: [{ hour: 9, minute: 0 }], tz: 'Asia/Shanghai' },
     ...over,
   }, 1);
 
@@ -67,7 +67,7 @@ describe('tick', () => {
   });
 
   it('one automation with an invalid tz does not starve the others', async () => {
-    seed({ name: 'broken', schedule: { times: [{ hour: 9, minute: 0 }], tz: 'Beijing' } }); // Intl throws RangeError
+    seed({ name: 'broken', schedule: { slots: [{ hour: 9, minute: 0 }], tz: 'Beijing' } }); // Intl throws RangeError
     const good = seed({ name: 'good' });
     const logs: string[] = [];
     await makeEngine({ log: msg => logs.push(msg) }).tick();
