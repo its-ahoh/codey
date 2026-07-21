@@ -5,15 +5,23 @@ import { McpServerSpec } from '../types';
 
 /**
  * Write a Claude Code MCP config file and return the CLI args referencing it.
- * The temp dir is per-spawn; callers invoke cleanup() after the CLI exits.
+ * Remote entries (spec.url) serialize as `{ type: 'http', url }`; stdio
+ * entries pass command/args/env through. The temp dir is per-spawn; callers
+ * invoke cleanup() after the CLI exits.
  */
 export function writeClaudeMcpConfig(
   servers: Record<string, McpServerSpec>,
 ): { args: string[]; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-mcp-'));
   const file = path.join(dir, 'mcp.json');
+  const mcpServers: Record<string, unknown> = {};
+  for (const [name, spec] of Object.entries(servers)) {
+    mcpServers[name] = spec.url
+      ? { type: 'http', url: spec.url }
+      : { command: spec.command, args: spec.args, env: spec.env };
+  }
   try {
-    fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }));
+    fs.writeFileSync(file, JSON.stringify({ mcpServers }));
   } catch (error) {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
     throw error;
@@ -44,6 +52,8 @@ export function writeClaudeMcpConfig(
 export function codexMcpArgs(servers: Record<string, McpServerSpec>): string[] {
   const args: string[] = [];
   for (const [name, spec] of Object.entries(servers)) {
+    // Codex's -c MCP config is stdio-only; remote servers are skipped.
+    if (spec.url) continue;
     const key = `mcp_servers."${name}"`;
     args.push('-c', `${key}.command=${JSON.stringify(spec.command)}`);
     args.push('-c', `${key}.args=${JSON.stringify(spec.args)}`);
@@ -70,12 +80,14 @@ export function writeOpenCodeMcpConfig(
   const file = path.join(dir, 'opencode.json');
   const mcp: Record<string, unknown> = {};
   for (const [name, spec] of Object.entries(servers)) {
-    mcp[name] = {
-      type: 'local',
-      command: [spec.command, ...spec.args],
-      enabled: true,
-      environment: spec.env,
-    };
+    mcp[name] = spec.url
+      ? { type: 'remote', url: spec.url, enabled: true }
+      : {
+          type: 'local',
+          command: [spec.command, ...spec.args],
+          enabled: true,
+          environment: spec.env,
+        };
   }
   try {
     fs.writeFileSync(file, JSON.stringify({ mcp }));
