@@ -32,6 +32,16 @@ export interface PluginInfo {
   enabled: boolean
 }
 
+export interface ExternalMcpServer {
+  name: string
+  transport: 'stdio' | 'remote'
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  url?: string
+  enabled: boolean
+}
+
 export interface ModelEntry {
   apiType: 'anthropic' | 'openai'
   model: string
@@ -233,6 +243,12 @@ declare global {
       plugins: {
         list: () => Promise<IpcResult<PluginInfo[]>>
         setEnabled: (id: string, enabled: boolean) => Promise<IpcResult<void>>
+      }
+      mcp: {
+        list: () => Promise<IpcResult<ExternalMcpServer[]>>
+        save: (draft: Omit<ExternalMcpServer, 'enabled'> & { enabled?: boolean }) => Promise<IpcResult<void>>
+        remove: (name: string) => Promise<IpcResult<void>>
+        setEnabled: (name: string, enabled: boolean) => Promise<IpcResult<void>>
       }
       skills: {
         list: (agent?: string) => Promise<IpcResult<SkillsListResult>>
