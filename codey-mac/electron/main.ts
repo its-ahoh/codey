@@ -10,6 +10,7 @@ import { decideAutomationNotification, findUnseenRuns } from './automation-notif
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, uniqueSkills } from './skills'
+import { listPlugins } from './plugins'
 import type { ScannedSkill } from './skills'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
@@ -2504,6 +2505,19 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       coreConfigManager.update(updates)
+    })
+  )
+
+  // ── Plugins IPC ───────────────────────────────────────────────────
+  ipcMain.handle('plugins:list', async () =>
+    wrap(async () => listPlugins(coreConfigManager?.get() as any))
+  )
+
+  ipcMain.handle('plugins:setEnabled', async (_e, id: string, enabled: boolean) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      if (id !== 'browser') throw new Error(`Unknown plugin: ${id}`)
+      coreConfigManager.update({ plugins: { [id]: { enabled: enabled === true } } } as any)
     })
   )
 

@@ -25,6 +25,13 @@ export interface SkillsListResult {
   projectDir: string | null
 }
 
+export interface PluginInfo {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+}
+
 export interface ModelEntry {
   apiType: 'anthropic' | 'openai'
   model: string
@@ -222,6 +229,10 @@ declare global {
       aide: {
         get: () => Promise<IpcResult<{ agent?: string; model?: string }>>
         set: (updates: { agent?: string; model?: string }) => Promise<IpcResult<void>>
+      }
+      plugins: {
+        list: () => Promise<IpcResult<PluginInfo[]>>
+        setEnabled: (id: string, enabled: boolean) => Promise<IpcResult<void>>
       }
       skills: {
         list: (agent?: string) => Promise<IpcResult<SkillsListResult>>
