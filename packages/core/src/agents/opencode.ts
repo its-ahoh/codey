@@ -74,6 +74,8 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       // OpenCode is provider-agnostic; default to openai if apiType unset.
       const env = applyModelEnv({ ...process.env }, request.model, 'openai');
       if (request.extraEnv) Object.assign(env, request.extraEnv);
+      // Deliberately after extraEnv: plugin MCP config must win even over a
+      // user-supplied OPENCODE_CONFIG, or enabled plugins would silently vanish.
       Object.assign(env, mcpEnv);
       const childProcess: ChildProcess = spawn('opencode', args, {
         stdio: ['ignore', 'pipe', 'pipe'],
