@@ -310,7 +310,7 @@ declare global {
         addAllowed: (toolNames: string[], chatId?: string) => Promise<IpcResult<{ added: number }>>
       }
       pairing: {
-        start: (channel: 'telegram' | 'discord' | 'imessage') => Promise<IpcResult<string>>
+        start: (channel: 'telegram' | 'discord' | 'imessage') => Promise<IpcResult<{ code: string; deepLink?: string }>>
         list: () => Promise<IpcResult<Array<{
           channel: 'telegram' | 'discord' | 'imessage'
           channelUserId: string
