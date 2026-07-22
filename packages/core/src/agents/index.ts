@@ -47,11 +47,35 @@ export function addCodeyBrowserMcp(
   };
 }
 
+/**
+ * Merge user-configured external MCP servers into a task-performing agent
+ * turn. Uses the same turn gate as the browser plugin — `browserTools` doubles
+ * as the "tools-capable turn" marker, so advisor/housekeeping/tool-restricted
+ * turns get nothing. The reserved `codey-browser` name is filtered, and
+ * servers already on the request always win name conflicts.
+ */
+export function addExternalMcpServers(
+  request: AgentRequest,
+  servers: Record<string, McpServerSpec> | undefined,
+): AgentRequest {
+  if (!servers) return request;
+  if (request.browserTools !== true || !request.context?.workingDir || request.allowedTools) {
+    return request;
+  }
+  const entries = Object.entries(servers).filter(([name]) => name !== 'codey-browser');
+  if (entries.length === 0) return request;
+  return {
+    ...request,
+    mcpServers: { ...Object.fromEntries(entries), ...(request.mcpServers ?? {}) },
+  };
+}
+
 // Agent factory
 export class AgentFactory {
   private agents: Map<CodingAgent, CodingAgentAdapter> = new Map();
   private envProvider?: (agent: CodingAgent) => Record<string, string> | undefined;
   private pluginEnabledProvider?: (plugin: string) => boolean;
+  private externalMcpProvider?: () => Record<string, McpServerSpec> | undefined;
 
   constructor() {
     this.register('claude-code', new ClaudeCodeAdapter());
@@ -82,6 +106,14 @@ export class AgentFactory {
    */
   setPluginEnabledProvider(provider: (plugin: string) => boolean): void {
     this.pluginEnabledProvider = provider;
+  }
+
+  /**
+   * Inject a callback that returns the user's enabled external MCP servers
+   * from the live config, so edits in the renderer apply on the next request.
+   */
+  setExternalMcpProvider(provider: () => Record<string, McpServerSpec> | undefined): void {
+    this.externalMcpProvider = provider;
   }
 
   resetSessions(): void {
@@ -116,6 +148,7 @@ export class AgentFactory {
     }
 
     request = addCodeyBrowserMcp(request, this.pluginEnabledProvider?.('browser') === true);
+    request = addExternalMcpServers(request, this.externalMcpProvider?.());
 
     return adapter.run(request);
   }

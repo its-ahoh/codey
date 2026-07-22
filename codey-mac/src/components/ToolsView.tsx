@@ -4,16 +4,18 @@ import { OverlayWindow } from './OverlayWindow'
 import { SkillsTab } from './SkillsTab'
 import { PlaybooksTab } from './PlaybooksTab'
 import { PluginsTab } from './PluginsTab'
+import { McpTab } from './McpTab'
 import { UIIcon, type IconName } from './UIIcons'
 
 interface Props { onClose: () => void }
 
-type Tab = 'skills' | 'playbooks' | 'plugins'
+type Tab = 'skills' | 'playbooks' | 'plugins' | 'mcp'
 
 const TABS: { key: Tab; label: string; icon: IconName }[] = [
   { key: 'skills',  label: 'Skills',  icon: 'sparkle' },
   { key: 'playbooks', label: 'Playbooks', icon: 'archive' },
   { key: 'plugins', label: 'Plugins', icon: 'tools' },
+  { key: 'mcp', label: 'MCPs', icon: 'server' },
 ]
 
 export const ToolsView: React.FC<Props> = ({ onClose }) => {
@@ -47,6 +49,7 @@ export const ToolsView: React.FC<Props> = ({ onClose }) => {
         {tab === 'skills'  && <SkillsTab addRequest={addSkillRequest} />}
         {tab === 'playbooks' && <PlaybooksTab />}
         {tab === 'plugins' && <PluginsTab />}
+        {tab === 'mcp' && <McpTab />}
       </div>
     </OverlayWindow>
   )

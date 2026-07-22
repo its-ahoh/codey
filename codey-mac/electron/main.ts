@@ -11,6 +11,7 @@ import { validateAutomationChatPatch, validateAutomationDraft, validateAutomatio
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
+import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import type { ScannedSkill } from './skills'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
@@ -2519,6 +2520,42 @@ app.whenReady().then(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
       coreConfigManager.update({ plugins: { [id]: { enabled: enabled === true } } } as any)
+    })
+  )
+
+  // ── External MCP servers IPC ──────────────────────────────────────
+  ipcMain.handle('mcp:list', async () =>
+    wrap(async () => {
+      const servers = (coreConfigManager?.get() as any)?.mcpServers ?? {}
+      return Object.entries(servers)
+        // A hand-edited codey-browser entry can never reach agents; hide it here too.
+        .filter(([name]) => name !== 'codey-browser')
+        .map(([name, cfg]) => ({ name, ...(cfg as object) }))
+    })
+  )
+
+  ipcMain.handle('mcp:save', async (_e, draft: ExternalMcpDraft) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      const result = validateExternalMcp(draft)
+      if (!result.ok) throw new Error(result.error)
+      coreConfigManager.setExternalMcpServer(result.name, result.config)
+    })
+  )
+
+  ipcMain.handle('mcp:remove', async (_e, name: string) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.removeExternalMcpServer(String(name))
+    })
+  )
+
+  ipcMain.handle('mcp:setEnabled', async (_e, name: string, enabled: boolean) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      const existing = coreConfigManager.get().mcpServers?.[String(name)]
+      if (!existing) throw new Error(`Unknown MCP server: ${name}`)
+      coreConfigManager.setExternalMcpServer(String(name), { ...existing, enabled: enabled === true })
     })
   )
 

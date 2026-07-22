@@ -104,6 +104,12 @@ export interface McpServerSpec {
   command: string;
   args: string[];
   env: Record<string, string>;
+  /**
+   * Remote server URL. When set, adapters that support remote MCP serialize
+   * the url and ignore command/args/env (which are empty for remote entries);
+   * adapters without remote support (codex) skip the server entirely.
+   */
+  url?: string;
 }
 
 export interface AgentRequest {

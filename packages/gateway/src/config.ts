@@ -1,9 +1,19 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
-import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, ModelEntry, TeamConfigRaw } from '@codey/core';
+import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, McpServerSpec, ModelEntry, TeamConfigRaw } from '@codey/core';
 
 // ── Configuration types ─────────────────────────────────────────────
+
+/** One user-configured external MCP server as stored in gateway.json. */
+export interface ExternalMcpServerConfig {
+  transport: 'stdio' | 'remote';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  enabled: boolean;
+}
 
 export interface GatewayConfigJson {
   gateway: {
@@ -97,6 +107,12 @@ export interface GatewayConfigJson {
   plugins?: {
     browser?: { enabled: boolean };
   };
+  /**
+   * User-configured external MCP servers, keyed by server name. Enabled
+   * entries are exposed to every task-performing agent turn alongside plugin
+   * servers. Env values are stored in plaintext, same as `apiKeys`.
+   */
+  mcpServers?: Record<string, ExternalMcpServerConfig>;
   notifications?: { enabled?: boolean };
   capture?: { hotkey?: string };
   ui?: { launchAtLogin?: boolean; dockless?: boolean };
@@ -202,6 +218,9 @@ export class ConfigManager extends EventEmitter {
     if (partial.teams !== undefined) this.config.teams = partial.teams;
     if (partial.plugins !== undefined) {
       this.config.plugins = { ...this.config.plugins, ...partial.plugins };
+    }
+    if (partial.mcpServers !== undefined) {
+      this.config.mcpServers = { ...this.config.mcpServers, ...partial.mcpServers };
     }
     if (partial.voice !== undefined) this.config.voice = partial.voice;
     if (partial.notifications !== undefined) {
@@ -422,6 +441,41 @@ export class ConfigManager extends EventEmitter {
     return this.config.plugins?.[name]?.enabled === true;
   }
 
+  // ── External MCP servers ───────────────────────────────────────────
+  /** Add or replace one external MCP server entry. Saves and emits change. */
+  setExternalMcpServer(name: string, cfg: ExternalMcpServerConfig): void {
+    this.config.mcpServers = { ...this.config.mcpServers, [name]: cfg };
+    this.save();
+  }
+
+  /** Delete one external MCP server entry (merge-based update() cannot). */
+  removeExternalMcpServer(name: string): void {
+    if (!this.config.mcpServers || !(name in this.config.mcpServers)) return;
+    const { [name]: _removed, ...rest } = this.config.mcpServers;
+    this.config.mcpServers = rest;
+    this.save();
+  }
+
+  /**
+   * Enabled external servers mapped to the core McpServerSpec shape. Skips
+   * disabled entries, entries missing their transport's required field, and
+   * the reserved `codey-browser` name.
+   */
+  getEnabledExternalMcpServers(): Record<string, McpServerSpec> {
+    const out: Record<string, McpServerSpec> = {};
+    for (const [name, cfg] of Object.entries(this.config.mcpServers ?? {})) {
+      if (!cfg.enabled || name === 'codey-browser') continue;
+      if (cfg.transport === 'remote') {
+        if (!cfg.url) continue;
+        out[name] = { command: '', args: [], env: {}, url: cfg.url };
+      } else if (cfg.transport === 'stdio') {
+        if (!cfg.command) continue;
+        out[name] = { command: cfg.command, args: cfg.args ?? [], env: cfg.env ?? {} };
+      }
+    }
+    return out;
+  }
+
   // ── Channels ───────────────────────────────────────────────────────
   getTelegramConfig() { return this.config.channels.telegram; }
   getDiscordConfig() { return this.config.channels.discord; }
@@ -628,6 +682,25 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
     out.plugins = {
       browser: { enabled: raw.plugins.browser?.enabled === true },
     };
+  }
+  if (raw.mcpServers && typeof raw.mcpServers === 'object') {
+    const servers: Record<string, ExternalMcpServerConfig> = {};
+    for (const [name, value] of Object.entries(raw.mcpServers as Record<string, any>)) {
+      if (!value || typeof value !== 'object') continue;
+      const transport = value.transport === 'remote' ? 'remote' : value.transport === 'stdio' ? 'stdio' : null;
+      if (!transport) continue; // unknown transports are dropped, not guessed
+      servers[name] = {
+        transport,
+        command: typeof value.command === 'string' ? value.command : undefined,
+        args: Array.isArray(value.args) ? value.args.map(String) : undefined,
+        env: value.env && typeof value.env === 'object'
+          ? Object.fromEntries(Object.entries(value.env).map(([k, v]) => [k, String(v)]))
+          : undefined,
+        url: typeof value.url === 'string' ? value.url : undefined,
+        enabled: value.enabled === true,
+      };
+    }
+    out.mcpServers = servers;
   }
   if (raw.voice && typeof raw.voice === 'object') {
     out.voice = raw.voice;

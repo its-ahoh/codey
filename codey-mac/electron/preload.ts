@@ -117,6 +117,12 @@ contextBridge.exposeInMainWorld('codey', {
     list: () => ipcRenderer.invoke('plugins:list'),
     setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('plugins:setEnabled', id, enabled),
   },
+  mcp: {
+    list: () => ipcRenderer.invoke('mcp:list'),
+    save: (draft: any) => ipcRenderer.invoke('mcp:save', draft),
+    remove: (name: string) => ipcRenderer.invoke('mcp:remove', name),
+    setEnabled: (name: string, enabled: boolean) => ipcRenderer.invoke('mcp:setEnabled', name, enabled),
+  },
   skills: {
     list: (agent?: string) => ipcRenderer.invoke('skills:list', agent),
     install: (payload: { agent?: string; scope: 'user' | 'project'; localDir?: string; gitUrl?: string }) =>

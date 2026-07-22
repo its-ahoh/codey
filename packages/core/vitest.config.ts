@@ -17,6 +17,7 @@ export default defineConfig({
       'src/agents/thinking-stream.test.ts',
       'src/agents/browser-mcp.test.ts',
       'src/agents/mcp-config.test.ts',
+      'src/agents/external-mcp.test.ts',
       'src/solo-advisor.test.ts',
       'src/team-graph.test.ts',
       'src/judge.test.ts',

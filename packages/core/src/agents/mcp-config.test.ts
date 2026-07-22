@@ -11,6 +11,8 @@ const servers: Record<string, McpServerSpec> = {
   },
 };
 
+const remote: McpServerSpec = { command: '', args: [], env: {}, url: 'https://mcp.linear.app/sse' };
+
 const cleanups: Array<() => void> = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
 
@@ -27,6 +29,13 @@ describe('writeClaudeMcpConfig', () => {
     const { args, cleanup } = writeClaudeMcpConfig(servers);
     cleanup();
     expect(fs.existsSync(args[1])).toBe(false);
+  });
+
+  it('serializes remote servers as http url entries', () => {
+    const { args, cleanup } = writeClaudeMcpConfig({ linear: remote });
+    cleanups.push(cleanup);
+    const parsed = JSON.parse(fs.readFileSync(args[1], 'utf-8'));
+    expect(parsed.mcpServers.linear).toEqual({ type: 'http', url: remote.url });
   });
 });
 
@@ -48,6 +57,12 @@ describe('codexMcpArgs', () => {
     expect(args).toContain('mcp_servers."bare".args=[]');
     expect(args).toContain('mcp_servers."bare".tool_timeout_sec=600');
   });
+
+  it('skips remote servers (codex has no remote MCP config)', () => {
+    const args = codexMcpArgs({ linear: remote, ...servers });
+    expect(args.join(' ')).not.toContain('linear');
+    expect(args.join(' ')).toContain('codey-browser');
+  });
 });
 
 describe('writeOpenCodeMcpConfig', () => {
@@ -61,5 +76,12 @@ describe('writeOpenCodeMcpConfig', () => {
       enabled: true,
       environment: servers['codey-browser'].env,
     });
+  });
+
+  it('serializes remote servers as remote url entries', () => {
+    const { env, cleanup } = writeOpenCodeMcpConfig({ linear: remote });
+    cleanups.push(cleanup);
+    const parsed = JSON.parse(fs.readFileSync(env.OPENCODE_CONFIG, 'utf-8'));
+    expect(parsed.mcp.linear).toEqual({ type: 'remote', url: remote.url, enabled: true });
   });
 });
