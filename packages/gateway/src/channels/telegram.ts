@@ -63,9 +63,20 @@ function markdownToTelegramHtml(text: string): string {
   return result.join('\n');
 }
 
+/**
+ * Rewrite a Telegram deep-link start command (`/start pair_123456`, produced by
+ * scanning the pairing QR code) into the equivalent `/pair 123456` command.
+ * Any other text passes through unchanged.
+ */
+export function rewriteStartPairCommand(text: string): string {
+  const m = text.match(/^\/start pair_(\d{6})$/);
+  return m ? `/pair ${m[1]}` : text;
+}
+
 export class TelegramHandler extends BaseChannelHandler {
   name = 'telegram';
   private bot?: TelegramBot;
+  private botUsername?: string;
   private typingIntervals: Map<string, NodeJS.Timeout> = new Map();
   private lastChoiceMessageByChat = new Map<string, number>(); // chatId → message_id
 
@@ -76,6 +87,12 @@ export class TelegramHandler extends BaseChannelHandler {
         params: { timeout: 30 },
       },
     });
+
+    // Bot username powers the t.me pairing deep link; pairing falls back to
+    // manual code entry if this lookup fails.
+    this.bot.getMe()
+      .then(me => { this.botUsername = me.username; })
+      .catch(err => console.log(`[Telegram] getMe failed: ${err.message}`));
 
     // Log transient polling errors at debug level (ECONNRESET, ETIMEDOUT, etc.)
     this.bot.on('polling_error', (err: Error) => {
@@ -118,7 +135,7 @@ export class TelegramHandler extends BaseChannelHandler {
         userId: msg.from.id.toString(),
         username: msg.from.username || msg.from.first_name || 'unknown',
         chatId,
-        text: msg.text,
+        text: rewriteStartPairCommand(msg.text),
         timestamp: msg.date * 1000,
       };
 
@@ -161,6 +178,10 @@ export class TelegramHandler extends BaseChannelHandler {
     });
 
     console.log('[Telegram] Handler started');
+  }
+
+  getBotUsername(): string | undefined {
+    return this.botUsername;
   }
 
   async stop(): Promise<void> {

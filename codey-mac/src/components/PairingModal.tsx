@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import QRCode from 'qrcode'
 import { apiService } from '../services/api'
 import { C } from '../theme'
 
@@ -9,12 +10,24 @@ export interface PairingModalProps {
 
 export function PairingModal({ channel, onClose }: PairingModalProps) {
   const [code, setCode] = useState<string | null>(null)
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     apiService.startPairing(channel)
-      .then(c => { if (!cancelled) setCode(c) })
+      .then(async ({ code, deepLink }) => {
+        if (cancelled) return
+        setCode(code)
+        if (deepLink) {
+          try {
+            const url = await QRCode.toDataURL(deepLink, { width: 220, margin: 1 })
+            if (!cancelled) setQrDataUrl(url)
+          } catch {
+            // QR generation failure is non-fatal; manual code entry still works.
+          }
+        }
+      })
       .catch(e => { if (!cancelled) setError(e.message) })
     return () => { cancelled = true }
   }, [channel])
@@ -27,11 +40,24 @@ export function PairingModal({ channel, onClose }: PairingModalProps) {
         {!error && !code && <p style={styles.hint}>Generating code…</p>}
         {code && (
           <>
-            {channel === 'imessage' ? (
+            {qrDataUrl && (
+              <>
+                <p>
+                  {channel === 'telegram'
+                    ? 'Scan with your phone to open the bot, then tap Start:'
+                    : 'Scan with your iPhone, address the message to this Mac’s Apple ID, and send:'}
+                </p>
+                <div style={styles.qrWrap}>
+                  <img src={qrDataUrl} alt="Pairing QR code" style={styles.qr} />
+                </div>
+                <p style={styles.hint}>Or pair manually:</p>
+              </>
+            )}
+            {!qrDataUrl && (channel === 'imessage' ? (
               <p>From another Apple device, send an iMessage to this Mac's Apple&nbsp;ID with the command:</p>
             ) : (
               <p>On your {channel} app, send this command to the bot:</p>
-            )}
+            ))}
             <pre style={styles.code}>/pair {code}</pre>
             {channel === 'imessage' && (
               <p style={styles.hint}>
@@ -66,6 +92,18 @@ const styles: Record<string, React.CSSProperties> = {
   title: { margin: '0 0 12px 0' },
   hint: { color: C.fg2, fontSize: 12 },
   error: { color: C.red },
+  qrWrap: {
+    display: 'flex',
+    justifyContent: 'center',
+    margin: '12px 0',
+  },
+  qr: {
+    width: 220,
+    height: 220,
+    borderRadius: 4,
+    // Quiet zone stays legible for scanners regardless of app theme.
+    background: '#fff',
+  },
   code: {
     background: C.surface2,
     padding: '8px 12px',

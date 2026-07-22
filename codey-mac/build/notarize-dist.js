@@ -24,6 +24,7 @@ const path = require('path');
 const os = require('os');
 
 const pkg = require('../package.json');
+const { regenerateLatestYml } = require('./latest-yml.js');
 const PRODUCT = pkg.build.productName; // "Codey"
 const VERSION = pkg.version;
 const RELEASE = path.join(__dirname, '..', 'release');
@@ -178,4 +179,15 @@ if (did === 0) {
   console.error(`ERROR: no built apps found under ${RELEASE}/mac* — run build:mac:signed first.`);
   process.exit(1);
 }
+
+// Repackaging/stapling above changed the artifact bytes, so the sha512/size
+// electron-builder wrote into latest-mac.yml no longer match. Rewrite them
+// from the final files or the updater fails with a checksum mismatch right
+// after the download completes.
+const rehashed = regenerateLatestYml(RELEASE, 'latest-mac.yml');
+if (rehashed.length === 0) {
+  console.error(`ERROR: no latest-mac.yml artifacts found under ${RELEASE} to re-hash — auto-update metadata would be stale.`);
+  process.exit(1);
+}
+console.log(`  • refreshed latest-mac.yml hashes for: ${rehashed.join(', ')}`);
 console.log(`\n✓ notarized + stapled ${did} arch(es).`);

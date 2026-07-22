@@ -665,9 +665,23 @@ export class Codey {
     this.pairingEventListener = fn;
   }
 
-  /** Mac calls this to start a pairing flow. Returns a 6-digit code shown in the UI. */
-  public startPairing(channel: ChannelKind): string {
-    return this.pairingStore.startPairing({ channel });
+  /**
+   * Mac calls this to start a pairing flow. Returns a 6-digit code shown in
+   * the UI, plus a deep link (rendered as a QR code) when the channel supports
+   * sending the code without typing it: Telegram via a t.me ?start payload,
+   * iMessage via an sms: compose link with the command prefilled.
+   */
+  public startPairing(channel: ChannelKind): { code: string; deepLink?: string } {
+    const code = this.pairingStore.startPairing({ channel });
+    let deepLink: string | undefined;
+    if (channel === 'telegram') {
+      const handler = this.handlers.get('telegram');
+      const username = handler instanceof TelegramHandler ? handler.getBotUsername() : undefined;
+      if (username) deepLink = `https://t.me/${username}?start=pair_${code}`;
+    } else if (channel === 'imessage') {
+      deepLink = `sms:&body=${encodeURIComponent(`/pair ${code}`)}`;
+    }
+    return { code, deepLink };
   }
 
   public listPairings(): ChannelBinding[] {

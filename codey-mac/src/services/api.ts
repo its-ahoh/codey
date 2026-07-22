@@ -218,7 +218,7 @@ export const apiService = {
   unlinkChat: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<Chat> =>
     unwrap(await window.codey.chats.unlink(chatId, channel, channelUserId)),
 
-  startPairing: async (channel: 'telegram' | 'discord' | 'imessage'): Promise<string> =>
+  startPairing: async (channel: 'telegram' | 'discord' | 'imessage'): Promise<{ code: string; deepLink?: string }> =>
     unwrap(await window.codey.pairing.start(channel)),
 
   listPairings: async (): Promise<Array<{
