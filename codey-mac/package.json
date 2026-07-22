@@ -117,6 +117,10 @@
       {
         "from": "electron/browser-agent-cli.cjs",
         "to": "browser-agent-cli.cjs"
+      },
+      {
+        "from": "electron/browser-mcp-server.cjs",
+        "to": "browser-mcp-server.cjs"
       }
     ]
   }

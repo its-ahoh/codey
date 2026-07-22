@@ -113,6 +113,10 @@ contextBridge.exposeInMainWorld('codey', {
     get: () => ipcRenderer.invoke('aide:get'),
     set: (updates: { agent?: string; model?: string }) => ipcRenderer.invoke('aide:set', updates),
   },
+  plugins: {
+    list: () => ipcRenderer.invoke('plugins:list'),
+    setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('plugins:setEnabled', id, enabled),
+  },
   skills: {
     list: (agent?: string) => ipcRenderer.invoke('skills:list', agent),
     install: (payload: { agent?: string; scope: 'user' | 'project'; localDir?: string; gitUrl?: string }) =>

@@ -3,6 +3,7 @@ import { AgentRequest, AgentResponse, AgentStateEntry, StatusUpdate } from '../t
 import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
 import { thinkingDeltaFrom } from './thinking-stream';
+import { writeClaudeMcpConfig } from './mcp-config';
 
 interface StreamEvent {
   type: string;
@@ -91,6 +92,13 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         args.push('--model', request.model.model);
       }
 
+      let mcpCleanup: (() => void) | undefined;
+      if (request.mcpServers && Object.keys(request.mcpServers).length > 0) {
+        const mcp = writeClaudeMcpConfig(request.mcpServers);
+        args.push(...mcp.args);
+        mcpCleanup = mcp.cleanup;
+      }
+
       // -p with prompt must be last (matches tested CLI format)
       args.push('-p', request.prompt);
 
@@ -103,6 +111,14 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // User-configured per-agent env wins over credentials — lets power users
       // pin CLAUDE_CONFIG_DIR / ANTHROPIC_AUTH_TOKEN explicitly when needed.
       if (request.extraEnv) Object.assign(env, request.extraEnv);
+
+      // MCP tool calls can legitimately block for minutes (e.g. the browser
+      // permission gate waits for the user). Default to generous timeouts,
+      // but let explicit user env win.
+      if (request.mcpServers && Object.keys(request.mcpServers).length > 0) {
+        if (!env.MCP_TIMEOUT) env.MCP_TIMEOUT = '60000';
+        if (!env.MCP_TOOL_TIMEOUT) env.MCP_TOOL_TIMEOUT = '600000';
+      }
 
       // Ensure common bin paths are available (Electron apps may have minimal PATH)
       const homedir = process.env.HOME || '';
@@ -128,6 +144,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       this.activeProcess = childProcess;
 
       childProcess.on('close', () => {
+        mcpCleanup?.();
         this.activeProcess = undefined;
       });
 
@@ -391,6 +408,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       });
 
       childProcess.on('error', (err: Error) => {
+        mcpCleanup?.();
         const duration = Math.round((Date.now() - startTime) / 1000);
         this.debug(`[claude-code] Spawn error: ${err.message}`);
         const spawnError = new AgentSpawnError(this.name, err.message);

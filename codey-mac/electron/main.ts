@@ -10,6 +10,7 @@ import { decideAutomationNotification, findUnseenRuns } from './automation-notif
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, uniqueSkills } from './skills'
+import { isKnownPlugin, listPlugins } from './plugins'
 import type { ScannedSkill } from './skills'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
@@ -81,6 +82,12 @@ function browserAgentCliPath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'browser-agent-cli.cjs')
     : join(app.getAppPath(), 'electron', 'browser-agent-cli.cjs')
+}
+
+function browserMcpServerPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'browser-mcp-server.cjs')
+    : join(app.getAppPath(), 'electron', 'browser-mcp-server.cjs')
 }
 
 // Single-instance guard: a second launch (vite restart leaving a stale main
@@ -1438,7 +1445,9 @@ app.whenReady().then(async () => {
     const bridge = await browserAgentBridge.start()
     process.env.CODEY_BROWSER_SOCKET = bridge.socketPath
     process.env.CODEY_BROWSER_TOKEN = bridge.token
+    // Retained for the still-shipped standalone browser-agent-cli.cjs; agents now use CODEY_BROWSER_MCP.
     process.env.CODEY_BROWSER_CLI = browserAgentCliPath()
+    process.env.CODEY_BROWSER_MCP = browserMcpServerPath()
     process.env.CODEY_BROWSER_RUNTIME = process.execPath
   } catch (error: any) {
     sendToRenderer('gateway-log', `[browser] agent bridge failed to start: ${error?.message ?? error}`)
@@ -2497,6 +2506,19 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       coreConfigManager.update(updates)
+    })
+  )
+
+  // ── Plugins IPC ───────────────────────────────────────────────────
+  ipcMain.handle('plugins:list', async () =>
+    wrap(async () => listPlugins(coreConfigManager?.get() as any))
+  )
+
+  ipcMain.handle('plugins:setEnabled', async (_e, id: string, enabled: boolean) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
+      coreConfigManager.update({ plugins: { [id]: { enabled: enabled === true } } } as any)
     })
   )
 

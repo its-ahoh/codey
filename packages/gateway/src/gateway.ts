@@ -555,6 +555,12 @@ export class Codey {
       const slot = this.configManager?.getAgentConfig(a);
       return slot?.env;
     });
+    // Plugins are opt-in: the factory only attaches plugin MCP servers when
+    // the user has enabled them in config. Read live so toggling in the
+    // renderer applies on the next agent spawn without a restart.
+    this.agentFactory.setPluginEnabledProvider((plugin) =>
+      plugin === 'browser' && this.configManager?.isPluginEnabled('browser') === true
+    );
     this.logger = logger || Logger.getInstance();
     this.contextManager = new ContextManager({
       maxTokenBudget: config.context?.maxTokenBudget ?? 12000,

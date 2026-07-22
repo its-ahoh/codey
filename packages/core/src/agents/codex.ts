@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import { AgentRequest, AgentResponse, AgentStateEntry } from '../types';
 import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
+import { codexMcpArgs } from './mcp-config';
 
 /**
  * Codex emits JSONL events to stdout when invoked with `--json`.
@@ -70,6 +71,9 @@ export class CodexAdapter extends BaseAgentAdapter {
       }
       if (request.context?.workingDir) {
         args.push('--cd', request.context.workingDir);
+      }
+      if (request.mcpServers && Object.keys(request.mcpServers).length > 0) {
+        args.push(...codexMcpArgs(request.mcpServers));
       }
       args.push(request.prompt);
 
