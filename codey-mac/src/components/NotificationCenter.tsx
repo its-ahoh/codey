@@ -47,7 +47,7 @@ export const NotificationCenter: React.FC = () => {
         aria-label="Notifications"
         style={styles.bellButton}
       >
-        <span style={styles.bellGlyph}><UIIcon name="activity" size={16} /></span>
+        <span style={styles.bellGlyph}><UIIcon name="bell" size={16} /></span>
         {hasInProgress && <span style={styles.pulseDot} />}
         {unreadCount > 0 && (
           <span style={styles.badge}>{unreadCount > 9 ? '9+' : unreadCount}</span>

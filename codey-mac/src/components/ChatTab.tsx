@@ -24,11 +24,30 @@ import { BranchPicker } from './BranchPicker'
 import { CreatePrModal } from './CreatePrModal'
 import { UIIcon } from './UIIcons'
 import { chatInputHistory, moveInInputHistory } from './chatInputHistory'
+import vscodeLogo from '../assets/editors/vscode.svg'
+import cursorLogo from '../assets/editors/cursor.svg'
+import xcodeLogo from '../assets/editors/xcode.svg'
+import type { BrowserLoginWaitEvent } from '../codey-api'
+import { WorkspaceDock, type WorkspaceDockTool } from './WorkspaceDock'
+import { TerminalPanel } from './TerminalPanel'
+
+const EDITOR_LOGOS: Partial<Record<string, string>> = {
+  vscode: vscodeLogo,
+  cursor: cursorLogo,
+  xcode: xcodeLogo,
+}
 
 interface Props {
   chatId: string
   isGatewayRunning: boolean
   coreFailed?: boolean
+  rightPanelMode: WorkspaceDockTool | null
+  onRightPanelModeChange: (mode: WorkspaceDockTool | null) => void
+  rightPanelWidth: number
+  onRightPanelResize: (width: number) => void
+  browserLoginWait?: BrowserLoginWaitEvent | null
+  onConfirmBrowserLogin?: (event: BrowserLoginWaitEvent) => void
+  onDismissBrowserLogin?: () => void
 }
 
 const SendIcon: React.FC<{ color: string }> = ({ color }) => (
@@ -325,7 +344,11 @@ const TeamRunGroup: React.FC<{
   )
 }
 
-export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed }) => {
+export const ChatTab: React.FC<Props> = ({
+  chatId, isGatewayRunning, coreFailed,
+  rightPanelMode, onRightPanelModeChange, rightPanelWidth, onRightPanelResize,
+  browserLoginWait, onConfirmBrowserLogin, onDismissBrowserLogin,
+}) => {
   const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setWorkingDir: setChatWorkingDir, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
@@ -368,10 +391,11 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   const [selectedTurnIdState, setSelectedTurnIdState] = useState<string | null>(null)
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
   const [taskBriefLoading, setTaskBriefLoading] = useState(false)
-  const [panelWidth, setPanelWidth] = useState<number>(() => {
-    const v = localStorage.getItem('codey.contextPanelWidth')
-    const n = v ? parseInt(v, 10) : NaN
-    return Number.isFinite(n) ? Math.max(260, Math.min(900, n)) : 340
+  const [statusSidecarHidden, setStatusSidecarHidden] = useState(false)
+  const [bottomTerminalOpen, setBottomTerminalOpen] = useState(false)
+  const [bottomTerminalHeight, setBottomTerminalHeight] = useState<number>(() => {
+    const value = Number(localStorage.getItem('codey.bottomTerminalHeight'))
+    return Number.isFinite(value) ? Math.max(180, Math.min(560, value)) : 280
   })
   // Manual composer height (px). null = auto-grow up to 120px (default
   // behavior). Once the user drags the handle we pin an explicit height so
@@ -471,6 +495,18 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   // header BranchPicker both operate on this effective dir.
   const workingDir = chat?.workingDirOverride || workspaceDir
 
+  const changeRightPanelMode = useCallback((mode: WorkspaceDockTool | null) => {
+    onRightPanelModeChange(mode)
+    if (chat) void setContextPanelOpen(chat.id, mode !== null)
+  }, [chat?.id, onRightPanelModeChange, setContextPanelOpen])
+
+  // Browser requests can originate in the main shell (agent control,
+  // permissions, sidebar). Persist the shared panel's open state on the chat
+  // when one of those requests selects a tool.
+  useEffect(() => {
+    if (rightPanelMode && chat && !chat.contextPanelOpen) void setContextPanelOpen(chat.id, true)
+  }, [rightPanelMode, chat?.id, chat?.contextPanelOpen, setContextPanelOpen])
+
   const loadEditors = useCallback(async () => {
     if (editorsLoaded) return editors
     const result = await window.codey.editors.list()
@@ -514,6 +550,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
     const preferred = available.find(editor => editor.id === preferredEditorId) ?? available[0]
     if (preferred) await openInEditor(preferred)
   }
+
+  const preferredEditor = editors.find(editor => editor.id === preferredEditorId && editor.installed)
 
   const { status: gitStatus, refresh: refreshGit } = useGitStatus(workingDir)
   const [showPrModal, setShowPrModal] = useState(false)
@@ -606,7 +644,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
       try { ta.setSelectionRange(len, len) } catch { /* not supported */ }
     })
   }, [restoreText, chatId])
-  useEffect(() => { localStorage.setItem('codey.contextPanelWidth', String(panelWidth)) }, [panelWidth])
+  useEffect(() => { localStorage.setItem('codey.bottomTerminalHeight', String(bottomTerminalHeight)) }, [bottomTerminalHeight])
   // Track window width so the context panel can shrink (or be hidden) when
   // the user resizes Codey down — at small widths the middle column was
   // collapsing to ~200px and wrapping CJK characters one per line.
@@ -622,16 +660,21 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   }, [chatId])
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      // Cmd/Ctrl+Backslash mirrors VS Code's toggle-sidebar binding and avoids
-      // colliding with Electron's built-in Cmd+Shift+I devtools accelerator.
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === '\\') {
         e.preventDefault()
-        if (chat) setContextPanelOpen(chat.id, !(chat.contextPanelOpen ?? false))
+        changeRightPanelMode((rightPanelMode ?? (chat?.contextPanelOpen ? 'overview' : null)) ? null : 'overview')
+      } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'j') {
+        e.preventDefault()
+        setBottomTerminalOpen(open => {
+          const next = !open
+          if (next && rightPanelMode === 'terminal') changeRightPanelMode('overview')
+          return next
+        })
       }
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [chat?.id, chat?.contextPanelOpen])
+  }, [chat?.id, chat?.contextPanelOpen, rightPanelMode, changeRightPanelMode])
 
   const drainPendingPairing = React.useCallback(() => {
     const ch = consumePendingPairing(chatId)
@@ -677,7 +720,10 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
     }
     return null
   })()
-  const panelOpen: boolean = chat?.contextPanelOpen ?? false
+  const resolvedRightPanelMode: WorkspaceDockTool | null = rightPanelMode
+    ?? (chat?.contextPanelOpen ? 'overview' : null)
+  const panelOpen = resolvedRightPanelMode !== null
+  const overviewOpen = resolvedRightPanelMode === 'overview'
 
   // The Status sidecar floats over the chat's top-right when the panel is
   // closed (it's absolutely positioned, so it takes no layout space). Hidden on
@@ -686,7 +732,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   const SIDECAR_W = 264
   const sidecarFits = windowWidth >= 720
   const hasAssistantMsg = (chat?.messages ?? []).some(m => m.role === 'assistant')
-  const sidecarVisible = !panelOpen && sidecarFits && !!chat && hasAssistantMsg
+  const sidecarVisible = !panelOpen && !statusSidecarHidden && sidecarFits && !!chat && hasAssistantMsg
 
   // Self-populate the Status sidecar's brief while the panel is closed. Mirrors
   // the panel's turn-boundary refresh but gates on the sidecar being visible
@@ -864,7 +910,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
   }
 
   const openQuickQuestion = (initial?: string) => {
-    setContextPanelOpen(chat.id, true)
+    changeRightPanelMode('overview')
     setPanelTab('qq')
     if (initial && initial.trim()) {
       void askQuickQuestion(chat.id, initial.trim())
@@ -872,6 +918,26 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
       // Focus the QQ composer on the next paint, once the panel has mounted.
       setTimeout(() => qqInputRef.current?.focus(), 50)
     }
+  }
+
+  const startBottomTerminalResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const startY = event.clientY
+    const startHeight = bottomTerminalHeight
+    const move = (next: PointerEvent) => {
+      setBottomTerminalHeight(Math.max(180, Math.min(window.innerHeight * 0.7, startHeight + startY - next.clientY)))
+    }
+    const up = (next: PointerEvent) => {
+      move(next)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
   }
 
   const send = async () => {
@@ -1048,12 +1114,17 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
               onClick={() => void openPreferredEditor()}
               style={styles.openInPrimary}
               disabled={!workingDir || openingEditor !== null || (editorsLoaded && !editors.some(editor => editor.installed))}
-              title={workingDir ? 'Open this project in the preferred editor' : 'Project directory is unavailable'}
+              title={workingDir
+                ? `Open this project${preferredEditor ? ` in ${preferredEditor.name}` : ''}`
+                : 'Project directory is unavailable'}
+              aria-label={preferredEditor ? `Open in ${preferredEditor.name}` : 'Open in editor'}
             >
-              <UIIcon name="code" size={14} />
-              <span>{openingEditor
-                ? 'Opening…'
-                : editors.find(editor => editor.id === preferredEditorId && editor.installed)?.name ?? 'Open in'}</span>
+              {preferredEditor && EDITOR_LOGOS[preferredEditor.id] ? (
+                <img src={EDITOR_LOGOS[preferredEditor.id]} alt="" style={styles.editorIcon} />
+              ) : (
+                <UIIcon name="code" size={15} />
+              )}
+              {openingEditor && <span style={styles.editorOpeningLabel}>Opening…</span>}
             </button>
             <button
               onClick={() => void toggleEditorMenu()}
@@ -1079,8 +1150,11 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                       disabled={openingEditor !== null}
                       onClick={() => void openInEditor(editor)}
                     >
-                      <UIIcon name={editor.id === preferredEditorId ? 'check' : 'code'} size={14} />
+                      {EDITOR_LOGOS[editor.id]
+                        ? <img src={EDITOR_LOGOS[editor.id]} alt="" style={styles.editorMenuIcon} />
+                        : <UIIcon name="code" size={14} />}
                       <span>{openingEditor === editor.id ? `Opening ${editor.name}…` : editor.name}</span>
+                      {editor.id === preferredEditorId && <UIIcon name="check" size={14} />}
                     </button>
                   ))
                 ) : (
@@ -1240,7 +1314,19 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
           )}
         </div>
         <button
-          onClick={() => setContextPanelOpen(chat.id, !panelOpen)}
+          onClick={() => setBottomTerminalOpen(open => {
+            const next = !open
+            if (next && resolvedRightPanelMode === 'terminal') changeRightPanelMode('overview')
+            return next
+          })}
+          style={{ ...styles.linkBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px' }}
+          title={bottomTerminalOpen ? 'Hide bottom Terminal (⌘J)' : 'Show bottom Terminal (⌘J)'}
+          aria-label={bottomTerminalOpen ? 'Hide bottom Terminal' : 'Show bottom Terminal'}
+        >
+          <UIIcon name="terminal" color={C.fg} filled={bottomTerminalOpen} />
+        </button>
+        <button
+          onClick={() => changeRightPanelMode(panelOpen ? null : 'overview')}
           style={{ ...styles.linkBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px' }}
           title={panelOpen ? 'Hide context panel (⌘\\)' : 'Show context panel (⌘\\)'}
           aria-label={panelOpen ? 'Hide context panel' : 'Show context panel'}
@@ -1260,12 +1346,12 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                 item={item}
                 isStreaming={!!flight && item.messages[item.messages.length - 1]?.id === lastMsg?.id}
                 selectedTurnId={selectedTurnId}
-                panelOpen={panelOpen}
+                panelOpen={overviewOpen}
                 onSelectTurn={(id: string) => {
                   setSelectedTurnIdState(id)
                   setFollowLatest(false)
-                  if (!panelOpen) {
-                    setContextPanelOpen(chat.id, true)
+                  if (!overviewOpen) {
+                    changeRightPanelMode('overview')
                     setPanelTab('current')
                   }
                 }}
@@ -1274,7 +1360,7 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
           }
           const msg = item.message
           const isUser = msg.role === 'user'
-          const isSelected = !isUser && msg.id === selectedTurnId && panelOpen
+          const isSelected = !isUser && msg.id === selectedTurnId && overviewOpen
           return (
             <div key={msg.id}
               onDoubleClick={isUser ? undefined : () => {
@@ -1282,8 +1368,8 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
                 setFollowLatest(false)
                 // Only a double-click reveals the right panel; open it on the
                 // turn-detail tab so it shows that turn's own detail.
-                if (!panelOpen) {
-                  setContextPanelOpen(chat.id, true)
+                if (!overviewOpen) {
+                  changeRightPanelMode('overview')
                   setPanelTab('current')
                 }
               }}
@@ -1664,21 +1750,40 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
           }}
         />
       )}
+      {bottomTerminalOpen && workingDir && (
+        <div style={{ ...styles.bottomTerminal, height: bottomTerminalHeight }}>
+          <div
+            style={styles.bottomTerminalResizer}
+            onPointerDown={startBottomTerminalResize}
+            title="Resize bottom Terminal"
+          />
+          <TerminalPanel
+            chatId={chat.id}
+            workingDir={workingDir}
+            placement="bottom"
+            onMove={() => {
+              setBottomTerminalOpen(false)
+              changeRightPanelMode('terminal')
+            }}
+            onClose={() => setBottomTerminalOpen(false)}
+          />
+        </div>
+      )}
       </div>
-      {/* The context panel only renders when there's room for both the chat
-          list (~180-240px) AND a usable conversation column (>= MIN_MIDDLE).
-          On very narrow windows we hide it entirely so the conversation
-          doesn't get squeezed to a single character per line. */}
+      {/* Overview, Terminal, and Browser share this single right panel. On a
+          narrow window it overlays the chat so the conversation remains usable. */}
       {(() => {
         const CHAT_LIST_W = windowWidth < 600 ? 180 : 240
         const MIN_MIDDLE = 360
 
-        if (panelOpen) {
-          const MIN_PANEL = 260
+        if (panelOpen && resolvedRightPanelMode) {
+          const MIN_PANEL = 320
           const available = windowWidth - CHAT_LIST_W - MIN_MIDDLE
-          if (available < MIN_PANEL) return null
-          const effectiveWidth = Math.min(panelWidth, available)
-          return (
+          const overlay = available < MIN_PANEL
+          const effectiveWidth = overlay
+            ? Math.min(rightPanelWidth, Math.max(MIN_PANEL, windowWidth - 72))
+            : Math.min(rightPanelWidth, available)
+          const overview = (
             <ChatContextPanel
               chat={chat}
               selectedTurnId={selectedTurnId}
@@ -1691,9 +1796,10 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
               teamGraph={panelTeamGraph}
               workingDir={workingDir}
               width={effectiveWidth}
+              embedded
               onFollowLatest={() => setFollowLatest(true)}
-              onClose={() => setContextPanelOpen(chat.id, false)}
-              onResize={setPanelWidth}
+              onClose={() => changeRightPanelMode(null)}
+              onResize={onRightPanelResize}
               onRevealFile={(p) => apiService.revealInFolder(p)}
               onScrollToStep={(mid, step) => {
                 document.getElementById(stepDomId(mid, step))?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -1711,6 +1817,29 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
               }}
             />
           )
+          return (
+            <WorkspaceDock
+              tool={resolvedRightPanelMode}
+              width={effectiveWidth}
+              overview={overview}
+              chatId={chat.id}
+              workingDir={workingDir}
+              loginWait={browserLoginWait}
+              onConfirmLoginWait={onConfirmBrowserLogin}
+              onDismissLoginWait={onDismissBrowserLogin}
+              onSelectTool={(tool) => {
+                if (tool === 'terminal') setBottomTerminalOpen(false)
+                changeRightPanelMode(tool)
+              }}
+              onClose={() => changeRightPanelMode(null)}
+              onResize={onRightPanelResize}
+              onDockTerminalBottom={() => {
+                setBottomTerminalOpen(true)
+                changeRightPanelMode('overview')
+              }}
+              overlay={overlay}
+            />
+          )
         }
 
         // Panel closed → light Status sidecar. Hidden until there's a brief to
@@ -1721,9 +1850,10 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
             view={extractSidecarBrief(chat.taskBrief)}
             loading={taskBriefLoading}
             width={SIDECAR_W}
+            onHide={() => setStatusSidecarHidden(true)}
             branchAhead={branchAhead}
             onCreatePr={() => setShowPrModal(true)}
-            onOpen={() => { setContextPanelOpen(chat.id, true); setPanelTab('task') }}
+            onOpen={() => { changeRightPanelMode('overview'); setPanelTab('task') }}
           />
         )
       })()}
@@ -1734,6 +1864,13 @@ export const ChatTab: React.FC<Props> = ({ chatId, isGatewayRunning, coreFailed 
 const styles: Record<string, React.CSSProperties> = {
   outer: { display: 'flex', flexDirection: 'row', height: '100%', minHeight: 0, position: 'relative' },
   container: { display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0, position: 'relative' },
+  bottomTerminal: {
+    position: 'relative', flexShrink: 0, minHeight: 180, maxHeight: '70%',
+    borderTop: `1px solid ${C.border2}`, boxShadow: '0 -10px 28px rgba(0,0,0,0.14)', zIndex: 8,
+  },
+  bottomTerminalResizer: {
+    position: 'absolute', left: 0, right: 0, top: -4, height: 8, cursor: 'row-resize', zIndex: 20,
+  },
   header: {
     padding: '10px 18px', borderBottom: `1px solid ${C.border}`,
     display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
@@ -1798,6 +1935,15 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%', border: 'none', borderRadius: 6, padding: '8px 9px', background: 'transparent', color: C.fg2,
     cursor: 'pointer', fontSize: 12, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8,
   },
+  editorIcon: {
+    width: 18, height: 18, objectFit: 'contain', flexShrink: 0,
+    padding: 1.5, borderRadius: 4, background: '#fff', boxSizing: 'border-box',
+  },
+  editorMenuIcon: {
+    width: 16, height: 16, objectFit: 'contain', flexShrink: 0,
+    padding: 1, borderRadius: 4, background: '#fff', boxSizing: 'border-box',
+  },
+  editorOpeningLabel: { color: C.fg2, fontSize: 11, whiteSpace: 'nowrap' },
   editorMenuEmpty: { color: C.fg3, fontSize: 11, lineHeight: 1.4, padding: '8px 9px', maxWidth: 220 },
   messages: { flex: 1, overflowY: 'auto', padding: '22px max(22px, 5%)', background: C.bg },
   typingRow: { display: 'flex', alignItems: 'center', gap: 8, color: C.fg3, fontSize: 13, marginBottom: 12 },

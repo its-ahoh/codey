@@ -11,8 +11,8 @@ import { CoreOfflineBanner } from './components/CoreOfflineBanner'
 import { CodeyMark, UIIcon } from './components/UIIcons'
 import { AutomationsView } from './components/AutomationsView'
 import { ToolsView } from './components/ToolsView'
-import { BrowserPanel } from './components/BrowserPanel'
 import type { BrowserLoginWaitEvent } from './codey-api'
+import type { WorkspaceDockTool } from './components/WorkspaceDock'
 import { unwrap } from './components/settingsAtoms'
 import {
   C,
@@ -40,7 +40,11 @@ const Shell: React.FC = () => {
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
   const [automationsOpen, setAutomationsOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
-  const [browserOpen, setBrowserOpen] = useState(false)
+  const [rightTool, setRightTool] = useState<WorkspaceDockTool | null>(null)
+  const [rightDockWidth, setRightDockWidth] = useState<number>(() => {
+    const stored = Number(localStorage.getItem('codey.rightDockWidth'))
+    return Number.isFinite(stored) ? Math.max(420, Math.min(900, stored)) : 620
+  })
   const [browserLoginWait, setBrowserLoginWait] = useState<BrowserLoginWaitEvent | null>(null)
   // Unseen automation-run keys (`${automationId}:${runId}`), for the sidebar
   // badge. A Set so the one-shot 'automation-unseen' push and the on-mount
@@ -56,18 +60,22 @@ const Shell: React.FC = () => {
 
   const activeChat = state.selectedChatId ? state.chats[state.selectedChatId] : null
 
-  useEffect(() => {
-    setBrowserOpen(false)
-  }, [state.selectedChatId])
+  const selectRightTool = React.useCallback((tool: WorkspaceDockTool | null) => {
+    setRightTool(tool)
+  }, [])
 
+  const resizeRightDock = (width: number) => {
+    setRightDockWidth(width)
+    localStorage.setItem('codey.rightDockWidth', String(Math.round(width)))
+  }
   useEffect(() => {
     return window.codey.browser.onAgentOpen(() => {
       setSettingsOpen(false)
       setAutomationsOpen(false)
       setToolsOpen(false)
-      setBrowserOpen(true)
+      selectRightTool('browser')
     })
-  }, [])
+  }, [selectRightTool])
 
   useEffect(() => {
     return window.codey.browser.onControlPermission(permission => {
@@ -75,9 +83,9 @@ const Shell: React.FC = () => {
       setSettingsOpen(false)
       setAutomationsOpen(false)
       setToolsOpen(false)
-      setBrowserOpen(true)
+      selectRightTool('browser')
     })
-  }, [])
+  }, [selectRightTool])
 
   useEffect(() => {
     return window.codey.browser.onLoginWait(event => {
@@ -85,9 +93,9 @@ const Shell: React.FC = () => {
       setSettingsOpen(false)
       setAutomationsOpen(false)
       setToolsOpen(false)
-      setBrowserOpen(true)
+      selectRightTool('browser')
     })
-  }, [])
+  }, [selectRightTool])
 
   useEffect(() => {
     if (browserLoginWait?.status !== 'changed') return
@@ -106,7 +114,7 @@ const Shell: React.FC = () => {
   }
 
   const openSettings = (tab?: string) => {
-    setBrowserOpen(false)
+    setRightTool(null)
     setSettingsTab(tab)
     setSettingsOpen(true)
   }
@@ -164,6 +172,9 @@ const Shell: React.FC = () => {
       } else if (e.key === '\\') {
         e.preventDefault()
         toggleLeftPanel()
+      } else if (e.shiftKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        selectRightTool(rightTool === 'browser' ? null : 'browser')
       } else if (/^[1-9]$/.test(e.key)) {
         const idx = parseInt(e.key, 10) - 1
         const id = state.order[idx]
@@ -172,7 +183,7 @@ const Shell: React.FC = () => {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.order, state.workspaces, createChat, selectChat])
+  }, [state.order, state.workspaces, createChat, selectChat, activeChat, rightTool, selectRightTool])
 
   useEffect(() => {
     const off = window.codey.notify.onOpenSettings(() => {
@@ -219,7 +230,7 @@ const Shell: React.FC = () => {
   }, [])
 
   const openAutomations = () => {
-    setBrowserOpen(false)
+    setRightTool(null)
     setUnseenRunKeys(new Set())
     setAutomationsOpen(true)
   }
@@ -228,7 +239,7 @@ const Shell: React.FC = () => {
     setSettingsOpen(false)
     setAutomationsOpen(false)
     setToolsOpen(false)
-    setBrowserOpen(true)
+    selectRightTool('browser')
   }
 
   useEffect(() => {
@@ -264,9 +275,9 @@ const Shell: React.FC = () => {
           </button>
           <div style={styles.titleCenter}>
             <CodeyMark size={22} />
-            {(browserOpen || activeChat) && (
-              <span style={styles.appName} title={browserOpen ? 'Browser' : activeChat?.title}>
-                {browserOpen ? 'Browser' : activeChat?.title}
+            {(rightTool || activeChat) && (
+              <span style={styles.appName} title={activeChat?.title ?? (rightTool === 'browser' ? 'Browser' : 'Terminal')}>
+                {activeChat?.title ?? (rightTool === 'browser' ? 'Browser' : 'Terminal')}
               </span>
             )}
           </div>
@@ -280,8 +291,8 @@ const Shell: React.FC = () => {
               onOpenSettings={openSettings}
               onOpenAutomations={openAutomations}
               onOpenBrowser={openBrowser}
-              onOpenTools={() => { setBrowserOpen(false); setToolsOpen(true) }}
-              onSelectChat={() => setBrowserOpen(false)}
+              onOpenTools={() => { setRightTool(null); setToolsOpen(true) }}
+              onSelectChat={() => { /* keep the selected workspace tool open across chats */ }}
               automationsUnseenCount={unseenRunKeys.size}
               activeChatId={state.selectedChatId}
             />
@@ -304,22 +315,26 @@ const Shell: React.FC = () => {
         )}
         <div style={styles.content}>
           <CoreOfflineBanner state={coreState} onRelaunch={relaunchApp} />
-          {browserOpen && <BrowserPanel
-            chatId={activeChat?.id}
-            loginWait={browserLoginWait}
-            onConfirmLoginWait={event => { void confirmExpiredLogin(event) }}
-            onDismissLoginWait={() => setBrowserLoginWait(null)}
-            onClose={() => setBrowserOpen(false)}
-          />}
-          {!browserOpen && activeChat && (
+          {activeChat && (
             <div
               key={activeChat.id}
               style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
             >
-              <ChatTab chatId={activeChat.id} isGatewayRunning={isRunning} coreFailed={coreState.phase === 'failed'} />
+              <ChatTab
+                chatId={activeChat.id}
+                isGatewayRunning={isRunning}
+                coreFailed={coreState.phase === 'failed'}
+                rightPanelMode={rightTool}
+                onRightPanelModeChange={selectRightTool}
+                rightPanelWidth={rightDockWidth}
+                onRightPanelResize={resizeRightDock}
+                browserLoginWait={browserLoginWait}
+                onConfirmBrowserLogin={event => { void confirmExpiredLogin(event) }}
+                onDismissBrowserLogin={() => setBrowserLoginWait(null)}
+              />
             </div>
           )}
-          {!browserOpen && !activeChat && (
+          {!activeChat && (
             <div style={styles.emptyMain}>
               <div style={styles.emptyCard}>
                 <div style={styles.emptyIcon}><UIIcon name="chat" size={30} /></div>

@@ -376,6 +376,17 @@ declare global {
       app: {
         version: () => Promise<string>
       }
+      terminal: {
+        list: (chatId: string) => Promise<IpcResult<Array<{ sessionId: string; chatId: string; cwd: string; pid: number; alive: boolean }>>>
+        open: (input: { sessionId?: string; chatId: string; cwd: string; cols: number; rows: number }) => Promise<IpcResult<{ sessionId: string; chatId: string; cwd: string; pid: number; output: string; alive: boolean }>>
+        write: (sessionId: string, data: string) => Promise<IpcResult<void>>
+        resize: (sessionId: string, cols: number, rows: number) => Promise<IpcResult<void>>
+        status: (sessionId: string) => Promise<IpcResult<{ sessionId: string; title: string; pid: number; alive: boolean }>>
+        restart: (input: { sessionId: string; chatId: string; cwd: string; cols: number; rows: number }) => Promise<IpcResult<{ sessionId: string; chatId: string; cwd: string; pid: number; output: string; alive: boolean }>>
+        close: (sessionId: string) => Promise<IpcResult<void>>
+        onData: (handler: (event: { sessionId: string; chatId: string; data: string }) => void) => () => void
+        onExit: (handler: (event: { sessionId: string; chatId: string; exitCode: number; signal?: number }) => void) => () => void
+      }
       browser: {
         getState: () => Promise<IpcResult<BrowserState>>
         show: (bounds: BrowserBounds) => Promise<IpcResult<BrowserState>>

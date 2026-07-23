@@ -28,9 +28,11 @@ describe('start', () => {
 
   it('edit mode seeds the initial draft and asks what to change', () => {
     const { mgr } = manager();
-    const step = mgr.start('edit', { name: 'News', brief: 'b' });
+    const step = mgr.start('edit', COMPLETE);
     expect(step.reply).toMatch(/What should change/);
-    expect(step.draft).toEqual({ name: 'News', brief: 'b' });
+    expect(step.draft).toEqual(COMPLETE);
+    expect(step.ready).toBe(true);
+    expect(step.check).toBe('clean');
   });
 });
 
@@ -206,11 +208,19 @@ describe('dry-run check state', () => {
     const mgr = new AutomationChatManager({ turn: vi.fn(), context: () => CTX });
     const { sessionId } = mgr.start('edit', COMPLETE, 'automation-1');
     mgr.patch(sessionId, { name: 'Renamed' });
-    expect(() => mgr.finalize(sessionId)).toThrow(/check/i);
-    expect(mgr.resolveCheck(sessionId, 'clean')).toBe(true);
     expect(mgr.finalize(sessionId)).toEqual({
       mode: 'edit', sourceAutomationId: 'automation-1', draft: { ...COMPLETE, name: 'Renamed' },
     });
+  });
+
+  it('rechecks execution-changing form edits to an existing automation', () => {
+    const onReadyTransition = vi.fn();
+    const mgr = new AutomationChatManager({ turn: vi.fn(), context: () => CTX, onReadyTransition });
+    const { sessionId } = mgr.start('edit', COMPLETE, 'automation-1');
+    const step = mgr.patch(sessionId, { brief: 'Post ten items.' });
+    expect(step.ready).toBe(true);
+    expect(step.check).toBe('pending');
+    expect(onReadyTransition).toHaveBeenCalledWith(sessionId, { ...COMPLETE, brief: 'Post ten items.' });
   });
 
   it('allows an explicit override only for a failed check, never gaps', () => {

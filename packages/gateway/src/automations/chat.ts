@@ -79,8 +79,18 @@ export class AutomationChatManager {
       touchedAt: this.now(),
       sourceAutomationId,
     };
+    // A persisted automation is already a valid, reviewed baseline. Treat it
+    // as ready so the structured form can save metadata/schedule/notification
+    // edits without forcing an otherwise empty assistant turn. Changes to the
+    // execution fingerprint (target, brief, or params) still trigger a fresh
+    // unattended check through patch().
+    const ready = mode === 'edit' && draftComplete(s.draft);
+    if (ready) {
+      s.check = 'clean';
+      s.checkFingerprint = executionFingerprint(s.draft);
+    }
     this.sessions.set(sessionId, s);
-    return this.step(sessionId, s, reply, [], false);
+    return this.step(sessionId, s, reply, [], ready);
   }
 
   async send(sessionId: string, text: string): Promise<ChatStep> {
