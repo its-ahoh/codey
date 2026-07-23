@@ -264,7 +264,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
       </div>
 
       <div style={tabBar}>
-        <button style={{ ...tabStyle(tab === 'overview'), display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => setTab('overview')}><UIIcon name="activity" size={13} />Overview</button>
+        <button style={{ ...tabStyle(tab === 'overview'), display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => setTab('overview')}><UIIcon name="overview" size={13} />Overview</button>
         <button style={{ ...tabStyle(tab === 'runs'), display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => setTab('runs')}><UIIcon name="archive" size={13} />Runs ({runs.length})</button>
       </div>
 

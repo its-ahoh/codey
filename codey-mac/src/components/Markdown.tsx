@@ -250,7 +250,12 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
                   borderRadius: 4,
                   fontSize: 12,
                   fontFamily: MONO,
-                  whiteSpace: 'pre-wrap',
+                  // Identifiers such as `certificate_request` are semantic
+                  // units. Keep the entire token together instead of inheriting
+                  // the prose container's break-word behavior.
+                  whiteSpace: 'pre',
+                  wordBreak: 'normal',
+                  overflowWrap: 'normal',
                 }}
               >
                 {children}

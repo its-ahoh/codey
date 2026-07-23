@@ -292,6 +292,25 @@ contextBridge.exposeInMainWorld('codey', {
   app: {
     version: () => ipcRenderer.invoke('app:version'),
   },
+  terminal: {
+    list: (chatId: string) => ipcRenderer.invoke('terminal:list', chatId),
+    open: (input: { sessionId?: string; chatId: string; cwd: string; cols: number; rows: number }) => ipcRenderer.invoke('terminal:open', input),
+    write: (sessionId: string, data: string) => ipcRenderer.invoke('terminal:write', sessionId, data),
+    resize: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', sessionId, cols, rows),
+    status: (sessionId: string) => ipcRenderer.invoke('terminal:status', sessionId),
+    restart: (input: { sessionId: string; chatId: string; cwd: string; cols: number; rows: number }) => ipcRenderer.invoke('terminal:restart', input),
+    close: (sessionId: string) => ipcRenderer.invoke('terminal:close', sessionId),
+    onData: (handler: (event: { sessionId: string; chatId: string; data: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, event: { sessionId: string; chatId: string; data: string }) => handler(event)
+      ipcRenderer.on('terminal:data', listener)
+      return () => ipcRenderer.removeListener('terminal:data', listener)
+    },
+    onExit: (handler: (event: { sessionId: string; chatId: string; exitCode: number; signal?: number }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, event: { sessionId: string; chatId: string; exitCode: number; signal?: number }) => handler(event)
+      ipcRenderer.on('terminal:exit', listener)
+      return () => ipcRenderer.removeListener('terminal:exit', listener)
+    },
+  },
   browser: {
     getState: () => ipcRenderer.invoke('browser:getState'),
     show: (bounds: { x: number; y: number; width: number; height: number }) =>

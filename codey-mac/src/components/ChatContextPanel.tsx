@@ -7,6 +7,7 @@ import { ToolCallList } from './ToolCallList'
 import { QuickQuestionView } from './QuickQuestionView'
 import { TaskHud } from './TaskHud'
 import TeamRunFlow from './TeamRunFlow'
+import { UIIcon } from './UIIcons'
 
 export type ContextPanelTab = 'current' | 'task' | 'files' | 'qq'
 
@@ -47,6 +48,8 @@ interface Props {
   taskBriefLoading: boolean
   /** Called when the task tab becomes visible — triggers brief generation. */
   onTaskTabShown: () => void
+  /** Render inside the shared right-panel shell, which owns resize and close controls. */
+  embedded?: boolean
 }
 
 const fmtTime = (ts: number) =>
@@ -65,6 +68,7 @@ export const ChatContextPanel: React.FC<Props> = ({
   width, onFollowLatest, onClose, onResize, onRevealFile, onScrollToStep, isTurnStreaming,
   activeTab, onTabChange, qqInputRef,
   onAnswerNextAction, taskBriefLoading, onTaskTabShown,
+  embedded = false,
 }) => {
   const turn: ChatMessage | undefined = selectedTurnId
     ? chat.messages.find(m => m.id === selectedTurnId && m.role === 'assistant')
@@ -113,8 +117,8 @@ export const ChatContextPanel: React.FC<Props> = ({
   }
 
   return (
-    <div style={{ ...styles.root, width }}>
-      <div style={styles.resizer} onMouseDown={onResizerMouseDown} title="Drag to resize" />
+    <div style={{ ...styles.root, width: embedded ? '100%' : width, ...(embedded ? styles.rootEmbedded : null) }}>
+      {!embedded && <div style={styles.resizer} onMouseDown={onResizerMouseDown} title="Drag to resize" />}
       {/* Header */}
       <div style={styles.header}>
         <div style={styles.headerMeta}>
@@ -144,7 +148,7 @@ export const ChatContextPanel: React.FC<Props> = ({
         {!followLatest && (
           <button style={styles.followPill} onClick={onFollowLatest} title="Follow live updates">Follow latest ↓</button>
         )}
-        <button style={styles.closeBtn} onClick={onClose} aria-label="Close panel">×</button>
+        {!embedded && <button style={styles.closeBtn} onClick={onClose} aria-label="Close panel">×</button>}
       </div>
 
       {/* Tabs */}
@@ -681,7 +685,11 @@ const FileChangesView: React.FC<{
         return (
           <div key={path} style={fcStyles.fileGroup}>
             <div style={fcStyles.fileHeader} title={path} onClick={toggle}>
-              <span style={fcStyles.chevron}>{isCollapsed ? '▶' : '▾'}</span>
+              <span style={fcStyles.chevron}>
+                <span style={{ ...fcStyles.chevronIcon, transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>
+                  <UIIcon name="disclosure" size={12} />
+                </span>
+              </span>
               <span style={fcStyles.filePath}>{displayPath(path, workingDir)}</span>
               <span style={fcStyles.fileCount}>{group.length} edit{group.length === 1 ? '' : 's'}</span>
               {path && path.startsWith('/') && (
@@ -706,7 +714,7 @@ const FileChangesView: React.FC<{
               const patches = group.filter(c => c.tool === 'Patch')
               return (
                 <div style={fcStyles.changeBody}>
-                  {diffHunks.length > 0 && <CombinedDiffView hunks={diffHunks} />}
+                  {diffHunks.length > 0 && <CombinedDiffView hunks={diffHunks} fileContent={content} filePath={path} />}
                   {patches.map(c => (
                     <pre key={`${c.msgId}::${c.callId}`} style={fcStyles.patchPre}>
                       {c.patchText || '(empty patch)'}
@@ -740,42 +748,56 @@ const FileChangesView: React.FC<{
 const fcStyles: Record<string, React.CSSProperties> = {
   toolbar: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: 8, marginBottom: 10,
+    gap: 10, marginBottom: 12,
   },
   scopeGroup: { display: 'flex', gap: 4 },
   scopeBtn: {
-    background: 'transparent', border: `1px solid ${C.border2}`,
-    color: C.fg3, fontSize: 10, fontWeight: 600,
-    padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
+    background: C.surface2, border: `1px solid ${C.border2}`,
+    color: C.fg2, fontSize: 10, fontWeight: 650,
+    padding: '4px 9px', borderRadius: 6, cursor: 'pointer',
     textTransform: 'uppercase', letterSpacing: 0.4,
   },
   scopeBtnActive: {
-    background: C.surface3, color: C.fg, borderColor: C.border,
+    background: C.accentDim, color: C.fg, borderColor: C.accent,
   },
-  summary: { color: C.fg3, fontSize: 10 },
+  summary: { color: C.fg2, fontSize: 10.5, fontWeight: 500, textAlign: 'right' },
   fileGroup: {
-    marginBottom: 12, border: `1px solid ${C.border}`,
-    borderRadius: 6, overflow: 'hidden', background: C.surface3,
+    marginBottom: 12, border: `1px solid ${C.border2}`,
+    borderRadius: 8, overflow: 'hidden', background: C.surface2,
+    boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
   },
   fileHeader: {
     display: 'flex', alignItems: 'center', gap: 6,
-    padding: '6px 8px', borderBottom: `1px solid ${C.border}`,
-    background: 'rgba(0,0,0,0.15)', cursor: 'pointer',
+    minHeight: 34, padding: '6px 9px', borderBottom: `1px solid ${C.border}`,
+    background: C.surface3, cursor: 'pointer',
   },
-  chevron: { color: C.fg3, fontSize: 9, width: 10, flexShrink: 0, userSelect: 'none' },
+  chevron: {
+    color: C.fg2, width: 14, height: 16, flexShrink: 0, userSelect: 'none',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  },
+  chevronIcon: {
+    width: 12, height: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    transformOrigin: 'center', transition: 'transform 0.15s ease',
+  },
   filePath: {
     flex: 1, color: C.fg, fontSize: 11.5, fontWeight: 600,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
   },
-  fileCount: { color: C.fg3, fontSize: 10, flexShrink: 0 },
+  fileCount: {
+    color: C.fg2, background: C.surface2, border: `1px solid ${C.border2}`,
+    borderRadius: 999, fontSize: 9.5, fontWeight: 600, padding: '2px 6px', flexShrink: 0,
+  },
   iconBtn: {
     background: 'transparent', border: 'none', color: C.fg3,
     cursor: 'pointer', fontSize: 12, padding: '0 4px', flexShrink: 0,
   },
-  readSection: { marginTop: 12 },
-  readHeader: { color: C.fg3, fontSize: 10, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.4, marginBottom: 4 },
-  changeBody: { padding: 8, background: C.bg, display: 'flex', flexDirection: 'column', gap: 6 },
+  readSection: {
+    marginTop: 14, padding: '10px', background: C.surface2,
+    border: `1px solid ${C.border}`, borderRadius: 8,
+  },
+  readHeader: { color: C.fg2, fontSize: 10, fontWeight: 650, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 6 },
+  changeBody: { padding: 9, background: C.bg, display: 'flex', flexDirection: 'column', gap: 7 },
   changeItem: {},
   patchPre: {
     margin: 0, fontSize: 11.5, color: C.fg,
@@ -795,12 +817,13 @@ const styles: Record<string, React.CSSProperties> = {
   root: {
     position: 'relative',
     height: '100%',
-    background: C.surface,
-    borderLeft: `1px solid ${C.border}`,
+    background: C.surface2,
+    borderLeft: `1px solid ${C.border2}`,
     display: 'flex',
     flexDirection: 'column',
     flexShrink: 0,
   },
+  rootEmbedded: { borderLeft: 'none' },
   resizer: {
     position: 'absolute',
     left: -3, top: 0, bottom: 0, width: 6,
@@ -831,7 +854,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid transparent', marginBottom: 0,
   },
   tabActive: {
-    color: C.fg, background: C.accentDim, borderColor: C.accent,
+    color: C.fg, background: C.accentDim,
   },
   headerMeta: { flex: 1, display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 },
   headerSubLine: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },

@@ -155,7 +155,26 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     if (!sid || saving) return
     if (allowUnchecked && !confirm('The unattended check failed. Save this automation anyway?')) return
     setSaving(true)
+    setCheck(undefined)
     try {
+      // Flush the visible form before finalizing. Text fields intentionally
+      // keep local state while typing, so relying only on blur can otherwise
+      // race a click on Save and persist the previous value.
+      const synced: ChatStep = unwrap(await window.codey.automations.chatPatch(sid, {
+        name: (draft.name?.trim() || null) as any,
+        target: (draft.target ?? null) as any,
+        schedule: (draft.schedule ?? null) as any,
+        notify: draft.notify ?? 'none',
+        brief: (draft.brief?.trim() || null) as any,
+        params: draft.params ?? {},
+      }))
+      applyStep(synced)
+      if (synced.check === 'pending') {
+        // Execution-relevant form edits need the same unattended verification
+        // as chat edits. The check event will re-enable Save when it finishes.
+        setSaving(false)
+        return
+      }
       unwrap(await window.codey.automations.chatSave(sid, allowUnchecked))
       sessionIdRef.current = null
       onDone()
@@ -226,9 +245,9 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
         <div style={columnHeader}>
           <div>
             <div style={eyebrow}>AI ASSISTANT</div>
-            <div style={columnTitle}>Describe the outcome</div>
+            <div style={columnTitle}>{mode === 'edit' ? 'Optional editing assistant' : 'Describe the outcome'}</div>
           </div>
-          <span style={helperText}>Chat fills the setup; every field remains editable.</span>
+          <span style={helperText}>{mode === 'edit' ? 'Edit the form directly, or ask for a specific change.' : 'Chat fills the setup; every field remains editable.'}</span>
         </div>
         <div ref={scrollRef} style={chatScroll}>
           {messages.map((message, index) => message.role === 'user'

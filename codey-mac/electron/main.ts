@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen, session } from 'electron'
 import { join } from 'path'
+import { randomUUID } from 'crypto'
 import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
@@ -19,6 +20,7 @@ import { BrowserControlPermissionGate } from './browser-control-permission'
 import { BrowserSitePermissionManager } from './browser-site-permissions'
 import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLabel, type BrowserPasskeyPickerRequest } from './browser-webauthn'
 import { BrowserExtensionManager } from './browser-extensions'
+import * as pty from 'node-pty'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -57,6 +59,107 @@ let browserAgentBridge: BrowserAgentBridge | null = null
 let browserControlPermission: BrowserControlPermissionGate | null = null
 let browserSitePermissions: BrowserSitePermissionManager | null = null
 let browserExtensionManager: BrowserExtensionManager | null = null
+
+type TerminalSession = {
+  id: string
+  chatId: string
+  cwd: string
+  process: pty.IPty
+  output: string
+  alive: boolean
+}
+
+const terminalSessions = new Map<string, TerminalSession>()
+const TERMINAL_REPLAY_LIMIT = 200_000
+
+function disposeTerminalSession(sessionId: string): void {
+  const session = terminalSessions.get(sessionId)
+  if (!session) return
+  terminalSessions.delete(sessionId)
+  session.alive = false
+  try { session.process.kill() } catch { /* already exited */ }
+}
+
+function runPs(args: string[]): Promise<string> {
+  return new Promise(resolve => {
+    void import('child_process').then(({ execFile }) => {
+      execFile('/bin/ps', args, { timeout: 1500 }, (error, stdout) => resolve(error ? '' : stdout.trim()))
+    }).catch(() => resolve(''))
+  })
+}
+
+async function terminalSessionTitle(session: TerminalSession): Promise<string> {
+  if (!session.alive) return 'Exited'
+  let foregroundPid = session.process.pid
+  if (process.platform !== 'win32') {
+    const group = Number.parseInt(await runPs(['-o', 'tpgid=', '-p', String(session.process.pid)]), 10)
+    if (Number.isInteger(group) && group > 0) foregroundPid = group
+  }
+  const command = process.platform === 'win32'
+    ? ''
+    : await runPs(['-o', 'comm=', '-p', String(foregroundPid)])
+  const leaf = command.replace(/^-/, '').split('/').filter(Boolean).pop()?.trim()
+  return leaf || (process.env.SHELL?.split('/').pop() ?? 'Shell')
+}
+
+async function openTerminalSession(chatId: string, cwd: string, cols: number, rows: number, requestedId?: string): Promise<{
+  sessionId: string
+  chatId: string
+  cwd: string
+  pid: number
+  output: string
+  alive: boolean
+}> {
+  if (!chatId || typeof chatId !== 'string') throw new Error('A chat is required to open a terminal')
+  if (!cwd || typeof cwd !== 'string') throw new Error('A workspace directory is required to open a terminal')
+
+  const fsMod = await import('fs')
+  const stat = await fsMod.promises.stat(cwd)
+  if (!stat.isDirectory()) throw new Error('Terminal working directory is not a directory')
+
+  const sessionId = requestedId || randomUUID()
+  const existing = terminalSessions.get(sessionId)
+  if (existing?.alive && existing.chatId === chatId && existing.cwd === cwd) {
+    try { existing.process.resize(Math.max(2, cols), Math.max(1, rows)) } catch { /* resize is best effort */ }
+    return {
+      sessionId,
+      chatId,
+      cwd: existing.cwd,
+      pid: existing.process.pid,
+      output: existing.output,
+      alive: true,
+    }
+  }
+  if (existing) disposeTerminalSession(sessionId)
+
+  const shellPath = process.env.SHELL || '/bin/zsh'
+  const env = Object.fromEntries(
+    Object.entries({ ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' })
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+  )
+  const terminalProcess = pty.spawn(shellPath, ['-l'], {
+    name: 'xterm-256color',
+    cols: Math.max(2, cols),
+    rows: Math.max(1, rows),
+    cwd,
+    env,
+  })
+  const session: TerminalSession = { id: sessionId, chatId, cwd, process: terminalProcess, output: '', alive: true }
+  terminalSessions.set(sessionId, session)
+
+  terminalProcess.onData(data => {
+    if (terminalSessions.get(sessionId) !== session) return
+    session.output = (session.output + data).slice(-TERMINAL_REPLAY_LIMIT)
+    sendToRenderer('terminal:data', { sessionId, chatId, data })
+  })
+  terminalProcess.onExit(({ exitCode, signal }) => {
+    if (terminalSessions.get(sessionId) !== session) return
+    session.alive = false
+    sendToRenderer('terminal:exit', { sessionId, chatId, exitCode, signal })
+  })
+
+  return { sessionId, chatId, cwd, pid: terminalProcess.pid, output: '', alive: true }
+}
 
 function handleBrowserLoginWait(event: BrowserLoginWaitEvent): void {
   sendToRenderer('browser:loginWait', event)
@@ -1336,6 +1439,43 @@ app.whenReady().then(async () => {
       if (!fromMainRenderer(event)) throw new Error('Browser controls are only available to the Codey window')
       return await fn()
     })
+  const terminalCall = <T>(event: Electron.IpcMainInvokeEvent, fn: () => Promise<T> | T) =>
+    wrap(async () => {
+      if (!fromMainRenderer(event)) throw new Error('Terminal controls are only available to the Codey window')
+      return await fn()
+    })
+  ipcMain.handle('terminal:list', (event, chatId: string) =>
+    terminalCall(event, () => [...terminalSessions.values()]
+      .filter(session => session.chatId === chatId)
+      .map(session => ({ sessionId: session.id, chatId, cwd: session.cwd, pid: session.process.pid, alive: session.alive }))))
+  ipcMain.handle('terminal:open', (event, input: { sessionId?: string; chatId: string; cwd: string; cols: number; rows: number }) =>
+    terminalCall(event, () => openTerminalSession(input.chatId, input.cwd, input.cols, input.rows, input.sessionId)))
+  ipcMain.handle('terminal:write', (event, sessionId: string, data: string) =>
+    terminalCall(event, () => {
+      const terminal = terminalSessions.get(sessionId)
+      if (!terminal?.alive) throw new Error('Terminal session is not running')
+      if (typeof data !== 'string' || data.length > 65_536) throw new Error('Invalid terminal input')
+      terminal.process.write(data)
+    }))
+  ipcMain.handle('terminal:resize', (event, sessionId: string, cols: number, rows: number) =>
+    terminalCall(event, () => {
+      const terminal = terminalSessions.get(sessionId)
+      if (!terminal?.alive) return
+      terminal.process.resize(Math.max(2, Math.min(500, cols)), Math.max(1, Math.min(300, rows)))
+    }))
+  ipcMain.handle('terminal:status', (event, sessionId: string) =>
+    terminalCall(event, async () => {
+      const terminal = terminalSessions.get(sessionId)
+      if (!terminal) throw new Error('Terminal session was not found')
+      return { sessionId, title: await terminalSessionTitle(terminal), pid: terminal.process.pid, alive: terminal.alive }
+    }))
+  ipcMain.handle('terminal:restart', (event, input: { sessionId: string; chatId: string; cwd: string; cols: number; rows: number }) =>
+    terminalCall(event, async () => {
+      disposeTerminalSession(input.sessionId)
+      return openTerminalSession(input.chatId, input.cwd, input.cols, input.rows, input.sessionId)
+    }))
+  ipcMain.handle('terminal:close', (event, sessionId: string) =>
+    terminalCall(event, () => disposeTerminalSession(sessionId)))
   ipcMain.handle('browser:getState', event => browserCall(event, () => browserController.getState()))
   ipcMain.handle('browser:show', (event, bounds: BrowserBounds) => browserCall(event, () => browserController.show(bounds)))
   ipcMain.handle('browser:hide', event => browserCall(event, () => browserController.hide()))
@@ -1589,9 +1729,9 @@ app.whenReady().then(async () => {
   )
   await bootInProcessCore()
 
-  // Check Full Disk Access by probing the iMessage database.
-  // macOS shows a system dialog the first time; on subsequent launches
-  // we surface a reminder if access is still denied.
+  // Check Full Disk Access by probing the iMessage database. This reminder is
+  // intentionally one-time: it is guidance for the optional iMessage channel,
+  // not a blocking prompt that should interrupt every app launch.
   {
     const fsMod = await import('fs')
     const osMod = await import('os')
@@ -1600,14 +1740,18 @@ app.whenReady().then(async () => {
     try {
       fsMod.accessSync(chatDbPath, fsMod.constants.R_OK)
     } catch {
-      const { dialog: dlg } = await import('electron')
-      dlg.showMessageBox({
-        type: 'info',
-        title: 'Full Disk Access recommended',
-        message: 'Codey needs Full Disk Access to read iMessage conversations.',
-        detail: 'Go to System Settings → Privacy & Security → Full Disk Access and add Codey.',
-        buttons: ['OK'],
-      })
+      const marker = pathMod.join(app.getPath('userData'), 'full-disk-access-prompt-seen')
+      if (!fsMod.existsSync(marker)) {
+        try { fsMod.writeFileSync(marker, String(Date.now()), 'utf8') } catch { /* best effort */ }
+        const { dialog: dlg } = await import('electron')
+        void dlg.showMessageBox({
+          type: 'info',
+          title: 'Full Disk Access recommended',
+          message: 'Codey needs Full Disk Access to read iMessage conversations.',
+          detail: 'Go to System Settings → Privacy & Security → Full Disk Access and add Codey.',
+          buttons: ['OK'],
+        })
+      }
     }
   }
 
@@ -3219,6 +3363,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  for (const sessionId of terminalSessions.keys()) disposeTerminalSession(sessionId)
   // Detach the browser surface but let Electron own final WebContents teardown.
   // Closing child contents while the native window is already quitting can race
   // Chromium's view destruction and terminate the browser process with SIGTRAP.

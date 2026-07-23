@@ -2,6 +2,7 @@ import React from 'react'
 import { C } from '../theme'
 import { ToolDetail } from './toolFormat'
 import type { ToolCallEntry } from '../types'
+import { UIIcon } from './UIIcons'
 
 /**
  * Renders a stream of ToolCallEntry items as an expandable timeline.
@@ -66,7 +67,6 @@ export const ToolCallList: React.FC<{ toolCalls: ToolCallEntry[]; emptyHint?: st
           next.has(r.id) ? next.delete(r.id) : next.add(r.id)
           return next
         })
-        const icon = isOpen ? '▾' : '▶'
         return (
           <div key={r.id}>
             <div
@@ -78,12 +78,22 @@ export const ToolCallList: React.FC<{ toolCalls: ToolCallEntry[]; emptyHint?: st
                 // tool label (the message already reads "Read(foo.ts)"); keep a
                 // subtle chevron only when there's detail to expand.
                 <>
-                  <span style={timelineStyles.chevron}>{hasDetail ? (isOpen ? '⌄' : '›') : ''}</span>
+                  <span style={timelineStyles.chevron}>
+                    {hasDetail && (
+                      <span style={{ ...timelineStyles.chevronIcon, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                        <UIIcon name="disclosure" size={12} />
+                      </span>
+                    )}
+                  </span>
                   <span style={timelineStyles.callMsg}>{r.message || r.tool}</span>
                 </>
               ) : (
                 <>
-                  <span style={r.done ? timelineStyles.iconDone : timelineStyles.iconRunning}>{icon}</span>
+                  <span style={r.done ? timelineStyles.iconDone : timelineStyles.iconRunning}>
+                    <span style={{ ...timelineStyles.chevronIcon, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                      <UIIcon name="disclosure" size={12} />
+                    </span>
+                  </span>
                   <span style={timelineStyles.callMsg}>{r.message || r.tool || '(tool)'}</span>
                 </>
               )}
@@ -118,16 +128,20 @@ const timelineStyles: Record<string, React.CSSProperties> = {
     fontSize: 12, fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     padding: '2px 0',
   },
-  chevron: { color: C.fg3, width: 10, flexShrink: 0 },
+  chevron: { color: C.fg2, width: 12, height: 16, flexShrink: 0, display: 'inline-flex', alignItems: 'center' },
+  chevronIcon: {
+    width: 12, height: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    transformOrigin: 'center', transition: 'transform 0.15s ease',
+  },
   callMsg: { color: C.fg2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  iconRunning: { color: C.accent, width: 12, flexShrink: 0 },
-  iconDone: { color: C.green, width: 12, flexShrink: 0 },
+  iconRunning: { color: C.accent, width: 12, height: 16, flexShrink: 0, display: 'inline-flex', alignItems: 'center' },
+  iconDone: { color: C.green, width: 12, height: 16, flexShrink: 0, display: 'inline-flex', alignItems: 'center' },
   iconInfo: { color: C.fg3, width: 12, flexShrink: 0 },
   detail: {
     marginLeft: 18, marginTop: 4, marginBottom: 6,
-    padding: 8, background: 'rgba(0,0,0,0.3)',
-    border: `1px solid ${C.border}`, borderRadius: 6,
+    padding: 9, background: C.surface3,
+    border: `1px solid ${C.border2}`, borderRadius: 7,
     maxHeight: 280, overflowY: 'auto',
   },
-  detailLabel: { color: C.fg3, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
+  detailLabel: { color: C.fg2, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 5 },
 }

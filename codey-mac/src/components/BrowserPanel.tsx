@@ -19,6 +19,7 @@ import { buildBrowserContextPrompt } from './browserContextPrompt'
 
 interface Props {
   chatId?: string
+  embedded?: boolean
   loginWait?: BrowserLoginWaitEvent | null
   onConfirmLoginWait?: (event: BrowserLoginWaitEvent) => void
   onDismissLoginWait?: () => void
@@ -59,6 +60,7 @@ export const BrowserPanel: React.FC<Props> = ({
   onConfirmLoginWait,
   onDismissLoginWait,
   onClose,
+  embedded = false,
 }) => {
   const hostRef = useRef<HTMLDivElement>(null)
   const shownRef = useRef(false)
@@ -78,6 +80,7 @@ export const BrowserPanel: React.FC<Props> = ({
   const [chromeExtensions, setChromeExtensions] = useState<ChromeBrowserExtensionCandidate[]>([])
   const [chromeScanComplete, setChromeScanComplete] = useState(false)
   const [extensionBusy, setExtensionBusy] = useState(false)
+  const [browserMenuOpen, setBrowserMenuOpen] = useState(false)
 
   const useResult = <T,>(result: { ok: true; data: T } | { ok: false; error: string }): T | undefined => {
     if (!result.ok) {
@@ -330,7 +333,7 @@ export const BrowserPanel: React.FC<Props> = ({
 
   return (
     <section style={styles.root} aria-label="Codey Browser">
-      <div style={styles.toolbar}>
+      <div style={{ ...styles.toolbar, ...(embedded ? styles.compactToolbar : null) }}>
         <div style={styles.navGroup}>
           <button
             type="button"
@@ -340,14 +343,16 @@ export const BrowserPanel: React.FC<Props> = ({
             aria-label="Back"
             onClick={() => void run(window.codey.browser.back)}
           >‹</button>
-          <button
-            type="button"
-            style={{ ...styles.iconButton, opacity: state.canGoForward ? 1 : 0.38 }}
-            disabled={!state.canGoForward}
-            title="Forward"
-            aria-label="Forward"
-            onClick={() => void run(window.codey.browser.forward)}
-          >›</button>
+          {!embedded && (
+            <button
+              type="button"
+              style={{ ...styles.iconButton, opacity: state.canGoForward ? 1 : 0.38 }}
+              disabled={!state.canGoForward}
+              title="Forward"
+              aria-label="Forward"
+              onClick={() => void run(window.codey.browser.forward)}
+            >›</button>
+          )}
           <button
             type="button"
             style={styles.iconButton}
@@ -386,25 +391,25 @@ export const BrowserPanel: React.FC<Props> = ({
           onClick={() => void usePageInChat()}
         >
           <UIIcon name="sparkle" size={14} />
-          <span>Use in chat</span>
+          {!embedded && <span>Use in chat</span>}
         </button>
-        <button
+        {!embedded && <button
           type="button"
           style={{ ...styles.iconButton, ...(extensionsOpen ? styles.iconButtonActive : null) }}
           title="Browser extensions"
           aria-label="Browser extensions"
           aria-expanded={extensionsOpen}
           onClick={() => void openExtensions()}
-        >⊞</button>
-        <button
+        >⊞</button>}
+        {!embedded && <button
           type="button"
           style={styles.iconButton}
           title="Open in default browser"
           aria-label="Open in default browser"
           disabled={!state.url}
           onClick={() => { if (state.url) void window.codey.openExternal(state.url) }}
-        >↗</button>
-        <button
+        >↗</button>}
+        {!embedded && <button
           type="button"
           style={{
             ...styles.permissionBadge,
@@ -417,19 +422,54 @@ export const BrowserPanel: React.FC<Props> = ({
         >
           <span style={styles.permissionDot} />
           {controlPermission.approved ? 'Full Control' : 'View Only'}
-        </button>
-        <button
+        </button>}
+        {!embedded && <button
           type="button"
           style={{ ...styles.iconButton, ...(resetConfirmation ? styles.iconButtonDanger : null) }}
           title="Clear browser data and sign out"
           aria-label="Clear browser data and sign out"
           aria-expanded={resetConfirmation}
           onClick={() => setResetConfirmation(current => !current)}
-        ><UIIcon name="trash" size={14} /></button>
-        <button type="button" style={styles.closeButton} onClick={onClose} title="Close browser" aria-label="Close browser">
+        ><UIIcon name="trash" size={14} /></button>}
+        {embedded && (
+          <button
+            type="button"
+            style={{ ...styles.iconButton, ...(browserMenuOpen ? styles.iconButtonActive : null) }}
+            title="More browser actions"
+            aria-label="More browser actions"
+            aria-expanded={browserMenuOpen}
+            onClick={() => setBrowserMenuOpen(current => !current)}
+          ><UIIcon name="more" size={15} /></button>
+        )}
+        {!embedded && <button type="button" style={styles.closeButton} onClick={onClose} title="Close browser" aria-label="Close browser">
           <UIIcon name="close" size={15} />
-        </button>
+        </button>}
       </div>
+
+      {embedded && browserMenuOpen && (
+        <div style={styles.browserMenu} aria-label="Browser actions">
+          <button type="button" style={styles.menuButton} onClick={() => { setBrowserMenuOpen(false); void openExtensions() }}>
+            <span aria-hidden="true">⊞</span> Extensions
+          </button>
+          <button type="button" style={styles.menuButton} disabled={!state.url} onClick={() => { setBrowserMenuOpen(false); if (state.url) void window.codey.openExternal(state.url) }}>
+            <span aria-hidden="true">↗</span> Open externally
+          </button>
+          <button
+            type="button"
+            style={{ ...styles.menuButton, ...(controlPermission.approved ? styles.menuButtonWarning : null) }}
+            onClick={() => {
+              setBrowserMenuOpen(false)
+              if (controlPermission.approved) void updateControlPermission(window.codey.browser.controlPermission.revoke)
+            }}
+          >
+            <span aria-hidden="true">{controlPermission.approved ? '●' : '○'}</span>
+            {controlPermission.approved ? 'Revoke agent control' : 'Agent access: view only'}
+          </button>
+          <button type="button" style={{ ...styles.menuButton, color: C.red }} onClick={() => { setBrowserMenuOpen(false); setResetConfirmation(true) }}>
+            <UIIcon name="trash" size={13} /> Clear data & sign out
+          </button>
+        </div>
+      )}
 
       <div style={styles.tabStrip} role="tablist" aria-label="Browser tabs">
         {tabs.map(tab => (
@@ -720,6 +760,10 @@ export const BrowserPanel: React.FC<Props> = ({
 const styles: Record<string, React.CSSProperties> = {
   root: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg },
   toolbar: { height: 48, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 7, padding: '7px 10px', background: C.surface, borderBottom: `1px solid ${C.border}` },
+  compactToolbar: { gap: 4, padding: '7px 6px' },
+  browserMenu: { minHeight: 38, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '5px 7px', overflowX: 'auto', background: C.surface2, borderBottom: `1px solid ${C.border}` },
+  menuButton: { height: 28, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5, padding: '0 8px', border: `1px solid ${C.border}`, borderRadius: 6, background: C.surface, color: C.fg2, cursor: 'pointer', fontSize: 10, whiteSpace: 'nowrap' },
+  menuButtonWarning: { color: C.warningFg, borderColor: `${C.warningFg}88`, background: C.warningBg },
   tabStrip: { height: 34, flexShrink: 0, display: 'flex', alignItems: 'flex-end', gap: 3, padding: '4px 8px 0', overflowX: 'auto', background: C.surface, borderBottom: `1px solid ${C.border}` },
   tab: { maxWidth: 180, minWidth: 90, height: 29, padding: '0 6px 0 9px', display: 'flex', alignItems: 'center', gap: 7, border: `1px solid transparent`, borderBottom: 'none', borderRadius: '7px 7px 0 0', background: 'transparent', color: C.fg3, cursor: 'pointer', fontSize: 10.5 },
   activeTab: { background: C.bg, color: C.fg, borderColor: C.border },

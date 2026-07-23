@@ -10,6 +10,8 @@ interface Props {
   loading: boolean
   /** Open the full panel on the Status tab. */
   onOpen: () => void
+  /** Hide the floating sidecar without closing or changing the task. */
+  onHide: () => void
   width: number
   /** Branch is ahead of the default branch (has commits to PR). */
   branchAhead?: boolean
@@ -26,7 +28,7 @@ const clamp = (lines: number): React.CSSProperties => ({
 
 const COLLAPSE_KEY = 'codey.statusSidecarCollapsed'
 
-export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, width, branchAhead, onCreatePr }) => {
+export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, onHide, width, branchAhead, onCreatePr }) => {
   const sm = statusMeta(view.status)
   const prState = createPrButtonState(view.status, !!branchAhead)
   const [collapsed, setCollapsed] = React.useState<boolean>(() => localStorage.getItem(COLLAPSE_KEY) === '1')
@@ -56,7 +58,7 @@ export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, width, b
         title={collapsed ? 'Expand status' : 'Collapse status'}
         aria-expanded={!collapsed}
       >
-        <span style={styles.headerLabel}><UIIcon name="activity" size={13} />Task status</span>
+        <span style={styles.headerLabel}>Status</span>
         <div style={styles.headerRight}>
           {loading && <span style={styles.headerLoading}>updating…</span>}
           <svg
@@ -65,6 +67,15 @@ export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, width, b
           >
             <path d="M3.5 5.25 L7 8.75 L10.5 5.25" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
+          <button
+            type="button"
+            style={styles.hideButton}
+            title="Hide status panel"
+            aria-label="Hide status panel"
+            onClick={(event) => { event.stopPropagation(); onHide() }}
+          >
+            <UIIcon name="close" size={12} />
+          </button>
         </div>
       </div>
 
@@ -142,6 +153,10 @@ const styles: Record<string, React.CSSProperties> = {
   headerLabel: { fontSize: 10, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: C.fg3, display: 'inline-flex', alignItems: 'center', gap: 5 },
   headerRight: { display: 'flex', alignItems: 'center', gap: 8 },
   headerLoading: { fontSize: 10, color: C.fg3, fontStyle: 'italic' },
+  hideButton: {
+    width: 22, height: 22, display: 'grid', placeItems: 'center', padding: 0,
+    color: C.fg3, background: 'transparent', border: 'none', borderRadius: 5, cursor: 'pointer',
+  },
   chevron: { color: C.fg2, display: 'block', flex: 'none', transition: 'transform 0.15s ease' },
   goal: { fontSize: 13, fontWeight: 600, color: C.fg, lineHeight: 1.35, ...clamp(2) },
   statusRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' },

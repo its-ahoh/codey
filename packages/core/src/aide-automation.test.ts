@@ -94,6 +94,19 @@ describe('automationChatTurn', () => {
       '{"reply":"ok","draftPatch":{"target":{"kind":"team","workspaceName":"w"}}}'));
     expect(t.draftPatch).toEqual({});
   });
+
+  it('merges targeted model and parameter edits with the existing draft', async () => {
+    const draft = {
+      target: { kind: 'prompt' as const, workspaceName: 'default', agent: 'codex' as const },
+      params: { account: '@codey', count: '5' },
+    };
+    const t = await automationChatTurn(msgs, draft, ctx, aide(
+      '{"reply":"Updated.","draftPatch":{"target":{"model":"gpt-5.6"},"params":{"tone":"brief","count":null}},"ready":true}'));
+    expect(t.draftPatch).toEqual({
+      target: { kind: 'prompt', workspaceName: 'default', agent: 'codex', model: 'gpt-5.6' },
+      params: { account: '@codey', tone: 'brief' },
+    });
+  });
 });
 
 describe('CHAT_TURN_PROMPT readiness gate', () => {
@@ -116,6 +129,9 @@ describe('CHAT_TURN_PROMPT readiness gate', () => {
     expect(captured).toMatch(/scheduling is NOT required for ready/i);
     expect(captured).not.toMatch(/and eventually scheduling/i);
     expect(captured).toMatch(/dry-run findings/i);
+    expect(captured).toMatch(/clearly scoped change/i);
+    expect(captured).toMatch(/DO NOT restart the setup interview/i);
+    expect(captured).toMatch(/Ask a follow-up only when the requested edit itself is ambiguous/i);
   });
 });
 
