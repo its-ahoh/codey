@@ -6,9 +6,21 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
+<p align="center">
+  <a href="https://github.com/its-ahoh/codey/releases/latest"><img src="https://img.shields.io/github/v/release/its-ahoh/codey?label=download&color=2ea44f" alt="Latest release" /></a>
+  <img src="https://img.shields.io/badge/platform-macOS-black" alt="Platform: macOS" />
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/its-ahoh/codey" alt="License: MIT" /></a>
+  <a href="https://github.com/its-ahoh/codey/stargazers"><img src="https://img.shields.io/github/stars/its-ahoh/codey?style=social" alt="GitHub stars" /></a>
+</p>
+
 **A multi-agent workbench for coding agents.** Codey is one place to organize, switch between, and orchestrate Claude Code, OpenCode, Codex (and more) across your projects — give each project its own workspace, build worker teams with different agents/models per role, run several agents in parallel on the same task to compare, and reach all of it from a native macOS app, chat platforms (Telegram / Discord / iMessage), or system-wide push-to-talk voice.
 
 Think of it less as a chat bridge and more as **the control plane for the coding agents you already use**.
+
+<p align="center">
+  <img src="assets/demo.gif" alt="Codey demo: a scheduled Automation drafts a post and publishes it through the built-in agent-controlled browser, hands-free" width="800" />
+</p>
+<p align="center"><em>A scheduled Automation researches the news, drafts a post, and publishes it through Codey's built-in agent-controlled browser — hands-free (2.5× speed).</em></p>
 
 ## Why Codey
 
@@ -45,6 +57,12 @@ Builds are currently unsigned — on first launch, right-click the app → **Ope
 - **Chat platforms**: Telegram, Discord, iMessage
 - **Voice input (macOS)**: Hotkey-triggered dictation with on-device WhisperKit (CoreML / ANE) or OpenAI-compatible APIs — pastes directly into whichever app you're focused on
 - **Health endpoints**: Built-in health check and metrics
+
+**Automation & web**
+- **Automations**: Put agents on a schedule — daily posts, recurring checks, cron-style workflows managed from the Mac app
+- **Agent-controlled browser**: A built-in secure browser agents can open, read, click, and fill — view-only by default, with every state-changing action gated on your approval
+- **External MCP servers**: Plug extra tools into your agents from the Mac app's MCP tab
+- **QR pairing**: Link Telegram / iMessage to your gateway by scanning a code
 
 ## Quick Start
 

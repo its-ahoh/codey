@@ -6,9 +6,21 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
+<p align="center">
+  <a href="https://github.com/its-ahoh/codey/releases/latest"><img src="https://img.shields.io/github/v/release/its-ahoh/codey?label=download&color=2ea44f" alt="最新版本" /></a>
+  <img src="https://img.shields.io/badge/platform-macOS-black" alt="平台：macOS" />
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/its-ahoh/codey" alt="许可证：MIT" /></a>
+  <a href="https://github.com/its-ahoh/codey/stargazers"><img src="https://img.shields.io/github/stars/its-ahoh/codey?style=social" alt="GitHub stars" /></a>
+</p>
+
 **面向编码 Agent 的多 Agent 工作台。** Codey 把 Claude Code、OpenCode、Codex 等编码 Agent 统一管起来：给每个项目独立的 workspace，按角色为 worker 配不同的 Agent / 模型，在同一个任务上并行跑多个 Agent 做对比；从原生 macOS 应用、聊天平台（Telegram / Discord / iMessage）或者全局语音输入都能用。
 
 与其说它是"聊天平台到 Agent 的桥"，不如说它是**你已经在用的那些编码 Agent 的控制台**。
+
+<p align="center">
+  <img src="assets/demo.gif" alt="Codey 演示：定时 Automation 自动起草内容，并通过内置的 Agent 控制浏览器完成发帖" width="800" />
+</p>
+<p align="center"><em>定时 Automation 自动搜集资讯、起草内容，并通过 Codey 内置的 Agent 控制浏览器完成发帖 —— 全程无人值守（2.5 倍速）。</em></p>
 
 ## 为什么用 Codey
 
@@ -45,6 +57,12 @@
 - **聊天平台**：Telegram、Discord、iMessage
 - **语音输入 (macOS)**：热键触发的语音转录，支持本地 WhisperKit（CoreML / Neural Engine）和 OpenAI 兼容 API — 识别结果直接粘贴到当前光标所在的输入框
 - **健康检查端点**：内置健康检查和指标监控
+
+**自动化与网页**
+- **Automations 定时自动化**：给 Agent 排日程 —— 每日发帖、定期检查、cron 式工作流，都在 Mac 应用里管理
+- **Agent 控制的内置浏览器**：Agent 可以打开、阅读、点击、填表 —— 默认只读，所有会改变状态的操作都需要你确认
+- **外部 MCP 服务器**：在 Mac 应用的 MCP 标签页里给 Agent 接入更多工具
+- **QR 扫码配对**：扫码即可把 Telegram / iMessage 连到你的 gateway
 
 ## 快速开始
 
