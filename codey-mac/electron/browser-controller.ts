@@ -70,6 +70,12 @@ export interface BrowserActionResult {
   message: string
 }
 
+/** Seams for deterministic, fast tests of the humanized input timing. */
+export interface HumanInputOptions {
+  random?: () => number
+  sleep?: (ms: number) => Promise<void>
+}
+
 export interface BrowserWaitRequest {
   kind: 'ref' | 'text' | 'url' | 'title'
   value: string
@@ -201,6 +207,10 @@ export class BrowserController {
   private downloadWaiters: Array<(download: BrowserDownload) => void> = []
   private downloadSequence = 0
   private sitePermissionManager: BrowserSitePermissionManager | null = null
+  /** Last synthesized cursor position, so each move starts where the last ended. */
+  private pointer: { x: number; y: number } | null = null
+  private readonly random: () => number
+  private readonly sleep: (ms: number) => Promise<void>
 
   constructor(
     private readonly getWindow: () => BrowserWindow | null,
@@ -208,7 +218,11 @@ export class BrowserController {
     private readonly onDownload: (download: BrowserDownload) => void = () => {},
     private readonly getDownloadDirectory: () => string = () => path.join(os.tmpdir(), 'codey-downloads'),
     private readonly getBrowserSession: () => Session = () => session.fromPartition(BROWSER_PARTITION, { cache: true }),
-  ) {}
+    options: HumanInputOptions = {},
+  ) {
+    this.random = options.random ?? Math.random
+    this.sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
+  }
 
   setSitePermissionManager(manager: BrowserSitePermissionManager): void {
     this.sitePermissionManager = manager
@@ -561,9 +575,7 @@ export class BrowserController {
   async click(ref: string): Promise<BrowserActionResult> {
     const contents = this.requirePage()
     const point = await this.elementPoint(ref)
-    contents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
-    contents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 })
-    contents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 })
+    await this.humanClick(contents, point)
     return this.actionResult(`Clicked ${ref}`)
   }
 
@@ -571,11 +583,7 @@ export class BrowserController {
     const contents = this.requirePage()
     const point = this.validatePoint(x, y)
     const count = Math.max(1, Math.min(3, Math.round(clickCount) || 1))
-    contents.sendInputEvent({ type: 'mouseMove', ...point })
-    for (let index = 1; index <= count; index += 1) {
-      contents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: index })
-      contents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: index })
-    }
+    await this.humanClick(contents, point, count)
     return this.actionResult(`Clicked at ${point.x}, ${point.y}${count > 1 ? ` (${count} times)` : ''}`)
   }
 
@@ -602,23 +610,25 @@ export class BrowserController {
       })
     }
     contents.sendInputEvent({ type: 'mouseUp', ...to, button: 'left', clickCount: 1 })
+    this.pointer = { x: to.x, y: to.y }
     return this.actionResult(`Dragged from ${from.x}, ${from.y} to ${to.x}, ${to.y}`)
   }
 
   async hover(ref: string): Promise<BrowserActionResult> {
     const contents = this.requirePage()
     const point = await this.elementPoint(ref)
-    contents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
+    await this.humanMove(contents, point)
     return this.actionResult(`Hovered ${ref}`)
   }
 
   async fill(ref: string, value: string): Promise<BrowserActionResult> {
     this.assertRef(ref)
     const contents = this.requirePage()
-    // Select through the DOM, then insert through Chromium's native editing
-    // pipeline. Assigning textContent/value only changes the rendered DOM and
-    // leaves stateful editors (Draft.js, ProseMirror, X's composer, etc.)
-    // unaware of the new text.
+    // Select through the DOM, then type through Chromium's native key pipeline.
+    // Assigning textContent/value only changes the rendered DOM and leaves
+    // stateful editors (Draft.js, ProseMirror, X's composer, etc.) unaware of
+    // the new text; real keystrokes drive their editing model and also emit the
+    // keydown/keyup cadence that anti-bot heuristics look for.
     await contents.executeJavaScript(`(() => {
       const el = document.querySelector('[data-codey-ref="${ref}"]')
       if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
@@ -638,10 +648,12 @@ export class BrowserController {
       return true
     })()`, true)
     if (value) {
-      contents.insertText(value)
+      // Typing over the existing selection replaces it, just like a person
+      // does after the field is selected above.
+      await this.humanType(contents, value)
     } else {
-      // insertText('') does not replace the active selection, so preserve the
-      // expected "fill with empty text" behavior through the same native path.
+      // Nothing to type, so clear the active selection through the same native
+      // path to preserve the expected "fill with empty text" behavior.
       contents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
       contents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
     }
@@ -902,6 +914,99 @@ export class BrowserController {
     })()`, true) as { x: number; y: number }
   }
 
+  /**
+   * Emit a curved, variable-speed pointer path from the last known cursor
+   * position to the target. A straight line traversed at a constant rate is a
+   * strong automation tell, so the synthesized motion arcs off-axis, eases in
+   * and out, and jitters between samples the way a real hand does.
+   */
+  private async humanMove(contents: WebContents, target: { x: number; y: number }): Promise<void> {
+    const from = this.pointer ?? {
+      x: Math.max(0, target.x - 40 - Math.round(this.random() * 40)),
+      y: Math.max(0, target.y - 30 - Math.round(this.random() * 30)),
+    }
+    for (const point of this.buildPointerPath(from, target)) {
+      contents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
+      await this.sleep(this.humanDelay(6, 10))
+    }
+    this.pointer = { x: target.x, y: target.y }
+  }
+
+  /** Approach the target, settle, then press and release with human-scale gaps. */
+  private async humanClick(
+    contents: WebContents,
+    target: { x: number; y: number },
+    clickCount = 1,
+  ): Promise<void> {
+    await this.humanMove(contents, target)
+    await this.sleep(this.humanDelay(40, 90))
+    const count = Math.max(1, Math.min(3, Math.round(clickCount) || 1))
+    for (let index = 1; index <= count; index += 1) {
+      contents.sendInputEvent({ type: 'mouseDown', x: target.x, y: target.y, button: 'left', clickCount: index })
+      await this.sleep(this.humanDelay(55, 70))
+      contents.sendInputEvent({ type: 'mouseUp', x: target.x, y: target.y, button: 'left', clickCount: index })
+      if (index < count) await this.sleep(this.humanDelay(70, 90))
+    }
+  }
+
+  private buildPointerPath(
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+  ): Array<{ x: number; y: number }> {
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    const distance = Math.hypot(dx, dy)
+    const steps = Math.max(8, Math.min(40, Math.round(distance / 12) + 8))
+    const length = distance || 1
+    // Perpendicular unit vector used to bow the straight line into a gentle arc.
+    const perpX = -dy / length
+    const perpY = dx / length
+    const bow = (this.random() * 2 - 1) * Math.min(60, distance * 0.2)
+    const controlX = from.x + dx / 2 + perpX * bow
+    const controlY = from.y + dy / 2 + perpY * bow
+    const points: Array<{ x: number; y: number }> = []
+    for (let index = 1; index <= steps; index += 1) {
+      const progress = index / steps
+      // Ease-in-out clusters samples near the endpoints, like a real hand.
+      const eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2
+      const inverse = 1 - eased
+      const last = index === steps
+      // Quadratic Bézier through the bowed control point.
+      const x = inverse * inverse * from.x + 2 * inverse * eased * controlX + eased * eased * to.x
+      const y = inverse * inverse * from.y + 2 * inverse * eased * controlY + eased * eased * to.y
+      // Land exactly on the target; only intermediate samples carry jitter.
+      const jitterX = last ? 0 : (this.random() * 2 - 1) * 1.2
+      const jitterY = last ? 0 : (this.random() * 2 - 1) * 1.2
+      points.push({ x: Math.round(x + jitterX), y: Math.round(y + jitterY) })
+    }
+    return points
+  }
+
+  /**
+   * Type a string one character at a time as full keydown/char/keyup
+   * keystrokes with a jittered inter-key delay. `Array.from` keeps multi-code-
+   * unit characters (emoji, combined glyphs) intact, and newlines are sent as
+   * Return so multi-line fields receive the break a real keyboard would insert.
+   */
+  private async humanType(contents: WebContents, value: string): Promise<void> {
+    for (const char of Array.from(value)) {
+      if (char === '\n' || char === '\r') {
+        contents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
+        contents.sendInputEvent({ type: 'char', keyCode: '\r' })
+        contents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
+      } else {
+        contents.sendInputEvent({ type: 'keyDown', keyCode: char })
+        contents.sendInputEvent({ type: 'char', keyCode: char })
+        contents.sendInputEvent({ type: 'keyUp', keyCode: char })
+      }
+      await this.sleep(this.humanDelay(40, 90))
+    }
+  }
+
+  private humanDelay(base: number, spread: number): number {
+    return Math.max(0, Math.round(base + this.random() * spread))
+  }
+
   private actionResult(message: string): BrowserActionResult {
     return { ok: true, url: this.view?.webContents.getURL() || '', message }
   }
@@ -929,6 +1034,10 @@ export class BrowserController {
         nodeIntegration: false,
         sandbox: true,
         webSecurity: true,
+        // Keep the page compositing and running timers even when the Codey
+        // window is backgrounded or occluded, so agent screenshots
+        // (capturePage) stay fresh without forcing the window to the front.
+        backgroundThrottling: false,
       },
     })
     view.setBackgroundColor('#141414')
