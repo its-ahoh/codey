@@ -516,7 +516,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                   try { await navigator.clipboard.writeText(chatMenu.chat.id) } catch {}
                   setChatMenu(null)
                 }}
-              >⧉ Copy chat ID</button>
+              ><UIIcon name="copy" size={14} />Copy chat ID</button>
               <div style={styles.menuSep} />
               <button
                 style={{ ...styles.menuItem, color: C.red }}
@@ -531,10 +531,12 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
             </>
           ) : (
             <>
-              <button style={styles.menuItem} onClick={() => setChatMenuView('main')}>⬅ Back</button>
+              <button style={styles.menuItem} onClick={() => setChatMenuView('main')}>
+                <span style={{ display: 'inline-flex', transform: 'rotate(180deg)' }}><UIIcon name="chevron" size={14} /></span>Back
+              </button>
               {(['telegram', 'discord', 'imessage'] as const).map(ch => {
                 const linked = chatMenu.chat.routes?.find(r => r.channel === ch)
-                const label = ch === 'telegram' ? '✈ Telegram' : ch === 'discord' ? '◈ Discord' : '◐ iMessage'
+                const label = ch === 'telegram' ? 'Telegram' : ch === 'discord' ? 'Discord' : 'iMessage'
                 return (
                   <button
                     key={ch}
@@ -554,7 +556,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                       selectChat(c.id)
                       window.dispatchEvent(new Event('pendingPairing'))
                     }}
-                  >{linked ? `✕ Disconnect ${label}` : label}</button>
+                  ><UIIcon name={ch} size={14} />{linked ? `Disconnect ${label}` : label}</button>
                 )
               })}
             </>
