@@ -228,9 +228,17 @@ describe('BrowserController agent controls', () => {
 
     contents.sendInputEvent.mockClear()
     await controller.drag(10, 20, 110, 120, 4)
-    expect(contents.sendInputEvent.mock.calls.map(call => call[0].type)).toEqual([
-      'mouseMove', 'mouseDown', 'mouseMove', 'mouseMove', 'mouseMove', 'mouseMove', 'mouseUp',
-    ])
+    const dragEvents = contents.sendInputEvent.mock.calls.map(call => call[0])
+    const dragTypes = dragEvents.map(event => event.type)
+    // Approach the grab point, press once, drag across many held samples, release once.
+    expect(dragTypes.filter(type => type === 'mouseDown')).toHaveLength(1)
+    expect(dragTypes.filter(type => type === 'mouseUp')).toHaveLength(1)
+    const downIndex = dragTypes.indexOf('mouseDown')
+    const upIndex = dragTypes.lastIndexOf('mouseUp')
+    expect(dragEvents[downIndex]).toMatchObject({ x: 10, y: 20 })
+    const heldMoves = dragEvents.slice(downIndex + 1, upIndex).filter(event => event.type === 'mouseMove')
+    expect(heldMoves.length).toBeGreaterThan(1)
+    expect(heldMoves.every(event => event.button === 'left')).toBe(true)
     expect(contents.sendInputEvent).toHaveBeenLastCalledWith(expect.objectContaining({ x: 110, y: 120 }))
   })
 

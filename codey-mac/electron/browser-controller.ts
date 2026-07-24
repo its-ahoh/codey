@@ -598,17 +598,16 @@ export class BrowserController {
     const from = this.validatePoint(fromX, fromY)
     const to = this.validatePoint(toX, toY)
     const count = Math.max(1, Math.min(100, Math.round(steps) || 12))
-    contents.sendInputEvent({ type: 'mouseMove', ...from })
+    // Move to the grab point, press, drag along a curved path with the button
+    // held, then release — the same human motion model as a click.
+    await this.humanMove(contents, from)
     contents.sendInputEvent({ type: 'mouseDown', ...from, button: 'left', clickCount: 1 })
-    for (let index = 1; index <= count; index += 1) {
-      const ratio = index / count
-      contents.sendInputEvent({
-        type: 'mouseMove',
-        x: Math.round(from.x + (to.x - from.x) * ratio),
-        y: Math.round(from.y + (to.y - from.y) * ratio),
-        button: 'left',
-      })
+    await this.sleep(this.humanDelay(40, 80))
+    for (const point of this.buildPointerPath(from, to, count)) {
+      contents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y, button: 'left' })
+      await this.sleep(this.humanDelay(6, 12))
     }
+    await this.sleep(this.humanDelay(40, 80))
     contents.sendInputEvent({ type: 'mouseUp', ...to, button: 'left', clickCount: 1 })
     this.pointer = { x: to.x, y: to.y }
     return this.actionResult(`Dragged from ${from.x}, ${from.y} to ${to.x}, ${to.y}`)
@@ -952,11 +951,12 @@ export class BrowserController {
   private buildPointerPath(
     from: { x: number; y: number },
     to: { x: number; y: number },
+    minSteps = 8,
   ): Array<{ x: number; y: number }> {
     const dx = to.x - from.x
     const dy = to.y - from.y
     const distance = Math.hypot(dx, dy)
-    const steps = Math.max(8, Math.min(40, Math.round(distance / 12) + 8))
+    const steps = Math.max(minSteps, Math.min(40, Math.round(distance / 12) + 8))
     const length = distance || 1
     // Perpendicular unit vector used to bow the straight line into a gentle arc.
     const perpX = -dy / length
