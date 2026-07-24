@@ -282,10 +282,13 @@ export class WorkspaceManager {
       }
     }
 
-    let name = path.basename(dir).toLowerCase().replace(/[^a-z0-9-_]/g, '-');
-    if (workspaces.includes(name)) {
+    let name = path.basename(dir).replace(/[^a-zA-Z0-9-_]/g, '-');
+    // Case-insensitive collision check: workspace dirs live on a
+    // case-insensitive filesystem on macOS.
+    const taken = (n: string) => workspaces.some(ws => ws.toLowerCase() === n.toLowerCase());
+    if (taken(name)) {
       let i = 2;
-      while (workspaces.includes(`${name}-${i}`)) i++;
+      while (taken(`${name}-${i}`)) i++;
       name = `${name}-${i}`;
     }
 
