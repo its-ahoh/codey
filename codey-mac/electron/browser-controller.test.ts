@@ -62,18 +62,59 @@ describe('BrowserController agent controls', () => {
           : command === 'DOM.querySelector' ? { nodeId: 2 } : {}),
       },
     }
-    const controller = new BrowserController(() => null, vi.fn())
+    const controller = new BrowserController(
+      () => null,
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      { random: () => 0.5, sleep: async () => {} },
+    )
     ;(controller as any).view = { webContents: contents }
     return { controller, contents }
   }
 
-  it('performs a trusted click at the snapshotted element center', async () => {
+  it('approaches and clicks the snapshotted element center along a human path', async () => {
     const { controller, contents } = setup({ x: 120, y: 80 })
     await expect(controller.click('e2')).resolves.toMatchObject({ ok: true, message: 'Clicked e2' })
-    expect(contents.sendInputEvent.mock.calls.map(call => call[0].type)).toEqual([
-      'mouseMove', 'mouseDown', 'mouseUp',
-    ])
+    const events = contents.sendInputEvent.mock.calls.map(call => call[0])
+    const moves = events.filter(event => event.type === 'mouseMove')
+    // A curved approach means many samples, not a single jump to the target.
+    expect(moves.length).toBeGreaterThan(1)
+    expect(moves[moves.length - 1]).toMatchObject({ x: 120, y: 80 })
+    expect(events.slice(-2).map(event => event.type)).toEqual(['mouseDown', 'mouseUp'])
+    expect(events.find(event => event.type === 'mouseDown')).toMatchObject({ x: 120, y: 80 })
     expect(contents.sendInputEvent).toHaveBeenLastCalledWith(expect.objectContaining({ x: 120, y: 80 }))
+  })
+
+  it('bows the pointer path off the straight line between endpoints', async () => {
+    const contents = {
+      isDestroyed: vi.fn(() => false),
+      getURL: vi.fn(() => 'https://example.com/form'),
+      getTitle: vi.fn(() => 'Example'),
+      executeJavaScript: vi.fn(async () => ({ x: 200, y: 200 })),
+      sendInputEvent: vi.fn(),
+    }
+    const controller = new BrowserController(
+      () => null,
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      { random: () => 0.9, sleep: async () => {} },
+    )
+    ;(controller as any).view = { webContents: contents }
+    await controller.click('e1')
+    const moves = contents.sendInputEvent.mock.calls.map(call => call[0]).filter(event => event.type === 'mouseMove')
+    const start = moves[0]
+    const end = moves[moves.length - 1]
+    const mid = moves[Math.floor(moves.length / 2)]
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    // Perpendicular distance of the midpoint from the start→end line proves the arc.
+    const deviation = Math.abs((mid.x - start.x) * dy - (mid.y - start.y) * dx) / (Math.hypot(dx, dy) || 1)
+    expect(deviation).toBeGreaterThan(1)
+    expect(end).toMatchObject({ x: 200, y: 200 })
   })
 
   it('follows a safe page link directly without dispatching its click handler', async () => {
@@ -137,14 +178,24 @@ describe('BrowserController agent controls', () => {
     expect(script).not.toContain('sessionStorage')
   })
 
-  it('fills through Chromium native editing so stateful editors receive the text', async () => {
+  it('types into the focused field character by character with native keystrokes', async () => {
     const { controller, contents } = setup(true)
     await controller.fill('e4', `Jack's "post"`)
     const script = contents.executeJavaScript.mock.calls[0][0]
     expect(script).toContain('range.selectNodeContents(el)')
     expect(script).toContain('el.select()')
+    // The text is never embedded in the executed page script.
     expect(script).not.toContain(`Jack's`)
-    expect(contents.insertText).toHaveBeenCalledWith(`Jack's "post"`)
+    expect(contents.insertText).not.toHaveBeenCalled()
+    // Each character arrives as a full keydown/char/keyup keystroke.
+    expect(contents.sendInputEvent.mock.calls.slice(0, 3).map(call => call[0].type)).toEqual([
+      'keyDown', 'char', 'keyUp',
+    ])
+    const typed = contents.sendInputEvent.mock.calls
+      .filter(call => call[0].type === 'char')
+      .map(call => call[0].keyCode)
+      .join('')
+    expect(typed).toBe(`Jack's "post"`)
   })
 
   it('sends a character event for the space key', async () => {
@@ -170,9 +221,9 @@ describe('BrowserController agent controls', () => {
   it('supports coordinate clicks and drag gestures for maps and canvases', async () => {
     const { controller, contents } = setup(true)
     await controller.clickAt(20.4, 30.6, 2)
-    expect(contents.sendInputEvent.mock.calls.map(call => call[0].type)).toEqual([
-      'mouseMove', 'mouseDown', 'mouseUp', 'mouseDown', 'mouseUp',
-    ])
+    const clickEvents = contents.sendInputEvent.mock.calls.map(call => call[0])
+    expect(clickEvents.filter(event => event.type === 'mouseMove').length).toBeGreaterThan(1)
+    expect(clickEvents.slice(-4).map(event => event.type)).toEqual(['mouseDown', 'mouseUp', 'mouseDown', 'mouseUp'])
     expect(contents.sendInputEvent).toHaveBeenLastCalledWith(expect.objectContaining({ x: 20, y: 31, clickCount: 2 }))
 
     contents.sendInputEvent.mockClear()
