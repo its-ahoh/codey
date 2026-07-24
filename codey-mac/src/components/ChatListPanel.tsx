@@ -339,12 +339,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                     <span style={styles.groupName}>{ws}</span>
                     {ws === gatewayWorkspace && (
                       <span
-                        style={styles.gatewayIcon}
+                        style={styles.gatewayBadge}
                         title="Gateway default workspace — receives messages from chat platforms"
                         aria-label="Gateway default workspace"
-                      >
-                        <UIIcon name="server" size={12} strokeWidth={2} />
-                      </span>
+                      >primary</span>
                     )}
                   </span>
                 )}
@@ -625,10 +623,11 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.surface3, border: `1px solid ${C.border2}`, color: C.fg2,
     cursor: 'pointer', lineHeight: 1, padding: 3, borderRadius: 5, display: 'inline-flex',
   },
-  gatewayIcon: {
+  gatewayBadge: {
     color: C.accent, background: C.accentDim, border: `1px solid ${C.accent}55`,
     borderRadius: 5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    width: 18, height: 18, boxSizing: 'border-box', flexShrink: 0,
+    height: 18, padding: '0 5px', fontSize: 10, fontWeight: 600, lineHeight: 1,
+    boxSizing: 'border-box', flexShrink: 0,
   },
   attentionBadge: {
     width: 16, height: 16, borderRadius: 5, display: 'inline-flex', alignItems: 'center',
