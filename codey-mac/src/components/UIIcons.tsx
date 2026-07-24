@@ -2,8 +2,9 @@ import React from 'react'
 
 export type IconName =
   | 'activity' | 'add' | 'archive' | 'bell' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
-  | 'code' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
+  | 'code' | 'copy' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
   | 'globe' | 'overview' | 'refresh' | 'server' | 'settings' | 'sparkle' | 'split' | 'terminal' | 'tools' | 'trash' | 'users' | 'workspace'
+  | 'telegram' | 'discord' | 'imessage'
 
 interface Props {
   name: IconName
@@ -29,6 +30,7 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     close: <path {...common} d="M6 6l12 12M18 6L6 18" />,
     disclosure: <path fill="currentColor" stroke="none" d="M9 6.5L16 12l-7 5.5z" />,
     code: <><path {...common} d="M8 9l-3 3 3 3M16 9l3 3-3 3M14 6l-4 12" /></>,
+    copy: <><rect {...common} x="9" y="9" width="11" height="11" rx="2" /><path {...common} d="M5 15V5a2 2 0 012-2h10" /></>,
     folder: <path {...common} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />,
     'folder-open': <><path {...common} d="M3 18V7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v1" /><path {...common} d="M3.2 19h15.2a2 2 0 001.94-1.51l1.25-5A2 2 0 0019.65 10H8l-2 3H3" /></>,
     globe: <><circle {...common} cx="12" cy="12" r="9" /><path {...common} d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18" /></>,
@@ -52,6 +54,9 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     trash: <><path {...common} d="M4 7h16M10 11v5M14 11v5M9 7l1-3h4l1 3M6 7l1 13h10l1-13" /></>,
     users: <><path {...common} d="M16 20v-1.5a4.5 4.5 0 00-4.5-4.5h-4A4.5 4.5 0 003 18.5V20M9.5 10a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM17 11a3 3 0 000-6M21 20v-1.5A4.5 4.5 0 0017.5 14" /></>,
     workspace: <><rect {...common} x="3" y="4" width="18" height="16" rx="2" /><path {...common} d="M3 9h18M8 14h3" /></>,
+    telegram: <><path {...common} d="M22 3L11 14M22 3l-7 18-4-8-8-4 19-6z" /></>,
+    discord: <><rect {...common} x="2.5" y="7.5" width="19" height="9" rx="4.5" /><circle fill="currentColor" cx="8.5" cy="12" r="1.15" /><circle fill="currentColor" cx="15.5" cy="12" r="1.15" /></>,
+    imessage: <><path {...common} d="M12 4.5c-4.7 0-8.5 3-8.5 6.7 0 2 1.1 3.8 2.9 5-.2 1.2-.8 2.3-1.7 3.3 1.7-.2 3.2-.9 4.4-1.8.9.2 1.9.3 2.9.3 4.7 0 8.5-3 8.5-6.8s-3.8-6.7-8.5-6.7z" /></>,
   }
   return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={color ? { color } : undefined}>{paths[name]}</svg>
 }
