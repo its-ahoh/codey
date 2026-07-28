@@ -2,10 +2,11 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import { OverlayWindow } from './OverlayWindow'
 import { pillButton, unwrap } from './settingsAtoms'
-import { humanizeDelta, nextRunAt } from './automationsModel'
+import { humanizeDelta, nextRunAt, scheduleChipLabel, scheduleSummary } from './automationsModel'
 import { AutomationChatCreate } from './AutomationChatCreate'
 import { AutomationOnePager } from './AutomationOnePager'
 import { UIIcon } from './UIIcons'
+import { isScheduled } from '../../../packages/core/src/types/automation'
 import type { Automation, AutomationRun, AutomationTarget } from '../../../packages/core/src/types/automation'
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -38,7 +39,10 @@ export const AutomationsView: React.FC<Props> = ({ onClose, onOpenRunChat }) => 
     }
   }, [])
 
-  useEffect(() => { void refresh() }, [refresh])
+  // Also re-lists on every return to the list, so edits made on the one-pager
+  // (schedule, notify, params) are reflected the moment the user comes back —
+  // those go through `update`, which fires no automation event.
+  useEffect(() => { if (panel.kind === 'list') void refresh() }, [panel.kind, refresh])
 
   // The view is open and the user is looking at it - mark finished/parked
   // runs seen as their events arrive, so they don't re-notify on next launch.
@@ -143,7 +147,7 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
 
   const toggleRunMode = async (a: Automation) => {
     if (switchingIds[a.id]) return
-    const scheduled = !!a.schedule && a.enabled
+    const scheduled = isScheduled(a)
     setSwitchingIds(prev => ({ ...prev, [a.id]: true }))
     try {
       if (scheduled) {
@@ -188,13 +192,12 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
     const status = lastStatus[a.id]?.status
     return status === 'failed' || status === 'parked'
   }).length
-  const scheduledCount = automations.filter(a => a.enabled && a.schedule).length
+  const scheduledCount = automations.filter(isScheduled).length
   const manualCount = automations.length - scheduledCount
-  const ordered = [...automations].sort((a, b) => {
-    const attention = (automation: Automation) => ['failed', 'parked'].includes(lastStatus[automation.id]?.status ?? '') ? 1 : 0
-    const scheduled = (automation: Automation) => Number(!!automation.schedule && automation.enabled)
-    return attention(b) - attention(a) || scheduled(b) - scheduled(a) || b.updatedAt - a.updatedAt
-  })
+  // Ordered by creation only. Sorting on run state or updatedAt made rows jump
+  // whenever a mode toggle or a finished run landed, which loses the user's
+  // place; status is carried by the rail colour and pill instead.
+  const ordered = [...automations].sort((a, b) => b.createdAt - a.createdAt)
 
   return (
     <div style={styles.list}>
@@ -224,7 +227,7 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
           {ordered.map(a => {
             const last = lastStatus[a.id]
             const health = listHealth(a, last)
-            const scheduled = !!a.schedule && a.enabled
+            const scheduled = isScheduled(a)
             const next = scheduled ? nextRunAt(a.schedule, Date.now()) : null
             return (
               <div key={a.id} style={rowStyle}>
@@ -236,21 +239,32 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
                       <strong style={automationName}>{a.name}</strong>
                       <span style={statusPill(health.color)}><span style={{ ...statusDot, background: health.color }} />{health.label}</span>
                     </span>
-                    <span style={targetLine}>{targetLabel(a.target)}</span>
+                    <span style={metaRow}>
+                      {scheduled ? (
+                        <span style={schedulePill} title={`${scheduleSummary(a.schedule)} · ${a.schedule!.tz}`}>
+                          <UIIcon name="clock" size={10} strokeWidth={2} />
+                          {scheduleChipLabel(a.schedule)}
+                          {next && <span style={nextHint}>· {humanizeDelta(next - Date.now())}</span>}
+                        </span>
+                      ) : (
+                        <span style={manualPill} title="Runs only when you start it">Manual</span>
+                      )}
+                      <span style={targetLine}>{targetLabel(a.target)}</span>
+                    </span>
                   </span>
                 </button>
                 <div style={cardAside}>
                   <div style={runRecency}>
-                    <span style={runRecencyLabel}>{last ? 'Last run' : next ? 'Next run' : 'Run history'}</span>
+                    <span style={runRecencyLabel}>{last ? 'Last run' : 'Run history'}</span>
                     <strong style={{ color: last?.status === 'failed' ? C.red : C.fg2, fontSize: 10.5 }}>
-                      {last ? runStatusText(last) : next ? humanizeDelta(next - Date.now()) : 'Not run yet'}
+                      {last ? runStatusText(last) : 'Not run yet'}
                     </strong>
                     {last && <span style={runDate}>{new Date(last.startedAt).toLocaleString()}</span>}
                   </div>
                   <button
                     type="button" role="switch" aria-label={`${a.name} run mode`}
-                    aria-checked={scheduled} style={modeToggle} disabled={!!switchingIds[a.id]}
-                    title={scheduled ? 'Switch to manual runs' : 'Run automatically on a schedule'}
+                    aria-checked={scheduled} style={modeToggle(scheduled)} disabled={!!switchingIds[a.id]}
+                    title={scheduled ? `Runs ${scheduleSummary(a.schedule)} — click for manual runs` : 'Run automatically on a schedule'}
                     onClick={() => void toggleRunMode(a)}
                   >
                     {scheduled ? 'Scheduled' : 'Manual'}
@@ -300,16 +314,28 @@ const nameRow: React.CSSProperties = { display: 'flex', alignItems: 'center', ga
 const automationName: React.CSSProperties = { color: C.fg, fontSize: 13, fontWeight: 720, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const statusPill = (color: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, padding: '2px 6px', borderRadius: 999, color, background: C.surface3, fontSize: 9, fontWeight: 700 })
 const statusDot: React.CSSProperties = { width: 5, height: 5, borderRadius: 999 }
-const targetLine: React.CSSProperties = { color: C.fg3, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const targetLine: React.CSSProperties = { color: C.fg3, fontSize: 10, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const metaRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }
+const schedulePill: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
+  padding: '2px 7px', borderRadius: 999, background: C.accentDim, color: C.accent,
+  fontSize: 9.5, fontWeight: 700, whiteSpace: 'nowrap',
+}
+const manualPill: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', flexShrink: 0, padding: '2px 7px', borderRadius: 999,
+  background: C.surface3, color: C.fg3, fontSize: 9.5, fontWeight: 700,
+}
+const nextHint: React.CSSProperties = { color: C.fg3, fontWeight: 600 }
 const cardAside: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, padding: '10px 11px 10px 6px' }
 const runRecency: React.CSSProperties = { width: 130, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1, paddingRight: 5 }
 const runRecencyLabel: React.CSSProperties = { color: C.fg3, fontSize: 8.5, fontWeight: 750, textTransform: 'uppercase', letterSpacing: .45 }
 const runDate: React.CSSProperties = { color: C.fg3, fontSize: 8.5, whiteSpace: 'nowrap' }
-const modeToggle: React.CSSProperties = {
-  padding: '6px 8px', border: `1px solid ${C.border}`, borderRadius: 8,
-  background: C.surface3, color: C.fg2, fontSize: 9.5, fontWeight: 650,
-  cursor: 'pointer',
-}
+const modeToggle = (scheduled: boolean): React.CSSProperties => ({
+  padding: '6px 8px', borderRadius: 8, fontSize: 9.5, fontWeight: 650, cursor: 'pointer',
+  border: `1px solid ${scheduled ? C.accent : C.border}`,
+  background: scheduled ? C.accentDim : C.surface3,
+  color: scheduled ? C.accent : C.fg2,
+})
 const runButton: React.CSSProperties = { ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 9px', fontSize: 10.5 }
 const openButton: React.CSSProperties = { width: 28, height: 28, display: 'grid', placeItems: 'center', border: 'none', borderRadius: 8, background: 'transparent', color: C.fg3, cursor: 'pointer' }
 const listStat: React.CSSProperties = { display: 'flex', alignItems: 'baseline', gap: 6, color: C.fg3, fontSize: 10.5, padding: '7px 11px', borderRight: `1px solid ${C.border}` }

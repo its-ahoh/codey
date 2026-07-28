@@ -108,6 +108,20 @@ export interface Automation {
   updatedAt: number;
 }
 
+/** How an automation is triggered. Derived from `enabled` + `schedule` rather
+ *  than stored: 'manual' with a schedule present means the times are kept but
+ *  disarmed, so switching back restores them. */
+export type AutomationRunMode = 'scheduled' | 'manual';
+
+export function runMode(a: { enabled?: boolean; schedule?: AutomationSchedule }): AutomationRunMode {
+  return a.schedule && a.enabled !== false ? 'scheduled' : 'manual';
+}
+
+/** True when the scheduler will fire this automation on its own. */
+export function isScheduled(a: { enabled?: boolean; schedule?: AutomationSchedule }): boolean {
+  return runMode(a) === 'scheduled';
+}
+
 export type AutomationRunStatus = 'success' | 'failed' | 'parked' | 'resumed';
 
 export interface AutomationRun {

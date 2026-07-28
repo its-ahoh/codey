@@ -1,6 +1,8 @@
 // codey-mac/src/components/automationsModel.ts
 // Pure helpers for the Automations view — kept separate for unit tests.
 
+import { isScheduled } from '../../../packages/core/src/types/automation'
+
 export interface ScheduleSlotLike { hour: number; minute: number; daysOfWeek?: number[] }
 export interface ScheduleLike { slots: ScheduleSlotLike[]; tz: string }
 export interface ScheduleSlotInput { time: string; days: number[] }
@@ -8,8 +10,8 @@ export interface ScheduleSlotInput { time: string; days: number[] }
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const pad = (n: number) => String(n).padStart(2, '0')
 
-export function scheduleSummary(s: ScheduleLike | undefined): string {
-  if (!s) return 'manual'
+/** Slots collapsed into one label per distinct day-set, e.g. ["daily 09:00"]. */
+function scheduleGroupLabels(s: ScheduleLike, maxTimes = Infinity): string[] {
   const groups = new Map<string, { days: number[]; times: string[] }>()
   for (const slot of s.slots) {
     const days = [...(slot.daysOfWeek ?? [])].sort((a, b) => a - b)
@@ -18,7 +20,38 @@ export function scheduleSummary(s: ScheduleLike | undefined): string {
     group.times.push(`${pad(slot.hour)}:${pad(slot.minute)}`)
     groups.set(key, group)
   }
-  return [...groups.values()].map(group => `${dayLabel(group.days)} ${group.times.join(', ')}`).join(' · ')
+  return [...groups.values()].map(group => {
+    const shown = group.times.slice(0, maxTimes)
+    const extra = group.times.length - shown.length
+    return `${dayLabel(group.days)} ${shown.join(', ')}${extra ? ` +${extra}` : ''}`
+  })
+}
+
+export function scheduleSummary(s: ScheduleLike | undefined): string {
+  if (!s) return 'manual'
+  return scheduleGroupLabels(s).join(' · ')
+}
+
+/** One-line schedule label for a list row. A single day-set is spelled out
+ *  ("Mon–Fri 09:00"); anything more elaborate would be truncated mid-word, so
+ *  it collapses to a cadence instead and leaves the detail to the tooltip and
+ *  the one-pager. */
+export function scheduleChipLabel(s: ScheduleLike | undefined, maxTimes = 3): string {
+  if (!s) return 'Manual'
+  const labels = scheduleGroupLabels(s, maxTimes)
+  if (labels.length === 1) return labels[0].charAt(0).toUpperCase() + labels[0].slice(1)
+  const days = new Set<number>()
+  const times = new Set<string>()
+  let runsPerWeek = 0
+  for (const slot of s.slots) {
+    const slotDays = slot.daysOfWeek?.length ? slot.daysOfWeek : [0, 1, 2, 3, 4, 5, 6]
+    for (const day of slotDays) days.add(day)
+    times.add(`${pad(slot.hour)}:${pad(slot.minute)}`)
+    runsPerWeek += slotDays.length
+  }
+  // Same clock time on an irregular set of days is common enough to name.
+  if (times.size === 1) return `${[...times][0]} · ${days.size} days/wk`
+  return `${runsPerWeek} runs/wk · ${times.size} times`
 }
 
 function dayLabel(days: number[]): string {
@@ -149,7 +182,7 @@ interface KnobSource {
 export function knobsFrom(a: KnobSource): Knobs {
   return {
     params: { ...a.params },
-    scheduleOn: !!a.schedule && a.enabled !== false,
+    scheduleOn: isScheduled(a),
     slots: a.schedule
       ? a.schedule.slots.map(slot => ({ time: formatHHMM(slot.hour, slot.minute), days: [...(slot.daysOfWeek ?? [])].sort((x, y) => x - y) }))
       : [{ time: '09:00', days: [] }],
@@ -160,7 +193,7 @@ export function knobsFrom(a: KnobSource): Knobs {
 /** True when the staged knobs match the automation (nothing to save). */
 export function knobsEqual(k: Knobs, a: KnobSource): boolean {
   if (JSON.stringify(k.params) !== JSON.stringify(a.params)) return false
-  if (k.scheduleOn !== (!!a.schedule && a.enabled !== false)) return false
+  if (k.scheduleOn !== isScheduled(a)) return false
   if (k.scheduleOn) {
     const canonical = (slots: ScheduleSlotInput[]) => slots
       .map(slot => ({ time: slot.time, days: [...slot.days].sort((x, y) => x - y) }))
