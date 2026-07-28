@@ -8,10 +8,14 @@ interface Props {
   view: SidecarView
   /** True while a (re)generation of the brief is in flight. */
   loading: boolean
+  /** Render only the global, right-edge status control. */
+  compact?: boolean
   /** Open the full panel on the Status tab. */
   onOpen: () => void
   /** Hide the floating sidecar without closing or changing the task. */
   onHide: () => void
+  /** Restore the floating sidecar from its compact global state. */
+  onRestore: () => void
   width: number
   /** Branch is ahead of the default branch (has commits to PR). */
   branchAhead?: boolean
@@ -28,11 +32,36 @@ const clamp = (lines: number): React.CSSProperties => ({
 
 const COLLAPSE_KEY = 'codey.statusSidecarCollapsed'
 
-export const StatusSidecar: React.FC<Props> = ({ view, loading, onOpen, onHide, width, branchAhead, onCreatePr }) => {
+export const StatusSidecar: React.FC<Props> = ({
+  view, loading, compact = false, onOpen, onHide, onRestore, width, branchAhead, onCreatePr,
+}) => {
   const sm = statusMeta(view.status)
   const prState = createPrButtonState(view.status, !!branchAhead)
   const [collapsed, setCollapsed] = React.useState<boolean>(() => localStorage.getItem(COLLAPSE_KEY) === '1')
   React.useEffect(() => { localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0') }, [collapsed])
+
+  if (compact) {
+    return (
+      <button
+        type="button"
+        style={styles.compactRoot}
+        onClick={onRestore}
+        title="Show status panel"
+        aria-label={`Show status panel: ${sm.label}, ${view.progress}%`}
+      >
+        <span
+          style={{
+            ...styles.compactDot,
+            background: toneColor(sm.tone),
+            boxShadow: `0 0 7px ${toneColor(sm.tone)}66`,
+          }}
+        />
+        <span style={styles.compactStatus}>{sm.label}</span>
+        <span style={styles.compactProgress}>{view.progress}%</span>
+        <UIIcon name="chevron" size={11} />
+      </button>
+    )
+  }
 
   const pill = (
     <span style={{ ...styles.pill, color: toneColor(sm.tone), background: `${toneColor(sm.tone)}22` }}>{sm.label}</span>
@@ -143,6 +172,23 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: '0 14px 32px rgba(0,0,0,0.28)',
     display: 'flex', flexDirection: 'column', gap: 11,
     padding: '13px 14px', overflowY: 'auto', cursor: 'pointer',
+  },
+  compactRoot: {
+    position: 'absolute', top: 58, right: 12, zIndex: 6,
+    height: 34, maxWidth: 190, padding: '0 9px',
+    display: 'flex', alignItems: 'center', gap: 7,
+    color: C.fg2, background: C.surface2,
+    border: `1px solid ${C.border2}`, borderRadius: 9,
+    boxShadow: '0 8px 22px rgba(0,0,0,0.24)',
+    cursor: 'pointer',
+  },
+  compactDot: { width: 7, height: 7, borderRadius: '50%', flex: 'none' },
+  compactStatus: {
+    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    fontSize: 11, fontWeight: 600,
+  },
+  compactProgress: {
+    color: C.fg, fontSize: 11, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
   },
   header: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',

@@ -28,6 +28,9 @@ export interface SkillEntry {
   sourceRunIds: string[];
   createdAt: number;
   archived: boolean;
+  /** Promoted playbooks are backed by a durable agent SKILL.md and are never
+   *  archived by either garbage collection or the playbook UI. */
+  promotedToSkill?: boolean;
 }
 
 export interface RejectedSuggestion {
@@ -232,7 +235,7 @@ export class SkillStore {
 
   archive(name: string): boolean {
     const entry = this.index.entries.find(e => e.name === name);
-    if (!entry) return false;
+    if (!entry || entry.promotedToSkill) return false;
     entry.archived = true;
     this.markIndexDirty();
     return true;
@@ -241,6 +244,17 @@ export class SkillStore {
   restore(name: string): boolean {
     const entry = this.index.entries.find(e => e.name === name);
     if (!entry) return false;
+    entry.archived = false;
+    this.markIndexDirty();
+    return true;
+  }
+
+  /** Mark a playbook as a durable agent skill. Promotion also restores a
+   *  previously archived playbook so it can continue to be matched/evolved. */
+  promoteToSkill(name: string): boolean {
+    const entry = this.index.entries.find(e => e.name === name);
+    if (!entry) return false;
+    entry.promotedToSkill = true;
     entry.archived = false;
     this.markIndexDirty();
     return true;
@@ -332,7 +346,7 @@ export class SkillStore {
     const now = Date.now();
     let archived = 0;
     for (const entry of this.index.entries) {
-      if (entry.archived) continue;
+      if (entry.archived || entry.promotedToSkill) continue;
       if (now - entry.lastUsedAt > opts.staleDays * 86_400_000) {
         entry.archived = true;
         archived++;

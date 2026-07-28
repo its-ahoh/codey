@@ -2,11 +2,13 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import { OverlayWindow } from './OverlayWindow'
 import { pillButton, unwrap } from './settingsAtoms'
-import { humanizeDelta, nextRunAt, scheduleSummary } from './automationsModel'
+import { humanizeDelta, nextRunAt } from './automationsModel'
 import { AutomationChatCreate } from './AutomationChatCreate'
 import { AutomationOnePager } from './AutomationOnePager'
 import { UIIcon } from './UIIcons'
 import type { Automation, AutomationRun, AutomationTarget } from '../../../packages/core/src/types/automation'
+
+const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone
 
 interface Props {
   onClose: () => void
@@ -116,6 +118,7 @@ interface ListProps {
 const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, onNew, onOpen, onOpenRunChat, setError }) => {
   const [lastStatus, setLastStatus] = useState<Record<string, AutomationRun | undefined>>({})
   const [runningIds, setRunningIds] = useState<Record<string, boolean>>({})
+  const [switchingIds, setSwitchingIds] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -138,12 +141,26 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
     return () => { cancelled = true }
   }, [automations])
 
-  const toggle = async (a: Automation) => {
+  const toggleRunMode = async (a: Automation) => {
+    if (switchingIds[a.id]) return
+    const scheduled = !!a.schedule && a.enabled
+    setSwitchingIds(prev => ({ ...prev, [a.id]: true }))
     try {
-      await window.codey.automations.setEnabled(a.id, !a.enabled)
+      if (scheduled) {
+        unwrap(await window.codey.automations.setEnabled(a.id, false))
+      } else if (a.schedule) {
+        unwrap(await window.codey.automations.setEnabled(a.id, true))
+      } else {
+        const withSchedule = unwrap(await window.codey.automations.update(a.id, {
+          schedule: { slots: [{ hour: 9, minute: 0 }], tz: TZ },
+        }))
+        if (!withSchedule.enabled) unwrap(await window.codey.automations.setEnabled(a.id, true))
+      }
       onRefresh()
     } catch (e: any) {
       setError(e?.message ?? String(e))
+    } finally {
+      setSwitchingIds(prev => ({ ...prev, [a.id]: false }))
     }
   }
 
@@ -171,11 +188,12 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
     const status = lastStatus[a.id]?.status
     return status === 'failed' || status === 'parked'
   }).length
-  const activeCount = automations.filter(a => a.enabled).length
   const scheduledCount = automations.filter(a => a.enabled && a.schedule).length
+  const manualCount = automations.length - scheduledCount
   const ordered = [...automations].sort((a, b) => {
     const attention = (automation: Automation) => ['failed', 'parked'].includes(lastStatus[automation.id]?.status ?? '') ? 1 : 0
-    return attention(b) - attention(a) || Number(b.enabled) - Number(a.enabled) || b.updatedAt - a.updatedAt
+    const scheduled = (automation: Automation) => Number(!!automation.schedule && automation.enabled)
+    return attention(b) - attention(a) || scheduled(b) - scheduled(a) || b.updatedAt - a.updatedAt
   })
 
   return (
@@ -198,29 +216,25 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
       ) : (
         <>
           <div style={styles.listSummary}>
-            <ListStat value={activeCount} label="Active" tone={C.green} />
             <ListStat value={scheduledCount} label="Scheduled" tone={C.accent} />
+            <ListStat value={manualCount} label="Manual" tone={C.fg2} />
             <ListStat value={attentionCount} label="Need attention" tone={attentionCount ? C.yellow : C.fg3} />
           </div>
           <div style={styles.cardList}>
           {ordered.map(a => {
             const last = lastStatus[a.id]
             const health = listHealth(a, last)
-            const next = a.enabled && a.schedule ? nextRunAt(a.schedule, Date.now()) : null
+            const scheduled = !!a.schedule && a.enabled
+            const next = scheduled ? nextRunAt(a.schedule, Date.now()) : null
             return (
-              <div key={a.id} style={{ ...rowStyle, opacity: a.enabled ? 1 : .76 }}>
+              <div key={a.id} style={rowStyle}>
                 <span style={{ ...statusRail, background: health.color }} />
                 <button style={cardMain} onClick={() => onOpen(a.id)}>
-                  <span style={automationIcon(a.enabled)}><UIIcon name={a.target.kind === 'team' ? 'users' : 'activity'} size={16} /></span>
+                  <span style={automationIcon(scheduled)}><UIIcon name={a.target.kind === 'team' ? 'users' : 'activity'} size={16} /></span>
                   <span style={cardCopy}>
                     <span style={nameRow}>
                       <strong style={automationName}>{a.name}</strong>
                       <span style={statusPill(health.color)}><span style={{ ...statusDot, background: health.color }} />{health.label}</span>
-                    </span>
-                    <span style={scheduleLine}>
-                      <UIIcon name="activity" size={12} />
-                      <span>{scheduleSummary(a.schedule)}</span>
-                      {a.schedule && <span style={timezoneText}>{a.schedule.tz}</span>}
                     </span>
                     <span style={targetLine}>{targetLabel(a.target)}</span>
                   </span>
@@ -233,10 +247,14 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
                     </strong>
                     {last && <span style={runDate}>{new Date(last.startedAt).toLocaleString()}</span>}
                   </div>
-                  <label style={enableToggle} title={a.enabled ? 'Pause automation' : 'Enable automation'}>
-                    <input type="checkbox" checked={a.enabled} onChange={() => void toggle(a)} />
-                    {a.enabled ? 'On' : 'Off'}
-                  </label>
+                  <button
+                    type="button" role="switch" aria-label={`${a.name} run mode`}
+                    aria-checked={scheduled} style={modeToggle} disabled={!!switchingIds[a.id]}
+                    title={scheduled ? 'Switch to manual runs' : 'Run automatically on a schedule'}
+                    onClick={() => void toggleRunMode(a)}
+                  >
+                    {scheduled ? 'Scheduled' : 'Manual'}
+                  </button>
                   <button style={runButton} disabled={!!runningIds[a.id]} onClick={() => void runNow(a.id)}>
                     <UIIcon name="play" size={12} />{runningIds[a.id] ? 'Starting…' : 'Run'}
                   </button>
@@ -257,10 +275,9 @@ const ListStat: React.FC<{ value: number; label: string; tone: string }> = ({ va
 )
 
 function listHealth(a: Automation, last?: AutomationRun): { label: string; color: string } {
-  if (!a.enabled) return { label: 'Paused', color: C.fg3 }
   if (last?.status === 'parked') return { label: 'Needs input', color: C.yellow }
   if (last?.status === 'failed') return { label: 'Needs attention', color: C.red }
-  return { label: a.schedule ? 'Scheduled' : 'Ready', color: C.green }
+  return { label: 'Ready', color: C.green }
 }
 
 function runStatusText(run: AutomationRun): string {
@@ -283,14 +300,16 @@ const nameRow: React.CSSProperties = { display: 'flex', alignItems: 'center', ga
 const automationName: React.CSSProperties = { color: C.fg, fontSize: 13, fontWeight: 720, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const statusPill = (color: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, padding: '2px 6px', borderRadius: 999, color, background: C.surface3, fontSize: 9, fontWeight: 700 })
 const statusDot: React.CSSProperties = { width: 5, height: 5, borderRadius: 999 }
-const scheduleLine: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, color: C.fg2, fontSize: 10.5, minWidth: 0 }
-const timezoneText: React.CSSProperties = { color: C.fg3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const targetLine: React.CSSProperties = { color: C.fg3, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const cardAside: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, padding: '10px 11px 10px 6px' }
 const runRecency: React.CSSProperties = { width: 130, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1, paddingRight: 5 }
 const runRecencyLabel: React.CSSProperties = { color: C.fg3, fontSize: 8.5, fontWeight: 750, textTransform: 'uppercase', letterSpacing: .45 }
 const runDate: React.CSSProperties = { color: C.fg3, fontSize: 8.5, whiteSpace: 'nowrap' }
-const enableToggle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, color: C.fg3, fontSize: 9.5, cursor: 'pointer', padding: '5px 6px' }
+const modeToggle: React.CSSProperties = {
+  padding: '6px 8px', border: `1px solid ${C.border}`, borderRadius: 8,
+  background: C.surface3, color: C.fg2, fontSize: 9.5, fontWeight: 650,
+  cursor: 'pointer',
+}
 const runButton: React.CSSProperties = { ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 9px', fontSize: 10.5 }
 const openButton: React.CSSProperties = { width: 28, height: 28, display: 'grid', placeItems: 'center', border: 'none', borderRadius: 8, background: 'transparent', color: C.fg3, cursor: 'pointer' }
 const listStat: React.CSSProperties = { display: 'flex', alignItems: 'baseline', gap: 6, color: C.fg3, fontSize: 10.5, padding: '7px 11px', borderRight: `1px solid ${C.border}` }

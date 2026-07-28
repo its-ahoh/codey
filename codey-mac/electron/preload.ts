@@ -136,6 +136,7 @@ contextBridge.exposeInMainWorld('codey', {
     forget: (name: string) => ipcRenderer.invoke('playbooks:forget', name),
     restore: (name: string) => ipcRenderer.invoke('playbooks:restore', name),
     rollback: (name: string) => ipcRenderer.invoke('playbooks:rollback', name),
+    promote: (name: string) => ipcRenderer.invoke('playbooks:promote', name),
   },
   agents: {
     get: () => ipcRenderer.invoke('agents:get'),

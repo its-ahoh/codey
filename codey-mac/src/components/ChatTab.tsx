@@ -37,6 +37,8 @@ const EDITOR_LOGOS: Partial<Record<string, string>> = {
   xcode: xcodeLogo,
 }
 
+const STATUS_SIDECAR_HIDDEN_KEY = 'codey.statusSidecarHidden'
+
 interface Props {
   chatId: string
   isGatewayRunning: boolean
@@ -391,7 +393,12 @@ export const ChatTab: React.FC<Props> = ({
   const [selectedTurnIdState, setSelectedTurnIdState] = useState<string | null>(null)
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
   const [taskBriefLoading, setTaskBriefLoading] = useState(false)
-  const [statusSidecarHidden, setStatusSidecarHidden] = useState(false)
+  // This is a single app-wide display preference, not chat state. ChatTab is
+  // remounted on chat switches, so seed it from localStorage and write changes
+  // synchronously before a switch can occur.
+  const [statusSidecarHidden, setStatusSidecarHidden] = useState(
+    () => localStorage.getItem(STATUS_SIDECAR_HIDDEN_KEY) === '1',
+  )
   const [bottomTerminalOpen, setBottomTerminalOpen] = useState(false)
   const [bottomTerminalHeight, setBottomTerminalHeight] = useState<number>(() => {
     const value = Number(localStorage.getItem('codey.bottomTerminalHeight'))
@@ -726,13 +733,20 @@ export const ChatTab: React.FC<Props> = ({
   const overviewOpen = resolvedRightPanelMode === 'overview'
 
   // The Status sidecar floats over the chat's top-right when the panel is
-  // closed (it's absolutely positioned, so it takes no layout space). Hidden on
-  // narrow windows where it would cover most of the conversation, and only when
-  // there's at least one assistant turn to summarize.
+  // closed (it's absolutely positioned, so it takes no layout space). The full
+  // card stays off narrow windows; its compact global control always fits.
   const SIDECAR_W = 264
   const sidecarFits = windowWidth >= 720
   const hasAssistantMsg = (chat?.messages ?? []).some(m => m.role === 'assistant')
-  const sidecarVisible = !panelOpen && !statusSidecarHidden && sidecarFits && !!chat && hasAssistantMsg
+  const sidecarVisible = !panelOpen
+    && (statusSidecarHidden || sidecarFits)
+    && !!chat
+    && hasAssistantMsg
+
+  const setGlobalStatusSidecarHidden = (hidden: boolean) => {
+    localStorage.setItem(STATUS_SIDECAR_HIDDEN_KEY, hidden ? '1' : '0')
+    setStatusSidecarHidden(hidden)
+  }
 
   // Self-populate the Status sidecar's brief while the panel is closed. Mirrors
   // the panel's turn-boundary refresh but gates on the sidecar being visible
@@ -1849,8 +1863,10 @@ export const ChatTab: React.FC<Props> = ({
           <StatusSidecar
             view={extractSidecarBrief(chat.taskBrief)}
             loading={taskBriefLoading}
+            compact={statusSidecarHidden}
             width={SIDECAR_W}
-            onHide={() => setStatusSidecarHidden(true)}
+            onHide={() => setGlobalStatusSidecarHidden(true)}
+            onRestore={() => setGlobalStatusSidecarHidden(false)}
             branchAhead={branchAhead}
             onCreatePr={() => setShowPrModal(true)}
             onOpen={() => { changeRightPanelMode('overview'); setPanelTab('task') }}

@@ -138,6 +138,7 @@ export interface Knobs {
 }
 
 interface KnobSource {
+  enabled?: boolean
   params: Record<string, string>
   schedule?: ScheduleLike
   report: { notify: NotifyMode }
@@ -148,7 +149,7 @@ interface KnobSource {
 export function knobsFrom(a: KnobSource): Knobs {
   return {
     params: { ...a.params },
-    scheduleOn: !!a.schedule,
+    scheduleOn: !!a.schedule && a.enabled !== false,
     slots: a.schedule
       ? a.schedule.slots.map(slot => ({ time: formatHHMM(slot.hour, slot.minute), days: [...(slot.daysOfWeek ?? [])].sort((x, y) => x - y) }))
       : [{ time: '09:00', days: [] }],
@@ -159,7 +160,7 @@ export function knobsFrom(a: KnobSource): Knobs {
 /** True when the staged knobs match the automation (nothing to save). */
 export function knobsEqual(k: Knobs, a: KnobSource): boolean {
   if (JSON.stringify(k.params) !== JSON.stringify(a.params)) return false
-  if (k.scheduleOn !== !!a.schedule) return false
+  if (k.scheduleOn !== (!!a.schedule && a.enabled !== false)) return false
   if (k.scheduleOn) {
     const canonical = (slots: ScheduleSlotInput[]) => slots
       .map(slot => ({ time: slot.time, days: [...slot.days].sort((x, y) => x - y) }))
@@ -186,15 +187,15 @@ export function draftComplete(d: DraftLike): boolean {
 
 export type CheckTone = 'dim' | 'good' | 'warn'
 
-/** Status-row label for the authoring dry-run check; null hides the row. */
+/** Status-row label for the authoring dry-run check. */
 export function checkLabel(
   check: 'pending' | 'clean' | 'gaps' | 'error' | undefined,
-): { text: string; tone: CheckTone } | null {
+): { text: string; tone: CheckTone } {
   switch (check) {
     case 'pending': return { text: 'Checking setup…', tone: 'dim' }
     case 'clean': return { text: 'Ready to run unattended', tone: 'good' }
     case 'gaps': return { text: 'Needs clarification', tone: 'warn' }
     case 'error': return { text: 'Check couldn’t run', tone: 'dim' }
-    default: return null
+    default: return { text: 'Not verified yet', tone: 'dim' }
   }
 }

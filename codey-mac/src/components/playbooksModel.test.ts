@@ -42,14 +42,19 @@ describe('timelineRows', () => {
 
 describe('playbookActions', () => {
   it('derives which action buttons are enabled', () => {
-    expect(playbookActions({ archived: false, canRollback: true }))
-      .toEqual({ forget: true, restore: false, rollback: true })
-    expect(playbookActions({ archived: true, canRollback: false }))
-      .toEqual({ forget: false, restore: true, rollback: false })
+    expect(playbookActions({ archived: false, canRollback: true, promotedToSkill: false }))
+      .toEqual({ forget: true, restore: false, rollback: true, promote: true })
+    expect(playbookActions({ archived: true, canRollback: false, promotedToSkill: false }))
+      .toEqual({ forget: false, restore: true, rollback: false, promote: true })
   })
 
   it('allows rollback on archived skills, matching the gateway', () => {
-    expect(playbookActions({ archived: true, canRollback: true }))
-      .toEqual({ forget: false, restore: true, rollback: true })
+    expect(playbookActions({ archived: true, canRollback: true, promotedToSkill: false }))
+      .toEqual({ forget: false, restore: true, rollback: true, promote: true })
+  })
+
+  it('hides archive and promotion actions after promotion', () => {
+    expect(playbookActions({ archived: false, canRollback: true, promotedToSkill: true }))
+      .toEqual({ forget: false, restore: false, rollback: true, promote: false })
   })
 })

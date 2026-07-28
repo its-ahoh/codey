@@ -10,7 +10,7 @@ export interface ChatManagerDeps {
   ) => Promise<AutomationChatTurn>;
   /** Live grounding lists - re-read per turn so new workspaces/teams appear. */
   context: () => Omit<AutomationChatContext, 'mode'>;
-  /** Fired when a complete draft needs a new unattended dry-run check. */
+  /** Fired when the user explicitly requests an unattended dry-run check. */
   onReadyTransition?: (sessionId: string, draft: AutomationDraft) => void;
   now?: () => number;
 }
@@ -144,7 +144,7 @@ export class AutomationChatManager {
     if (!ready) throw new Error('Automation draft is incomplete');
     s.check = undefined;
     s.checkFingerprint = undefined;
-    this.reconcileCheck(sessionId, s, true);
+    this.reconcileCheck(sessionId, s, true, true);
     return this.step(sessionId, s, '', [], true);
   }
 
@@ -177,7 +177,7 @@ export class AutomationChatManager {
     return true;
   }
 
-  private reconcileCheck(sessionId: string, s: Session, ready: boolean): void {
+  private reconcileCheck(sessionId: string, s: Session, ready: boolean, startCheck = false): void {
     if (!ready) {
       s.check = undefined;
       s.checkFingerprint = undefined;
@@ -185,6 +185,9 @@ export class AutomationChatManager {
     }
     const fingerprint = executionFingerprint(s.draft);
     if (s.checkFingerprint === fingerprint && s.check) return;
+    s.check = undefined;
+    s.checkFingerprint = undefined;
+    if (!startCheck) return;
     s.check = 'pending';
     s.checkFingerprint = fingerprint;
     try { this.deps.onReadyTransition?.(sessionId, { ...s.draft }); }

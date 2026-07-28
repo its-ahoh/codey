@@ -117,7 +117,7 @@ describe('send', () => {
 });
 
 describe('dry-run check state', () => {
-  it('sets check=pending and fires onReadyTransition only on a false->true ready transition', async () => {
+  it('waits for an explicit request before starting a check', async () => {
     const onReadyTransition = vi.fn();
     const turn = vi.fn()
       .mockResolvedValueOnce(turnResult({ ready: true }))
@@ -126,8 +126,11 @@ describe('dry-run check state', () => {
     const { sessionId } = mgr.start('create', COMPLETE);
 
     const first = await mgr.send(sessionId, 'go');
-    expect(first.check).toBe('pending');
-    expect(onReadyTransition).toHaveBeenCalledTimes(1);
+    expect(first.check).toBeUndefined();
+    expect(onReadyTransition).not.toHaveBeenCalled();
+
+    const checking = mgr.retryCheck(sessionId);
+    expect(checking.check).toBe('pending');
     expect(onReadyTransition).toHaveBeenCalledWith(sessionId, COMPLETE);
 
     const second = await mgr.send(sessionId, 'still ready');
@@ -135,7 +138,7 @@ describe('dry-run check state', () => {
     expect(second.check).toBe('pending');               // state carries over
   });
 
-  it('clears check when ready drops back to false, and re-triggers on the next rise', async () => {
+  it('clears check when ready drops back to false without automatically restarting it', async () => {
     const onReadyTransition = vi.fn();
     const turn = vi.fn()
       .mockResolvedValueOnce(turnResult({ ready: true }))
@@ -144,10 +147,12 @@ describe('dry-run check state', () => {
     const mgr = new AutomationChatManager({ turn, context: () => CTX, onReadyTransition });
     const { sessionId } = mgr.start('create', COMPLETE);
     await mgr.send(sessionId, 'a');
+    mgr.retryCheck(sessionId);
     const dropped = await mgr.send(sessionId, 'b');
     expect(dropped.check).toBeUndefined();
-    await mgr.send(sessionId, 'c');
-    expect(onReadyTransition).toHaveBeenCalledTimes(2);
+    const readyAgain = await mgr.send(sessionId, 'c');
+    expect(readyAgain.check).toBeUndefined();
+    expect(onReadyTransition).toHaveBeenCalledTimes(1);
   });
 
   it('resolveCheck records the verdict and appends the message to the transcript', async () => {
@@ -155,6 +160,7 @@ describe('dry-run check state', () => {
     const mgr = new AutomationChatManager({ turn, context: () => CTX });
     const { sessionId } = mgr.start('create', COMPLETE);
     await mgr.send(sessionId, 'go');
+    mgr.retryCheck(sessionId);
 
     expect(mgr.resolveCheck(sessionId, 'clean', 'Dry run passed.')).toBe(true);
     const next = await mgr.send(sessionId, 'next');
@@ -169,6 +175,7 @@ describe('dry-run check state', () => {
     const { sessionId } = mgr.start('create', COMPLETE);
     expect(mgr.resolveCheck(sessionId, 'clean')).toBe(false); // never went pending
     await mgr.send(sessionId, 'go');
+    mgr.retryCheck(sessionId);
     expect(mgr.resolveCheck(sessionId, 'gaps', 'q')).toBe(true);
     expect(mgr.resolveCheck(sessionId, 'clean')).toBe(false); // already resolved
     expect(mgr.resolveCheck('nope', 'clean')).toBe(false);    // unknown session
@@ -180,19 +187,21 @@ describe('dry-run check state', () => {
       .mockResolvedValueOnce(turnResult({ ready: false }));
     const mgr = new AutomationChatManager({ turn, context: () => CTX });
     const { sessionId } = mgr.start('create', COMPLETE);
-    await mgr.send(sessionId, 'go');       // check -> pending
+    await mgr.send(sessionId, 'go');
+    mgr.retryCheck(sessionId);             // check -> pending
     await mgr.send(sessionId, 'actually'); // ready drops, check cleared
     expect(mgr.resolveCheck(sessionId, 'clean')).toBe(false);
   });
 
-  it('direct form patches become ready and recheck only execution-relevant changes', () => {
+  it('direct form patches invalidate only execution-relevant checks without starting one', () => {
     const onReadyTransition = vi.fn();
     const mgr = new AutomationChatManager({ turn: vi.fn(), context: () => CTX, onReadyTransition });
     const { sessionId } = mgr.start('create');
     const complete = mgr.patch(sessionId, COMPLETE);
     expect(complete.ready).toBe(true);
-    expect(complete.check).toBe('pending');
-    expect(onReadyTransition).toHaveBeenCalledTimes(1);
+    expect(complete.check).toBeUndefined();
+    expect(onReadyTransition).not.toHaveBeenCalled();
+    mgr.retryCheck(sessionId);
     expect(mgr.resolveCheck(sessionId, 'clean')).toBe(true);
 
     const renamed = mgr.patch(sessionId, { name: 'Renamed' });
@@ -200,8 +209,8 @@ describe('dry-run check state', () => {
     expect(onReadyTransition).toHaveBeenCalledTimes(1);
 
     const changed = mgr.patch(sessionId, { brief: 'Post ten items.' });
-    expect(changed.check).toBe('pending');
-    expect(onReadyTransition).toHaveBeenCalledTimes(2);
+    expect(changed.check).toBeUndefined();
+    expect(onReadyTransition).toHaveBeenCalledTimes(1);
   });
 
   it('finalizes only checked drafts and retains edit source identity', () => {
@@ -213,13 +222,16 @@ describe('dry-run check state', () => {
     });
   });
 
-  it('rechecks execution-changing form edits to an existing automation', () => {
+  it('requires verification after execution-changing form edits to an existing automation', () => {
     const onReadyTransition = vi.fn();
     const mgr = new AutomationChatManager({ turn: vi.fn(), context: () => CTX, onReadyTransition });
     const { sessionId } = mgr.start('edit', COMPLETE, 'automation-1');
     const step = mgr.patch(sessionId, { brief: 'Post ten items.' });
     expect(step.ready).toBe(true);
-    expect(step.check).toBe('pending');
+    expect(step.check).toBeUndefined();
+    expect(onReadyTransition).not.toHaveBeenCalled();
+    expect(() => mgr.finalize(sessionId)).toThrow(/pass/i);
+    mgr.retryCheck(sessionId);
     expect(onReadyTransition).toHaveBeenCalledWith(sessionId, { ...COMPLETE, brief: 'Post ten items.' });
   });
 
@@ -227,11 +239,13 @@ describe('dry-run check state', () => {
     const mgr = new AutomationChatManager({ turn: vi.fn(), context: () => CTX });
     const gaps = mgr.start('create', COMPLETE).sessionId;
     mgr.patch(gaps, { name: 'Ready' });
+    mgr.retryCheck(gaps);
     mgr.resolveCheck(gaps, 'gaps');
     expect(() => mgr.finalize(gaps, true)).toThrow(/pass/i);
 
     const failed = mgr.start('create', COMPLETE).sessionId;
     mgr.patch(failed, { name: 'Ready' });
+    mgr.retryCheck(failed);
     mgr.resolveCheck(failed, 'error');
     expect(mgr.finalize(failed, true).draft.name).toBe('Ready');
   });
