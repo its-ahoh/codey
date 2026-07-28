@@ -26,7 +26,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
 import { WorkerManager, WorkspaceManager } from '@codey/core'
-import { listPlaybooks, playbookHistory, forgetPlaybook, restorePlaybook, rollbackPlaybook } from './playbooks'
+import { listPlaybooks, playbookHistory, forgetPlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
@@ -3067,6 +3067,17 @@ app.whenReady().then(async () => {
     wrap(async () => restorePlaybook(playbookStore(), name)));
   ipcMain.handle('playbooks:rollback', async (_e, name: string) =>
     wrap(async () => rollbackPlaybook(playbookStore(), name)));
+  ipcMain.handle('playbooks:promote', async (_e, name: string) =>
+    wrap(async () => {
+      const pathMod = await import('path')
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      const workingDir = inProcessGateway.getWorkspaceManager().getWorkingDir()
+      if (!workingDir) throw new Error('The active workspace has no working directory.')
+      const agent = coreConfigManager?.getDefaultAgent() ?? 'claude-code'
+      const paths = skillPaths[agent] ?? skillPaths['claude-code']
+      const targetRoot = pathMod.join(workingDir, paths.projectSubdirs[0])
+      return promotePlaybook(playbookStore(), name, targetRoot)
+    }));
 
   // ── Conversations IPC ─────────────────────────────────────────────
   ipcMain.handle('conversations:list', async () =>

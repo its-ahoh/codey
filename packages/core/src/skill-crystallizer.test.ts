@@ -218,11 +218,17 @@ describe('SkillStore', () => {
     const s3 = store.add({ name: 'active', description: 'd', whenToUse: 'w', steps: 's', sourceRunId: 'r3' });
     s3.useCount = 5;
     s3.lastUsedAt = Date.now() - 86_400_000;
+    const s4 = store.add({ name: 'promoted', description: 'd', whenToUse: 'w', steps: 's' });
+    s4.createdAt = old;
+    s4.lastUsedAt = old;
+    expect(store.promoteToSkill('promoted')).toBe(true);
     const archived = store.runCollectGarbage({ staleDays: 30, weakSkillDays: 7 });
     expect(archived).toBe(2);
     expect(store.get('old')!.archived).toBe(true);
     expect(store.get('weak')!.archived).toBe(true);
     expect(store.get('active')!.archived).toBe(false);
+    expect(store.get('promoted')!.archived).toBe(false);
+    expect(store.archive('promoted')).toBe(false);
   });
 });
 

@@ -48,6 +48,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
   const [input, setInput] = useState('')
   const [newParam, setNewParam] = useState('')
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const saveAfterCheckRef = useRef(false)
 
   // A check event can beat the request response that triggered it. A resolved
   // verdict wins over a stale pending response; callers clear first when they
@@ -150,12 +151,25 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     void send(text)
   }
 
+  const finishSave = async (sid: string, allowUnchecked = false) => {
+    if (allowUnchecked && !confirm('The unattended check failed. Save this automation anyway?')) {
+      setSaving(false)
+      return
+    }
+    try {
+      unwrap(await window.codey.automations.chatSave(sid, allowUnchecked))
+      sessionIdRef.current = null
+      onDone()
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+      setSaving(false)
+    }
+  }
+
   const save = async (allowUnchecked = false) => {
     const sid = sessionIdRef.current
     if (!sid || saving) return
-    if (allowUnchecked && !confirm('The unattended check failed. Save this automation anyway?')) return
     setSaving(true)
-    setCheck(undefined)
     try {
       // Flush the visible form before finalizing. Text fields intentionally
       // keep local state while typing, so relying only on blur can otherwise
@@ -169,16 +183,17 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
         params: draft.params ?? {},
       }))
       applyStep(synced)
-      if (synced.check === 'pending') {
-        // Execution-relevant form edits need the same unattended verification
-        // as chat edits. The check event will re-enable Save when it finishes.
-        setSaving(false)
+      if (synced.check === 'clean' || (allowUnchecked && synced.check === 'error')) {
+        await finishSave(sid, allowUnchecked)
         return
       }
-      unwrap(await window.codey.automations.chatSave(sid, allowUnchecked))
-      sessionIdRef.current = null
-      onDone()
+      // Saving doubles as the verification fallback. Keep the save intent
+      // armed so a clean result persists automatically without a second click.
+      saveAfterCheckRef.current = true
+      const checking: ChatStep = unwrap(await window.codey.automations.chatRetryCheck(sid))
+      applyStep(checking)
     } catch (e: any) {
+      saveAfterCheckRef.current = false
       setError(e?.message ?? String(e))
       setSaving(false)
     }
@@ -186,15 +201,28 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
 
   const retryCheck = async () => {
     const sid = sessionIdRef.current
-    if (!sid) return
-    setCheck(undefined)
+    if (!sid || check === 'pending') return
+    setCheck('pending')
     try {
       const step: ChatStep = unwrap(await window.codey.automations.chatRetryCheck(sid))
       applyStep(step)
     } catch (e: any) {
+      setCheck(undefined)
       setError(e?.message ?? String(e))
     }
   }
+
+  useEffect(() => {
+    if (!saveAfterCheckRef.current) return
+    if (check === 'clean') {
+      saveAfterCheckRef.current = false
+      const sid = sessionIdRef.current
+      if (sid) void finishSave(sid)
+    } else if (check === 'gaps' || check === 'error') {
+      saveAfterCheckRef.current = false
+      setSaving(false)
+    }
+  }, [check])
 
   const setTargetKind = (kind: 'prompt' | 'team') => {
     const workspaceName = draft.target?.workspaceName || context.workspaces[0] || ''
@@ -265,7 +293,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
             </div>
           )}
           {!chatBusy && !failedText && suggestions.length > 0 && (
-            <div style={suggestionRow}>{suggestions.map(s => <button key={s} style={pillButton('ghost')} onClick={() => void send(s)}>{s}</button>)}</div>
+            <div style={suggestionRow}>{suggestions.map(s => <button key={s} style={suggestionButton} onClick={() => void send(s)}>{s}</button>)}</div>
           )}
         </div>
         <div style={composerBar}>
@@ -375,15 +403,23 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
           </SetupSection>
 
           <SetupSection title="Schedule & alerts" description={`Times use ${draft.schedule?.tz ?? context.tz}. Leave scheduling off to run manually.`}>
-            <Field label="Scheduled">
-              <label style={toggleLabel}>
-                <input type="checkbox" checked={!!draft.schedule} disabled={locked}
-                  onChange={e => e.target.checked
-                    ? setSchedule({ slots: [{ hour: 9, minute: 0 }], tz: context.tz })
-                    : setSchedule(undefined)} />
-                <span>{draft.schedule ? 'On' : 'Manual only'}</span>
-              </label>
-            </Field>
+            <div style={switchRow}>
+              <div>
+                <div style={switchTitle}>Run mode</div>
+                <div style={switchDescription}>{draft.schedule ? 'Runs automatically at the times below' : 'Runs only when you choose Run now'}</div>
+              </div>
+              <button
+                type="button" role="switch" aria-label="Automation run mode"
+                aria-checked={!!draft.schedule} disabled={locked}
+                style={modeControl(locked)}
+                onClick={() => draft.schedule
+                  ? setSchedule(undefined)
+                  : setSchedule({ slots: [{ hour: 9, minute: 0 }], tz: context.tz })}
+              >
+                <span style={modeOption(!draft.schedule)}>Manual</span>
+                <span style={modeOption(!!draft.schedule)}>Scheduled</span>
+              </button>
+            </div>
             {draft.schedule && (
               <>
                 <Field label="Time slots">
@@ -434,14 +470,22 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
               <div style={{ color: checkInfo.tone === 'good' ? C.green : checkInfo.tone === 'warn' ? C.yellow : C.fg3, fontSize: 12 }}>
                 {checkInfo.text}
                 {check === 'gaps' && ' — answer the assistant’s questions'}
-                {check === 'error' && <button style={inlineButton} title={checkDetail} onClick={() => void retryCheck()}>Retry</button>}
+                {check === 'error' && checkDetail && <span title={checkDetail}> — verification unavailable</span>}
               </div>
             ) : (
-              <div style={statusMuted}>Ready for unattended check</div>
+              <div style={statusMuted}>Not verified yet</div>
             )}
           </div>
+          {ready && draftComplete(draft) && check !== 'pending' && check !== 'clean' && (
+            <button style={pillButton('ghost')} disabled={saving} onClick={() => void retryCheck()}>
+              {check === 'error' ? 'Retry verification' : 'Verify setup'}
+            </button>
+          )}
           {ready && draftComplete(draft) && check === 'clean' && (
             <button style={pillButton('primary')} disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Create automation'}</button>
+          )}
+          {ready && draftComplete(draft) && check === undefined && (
+            <button style={pillButton('primary')} disabled={saving} onClick={() => void save()}>{saving ? 'Verifying…' : mode === 'edit' ? 'Save changes' : 'Create automation'}</button>
           )}
           {ready && draftComplete(draft) && check === 'pending' && <button style={pillButton('primary')} disabled>Checking…</button>}
           {ready && draftComplete(draft) && check === 'error' && (
@@ -464,10 +508,10 @@ const SetupSection: React.FC<{ title: string; description: string; children: Rea
 )
 
 const Field: React.FC<{ label: string; required?: boolean; children: React.ReactNode }> = ({ label, required, children }) => (
-  <label style={fieldBlock}>
+  <div style={fieldBlock}>
     <span style={fieldLabel}>{label}{required && <span style={{ color: C.accent }}> *</span>}</span>
     {children}
-  </label>
+  </div>
 )
 
 const shellStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(320px, 0.9fr) minmax(430px, 1.1fr)', flex: 1, minHeight: 0, background: C.bg }
@@ -482,6 +526,12 @@ const bubbleBase: React.CSSProperties = { maxWidth: '86%', padding: '9px 12px', 
 const bubbleAssistant: React.CSSProperties = { ...bubbleBase, alignSelf: 'flex-start', background: C.bg, border: `1px solid ${C.border}`, borderBottomLeftRadius: 4, color: C.fg }
 const bubbleUser: React.CSSProperties = { ...bubbleBase, alignSelf: 'flex-end', background: C.surface3, borderBottomRightRadius: 4, color: C.fg }
 const suggestionRow: React.CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }
+const suggestionButton: React.CSSProperties = {
+  ...pillButton('ghost'),
+  width: '100%',
+  textAlign: 'left',
+  lineHeight: 1.4,
+}
 const composerBar: React.CSSProperties = { display: 'flex', gap: 8, padding: '12px 14px', borderTop: `1px solid ${C.border}`, alignItems: 'flex-end' }
 const composerInput: React.CSSProperties = { ...inputStyle, flex: 1, width: 'auto', resize: 'none', minHeight: 40, maxHeight: 100, lineHeight: 1.45, fontFamily: 'inherit' }
 const sendButton: React.CSSProperties = { width: 40, height: 40, borderRadius: 10, border: 'none', display: 'grid', placeItems: 'center', flexShrink: 0 }
@@ -503,7 +553,18 @@ const paramRow: React.CSSProperties = { display: 'flex', gap: 7, alignItems: 'ce
 const paramKey: React.CSSProperties = { color: C.accent, fontSize: 10.5, width: 92, overflow: 'hidden', textOverflow: 'ellipsis' }
 const paramAddRow: React.CSSProperties = { display: 'flex', gap: 7 }
 const removeButton: React.CSSProperties = { width: 27, height: 27, borderRadius: 7, border: `1px solid ${C.border}`, background: 'transparent', color: C.fg3, cursor: 'pointer' }
-const toggleLabel: React.CSSProperties = { display: 'flex', gap: 7, alignItems: 'center', color: C.fg2, fontSize: 12 }
+const switchRow: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }
+const switchTitle: React.CSSProperties = { color: C.fg2, fontSize: 12, fontWeight: 650 }
+const switchDescription: React.CSSProperties = { color: C.fg3, fontSize: 10.5, marginTop: 2 }
+const modeControl = (disabled: boolean): React.CSSProperties => ({
+  display: 'inline-flex', alignItems: 'center', gap: 2, flexShrink: 0, padding: 3,
+  border: `1px solid ${C.border}`, borderRadius: 9, background: C.surface3,
+  cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.6 : 1,
+})
+const modeOption = (active: boolean): React.CSSProperties => ({
+  padding: '5px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: active ? 700 : 550,
+  color: active ? C.fg : C.fg3, background: active ? C.surface : 'transparent',
+})
 const slotList: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8 }
 const slotCard: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 11px', borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2 }
 const slotTopRow: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center' }

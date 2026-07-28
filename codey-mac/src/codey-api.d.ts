@@ -259,7 +259,7 @@ declare global {
       playbooks: {
         list: () => Promise<IpcResult<Array<{
           name: string; description: string; version: number; useCount: number;
-          lastUsedAt: number; archived: boolean;
+          lastUsedAt: number; archived: boolean; promotedToSkill: boolean;
           successSignals: { cleanRuns: number; corrections: number };
           canRollback: boolean;
         }>>>
@@ -274,6 +274,7 @@ declare global {
         forget: (name: string) => Promise<IpcResult<void>>
         restore: (name: string) => Promise<IpcResult<void>>
         rollback: (name: string) => Promise<IpcResult<number>>
+        promote: (name: string) => Promise<IpcResult<{ name: string; dir: string }>>
       }
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>>>

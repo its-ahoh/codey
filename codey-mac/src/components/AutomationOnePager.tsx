@@ -122,16 +122,6 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
     }
   }
 
-  const toggleEnabled = async () => {
-    if (!a) return
-    try {
-      unwrap(await window.codey.automations.setEnabled(id, !a.enabled))
-      setA({ ...a, enabled: !a.enabled })
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
-    }
-  }
-
   const del = async () => {
     if (!a || !confirm(`Delete automation "${a.name}"?`)) return
     setDeleting(true)
@@ -180,11 +170,17 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
         ? slotsToSchedule(knobs.slots, a.schedule?.tz ?? TZ)
         : undefined
       if (knobs.scheduleOn && !schedule) throw new Error('Invalid time')
-      const fresh: Automation = unwrap(await window.codey.automations.update(id, {
+      const updated: Automation = unwrap(await window.codey.automations.update(id, {
         params: knobs.params,
-        schedule: schedule ?? undefined,
+        // Manual mode keeps an existing schedule so switching back restores
+        // its times. A never-scheduled automation remains schedule-free.
+        schedule: knobs.scheduleOn ? schedule! : a.schedule,
         report: { ...a.report, notify: knobs.notify },
       }))
+      const shouldEnable = knobs.scheduleOn || !updated.schedule
+      const fresh: Automation = updated.enabled === shouldEnable
+        ? updated
+        : unwrap(await window.codey.automations.setEnabled(id, shouldEnable))
       setA(fresh)
       setKnobs(knobsFrom(fresh))
       aRef.current = fresh
@@ -197,7 +193,8 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
 
   if (!a) return <div style={{ color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 24 }}>Loading…</div>
 
-  const next = a.schedule && a.enabled ? nextRunAt(a.schedule, Date.now()) : null
+  const scheduled = !!a.schedule && a.enabled
+  const next = scheduled ? nextRunAt(a.schedule, Date.now()) : null
   const latest = runs[0]
   const health = automationHealth(a, latest)
   const targetTitle = a.target.kind === 'team' ? a.target.teamName : a.target.workspaceName
@@ -216,14 +213,10 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
             <span style={healthBadge(health.color)}><span style={healthDot(health.color)} />{health.label}</span>
           </div>
           <div style={subtitleStyle}>
-            {a.schedule ? `${scheduleSummary(a.schedule)} · ${a.schedule.tz}` : 'Runs manually'}
+            {scheduled ? `${scheduleSummary(a.schedule)} · ${a.schedule!.tz}` : 'Runs manually'}
           </div>
         </div>
         <div style={heroActions}>
-          <label style={enabledControl} title={a.enabled ? 'Pause scheduled runs' : 'Enable scheduled runs'}>
-            <input type="checkbox" checked={a.enabled} onChange={() => void toggleEnabled()} />
-            {a.enabled ? 'Enabled' : 'Paused'}
-          </label>
           <button style={iconButton} onClick={onEditInChat}><UIIcon name="settings" size={14} />Edit setup</button>
           <button style={{ ...pillButton('primary'), ...actionButton }} disabled={running} onClick={() => void runNow()}>
             <UIIcon name="play" size={14} />{running ? 'Starting…' : 'Run now'}
@@ -252,8 +245,8 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
 
       <div style={summaryGrid}>
         <SummaryCard label="Next run" icon="activity"
-          value={!a.enabled ? 'Paused' : next ? humanizeDelta(next - Date.now()) : a.schedule ? 'Not scheduled' : 'Manual only'}
-          detail={next ? new Date(next).toLocaleString() : a.schedule ? scheduleSummary(a.schedule) : 'Use Run now whenever needed'} />
+          value={next ? humanizeDelta(next - Date.now()) : scheduled ? 'Not scheduled' : 'Manual'}
+          detail={next ? new Date(next).toLocaleString() : scheduled ? scheduleSummary(a.schedule) : 'Use Run now whenever needed'} />
         <SummaryCard label="Last run" icon="archive"
           value={latest ? statusLabel(latest.status) : 'No runs yet'}
           detail={latest ? new Date(latest.startedAt).toLocaleString() : 'History will appear after the first run'}
@@ -292,11 +285,17 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <DetailCard title="Schedule" description={`Times are interpreted in ${a.schedule?.tz ?? TZ}.`}>
-              <label style={settingRow}>
-                <span style={settingLabel}>Scheduled runs</span>
-                <span style={inlineToggle}><input type="checkbox" checked={knobs.scheduleOn}
-                  onChange={e => setKnobs({ ...knobs, scheduleOn: e.target.checked })} />{knobs.scheduleOn ? 'On' : 'Off'}</span>
-              </label>
+              <div style={settingRow}>
+                <span style={settingLabel}>Run mode</span>
+                <button
+                  type="button" role="switch" aria-label="Automation run mode"
+                  aria-checked={knobs.scheduleOn} style={modeControl}
+                  onClick={() => setKnobs({ ...knobs, scheduleOn: !knobs.scheduleOn })}
+                >
+                  <span style={modeOption(!knobs.scheduleOn)}>Manual</span>
+                  <span style={modeOption(knobs.scheduleOn)}>Scheduled</span>
+                </button>
+              </div>
               {knobs.scheduleOn && (
                 <>
                   <div style={scheduleSlotList}>
@@ -451,10 +450,9 @@ function statusColor(status: AutomationRun['status']): string {
 }
 
 function automationHealth(a: Automation, latest?: AutomationRun): { label: string; color: string } {
-  if (!a.enabled) return { label: 'Paused', color: C.fg3 }
   if (latest?.status === 'parked') return { label: 'Needs input', color: C.yellow }
   if (latest?.status === 'failed') return { label: 'Last run failed', color: C.red }
-  return { label: 'Healthy', color: C.green }
+  return { label: 'Ready', color: C.green }
 }
 
 function formatDuration(ms: number): string {
@@ -474,7 +472,15 @@ const subtitleStyle: React.CSSProperties = { color: C.fg3, fontSize: 11, marginT
 const heroActions: React.CSSProperties = { display: 'flex', gap: 7, alignItems: 'center', flexShrink: 0 }
 const actionButton: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6 }
 const iconButton: React.CSSProperties = { ...pillButton('ghost'), ...actionButton }
-const enabledControl: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, padding: '7px 9px', color: C.fg2, fontSize: 11, border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface }
+const modeControl: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', gap: 2, padding: 3,
+  border: `1px solid ${C.border}`, borderRadius: 9, background: C.surface,
+  cursor: 'pointer',
+}
+const modeOption = (active: boolean): React.CSSProperties => ({
+  padding: '5px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: active ? 700 : 550,
+  color: active ? C.fg : C.fg3, background: active ? C.surface3 : 'transparent',
+})
 const healthBadge = (color: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 999, color, background: C.surface3, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' })
 const healthDot = (color: string): React.CSSProperties => ({ width: 6, height: 6, borderRadius: 999, background: color, boxShadow: `0 0 0 3px ${C.surface2}` })
 
@@ -516,7 +522,6 @@ const settingRow: React.CSSProperties = { display: 'flex', gap: 12, alignItems: 
 const settingLabel: React.CSSProperties = { color: C.fg2, fontSize: 11, minWidth: 90 }
 const settingInput: React.CSSProperties = { ...inputStyle, boxSizing: 'border-box', flex: 1, width: 'auto', minWidth: 0 }
 const settingSelect: React.CSSProperties = { ...selectStyle, width: 155 }
-const inlineToggle: React.CSSProperties = { display: 'flex', gap: 5, alignItems: 'center', color: C.fg2, fontSize: 11 }
 const compactInput: React.CSSProperties = { ...inputStyle, width: 88, padding: '5px 7px', fontSize: 11 }
 const removeButton: React.CSSProperties = { width: 25, height: 25, borderRadius: 7, border: `1px solid ${C.border}`, background: C.surface3, color: C.fg3, cursor: 'pointer' }
 const smallButton: React.CSSProperties = { padding: '5px 8px', borderRadius: 7, border: `1px solid ${C.border2}`, background: C.surface3, color: C.fg2, cursor: 'pointer', fontSize: 10 }

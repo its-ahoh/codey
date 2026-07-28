@@ -11,6 +11,7 @@ interface Summary {
   useCount: number
   lastUsedAt: number
   archived: boolean
+  promotedToSkill: boolean
   successSignals: { cleanRuns: number; corrections: number }
   canRollback: boolean
 }
@@ -68,6 +69,16 @@ export const PlaybooksTab: React.FC = () => {
       setError(e?.message ?? String(e))
     }
   }, [reload, expanded])
+
+  const promote = useCallback(async (name: string) => {
+    if (!confirm(`Turn "${name}" into a project skill? The playbook will no longer be archived automatically.`)) return
+    try {
+      unwrap(await window.codey.playbooks.promote(name))
+      await reload()
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    }
+  }, [reload])
 
   const renderTimeline = () => (
     <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 12, paddingTop: 10 }}>
@@ -131,6 +142,15 @@ export const PlaybooksTab: React.FC = () => {
                 Archived
               </span>
             )}
+            {s.promotedToSkill && (
+              <span style={{
+                fontSize: 9, fontWeight: 600, letterSpacing: 0.3,
+                padding: '2px 6px', borderRadius: 4, flexShrink: 0,
+                background: C.accentDim, color: C.accent,
+              }}>
+                Skill
+              </span>
+            )}
             <span style={{ flex: 1 }} />
             <span style={{ color: C.fg3, fontSize: 11, flexShrink: 0 }}>{isExpanded ? '▾' : '▸'}</span>
           </div>
@@ -146,6 +166,9 @@ export const PlaybooksTab: React.FC = () => {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          {actions.promote && (
+            <button onClick={() => void promote(s.name)} style={pillButton('primary')}>Turn into skill</button>
+          )}
           {actions.forget && (
             <button onClick={() => void act('forget', s.name)} style={{ ...pillButton('ghost'), color: C.red }}>Forget</button>
           )}

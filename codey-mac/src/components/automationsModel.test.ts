@@ -124,6 +124,15 @@ describe('knobsFrom', () => {
     })
   })
 
+  it('treats a disabled saved schedule as manual while preserving its slots', () => {
+    expect(knobsFrom({ ...base, enabled: false })).toEqual({
+      params: { topic: 'ai' },
+      scheduleOn: false,
+      slots: [{ time: '09:05', days: [1, 3, 5] }, { time: '18:00', days: [1, 3, 5] }],
+      notify: 'all',
+    })
+  })
+
   it('passes notify modes through', () => {
     expect(knobsFrom({ params: {}, report: { notify: 'failure' } }).notify).toBe('failure')
   })
@@ -167,6 +176,12 @@ describe('knobsEqual', () => {
     expect(knobsEqual({ ...knobsFrom(auto), scheduleOn: false }, auto)).toBe(false)
   })
 
+  it('matches manual mode for a disabled saved schedule', () => {
+    const manual = { ...auto, enabled: false }
+    expect(knobsFrom(manual).scheduleOn).toBe(false)
+    expect(knobsEqual(knobsFrom(manual), manual)).toBe(true)
+  })
+
   it('ignores times/days when the schedule is off on both sides', () => {
     const manual = { params: {}, report: { notify: 'all' as const } }
     expect(knobsEqual({ ...knobsFrom(manual), slots: [{ time: '17:00', days: [2] }] }, manual)).toBe(true)
@@ -191,6 +206,6 @@ describe('checkLabel', () => {
     expect(checkLabel('clean')).toEqual({ text: 'Ready to run unattended', tone: 'good' })
     expect(checkLabel('gaps')).toEqual({ text: 'Needs clarification', tone: 'warn' })
     expect(checkLabel('error')).toEqual({ text: 'Check couldn’t run', tone: 'dim' })
-    expect(checkLabel(undefined)).toBeNull()
+    expect(checkLabel(undefined)).toEqual({ text: 'Not verified yet', tone: 'dim' })
   })
 })
