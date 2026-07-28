@@ -213,4 +213,8 @@ export class AutomationStore {
   markSeen(id: string, runId: string, now: number): void {
     this.patchRun(id, runId, { seenAt: now });
   }
+
+  markNotified(id: string, runId: string, now: number): void {
+    this.patchRun(id, runId, { notifiedAt: now });
+  }
 }

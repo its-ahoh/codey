@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { decideAutomationNotification, findUnseenRuns } from './automation-notifications'
+import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from './automation-notifications'
 
 const auto = (over: any = {}) => ({
   id: 'a1', name: 'Morning news', report: { notify: 'all' }, ...over,
@@ -47,5 +47,17 @@ describe('findUnseenRuns', () => {
       run({ runId: 'fresh', endedAt: now - 3600_000 }),
     ]
     expect(findUnseenRuns(runs, now).map(r => r.runId)).toEqual(['fresh'])
+  })
+})
+
+describe('findUnnotifiedRuns', () => {
+  it('drops unseen runs that already fired a notification live', () => {
+    const now = 100 * 3600_000
+    const runs = [
+      run({ runId: 'announced', endedAt: now - 3600_000, notifiedAt: now - 3600_000 }),
+      run({ runId: 'silent', endedAt: now - 1800_000 }),
+    ]
+    expect(findUnseenRuns(runs, now).map(r => r.runId)).toEqual(['announced', 'silent'])
+    expect(findUnnotifiedRuns(runs, now).map(r => r.runId)).toEqual(['silent'])
   })
 })

@@ -7,7 +7,7 @@ import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { createCoreStateStore } from './core-state'
 import { decideNotification, createTurnTracker } from './chat-notifications'
-import { decideAutomationNotification, findUnseenRuns } from './automation-notifications'
+import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from './automation-notifications'
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, uniqueSkills } from './skills'
@@ -468,14 +468,14 @@ function sendToRenderer(channel: string, ...args: any[]) {
     if (pendingRendererMessages.length > 500) pendingRendererMessages.shift()
   }
 }
-// Same gate the chat path applies inside decideNotification (via maybeNotify's
-// ctx): global notifications toggle off → no OS notification; window focused →
-// the user is already looking at the app, so skip the OS notification (the
-// renderer still receives the underlying event either way).
-function osNotificationsAllowed(): boolean {
-  const enabled = ((coreConfigManager?.get() as any)?.notifications?.enabled ?? true) as boolean
-  const focused = mainWindow?.isFocused() ?? false
-  return enabled && !focused
+// Gate for automation-run notifications: only the global notifications toggle.
+// Deliberately NOT focus-gated, unlike the chat path (decideNotification via
+// maybeNotify's ctx). Automations run in the background, so a finished/parked
+// run is news even while the user is in the app — and a suppressed one is not
+// marked seen, so it used to resurface only via the launch scan on next start,
+// which read as "notifications are delayed until I restart".
+function automationNotificationsAllowed(): boolean {
+  return ((coreConfigManager?.get() as any)?.notifications?.enabled ?? true) as boolean
 }
 // Native macOS notifications for background chats. Decisions are pure
 // (chat-notifications.ts); this is the impure shell: focus check, config
@@ -953,16 +953,22 @@ async function bootInProcessCore() {
       // from being mislabeled as a gateway.start failure below.
       try {
         for (const a of inProcessGateway!.listAutomations()) {
-          const unseen = findUnseenRuns(inProcessGateway!.listAutomationRuns(a.id, 20) as any, Date.now())
+          const runs = inProcessGateway!.listAutomationRuns(a.id, 20) as any
+          const unseen = findUnseenRuns(runs, Date.now())
           if (unseen.length === 0) continue
           sendToRenderer('automation-unseen', { automationId: a.id, runIds: unseen.map((r: any) => r.runId) })
-          if (!osNotificationsAllowed()) continue
-          const d = decideAutomationNotification(a as any, unseen[0] as any)
+          if (!automationNotificationsAllowed()) continue
+          // Notify only about runs that were never announced live (e.g. fired by
+          // the daemon while the app was closed) — not every unseen one.
+          const fresh = findUnnotifiedRuns(runs, Date.now())
+          if (fresh.length === 0) continue
+          const d = decideAutomationNotification(a as any, fresh[0] as any)
           if (d) {
             new Notification({
               title: d.title,
-              body: unseen.length > 1 ? `${d.body} (+${unseen.length - 1} more)` : d.body,
+              body: fresh.length > 1 ? `${d.body} (+${fresh.length - 1} more)` : d.body,
             }).show()
+            for (const r of fresh) inProcessGateway!.markAutomationRunNotified(a.id, (r as any).runId)
           }
         }
       } catch (err: any) {
@@ -1012,11 +1018,14 @@ async function bootInProcessCore() {
     // report.notify (decision logic lives in automation-notifications.ts).
     inProcessGateway.setAutomationEventListener((ev: any) => {
       sendToRenderer('automation-event', ev)
-      if ((ev.type === 'run-finished' || ev.type === 'run-parked') && ev.run && osNotificationsAllowed()) {
+      if ((ev.type === 'run-finished' || ev.type === 'run-parked') && ev.run && automationNotificationsAllowed()) {
         const a = inProcessGateway?.getAutomation(ev.automationId)
         if (a) {
           const d = decideAutomationNotification(a as any, ev.run)
-          if (d) new Notification({ title: d.title, body: d.body }).show()
+          if (d) {
+            new Notification({ title: d.title, body: d.body }).show()
+            inProcessGateway?.markAutomationRunNotified(ev.automationId, ev.runId)
+          }
         }
       }
     })

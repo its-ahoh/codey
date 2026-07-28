@@ -194,10 +194,17 @@ const Shell: React.FC = () => {
 
   // Addition 3: the nav badge must not rely solely on the one-shot
   // 'automation-unseen' push (missed if it fires before this mounts, or if
-  // the app was relaunched) — also recompute from history on mount. Both
-  // paths merge into the same Set, whichever arrives.
+  // the app was relaunched) — also recompute from history on mount, and
+  // listen for live run completions. Without the live path the badge only
+  // appeared after a relaunch, since the mount scan was its only source for
+  // runs that finished while the app was open. All three paths merge into
+  // the same Set, whichever arrives.
   useEffect(() => {
     let cancelled = false
+    const offEvent = window.codey.automations.onEvent((ev) => {
+      if (ev.type !== 'run-finished' && ev.type !== 'run-parked') return
+      setUnseenRunKeys(prev => new Set(prev).add(`${ev.automationId}:${ev.runId}`))
+    })
     const off = window.codey.automations.onUnseen((msg) => {
       setUnseenRunKeys(prev => {
         const next = new Set(prev)
@@ -226,7 +233,7 @@ const Shell: React.FC = () => {
         // gateway not ready yet — the push will still arrive when it fires
       }
     })()
-    return () => { cancelled = true; off() }
+    return () => { cancelled = true; off(); offEvent() }
   }, [])
 
   const openAutomations = () => {

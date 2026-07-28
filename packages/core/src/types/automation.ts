@@ -129,6 +129,10 @@ export interface AutomationRun {
   reportFailure?: string;
   /** Set when the Mac app has surfaced this result. */
   seenAt?: number;
+  /** Set once an OS notification has been fired for this run, so the
+   *  launch-time unseen scan doesn't re-notify what was already announced
+   *  live. Distinct from seenAt: notified ≠ read, the badge still counts it. */
+  notifiedAt?: number;
 }
 
 /** Status of the authoring-time dry-run check for a chat session. */

@@ -24,6 +24,7 @@ export interface RunLike {
   error?: string
   question?: string
   seenAt?: number
+  notifiedAt?: number
 }
 export interface AutomationNotification { automationId: string; runId: string; title: string; body: string }
 
@@ -49,7 +50,14 @@ export function decideAutomationNotification(a: AutomationLike, run: RunLike): A
   return { automationId: a.id, runId: run.runId, title, body: truncate(mdToPlainText(raw), MAX_BODY) }
 }
 
-/** Runs that ended recently, unseen — surfaced (badge + notify) on app launch. */
+/** Runs that ended recently, unseen — surfaced as the launch-time badge count. */
 export function findUnseenRuns(runs: RunLike[], now: number): RunLike[] {
   return runs.filter(r => !r.seenAt && r.endedAt !== undefined && now - r.endedAt <= UNSEEN_WINDOW_MS)
+}
+
+/** Of those, the ones no OS notification has fired for yet. Unseen alone is the
+ *  wrong gate for notifying: a run announced live stays unseen until the user
+ *  opens it, so the launch scan would announce it again on the next start. */
+export function findUnnotifiedRuns(runs: RunLike[], now: number): RunLike[] {
+  return findUnseenRuns(runs, now).filter(r => !r.notifiedAt)
 }

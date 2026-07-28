@@ -1147,6 +1147,11 @@ export class Codey {
   markAutomationRunSeen(id: string, runId: string): void {
     this.automationStore?.markSeen(id, runId, Date.now());
   }
+  /** Records that an OS notification was fired, so a relaunch inside the
+   *  unseen window doesn't announce the same run twice. */
+  markAutomationRunNotified(id: string, runId: string): void {
+    this.automationStore?.markNotified(id, runId, Date.now());
+  }
   /** Per-run activity log (tool calls, worker steps), or undefined if none. */
   getAutomationRunLog(id: string, runId: string): string | undefined {
     return this.automationStore?.readRunLog(id, runId);
