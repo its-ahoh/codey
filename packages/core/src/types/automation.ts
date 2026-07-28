@@ -117,8 +117,11 @@ export function runMode(a: { enabled?: boolean; schedule?: AutomationSchedule })
   return a.schedule && a.enabled !== false ? 'scheduled' : 'manual';
 }
 
-/** True when the scheduler will fire this automation on its own. */
-export function isScheduled(a: { enabled?: boolean; schedule?: AutomationSchedule }): boolean {
+/** True when the scheduler will fire this automation on its own. Narrows
+ *  `schedule` to present, since that is half of what makes it scheduled. */
+export function isScheduled<T extends { enabled?: boolean; schedule?: AutomationSchedule }>(
+  a: T,
+): a is T & { schedule: AutomationSchedule } {
   return runMode(a) === 'scheduled';
 }
 
