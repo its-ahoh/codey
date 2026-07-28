@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, evolveSkill, isLowSignalPrompt } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, evolveSkill, isLowSignalTrace, toolSequenceFrom, TOOL_SEQUENCE_MAX } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -394,6 +394,22 @@ describe('distillCandidate', () => {
     expect(calledPrompt).not.toContain('\n  Result:');
   });
 
+  it('puts the tool sequence in the prompt as a Did line', async () => {
+    let calledPrompt = '';
+    const deps = fakeDeps(async (req) => {
+      calledPrompt = req.prompt;
+      return { success: true, output: 'NONE', error: null, tokens: { total: 10 } };
+    });
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'ok', outputPreview: 'posted', toolSequence: ['browser_navigate', 'browser_interact'], timestamp: 1, mode: 'solo' },
+      { runId: '2', promptSummary: 'go ahead', outputPreview: 'posted', timestamp: 2, mode: 'solo' },
+    ];
+    await distillCandidate(deps, traces, [], [], 2);
+    expect(calledPrompt).toContain('Did: browser_navigate → browser_interact');
+    // A trace without tool activity contributes no Did line.
+    expect(calledPrompt.match(/\n {2}Did:/g)).toHaveLength(1);
+  });
+
   it('logs a verdict for every outcome', async () => {
     const lines: string[] = [];
     const logger = { info: (m: string) => lines.push(m), warn: (m: string) => lines.push(m), error: (m: string) => lines.push(m) };
@@ -422,8 +438,45 @@ describe('distillCandidate', () => {
   });
 });
 
-describe('isLowSignalPrompt', () => {
-  it('flags bare acknowledgements and option picks', () => {
+function traceWith(over: Partial<RunTrace>): RunTrace {
+  return { runId: 'r', promptSummary: 'x', outputPreview: '', timestamp: 0, mode: 'solo', ...over };
+}
+
+describe('toolSequenceFrom', () => {
+  it('keeps call order, drops the tool_end half of each pair', () => {
+    expect(toolSequenceFrom([
+      { type: 'tool_start', tool: 'browser_navigate' },
+      { type: 'tool_end', tool: 'browser_navigate' },
+      { type: 'tool_start', tool: 'browser_read' },
+      { type: 'tool_end', tool: 'browser_read' },
+    ])).toEqual(['browser_navigate', 'browser_read']);
+  });
+
+  it('accepts records with no type (the channel surface shape)', () => {
+    expect(toolSequenceFrom([{ tool: 'Read' }, { tool: 'Write' }])).toEqual(['Read', 'Write']);
+  });
+
+  it('collapses consecutive repeats but keeps a later revisit', () => {
+    expect(toolSequenceFrom([
+      { tool: 'Read' }, { tool: 'Read' }, { tool: 'Read' }, { tool: 'Edit' }, { tool: 'Read' },
+    ])).toEqual(['Read', 'Edit', 'Read']);
+  });
+
+  it('skips info entries and entries with no tool name, and caps length', () => {
+    expect(toolSequenceFrom([{ type: 'info', tool: 'x', message: 'hi' } as any, { tool: undefined }, { tool: 'Read' }]))
+      .toEqual(['Read']);
+    const many = Array.from({ length: 40 }, (_, i) => ({ tool: `tool-${i}` }));
+    expect(toolSequenceFrom(many)).toHaveLength(TOOL_SEQUENCE_MAX);
+  });
+
+  it('returns an empty list for missing or empty input', () => {
+    expect(toolSequenceFrom(undefined)).toEqual([]);
+    expect(toolSequenceFrom([])).toEqual([]);
+  });
+});
+
+describe('isLowSignalTrace', () => {
+  it('flags turns that neither said nor did anything', () => {
     const acks = [
       '2', 'ok', 'Yes!', 'try again', 'it is ready', 'looks good', '   ',
       '好', // lint-allow-non-english
@@ -432,7 +485,7 @@ describe('isLowSignalPrompt', () => {
       '对的。', // lint-allow-non-english
     ];
     for (const text of acks) {
-      expect(isLowSignalPrompt(text), text).toBe(true);
+      expect(isLowSignalTrace(traceWith({ promptSummary: text })), text).toBe(true);
     }
   });
 
@@ -444,8 +497,19 @@ describe('isLowSignalPrompt', () => {
       '发布 hackernews reddit 的推广帖', // lint-allow-non-english
     ];
     for (const text of work) {
-      expect(isLowSignalPrompt(text), text).toBe(false);
+      expect(isLowSignalTrace(traceWith({ promptSummary: text })), text).toBe(false);
     }
+  });
+
+  it('keeps a bare acknowledgement that drove real tool work', () => {
+    expect(isLowSignalTrace(traceWith({
+      promptSummary: 'ok',
+      toolSequence: ['browser_navigate', 'browser_interact', 'Write'],
+    }))).toBe(false);
+    expect(isLowSignalTrace(traceWith({
+      promptSummary: 'ok',
+      workerSequence: ['researcher', 'writer'],
+    }))).toBe(false);
   });
 });
 
@@ -597,6 +661,19 @@ describe('evolveSkill', () => {
     const result = await evolveSkill(deps, skill, trace);
     expect(result).not.toBeNull();
     expect(result).toContain('add links');
+  });
+
+  it('shows the run tool sequence to the evolve prompt', async () => {
+    let calledPrompt = '';
+    const deps = fakeDeps(async (req) => {
+      calledPrompt = req.prompt;
+      return { success: true, output: JSON.stringify({ improved: false }), error: null, tokens: { total: 10 } };
+    });
+    await evolveSkill(deps, skill, { ...trace, toolSequence: ['Bash', 'Read', 'Write'] });
+    expect(calledPrompt).toContain('- Tools called: Bash → Read → Write');
+    calledPrompt = '';
+    await evolveSkill(deps, skill, trace);
+    expect(calledPrompt).not.toContain('Tools called');
   });
 
   it('returns null when no improvement needed', async () => {

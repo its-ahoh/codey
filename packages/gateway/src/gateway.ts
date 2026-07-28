@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalPrompt, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, toolSequenceFrom, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -1745,6 +1745,8 @@ export class Codey {
         runId: `solo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         promptSummary: parsed.prompt.slice(0, 200),
         outputPreview: (response.output || '').slice(0, 300),
+        // What the run DID — the procedure the distiller pattern-matches on.
+        toolSequence: toolSequenceFrom(meta.toolCalls),
         timestamp: Date.now(),
         mode: 'solo',
       };
@@ -2328,9 +2330,10 @@ export class Codey {
 
       if (!opts.clean) return; // failed runs contribute a correction signal, not a trace
 
-      // "ok", "2", "try again" — a real run, but as distillation input it is
-      // noise that pushes describable work out of the small trace window.
-      if (isLowSignalPrompt(opts.trace.promptSummary)) {
+      // A turn that neither said nor did anything ("ok", "2") is noise that
+      // pushes real procedures out of the small trace window. Tool activity
+      // overrides this — see isLowSignalTrace.
+      if (isLowSignalTrace(opts.trace)) {
         this.logger.debug(`[skills] trace skipped — continuation turn: "${opts.trace.promptSummary.slice(0, 40)}"`);
         return;
       }
@@ -5459,6 +5462,8 @@ Example: /model gpt-4.1 write a Python script`;
           promptSummary: userText.slice(0, 200),
           outputPreview: (output || '').slice(0, 300),
           workerSequence: workerSequence && workerSequence.length > 0 ? workerSequence : undefined,
+          // What the run DID — the procedure the distiller pattern-matches on.
+          toolSequence: toolSequenceFrom(toolCalls),
           timestamp: Date.now(),
           mode: teamTurnId ? 'team-sequential' : 'solo',
         };
