@@ -127,11 +127,22 @@ export interface Chat {
   lastAskedOptions?: { messageId: string; options: string[] };
   /** Set when the skill distiller has proposed a new skill and is waiting for
    *  the user's "yes" / "no" / "rename <name>" reply. Cleared on any resolution. */
+  /** Mirrors DistillResult (skill-crystallizer). Inlined rather than imported
+   *  so this type module stays dependency-free; `parameters`/`inducedFrom` are
+   *  present only when the suggestion came from an induced template. */
   pendingSkillSuggestion?: {
     name: string;
     description: string;
     whenToUse: string;
     steps: string;
+    parameters?: {
+      name: string;
+      /** Mirrors ArgShape['kind'] — kept literal so a drift shows up as a type
+       *  error at the store.add call site rather than silently widening. */
+      kind: 'url' | 'path' | 'enum' | 'text' | 'number' | 'bool' | 'other';
+      ext?: string;
+    }[];
+    inducedFrom?: string[];
   };
   /**
    * Warm CLI session for this chat. When set, the next turn for the same

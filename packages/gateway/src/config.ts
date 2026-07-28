@@ -75,6 +75,9 @@ export interface GatewayConfigJson {
     weakSkillDays?: number;
     /** Model override for distillation. Falls back to advisor.model. */
     distillModel?: string;
+    /** Suggest playbooks from clustered procedures instead of from an LLM's
+     *  impression of recent prompts. Off by default while thresholds settle. */
+    induction?: boolean;
   };
   /**
    * Global team library. Each entry maps a team name to its members + dispatch
@@ -377,6 +380,7 @@ export class ConfigManager extends EventEmitter {
   getSkillsConfig(): {
     enabled: boolean; suggestOnRepeat: number; autoApply: boolean;
     staleDays: number; weakSkillDays: number; distillModel: string | undefined;
+    induction: boolean;
   } {
     const raw = this.config.skills;
     return {
@@ -386,6 +390,10 @@ export class ConfigManager extends EventEmitter {
       staleDays: raw?.staleDays ?? 30,
       weakSkillDays: raw?.weakSkillDays ?? 7,
       distillModel: raw?.distillModel,
+      // Off by default: clustering thresholds are unfit guesses until they
+      // have been observed against real traces. Off still logs would-be
+      // clusters; on lets an induced template become a suggestion.
+      induction: raw?.induction ?? false,
     };
   }
 
@@ -656,6 +664,7 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
       staleDays: raw.skills.staleDays,
       weakSkillDays: raw.skills.weakSkillDays,
       distillModel: raw.skills.distillModel,
+      induction: raw.skills.induction,
     };
   }
   if (raw.advisor && typeof raw.advisor === 'object') {

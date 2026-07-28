@@ -330,3 +330,120 @@ export function clusterProcedures(
   report.clusters.sort((a, b) => b.score - a.score);
   return report;
 }
+
+// ── Template induction ─────────────────────────────────────────────
+
+export interface InducedStep {
+  tool: string;
+  /** Arguments that held the same identifying value in every member. */
+  constants: Record<string, string>;
+  /** Arguments that varied — the playbook's inputs. Names index into
+   *  InducedTemplate.parameters. */
+  slots: string[];
+}
+
+export interface TemplateParameter {
+  name: string;
+  kind: ArgShape['kind'];
+  /** Extension seen for path parameters — "a .ts file" is a better prompt than
+   *  "a path". Absent for other kinds. */
+  ext?: string;
+}
+
+export interface InducedTemplate {
+  steps: InducedStep[];
+  parameters: TemplateParameter[];
+  memberRunIds: string[];
+}
+
+/** Only two shapes retain a value identifying enough to call an argument
+ *  constant. Two `text` arguments in the same length bucket are NOT the same
+ *  text, and two paths with the same extension are not the same file — those
+ *  are slots, however similar their shapes look. */
+function constantValue(shape: ArgShape): string | null {
+  if (shape.kind === 'url') return shape.host;
+  if (shape.kind === 'enum') return shape.value;
+  return null;
+}
+
+/** Collapsed step list, matching what signatureOf produces. */
+function collapsedSteps(input: ProcedureInput): TraceStep[] {
+  const steps: TraceStep[] = [];
+  for (const step of input.steps ?? []) {
+    if (steps[steps.length - 1]?.tool === step.tool) continue;
+    steps.push(step);
+  }
+  return steps;
+}
+
+/** Turn a cluster into a procedure with holes.
+ *
+ *  Runs over the persisted SHAPES, not raw values — `sameShape` already
+ *  encodes the distinction the diff needs, so induction never requires the
+ *  values to have been stored.
+ *
+ *  Positional alignment: a step is induced only where every member called the
+ *  same tool at that index. A member that diverges mid-procedure contributes
+ *  its agreeing prefix and suffix positions, never a guess. */
+export function induceTemplate(members: ProcedureInput[]): InducedTemplate | null {
+  if (members.length < 2) return null;
+  const stepLists = members.map(collapsedSteps);
+  const length = Math.min(...stepLists.map(s => s.length));
+  if (length === 0) return null;
+
+  const steps: InducedStep[] = [];
+  const parameters: TemplateParameter[] = [];
+  const takenNames = new Set<string>();
+
+  for (let i = 0; i < length; i++) {
+    const tool = stepLists[0][i].tool;
+    if (!stepLists.every(list => list[i].tool === tool)) continue;
+
+    const constants: Record<string, string> = {};
+    const slots: string[] = [];
+    // Only arguments every member supplied can be reasoned about.
+    const keys = Object.keys(stepLists[0][i].args)
+      .filter(key => stepLists.every(list => list[i].args[key] !== undefined));
+
+    for (const key of keys) {
+      const shapes = stepLists.map(list => list[i].args[key]);
+      const first = shapes[0];
+      if (!shapes.every(shape => shape.kind === first.kind)) continue; // disagreeing kinds: not part of the template
+
+      const constant = constantValue(first);
+      if (constant !== null && shapes.every(shape => sameShape(shape, first))) {
+        constants[key] = constant;
+        continue;
+      }
+
+      let name = key;
+      let suffix = 2;
+      while (takenNames.has(name)) name = `${key}_${suffix++}`;
+      takenNames.add(name);
+      slots.push(name);
+      parameters.push({
+        name,
+        kind: first.kind,
+        ...(first.kind === 'path' ? { ext: first.ext } : {}),
+      });
+    }
+
+    steps.push({ tool, constants, slots });
+  }
+
+  if (steps.length === 0) return null;
+  return { steps, parameters, memberRunIds: members.map(m => m.runId) };
+}
+
+/** Render a template for a prompt or a confirmation. Contains only tool names,
+ *  argument keys, constants (hosts and short literals), and slot names — never
+ *  user content. */
+export function renderTemplate(template: InducedTemplate): string {
+  return template.steps.map((step, i) => {
+    const args = [
+      ...Object.entries(step.constants).map(([key, value]) => `${key}=${value}`),
+      ...step.slots.map(slot => `${slot}=«${slot}»`),
+    ];
+    return `${i + 1}. ${step.tool}${args.length ? `(${args.join(', ')})` : ''}`;
+  }).join('\n');
+}

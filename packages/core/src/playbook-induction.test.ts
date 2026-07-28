@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   shapeOf, sameShape, stepsFrom, signatureOf, computeRarity, similarity, clusterProcedures,
+  induceTemplate, renderTemplate,
   TEXT_LEN_MAX, MAX_STEPS, MAX_ARGS_PER_STEP, ProcedureInput,
 } from './playbook-induction';
 
@@ -250,5 +251,87 @@ describe('clusterProcedures', () => {
     ], { minMembers: 2 });
     expect(report.clusters).toHaveLength(1);
     expect(report.clusters[0].runIds.sort()).toEqual(['a', 'b']);
+  });
+});
+
+function member(runId: string, calls: { tool: string; input?: Record<string, unknown> }[]): ProcedureInput {
+  return { runId, steps: stepsFrom(calls) };
+}
+
+describe('induceTemplate', () => {
+  it('splits constants from slots across a cluster', () => {
+    const template = induceTemplate([
+      member('a', [
+        { tool: 'browser_navigate', input: { url: 'https://x.com/alice/status/1' } },
+        { tool: 'browser_interact', input: { text: 'a'.repeat(200) } },
+      ]),
+      member('b', [
+        { tool: 'browser_navigate', input: { url: 'https://x.com/bob/status/2' } },
+        { tool: 'browser_interact', input: { text: 'b'.repeat(240) } },
+      ]),
+    ])!;
+    // Same host every run -> constant. Same text bucket -> still a slot.
+    expect(template.steps[0]).toEqual({ tool: 'browser_navigate', constants: { url: 'x.com' }, slots: [] });
+    expect(template.steps[1]).toEqual({ tool: 'browser_interact', constants: {}, slots: ['text'] });
+    expect(template.parameters).toEqual([{ name: 'text', kind: 'text' }]);
+  });
+
+  it('makes a differing host a slot', () => {
+    const template = induceTemplate([
+      member('a', [{ tool: 'fetch', input: { url: 'https://x.com/a' } }, { tool: 'Write', input: { n: 1 } }]),
+      member('b', [{ tool: 'fetch', input: { url: 'https://reddit.com/b' } }, { tool: 'Write', input: { n: 2 } }]),
+    ])!;
+    expect(template.steps[0].slots).toEqual(['url']);
+    expect(template.steps[0].constants).toEqual({});
+    expect(template.parameters.map(p => p.name)).toEqual(['url', 'n']);
+  });
+
+  it('never treats same-length text or same-extension paths as constant', () => {
+    const template = induceTemplate([
+      member('a', [{ tool: 'Write', input: { file_path: 'src/one.ts', content: 'x'.repeat(50) } }]),
+      member('b', [{ tool: 'Write', input: { file_path: 'src/two.ts', content: 'y'.repeat(60) } }]),
+    ])!;
+    expect(template.steps[0].constants).toEqual({});
+    expect(template.steps[0].slots.sort()).toEqual(['content', 'file_path']);
+    expect(template.parameters.find(p => p.name === 'file_path')).toEqual({ name: 'file_path', kind: 'path', ext: 'ts' });
+  });
+
+  it('drops a step where members called different tools', () => {
+    const template = induceTemplate([
+      member('a', [{ tool: 'Read' }, { tool: 'Edit' }, { tool: 'Bash' }]),
+      member('b', [{ tool: 'Read' }, { tool: 'Grep' }, { tool: 'Bash' }]),
+    ])!;
+    expect(template.steps.map(s => s.tool)).toEqual(['Read', 'Bash']);
+  });
+
+  it('ignores arguments only some members supplied', () => {
+    const template = induceTemplate([
+      member('a', [{ tool: 'Bash', input: { command: 'x'.repeat(50), timeout: 1000 } }]),
+      member('b', [{ tool: 'Bash', input: { command: 'y'.repeat(50) } }]),
+    ])!;
+    expect(template.steps[0].slots).toEqual(['command']);
+  });
+
+  it('disambiguates repeated slot names', () => {
+    const template = induceTemplate([
+      member('a', [{ tool: 'fetch', input: { url: 'https://one.com/x' } }, { tool: 'post', input: { url: 'https://two.com/y' } }]),
+      member('b', [{ tool: 'fetch', input: { url: 'https://three.com/x' } }, { tool: 'post', input: { url: 'https://four.com/y' } }]),
+    ])!;
+    expect(template.parameters.map(p => p.name)).toEqual(['url', 'url_2']);
+  });
+
+  it('returns null without at least two members or any steps', () => {
+    expect(induceTemplate([member('a', [{ tool: 'Read' }])])).toBeNull();
+    expect(induceTemplate([{ runId: 'a' }, { runId: 'b' }])).toBeNull();
+  });
+
+  it('renders a template without any user content', () => {
+    const template = induceTemplate([
+      member('a', [{ tool: 'browser_navigate', input: { url: 'https://x.com/secret-handle/status/1' } }]),
+      member('b', [{ tool: 'browser_navigate', input: { url: 'https://x.com/other-handle/status/2' } }]),
+    ])!;
+    const rendered = renderTemplate(template);
+    expect(rendered).toBe('1. browser_navigate(url=x.com)');
+    expect(rendered).not.toContain('secret-handle');
   });
 });

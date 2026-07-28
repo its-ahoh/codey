@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, evolveSkill, isLowSignalTrace } from './skill-crystallizer';
+import { InducedTemplate } from './playbook-induction';
+import { SkillStore, RECENT_TRACES_MAX, TRACES_FILE_VERSION, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, bindParameter, nameTemplate, evolveSkill, isLowSignalTrace } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -171,6 +172,42 @@ describe('SkillStore', () => {
     const traces = store2.getRecentTraces(10);
     expect(traces.length).toBe(2);
     expect(traces[0].runId).toBe('r2');
+  });
+
+  it('loads a v1 traces file and rewrites it as v2', async () => {
+    const skillsDir = path.join(tmp, 'skills');
+    fs.mkdirSync(skillsDir, { recursive: true });
+    fs.writeFileSync(path.join(skillsDir, 'traces.json'), JSON.stringify({
+      version: 1,
+      traces: [{ runId: 'old', promptSummary: 'p', outputPreview: 'o', timestamp: 1, mode: 'solo' }],
+    }));
+    const store2 = new SkillStore(tmp);
+    await store2.load();
+    // v1 traces load as-is; they simply have no steps.
+    expect(store2.getRecentTraces(10)[0].runId).toBe('old');
+    expect(store2.getRecentTraces(10)[0].steps).toBeUndefined();
+    store2.recordTrace({
+      runId: 'new', promptSummary: 'p', outputPreview: 'o', timestamp: 2, mode: 'solo',
+      steps: [{ tool: 'Read', args: {} }],
+    });
+    await store2.flush();
+    const written = JSON.parse(fs.readFileSync(path.join(skillsDir, 'traces.json'), 'utf-8'));
+    expect(written.version).toBe(TRACES_FILE_VERSION);
+    expect(written.traces[0].steps).toEqual([{ tool: 'Read', args: {} }]);
+  });
+
+  it('persists parameters and provenance on an induced skill', async () => {
+    store.add({
+      name: 'x-outreach', description: 'd', whenToUse: 'w', steps: 's',
+      parameters: [{ name: 'comment', kind: 'text' }],
+      inducedFrom: ['r1', 'r2'],
+    });
+    await store.flush();
+    const store2 = new SkillStore(tmp);
+    await store2.load();
+    const entry = store2.get('x-outreach')!;
+    expect(entry.parameters).toEqual([{ name: 'comment', kind: 'text' }]);
+    expect(entry.inducedFrom).toEqual(['r1', 'r2']);
   });
 
   it('getRecentTraces returns most recent first', () => {
@@ -605,6 +642,93 @@ describe('applySkill', () => {
   it('handles empty task', () => {
     const result = applySkill('', skill);
     expect(result).toContain('using skill: release-notes');
+  });
+
+  it('binds a parameter the task plainly supplies', () => {
+    const parameterized = makeSkill({
+      ...skill,
+      parameters: [{ name: 'target_url', kind: 'url' }, { name: 'file_path', kind: 'path', ext: 'ts' }],
+    });
+    const result = applySkill('comment on https://x.com/someone/status/9 and patch src/gateway.ts', parameterized);
+    expect(result).toContain('«target_url» = https://x.com/someone/status/9');
+    expect(result).toContain('«file_path» = src/gateway.ts');
+  });
+
+  it('leaves a slot unfilled rather than inventing a value', () => {
+    const parameterized = makeSkill({
+      ...skill,
+      parameters: [{ name: 'topic', kind: 'text' }, { name: 'target_url', kind: 'url' }],
+    });
+    const result = applySkill('write something about agents', parameterized);
+    expect(result).toContain('«topic» — determine from the task (text)');
+    expect(result).toContain('«target_url» — determine from the task (url)');
+    expect(result).not.toContain('«topic» =');
+  });
+
+  it('says nothing about inputs for a skill without parameters', () => {
+    expect(applySkill('do the thing', skill)).not.toContain('Inputs:');
+  });
+});
+
+describe('bindParameter', () => {
+  it('extracts a URL, stopping at surrounding punctuation', () => {
+    expect(bindParameter('see https://x.com/a/b?x=1 for details', { name: 'u', kind: 'url' }))
+      .toBe('https://x.com/a/b?x=1');
+    expect(bindParameter('(https://x.com/a)', { name: 'u', kind: 'url' })).toBe('https://x.com/a');
+  });
+
+  it('prefers a path with the expected extension', () => {
+    expect(bindParameter('edit src/gateway.ts and README.md', { name: 'p', kind: 'path', ext: 'md' }))
+      .toBe('README.md');
+  });
+
+  it('returns null when the task supplies nothing usable', () => {
+    expect(bindParameter('no links here', { name: 'u', kind: 'url' })).toBeNull();
+    expect(bindParameter('anything', { name: 't', kind: 'text' })).toBeNull();
+    expect(bindParameter('anything', { name: 'n', kind: 'number' })).toBeNull();
+  });
+});
+
+describe('nameTemplate', () => {
+  const template: InducedTemplate = {
+    steps: [
+      { tool: 'browser_navigate', constants: { url: 'x.com' }, slots: [] },
+      { tool: 'browser_interact', constants: {}, slots: ['comment'] },
+    ],
+    parameters: [{ name: 'comment', kind: 'text' }],
+    memberRunIds: ['r1', 'r2'],
+  };
+
+  it('names the template and carries its parameters onto the result', async () => {
+    let prompt = '';
+    const deps = fakeDeps(async (req) => {
+      prompt = req.prompt;
+      return { success: true, output: JSON.stringify({
+        name: 'x-outreach', description: 'Comment on AI posts', whenToUse: 'user asks to comment', steps: '1. open «comment»',
+      }), error: null, tokens: { total: 10 } };
+    });
+    const result = await nameTemplate(deps, template, [], []);
+    expect(result!.name).toBe('x-outreach');
+    expect(result!.parameters).toEqual(template.parameters);
+    expect(result!.inducedFrom).toEqual(['r1', 'r2']);
+    // The prompt states the recurrence rather than asking the model to judge it.
+    expect(prompt).toContain('2 runs');
+    expect(prompt).toContain('browser_navigate(url=x.com)');
+    expect(prompt).toContain('comment=«comment»');
+  });
+
+  it('returns null when the model says the template duplicates a skill', async () => {
+    const deps = fakeDeps(async () => ({ success: true, output: 'NONE', error: null, tokens: { total: 5 } }));
+    expect(await nameTemplate(deps, template, [], [])).toBeNull();
+  });
+
+  it('returns null on an invalid name after retrying', async () => {
+    const deps = fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({ name: 'Bad Name', description: 'd', whenToUse: 'w', steps: '1. x' }),
+      error: null, tokens: { total: 5 },
+    }));
+    expect(await nameTemplate(deps, template, [], [])).toBeNull();
   });
 });
 

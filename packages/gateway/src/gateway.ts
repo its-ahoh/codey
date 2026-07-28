@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ProcedureCluster, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -1422,6 +1422,9 @@ export class Codey {
             // If this upserts an existing skill (evolving its steps), record
             // what the user confirmed as the evolution's trigger.
             trigger: { runId: 'user-confirmed', promptSummary: pendingSkill.description },
+            // Present only when the suggestion came from an induced template.
+            parameters: pendingSkill.parameters,
+            inducedFrom: pendingSkill.inducedFrom,
           });
           this.pendingSkillSuggestions.delete(pendingSkillKey);
           await this.sendResponse({
@@ -2286,25 +2289,45 @@ export class Codey {
    *  so it runs in log-only mode until there are real traces to fit them
    *  against. Pure computation over at most RECENT_TRACES_MAX traces.
    *  See docs/superpowers/specs/2026-07-28-playbook-induction-design.md. */
-  private logProcedureClusters(store: SkillStore, minMembers: number): void {
+  private logProcedureClusters(store: SkillStore, minMembers: number): ProcedureCluster | null {
     try {
-      const report = clusterProcedures(store.getRecentTraces(RECENT_TRACES_MAX), { minMembers });
+      const traces = store.getRecentTraces(RECENT_TRACES_MAX);
+      const report = clusterProcedures(traces, { minMembers });
       if (report.clusters.length === 0) {
         this.logger.debug(
           `[skills] induction: no cluster — ${report.withoutSteps} without steps, ` +
           `${report.tooShort} too short, ${report.tooFewMembers} not recurring yet, ` +
           `${report.rejectedByDistinctiveness} too generic`);
-        return;
+        return null;
       }
       for (const cluster of report.clusters) {
         this.logger.info(
-          `[skills] induction: would cluster ${cluster.runIds.length} run(s) — ` +
+          `[skills] induction: clustered ${cluster.runIds.length} run(s) — ` +
           `${cluster.signature.join(' → ')} (distinctiveness ${cluster.distinctiveness.toFixed(2)}, ` +
           `score ${cluster.score.toFixed(2)})`);
       }
+      return report.clusters[0];
     } catch (err) {
       this.logger.warn(`[skills] induction pass failed: ${err}`);
+      return null;
     }
+  }
+
+  /** Turn the winning cluster into a named, parameterized suggestion. Returns
+   *  null whenever induction has nothing to offer, so the caller falls back to
+   *  prose distillation. */
+  private async induceSuggestion(
+    store: SkillStore,
+    cluster: ProcedureCluster,
+  ): Promise<DistillResult | null> {
+    const byId = new Map(store.getRecentTraces(RECENT_TRACES_MAX).map(t => [t.runId, t]));
+    const members = cluster.runIds.map(id => byId.get(id)).filter((t): t is RunTrace => !!t);
+    const template = induceTemplate(members);
+    if (!template) {
+      this.logger.debug('[skills] induction: cluster produced no template');
+      return null;
+    }
+    return nameTemplate(this.getSkillDistillDeps(), template, store.getAll(), store.getRejected());
   }
 
   /** Shared post-run skill pass for both surfaces. Never rejects — every LLM
@@ -2368,7 +2391,7 @@ export class Codey {
       }
 
       store.recordTrace(opts.trace);
-      this.logProcedureClusters(store, cfg.suggestOnRepeat);
+      const cluster = this.logProcedureClusters(store, cfg.suggestOnRepeat);
 
       this.skillRunCounter++;
       if (this.skillRunCounter % Codey.SKILL_GC_EVERY_N_RUNS === 1) {
@@ -2393,9 +2416,14 @@ export class Codey {
             return;
           }
           this.lastSkillDistillTime = now;
-          const candidate = await distillCandidate(
-            this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
-          );
+          // A clustered procedure is evidence; a prose pattern is an
+          // impression. Prefer the former when induction is on, and fall back
+          // to distillation when there is no cluster or naming came up empty.
+          const candidate =
+            (cfg.induction && cluster ? await this.induceSuggestion(store, cluster) : null)
+            ?? await distillCandidate(
+              this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
+            );
           if (candidate) {
             opts.setPending(candidate);
             await opts.notify(
@@ -4984,7 +5012,9 @@ Example: /model gpt-4.1 write a Python script`;
                       steps: s.steps, sourceRunId: 'user-confirmed',
                       // If this upserts an existing skill (evolving its steps),
                       // record what the user confirmed as the trigger.
-                      trigger: { runId: 'user-confirmed', promptSummary: s.description } });
+                      trigger: { runId: 'user-confirmed', promptSummary: s.description },
+                      // Present only when the suggestion came from an induced template.
+                      parameters: s.parameters, inducedFrom: s.inducedFrom });
           responseText = `✅ Skill **${name}** saved. It will be auto-applied on matching tasks.`;
         }
         this.chatManager.setPendingSkillSuggestion(chatId, null);

@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { AideRunner, runAide } from './aide';
-import { TraceStep } from './playbook-induction';
+import { ArgShape, InducedTemplate, TraceStep, renderTemplate } from './playbook-induction';
 import { CodingAgent, CoreLogger, ModelConfig } from './types';
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -32,6 +32,17 @@ export interface SkillEntry {
   /** Promoted playbooks are backed by a durable agent SKILL.md and are never
    *  archived by either garbage collection or the playbook UI. */
   promotedToSkill?: boolean;
+  /** Inputs the procedure takes, discovered by diffing a cluster of runs.
+   *  Absent on skills distilled from prose rather than induced. */
+  parameters?: SkillParameter[];
+  /** Run ids the template was induced from — provenance for "why this?". */
+  inducedFrom?: string[];
+}
+
+export interface SkillParameter {
+  name: string;
+  kind: ArgShape['kind'];
+  ext?: string;
 }
 
 export interface RejectedSuggestion {
@@ -85,6 +96,10 @@ export interface DistillResult {
   description: string;
   whenToUse: string;
   steps: string;
+  /** Present when the suggestion came from an induced template rather than
+   *  from prose distillation. */
+  parameters?: SkillParameter[];
+  inducedFrom?: string[];
 }
 
 export interface SkillMatch {
@@ -199,6 +214,8 @@ export class SkillStore {
     steps: string;
     sourceRunId?: string;
     trigger?: { runId: string; promptSummary: string };
+    parameters?: SkillParameter[];
+    inducedFrom?: string[];
   }): SkillEntry {
     const now = Date.now();
     const existing = this.index.entries.find(e => e.name === params.name);
@@ -218,6 +235,10 @@ export class SkillStore {
       }
       existing.description = params.description;
       existing.whenToUse = params.whenToUse;
+      // A re-induction sees more runs than the first one did, so its parameter
+      // list supersedes the old one.
+      if (params.parameters) existing.parameters = params.parameters;
+      if (params.inducedFrom) existing.inducedFrom = params.inducedFrom;
       if (params.sourceRunId && !existing.sourceRunIds.includes(params.sourceRunId)) {
         existing.sourceRunIds.push(params.sourceRunId);
       }
@@ -238,6 +259,8 @@ export class SkillStore {
       sourceRunIds: params.sourceRunId ? [params.sourceRunId] : [],
       createdAt: now,
       archived: false,
+      ...(params.parameters?.length ? { parameters: params.parameters } : {}),
+      ...(params.inducedFrom?.length ? { inducedFrom: params.inducedFrom } : {}),
     };
     this.index.entries.push(entry);
     this.markIndexDirty();
@@ -655,6 +678,83 @@ export async function distillCandidate(
   return null;
 }
 
+// ── nameTemplate ───────────────────────────────────────────────────
+
+const NAME_TEMPLATE_PROMPT = `A recurring procedure was detected across %COUNT% runs by comparing what those runs actually did. Your job is only to NAME and DESCRIBE it — the recurrence is already established, so do not judge whether it is real.
+
+The procedure (tool calls in order; «name» marks an input that varied between runs):
+%TEMPLATE%
+
+Inputs it takes:
+%PARAMS%
+
+Existing skills (don't duplicate):
+%SKILLS%
+
+Previously rejected suggestions (the user said no — do NOT re-propose these or close variants):
+%REJECTED%
+
+Write the steps as prose a coding agent can follow, referring to inputs by their «name».
+
+Return ONE JSON object (no markdown, no prose) or the literal word "NONE" if this
+duplicates an existing skill:
+{
+  "name": "kebab-case",
+  "description": "one line describing what this skill does",
+  "whenToUse": "when the user asks to...",
+  "steps": "1. ...\\n2. ...\\n3. ..."
+}
+
+Rules:
+- name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
+- Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
+
+/** Name a template that clustering already established.
+ *
+ *  The prompt carries tool names, argument keys, hosts, short literals and
+ *  slot names — no prompt text, no tool output, no user content. That is the
+ *  whole point of inducing the template first: the model sees an abstraction,
+ *  not the runs. */
+export async function nameTemplate(
+  deps: DistillDeps,
+  template: InducedTemplate,
+  existing: SkillEntry[],
+  rejected: RejectedSuggestion[],
+): Promise<DistillResult | null> {
+  const params = template.parameters.length
+    ? template.parameters.map(p => `- ${p.name}: ${p.ext ? `${p.kind} (.${p.ext})` : p.kind}`).join('\n')
+    : '(none — the procedure takes no varying input)';
+
+  const composed = fillPrompt(NAME_TEMPLATE_PROMPT, {
+    '%COUNT%': String(template.memberRunIds.length),
+    '%TEMPLATE%': renderTemplate(template),
+    '%PARAMS%': params,
+    '%SKILLS%': formatSkillsForPrompt(existing.filter(s => !s.archived)),
+    '%REJECTED%': formatRejectedForPrompt(rejected),
+  });
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const prompt = attempt === 0 ? composed
+      : `${composed}\n\nReminder: return ONLY the JSON object or the word "NONE". No markdown.`;
+    const output = await runCrystallizerLLM(deps, prompt);
+    if (output === null) {
+      deps.logger?.warn(`[skills] induction: naming call failed (attempt ${attempt + 1})`);
+      continue;
+    }
+    const parsed = tryParseDistill(output);
+    if (parsed && /^[a-z][a-z0-9-]*$/.test(parsed.name) && parsed.name.length >= 3 && parsed.name.length <= 30) {
+      deps.logger?.info(`[skills] induction: named "${parsed.name}" from ${template.memberRunIds.length} run(s)`);
+      return { ...parsed, parameters: template.parameters, inducedFrom: template.memberRunIds };
+    }
+    if (output.trim() === 'NONE') {
+      deps.logger?.info('[skills] induction: template duplicates an existing skill');
+      return null;
+    }
+  }
+  deps.logger?.warn('[skills] induction: no usable name after 2 attempts');
+  return null;
+}
+
 export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | null {
   const active = skills.filter(s => !s.archived);
   if (active.length === 0) return null;
@@ -726,8 +826,38 @@ export async function confirmMatch(
   return output.trim().toUpperCase() === 'YES';
 }
 
+/** Pull a value for one parameter out of the task text, or null.
+ *
+ *  Deliberately a cheap syntactic pass — no LLM. A wrong auto-bound value is
+ *  worse than an unfilled slot, because the agent can resolve the latter from
+ *  the task itself but will act confidently on the former. */
+export function bindParameter(task: string, param: SkillParameter): string | null {
+  if (param.kind === 'url') {
+    return task.match(/https?:\/\/[^\s<>"')]+/)?.[0] ?? null;
+  }
+  if (param.kind === 'path') {
+    const pattern = param.ext
+      ? new RegExp(`[\\w./-]+\\.${param.ext.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`)
+      : /[\w./-]*\/[\w./-]+/;
+    return task.match(pattern)?.[0] ?? null;
+  }
+  return null;
+}
+
+/** Prefix a task with the skill's procedure. Parameters the task plainly
+ *  supplies are bound; the rest stay as «name» for the agent to resolve. */
 export function applySkill(task: string, skill: SkillEntry): string {
-  const banner = `⚙︎ using skill: ${skill.name} (v${skill.version})\n\nFollow this procedure:\n${skill.steps}\n\n---\nNow execute this task:`;
+  let params = '';
+  if (skill.parameters?.length) {
+    const lines = skill.parameters.map(param => {
+      const bound = bindParameter(task, param);
+      return bound
+        ? `- «${param.name}» = ${bound}`
+        : `- «${param.name}» — determine from the task (${param.ext ? `${param.kind}, .${param.ext}` : param.kind})`;
+    });
+    params = `\n\nInputs:\n${lines.join('\n')}`;
+  }
+  const banner = `⚙︎ using skill: ${skill.name} (v${skill.version})\n\nFollow this procedure:\n${skill.steps}${params}\n\n---\nNow execute this task:`;
   return task ? `${banner} ${task}` : `${banner}\n\nProceed with the procedure above.`;
 }
 

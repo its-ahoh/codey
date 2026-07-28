@@ -1,7 +1,7 @@
 # Playbook Induction — Design
 
 Date: 2026-07-28
-Status: Steps 1-2 implemented (trace schema v2 + log-only clustering); 3-5 pending
+Status: Implemented behind `skills.induction` (off by default); thresholds unfit
 
 ## Problem
 
@@ -187,14 +187,19 @@ construction, so alignment is positional after collapsing).
 
 For each step, for each argument key, compare the shapes across members:
 
-- **Identical shape and identical value across all members** -> a **constant**.
-  Bake it into the step text: "open x.com".
-- **Same shape, differing values** -> a **slot**. Name it from the key and
-  shape (`url` -> `«target_url»`, `query` -> `«query»`); collisions get a
-  numeric suffix.
-- **Differing shapes** -> not part of the template. If a step disagrees on
-  shape across members, drop the step from the induced procedure rather than
-  guessing.
+- **Identical shape and identical value across all members** -> a **constant**,
+  baked into the step text: "open x.com".
+- **Same shape, differing values** -> a **slot**, named from the argument key;
+  collisions get a numeric suffix.
+- **Differing kinds** -> not part of the template. Where members disagree on
+  the tool called at a position, the step is dropped rather than guessed.
+
+> Sharpened during implementation: **only `url` and `enum` shapes can produce a
+> constant.** The other shapes don't retain an identifying value, so "same
+> shape" doesn't mean "same value" — two `text` arguments in the same length
+> bucket are not the same text, and two paths with the same extension are not
+> the same file. Treating those as constants would bake one run's content into
+> the playbook. They are always slots.
 
 Output:
 
