@@ -1,5 +1,6 @@
 // packages/gateway/src/automations/engine.ts
 import { randomUUID } from 'crypto';
+import { isScheduled } from '@codey/core';
 import type { Automation, AutomationEvent, AutomationRun } from '@codey/core';
 import { AutomationStore } from './store';
 import { SchedulerLease } from './lease';
@@ -72,7 +73,7 @@ export class AutomationEngine {
       // a RangeError inside shouldFire) must not abort the whole tick and
       // starve every other schedule.
       try {
-        if (!a.enabled || !a.schedule) continue;
+        if (!isScheduled(a)) continue;
         if (!shouldFire(a.schedule, a.lastFiredAt, now)) continue;
         // Record the slot BEFORE running so a crash mid-run can't re-fire it.
         this.deps.store.recordLastFired(a.id, now);

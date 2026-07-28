@@ -1,6 +1,6 @@
 // codey-mac/src/components/automationsModel.test.ts
 import { describe, it, expect } from 'vitest'
-import { scheduleSummary, slotsToSchedule, nextRunAt, humanizeDelta, draftComplete, formatHHMM, knobsFrom, knobsEqual, checkLabel } from './automationsModel'
+import { scheduleSummary, scheduleChipLabel, slotsToSchedule, nextRunAt, humanizeDelta, draftComplete, formatHHMM, knobsFrom, knobsEqual, checkLabel } from './automationsModel'
 
 const t = (hour: number, minute: number, daysOfWeek?: number[]) => ({ hour, minute, ...(daysOfWeek ? { daysOfWeek } : {}) })
 
@@ -18,6 +18,26 @@ describe('scheduleSummary', () => {
   it('keeps each time connected to its own weekdays', () => {
     expect(scheduleSummary({ slots: [t(21, 0, [1, 2, 3]), t(12, 0, [4, 5])], tz: 'UTC' }))
       .toBe('Mon–Wed 21:00 · Thu–Fri 12:00')
+  })
+})
+
+describe('scheduleChipLabel', () => {
+  it('capitalizes the compact label and falls back to Manual', () => {
+    expect(scheduleChipLabel({ slots: [t(9, 0)], tz: 'UTC' })).toBe('Daily 09:00')
+    expect(scheduleChipLabel({ slots: [t(18, 30, [1, 2, 3, 4, 5])], tz: 'UTC' })).toBe('Mon–Fri 18:30')
+    expect(scheduleChipLabel(undefined)).toBe('Manual')
+  })
+  it('caps the times listed per day-set', () => {
+    expect(scheduleChipLabel({ slots: [t(1, 0), t(2, 0), t(3, 0), t(4, 0)], tz: 'UTC' }))
+      .toBe('Daily 01:00, 02:00, 03:00 +1')
+  })
+  it('collapses many day-sets sharing one clock time', () => {
+    const slots = [t(9, 0, [0, 3, 4, 6]), t(9, 0, [1, 5])]
+    expect(scheduleChipLabel({ slots, tz: 'UTC' })).toBe('09:00 · 6 days/wk')
+  })
+  it('collapses many day-sets with differing times to a cadence', () => {
+    const slots = [t(1, 0, [1]), t(2, 0, [2, 3]), t(3, 0, [4])]
+    expect(scheduleChipLabel({ slots, tz: 'UTC' })).toBe('4 runs/wk · 3 times')
   })
 })
 

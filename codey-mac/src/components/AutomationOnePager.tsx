@@ -8,6 +8,7 @@ import {
   scheduleSummary, slotsToSchedule, nextRunAt, humanizeDelta,
   knobsFrom, knobsEqual, NOTIFY_OPTIONS, type Knobs, type NotifyMode,
 } from './automationsModel'
+import { isScheduled } from '../../../packages/core/src/types/automation'
 import type { Automation, AutomationRun } from '../../../packages/core/src/types/automation'
 import { UIIcon, type IconName } from './UIIcons'
 import { Markdown } from './Markdown'
@@ -193,7 +194,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
 
   if (!a) return <div style={{ color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 24 }}>Loading…</div>
 
-  const scheduled = !!a.schedule && a.enabled
+  const scheduled = isScheduled(a)
   const next = scheduled ? nextRunAt(a.schedule, Date.now()) : null
   const latest = runs[0]
   const health = automationHealth(a, latest)

@@ -2,7 +2,7 @@ import React from 'react'
 
 export type IconName =
   | 'activity' | 'add' | 'archive' | 'bell' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
-  | 'code' | 'copy' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
+  | 'clock' | 'code' | 'copy' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
   | 'globe' | 'overview' | 'refresh' | 'server' | 'settings' | 'sparkle' | 'split' | 'terminal' | 'tools' | 'trash' | 'users' | 'workspace'
   | 'telegram' | 'discord' | 'imessage'
 
@@ -27,6 +27,7 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     chat: <><path {...common} d="M20 11.5a7.5 7.5 0 01-8 7.5 8.7 8.7 0 01-3.3-.65L4 20l1.55-3.9A7.3 7.3 0 014 11.5 7.5 7.5 0 0112 4a7.5 7.5 0 018 7.5z" /></>,
     check: <path {...common} d="M5 12.5l4.2 4.2L19 7" />,
     chevron: <path {...common} d="M9 18l6-6-6-6" />,
+    clock: <><circle {...common} cx="12" cy="12" r="9" /><path {...common} d="M12 7.5V12l3.2 2.2" /></>,
     close: <path {...common} d="M6 6l12 12M18 6L6 18" />,
     disclosure: <path fill="currentColor" stroke="none" d="M9 6.5L16 12l-7 5.5z" />,
     code: <><path {...common} d="M8 9l-3 3 3 3M16 9l3 3-3 3M14 6l-4 12" /></>,
