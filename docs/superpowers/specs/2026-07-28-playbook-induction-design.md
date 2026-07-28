@@ -1,7 +1,7 @@
 # Playbook Induction — Design
 
 Date: 2026-07-28
-Status: Draft (not implemented)
+Status: Steps 1-2 implemented (trace schema v2 + log-only clustering); 3-5 pending
 
 ## Problem
 
@@ -146,16 +146,31 @@ write" is not "write, read, navigate".
 **Step 3 — distinctiveness weighting.** This is what keeps the whole thing from
 firing on every coding run. `Read -> Edit -> Bash` is nearly universal and
 means nothing; `browser_navigate -> browser_interact -> Write` is a procedure.
-Weight each tool by inverse frequency across the trace store:
+Weight each tool by how *rare* it is across the window:
 
 ```
-idf(tool) = ln(totalTraces / (1 + tracesContaining(tool)))
+rarity(tool) = 1 - tracesContaining(tool) / totalRuns
 ```
 
-and weight LCS matches by `idf`, so a match on ubiquitous tools contributes
-little. Reject a cluster whose mean `idf` falls below a floor, and reject
-signatures shorter than `MIN_PROCEDURE_LEN` (3 distinct tools) regardless of
-similarity.
+LCS matches are weighted by `rarity`, so a match on ubiquitous tools
+contributes almost nothing. Reject a cluster whose mean rarity falls below
+`MIN_DISTINCTIVENESS`, and reject signatures shorter than `MIN_PROCEDURE_LEN`
+(3 distinct tools) regardless of similarity.
+
+> Revised during implementation. This started as `ln(total / (1 + containing))`
+> — textbook idf — which turns out to be unusable at these window sizes: a
+> procedure repeated twice in a 4-run window scores 0.29 and reads as "common",
+> so the very clusters worth finding were rejected. Plain `1 - frequency` means
+> the same thing at every window size and is directly interpretable ("absent
+> from at least 40% of runs"). Two related details:
+>
+> - `totalRuns` counts **every** run considered, including ones that observed
+>   no tools. Counting only runs with steps makes a procedure look ubiquitous
+>   at exactly the moment it is the only observable thing in the window.
+> - Distinctiveness still needs a corpus. Early on, with a handful of traces,
+>   real clusters will be withheld for looking too common. That is acceptable
+>   while the pass is log-only, and is itself a reason to keep it log-only
+>   until the window fills.
 
 **Step 4 — group.** Single-link agglomerative clustering at
 `SIMILARITY_THRESHOLD` (start at 0.7, tune against the real `traces.json`).

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, evolveSkill, isLowSignalTrace, toolSequenceFrom, TOOL_SEQUENCE_MAX } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, evolveSkill, isLowSignalTrace } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -441,39 +441,6 @@ describe('distillCandidate', () => {
 function traceWith(over: Partial<RunTrace>): RunTrace {
   return { runId: 'r', promptSummary: 'x', outputPreview: '', timestamp: 0, mode: 'solo', ...over };
 }
-
-describe('toolSequenceFrom', () => {
-  it('keeps call order, drops the tool_end half of each pair', () => {
-    expect(toolSequenceFrom([
-      { type: 'tool_start', tool: 'browser_navigate' },
-      { type: 'tool_end', tool: 'browser_navigate' },
-      { type: 'tool_start', tool: 'browser_read' },
-      { type: 'tool_end', tool: 'browser_read' },
-    ])).toEqual(['browser_navigate', 'browser_read']);
-  });
-
-  it('accepts records with no type (the channel surface shape)', () => {
-    expect(toolSequenceFrom([{ tool: 'Read' }, { tool: 'Write' }])).toEqual(['Read', 'Write']);
-  });
-
-  it('collapses consecutive repeats but keeps a later revisit', () => {
-    expect(toolSequenceFrom([
-      { tool: 'Read' }, { tool: 'Read' }, { tool: 'Read' }, { tool: 'Edit' }, { tool: 'Read' },
-    ])).toEqual(['Read', 'Edit', 'Read']);
-  });
-
-  it('skips info entries and entries with no tool name, and caps length', () => {
-    expect(toolSequenceFrom([{ type: 'info', tool: 'x', message: 'hi' } as any, { tool: undefined }, { tool: 'Read' }]))
-      .toEqual(['Read']);
-    const many = Array.from({ length: 40 }, (_, i) => ({ tool: `tool-${i}` }));
-    expect(toolSequenceFrom(many)).toHaveLength(TOOL_SEQUENCE_MAX);
-  });
-
-  it('returns an empty list for missing or empty input', () => {
-    expect(toolSequenceFrom(undefined)).toEqual([]);
-    expect(toolSequenceFrom([])).toEqual([]);
-  });
-});
 
 describe('isLowSignalTrace', () => {
   it('flags turns that neither said nor did anything', () => {

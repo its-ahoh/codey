@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { AideRunner, runAide } from './aide';
+import { TraceStep } from './playbook-induction';
 import { CodingAgent, CoreLogger, ModelConfig } from './types';
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -56,6 +57,11 @@ export interface RunTrace {
    *  TOOL_SEQUENCE_MAX. A skill IS a procedure, so what the run did is the
    *  signal the distiller actually needs — the message text is context. */
   toolSequence?: string[];
+  /** The same calls with their arguments abstracted to shapes — the input to
+   *  procedure clustering. Values never appear here; see playbook-induction.ts.
+   *  Absent on traces recorded before schema v2 and on adapters that emit no
+   *  tool events (opencode, codex). */
+  steps?: TraceStep[];
   timestamp: number;
   mode: 'solo' | 'team-sequential' | 'team-parallel' | 'team-auto';
 }
@@ -89,6 +95,8 @@ export interface SkillMatch {
 }
 
 export const RECENT_TRACES_MAX = 20;
+/** Kept as the cap on the derived `toolSequence`; step extraction enforces the
+ *  same bound via MAX_STEPS. */
 export const TOOL_SEQUENCE_MAX = 12;
 export const HISTORY_MAX = 5;
 export const REJECTED_MAX = 20;
@@ -107,8 +115,13 @@ export interface SkillEvolutionEvent {
   steps: string;
 }
 
+/** v2 adds RunTrace.steps. v1 files load as-is — their traces simply have no
+ *  `steps`, and the window rolls over within RECENT_TRACES_MAX runs anyway, so
+ *  there is nothing worth migrating. */
+export const TRACES_FILE_VERSION = 2;
+
 interface TracesFile {
-  version: 1;
+  version: 1 | 2;
   traces: RunTrace[];
 }
 
@@ -161,7 +174,7 @@ export class SkillStore {
     if (fs.existsSync(this.tracesPath)) {
       try {
         const parsed = JSON.parse(fs.readFileSync(this.tracesPath, 'utf-8')) as TracesFile;
-        if (parsed && parsed.version === 1 && Array.isArray(parsed.traces)) {
+        if (parsed && (parsed.version === 1 || parsed.version === 2) && Array.isArray(parsed.traces)) {
           this.runTraces = parsed.traces.slice(0, RECENT_TRACES_MAX);
         }
       } catch { /* start with empty traces */ }
@@ -397,7 +410,7 @@ export class SkillStore {
     this.tracesDirty = false;
     // Serialize synchronously so later mutations in this tick can't tear the snapshot.
     const indexJson = writeIndex ? JSON.stringify(this.index, null, 2) : null;
-    const tracesPayload: TracesFile = { version: 1, traces: this.runTraces };
+    const tracesPayload: TracesFile = { version: TRACES_FILE_VERSION, traces: this.runTraces };
     const tracesJson = writeTraces ? JSON.stringify(tracesPayload, null, 2) : null;
     try {
       await fsp.mkdir(this.skillsDir, { recursive: true });
@@ -560,30 +573,6 @@ function tryParseDistill(raw: string): DistillResult | null {
   }
   return { name: p.name as string, description: p.description as string,
            whenToUse: p.whenToUse as string, steps: p.steps as string };
-}
-
-/** Collapse a run's tool activity into an ordered list of tool NAMES.
- *
- *  Names only, deliberately: tool inputs and outputs carry user content and
- *  file contents, and every crystallizer prompt goes to a tool-less runner
- *  precisely so that material stays out of a tool-capable session.
- *
- *  Accepts both shapes the gateway has on hand — the chat surface's
- *  ToolCallEntry (paired 'tool_start'/'tool_end' records) and the channel
- *  surface's ContextManager ToolCallRecord (one record per call, no `type`).
- *  Only the start half of a pair is counted so calls aren't doubled. */
-export function toolSequenceFrom(entries: { tool?: string; type?: string }[] | undefined): string[] {
-  if (!entries || entries.length === 0) return [];
-  const names: string[] = [];
-  for (const entry of entries) {
-    if (!entry.tool) continue;
-    if (entry.type === 'tool_end' || entry.type === 'info') continue;
-    // A loop over 20 files is one step in a procedure, not 20.
-    if (names[names.length - 1] === entry.tool) continue;
-    names.push(entry.tool);
-    if (names.length >= TOOL_SEQUENCE_MAX) break;
-  }
-  return names;
 }
 
 /** Bare acknowledgements, matched after trailing punctuation is stripped. */
