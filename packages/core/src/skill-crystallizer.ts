@@ -52,6 +52,10 @@ export interface RunTrace {
   /** First ~300 chars of the agent's output. A preview, not a structural analysis. */
   outputPreview: string;
   workerSequence?: string[];
+  /** Tool names in call order, consecutive repeats collapsed, capped at
+   *  TOOL_SEQUENCE_MAX. A skill IS a procedure, so what the run did is the
+   *  signal the distiller actually needs — the message text is context. */
+  toolSequence?: string[];
   timestamp: number;
   mode: 'solo' | 'team-sequential' | 'team-parallel' | 'team-auto';
 }
@@ -65,6 +69,9 @@ export interface DistillDeps {
   runner: AideRunner;
   /** Hard timeout per call in ms. Defaults to the Aide's 30s. */
   timeoutMs?: number;
+  /** Optional — distillation returning nothing is the normal case, so without
+   *  a logger here "why has no playbook appeared?" is unanswerable from logs. */
+  logger?: CoreLogger;
 }
 
 export interface DistillResult {
@@ -82,6 +89,7 @@ export interface SkillMatch {
 }
 
 export const RECENT_TRACES_MAX = 20;
+export const TOOL_SEQUENCE_MAX = 12;
 export const HISTORY_MAX = 5;
 export const REJECTED_MAX = 20;
 export const EVOLUTION_MAX = 20;
@@ -482,6 +490,11 @@ const DISTILL_PROMPT = `You analyze coding-agent runs to find recurring work pat
 
 Given these recent run traces and existing skills, identify a repeatable sub-process that appears in 2+ runs. If you find one, describe it as a reusable skill. If none, return exactly "NONE".
 
+Each trace lists what the user asked ("- <request> [mode]"), the tools the run actually
+called in order ("Did: ..."), and what it produced ("Result: ..."). Weigh "Did" most
+heavily — a skill is a procedure, so two runs that ran the same tool sequence are the
+same work even when the requests are worded nothing alike.
+
 Recent traces:
 %TRACES%
 
@@ -503,12 +516,24 @@ Rules:
 - name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
 - Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
 
+/** How much of each trace's output preview reaches the distill prompt. The
+ *  preview is stored at 300 chars; trimming here keeps a full trace window
+ *  from crowding out the instructions. */
+const TRACE_PREVIEW_CHARS = 200;
+
 function formatTracesForPrompt(traces: RunTrace[]): string {
   return traces.map(t => {
     const parts = [`- ${t.promptSummary} [${t.mode}]`];
     if (t.workerSequence && t.workerSequence.length > 0) {
       parts.push(`  Steps: ${t.workerSequence.join(' → ')}`);
     }
+    if (t.toolSequence && t.toolSequence.length > 0) {
+      parts.push(`  Did: ${t.toolSequence.join(' → ')}`);
+    }
+    // The request alone is often just "do the thing again" — what the run
+    // PRODUCED is what makes two runs recognizably the same work.
+    const preview = (t.outputPreview || '').replace(/\s+/g, ' ').trim();
+    if (preview) parts.push(`  Result: ${preview.slice(0, TRACE_PREVIEW_CHARS)}`);
     return parts.join('\n');
   }).join('\n');
 }
@@ -537,6 +562,70 @@ function tryParseDistill(raw: string): DistillResult | null {
            whenToUse: p.whenToUse as string, steps: p.steps as string };
 }
 
+/** Collapse a run's tool activity into an ordered list of tool NAMES.
+ *
+ *  Names only, deliberately: tool inputs and outputs carry user content and
+ *  file contents, and every crystallizer prompt goes to a tool-less runner
+ *  precisely so that material stays out of a tool-capable session.
+ *
+ *  Accepts both shapes the gateway has on hand — the chat surface's
+ *  ToolCallEntry (paired 'tool_start'/'tool_end' records) and the channel
+ *  surface's ContextManager ToolCallRecord (one record per call, no `type`).
+ *  Only the start half of a pair is counted so calls aren't doubled. */
+export function toolSequenceFrom(entries: { tool?: string; type?: string }[] | undefined): string[] {
+  if (!entries || entries.length === 0) return [];
+  const names: string[] = [];
+  for (const entry of entries) {
+    if (!entry.tool) continue;
+    if (entry.type === 'tool_end' || entry.type === 'info') continue;
+    // A loop over 20 files is one step in a procedure, not 20.
+    if (names[names.length - 1] === entry.tool) continue;
+    names.push(entry.tool);
+    if (names.length >= TOOL_SEQUENCE_MAX) break;
+  }
+  return names;
+}
+
+/** Bare acknowledgements, matched after trailing punctuation is stripped. */
+const ACK_REPLY_EN = /^(y|yes|yep|yeah|ok|okay|k|sure|please|go|go ahead|continue|next|again|try again|do it|redo|retry|looks good|lgtm|perfect|great|nice|good|done|ready|it is ready|no|nope|nah|stop)$/i;
+/** The same, in the other language this gateway sees day to day. */
+const ACK_REPLY_ZH = new Set(['好', '好的', '好吧', '可以', '继续', '再来', '重来', '对', '对的', '是', '是的', '行', '嗯', '不错', '谢谢', '完成']); // lint-allow-non-english
+/** ASCII plus CJK sentence-final punctuation. */
+const TRAILING_PUNCT = /[.!?~,、。！？，]+$/; // lint-allow-non-english
+const CJK_CHAR = /[一-鿿]/g; // lint-allow-non-english
+
+/** Minimum content words (Latin script) / ideographs (CJK) a prompt needs
+ *  before it describes work rather than continuing a conversation. */
+const MIN_CONTENT_WORDS = 4;
+const MIN_CJK_CHARS = 4;
+
+function isLowSignalPrompt(text: string): boolean {
+  const normalized = (text || '').trim().replace(/\s+/g, ' ');
+  if (!normalized) return true;
+  const bare = normalized.replace(TRAILING_PUNCT, '');
+  if (ACK_REPLY_EN.test(bare) || ACK_REPLY_ZH.has(bare)) return true;
+  // CJK writes far more meaning per character, so it gets its own threshold
+  // instead of being judged by whitespace-delimited word count.
+  const cjkChars = (normalized.match(CJK_CHAR) || []).length;
+  if (cjkChars > 0) return cjkChars < MIN_CJK_CHARS;
+  const words = normalized.split(' ').filter(w => /[a-z0-9]/i.test(w));
+  return words.length < MIN_CONTENT_WORDS;
+}
+
+/** True for turns that continue a conversation instead of doing work — "ok",
+ *  "2", "try again" with nothing behind them. The trace window is small
+ *  (suggestOnRepeat + 5), so a handful of these crowds out every trace the
+ *  distiller could pattern-match on.
+ *
+ *  Tool activity outranks the prompt: a bare "ok" that drove six tool calls is
+ *  a full procedure and among the most useful traces there is. Only a turn
+ *  that both says nothing and did nothing is dropped. */
+export function isLowSignalTrace(trace: RunTrace): boolean {
+  if (trace.toolSequence && trace.toolSequence.length > 0) return false;
+  if (trace.workerSequence && trace.workerSequence.length > 0) return false;
+  return isLowSignalPrompt(trace.promptSummary);
+}
+
 export async function distillCandidate(
   deps: DistillDeps,
   traces: RunTrace[],
@@ -556,15 +645,24 @@ export async function distillCandidate(
     const prompt = attempt === 0 ? composed
       : `${composed}\n\nReminder: return ONLY the JSON object or the word "NONE". No markdown.`;
     const output = await runCrystallizerLLM(deps, prompt);
-    if (output === null) continue;
+    if (output === null) {
+      deps.logger?.warn(`[skills] distill: LLM call failed or timed out (attempt ${attempt + 1})`);
+      continue;
+    }
     const parsed = tryParseDistill(output);
     if (parsed) {
       if (/^[a-z][a-z0-9-]*$/.test(parsed.name) && parsed.name.length >= 3 && parsed.name.length <= 30) {
+        deps.logger?.info(`[skills] distill: candidate "${parsed.name}" from ${traces.length} trace(s)`);
         return parsed;
       }
+      deps.logger?.warn(`[skills] distill: rejected candidate name "${parsed.name}"`);
     }
-    if (output.trim() === 'NONE') return null;
+    if (output.trim() === 'NONE') {
+      deps.logger?.info(`[skills] distill: no recurring pattern across ${traces.length} trace(s)`);
+      return null;
+    }
   }
+  deps.logger?.warn(`[skills] distill: no usable output after 2 attempts over ${traces.length} trace(s)`);
   return null;
 }
 
@@ -657,7 +755,7 @@ Run context:
 - Task: %TASK_SUMMARY%
 - Output preview: %OUTPUT_PREVIEW%
 - Mode: %MODE%
-%WORKER_STEPS%
+%WORKER_STEPS%%TOOL_STEPS%
 
 Does the run suggest a better version of the steps? If yes, return improved steps. If the current steps are fine, say no change. Only propose a change when the run clearly revealed a missing, wrong, or better step — do not rephrase working steps.
 
@@ -677,6 +775,11 @@ export async function evolveSkill(
   if (trace.workerSequence && trace.workerSequence.length > 0) {
     workerPart = `- Worker sequence: ${trace.workerSequence.join(' → ')}`;
   }
+  // What the run DID is the strongest evidence that a step is missing or wrong.
+  let toolPart = '';
+  if (trace.toolSequence && trace.toolSequence.length > 0) {
+    toolPart = `${workerPart ? '\n' : ''}- Tools called: ${trace.toolSequence.join(' → ')}`;
+  }
   const composed = fillPrompt(EVOLVE_PROMPT, {
     '%SKILL_NAME%': skill.name,
     '%SKILL_DESC%': skill.description,
@@ -686,6 +789,7 @@ export async function evolveSkill(
     '%OUTPUT_PREVIEW%': trace.outputPreview,
     '%MODE%': trace.mode,
     '%WORKER_STEPS%': workerPart,
+    '%TOOL_STEPS%': toolPart,
   });
 
   const output = await runCrystallizerLLM(deps, composed);
