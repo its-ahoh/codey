@@ -65,6 +65,9 @@ export interface DistillDeps {
   runner: AideRunner;
   /** Hard timeout per call in ms. Defaults to the Aide's 30s. */
   timeoutMs?: number;
+  /** Optional — distillation returning nothing is the normal case, so without
+   *  a logger here "why has no playbook appeared?" is unanswerable from logs. */
+  logger?: CoreLogger;
 }
 
 export interface DistillResult {
@@ -482,6 +485,10 @@ const DISTILL_PROMPT = `You analyze coding-agent runs to find recurring work pat
 
 Given these recent run traces and existing skills, identify a repeatable sub-process that appears in 2+ runs. If you find one, describe it as a reusable skill. If none, return exactly "NONE".
 
+Each trace lists what the user asked ("- <request> [mode]") and, where available, what
+the run produced ("Result: ..."). Judge recurrence on the work itself, not on wording —
+two runs that phrase the request differently but do the same job still count as a repeat.
+
 Recent traces:
 %TRACES%
 
@@ -503,12 +510,21 @@ Rules:
 - name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
 - Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
 
+/** How much of each trace's output preview reaches the distill prompt. The
+ *  preview is stored at 300 chars; trimming here keeps a full trace window
+ *  from crowding out the instructions. */
+const TRACE_PREVIEW_CHARS = 200;
+
 function formatTracesForPrompt(traces: RunTrace[]): string {
   return traces.map(t => {
     const parts = [`- ${t.promptSummary} [${t.mode}]`];
     if (t.workerSequence && t.workerSequence.length > 0) {
       parts.push(`  Steps: ${t.workerSequence.join(' → ')}`);
     }
+    // The request alone is often just "do the thing again" — what the run
+    // PRODUCED is what makes two runs recognizably the same work.
+    const preview = (t.outputPreview || '').replace(/\s+/g, ' ').trim();
+    if (preview) parts.push(`  Result: ${preview.slice(0, TRACE_PREVIEW_CHARS)}`);
     return parts.join('\n');
   }).join('\n');
 }
@@ -537,6 +553,36 @@ function tryParseDistill(raw: string): DistillResult | null {
            whenToUse: p.whenToUse as string, steps: p.steps as string };
 }
 
+/** Bare acknowledgements, matched after trailing punctuation is stripped. */
+const ACK_REPLY_EN = /^(y|yes|yep|yeah|ok|okay|k|sure|please|go|go ahead|continue|next|again|try again|do it|redo|retry|looks good|lgtm|perfect|great|nice|good|done|ready|it is ready|no|nope|nah|stop)$/i;
+/** The same, in the other language this gateway sees day to day. */
+const ACK_REPLY_ZH = new Set(['好', '好的', '好吧', '可以', '继续', '再来', '重来', '对', '对的', '是', '是的', '行', '嗯', '不错', '谢谢', '完成']); // lint-allow-non-english
+/** ASCII plus CJK sentence-final punctuation. */
+const TRAILING_PUNCT = /[.!?~,、。！？，]+$/; // lint-allow-non-english
+const CJK_CHAR = /[一-鿿]/g; // lint-allow-non-english
+
+/** Minimum content words (Latin script) / ideographs (CJK) a prompt needs
+ *  before it describes work rather than continuing a conversation. */
+const MIN_CONTENT_WORDS = 4;
+const MIN_CJK_CHARS = 4;
+
+/** True for turns that continue a conversation instead of describing work —
+ *  "ok", "2", "try again". They are real runs, but as distillation input they
+ *  are noise, and the trace window is small enough (suggestOnRepeat + 5) that
+ *  a handful of them crowds out every trace the distiller could pattern-match. */
+export function isLowSignalPrompt(text: string): boolean {
+  const normalized = (text || '').trim().replace(/\s+/g, ' ');
+  if (!normalized) return true;
+  const bare = normalized.replace(TRAILING_PUNCT, '');
+  if (ACK_REPLY_EN.test(bare) || ACK_REPLY_ZH.has(bare)) return true;
+  // CJK writes far more meaning per character, so it gets its own threshold
+  // instead of being judged by whitespace-delimited word count.
+  const cjkChars = (normalized.match(CJK_CHAR) || []).length;
+  if (cjkChars > 0) return cjkChars < MIN_CJK_CHARS;
+  const words = normalized.split(' ').filter(w => /[a-z0-9]/i.test(w));
+  return words.length < MIN_CONTENT_WORDS;
+}
+
 export async function distillCandidate(
   deps: DistillDeps,
   traces: RunTrace[],
@@ -556,15 +602,24 @@ export async function distillCandidate(
     const prompt = attempt === 0 ? composed
       : `${composed}\n\nReminder: return ONLY the JSON object or the word "NONE". No markdown.`;
     const output = await runCrystallizerLLM(deps, prompt);
-    if (output === null) continue;
+    if (output === null) {
+      deps.logger?.warn(`[skills] distill: LLM call failed or timed out (attempt ${attempt + 1})`);
+      continue;
+    }
     const parsed = tryParseDistill(output);
     if (parsed) {
       if (/^[a-z][a-z0-9-]*$/.test(parsed.name) && parsed.name.length >= 3 && parsed.name.length <= 30) {
+        deps.logger?.info(`[skills] distill: candidate "${parsed.name}" from ${traces.length} trace(s)`);
         return parsed;
       }
+      deps.logger?.warn(`[skills] distill: rejected candidate name "${parsed.name}"`);
     }
-    if (output.trim() === 'NONE') return null;
+    if (output.trim() === 'NONE') {
+      deps.logger?.info(`[skills] distill: no recurring pattern across ${traces.length} trace(s)`);
+      return null;
+    }
   }
+  deps.logger?.warn(`[skills] distill: no usable output after 2 attempts over ${traces.length} trace(s)`);
   return null;
 }
 

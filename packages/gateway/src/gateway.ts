@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalPrompt, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -2252,6 +2252,7 @@ export class Codey {
       // and never with permissions skipped — crystallizer prompts embed user
       // text and agent output, so they must not reach a tool-capable session.
       runner: this.advisorRunner,
+      logger: this.logger,
     };
   }
 
@@ -2327,6 +2328,13 @@ export class Codey {
 
       if (!opts.clean) return; // failed runs contribute a correction signal, not a trace
 
+      // "ok", "2", "try again" — a real run, but as distillation input it is
+      // noise that pushes describable work out of the small trace window.
+      if (isLowSignalPrompt(opts.trace.promptSummary)) {
+        this.logger.debug(`[skills] trace skipped — continuation turn: "${opts.trace.promptSummary.slice(0, 40)}"`);
+        return;
+      }
+
       store.recordTrace(opts.trace);
 
       this.skillRunCounter++;
@@ -2342,10 +2350,15 @@ export class Codey {
 
       try {
         const now = Date.now();
-        if (now - this.lastSkillDistillTime > Codey.SKILL_DISTILL_COOLDOWN_MS) {
+        if (now - this.lastSkillDistillTime <= Codey.SKILL_DISTILL_COOLDOWN_MS) {
+          this.logger.debug('[skills] distill skipped — cooldown');
+        } else {
           const recent = store.getRecentTraces(cfg.suggestOnRepeat + 5);
           // Nothing to distill yet — skip WITHOUT consuming the cooldown.
-          if (recent.length < cfg.suggestOnRepeat) return;
+          if (recent.length < cfg.suggestOnRepeat) {
+            this.logger.debug(`[skills] distill skipped — ${recent.length}/${cfg.suggestOnRepeat} traces`);
+            return;
+          }
           this.lastSkillDistillTime = now;
           const candidate = await distillCandidate(
             this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
@@ -5421,9 +5434,12 @@ Example: /model gpt-4.1 write a Python script`;
       // with the team's question on the next user turn), and no use/success
       // bookkeeping for an applied skill either — the run isn't finished yet.
       const pausedAfterRun = !!this.chatManager.get(chatId)?.pendingTeam;
-      // Automation chats skip the pass entirely — unattended runs must not
-      // generate skill suggestions (nobody is there to answer them).
-      if (skillsCfg?.enabled && !pausedAfterRun && chat.kind !== 'automation') {
+      // Automation chats still contribute traces — scheduled work is the most
+      // repetitive work there is, so excluding it starves the distiller of its
+      // best signal. Only the SUGGESTION is suppressed: an unattended run has
+      // nobody there to answer "save this as a skill?".
+      const unattended = chat.kind === 'automation';
+      if (skillsCfg?.enabled && !pausedAfterRun) {
         // Real success signal: the solo path exposes it on singleAgentResponse
         // (a failed run reaches here with success:false and output = streamed
         // partial text or ''). Team paths have no structured flag — they throw
@@ -5457,7 +5473,7 @@ Example: /model gpt-4.1 write a Python script`;
           // a structured AskUserQuestion) must not get a skill suggestion
           // stacked on top — the user's "yes" would resolve the suggestion
           // instead of the agent's question. Trace/evolve still run.
-          suppressSuggestion: !!surfacedChoices || !!agentUserQuestion,
+          suppressSuggestion: unattended || !!surfacedChoices || !!agentUserQuestion,
           notify: (text) => { sink({ type: 'info', chatId, message: text, skillNotice: true }); },
           setPending: (s) => { this.chatManager.setPendingSkillSuggestion(chatId, s); },
         });

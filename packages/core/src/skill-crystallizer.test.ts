@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, evolveSkill } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, evolveSkill, isLowSignalPrompt } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -360,6 +360,92 @@ describe('distillCandidate', () => {
       error: null, tokens: { total: 10 },
     }));
     expect(await distillCandidate(tooShort, traces, [], [], 2)).toBeNull();
+  });
+
+  it('puts each trace output preview in the prompt, truncated', async () => {
+    let calledPrompt = '';
+    const deps = fakeDeps(async (req) => {
+      calledPrompt = req.prompt;
+      return { success: true, output: 'NONE', error: null, tokens: { total: 10 } };
+    });
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'do it again', outputPreview: 'Posted 3 comments on AI threads', timestamp: 1, mode: 'solo' },
+      { runId: '2', promptSummary: 'same as before', outputPreview: 'x'.repeat(300), timestamp: 2, mode: 'solo' },
+    ];
+    await distillCandidate(deps, traces, [], [], 2);
+    expect(calledPrompt).toContain('Result: Posted 3 comments on AI threads');
+    expect(calledPrompt).toContain(`Result: ${'x'.repeat(200)}\n`);
+    expect(calledPrompt).not.toContain('x'.repeat(201));
+  });
+
+  it('omits the Result line when a trace has no output preview', async () => {
+    let calledPrompt = '';
+    const deps = fakeDeps(async (req) => {
+      calledPrompt = req.prompt;
+      return { success: true, output: 'NONE', error: null, tokens: { total: 10 } };
+    });
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'draft release notes', outputPreview: '', timestamp: 1, mode: 'solo' },
+      { runId: '2', promptSummary: 'draft changelog', outputPreview: '   ', timestamp: 2, mode: 'solo' },
+    ];
+    await distillCandidate(deps, traces, [], [], 2);
+    // The instructions mention "Result: ..."; what must be absent is the
+    // indented per-trace line.
+    expect(calledPrompt).not.toContain('\n  Result:');
+  });
+
+  it('logs a verdict for every outcome', async () => {
+    const lines: string[] = [];
+    const logger = { info: (m: string) => lines.push(m), warn: (m: string) => lines.push(m), error: (m: string) => lines.push(m) };
+    const traces: RunTrace[] = [
+      { runId: '1', promptSummary: 'x', outputPreview: 'y', timestamp: 0, mode: 'solo' },
+      { runId: '2', promptSummary: 'z', outputPreview: 'y', timestamp: 1, mode: 'solo' },
+    ];
+
+    const none = { ...fakeDeps(async () => ({ success: true, output: 'NONE', error: null, tokens: { total: 10 } })), logger };
+    await distillCandidate(none, traces, [], [], 2);
+    expect(lines.some(l => l.includes('no recurring pattern'))).toBe(true);
+
+    lines.length = 0;
+    const garbage = { ...fakeDeps(async () => ({ success: true, output: 'garbage', error: null, tokens: { total: 10 } })), logger };
+    await distillCandidate(garbage, traces, [], [], 2);
+    expect(lines.some(l => l.includes('no usable output'))).toBe(true);
+
+    lines.length = 0;
+    const hit = { ...fakeDeps(async () => ({
+      success: true,
+      output: JSON.stringify({ name: 'release-notes', description: 'd', whenToUse: 'w', steps: '1. x' }),
+      error: null, tokens: { total: 10 },
+    })), logger };
+    await distillCandidate(hit, traces, [], [], 2);
+    expect(lines.some(l => l.includes('candidate "release-notes"'))).toBe(true);
+  });
+});
+
+describe('isLowSignalPrompt', () => {
+  it('flags bare acknowledgements and option picks', () => {
+    const acks = [
+      '2', 'ok', 'Yes!', 'try again', 'it is ready', 'looks good', '   ',
+      '好', // lint-allow-non-english
+      '好的', // lint-allow-non-english
+      '继续', // lint-allow-non-english
+      '对的。', // lint-allow-non-english
+    ];
+    for (const text of acks) {
+      expect(isLowSignalPrompt(text), text).toBe(true);
+    }
+  });
+
+  it('keeps prompts that describe work', () => {
+    const work = [
+      'write a post based on most recent AI news, keep it short',
+      'Analyze my Xiaohongshu account and give me some tips.',
+      '帮我找一下 twitter 上别人 ai 相关的项目，写一些评论', // lint-allow-non-english
+      '发布 hackernews reddit 的推广帖', // lint-allow-non-english
+    ];
+    for (const text of work) {
+      expect(isLowSignalPrompt(text), text).toBe(false);
+    }
   });
 });
 
