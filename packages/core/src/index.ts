@@ -6,6 +6,7 @@ export * from './workers';
 export * from './workspace';
 export * from './worker-generator';
 export * from './skill-crystallizer';
+export * from './playbook-induction';
 export * from './memory';
 export * from './agents';
 export * from './errors';
