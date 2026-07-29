@@ -29,6 +29,7 @@ interface CodexEvent {
     input_tokens?: number;
     output_tokens?: number;
     total_tokens?: number;
+    cached_input_tokens?: number;
   };
   error?: { message?: string };
   // item.started / item.updated / item.completed carry the work in `item`.
@@ -44,7 +45,7 @@ export interface CodexItem {
   // command_execution
   command?: string;
   aggregated_output?: string;
-  exit_code?: number;
+  exit_code?: number | null;
   // file_change
   path?: string;
   changes?: unknown;
@@ -162,6 +163,7 @@ export class CodexAdapter extends BaseAgentAdapter {
       let capturedThreadId: string | undefined;
       let streamedText = '';
       let errorMessage: string | undefined;
+      let tokens: AgentResponse['tokens'];
       // codex reports finished work, so the collector synthesizes the
       // tool_start the chat surface needs to see a procedure.
       const tools = new ToolCallCollector(request.onStatus);
@@ -223,11 +225,19 @@ export class CodexAdapter extends BaseAgentAdapter {
               });
             }
             break;
+          case 'turn.completed':
+            // Observed on a real run: usage carries input/output (and
+            // cached_input_tokens) but no total, so total is derived.
+            if (event.usage) {
+              const input = event.usage.input_tokens ?? 0;
+              const output = event.usage.output_tokens ?? 0;
+              tokens = { input, output, total: event.usage.total_tokens ?? input + output };
+            }
+            break;
           case 'turn.failed':
           case 'error':
             errorMessage = event.error?.message ?? event.message ?? 'Codex turn failed';
             break;
-          // 'turn.started' / 'turn.completed' carry no text we need here.
         }
       };
 
@@ -274,6 +284,7 @@ export class CodexAdapter extends BaseAgentAdapter {
           output,
           error: errorMessage ?? (code !== 0 ? (stderr.trim() || `Codex exited with code ${code}`) : undefined),
           duration,
+          tokens,
           statusUpdates,
           states,
           sessionId: capturedThreadId,
