@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { toolPhaseOf, isFailureStatus, ToolCallCollector } from './tool-events';
 import { codexItemAsTool, CODEX_TOOL_ITEMS } from './codex';
+import { opencodeToolEvent } from './opencode';
 import { StatusUpdate } from '../types';
+import { stepsFrom, signatureOf } from '../playbook-induction';
 
 describe('toolPhaseOf', () => {
   it('maps the dialects the three CLIs actually use', () => {
@@ -181,5 +183,88 @@ describe('codex item events, against a real captured stream', () => {
     // "in_progress" must resolve to a start, or the pairing collapses.
     expect(toolPhaseOf('in_progress')).toBe('start');
     expect(toolPhaseOf('completed')).toBe('end');
+  });
+});
+
+describe('opencode tool_use events, against a real captured stream', () => {
+  // Verbatim from `opencode run --format json` (opencode 1.14.18, 2026-07-28)
+  // for the prompt "Read the file note.txt and tell me what it says."
+  // Note what is NOT here: any event with a "running" status. opencode reports
+  // a tool once, already completed.
+  const CAPTURED_PARTS = [
+    {
+      type: 'tool', tool: 'read', callID: 'call_00_BaGBWjXewyuRz9fSIpJN6271',
+      state: {
+        status: 'completed',
+        input: { filePath: '/private/tmp/oc-probe/note.txt' },
+        output: '<path>/private/tmp/oc-probe/note.txt</path>\n<content>\n1: hello from probe\n',
+      },
+    },
+    {
+      type: 'tool', tool: 'glob', callID: 'call_01_7G7qL5AZ50oFOiauKKRZ6950',
+      state: {
+        status: 'completed',
+        input: { pattern: '**/note.txt', path: '/private/tmp/oc-probe' },
+        output: 'Found 1 file(s)\n\n/private/tmp/oc-probe/note.txt',
+      },
+    },
+  ];
+
+  it('reads the call identity, input and output off the part', () => {
+    expect(opencodeToolEvent(CAPTURED_PARTS[0])).toEqual({
+      tool: 'read',
+      key: 'call_00_BaGBWjXewyuRz9fSIpJN6271',
+      status: 'completed',
+      input: { filePath: '/private/tmp/oc-probe/note.txt' },
+      output: expect.stringContaining('hello from probe'),
+    });
+  });
+
+  it('produces a two-step procedure the crystallizer can cluster on', () => {
+    const updates: StatusUpdate[] = [];
+    const tools = new ToolCallCollector(u => updates.push(u));
+    for (const part of CAPTURED_PARTS) {
+      const observed = opencodeToolEvent(part);
+      if (observed) tools.record(observed);
+    }
+    tools.finish();
+
+    // Two completed tools -> two synthesized starts, in order. Before this
+    // fix the run contributed nothing at all.
+    expect(updates.map(u => `${u.type}:${u.tool}`)).toEqual([
+      'tool_start:read', 'tool_end:read', 'tool_start:glob', 'tool_end:glob',
+    ]);
+    expect(updates[0].input).toEqual({ filePath: '/private/tmp/oc-probe/note.txt' });
+    expect(tools.states.map(s => `${s.source}:${s.status}`)).toEqual([
+      'read:running', 'read:done', 'glob:running', 'glob:done',
+    ]);
+  });
+
+  it('ignores a part with no state', () => {
+    expect(opencodeToolEvent({ type: 'tool', tool: 'read' })).toBeNull();
+  });
+
+  it('reaches the crystallizer as a procedure with argument shapes', () => {
+    // End to end: what the chat surface collects from onStatus is what
+    // stepsFrom reads. This is the whole point of the fix — before it, an
+    // opencode run produced an empty signature and could never cluster.
+    const updates: StatusUpdate[] = [];
+    const tools = new ToolCallCollector(u => updates.push(u));
+    for (const part of CAPTURED_PARTS) {
+      const observed = opencodeToolEvent(part);
+      if (observed) tools.record(observed);
+    }
+    const steps = stepsFrom(updates.map(u => ({ tool: u.tool, type: u.type, input: u.input })));
+    expect(signatureOf({ runId: 'r', steps })).toEqual(['read', 'glob']);
+    expect(steps[0].args).toEqual({ filePath: { kind: 'path', ext: 'txt', depth: 4 } });
+    expect(steps[1].args).toEqual({
+      // A glob keeps its literal value: "**/note.txt" and "**/*.test.ts" are
+      // different searches, and a length bucket would hide that.
+      pattern: { kind: 'enum', value: '**/note.txt' },
+      // An extensionless directory lands on 'enum', not 'path' — deliberately.
+      // Only url and enum can be induced as CONSTANTS, so this is what lets
+      // "always the same directory" be baked into a playbook step.
+      path: { kind: 'enum', value: '/private/tmp/oc-probe' },
+    });
   });
 });

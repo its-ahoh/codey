@@ -3,9 +3,9 @@ import { AgentRequest, AgentResponse } from '../types';
 import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
 import { writeOpenCodeMcpConfig } from './mcp-config';
-import { ToolCallCollector } from './tool-events';
+import { ObservedToolEvent, ToolCallCollector } from './tool-events';
 
-interface OpenCodeEvent {
+export interface OpenCodeEvent {
   type: string;
   sessionID?: string;
   part?: {
@@ -30,6 +30,24 @@ interface OpenCodeEvent {
         write: number;
       };
     };
+  };
+}
+
+/** Map one opencode `tool_use` part onto an observed tool event.
+ *
+ *  Verified against a real `run --format json` stream (opencode 1.14.18):
+ *  the part carries `tool`, `callID`, and a `state` holding status, input and
+ *  output. Only terminal states are reported — there is no "running" event —
+ *  which is why ToolCallCollector synthesizes the start. */
+export function opencodeToolEvent(part: NonNullable<OpenCodeEvent['part']>): ObservedToolEvent | null {
+  if (!part.state) return null;
+  return {
+    tool: part.tool || 'tool_use',
+    // callID identifies the call; `id` is absent on tool parts.
+    key: part.callID ?? part.id ?? part.tool,
+    status: part.state.status,
+    input: part.state.input,
+    output: part.state.output,
   };
 }
 
@@ -138,14 +156,9 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
               request.onStream?.(event.part.text);
             }
 
-            if (event.type === 'tool_use' && event.part?.state) {
-              tools.record({
-                tool: event.part.tool || 'tool_use',
-                key: event.part.id ?? event.part.callID ?? event.part.tool,
-                status: event.part.state.status,
-                input: event.part.state.input,
-                output: event.part.state.output,
-              });
+            if (event.type === 'tool_use' && event.part) {
+              const observed = opencodeToolEvent(event.part);
+              if (observed) tools.record(observed);
             }
           } catch {
             // Not JSON, skip

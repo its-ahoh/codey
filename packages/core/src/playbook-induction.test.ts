@@ -335,3 +335,20 @@ describe('induceTemplate', () => {
     expect(rendered).not.toContain('secret-handle');
   });
 });
+
+describe('shapeOf, glob and directory values', () => {
+  it('keeps a glob pattern literal instead of bucketing it', () => {
+    // From a real opencode run: glob(pattern: "**/note.txt"). As bucketed text
+    // every glob of similar length looks identical.
+    expect(shapeOf('**/note.txt')).toEqual({ kind: 'enum', value: '**/note.txt' });
+    expect(sameShape(shapeOf('**/note.txt'), shapeOf('**/*.test.ts'))).toBe(false);
+    expect(shapeOf('src/**/{a,b}.ts').kind).toBe('enum');
+  });
+
+  it('treats an extensionless directory as a comparable value', () => {
+    // 'enum' rather than 'path' on purpose: only url and enum can be induced
+    // as constants, so this is what lets "always this directory" be baked in.
+    expect(shapeOf('/tmp/oc-probe')).toEqual({ kind: 'enum', value: '/tmp/oc-probe' });
+    expect(sameShape(shapeOf('/tmp/a'), shapeOf('/tmp/b'))).toBe(false);
+  });
+});
