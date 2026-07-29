@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { InducedTemplate } from './playbook-induction';
-import { SkillStore, RECENT_TRACES_MAX, TRACES_FILE_VERSION, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, bindParameter, nameTemplate, evolveSkill, isLowSignalTrace } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, TRACES_FILE_VERSION, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, bindParameter, nameTemplate, evolveSkill, isLowSignalTrace } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -707,19 +707,21 @@ describe('nameTemplate', () => {
         name: 'x-outreach', description: 'Comment on AI posts', whenToUse: 'user asks to comment', steps: '1. open «comment»',
       }), error: null, tokens: { total: 10 } };
     });
-    const result = await nameTemplate(deps, template, [], []);
-    expect(result!.name).toBe('x-outreach');
-    expect(result!.parameters).toEqual(template.parameters);
-    expect(result!.inducedFrom).toEqual(['r1', 'r2']);
+    const result = await nameTemplate(deps, template, [], []) as DistillResult;
+    expect(result.name).toBe('x-outreach');
+    expect(result.parameters).toEqual(template.parameters);
+    expect(result.inducedFrom).toEqual(['r1', 'r2']);
     // The prompt states the recurrence rather than asking the model to judge it.
     expect(prompt).toContain('2 runs');
     expect(prompt).toContain('browser_navigate(url=x.com)');
     expect(prompt).toContain('comment=«comment»');
   });
 
-  it('returns null when the model says the template duplicates a skill', async () => {
+  it('reports a duplicate distinctly from having nothing to offer', async () => {
+    // 'duplicate' must not read as "induction failed" — the caller uses it to
+    // stay quiet rather than fall back to prose distillation.
     const deps = fakeDeps(async () => ({ success: true, output: 'NONE', error: null, tokens: { total: 5 } }));
-    expect(await nameTemplate(deps, template, [], [])).toBeNull();
+    expect(await nameTemplate(deps, template, [], [])).toBe('duplicate');
   });
 
   it('returns null on an invalid name after retrying', async () => {

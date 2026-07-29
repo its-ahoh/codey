@@ -2319,7 +2319,7 @@ export class Codey {
   private async induceSuggestion(
     store: SkillStore,
     cluster: ProcedureCluster,
-  ): Promise<DistillResult | null> {
+  ): Promise<DistillResult | 'duplicate' | null> {
     const byId = new Map(store.getRecentTraces(RECENT_TRACES_MAX).map(t => [t.runId, t]));
     const members = cluster.runIds.map(id => byId.get(id)).filter((t): t is RunTrace => !!t);
     const template = induceTemplate(members);
@@ -2417,13 +2417,16 @@ export class Codey {
           }
           this.lastSkillDistillTime = now;
           // A clustered procedure is evidence; a prose pattern is an
-          // impression. Prefer the former when induction is on, and fall back
-          // to distillation when there is no cluster or naming came up empty.
-          const candidate =
-            (cfg.induction && cluster ? await this.induceSuggestion(store, cluster) : null)
-            ?? await distillCandidate(
-              this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
-            );
+          // impression. Prefer the former, and fall back to distillation only
+          // when induction found nothing — NOT when it found a procedure that
+          // already has a skill, which is a reason to stay quiet.
+          const induced = cfg.induction && cluster
+            ? await this.induceSuggestion(store, cluster)
+            : null;
+          if (induced === 'duplicate') return;
+          const candidate = induced ?? await distillCandidate(
+            this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
+          );
           if (candidate) {
             opts.setPending(candidate);
             await opts.notify(
