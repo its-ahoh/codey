@@ -3,6 +3,7 @@ import { AgentRequest, AgentResponse } from '../types';
 import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
 import { writeOpenCodeMcpConfig } from './mcp-config';
+import { ToolCallCollector } from './tool-events';
 
 interface OpenCodeEvent {
   type: string;
@@ -12,6 +13,8 @@ interface OpenCodeEvent {
     text?: string;
     reason?: string;
     tool?: string;
+    id?: string;
+    callID?: string;
     state?: {
       status?: string;
       input?: Record<string, unknown>;
@@ -94,8 +97,11 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       let resolved = false;
       let allData = '';
       let stderr = '';
-      const statusUpdates: string[] = [];
-      const states: NonNullable<AgentResponse['states']> = [];
+      // opencode reports a tool once it has finished, so the collector
+      // synthesizes the tool_start the chat surface needs to see a procedure.
+      const tools = new ToolCallCollector(request.onStatus);
+      const statusUpdates = tools.statusUpdates;
+      const states = tools.states;
       // Captured from the top-level `sessionID` field present on every event
       // (e.g. `step_start`, `text`, `step_finish`). The first event we see
       // tells us which session OpenCode opened so the gateway can resume it.
@@ -133,12 +139,9 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
             }
 
             if (event.type === 'tool_use' && event.part?.state) {
-              const toolName = event.part.tool || 'tool_use';
-              if (event.part.state.status) {
-                statusUpdates.push(`${toolName}: ${event.part.state.status}`);
-              }
-              states.push({
-                source: toolName,
+              tools.record({
+                tool: event.part.tool || 'tool_use',
+                key: event.part.id ?? event.part.callID ?? event.part.tool,
                 status: event.part.state.status,
                 input: event.part.state.input,
                 output: event.part.state.output,
@@ -156,6 +159,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
 
       // Process close - collect remaining buffer and resolve
       childProcess.on('close', (code: number | null) => {
+        tools.finish();
         // Process remaining buffer
         if (buffer.trim()) {
           try {

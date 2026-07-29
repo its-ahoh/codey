@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { estimateTokens } from './utils/tokens';
+import { toolPhaseOf } from './agents/tool-events';
 
 // ── Structured turn types ──────────────────────────────────────────
 
@@ -561,13 +562,17 @@ export class ContextManager {
       // Group by tool call pairs (running -> done)
       const seen = new Map<string, ToolCallRecord>();
       for (const state of response.states) {
-        if (state.status === 'running') {
+        // Adapters normalize to running/done via ToolCallCollector, but tolerate
+        // a CLI dialect leaking through ('completed', 'failed', ...) rather than
+        // silently dropping the tool call.
+        const phase = toolPhaseOf(state.status);
+        if (phase === 'start') {
           seen.set(state.source, {
             tool: state.source,
             input: state.input,
             status: 'success',
           });
-        } else if (state.status === 'done') {
+        } else if (phase === 'end') {
           const record = seen.get(state.source) || { tool: state.source, status: 'success' as const };
           if (state.output) {
             record.output = typeof state.output === 'string'
@@ -580,7 +585,12 @@ export class ContextManager {
           // Detect file changes from tool names
           const fileTools = ['Write', 'Edit', 'Create', 'Delete', 'Read', 'write', 'edit', 'create', 'delete', 'read'];
           if (fileTools.some(ft => state.source.toLowerCase().includes(ft.toLowerCase()))) {
-            const filePath = state.input?.file_path || state.input?.path || state.input?.file;
+            // The path arrives with the START event; this is the END one, so
+            // fall back to what the paired record already captured. Without
+            // this, filesChanged stayed empty for every adapter that reports
+            // arguments once, at the start.
+            const args = state.input ?? record.input;
+            const filePath = args?.file_path || args?.path || args?.file;
             if (filePath && typeof filePath === 'string') {
               const action = state.source.toLowerCase().includes('read') ? 'read'
                 : state.source.toLowerCase().includes('delete') ? 'delete'

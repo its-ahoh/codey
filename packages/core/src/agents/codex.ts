@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import { AgentRequest, AgentResponse, AgentStateEntry } from '../types';
 import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
+import { ToolCallCollector } from './tool-events';
 import { codexMcpArgs } from './mcp-config';
 
 /**
@@ -30,6 +31,68 @@ interface CodexEvent {
     total_tokens?: number;
   };
   error?: { message?: string };
+  // item.started / item.updated / item.completed carry the work in `item`.
+  item?: CodexItem;
+}
+
+/** The unit of work in codex's current event stream. `type` names the kind of
+ *  work, which is what stands in for a tool name here. */
+export interface CodexItem {
+  id?: string;
+  type?: string;
+  status?: string;
+  // command_execution
+  command?: string;
+  aggregated_output?: string;
+  exit_code?: number;
+  // file_change
+  path?: string;
+  changes?: unknown;
+  // mcp_tool_call
+  server?: string;
+  tool?: string;
+  arguments?: Record<string, unknown>;
+  result?: unknown;
+  // web_search
+  query?: string;
+}
+
+/** Item types that represent the agent DOING something, as opposed to saying
+ *  something. Anything else on an item.* event is ignored. */
+export const CODEX_TOOL_ITEMS = new Set(['command_execution', 'file_change', 'mcp_tool_call', 'web_search']);
+
+/** Name, input: what a codex item looks like as a tool call. An mcp tool keeps
+ *  its own identity ("server.tool") — those are the distinctive ones for
+ *  procedure clustering, so collapsing them all to "mcp_tool_call" would throw
+ *  away the signal. */
+export function codexItemAsTool(item: CodexItem): { tool: string; input?: Record<string, unknown>; output?: unknown } | null {
+  switch (item.type) {
+    case 'command_execution':
+      return {
+        tool: 'command_execution',
+        ...(item.command ? { input: { command: item.command } } : {}),
+        output: item.aggregated_output,
+      };
+    case 'file_change':
+      return {
+        tool: 'file_change',
+        ...(item.path ? { input: { path: item.path } } : {}),
+        output: item.changes,
+      };
+    case 'mcp_tool_call':
+      return {
+        tool: item.server && item.tool ? `${item.server}.${item.tool}` : (item.tool ?? 'mcp_tool_call'),
+        ...(item.arguments ? { input: item.arguments } : {}),
+        output: item.result,
+      };
+    case 'web_search':
+      return {
+        tool: 'web_search',
+        ...(item.query ? { input: { query: item.query } } : {}),
+      };
+    default:
+      return null;
+  }
 }
 
 /**
@@ -99,8 +162,11 @@ export class CodexAdapter extends BaseAgentAdapter {
       let capturedThreadId: string | undefined;
       let streamedText = '';
       let errorMessage: string | undefined;
-      const statusUpdates: string[] = [];
-      const states: AgentStateEntry[] = [];
+      // codex reports finished work, so the collector synthesizes the
+      // tool_start the chat surface needs to see a procedure.
+      const tools = new ToolCallCollector(request.onStatus);
+      const statusUpdates = tools.statusUpdates;
+      const states = tools.states;
 
       const safeResolve = (response: AgentResponse) => {
         if (resolved) return;
@@ -127,13 +193,30 @@ export class CodexAdapter extends BaseAgentAdapter {
               request.onStream?.(event.text);
             }
             break;
+          case 'item.started':
+          case 'item.updated':
+          case 'item.completed': {
+            // The current codex surface: work is reported as items, and only
+            // some item types are tool activity.
+            if (!event.item || !CODEX_TOOL_ITEMS.has(event.item.type ?? '')) break;
+            const asTool = codexItemAsTool(event.item);
+            if (!asTool) break;
+            tools.record({
+              ...asTool,
+              key: event.item.id ?? asTool.tool,
+              phase: event.type === 'item.started' ? 'start' : 'end',
+              status: event.item.status,
+            });
+            break;
+          }
           case 'tool_use':
           case 'tool_call':
           case 'shell_command':
+            // Older codex builds. Kept because these event names shipped for a
+            // while and cost nothing to keep accepting.
             if (event.name || event.status) {
-              statusUpdates.push(`${event.name ?? 'tool'}: ${event.status ?? 'running'}`);
-              states.push({
-                source: event.name ?? 'tool',
+              tools.record({
+                tool: event.name ?? 'tool',
                 status: event.status,
                 input: event.input,
                 output: event.output,
@@ -168,6 +251,7 @@ export class CodexAdapter extends BaseAgentAdapter {
       });
 
       childProcess.on('close', (code: number | null) => {
+        tools.finish();
         // Drain any leftover line.
         if (buffer.trim().startsWith('{')) {
           try { handleEvent(JSON.parse(buffer.trim()) as CodexEvent); } catch { /* ignore */ }

@@ -58,10 +58,29 @@ true for the default agent:
   The chat surface collects these into `ToolCallEntry[]` and persists them on
   the assistant message; the channel surface gets the same via
   `ContextManager.extractMeta`.
-- **opencode** and **codex** emit no tool events at all.
+- **opencode** emits `tool_use` events (`run --format json`).
+- **codex** emits `item.started` / `item.completed` (`exec --json`) whose item
+  types include `command_execution`, `file_change`, `mcp_tool_call` and
+  `web_search`.
 
-So tool observability is per-adapter, and the design must degrade rather than
-assume. See "Degradation" below.
+> Corrected 2026-07-28. This section first claimed opencode and codex emit no
+> tool events. They do; three gaps on our side were swallowing them, and all
+> three are now fixed:
+>
+> 1. Neither adapter called `request.onStatus`, so the chat/Mac surface — which
+>    builds `toolCalls` from that callback — saw nothing.
+> 2. `extractMeta` paired only `running` -> `done`. Both CLIs report
+>    `completed` / `failed`, matching neither branch, so the channel surface
+>    dropped them too.
+> 3. The codex adapter keyed on `tool_use` / `tool_call` / `shell_command`,
+>    which current codex does not emit.
+>
+> A shared `ToolCallCollector` now normalizes all three dialects. Both CLIs
+> report a tool once, already finished, so it synthesizes the start event that
+> downstream consumers key the procedure off.
+
+Tool observability is still per-adapter — any future CLI that reports nothing
+degrades the same way — so the design keeps the fallback below.
 
 ## Decisions
 
@@ -267,12 +286,18 @@ skills without parameters.
 
 ## 6. Degradation
 
-- **No tool events (opencode, codex):** traces have empty `steps`. Clustering
-  finds nothing, logs "no procedure data", and the existing LLM-only
-  `distillCandidate` runs as today. Users on those adapters keep current
-  behavior; users on claude-code get induction.
+- **No tool events:** traces have empty `steps`. Clustering finds nothing, logs
+  "no procedure data", and the existing LLM-only `distillCandidate` runs as
+  today. This is now the path for a CLI that reports nothing at all, rather
+  than for opencode and codex specifically.
 - **Mixed adapters in one workspace:** cluster only over traces that have
   steps. A trace with no steps never joins a cluster.
+- **Tool granularity differs by adapter.** claude-code names the tool
+  (`Read`, `Edit`); codex names the kind of work (`command_execution`,
+  `file_change`), keeping an MCP call's own `server.tool` identity. Procedures
+  therefore cluster within an adapter far more readily than across adapters.
+  Acceptable — a workspace usually has one — but it means the rarity
+  denominator mixes vocabularies when it does not.
 - **Team runs:** `workerSequence` is a procedure at a coarser grain. Treat a
   worker name as a pseudo-tool so team runs cluster on the same machinery.
 
