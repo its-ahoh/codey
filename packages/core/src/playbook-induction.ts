@@ -39,7 +39,11 @@ export const TEXT_LEN_MAX = 100_000;
 /** Values at or below this length are compared literally (kind 'enum').
  *  Longer ones are reduced to a length bucket. */
 const ENUM_MAX_LEN = 32;
-const ENUM_PATTERN = /^[\w.\-/]+$/;
+// Glob and brace characters are included deliberately: a search pattern like
+// "**/*.test.ts" is an identifying value, and reducing it to a length bucket
+// would make two unrelated searches look like the same argument. Observed on a
+// real opencode run (glob(pattern: "**/note.txt")).
+const ENUM_PATTERN = /^[\w.\-/*?[\]{},]+$/;  // comma: brace expansion, e.g. src/**/{a,b}.ts
 const PATH_PATTERN = /^[~.]?\/|^[\w\-./]+\.[a-z]{1,5}$/i;
 
 function bucketLen(len: number): number {

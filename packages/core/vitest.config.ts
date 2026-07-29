@@ -23,6 +23,8 @@ export default defineConfig({
       'src/judge.test.ts',
       'src/skill-crystallizer.test.ts',
       'src/playbook-induction.test.ts',
+      'src/agents/tool-events.test.ts',
+      'src/context.extract-meta.test.ts',
       'src/aide-automation.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
