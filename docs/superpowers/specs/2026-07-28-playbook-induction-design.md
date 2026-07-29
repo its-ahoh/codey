@@ -1,7 +1,7 @@
 # Playbook Induction — Design
 
 Date: 2026-07-28
-Status: Implemented behind `skills.induction` (off by default); thresholds unfit
+Status: Implemented; on by default via `skills.induction`
 
 ## Problem
 

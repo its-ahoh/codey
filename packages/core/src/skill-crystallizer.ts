@@ -720,7 +720,7 @@ export async function nameTemplate(
   template: InducedTemplate,
   existing: SkillEntry[],
   rejected: RejectedSuggestion[],
-): Promise<DistillResult | null> {
+): Promise<DistillResult | 'duplicate' | null> {
   const params = template.parameters.length
     ? template.parameters.map(p => `- ${p.name}: ${p.ext ? `${p.kind} (.${p.ext})` : p.kind}`).join('\n')
     : '(none — the procedure takes no varying input)';
@@ -747,8 +747,11 @@ export async function nameTemplate(
       return { ...parsed, parameters: template.parameters, inducedFrom: template.memberRunIds };
     }
     if (output.trim() === 'NONE') {
+      // Distinct from null: the procedure IS established, it just already has
+      // a skill. Falling back to prose distillation here would propose
+      // something else in spite of that signal.
       deps.logger?.info('[skills] induction: template duplicates an existing skill');
-      return null;
+      return 'duplicate';
     }
   }
   deps.logger?.warn('[skills] induction: no usable name after 2 attempts');

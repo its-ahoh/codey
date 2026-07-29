@@ -76,7 +76,7 @@ export interface GatewayConfigJson {
     /** Model override for distillation. Falls back to advisor.model. */
     distillModel?: string;
     /** Suggest playbooks from clustered procedures instead of from an LLM's
-     *  impression of recent prompts. Off by default while thresholds settle. */
+     *  impression of recent prompts. On by default; set false to disable. */
     induction?: boolean;
   };
   /**
@@ -390,10 +390,12 @@ export class ConfigManager extends EventEmitter {
       staleDays: raw?.staleDays ?? 30,
       weakSkillDays: raw?.weakSkillDays ?? 7,
       distillModel: raw?.distillModel,
-      // Off by default: clustering thresholds are unfit guesses until they
-      // have been observed against real traces. Off still logs would-be
-      // clusters; on lets an induced template become a suggestion.
-      induction: raw?.induction ?? false,
+      // On by default. The gates (3+ distinct tools, 2+ members, 0.4
+      // distinctiveness) all err toward finding nothing, the suggestion still
+      // needs the user's "yes", and a "no" is remembered — so the cost of a
+      // bad cluster is one dismissed message. Set false to fall back to prose
+      // distillation; clustering still logs either way.
+      induction: raw?.induction ?? true,
     };
   }
 
