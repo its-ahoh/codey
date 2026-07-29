@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ProcedureCluster, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -2289,7 +2289,7 @@ export class Codey {
    *  so it runs in log-only mode until there are real traces to fit them
    *  against. Pure computation over at most RECENT_TRACES_MAX traces.
    *  See docs/superpowers/specs/2026-07-28-playbook-induction-design.md. */
-  private logProcedureClusters(store: SkillStore, minMembers: number): ProcedureCluster | null {
+  private logProcedureClusters(store: SkillStore, minMembers: number): ClusterReport | null {
     try {
       const traces = store.getRecentTraces(RECENT_TRACES_MAX);
       const report = clusterProcedures(traces, { minMembers });
@@ -2298,7 +2298,7 @@ export class Codey {
           `[skills] induction: no cluster — ${report.withoutSteps} without steps, ` +
           `${report.tooShort} too short, ${report.tooFewMembers} not recurring yet, ` +
           `${report.rejectedByDistinctiveness} too generic`);
-        return null;
+        return report;
       }
       for (const cluster of report.clusters) {
         this.logger.info(
@@ -2306,7 +2306,7 @@ export class Codey {
           `${cluster.signature.join(' → ')} (distinctiveness ${cluster.distinctiveness.toFixed(2)}, ` +
           `score ${cluster.score.toFixed(2)})`);
       }
-      return report.clusters[0];
+      return report;
     } catch (err) {
       this.logger.warn(`[skills] induction pass failed: ${err}`);
       return null;
@@ -2391,7 +2391,7 @@ export class Codey {
       }
 
       store.recordTrace(opts.trace);
-      const cluster = this.logProcedureClusters(store, cfg.suggestOnRepeat);
+      const clusterReport = this.logProcedureClusters(store, cfg.suggestOnRepeat);
 
       this.skillRunCounter++;
       if (this.skillRunCounter % Codey.SKILL_GC_EVERY_N_RUNS === 1) {
@@ -2417,16 +2417,30 @@ export class Codey {
           }
           this.lastSkillDistillTime = now;
           // A clustered procedure is evidence; a prose pattern is an
-          // impression. Prefer the former, and fall back to distillation only
-          // when induction found nothing — NOT when it found a procedure that
-          // already has a skill, which is a reason to stay quiet.
-          const induced = cfg.induction && cluster
-            ? await this.induceSuggestion(store, cluster)
-            : null;
-          if (induced === 'duplicate') return;
-          const candidate = induced ?? await distillCandidate(
-            this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
-          );
+          // impression. When induction has something to say, it is the only
+          // one that speaks — including when what it says is "already a skill"
+          // or "I couldn't name it", both of which mean stay quiet and retry
+          // on the next window rather than propose something unrelated.
+          let candidate: DistillResult | null = null;
+          if (cfg.induction && clusterReport?.clusters.length) {
+            const induced = await this.induceSuggestion(store, clusterReport.clusters[0]);
+            if (induced === 'duplicate' || induced === null) return;
+            candidate = induced;
+          } else {
+            // Prose distillation is for runs induction CANNOT see: no tool
+            // activity anywhere in the window. When procedures were observed
+            // and clustering declined them — too short, too generic, not
+            // recurring yet — that decision stands. Falling through here would
+            // let the distiller re-propose exactly what the distinctiveness
+            // gate just rejected ("read a file, then edit it").
+            if (cfg.induction && clusterReport && hasProcedureData(clusterReport)) {
+              this.logger.debug('[skills] distill skipped — procedures observed but none clustered');
+              return;
+            }
+            candidate = await distillCandidate(
+              this.getSkillDistillDeps(), recent, store.getAll(), store.getRejected(), cfg.suggestOnRepeat,
+            );
+          }
           if (candidate) {
             opts.setPending(candidate);
             await opts.notify(

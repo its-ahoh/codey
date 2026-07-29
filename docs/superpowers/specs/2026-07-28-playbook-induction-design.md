@@ -96,7 +96,14 @@ degrades the same way — so the design keeps the fallback below.
   `«topic»`) reaches the model.
 - **Suggestion stays opt-in.** Unchanged: detect -> propose -> user confirms.
   A computed cluster is stronger evidence, not a license to auto-save.
-- **The existing LLM-only path stays as a fallback**, not as the primary.
+- **The existing LLM-only path stays as a fallback**, not as the primary — and
+  only for what induction cannot see. Narrowed 2026-07-28: the fallback fires
+  when no run in the window observed a tool at all, not merely when clustering
+  found nothing. Clustering declining a candidate (too short, too generic, not
+  recurring yet) is a decision, and routing around it to the distiller would
+  re-propose exactly what the distinctiveness gate just rejected. Likewise,
+  "already a skill" and "couldn't name it" both mean stay quiet and retry on the
+  next window.
 
 ## 1. Trace schema v2
 
