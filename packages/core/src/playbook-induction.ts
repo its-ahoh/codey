@@ -248,6 +248,10 @@ export function similarity(a: string[], b: string[], rarity: Map<string, number>
  *  is answerable with a number instead of a shrug. */
 export interface ClusterReport {
   clusters: ProcedureCluster[];
+  /** How many runs were looked at. `considered === withoutSteps` means the
+   *  window holds no procedure data at all — the one case where prose
+   *  distillation is the only thing that could find anything. */
+  considered: number;
   /** Runs carrying no procedure data at all (adapter emits no tool events). */
   withoutSteps: number;
   /** Runs whose procedure was too short to mean anything. */
@@ -256,6 +260,13 @@ export interface ClusterReport {
   rejectedByDistinctiveness: number;
   /** Groups that were distinctive enough but haven't recurred yet. */
   tooFewMembers: number;
+}
+
+/** True when at least one run in the window left a procedure behind. Distinct
+ *  from "clustering found nothing": a window full of observed-but-unclusterable
+ *  runs has data, it just did not recur distinctively enough. */
+export function hasProcedureData(report: ClusterReport): boolean {
+  return report.considered > report.withoutSteps;
 }
 
 /** Group runs by the procedure they executed. Pure; no I/O, no LLM. */
@@ -268,7 +279,8 @@ export function clusterProcedures(
   const minDistinctiveness = opts.minDistinctiveness ?? DEFAULT_MIN_DISTINCTIVENESS;
 
   const report: ClusterReport = {
-    clusters: [], withoutSteps: 0, tooShort: 0, rejectedByDistinctiveness: 0, tooFewMembers: 0,
+    clusters: [], considered: inputs.length, withoutSteps: 0, tooShort: 0,
+    rejectedByDistinctiveness: 0, tooFewMembers: 0,
   };
 
   const eligible: { runId: string; sig: string[] }[] = [];

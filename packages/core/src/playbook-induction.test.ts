@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   shapeOf, sameShape, stepsFrom, signatureOf, computeRarity, similarity, clusterProcedures,
-  induceTemplate, renderTemplate,
+  induceTemplate, renderTemplate, hasProcedureData,
   TEXT_LEN_MAX, MAX_STEPS, MAX_ARGS_PER_STEP, ProcedureInput,
 } from './playbook-induction';
 
@@ -350,5 +350,43 @@ describe('shapeOf, glob and directory values', () => {
     // as constants, so this is what lets "always this directory" be baked in.
     expect(shapeOf('/tmp/oc-probe')).toEqual({ kind: 'enum', value: '/tmp/oc-probe' });
     expect(sameShape(shapeOf('/tmp/a'), shapeOf('/tmp/b'))).toBe(false);
+  });
+});
+
+describe('hasProcedureData', () => {
+  it('is false only when nothing in the window observed a tool', () => {
+    const nothing = clusterProcedures([{ runId: 'a' }, { runId: 'b' }], { minMembers: 2 });
+    expect(nothing.considered).toBe(2);
+    expect(nothing.withoutSteps).toBe(2);
+    expect(hasProcedureData(nothing)).toBe(false);
+  });
+
+  it('is true when procedures were observed but declined', () => {
+    // The distinction the distill fallback turns on: these runs DID something,
+    // clustering just refused to crystallize it. Falling back to prose
+    // distillation here would re-propose what the gates rejected.
+    const tooGeneric = clusterProcedures([
+      run('a', ['Read', 'Edit', 'Bash']),
+      run('b', ['Read', 'Edit', 'Bash']),
+      run('c', ['Read', 'Edit', 'Bash']),
+    ], { minMembers: 2 });
+    expect(tooGeneric.clusters).toHaveLength(0);
+    expect(hasProcedureData(tooGeneric)).toBe(true);
+
+    const tooShort = clusterProcedures([run('a', ['Read', 'Edit'])], { minMembers: 2 });
+    expect(tooShort.clusters).toHaveLength(0);
+    expect(hasProcedureData(tooShort)).toBe(true);
+  });
+
+  it('is true when a mixed window has any observable run', () => {
+    const mixed = clusterProcedures([
+      { runId: 'a' },
+      run('b', ['browser_navigate', 'browser_read', 'browser_interact']),
+    ], { minMembers: 2 });
+    expect(hasProcedureData(mixed)).toBe(true);
+  });
+
+  it('is false for an empty window', () => {
+    expect(hasProcedureData(clusterProcedures([], { minMembers: 2 }))).toBe(false);
   });
 });
