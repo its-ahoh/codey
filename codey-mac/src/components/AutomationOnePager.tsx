@@ -12,6 +12,7 @@ import { isScheduled } from '../../../packages/core/src/types/automation'
 import type { Automation, AutomationRun } from '../../../packages/core/src/types/automation'
 import { UIIcon, type IconName } from './UIIcons'
 import { Markdown } from './Markdown'
+import { AutomationIconPicker } from './AutomationIconPicker'
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -65,6 +66,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
   const [knobs, setKnobs] = useState<Knobs | null>(null)
   const [running, setRunning] = useState(false)
   const [savingKnobs, setSavingKnobs] = useState(false)
+  const [savingIcon, setSavingIcon] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [resuming, setResuming] = useState<Record<string, boolean>>({})
@@ -192,6 +194,20 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
     }
   }
 
+  const saveIcon = async (icon: NonNullable<Automation['icon']>) => {
+    if (savingIcon) return
+    setSavingIcon(true)
+    try {
+      const fresh: Automation = unwrap(await window.codey.automations.update(id, { icon }))
+      setA(fresh)
+      aRef.current = fresh
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    } finally {
+      setSavingIcon(false)
+    }
+  }
+
   if (!a) return <div style={{ color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 24 }}>Loading…</div>
 
   const scheduled = isScheduled(a)
@@ -207,6 +223,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
   return (
     <div style={pageStyle}>
       <header style={heroStyle}>
+        <AutomationIconPicker icon={a.icon} saving={savingIcon} onSave={icon => void saveIcon(icon)} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={eyebrow}>AUTOMATION</div>
           <div style={titleRow}>

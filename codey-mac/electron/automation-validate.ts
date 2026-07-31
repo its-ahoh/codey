@@ -77,8 +77,8 @@ function validateReport(report: unknown): void {
   }
 }
 
-const CREATE_FIELDS = new Set(['name', 'enabled', 'target', 'brief', 'params', 'schedule', 'report'])
-const UPDATE_FIELDS = new Set(['name', 'target', 'brief', 'params', 'schedule', 'report'])
+const CREATE_FIELDS = new Set(['name', 'icon', 'enabled', 'target', 'brief', 'params', 'schedule', 'report'])
+const UPDATE_FIELDS = new Set(['name', 'icon', 'target', 'brief', 'params', 'schedule', 'report'])
 const CHAT_FIELDS = new Set(['name', 'target', 'brief', 'params', 'schedule', 'notify'])
 const AGENTS = new Set(['claude-code', 'opencode', 'codex'])
 
@@ -108,6 +108,16 @@ function validateParams(value: unknown): void {
   }
 }
 
+function validateIcon(value: unknown): void {
+  validateObject(value, 'icon')
+  if (typeof value.emoji !== 'string' || !value.emoji.trim() || value.emoji.length > 16) {
+    throw new Error('invalid automation: icon.emoji must be a short emoji')
+  }
+  if (typeof value.backgroundColor !== 'string' || !/^#[0-9a-f]{6}$/i.test(value.backgroundColor)) {
+    throw new Error('invalid automation: icon.backgroundColor must be a six-digit hex color')
+  }
+}
+
 function validateTarget(value: unknown): void {
   validateObject(value, 'target')
   if (typeof value.workspaceName !== 'string' || !value.workspaceName.trim()) {
@@ -128,6 +138,7 @@ function validateTarget(value: unknown): void {
 
 function validateMutableFields(value: Record<string, unknown>): void {
   if ('name' in value) validateName(value.name)
+  if ('icon' in value) validateIcon(value.icon)
   if ('target' in value) validateTarget(value.target)
   if ('brief' in value) validateBrief(value.brief)
   if ('params' in value) validateParams(value.params)
@@ -140,6 +151,7 @@ export function validateAutomationDraft(draft: any): void {
   validateObject(draft, 'draft')
   validateFields(draft, CREATE_FIELDS)
   validateName(draft.name)
+  if (draft.icon !== undefined) validateIcon(draft.icon)
   validateTarget(draft.target)
   validateBrief(draft.brief)
   validateParams(draft.params)

@@ -50,6 +50,9 @@ describe('validateAutomationDraft / validateAutomationPatch', () => {
 
   it('requires a complete valid definition on create', () => {
     expect(() => validateAutomationDraft(validDraft())).not.toThrow()
+    expect(() => validateAutomationDraft(validDraft({ icon: { emoji: '📰', backgroundColor: '#6d5efc' } }))).not.toThrow()
+    expect(() => validateAutomationDraft(validDraft({ icon: { emoji: '', backgroundColor: '#6d5efc' } }))).toThrow(/emoji/)
+    expect(() => validateAutomationDraft(validDraft({ icon: { emoji: '📰', backgroundColor: 'purple' } }))).toThrow(/backgroundColor/)
     expect(() => validateAutomationDraft(validDraft({ report: { notify: true } }))).toThrow(/report\.notify/) // booleans are not modes
     for (const mode of ['all', 'failure', 'success', 'none']) {
       expect(() => validateAutomationDraft(validDraft({ report: { notify: mode } }))).not.toThrow()
@@ -63,6 +66,7 @@ describe('validateAutomationDraft / validateAutomationPatch', () => {
 
   it('allows only mutable, valid fields on update', () => {
     expect(() => validateAutomationPatch({ name: 'x' })).not.toThrow() // no schedule on the patch
+    expect(() => validateAutomationPatch({ icon: { emoji: '🚀', backgroundColor: '#123ABC' } })).not.toThrow()
     expect(() => validateAutomationPatch({ schedule: { hour: 9, minute: 0, tz: 'Beijing' } })).toThrow(/time zone/)
     expect(() => validateAutomationPatch({ report: { notify: 'failure' } })).not.toThrow()
     expect(() => validateAutomationPatch({ report: { notify: 'sometimes' } })).toThrow(/report\.notify/)

@@ -87,9 +87,18 @@ export interface AutomationReport {
   channel?: { platform: string; target: string };
 }
 
+/** User-selected visual shown beside an automation's title. */
+export interface AutomationIcon {
+  emoji: string;
+  /** Six-digit CSS hex color, including the leading #. */
+  backgroundColor: string;
+}
+
 export interface Automation {
   id: string;
   name: string;
+  /** Absent for older/default automations, which use the activity glyph. */
+  icon?: AutomationIcon;
   enabled: boolean;
   target: AutomationTarget;
   /** Frozen, self-contained instruction block synthesized by the authoring chat.
