@@ -162,10 +162,6 @@ export const McpTab: React.FC = () => {
         </div>
       ))}
 
-      {servers.length === 0 && !form && (
-        <div style={styles.empty}>No external MCP servers yet. Add one to get started.</div>
-      )}
-
       {form ? (
         <div style={styles.form}>
           <div style={styles.formTitle}>{editing ? `Edit ${editing}` : 'Add MCP server'}</div>
@@ -267,7 +263,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg3, border: `1px solid ${C.border2}`, borderRadius: 5, padding: '1px 6px',
   },
   toggleBusy: { opacity: 0.5, cursor: 'wait', pointerEvents: 'none' },
-  empty: { color: C.fg3, fontSize: 12, padding: '18px 0', textAlign: 'center' },
   form: {
     border: `1px solid ${C.border}`, borderRadius: 12, background: C.surface2,
     padding: '14px 16px', marginTop: 4, display: 'flex', flexDirection: 'column', gap: 10,

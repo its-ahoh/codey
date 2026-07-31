@@ -6,6 +6,7 @@ import { humanizeDelta, nextRunAt, scheduleChipLabel, scheduleSummary } from './
 import { AutomationChatCreate } from './AutomationChatCreate'
 import { AutomationOnePager } from './AutomationOnePager'
 import { UIIcon } from './UIIcons'
+import { AutomationIconBadge } from './AutomationIconPicker'
 import { isScheduled } from '../../../packages/core/src/types/automation'
 import type { Automation, AutomationRun, AutomationTarget } from '../../../packages/core/src/types/automation'
 
@@ -233,7 +234,11 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
               <div key={a.id} style={rowStyle}>
                 <span style={{ ...statusRail, background: health.color }} />
                 <button style={cardMain} onClick={() => onOpen(a.id)}>
-                  <span style={automationIcon(scheduled)}><UIIcon name={a.target.kind === 'team' ? 'users' : 'activity'} size={16} /></span>
+                  <AutomationIconBadge
+                    icon={a.icon}
+                    fallbackBackground={scheduled ? C.accentDim : C.surface3}
+                    fallback={<span style={automationIconFallback(scheduled)}><UIIcon name={a.target.kind === 'team' ? 'users' : 'activity'} size={16} /></span>}
+                  />
                   <span style={cardCopy}>
                     <span style={nameRow}>
                       <strong style={automationName}>{a.name}</strong>
@@ -308,7 +313,7 @@ const rowStyle: React.CSSProperties = {
 }
 const statusRail: React.CSSProperties = { width: 3, flexShrink: 0 }
 const cardMain: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 11, padding: '13px 14px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', color: 'inherit' }
-const automationIcon = (enabled: boolean): React.CSSProperties => ({ width: 34, height: 34, flexShrink: 0, display: 'grid', placeItems: 'center', borderRadius: 10, background: enabled ? C.accentDim : C.surface3, color: enabled ? C.accent : C.fg3 })
+const automationIconFallback = (enabled: boolean): React.CSSProperties => ({ color: enabled ? C.accent : C.fg3, display: 'grid', placeItems: 'center' })
 const cardCopy: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }
 const nameRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }
 const automationName: React.CSSProperties = { color: C.fg, fontSize: 13, fontWeight: 720, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
