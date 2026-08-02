@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { C } from '../theme'
 import { pillButton, unwrap } from './settingsAtoms'
 import { timelineRows, playbookActions, relativeTime, TimelineRow } from './playbooksModel'
 import { UIIcon } from './UIIcons'
+import { matchesToolSearch } from './tools-search'
 
 interface Summary {
   name: string
@@ -16,13 +17,17 @@ interface Summary {
   canRollback: boolean
 }
 
-export const PlaybooksTab: React.FC = () => {
+export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
   const [playbooks, setPlaybooks] = useState<Summary[]>([])
   const [expanded, setExpanded] = useState<string | null>(null)
   const [trail, setTrail] = useState<TimelineRow[]>([])
   const [openSteps, setOpenSteps] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const filteredPlaybooks = useMemo(
+    () => playbooks.filter(playbook => matchesToolSearch(searchQuery, playbook.name, playbook.description)),
+    [playbooks, searchQuery],
+  )
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -199,9 +204,14 @@ export const PlaybooksTab: React.FC = () => {
           <div style={{ fontWeight: 500, color: C.fg2, marginBottom: 4 }}>No playbooks yet</div>
           <div style={{ fontSize: 12 }}>Playbooks crystallize from your repeated work patterns.</div>
         </div>
+      ) : filteredPlaybooks.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '36px 20px', color: C.fg3, fontSize: 13 }}>
+          <div style={{ fontWeight: 600, color: C.fg2, marginBottom: 4 }}>No matching playbooks</div>
+          <div style={{ fontSize: 12 }}>Try a different name or description keyword.</div>
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {playbooks.map(renderCard)}
+          {filteredPlaybooks.map(renderCard)}
         </div>
       )}
     </div>

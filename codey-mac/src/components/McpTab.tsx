@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { C } from '../theme'
 import { inputStyle, pillButton, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { parseArgsLine, parseEnvLines } from './mcp-form'
+import { matchesToolSearch } from './tools-search'
 import type { ExternalMcpServer } from '../codey-api'
 
 // Matches the toggle idiom already used by AppearanceTab / PluginsTab.
@@ -41,7 +42,7 @@ const toForm = (server: ExternalMcpServer): FormState => ({
   url: server.url ?? '',
 })
 
-export const McpTab: React.FC = () => {
+export const McpTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
   const [servers, setServers] = useState<ExternalMcpServer[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -49,6 +50,14 @@ export const McpTab: React.FC = () => {
   const [form, setForm] = useState<FormState | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const filteredServers = useMemo(
+    () => servers.filter(server => matchesToolSearch(
+      searchQuery,
+      server.name,
+      server.transport === 'remote' ? server.url : [server.command, ...(server.args ?? [])].join(' '),
+    )),
+    [servers, searchQuery],
+  )
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -133,7 +142,7 @@ export const McpTab: React.FC = () => {
       </div>
       {error && <div style={styles.errorBanner}>{error}</div>}
 
-      {servers.map(server => (
+      {filteredServers.map(server => (
         <div key={server.name} style={styles.card}>
           <div style={styles.cardIcon}><UIIcon name="server" size={18} /></div>
           <div style={styles.cardBody}>
@@ -161,67 +170,74 @@ export const McpTab: React.FC = () => {
           </div>
         </div>
       ))}
+      {servers.length > 0 && filteredServers.length === 0 && !form && (
+        <div style={styles.emptySearch}>No MCP servers match that name or configuration.</div>
+      )}
 
       {form ? (
         <div style={styles.form}>
           <div style={styles.formTitle}>{editing ? `Edit ${editing}` : 'Add MCP server'}</div>
-          <label style={styles.label}>Name
-            <input
-              style={inputStyle}
-              value={form.name}
-              disabled={!!editing}
-              placeholder="github"
-              onChange={e => setForm({ ...form, name: e.target.value })}
-            />
-          </label>
-          <label style={styles.label}>Transport
-            <div style={styles.transportRow}>
-              {(['stdio', 'remote'] as const).map(t => (
-                <button
-                  key={t}
-                  style={{ ...styles.transportBtn, ...(form.transport === t ? styles.transportBtnActive : null) }}
-                  onClick={() => setForm({ ...form, transport: t })}
-                >{t === 'stdio' ? 'Local (stdio)' : 'Remote (URL)'}</button>
-              ))}
-            </div>
-          </label>
-          {form.transport === 'stdio' ? (
-            <>
-              <label style={styles.label}>Command
-                <input
-                  style={inputStyle}
-                  value={form.command}
-                  placeholder="npx"
-                  onChange={e => setForm({ ...form, command: e.target.value })}
-                />
-              </label>
-              <label style={styles.label}>Arguments (space-separated)
-                <input
-                  style={inputStyle}
-                  value={form.args}
-                  placeholder="-y @modelcontextprotocol/server-github"
-                  onChange={e => setForm({ ...form, args: e.target.value })}
-                />
-              </label>
-              <label style={styles.label}>Environment (one KEY=VALUE per line)
-                <textarea
-                  style={{ ...inputStyle, minHeight: 64, resize: 'vertical', fontFamily: 'monospace' }}
-                  value={form.env}
-                  placeholder={'GITHUB_TOKEN=ghp_...'}
-                  onChange={e => setForm({ ...form, env: e.target.value })}
-                />
-              </label>
-            </>
-          ) : (
-            <label style={styles.label}>URL
+          <div style={styles.formGrid}>
+            <label style={styles.label}>Name
               <input
-                style={inputStyle}
-                value={form.url}
-                placeholder="https://mcp.example.com/sse"
-                onChange={e => setForm({ ...form, url: e.target.value })}
+                style={styles.formInput}
+                value={form.name}
+                disabled={!!editing}
+                placeholder="github"
+                onChange={e => setForm({ ...form, name: e.target.value })}
               />
             </label>
-          )}
+            <label style={styles.label}>Transport
+              <div style={styles.transportRow}>
+                {(['stdio', 'remote'] as const).map(t => (
+                  <button
+                    key={t}
+                    type="button"
+                    aria-pressed={form.transport === t}
+                    style={{ ...styles.transportBtn, ...(form.transport === t ? styles.transportBtnActive : null) }}
+                    onClick={() => setForm({ ...form, transport: t })}
+                  >{t === 'stdio' ? 'Local (stdio)' : 'Remote (URL)'}</button>
+                ))}
+              </div>
+            </label>
+            {form.transport === 'stdio' ? (
+              <>
+                <label style={styles.label}>Command
+                  <input
+                    style={styles.formInput}
+                    value={form.command}
+                    placeholder="npx"
+                    onChange={e => setForm({ ...form, command: e.target.value })}
+                  />
+                </label>
+                <label style={styles.label}>Arguments (space-separated)
+                  <input
+                    style={styles.formInput}
+                    value={form.args}
+                    placeholder="-y @modelcontextprotocol/server-github"
+                    onChange={e => setForm({ ...form, args: e.target.value })}
+                  />
+                </label>
+                <label style={{ ...styles.label, ...styles.fullWidthField }}>Environment (one KEY=VALUE per line)
+                  <textarea
+                    style={styles.formTextarea}
+                    value={form.env}
+                    placeholder={'GITHUB_TOKEN=ghp_...'}
+                    onChange={e => setForm({ ...form, env: e.target.value })}
+                  />
+                </label>
+              </>
+            ) : (
+              <label style={{ ...styles.label, ...styles.fullWidthField }}>URL
+                <input
+                  style={styles.formInput}
+                  value={form.url}
+                  placeholder="https://mcp.example.com/sse"
+                  onChange={e => setForm({ ...form, url: e.target.value })}
+                />
+              </label>
+            )}
+          </div>
           <div style={styles.formActions}>
             <button style={pillButton('primary')} disabled={saving} onClick={() => void save()}>
               {saving ? 'Saving…' : 'Save'}
@@ -263,13 +279,25 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg3, border: `1px solid ${C.border2}`, borderRadius: 5, padding: '1px 6px',
   },
   toggleBusy: { opacity: 0.5, cursor: 'wait', pointerEvents: 'none' },
+  emptySearch: { color: C.fg3, fontSize: 12, textAlign: 'center', padding: '30px 16px' },
   form: {
     border: `1px solid ${C.border}`, borderRadius: 12, background: C.surface2,
-    padding: '14px 16px', marginTop: 4, display: 'flex', flexDirection: 'column', gap: 10,
+    padding: '16px', marginTop: 4, display: 'flex', flexDirection: 'column', gap: 14,
+    maxWidth: 720, boxSizing: 'border-box',
   },
   formTitle: { color: C.fg, fontSize: 13, fontWeight: 700 },
-  label: { color: C.fg2, fontSize: 11.5, display: 'flex', flexDirection: 'column', gap: 4 },
-  transportRow: { display: 'flex', gap: 8 },
+  formGrid: {
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+    gap: '12px 14px', alignItems: 'end',
+  },
+  label: { color: C.fg2, fontSize: 11.5, display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 },
+  fullWidthField: { gridColumn: '1 / -1' },
+  formInput: { ...inputStyle, width: '100%', boxSizing: 'border-box' },
+  formTextarea: {
+    ...inputStyle, width: '100%', minHeight: 76, resize: 'vertical',
+    boxSizing: 'border-box', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  },
+  transportRow: { display: 'flex', gap: 8, minHeight: 34 },
   transportBtn: {
     padding: '6px 12px', borderRadius: 8, border: `1px solid ${C.border2}`,
     background: 'transparent', color: C.fg2, cursor: 'pointer', fontSize: 12,

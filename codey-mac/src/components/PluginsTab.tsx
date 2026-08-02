@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { C } from '../theme'
 import { unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
+import { matchesToolSearch } from './tools-search'
 import type { PluginInfo } from '../codey-api'
 
 // Matches the toggle idiom already used by AppearanceTab / ChannelsSection.
@@ -20,11 +21,15 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on,
   </div>
 )
 
-export const PluginsTab: React.FC = () => {
+export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const filteredPlugins = useMemo(
+    () => plugins.filter(plugin => matchesToolSearch(searchQuery, plugin.name, plugin.description)),
+    [plugins, searchQuery],
+  )
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -62,7 +67,7 @@ export const PluginsTab: React.FC = () => {
         changes apply to the next agent run.
       </div>
       {error && <div style={styles.errorBanner}>{error}</div>}
-      {plugins.map(plugin => (
+      {filteredPlugins.map(plugin => (
         <div key={plugin.id} style={styles.card}>
           <div style={styles.cardIcon}><UIIcon name="tools" size={18} /></div>
           <div style={styles.cardBody}>
@@ -74,6 +79,9 @@ export const PluginsTab: React.FC = () => {
           </div>
         </div>
       ))}
+      {plugins.length > 0 && filteredPlugins.length === 0 && (
+        <div style={styles.emptySearch}>No plugins match that name or description.</div>
+      )}
     </div>
   )
 }
@@ -94,4 +102,5 @@ const styles: Record<string, React.CSSProperties> = {
   cardName: { color: C.fg, fontSize: 13, fontWeight: 700, marginBottom: 3 },
   cardDesc: { color: C.fg3, fontSize: 11.5, lineHeight: 1.45 },
   toggleBusy: { opacity: 0.5, cursor: 'wait', pointerEvents: 'none' },
+  emptySearch: { color: C.fg3, fontSize: 12, textAlign: 'center', padding: '30px 16px' },
 }
