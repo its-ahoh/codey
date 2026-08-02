@@ -429,9 +429,6 @@ export class Codey {
     return this.runWithFallback(req.agent, req);
   };
 
-  /** Run the stronger advisor model for a stuck single agent. Returns plain-text
-   *  guidance, or null on failure/timeout (caller degrades to the agent's reply). */
-  private async runSoloAdvisor(
   /** Conservative gate for Sequential/Graph teams. Invalid, failed, or
    * uncertain classifications always keep the full workflow. */
   private async decideSequentialFastPath(
@@ -464,6 +461,9 @@ export class Codey {
     }
   }
 
+  /** Run the stronger advisor model for a stuck single agent. Returns plain-text
+   *  guidance, or null on failure/timeout (caller degrades to the agent's reply). */
+  private async runSoloAdvisor(
     input: SoloAdvisorInput,
     workingDir: string,
     signal?: AbortSignal,
@@ -3500,8 +3500,19 @@ Example: /model gpt-4.1 write a Python script`;
     // on resume more richly requires first unifying this path onto the same sink
     // + structured-message pipeline as runTeamForChat — tracked as a follow-up
     // (see docs/superpowers/specs/...-resume-streaming-unification).
+    const nextResumeStep = Math.max(
+      0,
+      ...(this.chatManager.get(chatId)?.messages
+        .filter(message => message.teamTurnId === pending.teamTurnId)
+        .map(message => message.step ?? 0) ?? []),
+    ) + 1;
+    const recordResumeFailure = (worker: string, reason: string) => {
+      emitter.beginWorker?.({ step: nextResumeStep, worker });
+      emitter.endWorker?.('failed', { failureReason: reason });
+    };
     const team = this.workspaceManager.getTeam(pending.teamName);
     if (!team) {
+      recordResumeFailure('Team', `Team "${pending.teamName}" no longer exists`);
       await emitter.notify(`Team \`${pending.teamName}\` no longer exists; the paused run was dropped.`);
       return emitter.transcript;
     }
@@ -3555,8 +3566,10 @@ Example: /model gpt-4.1 write a Python script`;
         blackboard.renderForWorker(memberName),
       );
       await emitter.status(`🔄 Resuming **${memberName}** with your answer…`);
+      emitter.beginWorker?.({ step: nextResumeStep, worker: memberName, agent: codingAgent, model: modelConfig?.model });
       const response = await runOneWorker(memberName, reprompt, codingAgent, modelConfig, blackboard);
       if (!response.success) {
+        emitter.endWorker?.('failed', { failureReason: response.error ?? 'Worker failed without an error message' });
         await emitter.notify(`❌ Worker **${memberName}** failed on resume: ${response.error}`);
         return emitter.transcript;
       }
@@ -3584,8 +3597,10 @@ Example: /model gpt-4.1 write a Python script`;
         });
         const rendered2 = renderQuestion(memberName, ask.preamble, ask.question, ask.options);
         await emitter.notify(rendered2.text, rendered2.choices);
+        emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
         return emitter.transcript;
       }
+      emitter.endWorker?.('done');
       const carryForNext = `Previous worker output:\n${response.output}\n\nYour task: ${pending.task}`;
       const priorResults: string[] = [`**${memberName}**: ${response.output}`];
       await this.runAllMembersInOrder(
@@ -3603,6 +3618,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     if (pending.mode === 'graph') {
       if (!team.graph) {
+        recordResumeFailure('Team', `Team "${pending.teamName}" no longer has a flow graph`);
         await emitter.notify(`Team \`${pending.teamName}\` no longer has a flow graph; the paused run was dropped.`);
         return emitter.transcript;
       }
@@ -3635,6 +3651,7 @@ Example: /model gpt-4.1 write a Python script`;
       { agent: mAgent, model: mModel, runner: this.advisorRunner },
     );
     if (turn.fallback) {
+      recordResumeFailure('Advisor', turn.fallbackReason ?? 'Advisor failed without an error message');
       await emitter.notify(`⚠️ Advisor failed on resume (${turn.fallbackReason}). Paused run dropped.`);
       return emitter.transcript;
     }
@@ -3658,27 +3675,18 @@ Example: /model gpt-4.1 write a Python script`;
     // and the marker protocol — keeps post-pause steps consistent with pre-pause.
     const resumeRoster = team.members
       .filter(n => n !== turn.next)
-    const nextResumeStep = Math.max(
-      0,
-      ...(this.chatManager.get(chatId)?.messages
-        .filter(message => message.teamTurnId === pending.teamTurnId)
-        .map(message => message.step ?? 0) ?? []),
-    ) + 1;
-    const recordResumeFailure = (worker: string, reason: string) => {
-      emitter.beginWorker?.({ step: nextResumeStep, worker });
-      emitter.endWorker?.('failed', { failureReason: reason });
-    };
       .map(n => ({ name: n, hint: wm.getDispatchHint(n) }));
     const resumeBoardForPrompt = TeamBlackboard.fromJSON(pending.blackboard);
-      recordResumeFailure('Team', `Team "${pending.teamName}" no longer exists`);
     const stepPrompt = wm.buildTeamWorkerPrompt(
       turn.next,
       stepTaskBody,
       resumeRoster,
       resumeBoardForPrompt.renderForWorker(turn.next),
     );
+    emitter.beginWorker?.({ step: nextResumeStep, worker: turn.next, reason: turn.reason, agent: codingAgent, model: modelConfig?.model });
     const response = await runOneWorker(turn.next, stepPrompt, codingAgent, modelConfig, resumeBoardForPrompt);
     if (!response.success) {
+      emitter.endWorker?.('failed', { failureReason: response.error ?? 'Worker failed without an error message' });
       await emitter.notify(`❌ Worker **${turn.next}** failed on resume: ${response.error}`);
       return emitter.transcript;
     }
@@ -3714,8 +3722,10 @@ Example: /model gpt-4.1 write a Python script`;
       });
       const rendered3 = renderQuestion(turn.next, ask.preamble, ask.question, ask.options);
       await emitter.notify(rendered3.text, rendered3.choices);
+      emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
       return emitter.transcript;
     }
+    emitter.endWorker?.('done');
     const closing = await runAdvisor(
       {
         task: pending.task,
@@ -3724,10 +3734,8 @@ Example: /model gpt-4.1 write a Python script`;
         lastWorker: turn.next,
         lastOutput: response.output,
         finalize: true,
-      emitter.beginWorker?.({ step: nextResumeStep, worker: memberName, agent: codingAgent, model: modelConfig?.model });
       },
       { agent: mAgent, model: mModel, runner: this.advisorRunner },
-        emitter.endWorker?.('failed', { failureReason: response.error ?? 'Worker failed without an error message' });
     );
     const finalSummary = closing.fallback ? '' : (closing.final_summary ?? '');
     const resumeBlock = resumeBoard.renderForUser();
@@ -3755,28 +3763,28 @@ Example: /model gpt-4.1 write a Python script`;
     opts: { startIndex?: number; startStep?: number; startCarry?: string; priorResults?: string[]; blackboard?: TeamBlackboard; conversationId?: string; signal?: AbortSignal; fallbackAgent?: CodingAgent; fallbackModel?: ModelConfig; teamTurnId?: string; firstReason?: string } = {},
   ): Promise<{ thinkingByStep: Record<number, string> }> {
     const workerManager = this.workspaceManager.getWorkerManager();
-        emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
     const results: string[] = opts.priorResults ? [...opts.priorResults] : [];
     let currentTask = opts.startCarry ?? task;
-      emitter.endWorker?.('done');
     const blackboard = opts.blackboard ?? new TeamBlackboard();
     const thinkingByStep: Record<number, string> = {};
     const teamConv = opts.conversationId
       ?? this.workerConversationId(convBase, { team: teamName });
+    let executionStep = opts.startStep ?? ((opts.startIndex ?? 0) + 1);
 
     for (let i = opts.startIndex ?? 0; i < members.length; i++) {
       if (opts.signal?.aborted) break;
       const memberName = members[i];
       const worker = workerManager.getWorker(memberName);
       if (!worker) {
+        emitter.beginWorker?.({ step: executionStep, worker: memberName });
         results.push(`**${memberName}**: ❌ not found in global library`);
+        emitter.endWorker?.('failed', { failureReason: `Worker "${memberName}" was not found` });
         break;
       }
       const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? opts.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
       const wmModel = workerManager.getWorkerModel(memberName);
       const modelConfig = wmModel ? this.getModelConfig(codingAgent, wmModel) : (opts.fallbackModel ?? this.getDefaultModelConfig(codingAgent));
       await emitter.status(`🔄 Worker **${worker.name}** is working...`);
-        recordResumeFailure('Team', `Team "${pending.teamName}" no longer has a flow graph`);
       emitter.beginWorker?.({ step: executionStep, worker: worker.name, reason: i === (opts.startIndex ?? 0) ? opts.firstReason : undefined, agent: codingAgent, model: modelConfig?.model });
       const roster = members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
       const nextName = members[i + 1];
@@ -3809,7 +3817,6 @@ Example: /model gpt-4.1 write a Python script`;
           mode: 'sequential',
           teamName,
           task,
-      recordResumeFailure('Advisor', turn.fallbackReason ?? 'Advisor failed without an error message');
           teamTurnId: opts.teamTurnId || '',
           memberIndex: i,
           carry: currentTask,
@@ -3828,6 +3835,7 @@ Example: /model gpt-4.1 write a Python script`;
       }
       results.push(`**${worker.name}**: ${cleanOutput}`);
       emitter.endWorker?.('done');
+      executionStep++;
       currentTask = `Previous worker output:\n${cleanOutput}\n\nYour task: ${task}`;
     }
 
@@ -3841,10 +3849,8 @@ Example: /model gpt-4.1 write a Python script`;
   /**
    * Build the judge edge descriptors for the given node. Shared by both graph
    * walk variants so they can't silently drift.
-    emitter.beginWorker?.({ step: nextResumeStep, worker: turn.next, reason: turn.reason, agent: codingAgent, model: modelConfig?.model });
    */
   private buildJudgeEdges(
-      emitter.endWorker?.('failed', { failureReason: response.error ?? 'Worker failed without an error message' });
     graph: TeamGraph,
     nodeById: Map<string, TeamGraph['nodes'][number]>,
     nodeId: string,
@@ -3880,10 +3886,8 @@ Example: /model gpt-4.1 write a Python script`;
     const decision = await runJudge(
       { task, worker: workerName, workerOutput, blackboardSummary, edges,
         question: node?.type === 'condition' ? node.condition : undefined },
-      emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
       { agent, model, runner: this.advisorRunner, signal },
     );
-    emitter.endWorker?.('done');
     const edge = resolveEdge(graph, currentNodeId, decision.edgeId);
     return { decision, edge };
   }
@@ -3927,16 +3931,13 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   /**
-    let executionStep = opts.startStep ?? ((opts.startIndex ?? 0) + 1);
    * Resumable body of runSequentialGraphForChat's flow walk. Runs the void/
    * sendResponse loop from `state` until the graph finishes (or pauses on an
    * [ASK_USER]), then emits the cap warning + final results block. Shared by the
    * fresh run and the `mode:'graph'` resume path so post-pause steps behave
    * identically. When `resume` is set, the FIRST worker's prompt is re-issued
    * with the user's answer injected (matching the sequential resume format).
-        emitter.beginWorker?.({ step: executionStep, worker: memberName });
    */
-        emitter.endWorker?.('failed', { failureReason: `Worker "${memberName}" was not found` });
   private async continueGraphRun(
     emitter: TeamEmitter,
     chatId: string,
@@ -4003,7 +4004,6 @@ Example: /model gpt-4.1 write a Python script`;
         emitter.endWorker?.('failed', { failureReason: `Worker "${workerName}" was not found` });
         break;
       }
-      executionStep++;
 
       const codingAgent = (wm.getWorkerCodingAgent(workerName) ?? opts?.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
       const wmModel = wm.getWorkerModel(workerName);
@@ -4051,6 +4051,8 @@ Example: /model gpt-4.1 write a Python script`;
         emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
         return emitter.transcript;
       }
+
+      emitter.endWorker?.('done');
 
       // Count this completed (non-paused) run toward the worker's self-loop cap.
       state = { ...state, runStreak: state.runStreak + 1 };
@@ -4198,6 +4200,34 @@ Example: /model gpt-4.1 write a Python script`;
 
     const useAdvisor = team.dispatch === 'auto' && !opts.forceAll;
 
+    // Sequential and authored-graph teams normally run their full workflow.
+    // A conservative Advisor gate may route a genuinely simple informational
+    // question to one suitable worker; failures and uncertainty fall through
+    // to the complete flow. `--all` remains the explicit bypass.
+    if (team.dispatch === 'all' && !opts.forceAll) {
+      const fastPath = await this.decideSequentialFastPath(team.members, opts.routingTask ?? prompt, workingDir, signal);
+      if (fastPath.route === 'single_worker' && !signal?.aborted) {
+        const emitter = new ChatEmitter(sink, chatId, workerMsgs);
+        const result = await this.runAllMembersInOrder(
+          emitter,
+          chatId,
+          baseConv,
+          teamName,
+          [fastPath.worker],
+          prompt,
+          runOneWorker,
+          {
+            signal,
+            fallbackAgent: chatAgent,
+            fallbackModel: chatModel,
+            teamTurnId,
+            firstReason: `Direct-answer fast path: ${fastPath.reason}`,
+          },
+        );
+        return { response: emitter.transcript, choices: emitter.choices, thinkingByStep: result.thinkingByStep, teamTurnId };
+      }
+    }
+
     // === parallel dispatch branch ===
     // Check if user is answering a pending question from a paused parallel discussion
     if (this.parallelResumes.has(chat.id)) {
@@ -4210,8 +4240,6 @@ Example: /model gpt-4.1 write a Python script`;
     this.logger.info(`[parallel-debug] runTeamForChat: dispatch=${team.dispatch} parallel=${JSON.stringify(team.parallel)} members=${team.members.join(',')}`);
     if (team.dispatch === 'parallel') {
       this.logger.info(`[parallel-debug] entering parallel branch`);
-      emitter.endWorker?.('done');
-
       const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
       // Resume detection: if this chat has a completed/terminated discussion,
       // re-activate it instead of starting fresh. initDiscussionDir will
@@ -4299,6 +4327,14 @@ Example: /model gpt-4.1 write a Python script`;
         onFinal: ev => {
           this.parallelResumes.delete(chat.id);
           this.activeParallelRuns.delete(chat.id);
+          const completedNormally = ev.reason === 'consensus';
+          for (const worker of team.members) {
+            workerMsgs.endWorker(
+              completedNormally ? 'done' : 'failed',
+              completedNormally ? undefined : { failureReason: `Parallel discussion ended: ${ev.reason}` },
+              worker,
+            );
+          }
           const c = this.chatManager.get(chat.id);
           if (c) {
             c.discussion = { teamName, status: 'done', startedAt: c.discussion?.startedAt ?? Date.now(), terminatedReason: ev.reason };
@@ -4362,34 +4398,6 @@ Example: /model gpt-4.1 write a Python script`;
               agent: workerAgent,
               model: workerModel?.model,
             });
-    // Sequential and authored-graph teams normally run their full workflow.
-    // A conservative Advisor gate may route a genuinely simple informational
-    // question to one suitable worker; failures and uncertainty fall through
-    // to the complete flow. `--all` remains the explicit bypass.
-    if (team.dispatch === 'all' && !opts.forceAll) {
-      const fastPath = await this.decideSequentialFastPath(team.members, opts.routingTask ?? prompt, workingDir, signal);
-      if (fastPath.route === 'single_worker' && !signal?.aborted) {
-        const emitter = new ChatEmitter(sink, chatId, workerMsgs);
-        const result = await this.runAllMembersInOrder(
-          emitter,
-          chatId,
-          baseConv,
-          teamName,
-          [fastPath.worker],
-          prompt,
-          runOneWorker,
-          {
-            signal,
-            fallbackAgent: chatAgent,
-            fallbackModel: chatModel,
-            teamTurnId,
-            firstReason: `Direct-answer fast path: ${fastPath.reason}`,
-          },
-        );
-        return { response: emitter.transcript, choices: emitter.choices, thinkingByStep: result.thinkingByStep, teamTurnId };
-      }
-    }
-
           } else {
             sink({ type: 'info', chatId, message: msg.summary });
           }
@@ -4426,6 +4434,16 @@ Example: /model gpt-4.1 write a Python script`;
           askedAt: Date.now(),
           workerAnchors: this.snapshotWorkerAnchors(teamConv),
         });
+        const askingMessage = this.chatManager.get(chatId)?.messages
+          .filter(message => message.teamTurnId === teamTurnId && message.worker === p.askingWorker)
+          .pop();
+        if (askingMessage) {
+          this.chatManager.updateMessage(chatId, askingMessage.id, {
+            workerStatus: 'askedUser',
+            workerNextUserAction: { text: p.question, options: p.options },
+          });
+          sink({ type: 'worker_end', chatId, messageId: askingMessage.id, step: askingMessage.step ?? p.step, status: 'askedUser' });
+        }
         const rendered5 = renderQuestion(askWorkerName, '', p.question, p.options);
         sink({ type: 'stream', chatId, token: rendered5.text });
         return { response: rendered5.text, choices: rendered5.choices, teamTurnId };
@@ -4489,14 +4507,6 @@ Example: /model gpt-4.1 write a Python script`;
     const commandMatch = text.match(/^\/(\w+)(?:\s+(.*))?$/);
     
     if (commandMatch) {
-          const completedNormally = ev.reason === 'consensus';
-          for (const worker of team.members) {
-            workerMsgs.endWorker(
-              completedNormally ? 'done' : 'failed',
-              completedNormally ? undefined : { failureReason: `Parallel discussion ended: ${ev.reason}` },
-              worker,
-            );
-          }
       const command = commandMatch[1].toLowerCase();
       const argsStr = commandMatch[2] || '';
       const args = argsStr.split(/\s+/).filter(Boolean);
@@ -4592,16 +4602,6 @@ Example: /model gpt-4.1 write a Python script`;
     const out: CodingAgent[] = [];
     for (const e of fb?.order ?? []) {
       if (Codey.ALL_AGENTS.includes(e.agent) && !seen.has(e.agent)) {
-        const askingMessage = this.chatManager.get(chatId)?.messages
-          .filter(message => message.teamTurnId === teamTurnId && message.worker === p.askingWorker)
-          .pop();
-        if (askingMessage) {
-          this.chatManager.updateMessage(chatId, askingMessage.id, {
-            workerStatus: 'askedUser',
-            workerNextUserAction: { text: p.question, options: p.options },
-          });
-          sink({ type: 'worker_end', chatId, messageId: askingMessage.id, step: askingMessage.step ?? p.step, status: 'askedUser' });
-        }
         seen.add(e.agent);
         out.push(e.agent);
       }
@@ -5600,6 +5600,13 @@ Example: /model gpt-4.1 write a Python script`;
       const fallbackIdentity = singleAgentResponse?.fallback?.to.match(/^([^()]+)\((.+)\)$/);
       const responseAgent = (fallbackIdentity?.[1] ?? agent) as CodingAgent;
       const responseModel = fallbackIdentity?.[2] ?? model?.model;
+      const terminalTeamMessages = teamTurnId
+        ? this.chatManager.get(chatId)?.messages.filter(message => message.teamTurnId === teamTurnId) ?? []
+        : [];
+      const terminalTeamSummary: TeamRunSummary | undefined = teamTurnId
+        && !this.chatManager.get(chatId)?.pendingTeam
+        ? finalizeTeamRunSummary(terminalTeamMessages) ?? undefined
+        : undefined;
       const assistantMessage: ChatMessage = {
         id: randomUUID(),
         role: 'assistant',
@@ -5616,6 +5623,7 @@ Example: /model gpt-4.1 write a Python script`;
         ...(surfacedChoices ? { choices: surfacedChoices } : {}),
         ...(agentUserQuestion ? { userQuestion: agentUserQuestion } : {}),
         ...(singleAgentResponse?.fallback ? { fallback: singleAgentResponse.fallback } : {}),
+        ...(terminalTeamSummary ? { teamSummary: terminalTeamSummary } : {}),
       };
       // For per-worker team runs the transcript was already persisted as
       // individual worker messages by the WorkerMessageEmitter. Persist only a
@@ -5630,6 +5638,45 @@ Example: /model gpt-4.1 write a Python script`;
         if (plainAskOptions && !updated.pendingTeam) {
           this.chatManager.setLastAskedOptions(chatId, assistantMessage.id, plainAskOptions);
         }
+      } else if (output.trim()) {
+        const workerMessage = this.chatManager.get(chatId)?.messages.find(m => m.teamTurnId === teamTurnId && m.worker);
+        this.chatManager.appendMessage(chatId, {
+          ...assistantMessage,
+          teamTurnId,
+          teamName: workerMessage?.teamName,
+          teamMode: workerMessage?.teamMode,
+        });
+        teamSummaryMessageId = assistantMessage.id;
+      } else if (terminalTeamSummary) {
+        const lastWorkerMessage = this.chatManager.get(chatId)?.messages
+          .filter(message => message.teamTurnId === teamTurnId && message.worker)
+          .pop();
+        if (lastWorkerMessage) {
+          teamSummaryMessageId = lastWorkerMessage.id;
+          this.chatManager.updateMessage(chatId, lastWorkerMessage.id, { teamSummary: terminalTeamSummary });
+        }
+      }
+
+      if (teamTurnId && terminalTeamSummary) {
+        let finalTeamSummary = terminalTeamSummary;
+        let terminalTaskBrief: TaskBrief | undefined;
+        if (this.isAideConfigured()) {
+          const terminalChat = this.chatManager.get(chatId);
+          if (terminalChat) {
+            try {
+              const digest = await generateAideTurnDigest(terminalChat, this.getAideOptions(), terminalTeamSummary);
+              terminalTaskBrief = { ...digest.taskBrief, teamTurnId };
+              finalTeamSummary = digest.teamSummary ?? terminalTeamSummary;
+              this.chatManager.setTaskBrief(chatId, terminalTaskBrief);
+              if (teamSummaryMessageId) {
+                this.chatManager.updateMessage(chatId, teamSummaryMessageId, { teamSummary: finalTeamSummary });
+              }
+            } catch (err) {
+              this.logger.warn(`Aide terminal team digest generation failed: ${(err as Error).message}`);
+            }
+          }
+        }
+        sink({ type: 'team_end', chatId, teamTurnId, summary: finalTeamSummary, ...(terminalTaskBrief ? { taskBrief: terminalTaskBrief } : {}) });
       }
 
       // Apply the Aide-generated title (first turn only) before announcing
@@ -5760,13 +5807,6 @@ Example: /model gpt-4.1 write a Python script`;
       void runner.stop('user_cancel', 'user cancelled the discussion');
       // Also abort the surrounding chat turn so the prompt is rolled back
       // and the 'stopped' event fires from runChatTurn's abort branch.
-      const terminalTeamMessages = teamTurnId
-        ? this.chatManager.get(chatId)?.messages.filter(message => message.teamTurnId === teamTurnId) ?? []
-        : [];
-      const terminalTeamSummary: TeamRunSummary | undefined = teamTurnId
-        && !this.chatManager.get(chatId)?.pendingTeam
-        ? finalizeTeamRunSummary(terminalTeamMessages) ?? undefined
-        : undefined;
       const c = this.chatAborts.get(chatId);
       if (c) c.abort();
       return true;
@@ -5777,43 +5817,3 @@ Example: /model gpt-4.1 write a Python script`;
     return true;
   }
 }
-        ...(terminalTeamSummary ? { teamSummary: terminalTeamSummary } : {}),
-      } else if (output.trim()) {
-        const workerMessage = this.chatManager.get(chatId)?.messages.find(m => m.teamTurnId === teamTurnId && m.worker);
-        this.chatManager.appendMessage(chatId, {
-          ...assistantMessage,
-          teamTurnId,
-          teamName: workerMessage?.teamName,
-          teamMode: workerMessage?.teamMode,
-        });
-        teamSummaryMessageId = assistantMessage.id;
-      } else if (terminalTeamSummary) {
-        const lastWorkerMessage = this.chatManager.get(chatId)?.messages
-          .filter(message => message.teamTurnId === teamTurnId && message.worker)
-          .pop();
-        if (lastWorkerMessage) {
-          teamSummaryMessageId = lastWorkerMessage.id;
-          this.chatManager.updateMessage(chatId, lastWorkerMessage.id, { teamSummary: terminalTeamSummary });
-        }
-      }
-
-      if (teamTurnId && terminalTeamSummary) {
-        let finalTeamSummary = terminalTeamSummary;
-        let terminalTaskBrief: TaskBrief | undefined;
-        if (this.isAideConfigured()) {
-          const terminalChat = this.chatManager.get(chatId);
-          if (terminalChat) {
-            try {
-              const digest = await generateAideTurnDigest(terminalChat, this.getAideOptions(), terminalTeamSummary);
-              terminalTaskBrief = { ...digest.taskBrief, teamTurnId };
-              finalTeamSummary = digest.teamSummary ?? terminalTeamSummary;
-              this.chatManager.setTaskBrief(chatId, terminalTaskBrief);
-              if (teamSummaryMessageId) {
-                this.chatManager.updateMessage(chatId, teamSummaryMessageId, { teamSummary: finalTeamSummary });
-              }
-            } catch (err) {
-              this.logger.warn(`Aide terminal team digest generation failed: ${(err as Error).message}`);
-            }
-          }
-        }
-        sink({ type: 'team_end', chatId, teamTurnId, summary: finalTeamSummary, ...(terminalTaskBrief ? { taskBrief: terminalTaskBrief } : {}) });
