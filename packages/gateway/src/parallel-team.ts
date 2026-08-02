@@ -49,7 +49,7 @@ export interface ParallelTeamRunnerOptions {
   onUserQuestion: (q: ParallelUserQuestion) => void;
   onFinal: (e: ParallelFinalEvent) => void;
   /** Called when a worker's run finishes (success or failure). */
-  onWorkerDone?: (worker: string, ok: boolean) => void;
+  onWorkerDone?: (worker: string, ok: boolean, error?: string) => void;
 }
 
 export class ParallelTeamRunner {
@@ -130,12 +130,12 @@ export class ParallelTeamRunner {
           actor: worker, kind: res.success ? 'worker_done' : 'worker_failed',
           note: res.error || `round ${round}`,
         });
-        if (!res.success) { this.opts.onWorkerDone?.(worker, false); finalized = true; break; }
+        if (!res.success) { this.opts.onWorkerDone?.(worker, false, res.error); finalized = true; break; }
       } catch (err) {
         await appendTranscript(wsRoot, ws, chat, {
           actor: worker, kind: 'worker_error', note: (err as Error).message,
         });
-        this.opts.onWorkerDone?.(worker, false); finalized = true;
+        this.opts.onWorkerDone?.(worker, false, (err as Error).message); finalized = true;
         break;
       }
 

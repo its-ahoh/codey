@@ -13,6 +13,12 @@ export interface WorkerMessageStore {
 interface Buf { messageId: string; step: number; worker: string; content: string; toolCalls: ToolCallEntry[]; thinking: string; }
 
 export interface BeginWorkerArgs { step: number; worker: string; reason?: string; agent?: ChatMessage['agent']; model?: string; }
+export interface EndWorkerMeta {
+  tokens?: number;
+  durationSec?: number;
+  failureReason?: string;
+  nextUserAction?: { text: string; options?: string[] };
+}
 
 /**
  * Owns the per-worker chat-message lifecycle for a single team run. All
@@ -76,7 +82,7 @@ export class WorkerMessageEmitter {
   }
 
   /** Finalize a worker. For parallel pass `worker`; for serial it finalizes the active one. */
-  endWorker(status: 'done' | 'failed' | 'askedUser', extra?: { tokens?: number; durationSec?: number }, worker?: string): void {
+  endWorker(status: 'done' | 'failed' | 'askedUser', extra?: EndWorkerMeta, worker?: string): void {
     const buf = worker ? this.byWorker.get(worker) : this.active;
     if (!buf) return;
     this.store.updateMessage(this.chatId, buf.messageId, {
@@ -87,9 +93,12 @@ export class WorkerMessageEmitter {
       isComplete: true,
       ...(extra?.tokens != null ? { tokens: extra.tokens } : {}),
       ...(extra?.durationSec != null ? { durationSec: extra.durationSec } : {}),
+      ...(extra?.failureReason ? { workerFailureReason: extra.failureReason } : {}),
+      ...(extra?.nextUserAction ? { workerNextUserAction: extra.nextUserAction } : {}),
     });
     this.sink({ type: 'worker_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status, tokens: extra?.tokens, durationSec: extra?.durationSec });
     if (buf === this.active) this.active = null;
+    if (worker) this.byWorker.delete(worker);
   }
 
   /** The message id of the currently-active serial worker (for resume mapping). */

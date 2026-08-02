@@ -18,6 +18,19 @@ export interface ToolCallEntry {
   output?: string;
 }
 
+export interface TeamRunSummaryEntry {
+  worker: string;
+  step: number;
+  text: string;
+}
+
+export interface TeamRunSummary {
+  completed: TeamRunSummaryEntry[];
+  failures: TeamRunSummaryEntry[];
+  nextUserActions: TeamRunSummaryEntry[];
+  finalizedAt: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -60,6 +73,14 @@ export interface ChatMessage {
   workerStatus?: 'running' | 'done' | 'failed' | 'askedUser';
   /** Advisor's routing reason, shown as a caption on the bubble. */
   advisorReason?: string;
+  /** Structured terminal error captured by the team orchestrator. */
+  workerFailureReason?: string;
+  /** Structured user action captured when a worker pauses for input. */
+  workerNextUserAction?: { text: string; options?: string[] };
+  /** A resolved pause marker; terminal but not itself a completed outcome. */
+  workerSummaryExcluded?: boolean;
+  /** Gateway-authored terminal aggregate for this teamTurnId. */
+  teamSummary?: TeamRunSummary;
   /** Option labels when this assistant message ended in [ASK_USER:choice]. */
   choices?: string[];
   /** Structured question from AskUserQuestion tool call, with option descriptions. */
@@ -215,4 +236,6 @@ export interface TaskBrief {
   timeline: TaskEvent[];
   /** When the Aide produced this (epoch ms). */
   generatedAt: number;
+  /** Terminal team turn summarized by the same Aide call, when applicable. */
+  teamTurnId?: string;
 }

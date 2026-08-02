@@ -52,6 +52,29 @@ describe('WorkerMessageEmitter — serial', () => {
     expect(h.events.at(-1)).toMatchObject({ type: 'worker_end', messageId: id, status: 'done' });
   });
 
+  it('persists thinking tokens without translating or normalizing them', () => {
+    const h = harness();
+    const source = `\n\u4FDD\u7559\u539F\u59CB\u8BED\u8A00\nEnglish follows  `;
+    h.em.beginWorker({ step: 1, worker: 'a' });
+    h.em.onThinking(source.slice(0, 5), 1);
+    h.em.onThinking(source.slice(5), 1);
+    h.em.endWorker('done');
+    expect(h.patched[0].patch.thinking).toBe(source);
+    expect(h.events.filter(e => e.type === 'thinking').map(e => (e as any).token).join('')).toBe(source);
+  });
+
+  it('persists structured failure and user-action metadata', () => {
+    const failed = harness();
+    failed.em.beginWorker({ step: 1, worker: 'a' });
+    failed.em.endWorker('failed', { failureReason: 'Compiler exited with code 2' });
+    expect(failed.patched[0].patch.workerFailureReason).toBe('Compiler exited with code 2');
+
+    const waiting = harness();
+    waiting.em.beginWorker({ step: 1, worker: 'a' });
+    waiting.em.endWorker('askedUser', { nextUserAction: { text: 'Choose a target', options: ['A', 'B'] } });
+    expect(waiting.patched[0].patch.workerNextUserAction).toEqual({ text: 'Choose a target', options: ['A', 'B'] });
+  });
+
   it('beginWorker auto-finalizes a still-active previous worker as done', () => {
     const h = harness();
     h.em.beginWorker({ step: 1, worker: 'a' });

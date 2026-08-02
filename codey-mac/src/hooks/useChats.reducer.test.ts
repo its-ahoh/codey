@@ -29,9 +29,11 @@ function baseState(): State {
 describe('team reducer routing', () => {
   it('workerStart appends a running worker message with the backend id', () => {
     let s = baseState();
+    s.chats.c1.messages = [{ id: 'asst-x', role: 'assistant', content: '', timestamp: 1, isComplete: false }]
     s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'pm', reason: 'kickoff', agent: 'codex', model: 'gpt-5' });
     const m = s.chats.c1.messages.find(x => x.id === 'w1')!;
     expect(m).toMatchObject({ id: 'w1', role: 'assistant', teamTurnId: 'tt1', worker: 'pm', workerStatus: 'running', advisorReason: 'kickoff', agent: 'codex', model: 'gpt-5' });
+    expect(s.chats.c1.messages.some(x => x.id === 'asst-x')).toBe(false)
   });
 
   it('streamToken/toolCall route to the event messageId, not the single inFlight id', () => {
@@ -51,6 +53,46 @@ describe('team reducer routing', () => {
     s = reducer(s, { type: 'workerEnd', chatId: 'c1', messageId: 'w1', step: 1, status: 'done' });
     expect(s.chats.c1.messages.find(x => x.id === 'w1')!.workerStatus).toBe('done');
   });
+
+  it('attaches a terminal team summary only when teamEnd arrives', () => {
+    let s = baseState();
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' });
+    expect(s.chats.c1.messages.find(x => x.id === 'w1')!.teamSummary).toBeUndefined();
+    const summary = {
+      completed: [{ worker: 'a', step: 1, text: 'Implemented change' }],
+      failures: [],
+      nextUserActions: [],
+      finalizedAt: 100,
+    };
+    const taskBrief = {
+      goal: 'Implement change',
+      state: { progress: 100, status: 'done' as const },
+      timeline: [],
+      generatedAt: 101,
+    };
+    s = reducer(s, { type: 'teamEnd', chatId: 'c1', teamTurnId: 'tt1', summary, taskBrief });
+    expect(s.chats.c1.messages.find(x => x.id === 'w1')!.teamSummary).toEqual(summary);
+    expect(s.chats.c1.taskBrief).toEqual(taskBrief);
+  });
+
+  it('concatenates thinking tokens without changing language or whitespace', () => {
+    let s = baseState();
+    const source = `\n\u4FDD\u7559\u539F\u6587\nEnglish text  `;
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' });
+    s = reducer(s, { type: 'thinkingToken', chatId: 'c1', token: source.slice(0, 4), step: 1, messageId: 'w1' });
+    s = reducer(s, { type: 'thinkingToken', chatId: 'c1', token: source.slice(4), step: 1, messageId: 'w1' });
+    expect(s.chats.c1.messages.find(x => x.id === 'w1')!.thinkingByStep?.[1]).toBe(source);
+  });
+
+  it('stores a team completion as group metadata instead of a standalone bubble', () => {
+    let s = baseState()
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' })
+    s = reducer(s, { type: 'completeSend', chatId: 'c1', assistantMessageId: 'asst-x', content: '### 🧠 Team blackboard\n\n**Facts:**\n- useful', teamTurnId: 'tt1' })
+    const footer = s.chats.c1.messages.find(x => x.id === 'asst-x')!
+    expect(footer).toMatchObject({ teamTurnId: 'tt1', teamName: 'team', isComplete: true })
+    expect(footer.worker).toBeUndefined()
+    expect(s.inFlight.c1).toBeUndefined()
+  })
 });
 
 // Regression: quick-capture (and paired-channel) turns are created + run in the

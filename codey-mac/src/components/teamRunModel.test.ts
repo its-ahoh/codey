@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveWorkerRuns } from './teamRunModel'
+import { deriveWorkerRuns, groupTeamMessagesByMember } from './teamRunModel'
 import type { ChatMessage } from '../types'
 
 const teamTurn = (over: Partial<ChatMessage> = {}): ChatMessage => ({
@@ -105,6 +105,22 @@ describe('deriveWorkerRunsFromGroup', () => {
     expect(runs.map(r => [r.step, r.worker, r.status, r.output])).toEqual([
       [1, 'a', 'done', 'A'], [2, 'b', 'running', 'B'],
     ])
+  })
+})
+
+describe('groupTeamMessagesByMember', () => {
+  it('collects revisited workers into ordered rounds and preserves member order', () => {
+    const groups = groupTeamMessagesByMember([
+      w(1, 'pm', 'done', 'scope'),
+      w(4, 'architect', 'done', 'revision'),
+      w(2, 'architect', 'done', 'design'),
+      w(3, 'developer', 'running', 'build'),
+    ])
+    expect(groups.map(group => [group.worker, group.messages.map(message => message.step)])).toEqual([
+      ['pm', [1]], ['architect', [2, 4]], ['developer', [3]],
+    ])
+    expect(groups[1].latest.content).toBe('revision')
+    expect(groups[2].status).toBe('running')
   })
 })
 
