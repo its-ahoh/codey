@@ -12,6 +12,37 @@ export interface WorkerRun {
   thinking?: string
 }
 
+export interface TeamMemberMessageGroup {
+  worker: string
+  messages: ChatMessage[]
+  latest: ChatMessage
+  status: NonNullable<ChatMessage['workerStatus']>
+}
+
+/** Group a chronological team transcript by worker while preserving the order
+ * in which members first appeared. Revisited graph workers become rounds under
+ * one member instead of repeated top-level rows. */
+export function groupTeamMessagesByMember(messages: ChatMessage[]): TeamMemberMessageGroup[] {
+  const grouped = new Map<string, ChatMessage[]>()
+  for (const message of messages) {
+    if (!message.worker) continue
+    const list = grouped.get(message.worker) ?? []
+    list.push(message)
+    grouped.set(message.worker, list)
+  }
+  return [...grouped.entries()].map(([worker, unsorted]) => {
+    const rounds = [...unsorted].sort((a, b) => (a.step ?? 0) - (b.step ?? 0))
+    const latest = rounds[rounds.length - 1]
+    const running = rounds.find(message => message.workerStatus === 'running')
+    return {
+      worker,
+      messages: rounds,
+      latest,
+      status: running ? 'running' : (latest.workerStatus ?? 'done'),
+    }
+  })
+}
+
 // Gateway marks a failed team step with a leading ❌ in its output.
 const FAILED_RE = /❌/
 

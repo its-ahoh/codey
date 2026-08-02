@@ -396,7 +396,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           safeResolve(resp);
         } else if (code === 0 && output) {
           const successResp = this.createResponse(output, true, tokens, finalDuration, statusUpdates, states, permissionDenials);
-          successResp.thinking = thinkingText.trim() || undefined;
+          successResp.thinking = thinkingText || undefined;
           safeResolve(successResp);
         } else {
           // Clear session on failure to avoid "session already in use" errors

@@ -10,6 +10,104 @@ interface MarkdownProps {
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace'
 
+const CodeBlock: React.FC<{
+  children: React.ReactNode
+  background: string
+  borderColor: string
+}> = ({ children, background, borderColor }) => {
+  const [copied, setCopied] = React.useState(false)
+  const resetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const child: any = React.Children.toArray(children)[0]
+  const className: string = child?.props?.className ?? ''
+  const lang = /language-(\w+)/.exec(className)?.[1]
+  const codeText: string = typeof child?.props?.children === 'string'
+    ? child.props.children
+    : Array.isArray(child?.props?.children)
+      ? child.props.children.join('')
+      : String(child?.props?.children ?? '')
+
+  React.useEffect(() => () => {
+    if (resetTimer.current) clearTimeout(resetTimer.current)
+  }, [])
+
+  const onCopy = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) return
+      await navigator.clipboard.writeText(codeText.replace(/\n$/, ''))
+      setCopied(true)
+      if (resetTimer.current) clearTimeout(resetTimer.current)
+      resetTimer.current = setTimeout(() => setCopied(false), 1800)
+    } catch { /* keep the button unchanged when copying fails */ }
+  }
+
+  return (
+    <div
+      style={{
+        background,
+        border: `1px solid ${borderColor}`,
+        borderRadius: 8,
+        margin: '6px 0 8px',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '4px 10px',
+          fontSize: 10,
+          color: C.fg3,
+          fontFamily: MONO,
+          borderBottom: `1px solid ${borderColor}`,
+          background: 'rgba(0,0,0,0.08)',
+        }}
+      >
+        <span style={{ textTransform: 'lowercase' }}>{lang ?? 'text'}</span>
+        <button
+          type="button"
+          onClick={() => { void onCopy() }}
+          style={{
+            background: copied ? `${C.green}1f` : 'transparent',
+            border: `1px solid ${copied ? C.green : borderColor}`,
+            color: copied ? C.green : C.fg3,
+            borderRadius: 4,
+            padding: '1px 6px',
+            fontSize: 10,
+            fontWeight: copied ? 700 : 400,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+          }}
+          title={copied ? 'Copied' : 'Copy'}
+          aria-live="polite"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre
+        style={{
+          margin: 0,
+          padding: '10px 12px',
+          overflowX: 'auto',
+          fontSize: 12,
+          lineHeight: 1.5,
+          fontFamily: MONO,
+          color: C.codeFg,
+          background: 'transparent',
+          whiteSpace: 'pre',
+          tabSize: 2,
+        }}
+      >
+        <code style={{ background: 'transparent', padding: 0, fontFamily: MONO, color: 'inherit' }}>
+          {codeText.replace(/\n$/, '')}
+        </code>
+      </pre>
+    </div>
+  )
+}
+
 // Add markdown hard breaks ("  \n") only inside prose paragraphs, so the
 // author's single line breaks survive rendering. Leave block-level
 // constructs alone — fenced code, indented code, tables, lists, headings,
@@ -73,7 +171,7 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
   const tableHeadBg = onUser ? 'rgba(0,0,0,0.2)' : C.surface3
 
   return (
-    <div style={{ fontSize: 13, lineHeight: 1.55, wordBreak: 'break-word' }}>
+    <div style={{ minWidth: 0, maxWidth: '100%', fontSize: 13, lineHeight: 1.55, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -157,82 +255,10 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
             </td>
           ),
           pre: ({ children }: any) => {
-            const child: any = React.Children.toArray(children)[0]
-            const className: string = child?.props?.className ?? ''
-            const lang = /language-(\w+)/.exec(className)?.[1]
-            // Pull the raw code text so we can render it inside a <pre>
-            // (whitespace-preserving) and offer a Copy button. Rendering as
-            // <div> + <code> here would let the browser collapse newlines
-            // because <div>'s default white-space is `normal`.
-            const codeText: string = typeof child?.props?.children === 'string'
-              ? child.props.children
-              : Array.isArray(child?.props?.children)
-                ? child.props.children.join('')
-                : String(child?.props?.children ?? '')
-            const onCopy = () => {
-              try { navigator.clipboard?.writeText(codeText.replace(/\n$/, '')) } catch { /* noop */ }
-            }
             return (
-              <div
-                style={{
-                  background: codeBlockBg,
-                  border: `1px solid ${codeBlockBorder}`,
-                  borderRadius: 8,
-                  margin: '6px 0 8px',
-                  position: 'relative',
-                  overflow: 'hidden',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '4px 10px',
-                    fontSize: 10,
-                    color: C.fg3,
-                    fontFamily: MONO,
-                    borderBottom: `1px solid ${codeBlockBorder}`,
-                    background: 'rgba(0,0,0,0.08)',
-                  }}
-                >
-                  <span style={{ textTransform: 'lowercase' }}>{lang ?? 'text'}</span>
-                  <button
-                    onClick={onCopy}
-                    style={{
-                      background: 'transparent',
-                      border: `1px solid ${codeBlockBorder}`,
-                      color: C.fg3,
-                      borderRadius: 4,
-                      padding: '1px 6px',
-                      fontSize: 10,
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
-                    }}
-                    title="Copy"
-                  >
-                    Copy
-                  </button>
-                </div>
-                <pre
-                  style={{
-                    margin: 0,
-                    padding: '10px 12px',
-                    overflowX: 'auto',
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                    fontFamily: MONO,
-                    color: C.codeFg,
-                    background: 'transparent',
-                    whiteSpace: 'pre',
-                    tabSize: 2,
-                  }}
-                >
-                  <code style={{ background: 'transparent', padding: 0, fontFamily: MONO, color: 'inherit' }}>
-                    {codeText.replace(/\n$/, '')}
-                  </code>
-                </pre>
-              </div>
+              <CodeBlock background={codeBlockBg} borderColor={codeBlockBorder}>
+                {children}
+              </CodeBlock>
             )
           },
           code: ({ className, children, ...props }: any) => {
@@ -250,12 +276,11 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
                   borderRadius: 4,
                   fontSize: 12,
                   fontFamily: MONO,
-                  // Identifiers such as `certificate_request` are semantic
-                  // units. Keep the entire token together instead of inheriting
-                  // the prose container's break-word behavior.
-                  whiteSpace: 'pre',
-                  wordBreak: 'normal',
-                  overflowWrap: 'normal',
+                  // Preserve spaces while still allowing long inline snippets
+                  // to wrap inside a narrow message bubble.
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'anywhere',
                 }}
               >
                 {children}

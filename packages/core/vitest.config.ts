@@ -20,6 +20,8 @@ export default defineConfig({
       'src/agents/external-mcp.test.ts',
       'src/solo-advisor.test.ts',
       'src/team-graph.test.ts',
+      'src/team-fast-path.test.ts',
+      'src/team-run-summary.test.ts',
       'src/judge.test.ts',
       'src/skill-crystallizer.test.ts',
       'src/playbook-induction.test.ts',

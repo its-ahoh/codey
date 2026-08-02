@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { generateTaskBrief, generateChatTitle } from './aide-tasks';
+import { generateAideTurnDigest, generateTaskBrief, generateChatTitle } from './aide-tasks';
 import type { Chat } from './types/chat';
 import type { AideOptions } from './aide';
 
@@ -42,6 +42,86 @@ describe('generateTaskBrief', () => {
     const brief = await generateTaskBrief(makeChat({ title: 'My Task' }), optsReturning('not json'));
     expect(brief.goal).toBe('My Task');
     expect(brief.timeline).toEqual([]);
+  });
+
+  it('instructs the Aide to follow the language of the latest user request', async () => {
+    const localizedGoal = '\u4F18\u5316\u72B6\u6001\u9762\u677F';
+    const localizedRequest = '\u72B6\u6001\u9762\u677F\u9ED8\u8BA4\u4F7F\u7528\u63D0\u95EE\u7684\u8BED\u8A00';
+    const opts = optsReturning(JSON.stringify({
+      goal: localizedGoal,
+      state: { progress: 20, status: 'working' },
+      timeline: [],
+    }));
+    await generateTaskBrief(makeChat({
+      messages: [
+        { id: 'm1', role: 'user', content: 'Please update the UI', timestamp: 1 },
+        { id: 'm2', role: 'user', content: localizedRequest, timestamp: 2 },
+      ],
+    }), opts);
+
+    const runner = opts.runner as ReturnType<typeof vi.fn>;
+    const prompt = runner.mock.calls[0][0].prompt as string;
+    expect(prompt).toContain('same language as the user\'s most recent substantive request');
+    expect(prompt).toContain(`## Most recent user request (language reference)\n${localizedRequest}`);
+    expect(prompt).not.toContain('Write every string in English');
+  });
+});
+
+describe('generateAideTurnDigest', () => {
+  it('uses one Aide response for the task brief and a grounded team summary', async () => {
+    const opts = optsReturning(JSON.stringify({
+      taskBrief: {
+        goal: 'Ship OAuth',
+        state: { progress: 100, status: 'done' },
+        timeline: [],
+      },
+      teamSummary: {
+        completed: [{ sources: [0, 1], text: 'Implemented and verified OAuth.' }],
+        failures: [],
+        nextUserActions: [{ sources: [0], text: 'Provide the production client ID.' }],
+      },
+    }));
+    const digest = await generateAideTurnDigest(makeChat(), opts, {
+      completed: [
+        { worker: 'developer', step: 1, text: 'Implemented OAuth.' },
+        { worker: 'tester', step: 2, text: 'OAuth tests pass.' },
+      ],
+      failures: [],
+      nextUserActions: [{ worker: 'developer', step: 3, text: 'Provide a production client ID.' }],
+      finalizedAt: 100,
+    });
+
+    expect(opts.runner).toHaveBeenCalledTimes(1);
+    expect(digest.taskBrief.goal).toBe('Ship OAuth');
+    expect(digest.teamSummary).toEqual({
+      completed: [{ worker: 'Team', step: 1, text: 'Implemented and verified OAuth.' }],
+      failures: [],
+      nextUserActions: [{ worker: 'developer', step: 3, text: 'Provide the production client ID.' }],
+      finalizedAt: 100,
+    });
+  });
+
+  it('falls back to authoritative facts when source references are incomplete', async () => {
+    const source = {
+      completed: [
+        { worker: 'developer', step: 1, text: 'Implemented OAuth.' },
+        { worker: 'tester', step: 2, text: 'OAuth tests pass.' },
+      ],
+      failures: [],
+      nextUserActions: [],
+      finalizedAt: 100,
+    };
+    const opts = optsReturning(JSON.stringify({
+      taskBrief: { goal: 'Ship OAuth', state: { progress: 100, status: 'done' }, timeline: [] },
+      teamSummary: {
+        completed: [{ sources: [0], text: 'Implemented OAuth.' }],
+        failures: [{ sources: [0], text: 'Invented failure.' }],
+        nextUserActions: [],
+      },
+    }));
+
+    const digest = await generateAideTurnDigest(makeChat(), opts, source);
+    expect(digest.teamSummary).toEqual(source);
   });
 });
 

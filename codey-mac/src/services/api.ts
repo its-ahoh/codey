@@ -1,6 +1,6 @@
 // IPC proxy — all calls go through window.codey.* (Electron preload)
 
-import type { Chat, ChatSelection, TaskBrief } from '../types'
+import type { Chat, ChatSelection, TaskBrief, TeamRunSummary } from '../types'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 
 // Inline ChatStreamEvent to avoid cross-package import
@@ -14,6 +14,7 @@ export type ChatStreamEvent =
   | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex'; model?: string }> }
   | { type: 'worker_start'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex'; model?: string; reason?: string }
   | { type: 'worker_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number }
+  | { type: 'team_end'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
   | { type: 'done'; chatId: string; response: string; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string }; teamTurnId?: string }
   | { type: 'stopped'; chatId: string; userMessageId: string; text: string }
   | { type: 'error'; chatId: string; message: string }

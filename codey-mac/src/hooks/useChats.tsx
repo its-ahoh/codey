@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react'
 import { apiService } from '../services/api'
-import type { Chat, ChatSelection, ChatMessage, ToolCallEntry, FileAttachment, TaskBrief } from '../types'
+import type { Chat, ChatSelection, ChatMessage, ToolCallEntry, FileAttachment, TaskBrief, TeamRunSummary } from '../types'
 import type { ChatStreamEvent } from '../../../packages/gateway/src/chat-runner'
 
 interface InFlight {
@@ -42,7 +42,7 @@ type Action =
   | { type: 'thinkingToken'; chatId: string; token: string; step?: number; messageId?: string }
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: 'working' | 'writing'; messageId?: string }
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback'] }
+  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; teamTurnId?: string }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
@@ -54,6 +54,7 @@ type Action =
   | { type: 'teamStart'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string }> }
   | { type: 'workerStart'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
   | { type: 'workerEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser' }
+  | { type: 'teamEnd'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
 
 function reorder(order: string[], chatId: string): string[] {
   return [chatId, ...order.filter(id => id !== chatId)]
@@ -61,7 +62,7 @@ function reorder(order: string[], chatId: string): string[] {
 
 const EXTERNAL_TURN_EVENTS = new Set([
   'tool_start', 'tool_end', 'info', 'stream', 'thinking',
-  'team_start', 'worker_start', 'worker_end',
+  'team_start', 'worker_start', 'worker_end', 'team_end',
 ])
 
 /**
@@ -282,9 +283,16 @@ export function reducer(state: State, action: Action): State {
       const chat = state.chats[action.chatId]
       if (!chat) return state
       const stubs = (action.workers ?? []).map(w => mkWorkerStub(action.teamTurnId, action.teamName, action.mode, w.messageId, w.step, w.worker, undefined, w.agent, w.model))
-      if (stubs.length === 0) return state
       const existing = new Set(chat.messages.map(m => m.id))
-      const messages = [...chat.messages, ...stubs.filter(s => !existing.has(s.id))]
+      // A normal send starts with a generic assistant placeholder. Once the
+      // gateway identifies the turn as a team run, the worker messages replace
+      // that placeholder; leaving it behind creates the empty bubble above the
+      // team group (and later a duplicate combined transcript).
+      const placeholderId = state.inFlight[action.chatId]?.assistantMessageId
+      const messages = [
+        ...chat.messages.filter(m => m.id !== placeholderId),
+        ...stubs.filter(s => !existing.has(s.id)),
+      ]
       return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
     }
     case 'workerStart': {
@@ -294,13 +302,23 @@ export function reducer(state: State, action: Action): State {
       const teamName = chat.messages.find(m => m.teamTurnId === action.teamTurnId)?.teamName ?? (chat.selection.type === 'team' ? chat.selection.name ?? '' : '')
       const mode = chat.messages.find(m => m.teamTurnId === action.teamTurnId)?.teamMode ?? 'auto'
       const stub = mkWorkerStub(action.teamTurnId, teamName, mode, action.messageId, action.step, action.worker, action.reason, action.agent, action.model)
-      return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages: [...chat.messages, stub], updatedAt: Date.now() } } }
+      const placeholderId = state.inFlight[action.chatId]?.assistantMessageId
+      const messages = [...chat.messages.filter(m => m.id !== placeholderId), stub]
+      return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
     }
     case 'workerEnd': {
       const chat = state.chats[action.chatId]
       if (!chat) return state
       const messages = chat.messages.map(m => m.id === action.messageId ? { ...m, workerStatus: action.status, isComplete: action.status !== 'running' } : m)
       return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
+    }
+    case 'teamEnd': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      const target = [...chat.messages].reverse().find(message => message.teamTurnId === action.teamTurnId)
+      if (!target) return state
+      const messages = chat.messages.map(message => message.id === target.id ? { ...message, teamSummary: action.summary } : message)
+      return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, ...(action.taskBrief ? { taskBrief: action.taskBrief } : {}), updatedAt: Date.now() } } }
     }
     case 'queued': {
       const fl = state.inFlight[action.chatId]
@@ -313,11 +331,40 @@ export function reducer(state: State, action: Action): State {
     case 'completeSend': {
       const chat = state.chats[action.chatId]
       if (!chat) return state
-      const messages = chat.messages.map(m =>
-        m.id === action.assistantMessageId
-          ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
-          : m
-      )
+      let messages: ChatMessage[]
+      if (action.teamTurnId) {
+        const teamMessages = chat.messages.filter(m => m.teamTurnId === action.teamTurnId)
+        const firstWorker = teamMessages.find(m => m.worker)
+        messages = chat.messages.filter(m => m.id !== action.assistantMessageId)
+        // Keep the team wrap-up/whiteboard as group metadata rather than a
+        // standalone assistant bubble. An empty response needs no footer.
+        if (action.content.trim()) {
+          messages = [...messages, {
+            id: action.assistantMessageId,
+            role: 'assistant',
+            content: action.content,
+            timestamp: Date.now(),
+            toolCalls: [],
+            isComplete: true,
+            tokens: action.tokens,
+            durationSec: action.durationSec,
+            agent: action.agent,
+            model: action.model,
+            choices: action.choices,
+            userQuestion: action.userQuestion,
+            fallback: action.fallback,
+            teamTurnId: action.teamTurnId,
+            teamName: firstWorker?.teamName,
+            teamMode: firstWorker?.teamMode,
+          }]
+        }
+      } else {
+        messages = chat.messages.map(m =>
+          m.id === action.assistantMessageId
+            ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
+            : m
+        )
+      }
       const updatedChat: Chat = { ...chat, messages, updatedAt: Date.now() }
       if (action.title) updatedChat.title = action.title
       const inFlight = { ...state.inFlight }
@@ -538,6 +585,9 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         case 'worker_end':
           dispatch({ type: 'workerEnd', chatId: ev.chatId, messageId: ev.messageId, step: ev.step, status: ev.status })
           break
+        case 'team_end':
+          dispatch({ type: 'teamEnd', chatId: ev.chatId, teamTurnId: ev.teamTurnId, summary: ev.summary, taskBrief: ev.taskBrief })
+          break
         case 'done': {
           adopting.current.delete(ev.chatId)
           const asstId = pendingAssistantId.current[ev.chatId]
@@ -555,6 +605,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               choices: ev.choices,
               userQuestion: ev.userQuestion,
               fallback: ev.fallback,
+              teamTurnId: ev.teamTurnId,
             })
             delete pendingAssistantId.current[ev.chatId]
           } else {

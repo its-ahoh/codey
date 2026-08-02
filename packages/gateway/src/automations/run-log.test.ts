@@ -39,6 +39,10 @@ describe('formatRunLogEvent', () => {
     expect(formatRunLogEvent(
       { type: 'worker_end', chatId: 'c', messageId: 'm', step: 2, status: 'done', durationSec: 12, tokens: 340 }, T,
     )).toBe(`${STAMP} worker_end #2 done (12s) 340 tokens`);
+    expect(formatRunLogEvent({
+      type: 'team_end', chatId: 'c', teamTurnId: 't',
+      summary: { completed: [{ worker: 'coder', step: 2, text: 'done' }], failures: [], nextUserActions: [], finalizedAt: T },
+    }, T)).toBe(`${STAMP} team_end completed=1 failures=0 next_actions=0`);
   });
 
   it('collapses multi-line messages to one log line', () => {

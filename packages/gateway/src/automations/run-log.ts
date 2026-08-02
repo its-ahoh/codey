@@ -42,6 +42,8 @@ export function formatRunLogEvent(e: ChatStreamEvent, now: number): string | nul
       const tokens = e.tokens != null ? ` ${e.tokens} tokens` : '';
       return `[${t}] worker_end #${e.step} ${e.status}${duration}${tokens}`;
     }
+    case 'team_end':
+      return `[${t}] team_end completed=${e.summary.completed.length} failures=${e.summary.failures.length} next_actions=${e.summary.nextUserActions.length}`;
     case 'info':
       return `[${t}] info ${cap(oneLine(e.message))}`;
     case 'error':
