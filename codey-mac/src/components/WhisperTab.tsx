@@ -19,6 +19,20 @@ interface VoiceCfg {
   localModel: string
   realtimeUrl: string
   realtimeModel: string
+  /** Where a finished transcript goes: the cursor, or a conversation with Codey. */
+  mode: 'inject' | 'converse'
+  tts: TtsCfg
+}
+
+interface TtsCfg {
+  enabled: boolean
+  provider: 'api' | 'local'
+  apiUrl: string
+  apiKey: string
+  apiModel: string
+  voiceId: string
+  /** How much of a reply gets spoken. See speech-digest.ts. */
+  verbosity: 'full' | 'digest' | 'auto'
 }
 
 const VOICE_DEFAULT: VoiceCfg = {
@@ -33,7 +47,19 @@ const VOICE_DEFAULT: VoiceCfg = {
   localModel: 'openai_whisper-large-v3_turbo_954MB',
   realtimeUrl: 'wss://api.openai.com/v1/realtime?intent=transcription',
   realtimeModel: 'gpt-4o-mini-transcribe',
+  mode: 'inject',
+  tts: {
+    enabled: false,
+    provider: 'api',
+    apiUrl: 'https://api.openai.com/v1',
+    apiKey: '',
+    apiModel: 'gpt-4o-mini-tts',
+    voiceId: 'alloy',
+    verbosity: 'auto',
+  },
 }
+
+const TTS_VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer']
 
 // Values must match real folder names in argmaxinc/whisperkit-coreml on HF.
 // The helper strips the `openai_whisper-` prefix before passing to WhisperKit.
@@ -248,7 +274,13 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
     setError(null)
     try {
       const cfg = await unwrap(await window.codey.config.get())
-      setVoice({ ...VOICE_DEFAULT, ...(cfg?.voice ?? {}) })
+      // tts merges one level deeper: a config written before a tts field
+      // existed would otherwise blank out that field's default.
+      setVoice({
+        ...VOICE_DEFAULT,
+        ...(cfg?.voice ?? {}),
+        tts: { ...VOICE_DEFAULT.tts, ...(cfg?.voice?.tts ?? {}) },
+      })
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
@@ -276,6 +308,8 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
       </div>
     )
   }
+
+  const updateTts = (patch: Partial<TtsCfg>) => updateVoice({ tts: { ...voice.tts, ...patch } })
 
   const updateVoice = async (patch: Partial<VoiceCfg>) => {
     const next = { ...voice, ...patch }
@@ -376,17 +410,130 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
         </select>
       </div>
 
-      <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Injection mode</span>
-        <select
-          value={voice.injection}
-          onChange={e => updateVoice({ injection: e.target.value as 'paste' | 'ax' })}
-          style={selectStyle}
-        >
-          <option value="paste">Paste (⌘V — works everywhere)</option>
-          <option value="ax">Accessibility API (no clipboard touch)</option>
-        </select>
+      <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
+          <span style={{ color: C.fg, fontSize: 13 }}>What happens to the transcript</span>
+          <select
+            value={voice.mode}
+            onChange={e => updateVoice({ mode: e.target.value as 'inject' | 'converse' })}
+            style={selectStyle}
+          >
+            <option value="inject">Type it (dictation)</option>
+            <option value="converse">Talk to Codey</option>
+          </select>
+        </div>
+        <div style={{ color: C.fg3, fontSize: 11 }}>
+          {voice.mode === 'inject'
+            ? 'The transcript is typed into whatever app has focus.'
+            : 'The transcript goes to Codey and the reply is spoken back. Press the hotkey while it talks to interrupt; Esc stops it.'}
+        </div>
       </div>
+
+      {voice.mode === 'inject' && (
+        <div style={fieldStyle}>
+          <span style={{ color: C.fg, fontSize: 13 }}>Injection mode</span>
+          <select
+            value={voice.injection}
+            onChange={e => updateVoice({ injection: e.target.value as 'paste' | 'ax' })}
+            style={selectStyle}
+          >
+            <option value="paste">Paste (⌘V — works everywhere)</option>
+            <option value="ax">Accessibility API (no clipboard touch)</option>
+          </select>
+        </div>
+      )}
+
+      {voice.mode === 'converse' && (
+        <>
+          <Section title="Spoken replies"/>
+
+          <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
+              <span style={{ color: C.fg, fontSize: 13 }}>Voice</span>
+              <select
+                value={voice.tts.enabled ? 'api' : 'system'}
+                onChange={e => updateTts({ enabled: e.target.value === 'api' })}
+                style={selectStyle}
+              >
+                <option value="system">System voice (offline, free)</option>
+                <option value="api">OpenAI voice (better quality)</option>
+              </select>
+            </div>
+            <div style={{ color: C.fg3, fontSize: 11 }}>
+              {voice.tts.enabled
+                ? 'Replies are synthesized by the API. If a request fails mid-reply, the rest is read by the system voice so playback never goes silent.'
+                : 'Replies are read by the built-in macOS voice. No API key needed, but noticeably weaker on Chinese.'}
+            </div>
+          </div>
+
+          <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
+              <span style={{ color: C.fg, fontSize: 13 }}>How much gets read out</span>
+              <select
+                value={voice.tts.verbosity}
+                onChange={e => updateTts({ verbosity: e.target.value as TtsCfg['verbosity'] })}
+                style={selectStyle}
+              >
+                <option value="auto">Summarize long replies</option>
+                <option value="digest">Always summarize</option>
+                <option value="full">Read everything</option>
+              </select>
+            </div>
+            <div style={{ color: C.fg3, fontSize: 11 }}>
+              Say &ldquo;more detail&rdquo; (or &ldquo;说详细点&rdquo;) to hear the full reply — it replays from cache without re-running the agent.
+            </div>
+          </div>
+
+          {voice.tts.enabled && (
+            <>
+              <div style={fieldStyle}>
+                <span style={{ color: C.fg, fontSize: 13 }}>Speech API URL</span>
+                <input
+                  value={voice.tts.apiUrl}
+                  onChange={e => setVoice({ ...voice, tts: { ...voice.tts, apiUrl: e.target.value } })}
+                  onBlur={e => updateTts({ apiUrl: e.target.value })}
+                  style={inputStyle}
+                  placeholder="https://api.openai.com/v1"
+                />
+              </div>
+
+              <div style={fieldStyle}>
+                <span style={{ color: C.fg, fontSize: 13 }}>Speech API key</span>
+                <input
+                  type="password"
+                  value={voice.tts.apiKey}
+                  onChange={e => setVoice({ ...voice, tts: { ...voice.tts, apiKey: e.target.value } })}
+                  onBlur={e => updateTts({ apiKey: e.target.value })}
+                  style={inputStyle}
+                  placeholder="sk-..."
+                />
+              </div>
+
+              <div style={fieldStyle}>
+                <span style={{ color: C.fg, fontSize: 13 }}>Speech model</span>
+                <input
+                  value={voice.tts.apiModel}
+                  onChange={e => setVoice({ ...voice, tts: { ...voice.tts, apiModel: e.target.value } })}
+                  onBlur={e => updateTts({ apiModel: e.target.value })}
+                  style={inputStyle}
+                  placeholder="gpt-4o-mini-tts"
+                />
+              </div>
+
+              <div style={fieldStyle}>
+                <span style={{ color: C.fg, fontSize: 13 }}>Voice</span>
+                <select
+                  value={voice.tts.voiceId}
+                  onChange={e => updateTts({ voiceId: e.target.value })}
+                  style={selectStyle}
+                >
+                  {TTS_VOICES.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+            </>
+          )}
+        </>
+      )}
 
       <Section title="Transcription backend"/>
       {/* Provider row + descriptive note grouped as a single block: the divider
