@@ -1645,8 +1645,15 @@ export const ChatTab: React.FC<Props> = ({
     void send()
     // Acknowledge immediately. An agent turn routinely runs for 30s to
     // several minutes, and unbroken silence in a voice interface reads as
-    // "it died" rather than "it's working".
-    voice.sayLocally(/[\u4e00-\u9fff]/.test(spoken) ? '好的，我去处理' : 'Got it, working on it.')
+    // "it died" rather than "it's working". Routed through the gateway like
+    // the reply so both use the same voice; verbatim because a one-line ack
+    // has nothing to digest, and no conversationId so it can't displace the
+    // cached reply behind "more detail".
+    void voice.speak(
+      /[\u4e00-\u9fff]/.test(spoken) ? '好的，我去处理' : 'Got it, working on it.',
+      undefined,
+      true,
+    )
   }, [input]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Read the reply aloud once the turn settles. Keyed off the in-flight

@@ -35,6 +35,7 @@ export class ApiServer {
     text: string,
     emit: (event: VoiceConverseEvent) => void,
     conversationId?: string,
+    verbatim?: boolean,
   ) => Promise<void>;
   private onConverseHotkey?: () => void;
 
@@ -51,6 +52,7 @@ export class ApiServer {
       text: string,
       emit: (event: VoiceConverseEvent) => void,
       conversationId?: string,
+      verbatim?: boolean,
     ) => Promise<void>,
     onConverseHotkey?: () => void,
   ) {
@@ -226,10 +228,12 @@ export class ApiServer {
         req.on('end', async () => {
           let text: string;
           let conversationId: string | undefined;
+          let verbatim = false;
           try {
             const parsed = JSON.parse(body);
             text = typeof parsed.text === 'string' ? parsed.text.trim() : '';
             conversationId = typeof parsed.conversationId === 'string' ? parsed.conversationId : undefined;
+            verbatim = parsed.verbatim === true;
           } catch {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Invalid JSON' }));
@@ -248,7 +252,7 @@ export class ApiServer {
           res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
           await this.runVoiceSpeak(text, (event: VoiceConverseEvent) => {
             res.write(JSON.stringify(event) + '\n');
-          }, conversationId);
+          }, conversationId, verbatim);
           res.end();
         });
         return;

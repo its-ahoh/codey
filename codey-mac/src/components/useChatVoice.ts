@@ -276,26 +276,13 @@ export function useChatVoice({ onTranscript, onError }: Options) {
   }, [drainQueue, fail])
 
   /**
-   * Speaks a short line locally, without a round trip. Used for the
-   * acknowledgement after a voice turn is sent: /voice/speak only reads a
-   * reply that already exists, so nothing else covers the gap between
-   * "message sent" and "agent finished", which is exactly the silence that
-   * makes a voice interface feel dead.
+   * Speaks `text` through the gateway, which decides between the configured
+   * TTS voice and the system one. `verbatim` skips the digest — right for a
+   * one-line interjection like the acknowledgement, wrong for a reply.
    */
-  const sayLocally = useCallback((text: string) => {
-    const trimmed = text.trim()
-    if (!trimmed) return
-    setState('speaking')
-    setSpokenText(trimmed)
-    queueRef.current.push({ kind: 'speech', text: trimmed })
-    // The ack stands alone; the reply arrives later on its own stream.
-    streamDoneRef.current = true
-    drainQueue()
-  }, [drainQueue])
-
-  const speak = useCallback(async (text: string, conversationId?: string) => {
+  const speak = useCallback(async (text: string, conversationId?: string, verbatim = false) => {
     if (!text.trim()) return
-    const res = await window.codey.voice.speak(text, conversationId)
+    const res = await window.codey.voice.speak(text, conversationId, verbatim)
     if (res && res.ok === false) fail(res.error ?? 'Speech failed')
   }, [fail])
 
@@ -385,5 +372,5 @@ export function useChatVoice({ onTranscript, onError }: Options) {
 
   useEffect(() => () => { stopPlayback(); stopRecording() }, [stopPlayback, stopRecording])
 
-  return { state, mode, level, spokenText, toggle, speak, sayLocally, stopPlayback }
+  return { state, mode, level, spokenText, toggle, speak, stopPlayback }
 }

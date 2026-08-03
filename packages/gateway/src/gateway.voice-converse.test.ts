@@ -311,3 +311,36 @@ describe('runVoiceSpeak — speaking an existing reply', () => {
     expect(audiosOf(events)).toHaveLength(0);
   });
 });
+
+describe('runVoiceSpeak — verbatim', () => {
+  const speakVerbatim = async (h: Harness, text: string, convId?: string) => {
+    await h.gateway.runVoiceSpeak(text, (e: VoiceConverseEvent) => h.events.push(e), convId, true);
+    return h.events;
+  };
+
+  it('never digests, however long the text or strict the verbosity', async () => {
+    const h = makeHarness({ tts: { ...TTS_CONFIG, verbosity: 'digest' }, digestSentences: ['Gist.'] });
+    const events = await speakVerbatim(h, 'One. Two.');
+    expect(textsOf(events).map((e) => e.text)).toEqual(['One.', 'Two.']);
+  });
+
+  it('does not displace the cached reply behind "more detail"', async () => {
+    const h = makeHarness({ digestSentences: ['Gist.'] });
+    await h.gateway.runVoiceSpeak('Line one. Line two.', () => {}, 'conv-ack');
+    await h.gateway.runVoiceSpeak('好的，我去处理', () => {}, 'conv-ack', true);
+    h.events.length = 0;
+
+    const events = await run(h, '说详细点', 'conv-ack');
+    expect(textsOf(events).map((e) => e.text)).toEqual(['Line one.', 'Line two.']);
+  });
+
+  it('still follows the configured TTS mode', async () => {
+    const server = await speakVerbatim(makeHarness(), 'Got it.');
+    expect(server[0]).toEqual({ type: 'start', tts: 'server' });
+    expect(audiosOf(server)).toHaveLength(1);
+
+    const client = await speakVerbatim(makeHarness({ tts: { ...TTS_CONFIG, enabled: false } }), 'Got it.');
+    expect(client[0]).toEqual({ type: 'start', tts: 'client' });
+    expect(audiosOf(client)).toHaveLength(0);
+  });
+});

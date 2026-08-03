@@ -985,6 +985,10 @@ export class Codey {
     text: string,
     emit: (event: VoiceConverseEvent) => void,
     conversationId?: string,
+    /** Read exactly as given: no digest, and nothing cached for "more
+     *  detail". Used for short interjections like the acknowledgement, which
+     *  are already one sentence and are not the reply. */
+    verbatim = false,
   ): Promise<void> {
     const { tts, ttsMode } = this.resolveTtsMode();
     emit({ type: 'start', tts: ttsMode });
@@ -995,7 +999,7 @@ export class Codey {
         emit({ type: 'done' });
         return;
       }
-      if (conversationId) this.voiceDigestCache.set(conversationId, trimmed);
+      if (conversationId && !verbatim) this.voiceDigestCache.set(conversationId, trimmed);
 
       const { speak, finish } = this.makeSpeechEmitter(emit, ttsMode, tts);
       const verbosity = tts?.verbosity ?? 'auto';
@@ -1005,7 +1009,7 @@ export class Codey {
       // refusal gets spoken instead of the answer. When there's no API model
       // to digest with, just read the reply: the full text is already on
       // screen, so a plain reading is never the wrong thing.
-      if (needsDigest(trimmed, verbosity)) {
+      if (!verbatim && needsDigest(trimmed, verbosity)) {
         const streamed = await this.streamVoiceDigest(trimmed, speak);
         if (!streamed) splitIntoSentences(stripForSpeech(trimmed)).forEach(speak);
       } else {

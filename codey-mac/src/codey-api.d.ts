@@ -365,7 +365,7 @@ declare global {
         onConverseHotkey: (handler: () => void) => () => void
         notifyTranscribed: (text: string) => Promise<IpcResult<void>>
         /** Speak text through the gateway's digest + TTS pipeline. */
-        speak: (text: string, conversationId?: string) => Promise<IpcResult<void>>
+        speak: (text: string, conversationId?: string, verbatim?: boolean) => Promise<IpcResult<void>>
         stopSpeaking: () => Promise<IpcResult<void>>
         setHudState: (state: string) => Promise<IpcResult<void>>
         setHudLevel: (level: number) => void

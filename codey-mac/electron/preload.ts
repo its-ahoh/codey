@@ -271,8 +271,8 @@ contextBridge.exposeInMainWorld('codey', {
     notifyTranscribed: (text: string) => ipcRenderer.invoke('voice:transcribed', text),
     /** Speak `text` aloud through the gateway's digest + TTS pipeline.
      *  Events arrive via onSpeakEvent; resolves when the stream is done. */
-    speak: (text: string, conversationId?: string) =>
-      ipcRenderer.invoke('voice:speak', { text, conversationId }),
+    speak: (text: string, conversationId?: string, verbatim?: boolean) =>
+      ipcRenderer.invoke('voice:speak', { text, conversationId, verbatim }),
     stopSpeaking: () => ipcRenderer.invoke('voice:stopSpeaking'),
     /** Report converse state so the floating capsule can show/hide itself. */
     setHudState: (state: string) => ipcRenderer.invoke('voice:hudState', state),

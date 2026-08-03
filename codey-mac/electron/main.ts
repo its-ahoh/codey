@@ -2555,7 +2555,7 @@ app.whenReady().then(async () => {
     wrap(async () => { speakRun += 1 })
   )
 
-  ipcMain.handle('voice:speak', async (_e, { text, conversationId }: { text: string; conversationId?: string }) =>
+  ipcMain.handle('voice:speak', async (_e, { text, conversationId, verbatim }: { text: string; conversationId?: string; verbatim?: boolean }) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not running')
       if (typeof text !== 'string' || !text.trim()) return
@@ -2564,7 +2564,7 @@ app.whenReady().then(async () => {
       await inProcessGateway.runVoiceSpeak(text, (event: any) => {
         if (myRun !== speakRun) return
         sendToRenderer('voice:speakEvent', event)
-      }, conversationId)
+      }, conversationId, verbatim === true)
     })
   )
 
