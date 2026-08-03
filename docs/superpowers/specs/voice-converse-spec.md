@@ -79,12 +79,25 @@ Mac app settings, delivered via existing `/voice/config`.
 
 ## Swift helper contract (CodeyVoice)
 
-- New `VoiceCoordinator` state `.speaking`, entered on receiving `start`;
+- New `VoiceCoordinator` state `.speaking`, entered when the transcript is
+  sent rather than when the first audio arrives, so the hotkey means barge-in
+  for the whole turn — including the long stretch where the agent is working.
   `reportStatus("speaking")`.
-- Playback via **AVAudioEngine** (not AVAudioPlayer): queue `audio` segments
-  in `seq` order; leaves room for v2 echo cancellation.
+- Playback via **AVAudioPlayer**, one player per segment, played back to back
+  (`SpeechPlayer`). The original plan called for AVAudioEngine to leave room
+  for v2 echo cancellation, but each `audio` event carries a complete MP3 for
+  one sentence — there is no partial-frame stream to assemble, so the engine
+  bought nothing but complexity here. Revisit when VAD lands and echo
+  cancellation actually matters.
+- A turn ends when the stream has closed **and** playback has drained. An
+  empty queue alone is not enough: playback routinely outruns synthesis
+  mid-reply, and ending there would cut the reply off partway.
 - `tts: "client"` or missing-audio seqs at `done`: speak the text with
   AVSpeechSynthesizer. The chain must always produce sound.
+- `ack` is always spoken by the system voice — it is emitted before the agent
+  runs and carries no audio, so a turn with server TTS switches voices once,
+  from the system voice to the API voice. Immediacy is the reason: the whole
+  point of `ack` is that it lands instantly.
 - Hotkey during `.speaking` = **barge-in**: cancel the URLSession task, stop
   playback, transition straight to `.recording`. This same transition is the
   v2 VAD slot (VAD replaces the hotkey trigger; the state machine is

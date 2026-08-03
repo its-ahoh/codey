@@ -5,6 +5,11 @@ struct VoiceConfig: Codable {
     var hotkey: String = "Fn"
     var language: String = "auto"
     var injection: InjectionMode = .paste
+    /// Where a finished transcript goes: `inject` pastes it into whatever app
+    /// has focus (dictation, the original behavior), `converse` sends it to
+    /// Codey and speaks the reply. Defaults to `inject` so existing dictation
+    /// users are unaffected until they opt in.
+    var mode: Mode = .inject
     var provider: Provider = .api
     var apiUrl: String = "https://api.openai.com/v1"
     var apiKey: String = ""
@@ -20,6 +25,11 @@ struct VoiceConfig: Codable {
     /// Realtime transcription model (e.g. "gpt-4o-mini-transcribe").
     var realtimeModel: String = "gpt-4o-mini-transcribe"
 
+    enum Mode: String, Codable {
+        case inject
+        case converse
+    }
+
     enum InjectionMode: String, Codable {
         case paste
         case ax
@@ -34,4 +44,31 @@ struct VoiceConfig: Codable {
     static var `default`: VoiceConfig {
         VoiceConfig()
     }
+
+    /// Decodes leniently: any key the gateway omits keeps its default above.
+    ///
+    /// Swift's synthesized `init(from:)` ignores property defaults and throws
+    /// on a missing key, which would fail the *whole* config fetch — and the
+    /// gateway passes `voice` through from gateway.json verbatim, so a config
+    /// written before a field existed is normal, not exceptional. `mode` in
+    /// particular is optional on the gateway side, so requiring it would stop
+    /// config polling for every user who hasn't opted into converse yet.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = VoiceConfig()
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
+        hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? d.hotkey
+        language = try c.decodeIfPresent(String.self, forKey: .language) ?? d.language
+        injection = try c.decodeIfPresent(InjectionMode.self, forKey: .injection) ?? d.injection
+        mode = try c.decodeIfPresent(Mode.self, forKey: .mode) ?? d.mode
+        provider = try c.decodeIfPresent(Provider.self, forKey: .provider) ?? d.provider
+        apiUrl = try c.decodeIfPresent(String.self, forKey: .apiUrl) ?? d.apiUrl
+        apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? d.apiKey
+        apiModel = try c.decodeIfPresent(String.self, forKey: .apiModel) ?? d.apiModel
+        localModel = try c.decodeIfPresent(String.self, forKey: .localModel) ?? d.localModel
+        realtimeUrl = try c.decodeIfPresent(String.self, forKey: .realtimeUrl) ?? d.realtimeUrl
+        realtimeModel = try c.decodeIfPresent(String.self, forKey: .realtimeModel) ?? d.realtimeModel
+    }
+
+    init() {}
 }

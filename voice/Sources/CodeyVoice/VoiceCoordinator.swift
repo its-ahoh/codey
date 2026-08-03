@@ -7,6 +7,9 @@ final class VoiceCoordinator {
         case idle
         case recording
         case transcribing
+        /// Converse mode: the reply is streaming back and being played. The
+        /// hotkey means barge-in here — see handleToggle.
+        case speaking
     }
 
     private var state: State = .idle
@@ -37,6 +40,24 @@ final class VoiceCoordinator {
     /// content doesn't appear frozen during that window.
     private var lastPartialText: String = ""
 
+    // MARK: Converse mode
+
+    private let converseClient: ConverseClient
+    private let speechPlayer = SpeechPlayer()
+    /// Stable across turns so the gateway can keep conversation context and
+    /// resolve "说详细点" against the previous reply.
+    private let conversationId = "voice-\(UUID().uuidString)"
+    /// True once the gateway declares it will send audio for this turn.
+    private var serverTTSForTurn = false
+    /// Text of each seq that has not yet received audio. On a degraded `done`
+    /// these get spoken by the system voice so no sentence is silently lost.
+    private var pendingSpokenText: [Int: String] = [:]
+    /// Whether the NDJSON stream for the current turn has ended. Playback
+    /// routinely drains before the next sentence's audio arrives, so an empty
+    /// queue alone must not end the turn — only an empty queue *after* the
+    /// stream is closed does.
+    private var converseStreamEnded = false
+
     init(gatewayPort: Int = 3001) {
         self.gatewayPort = gatewayPort
         self.config = VoiceConfig.default
@@ -46,6 +67,7 @@ final class VoiceCoordinator {
         self.localEngine = WhisperKitEngine(config: .default)
         self.realtimeEngine = RealtimeTranscriptionEngine(config: .default)
         self.textInjector = TextInjector(mode: .paste)
+        self.converseClient = ConverseClient(port: gatewayPort)
     }
 
     private var activeEngine: TranscriptionEngineProtocol {
@@ -112,6 +134,16 @@ final class VoiceCoordinator {
             DispatchQueue.main.async { self?.hud.updateLevel(level) }
         }
 
+        // Playback draining is what actually ends a converse turn — the HTTP
+        // stream usually finishes while the last sentences are still playing.
+        speechPlayer.onFinished = { [weak self] in
+            guard let self = self, self.state == .speaking else { return }
+            // Only after the stream closes — mid-turn the queue empties often,
+            // whenever playback outruns the next sentence's synthesis.
+            guard self.converseStreamEnded else { return }
+            self.endSpeaking()
+        }
+
         // Check permissions
         checkPermissions()
 
@@ -150,6 +182,15 @@ final class VoiceCoordinator {
             stopRecording()
         case .transcribing:
             print("handleToggle: ignored, still transcribing")
+        case .speaking:
+            // Barge-in: the user pressed the hotkey while Codey was talking,
+            // which means they want to speak now. Kill the turn and start
+            // recording in the same gesture rather than making them press
+            // twice. (This transition is also where VAD would hook in later:
+            // detected speech would trigger the same path.)
+            print("handleToggle: barge-in during playback")
+            endSpeaking()
+            startRecording()
         }
     }
 
@@ -236,7 +277,14 @@ final class VoiceCoordinator {
     private func installEscMonitor() {
         let handler: (NSEvent) -> Void = { [weak self] event in
             guard let self = self, event.keyCode == 0x35 /* kVK_Escape */ else { return }
-            DispatchQueue.main.async { self.cancelRecording() }
+            DispatchQueue.main.async {
+                // Esc means "stop, and don't do anything with it" in both
+                // states: discard the recording, or shut Codey up mid-reply.
+                switch self.state {
+                case .speaking: self.endSpeaking()
+                default: self.cancelRecording()
+                }
+            }
         }
         escMonitorGlobal = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: handler)
         escMonitorLocal = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -292,6 +340,22 @@ final class VoiceCoordinator {
 
                 print("transcribe: result = \"\(text)\" (\(text.count) chars)")
 
+                // Converse mode diverts the transcript to Codey instead of
+                // pasting it at the cursor. Everything above (capture,
+                // transcription) is unchanged — only the destination differs.
+                if config.mode == .converse {
+                    let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if spoken.isEmpty {
+                        state = .idle
+                        statusItem?.updateState(.idle)
+                        await MainActor.run { self.hud.hide() }
+                        Task { await gateway.reportStatus("idle") }
+                    } else {
+                        await MainActor.run { self.startConverse(transcript: spoken) }
+                    }
+                    return
+                }
+
                 let canInject = TextInjector.canInjectAtCurrentFocus()
                 let finalText = text
                 if !finalText.isEmpty && canInject {
@@ -326,6 +390,101 @@ final class VoiceCoordinator {
                 Task { await gateway.reportStatus("error") }
             }
         }
+    }
+
+    // MARK: - Converse mode
+
+    /// Sends the transcript to the gateway and plays the reply as it streams
+    /// back. Enters `.speaking` immediately rather than on first audio, so the
+    /// hotkey means barge-in for the whole turn — including the long stretch
+    /// where the agent is still working.
+    private func startConverse(transcript: String) {
+        state = .speaking
+        serverTTSForTurn = false
+        converseStreamEnded = false
+        pendingSpokenText.removeAll()
+        speechPlayer.languageHint = config.language
+        statusItem?.updateState(.transcribing)
+        hud.show(.partial(transcript))
+        installEscMonitor()
+        Task { await gateway.reportStatus("speaking") }
+
+        converseClient.converse(
+            transcript: transcript,
+            conversationId: conversationId,
+            onEvent: { [weak self] event in self?.handleConverseEvent(event) },
+            onFinish: { [weak self] in
+                guard let self, self.state == .speaking else { return }
+                // The stream is done, but queued audio may still be playing.
+                // SpeechPlayer.onFinished returns us to idle in that case.
+                self.converseStreamEnded = true
+                if !self.speechPlayer.isActive { self.endSpeaking() }
+            }
+        )
+    }
+
+    private func handleConverseEvent(_ event: ConverseEvent) {
+        guard state == .speaking else { return }
+        switch event {
+        case .start(let serverTTS):
+            serverTTSForTurn = serverTTS
+
+        case .ack(let text), .command(_, let text):
+            hud.show(.partial(text))
+            speak(text, seq: nil)
+
+        case .text(let seq, let text):
+            hud.show(.partial(text))
+            // In server mode the audio for this seq is still coming, so hold
+            // the text back; a degraded `done` releases whatever never arrived.
+            if serverTTSForTurn {
+                pendingSpokenText[seq] = text
+            } else {
+                speak(text, seq: seq)
+            }
+
+        case .audio(let seq, let data):
+            pendingSpokenText.removeValue(forKey: seq)
+            speechPlayer.enqueueAudio(data)
+
+        case .done(let degraded):
+            converseStreamEnded = true
+            if degraded || !serverTTSForTurn {
+                // Speak the tail the gateway couldn't synthesize, in order.
+                for seq in pendingSpokenText.keys.sorted() {
+                    if let text = pendingSpokenText[seq] { speechPlayer.enqueueSpeech(text) }
+                }
+            }
+            pendingSpokenText.removeAll()
+            if !speechPlayer.isActive { endSpeaking() }
+
+        case .error(let message):
+            print("converse: error — \(message)")
+            speechPlayer.stop()
+            hud.show(.error(message))
+            state = .idle
+            statusItem?.updateState(.error(message))
+            removeEscMonitor()
+            Task { await gateway.reportStatus("error") }
+        }
+    }
+
+    private func speak(_ text: String, seq: Int?) {
+        if let seq { pendingSpokenText.removeValue(forKey: seq) }
+        speechPlayer.enqueueSpeech(text)
+    }
+
+    /// Tear down a converse turn: stop playback, drop the stream, return to
+    /// idle. Safe to call whether the turn finished, errored or was cut off.
+    private func endSpeaking() {
+        converseClient.cancel()
+        speechPlayer.stop()
+        pendingSpokenText.removeAll()
+        removeEscMonitor()
+        state = .idle
+        statusItem?.updateState(.idle)
+        hud.hide()
+        Task { await gateway.reportStatus("idle") }
     }
 
     // MARK: - Gateway polling
