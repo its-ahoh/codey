@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, needsDigest, buildSpeechDigestPrompt, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -12,7 +12,9 @@ import { detectParked } from './automations/parked';
 import { formatRunSummary } from './automations/report';
 import { formatRunLogEvent } from './automations/run-log';
 import { ConfigManager } from './config';
-import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, ChannelHandler } from './channels';
+import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, VoiceChannelHandler, ChannelHandler } from './channels';
+import { synthesizeSpeech } from './voice-tts';
+import { runTextCompletion, streamTextCompletion, canRunDirectly } from './text-completion';
 import { AgentFactory } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
@@ -94,6 +96,8 @@ export class Codey {
   private automationChats?: AutomationChatManager;
   private automationDryRuns?: DryRunManager;
   private automationEventListener?: (ev: AutomationEvent) => void;
+  private voiceHandler?: VoiceChannelHandler;
+  private voiceDigestCache = new ConversationDigestCache();
 
   // Rate limiting: userId -> last request timestamp
   private userCooldowns: Map<string, number> = new Map();
@@ -783,6 +787,242 @@ export class Codey {
 
   async switchWorkspaceByName(name: string): Promise<boolean> {
     return this.switchWorkspace(name);
+  }
+
+  /** Lazily creates and registers the synthetic 'voice' channel handler
+   *  (see channels/voice.ts) the first time a voice conversation runs. */
+  private getVoiceHandler(): VoiceChannelHandler {
+    if (!this.voiceHandler) {
+      const handler = new VoiceChannelHandler();
+      handler.onMessage(this.handleMessage.bind(this));
+      this.voiceHandler = handler;
+      this.handlers.set('voice', handler);
+    }
+    return this.voiceHandler;
+  }
+
+  /** "有什么通知" — spoken summary of automation runs the user hasn't seen yet. */
+  private describeUnseenNotifications(): string {
+    const automations = this.listAutomations();
+    const unseen: { name: string; run: AutomationRun }[] = [];
+    for (const automation of automations) {
+      const runs = this.listAutomationRuns(automation.id, 5);
+      for (const run of runs) {
+        if (!run.seenAt) unseen.push({ name: automation.name, run });
+      }
+    }
+    if (unseen.length === 0) return '没有新的通知。';
+    const summary = unseen
+      .slice(0, 5)
+      .map(({ name, run }) => `${name}${run.status === 'failed' ? '失败' : run.status === 'parked' ? '在等你回复' : '已完成'}`)
+      .join('，');
+    return `你有 ${unseen.length} 条新通知：${summary}。`;
+  }
+
+  /** Runs the digest-summarization prompt through the advisor's configured
+   *  agent/model, mirroring runSoloAdvisor's single-shot pattern. Returns
+   *  null on any failure so the caller falls back to the full text. */
+  /**
+   * Resolves the model the speech digest should use. Prefers an explicit
+   * `voice.tts.digestModel` (point it at a small, fast model — digesting is
+   * a tool-free text transform), else reuses the advisor's model. Returns
+   * undefined rather than throwing when the binding is broken, since a
+   * missing digest model must degrade to the CLI path, not fail the turn.
+   */
+  private resolveDigestModel(agent: CodingAgent, advisorModel?: ModelConfig): ModelConfig | undefined {
+    const name = this.configManager?.get().voice?.tts?.digestModel;
+    if (!name) return advisorModel;
+    try {
+      return this.getModelConfig(agent, name) ?? advisorModel;
+    } catch (e) {
+      this.logger.warn(`Voice digest model "${name}" could not be resolved, falling back: ${e}`);
+      return advisorModel;
+    }
+  }
+
+  /**
+   * Streams a speech digest of `fullReply`, handing each completed sentence
+   * to `onSentence` as soon as it lands. Returns false when no streaming
+   * path is available (no API credentials on the resolved model) or when the
+   * stream produced nothing, so the caller can fall back to the one-shot
+   * digest. Returns true after a partial stream too — those sentences have
+   * already been spoken, and re-running would repeat them.
+   */
+  private async streamVoiceDigest(fullReply: string, onSentence: (s: string) => void): Promise<boolean> {
+    const { agent, model } = this.getAdvisorAgentAndModel();
+    const digestModel = this.resolveDigestModel(agent, model);
+    if (!canRunDirectly(digestModel)) return false;
+
+    const accumulator = new SentenceAccumulator();
+    const text = await streamTextCompletion(
+      buildSpeechDigestPrompt(fullReply),
+      digestModel,
+      (delta) => accumulator.push(delta).forEach(onSentence),
+      { maxTokens: 512 },
+    );
+    if (!text) return false;
+    accumulator.flush().forEach(onSentence);
+    return true;
+  }
+
+  private async runVoiceDigestPrompt(fullReply: string): Promise<string | null> {
+    const { agent, model } = this.getAdvisorAgentAndModel();
+    const prompt = buildSpeechDigestPrompt(fullReply);
+
+    // Fast path — a plain HTTP call to the model API. The digest sits in the
+    // worst possible spot for a voice turn: the silence after the agent has
+    // finished but before Codey starts speaking. Spawning an agentic CLI
+    // here costs process boot + config load + MCP init before the model is
+    // even reached (5-15s); a direct call to a small model is ~1s.
+    const digestModel = this.resolveDigestModel(agent, model);
+    if (canRunDirectly(digestModel)) {
+      const direct = await runTextCompletion(prompt, digestModel, { maxTokens: 512, timeoutMs: 20000 });
+      if (direct) return direct;
+      this.logger.warn('Voice digest via direct API returned nothing; falling back to the agent CLI path.');
+    }
+
+    // Fallback — no API credentials on the model (e.g. a CLI-auth setup), or
+    // the direct call failed. Slower, but keeps the feature working.
+    try {
+      const resp = await this.runWithFallback(agent, {
+        prompt,
+        agent,
+        model,
+        // Well under the adapter's 15-minute default: a stalled digest here
+        // is pure dead air, and speaking the undigested reply beats silence.
+        timeout: 60000,
+        context: { workingDir: this.workingDir },
+        onStream: () => {},
+        onThinking: () => {},
+        onStatus: () => {},
+      });
+      if (!resp?.success) return null;
+      const text = this.formatAgentResponse(resp).trim();
+      return text.length > 0 ? text : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Runs one voice transcript through the full converse pipeline described
+   * in docs/superpowers/specs/voice-converse-spec.md and streams NDJSON
+   * events via `emit`. Command match short-circuits (workspace switch /
+   * notifications / list workspaces); otherwise the transcript runs through
+   * the normal conversation path and the reply is digested + segmented for
+   * TTS. Never throws — failures become an `error` event.
+   */
+  async runVoiceConverse(
+    transcript: string,
+    conversationId: string | undefined,
+    emit: (event: VoiceConverseEvent) => void,
+  ): Promise<void> {
+    const voiceConfig = this.configManager?.get().voice;
+    const tts = voiceConfig?.tts;
+    const ttsMode: 'server' | 'client' = tts?.enabled && tts.provider === 'api' && tts.apiKey ? 'server' : 'client';
+    emit({ type: 'start', tts: ttsMode });
+
+    try {
+      const command: VoiceCommand | null = parseVoiceCommand(transcript);
+      if (command) {
+        let result = '';
+        switch (command.type) {
+          case 'switch-workspace': {
+            const ok = await this.switchWorkspaceByName(command.workspace);
+            result = ok ? `已切换到 ${command.workspace}` : `没有找到工作区 ${command.workspace}`;
+            break;
+          }
+          case 'list-workspaces': {
+            const names = this.getWorkspaceList();
+            result = names.length > 0 ? `工作区有：${names.join('、')}` : '没有配置任何工作区。';
+            break;
+          }
+          case 'list-notifications': {
+            result = this.describeUnseenNotifications();
+            break;
+          }
+        }
+        emit({ type: 'command', action: command.type, result });
+        emit({ type: 'done' });
+        return;
+      }
+
+      const ackText = /[一-鿿]/.test(transcript) ? '好的，我去处理' : 'Got it, working on it.';
+      emit({ type: 'ack', text: ackText });
+
+      const convId = conversationId ?? `voice-${randomUUID()}`;
+      const chatId = `voice-${convId}`;
+      const message: UserMessage = {
+        id: randomUUID(),
+        channel: 'voice',
+        userId: 'voice-user',
+        username: 'Voice',
+        chatId,
+        text: transcript,
+        timestamp: Date.now(),
+        conversationId: convId,
+      };
+
+      const reply = (await this.getVoiceHandler().runMessage(message)).trim();
+      if (!reply) {
+        emit({ type: 'error', message: 'No reply was produced for this turn.' });
+        return;
+      }
+
+      this.voiceDigestCache.set(convId, reply);
+
+      let ttsDegraded = false;
+      let seq = 0;
+      // Audio events must reach the client in `seq` order, but synthesis
+      // should start the instant a sentence exists. Kick each request off
+      // immediately and serialize only the emission, by chaining.
+      let audioChain: Promise<void> = Promise.resolve();
+
+      const speak = (sentence: string): void => {
+        const mySeq = seq++;
+        emit({ type: 'text', seq: mySeq, text: sentence });
+        if (ttsMode !== 'server' || ttsDegraded || !tts) return;
+
+        const synthesis = synthesizeSpeech(sentence, {
+          apiUrl: tts.apiUrl,
+          apiKey: tts.apiKey,
+          apiModel: tts.apiModel,
+          voiceId: tts.voiceId,
+        }).then(
+          (audio) => ({ ok: true as const, audio }),
+          (e) => ({ ok: false as const, e }),
+        );
+
+        audioChain = audioChain.then(async () => {
+          const result = await synthesis;
+          if (result.ok) {
+            emit({ type: 'audio', seq: mySeq, format: 'mp3', dataBase64: result.audio.toString('base64') });
+          } else {
+            this.logger.error(`Voice TTS synthesis failed, degrading to client-side speech: ${result.e}`);
+            ttsDegraded = true;
+          }
+        });
+      };
+
+      const verbosity = tts?.verbosity ?? 'auto';
+      if (needsDigest(reply, verbosity)) {
+        // Streaming digest: sentences go to TTS while the rest is still being
+        // written, so first-sound latency is one sentence, not the whole
+        // summary. Returns false when streaming isn't available at all.
+        const streamed = await this.streamVoiceDigest(reply, speak);
+        if (!streamed) {
+          const digest = await this.runVoiceDigestPrompt(reply);
+          splitIntoSentences(digest ?? reply).forEach(speak);
+        }
+      } else {
+        splitIntoSentences(reply).forEach(speak);
+      }
+
+      await audioChain;
+      emit({ type: 'done', ttsDegraded: ttsDegraded || undefined });
+    } catch (e) {
+      emit({ type: 'error', message: String(e instanceof Error ? e.message : e) });
+    }
   }
 
   private async switchWorkspace(workspaceId: string): Promise<boolean> {

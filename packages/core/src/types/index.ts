@@ -7,7 +7,7 @@ export interface CoreLogger {
 }
 
 // Channel type
-export type ChannelType = 'telegram' | 'discord' | 'imessage' | 'tui';
+export type ChannelType = 'telegram' | 'discord' | 'imessage' | 'tui' | 'voice';
 
 // Message from a user
 export interface UserMessage {

@@ -26,3 +26,6 @@ export * from './team-blackboard';
 export * from './team-graph';
 export * from './team-fast-path';
 export * from './judge';
+export * from './speech-digest';
+export * from './voice-commands';
+export * from './voice-converse';

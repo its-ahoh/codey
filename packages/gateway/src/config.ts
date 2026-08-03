@@ -91,6 +91,10 @@ export interface GatewayConfigJson {
     hotkey: string;
     language: string;
     injection: 'paste' | 'ax';
+    /** Where a transcript goes: 'inject' pastes into the focused app (today's
+     *  behavior); 'converse' posts it to /voice/converse to talk to Codey.
+     *  Defaults to 'inject' so existing dictation users see no change. */
+    mode?: 'inject' | 'converse';
     /** Transcription backend: hosted API or on-device WhisperKit. */
     provider: 'api' | 'local';
     /** Base URL of an OpenAI-compatible transcription endpoint (e.g. https://api.openai.com/v1). */
@@ -101,6 +105,35 @@ export interface GatewayConfigJson {
     apiModel: string;
     /** WhisperKit model variant for local mode (e.g. openai_whisper-large-v3-turbo). */
     localModel: string;
+    /** Text-to-speech (spoken replies) configuration. */
+    tts?: {
+      enabled: boolean;
+      /** Synthesis backend: hosted streaming API or on-device AVSpeechSynthesizer fallback. */
+      provider: 'api' | 'local';
+      /** Base URL of an OpenAI-compatible speech endpoint (e.g. https://api.openai.com/v1). */
+      apiUrl: string;
+      /** Bearer token for the API endpoint. */
+      apiKey: string;
+      /** Model identifier sent to the API (e.g. gpt-4o-mini-tts). */
+      apiModel: string;
+      /** Voice identifier passed to the API or AVSpeechSynthesizer. */
+      voiceId: string;
+      /**
+       * Model (by name, from the global model catalog) used to condense a
+       * reply before speaking it. Point this at a small, fast model — the
+       * digest is a tool-free text transform and its latency lands in the
+       * silence before Codey starts talking. Falls back to the advisor's
+       * model when unset; when the resolved model carries an API key the
+       * digest runs as a direct API call instead of an agent CLI spawn.
+       */
+      digestModel?: string;
+      /**
+       * How much of a reply gets spoken: 'full' reads it verbatim, 'digest'
+       * always summarizes to a spoken-form gist, 'auto' summarizes only
+       * replies longer than a length threshold and reads short ones verbatim.
+       */
+      verbosity: 'full' | 'digest' | 'auto';
+    };
   };
   /**
    * Optional capability packs ("plugins") exposed to agents as MCP servers.

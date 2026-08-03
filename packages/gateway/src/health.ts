@@ -1,5 +1,6 @@
 import * as http from 'http';
 import { ConfigManager } from './config';
+import { VoiceConverseEvent } from '@codey/core';
 
 export type HealthStatusType = 'healthy' | 'degraded' | 'down';
 
@@ -25,11 +26,26 @@ export class ApiServer {
   private getStatus: () => HealthStatus;
   private configManager: ConfigManager;
   private _voiceStatus: string = 'idle';
+  private runVoiceConverse?: (
+    transcript: string,
+    conversationId: string | undefined,
+    emit: (event: VoiceConverseEvent) => void,
+  ) => Promise<void>;
 
-  constructor(port: number, getStatus: () => HealthStatus, configManager: ConfigManager) {
+  constructor(
+    port: number,
+    getStatus: () => HealthStatus,
+    configManager: ConfigManager,
+    runVoiceConverse?: (
+      transcript: string,
+      conversationId: string | undefined,
+      emit: (event: VoiceConverseEvent) => void,
+    ) => Promise<void>,
+  ) {
     this.port = port;
     this.getStatus = getStatus;
     this.configManager = configManager;
+    this.runVoiceConverse = runVoiceConverse;
   }
 
   async start(): Promise<void> {
@@ -147,6 +163,41 @@ export class ApiServer {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Invalid JSON' }));
           }
+        });
+        return;
+      }
+
+      if (url === '/voice/converse' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+          let transcript: string;
+          let conversationId: string | undefined;
+          try {
+            const parsed = JSON.parse(body);
+            transcript = typeof parsed.transcript === 'string' ? parsed.transcript.trim() : '';
+            conversationId = typeof parsed.conversationId === 'string' ? parsed.conversationId : undefined;
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+            return;
+          }
+          if (!transcript) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'transcript is required' }));
+            return;
+          }
+          if (!this.runVoiceConverse) {
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Voice conversation is not available' }));
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+          const emit = (event: VoiceConverseEvent) => {
+            res.write(JSON.stringify(event) + '\n');
+          };
+          await this.runVoiceConverse(transcript, conversationId, emit);
+          res.end();
         });
         return;
       }
