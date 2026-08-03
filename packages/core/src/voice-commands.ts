@@ -57,7 +57,12 @@ const PATTERNS: Pattern[] = [
     build: (m) => ({ type: 'switch-workspace', workspace: m[1].trim() }),
   },
   {
-    regex: /^(?:(?:查看|获取|检查)?(?:我的)?通知(?:有哪些|是什么)?|通知)$/,
+    regex: /^(?:(?:查看|获取|检查|看看|念)?(?:一下)?(?:我的)?通知(?:有哪些|是什么)?|通知)$/,
+    build: () => ({ type: 'list-notifications' }),
+  },
+  // 有什么通知 / 有没有新通知 / 有哪些通知吗
+  {
+    regex: /^(?:有什么|有哪些|有没有|有无)(?:新的?)?(?:未读)?通知(?:吗)?$/,
     build: () => ({ type: 'list-notifications' }),
   },
   {

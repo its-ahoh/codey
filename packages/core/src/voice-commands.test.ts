@@ -133,3 +133,17 @@ describe('parseVoiceCommand — more detail', () => {
     }
   });
 });
+
+describe('parseVoiceCommand — natural notification phrasings', () => {
+  it('matches the 有…通知 family', () => {
+    for (const phrase of ['有什么通知', '有哪些通知', '有没有通知', '有没有新通知', '有什么未读通知', '有哪些通知吗', '看看通知', '念一下通知']) {
+      expect(parseVoiceCommand(phrase), phrase).toEqual({ type: 'list-notifications' });
+    }
+  });
+
+  it('still ignores sentences that merely mention notifications', () => {
+    for (const phrase of ['把通知功能改一下', '通知是怎么实现的']) {
+      expect(parseVoiceCommand(phrase), phrase).toBeNull();
+    }
+  });
+});

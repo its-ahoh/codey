@@ -947,6 +947,12 @@ export class Codey {
 
         audioChain = audioChain.then(async () => {
           const result = await synthesis;
+          // Sentences are dispatched to the synthesizer as soon as they exist,
+          // so several can already be in flight when one fails. Suppress the
+          // rest here rather than letting a later success through: the chain
+          // runs in seq order, and a reply that switches back to the API voice
+          // partway through the client's fallback voice sounds broken.
+          if (ttsDegraded) return;
           if (result.ok) {
             emit({ type: 'audio', seq: mySeq, format: 'mp3', dataBase64: result.audio.toString('base64') });
           } else {
