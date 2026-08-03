@@ -1655,6 +1655,10 @@ export const ChatTab: React.FC<Props> = ({
     }
   }, [flight]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Global converse hotkey drives the same toggle as the waveform button, so
+  // one press starts talking and the next sends — no reaching for the mouse.
+  useEffect(() => window.codey.voice.onConverseHotkey(() => voice.toggle('converse')), [voice.toggle])
+
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing'
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)

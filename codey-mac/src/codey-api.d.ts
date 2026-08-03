@@ -362,6 +362,7 @@ declare global {
       }
       voice: {
         onHotkey: (handler: () => void) => () => void
+        onConverseHotkey: (handler: () => void) => () => void
         notifyTranscribed: (text: string) => Promise<IpcResult<void>>
         /** Speak text through the gateway's digest + TTS pipeline. */
         speak: (text: string, conversationId?: string) => Promise<IpcResult<void>>

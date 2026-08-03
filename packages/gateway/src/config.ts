@@ -89,6 +89,11 @@ export interface GatewayConfigJson {
   voice?: {
     enabled: boolean;
     hotkey: string;
+    /**
+     * Second hotkey: start/stop a spoken conversation in the focused chat.
+     * `hotkey` above dictates at the cursor instead. Unset means no binding.
+     */
+    converseHotkey?: string;
     language: string;
     injection: 'paste' | 'ax';
     /** Where a transcript goes: 'inject' pastes into the focused app (today's

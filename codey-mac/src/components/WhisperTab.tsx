@@ -10,6 +10,8 @@ interface WhisperTabProps {
 interface VoiceCfg {
   enabled: boolean
   hotkey: string
+  /** Second hotkey: start/stop a spoken conversation in the focused chat. */
+  converseHotkey: string
   language: string
   injection: 'paste' | 'ax'
   provider: 'api' | 'local' | 'realtime'
@@ -38,6 +40,7 @@ interface TtsCfg {
 const VOICE_DEFAULT: VoiceCfg = {
   enabled: false,
   hotkey: 'Fn',
+  converseHotkey: '',
   language: 'auto',
   injection: 'paste',
   provider: 'api',
@@ -396,6 +399,34 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
           Fn is handled by the bundled native helper. Make sure Codey Voice has Accessibility permission (System Settings → Privacy &amp; Security → Accessibility).
         </div>
       )}
+
+      <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
+          <span style={{ color: C.fg, fontSize: 13 }}>Talk-to-chat hotkey</span>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {voice.converseHotkey && (
+              <button
+                onClick={() => updateVoice({ converseHotkey: '' })}
+                style={pillButton('ghost')}
+                title="Remove this binding"
+              >
+                Clear
+              </button>
+            )}
+            <HotkeyRecorder
+              value={voice.converseHotkey}
+              onChange={converseHotkey => updateVoice({ converseHotkey })}
+            />
+          </div>
+        </div>
+        <div style={{ color: C.fg3, fontSize: 11 }}>
+          Press it to speak to the focused chat and hear the reply; press again to send.
+          Separate from the dictation hotkey above, which types at the cursor instead.
+          {voice.converseHotkey.trim().toLowerCase() === 'fn' && (
+            <span style={{ color: C.red }}> Fn can&rsquo;t be used here — it belongs to dictation.</span>
+          )}
+        </div>
+      </div>
 
       <div style={fieldStyle}>
         <span style={{ color: C.fg, fontSize: 13 }}>Language</span>

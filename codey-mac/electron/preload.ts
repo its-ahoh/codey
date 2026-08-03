@@ -262,6 +262,12 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.on('voice:hotkey', listener)
       return () => ipcRenderer.removeListener('voice:hotkey', listener)
     },
+    /** Fires when the converse hotkey is pressed — start/stop a spoken turn. */
+    onConverseHotkey: (handler: () => void) => {
+      const listener = () => handler()
+      ipcRenderer.on('voice:converseHotkey', listener)
+      return () => ipcRenderer.removeListener('voice:converseHotkey', listener)
+    },
     notifyTranscribed: (text: string) => ipcRenderer.invoke('voice:transcribed', text),
     /** Speak `text` aloud through the gateway's digest + TTS pipeline.
      *  Events arrive via onSpeakEvent; resolves when the stream is done. */

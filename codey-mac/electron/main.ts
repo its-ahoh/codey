@@ -928,6 +928,7 @@ async function bootInProcessCore() {
         sendToRenderer('gateway-log', `[core] applyConfig failed: ${err?.message ?? err}`)
       })
       applyVoiceHotkey(updated)
+      applyVoiceConverseHotkey(updated)
       applyCaptureHotkey(updated)
       applyScreenshotHotkey(updated)
       applyUiPreferences(updated)
@@ -937,6 +938,7 @@ async function bootInProcessCore() {
       sendToRenderer('gateway-log', `[voice] config on boot: enabled=${!!v?.enabled} hotkey=${v?.hotkey ?? '(unset)'}`)
     }
     applyVoiceHotkey(coreConfigManager.get())
+    applyVoiceConverseHotkey(coreConfigManager.get())
     applyCaptureHotkey(coreConfigManager.get())
     applyScreenshotHotkey(coreConfigManager.get())
     applyUiPreferences(coreConfigManager.get())
@@ -1046,6 +1048,47 @@ function toElectronAccelerator(hotkey: string | undefined): string | null {
   // old inline copy checked `low === ' '` *after* trim and so dropped the part,
   // producing invalid accelerators like "CommandOrControl+".
   return normalizeAccelerator(hotkey)
+}
+
+let currentConverseAccelerator: string | null = null
+/**
+ * Second voice hotkey: starts (or stops) a spoken conversation in the
+ * focused chat, as opposed to `voice.hotkey`, which dictates at the cursor.
+ * Separate binding rather than a modifier on the first one, because the two
+ * do different things with what you say and guessing wrong is annoying.
+ *
+ * Fn is unavailable here — the Swift helper owns it for dictation, and
+ * Electron can't bind it anyway.
+ */
+function applyVoiceConverseHotkey(rawCfg: any) {
+  const voice = rawCfg?.voice
+  const hk = voice?.converseHotkey
+  const isFn = typeof hk === 'string' && hk.trim().toLowerCase() === 'fn'
+  const desired = voice?.enabled && hk && !isFn ? toElectronAccelerator(hk) : null
+
+  if (currentConverseAccelerator && currentConverseAccelerator !== desired) {
+    try { globalShortcut.unregister(currentConverseAccelerator) } catch { /* not registered */ }
+    currentConverseAccelerator = null
+  }
+  if (!desired || currentConverseAccelerator === desired) return
+
+  const ok = globalShortcut.register(desired, () => {
+    // Bring the window forward: a spoken reply is useless if the user can't
+    // see which chat it belongs to, and the chat needs to be mounted to hear
+    // the event at all.
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+    }
+    mainWindow?.webContents.send('voice:converseHotkey')
+  })
+  if (ok) {
+    currentConverseAccelerator = desired
+    sendToRenderer('gateway-log', `[voice] converse hotkey registered: ${desired}`)
+  } else {
+    sendToRenderer('gateway-log', `[voice] converse hotkey registration failed: ${desired} (likely in use by another app)`)
+  }
 }
 
 let currentVoiceAccelerator: string | null = null
