@@ -63,6 +63,10 @@ export function useChatVoice({ onTranscript, onError }: Options) {
   // nothing and reads as broken. Same scaling as the Swift helper's capsule
   // (AudioCapture.swift): RMS x6, clamped, sampled ~20 Hz.
   const [level, setLevel] = useState(0)
+  /** What is being said right now — surfaced so it's obvious when the spoken
+   *  version diverges from the reply on screen (e.g. an over-aggressive
+   *  digest, or a reply whose substance was all tool output). */
+  const [spokenText, setSpokenText] = useState('')
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const meterRafRef = useRef<number | null>(null)
@@ -180,9 +184,11 @@ export function useChatVoice({ onTranscript, onError }: Options) {
           serverTtsRef.current = event.tts === 'server'
           pendingTextRef.current.clear()
           streamDoneRef.current = false
+          setSpokenText('')
           setState('speaking')
           break
         case 'text':
+          if (event.text) setSpokenText(prev => (prev ? `${prev} ${event.text}` : event.text!))
           // In server mode the audio for this seq is still coming; hold the
           // text back in case it never arrives.
           if (serverTtsRef.current) {
@@ -220,6 +226,24 @@ export function useChatVoice({ onTranscript, onError }: Options) {
     })
     return off
   }, [drainQueue, fail])
+
+  /**
+   * Speaks a short line locally, without a round trip. Used for the
+   * acknowledgement after a voice turn is sent: /voice/speak only reads a
+   * reply that already exists, so nothing else covers the gap between
+   * "message sent" and "agent finished", which is exactly the silence that
+   * makes a voice interface feel dead.
+   */
+  const sayLocally = useCallback((text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    setState('speaking')
+    setSpokenText(trimmed)
+    queueRef.current.push({ kind: 'speech', text: trimmed })
+    // The ack stands alone; the reply arrives later on its own stream.
+    streamDoneRef.current = true
+    drainQueue()
+  }, [drainQueue])
 
   const speak = useCallback(async (text: string, conversationId?: string) => {
     if (!text.trim()) return
@@ -313,5 +337,5 @@ export function useChatVoice({ onTranscript, onError }: Options) {
 
   useEffect(() => () => { stopPlayback(); stopRecording() }, [stopPlayback, stopRecording])
 
-  return { state, mode, level, toggle, speak, stopPlayback }
+  return { state, mode, level, spokenText, toggle, speak, sayLocally, stopPlayback }
 }

@@ -92,6 +92,8 @@ export interface GatewayConfigJson {
     /**
      * Second hotkey: start/stop a spoken conversation in the focused chat.
      * `hotkey` above dictates at the cursor instead. Unset means no binding.
+     * Cannot contain Fn: Electron's globalShortcut can't bind it, and the
+     * Swift helper already owns it for dictation.
      */
     converseHotkey?: string;
     language: string;

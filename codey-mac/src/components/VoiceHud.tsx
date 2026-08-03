@@ -17,9 +17,9 @@ import { VoiceMeter } from './VoiceMeter'
 type HudState = 'recording' | 'transcribing' | 'speaking' | 'hidden'
 
 const LABEL: Record<Exclude<HudState, 'hidden'>, string> = {
-  recording: 'Listening…',
-  transcribing: 'Thinking…',
-  speaking: 'Speaking…',
+  recording: 'Listening',
+  transcribing: 'Thinking',
+  speaking: 'Speaking',
 }
 
 export const VoiceHud: React.FC = () => {

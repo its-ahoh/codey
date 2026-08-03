@@ -1636,7 +1636,12 @@ export const ChatTab: React.FC<Props> = ({
   useEffect(() => {
     if (!voiceAutoSendRef.current || !input.trim()) return
     voiceAutoSendRef.current = false
+    const spoken = input
     void send()
+    // Acknowledge immediately. An agent turn routinely runs for 30s to
+    // several minutes, and unbroken silence in a voice interface reads as
+    // "it died" rather than "it's working".
+    voice.sayLocally(/[\u4e00-\u9fff]/.test(spoken) ? '好的，我去处理' : 'Got it, working on it.')
   }, [input]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Read the reply aloud once the turn settles. Keyed off the in-flight
@@ -2294,11 +2299,14 @@ export const ChatTab: React.FC<Props> = ({
                 height={14}
                 color={voice.state === 'speaking' ? C.accent : C.red}
               />
-              <span style={{ color: C.fg2, fontSize: 11, whiteSpace: 'nowrap' }}>
+              <span style={styles.voiceStatusText}>
                 {voice.state === 'recording'
                   ? (voice.mode === 'dictate' ? 'Listening — click the mic to stop' : 'Listening — click to send')
-                  : voice.state === 'transcribing' ? 'Transcribing…'
-                  : 'Speaking — click the wave to interrupt'}
+                  : voice.state === 'transcribing' ? 'Transcribing'
+                  // Show what it's actually saying: the spoken version is a
+                  // digest, and seeing it is the only way to tell a bad
+                  // summary from a reply that was thin to begin with.
+                  : (voice.spokenText || 'Speaking — click the wave to interrupt')}
               </span>
             </div>
           )}
@@ -2943,7 +2951,11 @@ const styles: Record<string, React.CSSProperties> = {
   voiceStatus: {
     display: 'flex', alignItems: 'center', gap: 8,
     padding: '4px 10px', marginBottom: 6, alignSelf: 'flex-start',
-    borderRadius: 999, background: C.surface3,
+    borderRadius: 999, background: C.surface3, maxWidth: '100%',
+  },
+  voiceStatusText: {
+    color: C.fg2, fontSize: 11,
+    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
   },
   attachButton: {
     width: 36, height: 36, borderRadius: 9, border: 'none',
