@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { VoiceMeter } from './VoiceMeter'
 
 /**
  * The floating capsule shown while a spoken conversation is in progress.
@@ -23,8 +24,10 @@ const LABEL: Record<Exclude<HudState, 'hidden'>, string> = {
 
 export const VoiceHud: React.FC = () => {
   const [state, setState] = useState<HudState>('recording')
+  const [level, setLevel] = useState(0)
 
   useEffect(() => window.codey.voice.onHudState(next => setState(next as HudState)), [])
+  useEffect(() => window.codey.voice.onHudLevel(setLevel), [])
 
   // index.html paints the theme background onto <html> before React mounts so
   // the app's first frame isn't white-on-white. In a transparent window that
@@ -39,35 +42,10 @@ export const VoiceHud: React.FC = () => {
   return (
     <div style={styles.root}>
       <div className="codey-voice-capsule" style={styles.capsule}>
-        <Bars state={state} />
+        <VoiceMeter level={level} idle={state === 'transcribing'} />
         <span style={styles.label}>{LABEL[state]}</span>
       </div>
       <style>{CSS}</style>
-    </div>
-  )
-}
-
-/**
- * Five bars whose heights animate out of phase, faster while speaking than
- * while listening, so the capsule reads differently at a glance depending on
- * who currently holds the turn.
- */
-const Bars: React.FC<{ state: Exclude<HudState, 'hidden'> }> = ({ state }) => {
-  const speed = state === 'speaking' ? 0.7 : state === 'recording' ? 1.1 : 1.8
-  return (
-    <div style={styles.bars}>
-      {[0, 1, 2, 3, 4].map(i => (
-        <span
-          key={i}
-          className="codey-voice-bar"
-          style={{
-            animationDuration: `${speed}s`,
-            animationDelay: `${i * 0.12}s`,
-            // Transcribing is a waiting state — keep it calm and low.
-            height: state === 'transcribing' ? 5 : undefined,
-          }}
-        />
-      ))}
     </div>
   )
 }
@@ -85,7 +63,6 @@ const styles: Record<string, React.CSSProperties> = {
     // No dark plate behind it: the gradient itself is the surface.
     boxShadow: '0 6px 22px rgba(0,0,0,0.28)',
   },
-  bars: { display: 'flex', alignItems: 'center', gap: 3, height: 18 },
   label: {
     color: '#fff', fontSize: 12, fontWeight: 600,
     letterSpacing: 0.2, whiteSpace: 'nowrap',
@@ -99,27 +76,13 @@ const CSS = `
   0%   { background-position:   0% 50%; }
   100% { background-position: 200% 50%; }
 }
-@keyframes codey-voice-bounce {
-  0%, 100% { height: 5px; opacity: 0.7; }
-  50%      { height: 17px; opacity: 1; }
-}
 .codey-voice-capsule {
   background-image: linear-gradient(90deg,
     #ff5f6d, #ffc371, #47e6b1, #38a3f5, #a86bf5, #ff5f6d);
   background-size: 200% 100%;
   animation: codey-voice-drift 4s linear infinite;
 }
-.codey-voice-bar {
-  display: block;
-  width: 3px;
-  border-radius: 2px;
-  background: rgba(255,255,255,0.95);
-  animation-name: codey-voice-bounce;
-  animation-iteration-count: infinite;
-  animation-timing-function: ease-in-out;
-}
 @media (prefers-reduced-motion: reduce) {
   .codey-voice-capsule { animation: none; }
-  .codey-voice-bar { animation: none; height: 11px; }
 }
 `

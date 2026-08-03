@@ -44,6 +44,7 @@ import {
   type VoiceStateDetail,
 } from './voiceInputEvents'
 import { useChatVoice } from './useChatVoice'
+import { VoiceMeter } from './VoiceMeter'
 
 const EDITOR_LOGOS: Partial<Record<string, string>> = {
   vscode: vscodeLogo,
@@ -1660,11 +1661,18 @@ export const ChatTab: React.FC<Props> = ({
   useEffect(() => window.codey.voice.onConverseHotkey(() => voice.toggle('converse')), [voice.toggle])
 
   // Drive the floating capsule. Only converse turns get one — dictation is a
-  // brief, eyes-on-screen action that doesn't need a background indicator.
+  // brief, eyes-on-screen action, and its status shows inline in the composer
+  // instead.
   useEffect(() => {
     const showable = voice.mode === 'converse' && voice.state !== 'idle'
     void window.codey.voice.setHudState(showable ? voice.state : 'idle')
   }, [voice.state, voice.mode])
+
+  useEffect(() => {
+    if (voice.mode === 'converse' && voice.state !== 'idle') {
+      window.codey.voice.setHudLevel(voice.level)
+    }
+  }, [voice.level, voice.mode, voice.state])
 
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing'
   const isSending = !!flight
@@ -2275,6 +2283,25 @@ export const ChatTab: React.FC<Props> = ({
               })}
             </div>
           )}
+          {voice.state !== 'idle' && (
+            // Inline status: dictation never raises the floating capsule,
+            // and even in converse mode the capsule can be off-screen while
+            // you're looking right at the composer.
+            <div style={styles.voiceStatus}>
+              <VoiceMeter
+                level={voice.level}
+                idle={voice.state === 'transcribing'}
+                height={14}
+                color={voice.state === 'speaking' ? C.accent : C.red}
+              />
+              <span style={{ color: C.fg2, fontSize: 11, whiteSpace: 'nowrap' }}>
+                {voice.state === 'recording'
+                  ? (voice.mode === 'dictate' ? 'Listening — click the mic to stop' : 'Listening — click to send')
+                  : voice.state === 'transcribing' ? 'Transcribing…'
+                  : 'Speaking — click the wave to interrupt'}
+              </span>
+            </div>
+          )}
           <div style={styles.composerRow}>
             <input
               ref={fileInputRef}
@@ -2328,7 +2355,7 @@ export const ChatTab: React.FC<Props> = ({
             >
               <UIIcon
                 name="mic"
-                size={16}
+                size={19}
                 color={voiceBusy && voice.mode === 'dictate' ? '#fff' : C.fg2}
               />
             </button>
@@ -2350,7 +2377,7 @@ export const ChatTab: React.FC<Props> = ({
             >
               <UIIcon
                 name="waveform"
-                size={16}
+                size={19}
                 color={
                   voice.state === 'recording' && voice.mode === 'converse' ? '#fff'
                   : voice.state === 'speaking' ? C.onAccent
@@ -2912,6 +2939,11 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg2,
     cursor: 'pointer',
     fontSize: 12,
+  },
+  voiceStatus: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    padding: '4px 10px', marginBottom: 6, alignSelf: 'flex-start',
+    borderRadius: 999, background: C.surface3,
   },
   attachButton: {
     width: 36, height: 36, borderRadius: 9, border: 'none',

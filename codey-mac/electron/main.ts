@@ -2525,6 +2525,14 @@ app.whenReady().then(async () => {
   // stops delivering events even though synthesis already in flight can't be
   // recalled.
   let speakRun = 0
+  // Level updates arrive ~20x/s; `send` rather than `invoke` so they never
+  // queue up behind a reply the sender doesn't need anyway.
+  ipcMain.on('voice:hudLevel', (_e, level: number) => {
+    if (voiceHudWindow && !voiceHudWindow.isDestroyed() && voiceHudWindow.isVisible()) {
+      voiceHudWindow.webContents.send('voice:hudLevel', level)
+    }
+  })
+
   ipcMain.handle('voice:hudState', async (_e, state: string) =>
     wrap(async () => {
       if (!state || state === 'idle' || state === 'hidden') hideVoiceHud()

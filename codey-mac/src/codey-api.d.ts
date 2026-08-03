@@ -368,6 +368,8 @@ declare global {
         speak: (text: string, conversationId?: string) => Promise<IpcResult<void>>
         stopSpeaking: () => Promise<IpcResult<void>>
         setHudState: (state: string) => Promise<IpcResult<void>>
+        setHudLevel: (level: number) => void
+        onHudLevel: (handler: (level: number) => void) => () => void
         onHudState: (handler: (state: string) => void) => () => void
         onSpeakEvent: (handler: (event: any) => void) => () => void
         showError: (message: string) => Promise<IpcResult<void>>

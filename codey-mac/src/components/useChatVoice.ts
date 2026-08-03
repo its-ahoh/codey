@@ -57,6 +57,75 @@ export function useChatVoice({ onTranscript, onError }: Options) {
 
   const fail = useCallback((msg: string) => { onError?.(msg) }, [onError])
 
+  // ── Live level meter ──────────────────────────────────────────────
+  // The bars have to follow the actual sound, not run a canned animation —
+  // a meter that moves the same way whether or not you're talking tells you
+  // nothing and reads as broken. Same scaling as the Swift helper's capsule
+  // (AudioCapture.swift): RMS x6, clamped, sampled ~20 Hz.
+  const [level, setLevel] = useState(0)
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const meterRafRef = useRef<number | null>(null)
+  const meterLastRef = useRef(0)
+
+  const audioContext = useCallback(() => {
+    if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
+      audioCtxRef.current = new AudioContext()
+    }
+    void audioCtxRef.current.resume()
+    return audioCtxRef.current
+  }, [])
+
+  const stopMeter = useCallback(() => {
+    if (meterRafRef.current != null) cancelAnimationFrame(meterRafRef.current)
+    meterRafRef.current = null
+    analyserRef.current = null
+    setLevel(0)
+  }, [])
+
+  const runMeter = useCallback((analyser: AnalyserNode) => {
+    analyserRef.current = analyser
+    const buf = new Float32Array(analyser.fftSize)
+    const tick = () => {
+      if (analyserRef.current !== analyser) return
+      meterRafRef.current = requestAnimationFrame(tick)
+      const now = performance.now()
+      if (now - meterLastRef.current < 50) return // ~20 Hz, as in the helper
+      meterLastRef.current = now
+      analyser.getFloatTimeDomainData(buf)
+      let sumSq = 0
+      for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i]
+      setLevel(Math.min(1, Math.sqrt(sumSq / buf.length) * 6))
+    }
+    tick()
+  }, [])
+
+  /** Meter a live microphone stream while recording. */
+  const meterStream = useCallback((stream: MediaStream) => {
+    try {
+      const ctx = audioContext()
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 1024
+      ctx.createMediaStreamSource(stream).connect(analyser)
+      runMeter(analyser)
+    } catch { /* meter is decoration; never break capture over it */ }
+  }, [audioContext, runMeter])
+
+  /** Meter a playing audio element so the bars follow the spoken reply. */
+  const meterElement = useCallback((el: HTMLAudioElement) => {
+    try {
+      const ctx = audioContext()
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 1024
+      const source = ctx.createMediaElementSource(el)
+      source.connect(analyser)
+      // Must also reach the speakers: routing through WebAudio detaches the
+      // element's default output.
+      source.connect(ctx.destination)
+      runMeter(analyser)
+    } catch { /* fall back to a still meter rather than losing the audio */ }
+  }, [audioContext, runMeter])
+
   // ── Playback ──────────────────────────────────────────────────────
 
   const drainQueue = useCallback(() => {
@@ -73,6 +142,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
     if (next.kind === 'audio') {
       const el = new Audio(next.url)
       audioElRef.current = el
+      meterElement(el)
       const advance = () => {
         URL.revokeObjectURL(next.url)
         playingRef.current = false
@@ -88,7 +158,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
       utterance.onerror = advance
       window.speechSynthesis.speak(utterance)
     }
-  }, [])
+  }, [meterElement])
 
   const stopPlayback = useCallback(() => {
     queueRef.current.forEach(item => { if (item.kind === 'audio') URL.revokeObjectURL(item.url) })
@@ -99,8 +169,9 @@ export function useChatVoice({ onTranscript, onError }: Options) {
       audioElRef.current = null
     }
     window.speechSynthesis.cancel()
+    stopMeter()
     void window.codey.voice.stopSpeaking()
-  }, [])
+  }, [stopMeter])
 
   useEffect(() => {
     const off = window.codey.voice.onSpeakEvent((event: SpeakEvent) => {
@@ -196,6 +267,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
+      meterStream(stream)
       const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : 'audio/webm'
@@ -203,6 +275,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
       chunksRef.current = []
       rec.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       rec.onstop = () => {
+        stopMeter()
         streamRef.current?.getTracks().forEach(t => t.stop())
         streamRef.current = null
         const blob = new Blob(chunksRef.current, { type: mime })
@@ -216,7 +289,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
       fail(err?.message ?? 'Microphone unavailable')
       setState('idle')
     }
-  }, [fail, stopPlayback, transcribe])
+  }, [fail, stopPlayback, transcribe, meterStream, stopMeter])
 
   const stopRecording = useCallback(() => {
     try { recorderRef.current?.stop() } catch { /* already stopped */ }
@@ -240,5 +313,5 @@ export function useChatVoice({ onTranscript, onError }: Options) {
 
   useEffect(() => () => { stopPlayback(); stopRecording() }, [stopPlayback, stopRecording])
 
-  return { state, mode, toggle, speak, stopPlayback }
+  return { state, mode, level, toggle, speak, stopPlayback }
 }
