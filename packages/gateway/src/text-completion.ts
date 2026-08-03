@@ -1,0 +1,188 @@
+import { request } from 'undici';
+import { ModelConfig } from '@codey/core';
+
+/**
+ * Minimal one-shot text completion against a hosted LLM API.
+ *
+ * This exists for short, tool-free text transforms (currently the voice
+ * speech digest) where spawning a full agentic CLI is the wrong executor:
+ * a cold `claude -p` spawn pays process boot + config load + MCP server
+ * init before the model is even called, which lands in the 5-15s range.
+ * A direct API call to a small model is ~1s, and that latency sits in the
+ * worst possible place for voice — the silence between "agent finished"
+ * and "Codey starts speaking".
+ *
+ * Deliberately narrow: no tools, no sessions, no streaming (streaming is a
+ * separate follow-up), and a short timeout, because a stalled digest should
+ * degrade to speaking the full reply rather than leaving dead air.
+ */
+
+const DEFAULT_ANTHROPIC_BASE = 'https://api.anthropic.com/v1';
+const DEFAULT_OPENAI_BASE = 'https://api.openai.com/v1';
+
+export interface TextCompletionOptions {
+  /** Upper bound on generated tokens. Digest output is a few sentences. */
+  maxTokens?: number;
+  /** Hard abort. Short by design — see the note above about dead air. */
+  timeoutMs?: number;
+}
+
+/** True when `model` carries enough credentials to be callable directly. */
+export function canRunDirectly(model: ModelConfig | undefined): model is ModelConfig {
+  return Boolean(model?.apiKey && model.model);
+}
+
+/**
+ * Runs `prompt` against `model` and returns the completion text, or null if
+ * the call fails or comes back empty. Never throws — every caller so far has
+ * a usable fallback, and surfacing an exception into a voice turn is worse
+ * than degrading quietly.
+ */
+export async function runTextCompletion(
+  prompt: string,
+  model: ModelConfig,
+  opts: TextCompletionOptions = {},
+): Promise<string | null> {
+  const maxTokens = opts.maxTokens ?? 512;
+  const timeoutMs = opts.timeoutMs ?? 20000;
+  const isAnthropic = model.apiType !== 'openai';
+
+  const base = (model.baseUrl ?? (isAnthropic ? DEFAULT_ANTHROPIC_BASE : DEFAULT_OPENAI_BASE)).replace(/\/$/, '');
+  const url = isAnthropic ? `${base}/messages` : `${base}/chat/completions`;
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (isAnthropic) {
+    headers['x-api-key'] = model.apiKey!;
+    headers['anthropic-version'] = '2023-06-01';
+  } else {
+    headers.Authorization = `Bearer ${model.apiKey}`;
+  }
+
+  const body = isAnthropic
+    ? { model: model.model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }
+    : { model: model.model, max_completion_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await request(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (res.statusCode < 200 || res.statusCode >= 300) return null;
+    const json = (await res.body.json()) as any;
+    const text = isAnthropic ? extractAnthropicText(json) : extractOpenAiText(json);
+    return text && text.trim().length > 0 ? text.trim() : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Streaming variant. Calls `onDelta` with each incremental text fragment as
+ * it arrives and resolves with the full text (or null if nothing at all was
+ * produced, so the caller can fall back).
+ *
+ * The point is first-sound latency: with a non-streaming digest the caller
+ * can't synthesize anything until the whole summary exists, so the user
+ * waits for generation *and* synthesis serially. Streaming lets the first
+ * sentence go to TTS while the rest is still being written.
+ *
+ * A mid-stream failure resolves with whatever text arrived rather than
+ * null — the caller has already spoken those sentences, and re-running a
+ * fallback would repeat them.
+ */
+export async function streamTextCompletion(
+  prompt: string,
+  model: ModelConfig,
+  onDelta: (delta: string) => void,
+  opts: TextCompletionOptions = {},
+): Promise<string | null> {
+  const maxTokens = opts.maxTokens ?? 512;
+  const timeoutMs = opts.timeoutMs ?? 30000;
+  const isAnthropic = model.apiType !== 'openai';
+
+  const base = (model.baseUrl ?? (isAnthropic ? DEFAULT_ANTHROPIC_BASE : DEFAULT_OPENAI_BASE)).replace(/\/$/, '');
+  const url = isAnthropic ? `${base}/messages` : `${base}/chat/completions`;
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (isAnthropic) {
+    headers['x-api-key'] = model.apiKey!;
+    headers['anthropic-version'] = '2023-06-01';
+  } else {
+    headers.Authorization = `Bearer ${model.apiKey}`;
+  }
+
+  const body = isAnthropic
+    ? { model: model.model, max_tokens: maxTokens, stream: true, messages: [{ role: 'user', content: prompt }] }
+    : { model: model.model, max_completion_tokens: maxTokens, stream: true, messages: [{ role: 'user', content: prompt }] };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let acc = '';
+  try {
+    const res = await request(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (res.statusCode < 200 || res.statusCode >= 300) return null;
+
+    let buffered = '';
+    for await (const chunk of res.body) {
+      buffered += chunk.toString();
+      let nl: number;
+      while ((nl = buffered.indexOf('\n')) >= 0) {
+        const line = buffered.slice(0, nl).trim();
+        buffered = buffered.slice(nl + 1);
+        const delta = parseSseDelta(line, isAnthropic);
+        if (delta) {
+          acc += delta;
+          onDelta(delta);
+        }
+      }
+    }
+  } catch {
+    // Fall through — partial text is still worth returning.
+  } finally {
+    clearTimeout(timer);
+  }
+  return acc.trim().length > 0 ? acc : null;
+}
+
+/** Pulls the text fragment out of one SSE line, or '' if it carries none. */
+function parseSseDelta(line: string, isAnthropic: boolean): string {
+  if (!line.startsWith('data:')) return '';
+  const payload = line.slice(5).trim();
+  if (!payload || payload === '[DONE]') return '';
+  let json: any;
+  try {
+    json = JSON.parse(payload);
+  } catch {
+    return '';
+  }
+  const delta = isAnthropic
+    ? json?.type === 'content_block_delta'
+      ? json?.delta?.text
+      : undefined
+    : json?.choices?.[0]?.delta?.content;
+  return typeof delta === 'string' ? delta : '';
+}
+
+function extractAnthropicText(json: any): string {
+  const blocks = Array.isArray(json?.content) ? json.content : [];
+  return blocks
+    .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
+    .map((b: any) => b.text)
+    .join('');
+}
+
+function extractOpenAiText(json: any): string {
+  const content = json?.choices?.[0]?.message?.content;
+  return typeof content === 'string' ? content : '';
+}

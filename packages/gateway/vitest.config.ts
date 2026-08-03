@@ -9,6 +9,7 @@ export default defineConfig({
     // added to this list.
     include: [
       'src/config.test.ts',
+      'src/text-completion.test.ts',
       'src/plugins-config.test.ts',
       'src/external-mcp-config.test.ts',
       'src/gateway.network-retry.test.ts',
