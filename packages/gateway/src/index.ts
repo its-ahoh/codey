@@ -72,6 +72,7 @@ function startGateway(): void {
       (): any => gateway.getHealthStatus(),
       configManager,
       (transcript, conversationId, emit) => gateway.runVoiceConverse(transcript, conversationId, emit),
+      (text, emit, conversationId) => gateway.runVoiceSpeak(text, emit, conversationId),
     );
     await apiServer.start();
 

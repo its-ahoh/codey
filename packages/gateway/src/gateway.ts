@@ -11,7 +11,7 @@ import { DryRunManager } from './automations/dry-run';
 import { detectParked } from './automations/parked';
 import { formatRunSummary } from './automations/report';
 import { formatRunLogEvent } from './automations/run-log';
-import { ConfigManager } from './config';
+import { ConfigManager, VoiceTtsSettings } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, VoiceChannelHandler, ChannelHandler } from './channels';
 import { synthesizeSpeech } from './voice-tts';
 import { runTextCompletion, streamTextCompletion, canRunDirectly } from './text-completion';
@@ -904,6 +904,116 @@ export class Codey {
     }
   }
 
+  /** Resolves who synthesizes audio for a spoken reply. */
+  private resolveTtsMode(): { tts: VoiceTtsSettings | undefined; ttsMode: 'server' | 'client' } {
+    const tts = this.configManager?.get().voice?.tts;
+    const ttsMode: 'server' | 'client' =
+      tts?.enabled && tts.provider === 'api' && tts.apiKey ? 'server' : 'client';
+    return { tts, ttsMode };
+  }
+
+  /**
+   * Builds the sentence→(text, audio) emitter shared by /voice/converse and
+   * /voice/speak. `speak` emits a sentence's text immediately and starts its
+   * synthesis right away; `finish` waits for the audio queue to drain and
+   * emits `done`.
+   *
+   * Audio events must reach the client in `seq` order, but synthesis should
+   * start the instant a sentence exists — so requests are fired immediately
+   * and only emission is serialized, by chaining.
+   */
+  private makeSpeechEmitter(
+    emit: (event: VoiceConverseEvent) => void,
+    ttsMode: 'server' | 'client',
+    tts: { apiUrl: string; apiKey: string; apiModel: string; voiceId: string } | undefined,
+  ): { speak: (sentence: string) => void; finish: () => Promise<void> } {
+    let ttsDegraded = false;
+    let seq = 0;
+    let audioChain: Promise<void> = Promise.resolve();
+
+    const speak = (sentence: string): void => {
+      const mySeq = seq++;
+      emit({ type: 'text', seq: mySeq, text: sentence });
+      if (ttsMode !== 'server' || ttsDegraded || !tts) return;
+
+      const synthesis = synthesizeSpeech(sentence, {
+        apiUrl: tts.apiUrl,
+        apiKey: tts.apiKey,
+        apiModel: tts.apiModel,
+        voiceId: tts.voiceId,
+      }).then(
+        (audio) => ({ ok: true as const, audio }),
+        (e) => ({ ok: false as const, e }),
+      );
+
+      audioChain = audioChain.then(async () => {
+        const result = await synthesis;
+        // Sentences are dispatched to the synthesizer as soon as they exist,
+        // so several can already be in flight when one fails. Suppress the
+        // rest here rather than letting a later success through: the chain
+        // runs in seq order, and a reply that switches back to the API voice
+        // partway through the client's fallback voice sounds broken.
+        if (ttsDegraded) return;
+        if (result.ok) {
+          emit({ type: 'audio', seq: mySeq, format: 'mp3', dataBase64: result.audio.toString('base64') });
+        } else {
+          this.logger.error(`Voice TTS synthesis failed, degrading to client-side speech: ${result.e}`);
+          ttsDegraded = true;
+        }
+      });
+    };
+
+    const finish = async (): Promise<void> => {
+      await audioChain;
+      emit({ type: 'done', ttsDegraded: ttsDegraded || undefined });
+    };
+
+    return { speak, finish };
+  }
+
+  /**
+   * Speaks `text` aloud without running an agent: digest (per verbosity),
+   * sentence-split, stream text/audio, done.
+   *
+   * This is what the in-chat voice button uses. It deliberately does *not*
+   * go through runVoiceConverse — a chat message has to travel the normal
+   * chat path to keep that chat's context, working directory and history.
+   * By the time this is called the reply already exists; all that's left is
+   * saying it.
+   */
+  async runVoiceSpeak(
+    text: string,
+    emit: (event: VoiceConverseEvent) => void,
+    conversationId?: string,
+  ): Promise<void> {
+    const { tts, ttsMode } = this.resolveTtsMode();
+    emit({ type: 'start', tts: ttsMode });
+
+    try {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        emit({ type: 'done' });
+        return;
+      }
+      if (conversationId) this.voiceDigestCache.set(conversationId, trimmed);
+
+      const { speak, finish } = this.makeSpeechEmitter(emit, ttsMode, tts);
+      const verbosity = tts?.verbosity ?? 'auto';
+      if (needsDigest(trimmed, verbosity)) {
+        const streamed = await this.streamVoiceDigest(trimmed, speak);
+        if (!streamed) {
+          const digest = await this.runVoiceDigestPrompt(trimmed);
+          splitIntoSentences(digest ?? trimmed).forEach(speak);
+        }
+      } else {
+        splitIntoSentences(trimmed).forEach(speak);
+      }
+      await finish();
+    } catch (e) {
+      emit({ type: 'error', message: String(e instanceof Error ? e.message : e) });
+    }
+  }
+
   /**
    * Runs one voice transcript through the full converse pipeline described
    * in docs/superpowers/specs/voice-converse-spec.md and streams NDJSON
@@ -923,44 +1033,7 @@ export class Codey {
     emit({ type: 'start', tts: ttsMode });
 
     try {
-      let ttsDegraded = false;
-      let seq = 0;
-      // Audio events must reach the client in `seq` order, but synthesis
-      // should start the instant a sentence exists. Kick each request off
-      // immediately and serialize only the emission, by chaining.
-      let audioChain: Promise<void> = Promise.resolve();
-
-      const speak = (sentence: string): void => {
-        const mySeq = seq++;
-        emit({ type: 'text', seq: mySeq, text: sentence });
-        if (ttsMode !== 'server' || ttsDegraded || !tts) return;
-
-        const synthesis = synthesizeSpeech(sentence, {
-          apiUrl: tts.apiUrl,
-          apiKey: tts.apiKey,
-          apiModel: tts.apiModel,
-          voiceId: tts.voiceId,
-        }).then(
-          (audio) => ({ ok: true as const, audio }),
-          (e) => ({ ok: false as const, e }),
-        );
-
-        audioChain = audioChain.then(async () => {
-          const result = await synthesis;
-          // Sentences are dispatched to the synthesizer as soon as they exist,
-          // so several can already be in flight when one fails. Suppress the
-          // rest here rather than letting a later success through: the chain
-          // runs in seq order, and a reply that switches back to the API voice
-          // partway through the client's fallback voice sounds broken.
-          if (ttsDegraded) return;
-          if (result.ok) {
-            emit({ type: 'audio', seq: mySeq, format: 'mp3', dataBase64: result.audio.toString('base64') });
-          } else {
-            this.logger.error(`Voice TTS synthesis failed, degrading to client-side speech: ${result.e}`);
-            ttsDegraded = true;
-          }
-        });
-      };
+      const { speak, finish } = this.makeSpeechEmitter(emit, ttsMode, tts);
 
       const command: VoiceCommand | null = parseVoiceCommand(transcript);
 
@@ -976,8 +1049,7 @@ export class Codey {
           return;
         }
         splitIntoSentences(cached).forEach(speak);
-        await audioChain;
-        emit({ type: 'done', ttsDegraded: ttsDegraded || undefined });
+        await finish();
         return;
       }
 
@@ -1042,8 +1114,7 @@ export class Codey {
         splitIntoSentences(reply).forEach(speak);
       }
 
-      await audioChain;
-      emit({ type: 'done', ttsDegraded: ttsDegraded || undefined });
+      await finish();
     } catch (e) {
       emit({ type: 'error', message: String(e instanceof Error ? e.message : e) });
     }

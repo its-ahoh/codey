@@ -259,3 +259,55 @@ describe('runVoiceConverse — degradation', () => {
     expect(events.at(-1)).toEqual({ type: 'done', ttsDegraded: true });
   });
 });
+
+describe('runVoiceSpeak — speaking an existing reply', () => {
+  const speak = async (h: Harness, text: string, convId?: string) => {
+    await h.gateway.runVoiceSpeak(text, (e: VoiceConverseEvent) => h.events.push(e), convId);
+    return h.events;
+  };
+
+  it('never runs the agent — the reply already exists', async () => {
+    const h = makeHarness({ digestSentences: ['Gist.'] });
+    await speak(h, LONG_REPLY);
+    expect(h.agentCalls).toEqual([]);
+  });
+
+  it('speaks a short reply verbatim, sentence by sentence', async () => {
+    const h = makeHarness({ digestSentences: null, oneShotDigest: null });
+    const events = await speak(h, 'Two files changed. Tests pass.');
+
+    expect(typesOf(events)[0]).toBe('start');
+    expect(textsOf(events).map((e) => e.text)).toEqual(['Two files changed.', 'Tests pass.']);
+    expect(audiosOf(events).map((e) => e.seq)).toEqual([0, 1]);
+    expect(events.at(-1)).toEqual({ type: 'done' });
+  });
+
+  it('digests a long reply before speaking it', async () => {
+    const h = makeHarness({ digestSentences: ['Short gist.'] });
+    const events = await speak(h, LONG_REPLY);
+    expect(textsOf(events).map((e) => e.text)).toEqual(['Short gist.']);
+  });
+
+  it('caches the full text so a later "more detail" can replay it', async () => {
+    const h = makeHarness({ digestSentences: ['Gist.'] });
+    await speak(h, 'Line one. Line two.', 'conv-speak');
+    h.events.length = 0;
+
+    const events = await run(h, '说详细点', 'conv-speak');
+    expect(textsOf(events).map((e) => e.text)).toEqual(['Line one.', 'Line two.']);
+  });
+
+  it('emits done without speaking when the text is blank', async () => {
+    const events = await speak(makeHarness(), '   ');
+    expect(typesOf(events)).toEqual(['start', 'done']);
+  });
+
+  it('still emits text in client TTS mode', async () => {
+    const h = makeHarness({ tts: { ...TTS_CONFIG, enabled: false }, digestSentences: null, oneShotDigest: null });
+    const events = await speak(h, 'Read by the client.');
+
+    expect(events[0]).toEqual({ type: 'start', tts: 'client' });
+    expect(textsOf(events)).toHaveLength(1);
+    expect(audiosOf(events)).toHaveLength(0);
+  });
+});

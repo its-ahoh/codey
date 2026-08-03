@@ -43,6 +43,7 @@ import {
   type VoiceLevelDetail,
   type VoiceStateDetail,
 } from './voiceInputEvents'
+import { useChatVoice } from './useChatVoice'
 
 const EDITOR_LOGOS: Partial<Record<string, string>> = {
   vscode: vscodeLogo,
@@ -833,6 +834,15 @@ export const ChatTab: React.FC<Props> = ({
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
+  // Voice for this chat: the transcript is sent through the normal chat path
+  // below, and only the reply is read aloud.
+  const voiceAutoSendRef = useRef(false)
+  const prevFlightRef = useRef<unknown>(null)
+  const voice = useChatVoice({
+    onTranscript: text => { voiceAutoSendRef.current = true; setInput(text) },
+    onError: msg => void window.codey.voice.showError(msg),
+  })
+
   // Seed from the per-chat draft store so unsent text/attachments survive the
   // remount that happens when switching chats (App.tsx keys ChatTab by chat id).
   const [input, setInput] = useState(() => getDraft(chatId).text)
@@ -1611,6 +1621,32 @@ export const ChatTab: React.FC<Props> = ({
     }
   }
 
+
+  // A finished transcript sends itself — the point of voice mode is not
+  // touching the keyboard, so stopping at a filled-in composer defeats it.
+  useEffect(() => {
+    if (!voiceAutoSendRef.current || !input.trim()) return
+    voiceAutoSendRef.current = false
+    void send()
+  }, [input]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Read the reply aloud once the turn settles. Keyed off the in-flight
+  // marker clearing rather than off message content, so partial streamed
+  // text is never spoken mid-generation.
+  useEffect(() => {
+    const wasInFlight = prevFlightRef.current
+    prevFlightRef.current = flight
+    if (!wasInFlight || flight || !voice.enabled) return
+    const messages = chat?.messages ?? []
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i]
+      if (message.role === 'assistant' && message.content?.trim()) {
+        void voice.speak(message.content, chatId)
+        return
+      }
+    }
+  }, [flight]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
   const canSend = isGatewayRunning && !coreFailed && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
@@ -2219,7 +2255,59 @@ export const ChatTab: React.FC<Props> = ({
               })}
             </div>
           )}
-          <div style={styles.composerInputRow}>
+          <div style={styles.composerRow}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,text/*,.json,.ts,.tsx,.js,.jsx,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.css,.html,.md,.yaml,.yml,.toml,.xml,.sh,.bash,.zsh,.log,.csv,.sql"
+              style={{ display: 'none' }}
+              onChange={handleFilePick}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!isGatewayRunning || !!coreFailed || isSending}
+              style={styles.attachButton}
+              title="Attach file"
+            >
+              <PaperclipIcon color={isGatewayRunning && !isSending ? C.fg2 : C.fg3} />
+            </button>
+            <button
+              onClick={() => {
+                if (!voice.enabled) { voice.setEnabled(true); voice.toggle(); return }
+                voice.toggle()
+              }}
+              onContextMenu={e => {
+                // Right-click leaves voice mode without starting a recording.
+                e.preventDefault()
+                voice.stopPlayback()
+                voice.setEnabled(false)
+              }}
+              disabled={!isGatewayRunning || !!coreFailed}
+              style={{
+                ...styles.attachButton,
+                background: voice.state === 'recording' ? C.red
+                  : voice.state === 'speaking' ? C.accent
+                  : voice.enabled ? C.surface3 : 'transparent',
+              }}
+              title={
+                voice.state === 'recording' ? 'Stop and send (recording…)'
+                : voice.state === 'transcribing' ? 'Transcribing…'
+                : voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
+                : voice.enabled ? 'Talk (right-click to turn voice off)'
+                : 'Talk to this chat — your reply is read aloud'
+              }
+            >
+              <UIIcon
+                name="mic"
+                size={16}
+                color={
+                  voice.state === 'recording' ? '#fff'
+                  : voice.state === 'speaking' ? C.onAccent
+                  : voice.enabled ? C.fg : C.fg2
+                }
+              />
+            </button>
             <textarea
               ref={taRef}
               value={input}

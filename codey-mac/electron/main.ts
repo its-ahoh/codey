@@ -2396,6 +2396,29 @@ app.whenReady().then(async () => {
   )
 
   // ── Voice IPC ─────────────────────────────────────────────────────
+  // Speaks an existing reply aloud. Runs the gateway's digest + TTS pipeline
+  // and streams the resulting text/audio segments to the renderer, which
+  // handles playback. `voice:stopSpeaking` marks the run stale so a barge-in
+  // stops delivering events even though synthesis already in flight can't be
+  // recalled.
+  let speakRun = 0
+  ipcMain.handle('voice:stopSpeaking', async () =>
+    wrap(async () => { speakRun += 1 })
+  )
+
+  ipcMain.handle('voice:speak', async (_e, { text, conversationId }: { text: string; conversationId?: string }) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not running')
+      if (typeof text !== 'string' || !text.trim()) return
+      speakRun += 1
+      const myRun = speakRun
+      await inProcessGateway.runVoiceSpeak(text, (event: any) => {
+        if (myRun !== speakRun) return
+        sendToRenderer('voice:speakEvent', event)
+      }, conversationId)
+    })
+  )
+
   ipcMain.handle('voice:transcribed', async (_e, text: string) =>
     wrap(async () => {
       if (typeof text !== 'string' || !text.trim()) return

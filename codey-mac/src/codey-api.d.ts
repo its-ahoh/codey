@@ -363,6 +363,10 @@ declare global {
       voice: {
         onHotkey: (handler: () => void) => () => void
         notifyTranscribed: (text: string) => Promise<IpcResult<void>>
+        /** Speak text through the gateway's digest + TTS pipeline. */
+        speak: (text: string, conversationId?: string) => Promise<IpcResult<void>>
+        stopSpeaking: () => Promise<IpcResult<void>>
+        onSpeakEvent: (handler: (event: any) => void) => () => void
         showError: (message: string) => Promise<IpcResult<void>>
         downloadModel: (model: string) => Promise<IpcResult<{ model: string }>>
         deleteModel: (model: string) => Promise<IpcResult<{ removed: string[] }>>

@@ -263,6 +263,16 @@ contextBridge.exposeInMainWorld('codey', {
       return () => ipcRenderer.removeListener('voice:hotkey', listener)
     },
     notifyTranscribed: (text: string) => ipcRenderer.invoke('voice:transcribed', text),
+    /** Speak `text` aloud through the gateway's digest + TTS pipeline.
+     *  Events arrive via onSpeakEvent; resolves when the stream is done. */
+    speak: (text: string, conversationId?: string) =>
+      ipcRenderer.invoke('voice:speak', { text, conversationId }),
+    stopSpeaking: () => ipcRenderer.invoke('voice:stopSpeaking'),
+    onSpeakEvent: (handler: (event: any) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, event: any) => handler(event)
+      ipcRenderer.on('voice:speakEvent', listener)
+      return () => ipcRenderer.removeListener('voice:speakEvent', listener)
+    },
     showError: (message: string) => ipcRenderer.invoke('voice:error', message),
     downloadModel: (model: string) => ipcRenderer.invoke('voice:downloadModel', model),
     deleteModel: (model: string) => ipcRenderer.invoke('voice:deleteModel', model),

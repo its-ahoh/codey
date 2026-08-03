@@ -31,6 +31,11 @@ export class ApiServer {
     conversationId: string | undefined,
     emit: (event: VoiceConverseEvent) => void,
   ) => Promise<void>;
+  private runVoiceSpeak?: (
+    text: string,
+    emit: (event: VoiceConverseEvent) => void,
+    conversationId?: string,
+  ) => Promise<void>;
 
   constructor(
     port: number,
@@ -41,11 +46,17 @@ export class ApiServer {
       conversationId: string | undefined,
       emit: (event: VoiceConverseEvent) => void,
     ) => Promise<void>,
+    runVoiceSpeak?: (
+      text: string,
+      emit: (event: VoiceConverseEvent) => void,
+      conversationId?: string,
+    ) => Promise<void>,
   ) {
     this.port = port;
     this.getStatus = getStatus;
     this.configManager = configManager;
     this.runVoiceConverse = runVoiceConverse;
+    this.runVoiceSpeak = runVoiceSpeak;
   }
 
   async start(): Promise<void> {
@@ -197,6 +208,44 @@ export class ApiServer {
             res.write(JSON.stringify(event) + '\n');
           };
           await this.runVoiceConverse(transcript, conversationId, emit);
+          res.end();
+        });
+        return;
+      }
+
+      // Speaks text that already exists — no agent run, no command routing.
+      // The in-chat voice button uses this: the chat message travels the
+      // normal chat path (so it keeps that chat's context and working dir),
+      // and only the reading-aloud happens here.
+      if (url === '/voice/speak' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+          let text: string;
+          let conversationId: string | undefined;
+          try {
+            const parsed = JSON.parse(body);
+            text = typeof parsed.text === 'string' ? parsed.text.trim() : '';
+            conversationId = typeof parsed.conversationId === 'string' ? parsed.conversationId : undefined;
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+            return;
+          }
+          if (!text) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'text is required' }));
+            return;
+          }
+          if (!this.runVoiceSpeak) {
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Voice output is not available' }));
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+          await this.runVoiceSpeak(text, (event: VoiceConverseEvent) => {
+            res.write(JSON.stringify(event) + '\n');
+          }, conversationId);
           res.end();
         });
         return;
