@@ -839,6 +839,10 @@ export const ChatTab: React.FC<Props> = ({
   // below, and only the reply is read aloud.
   const voiceAutoSendRef = useRef(false)
   const prevFlightRef = useRef<unknown>(null)
+  // Whether the turn currently in flight was started by speaking. `mode` is
+  // sticky (it remembers which button you used last), so keying playback off
+  // it read every typed message aloud too.
+  const spokenTurnRef = useRef(false)
   const voice = useChatVoice({
     onTranscript: (text, mode) => {
       if (mode === 'converse') {
@@ -1637,6 +1641,7 @@ export const ChatTab: React.FC<Props> = ({
     if (!voiceAutoSendRef.current || !input.trim()) return
     voiceAutoSendRef.current = false
     const spoken = input
+    spokenTurnRef.current = true
     void send()
     // Acknowledge immediately. An agent turn routinely runs for 30s to
     // several minutes, and unbroken silence in a voice interface reads as
@@ -1650,7 +1655,11 @@ export const ChatTab: React.FC<Props> = ({
   useEffect(() => {
     const wasInFlight = prevFlightRef.current
     prevFlightRef.current = flight
-    if (!wasInFlight || flight || voice.mode !== 'converse') return
+    if (!wasInFlight || flight) return
+    // Only speak a reply to something that was actually spoken. Typing into a
+    // chat you happen to have used voice in before should stay silent.
+    if (!spokenTurnRef.current) return
+    spokenTurnRef.current = false
     const messages = chat?.messages ?? []
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i]

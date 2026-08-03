@@ -33,6 +33,37 @@ interface Options {
   onError?: (message: string) => void
 }
 
+
+/**
+ * Picks a BCP-47 tag from the text itself. The reply's language isn't known
+ * up front — it follows whatever the user spoke — so it's detected per
+ * utterance rather than taken from a setting.
+ */
+function detectSpeechLang(text: string): string {
+  if (/[\u3040-\u30ff]/.test(text)) return 'ja-JP'      // kana before han:
+  if (/[\uac00-\ud7af]/.test(text)) return 'ko-KR'      // Japanese uses both
+  if (/[\u4e00-\u9fff]/.test(text)) return 'zh-CN'
+  return 'en-US'
+}
+
+/**
+ * Finds an installed voice for `lang`, preferring an exact region match and
+ * falling back to the same base language. Returns null when nothing matches,
+ * in which case setting `utterance.lang` alone still gets closer than the
+ * default voice would.
+ */
+function pickVoiceForLang(lang: string): SpeechSynthesisVoice | null {
+  const voices = window.speechSynthesis.getVoices()
+  if (!voices.length) return null
+  const want = lang.toLowerCase()
+  const base = want.split('-')[0]
+  const norm = (v: SpeechSynthesisVoice) => v.lang.replace('_', '-').toLowerCase()
+  return voices.find(v => norm(v) === want)
+    ?? voices.find(v => norm(v).startsWith(`${base}-`))
+    ?? voices.find(v => norm(v) === base)
+    ?? null
+}
+
 export function useChatVoice({ onTranscript, onError }: Options) {
   const [state, setState] = useState<ChatVoiceState>('idle')
   /** Mode of the turn currently being captured or spoken. */
@@ -56,6 +87,15 @@ export function useChatVoice({ onTranscript, onError }: Options) {
   const streamDoneRef = useRef(false)
 
   const fail = useCallback((msg: string) => { onError?.(msg) }, [onError])
+
+  // getVoices() is empty until the list loads, and the first utterance is
+  // usually the ack — early enough to miss it. Warm it on mount.
+  useEffect(() => {
+    window.speechSynthesis.getVoices()
+    const onVoices = () => window.speechSynthesis.getVoices()
+    window.speechSynthesis.addEventListener('voiceschanged', onVoices)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', onVoices)
+  }, [])
 
   // ── Live level meter ──────────────────────────────────────────────
   // The bars have to follow the actual sound, not run a canned animation —
@@ -157,6 +197,14 @@ export function useChatVoice({ onTranscript, onError }: Options) {
       void el.play().catch(advance)
     } else {
       const utterance = new SpeechSynthesisUtterance(next.text)
+      // Without an explicit language the system voice reads everything with
+      // the default (usually English) voice, which makes Chinese come out as
+      // nonsense. The system has voices for these languages; it just has to
+      // be told which one the text is in.
+      const lang = detectSpeechLang(next.text)
+      utterance.lang = lang
+      const match = pickVoiceForLang(lang)
+      if (match) utterance.voice = match
       const advance = () => { playingRef.current = false; drainQueue() }
       utterance.onend = advance
       utterance.onerror = advance
