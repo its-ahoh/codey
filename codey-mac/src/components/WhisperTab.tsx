@@ -40,7 +40,7 @@ interface TtsCfg {
 const VOICE_DEFAULT: VoiceCfg = {
   enabled: false,
   hotkey: 'Fn',
-  converseHotkey: 'Control+Shift+Space',
+  converseHotkey: 'Control+Fn',
   language: 'auto',
   injection: 'paste',
   provider: 'api',
@@ -422,9 +422,9 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
         <div style={{ color: C.fg3, fontSize: 11 }}>
           Press it to speak to the focused chat and hear the reply; press again to send.
           Separate from the dictation hotkey above, which types at the cursor instead.
-          {voice.converseHotkey.trim().toLowerCase().includes('fn') && (
-            <span style={{ color: C.red }}> Fn can&rsquo;t be bound here — macOS only exposes it to the
-            bundled helper, which owns it for dictation. Pick another combination.</span>
+          {voice.converseHotkey.trim().toLowerCase().endsWith('fn') && (
+            <span style={{ color: C.fg3 }}> Fn combinations are handled by the bundled helper, so this
+            one needs Codey Voice to have Accessibility permission.</span>
           )}
         </div>
       </div>

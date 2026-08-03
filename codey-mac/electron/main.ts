@@ -1079,7 +1079,16 @@ async function bootInProcessCore() {
         sendToRenderer('gateway-log', `[core] port scan failed: ${scanErr?.message ?? scanErr}; falling back to ${preferredPort}`)
       }
       activeApiPort = apiPort
-      apiServer = new ApiServer(apiPort, (): any => inProcessGateway!.getHealthStatus(), coreConfigManager)
+      apiServer = new ApiServer(
+        apiPort,
+        (): any => inProcessGateway!.getHealthStatus(),
+        coreConfigManager,
+        (transcript, conversationId, emit) => inProcessGateway!.runVoiceConverse(transcript, conversationId, emit),
+        (text, emit, conversationId) => inProcessGateway!.runVoiceSpeak(text, emit, conversationId),
+        // Fn-based converse bindings are pressed in the Swift helper, which
+        // reports them over HTTP; hand them to the chat like a local press.
+        () => { mainWindow?.webContents.send('voice:converseHotkey') },
+      )
       void apiServer.start().then(() => {
         sendToRenderer('gateway-log', `[core] API server listening on ${apiPort}`)
       }).catch((err: any) => {
@@ -1147,7 +1156,9 @@ let currentConverseAccelerator: string | null = null
 function applyVoiceConverseHotkey(rawCfg: any) {
   const voice = rawCfg?.voice
   const hk = voice?.converseHotkey
-  const isFn = typeof hk === 'string' && hk.trim().toLowerCase() === 'fn'
+  // Anything ending in Fn belongs to the Swift helper: globalShortcut can't
+  // bind Fn with or without modifiers.
+  const isFn = typeof hk === 'string' && hk.trim().toLowerCase().endsWith('fn')
   const desired = voice?.enabled && hk && !isFn ? toElectronAccelerator(hk) : null
 
   if (currentConverseAccelerator && currentConverseAccelerator !== desired) {

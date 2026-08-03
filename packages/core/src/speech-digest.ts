@@ -38,3 +38,38 @@ export function buildSpeechDigestPrompt(text: string): string {
     '## Spoken summary',
   ].join('\n\n');
 }
+
+/**
+ * Strips the parts of a reply that exist for the eye, so a text-to-speech
+ * voice doesn't read them out: fenced code, inline backticks, link syntax,
+ * heading and list markers, emphasis, and bare file paths.
+ *
+ * Used on the raw reply whenever it's spoken undigested. Reading Markdown
+ * verbatim is the failure mode this whole layer exists to prevent — the
+ * screen already has the full text; speech only has to carry the meaning.
+ */
+export function stripForSpeech(text: string): string {
+  return text
+    // Fenced blocks: say that code exists rather than spelling it out.
+    .replace(/```[\s\S]*?```/g, ' (code) ')
+    .replace(/~~~[\s\S]*?~~~/g, ' (code) ')
+    .replace(/`([^`]*)`/g, '$1')
+    // Images before links — the alt text is rarely worth speaking.
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}>\s?/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+[.)]\s+/gm, '')
+    // Table pipes and horizontal rules read as noise.
+    .replace(/^\s*\|.*\|\s*$/gm, ' ')
+    .replace(/^\s*([-*_])\s*(\1\s*){2,}$/gm, ' ')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/(^|\W)[*_]([^*_\n]+)[*_](?=\W|$)/g, '$1$2')
+    // Paths and URLs: unreadable aloud, and never the point of the sentence.
+    .replace(/https?:\/\/\S+/g, ' (link) ')
+    .replace(/(?:^|\s)[\w.~-]*\/[\w./~-]+/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}

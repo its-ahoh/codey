@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { needsDigest, buildSpeechDigestPrompt, AUTO_DIGEST_THRESHOLD } from './speech-digest';
+import { needsDigest, buildSpeechDigestPrompt, stripForSpeech, AUTO_DIGEST_THRESHOLD } from './speech-digest';
 
 describe('needsDigest', () => {
   it('never digests in full verbosity', () => {
@@ -30,5 +30,35 @@ describe('buildSpeechDigestPrompt', () => {
     const prompt = buildSpeechDigestPrompt('修复了 foo.ts 里的空指针问题。');
     expect(prompt.toLowerCase()).toContain('same language');
     expect(prompt).toContain('修复了 foo.ts 里的空指针问题。');
+  });
+});
+
+describe('stripForSpeech', () => {
+  it('replaces fenced code with a marker instead of reading it aloud', () => {
+    const out = stripForSpeech('Fixed it:\n```ts\nconst a = 1\n```\nAll good.');
+    expect(out).not.toContain('const');
+    expect(out).toContain('(code)');
+    expect(out).toContain('All good.');
+  });
+
+  it('drops heading, list and emphasis markers but keeps the words', () => {
+    expect(stripForSpeech('## Summary')).toBe('Summary');
+    expect(stripForSpeech('- one\n- two')).toBe('one\ntwo');
+    expect(stripForSpeech('this is **very** important')).toBe('this is very important');
+    expect(stripForSpeech('a `flag` here')).toBe('a flag here');
+  });
+
+  it('keeps link text and drops the URL', () => {
+    expect(stripForSpeech('see [the docs](https://example.com/x)')).toBe('see the docs');
+    expect(stripForSpeech('go to https://example.com/x now')).toContain('(link)');
+  });
+
+  it('removes file paths, which are unreadable aloud', () => {
+    expect(stripForSpeech('changed packages/core/src/a.ts today')).toBe('changed today');
+  });
+
+  it('leaves ordinary prose untouched', () => {
+    const prose = '我改了三个文件，主要逻辑在网关里。';
+    expect(stripForSpeech(prose)).toBe(prose);
   });
 });

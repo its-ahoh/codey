@@ -22,6 +22,9 @@ final class VoiceCoordinator {
     private let realtimeEngine: RealtimeTranscriptionEngine
     private var textInjector: TextInjector
     private var hotkeyManager: HotkeyManager?
+    /// Second binding for the in-chat spoken conversation. Fires into the Mac
+    /// app via the gateway rather than driving this helper's own pipeline.
+    private var converseHotkeyManager: HotkeyManager?
     private var statusItem: StatusItem?
     private let hud = HudOverlay()
     private var pollTimer: Timer?
@@ -94,6 +97,7 @@ final class VoiceCoordinator {
             statusItem?.updateState(.error("Hotkey '\(config.hotkey)' could not be registered"))
         }
         self.hotkeyManager = hotkey
+        registerConverseHotkey(config.converseHotkey)
 
         // Set up audio completion handler
         audioCapture.onRecordingComplete = { [weak self] buffer in
@@ -510,6 +514,7 @@ final class VoiceCoordinator {
 
     private func applyConfig(_ newConfig: VoiceConfig) {
         let oldHotkey = config.hotkey
+        let oldConverseHotkey = config.converseHotkey
         let oldProvider = config.provider
         config = newConfig
         textInjector = TextInjector(mode: newConfig.injection)
@@ -528,12 +533,32 @@ final class VoiceCoordinator {
             localEngine.prewarm()
         }
 
+        if newConfig.converseHotkey != oldConverseHotkey {
+            registerConverseHotkey(newConfig.converseHotkey)
+        }
+
         if newConfig.hotkey != oldHotkey, let hk = hotkeyManager {
             let ok = hk.register(hotkey: newConfig.hotkey)
             if !ok {
                 statusItem?.updateState(.error("Hotkey '\(newConfig.hotkey)' could not be registered"))
             }
         }
+    }
+
+    /// (Re)binds the converse hotkey. Electron registers non-Fn combinations
+    /// itself, so this only takes over when the binding involves Fn — the one
+    /// key Electron's globalShortcut cannot bind.
+    private func registerConverseHotkey(_ spec: String) {
+        converseHotkeyManager = nil
+        let trimmed = spec.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed.lowercased().hasSuffix("fn") else { return }
+        let manager = HotkeyManager { [weak self] in
+            guard let self = self else { return }
+            Task { await self.gateway.triggerConverseHotkey() }
+        }
+        let ok = manager.register(hotkey: trimmed)
+        print("Converse hotkey '\(trimmed)' registered: \(ok)")
+        if ok { converseHotkeyManager = manager }
     }
 
     // MARK: - Permissions

@@ -8,6 +8,7 @@ import Foundation
 ///
 /// Hotkey string format mirrors WhisperTab:
 ///   "Fn"                          — Fn key alone (NSEvent path)
+///   "Control+Fn"                  — Fn with modifiers held (NSEvent path)
 ///   "F5", "F1"..."F19"            — function keys (Carbon path)
 ///   "Meta+Shift+V"                — modifier combo + key (Carbon path)
 ///   "Control+Alt+Space"
@@ -17,6 +18,9 @@ final class HotkeyManager {
     private var fnMonitorGlobal: Any?
     private var fnMonitorLocal: Any?
     private var fnPreviouslyDown = false
+    /// Modifiers that must also be held for an Fn-based binding to fire.
+    /// Empty for bare "Fn".
+    private var fnRequiredFlags: NSEvent.ModifierFlags = []
     let onToggle: () -> Void
 
     init(onToggle: @escaping () -> Void) {
@@ -30,10 +34,26 @@ final class HotkeyManager {
         unregister()
         let trimmed = hotkey.trimmingCharacters(in: .whitespaces)
         print("HotkeyManager.register(\"\(trimmed)\")")
-        if trimmed.caseInsensitiveCompare("Fn") == .orderedSame
-            || trimmed.caseInsensitiveCompare("Function") == .orderedSame {
+        // Anything ending in Fn goes through the NSEvent path — Carbon's
+        // RegisterEventHotKey can't bind Fn at all, with or without modifiers.
+        let parts = trimmed.split(separator: "+").map {
+            String($0).trimmingCharacters(in: .whitespaces)
+        }
+        if let last = parts.last,
+           last.caseInsensitiveCompare("Fn") == .orderedSame
+            || last.caseInsensitiveCompare("Function") == .orderedSame {
+            fnRequiredFlags = []
+            for part in parts.dropLast() {
+                switch part.lowercased() {
+                case "meta", "cmd", "command": fnRequiredFlags.insert(.command)
+                case "control", "ctrl":        fnRequiredFlags.insert(.control)
+                case "alt", "option":          fnRequiredFlags.insert(.option)
+                case "shift":                  fnRequiredFlags.insert(.shift)
+                default: break
+                }
+            }
             let ok = registerFnMonitor()
-            print("Fn monitor registered: \(ok)")
+            print("Fn monitor registered: \(ok) (modifiers: \(fnRequiredFlags.rawValue))")
             return ok
         }
         let ok = registerCarbonHotKey(spec: trimmed)
@@ -65,8 +85,15 @@ final class HotkeyManager {
             guard let self = self else { return }
             let isDown = event.modifierFlags.contains(.function)
             if isDown && !self.fnPreviouslyDown {
-                print("Fn pressed → toggling recording")
-                DispatchQueue.main.async { self.onToggle() }
+                // A modifier-qualified binding ("Control+Fn") must see those
+                // modifiers still held on the Fn-down edge; otherwise plain Fn
+                // would fire both bindings.
+                if self.fnRequiredFlags.isEmpty
+                    || event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                        .isSuperset(of: self.fnRequiredFlags) {
+                    print("Fn hotkey matched → firing")
+                    DispatchQueue.main.async { self.onToggle() }
+                }
             }
             self.fnPreviouslyDown = isDown
         }

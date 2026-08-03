@@ -10,6 +10,11 @@ struct VoiceConfig: Codable {
     /// Codey and speaks the reply. Defaults to `inject` so existing dictation
     /// users are unaffected until they opt in.
     var mode: Mode = .inject
+    /// Second binding: start/stop a spoken conversation in the focused chat.
+    /// Handled here rather than in Electron because only this helper can bind
+    /// Fn-based combinations. Empty means unbound.
+    var converseHotkey: String = ""
+
     var provider: Provider = .api
     var apiUrl: String = "https://api.openai.com/v1"
     var apiKey: String = ""
@@ -61,6 +66,7 @@ struct VoiceConfig: Codable {
         language = try c.decodeIfPresent(String.self, forKey: .language) ?? d.language
         injection = try c.decodeIfPresent(InjectionMode.self, forKey: .injection) ?? d.injection
         mode = try c.decodeIfPresent(Mode.self, forKey: .mode) ?? d.mode
+        converseHotkey = try c.decodeIfPresent(String.self, forKey: .converseHotkey) ?? d.converseHotkey
         provider = try c.decodeIfPresent(Provider.self, forKey: .provider) ?? d.provider
         apiUrl = try c.decodeIfPresent(String.self, forKey: .apiUrl) ?? d.apiUrl
         apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? d.apiKey

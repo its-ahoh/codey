@@ -36,6 +36,7 @@ export class ApiServer {
     emit: (event: VoiceConverseEvent) => void,
     conversationId?: string,
   ) => Promise<void>;
+  private onConverseHotkey?: () => void;
 
   constructor(
     port: number,
@@ -51,12 +52,14 @@ export class ApiServer {
       emit: (event: VoiceConverseEvent) => void,
       conversationId?: string,
     ) => Promise<void>,
+    onConverseHotkey?: () => void,
   ) {
     this.port = port;
     this.getStatus = getStatus;
     this.configManager = configManager;
     this.runVoiceConverse = runVoiceConverse;
     this.runVoiceSpeak = runVoiceSpeak;
+    this.onConverseHotkey = onConverseHotkey;
   }
 
   async start(): Promise<void> {
@@ -248,6 +251,16 @@ export class ApiServer {
           }, conversationId);
           res.end();
         });
+        return;
+      }
+
+      // The Swift helper owns Fn-based bindings — Electron's globalShortcut
+      // can't bind Fn at all — so when the converse hotkey involves Fn the
+      // helper reports the press here and the app takes it from there.
+      if (url === '/voice/converse-hotkey' && req.method === 'POST') {
+        this.onConverseHotkey?.();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
         return;
       }
 
