@@ -849,8 +849,18 @@ export class Codey {
    * already been spoken, and re-running would repeat them.
    */
   private async streamVoiceDigest(fullReply: string, onSentence: (s: string) => void): Promise<boolean> {
-    const { agent, model } = this.getAdvisorAgentAndModel();
-    const digestModel = this.resolveDigestModel(agent, model);
+    let digestModel: ModelConfig | undefined;
+    try {
+      const { agent, model } = this.getAdvisorAgentAndModel();
+      digestModel = this.resolveDigestModel(agent, model);
+    } catch (e) {
+      // getAdvisorAgentAndModel throws when a model points at an API key that
+      // no longer exists. Speaking the reply undigested is a fine outcome;
+      // letting this escape turns the whole turn into an error event and the
+      // user hears nothing at all.
+      this.logger.warn(`Voice digest model unavailable, speaking the reply as-is: ${e}`);
+      return false;
+    }
     if (!canRunDirectly(digestModel)) return false;
 
     const accumulator = new SentenceAccumulator();
@@ -1009,11 +1019,21 @@ export class Codey {
       // refusal gets spoken instead of the answer. When there's no API model
       // to digest with, just read the reply: the full text is already on
       // screen, so a plain reading is never the wrong thing.
+      let spokenSentences = 0;
+      const countedSpeak = (sentence: string) => { spokenSentences++; speak(sentence); };
       if (!verbatim && needsDigest(trimmed, verbosity)) {
-        const streamed = await this.streamVoiceDigest(trimmed, speak);
-        if (!streamed) splitIntoSentences(stripForSpeech(trimmed)).forEach(speak);
+        const streamed = await this.streamVoiceDigest(trimmed, countedSpeak);
+        if (!streamed) splitIntoSentences(stripForSpeech(trimmed)).forEach(countedSpeak);
       } else {
-        splitIntoSentences(stripForSpeech(trimmed)).forEach(speak);
+        splitIntoSentences(stripForSpeech(trimmed)).forEach(countedSpeak);
+      }
+      // Silence is this feature's only unrecoverable failure and it leaves
+      // nothing on screen to inspect, so record what was actually said.
+      this.logger.info(
+        `[voice] speak: ${trimmed.length} chars in, tts=${ttsMode}, verbatim=${verbatim}, ${spokenSentences} sentence(s) out`
+      );
+      if (spokenSentences === 0) {
+        this.logger.warn('[voice] speak produced no sentences — nothing will be heard');
       }
       await finish();
     } catch (e) {

@@ -95,6 +95,21 @@ const TypingDots: React.FC = () => {
   return <span style={{ letterSpacing: 2 }}>{'●'.repeat(n + 1).padEnd(3, '○')}</span>
 }
 
+/** Elapsed recording time. A counter answers "is it still listening?" without
+ *  a sentence of prose, and reassures during a long dictation. */
+const VoiceElapsed: React.FC<{ since: number }> = ({ since }) => {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(id)
+  }, [since])
+  const total = Math.max(0, Math.floor((now - since) / 1000))
+  const mm = Math.floor(total / 60)
+  const ss = String(total % 60).padStart(2, '0')
+  return <span style={styles.voiceStatusText}>{mm}:{ss}</span>
+}
+
 const PaperclipIcon: React.FC<{ color: string }> = ({ color }) => (
   <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
     <path d="M21.44 11.05L12.25 20.24a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 11-2.83-2.83l8.49-8.48" />
@@ -1679,21 +1694,37 @@ export const ChatTab: React.FC<Props> = ({
 
   // Global converse hotkey drives the same toggle as the waveform button, so
   // one press starts talking and the next sends — no reaching for the mouse.
-  useEffect(() => window.codey.voice.onConverseHotkey(() => voice.toggle('converse')), [voice.toggle])
+  useEffect(() => window.codey.voice.onConverseHotkey(() => voice.toggle('converse', { fromHotkey: true })), [voice.toggle])
 
   // Drive the floating capsule. Only converse turns get one — dictation is a
   // brief, eyes-on-screen action, and its status shows inline in the composer
   // instead.
   useEffect(() => {
-    const showable = voice.mode === 'converse' && voice.state !== 'idle'
+    // Clicking the button means you're already looking at the window; the
+    // floating capsule is for the hotkey, where you may not be.
+    const showable = voice.fromHotkey && voice.mode === 'converse' && voice.state !== 'idle'
     void window.codey.voice.setHudState(showable ? voice.state : 'idle')
-  }, [voice.state, voice.mode])
+  }, [voice.state, voice.mode, voice.fromHotkey])
 
   useEffect(() => {
-    if (voice.mode === 'converse' && voice.state !== 'idle') {
+    if (voice.fromHotkey && voice.mode === 'converse' && voice.state !== 'idle') {
       window.codey.voice.setHudLevel(voice.level)
     }
-  }, [voice.level, voice.mode, voice.state])
+  }, [voice.level, voice.mode, voice.state, voice.fromHotkey])
+
+  // Esc abandons a voice turn: drop the recording rather than sending it, or
+  // stop a reply mid-sentence. Captured so it doesn't also reach the composer.
+  useEffect(() => {
+    if (voice.state === 'idle') return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      voice.cancel()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [voice.state, voice.cancel])
 
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing'
   const isSending = !!flight
@@ -2315,15 +2346,7 @@ export const ChatTab: React.FC<Props> = ({
                 height={14}
                 color={voice.state === 'speaking' ? C.accent : C.red}
               />
-              <span style={styles.voiceStatusText}>
-                {voice.state === 'recording'
-                  ? (voice.mode === 'dictate' ? 'Listening — click the mic to stop' : 'Listening — click to send')
-                  : voice.state === 'transcribing' ? 'Transcribing'
-                  // Show what it's actually saying: the spoken version is a
-                  // digest, and seeing it is the only way to tell a bad
-                  // summary from a reply that was thin to begin with.
-                  : (voice.spokenText || 'Speaking — click the wave to interrupt')}
-              </span>
+              {voice.state === 'recording' && <VoiceElapsed since={voice.recordingStartedAt} />}
             </div>
           )}
           <div style={styles.composerRow}>
@@ -2970,8 +2993,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 999, background: C.surface3, maxWidth: '100%',
   },
   voiceStatusText: {
-    color: C.fg2, fontSize: 11,
-    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+    color: C.fg2, fontSize: 11, fontVariantNumeric: 'tabular-nums',
   },
   attachButton: {
     width: 36, height: 36, borderRadius: 9, border: 'none',

@@ -70,8 +70,16 @@ export function useChatVoice({ onTranscript, onError }: Options) {
   const [mode, setMode] = useState<ChatVoiceMode>('converse')
   const modeRef = useRef<ChatVoiceMode>('converse')
   modeRef.current = mode
+  /** True when the current turn was started by the global hotkey rather than
+   *  a click. Only those raise the floating capsule — if you clicked the
+   *  button you are already looking at the window. */
+  const [fromHotkey, setFromHotkey] = useState(false)
+  /** Start time of the current recording, for the elapsed counter. */
+  const [recordingStartedAt, setRecordingStartedAt] = useState(0)
 
   const recorderRef = useRef<MediaRecorder | null>(null)
+  /** Set by cancel() so the recorder's onstop discards instead of transcribing. */
+  const cancelledRef = useRef(false)
   const chunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const stateRef = useRef<ChatVoiceState>('idle')
@@ -103,10 +111,6 @@ export function useChatVoice({ onTranscript, onError }: Options) {
   // nothing and reads as broken. Same scaling as the Swift helper's capsule
   // (AudioCapture.swift): RMS x6, clamped, sampled ~20 Hz.
   const [level, setLevel] = useState(0)
-  /** What is being said right now — surfaced so it's obvious when the spoken
-   *  version diverges from the reply on screen (e.g. an over-aggressive
-   *  digest, or a reply whose substance was all tool output). */
-  const [spokenText, setSpokenText] = useState('')
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const meterRafRef = useRef<number | null>(null)
@@ -232,11 +236,9 @@ export function useChatVoice({ onTranscript, onError }: Options) {
           serverTtsRef.current = event.tts === 'server'
           pendingTextRef.current.clear()
           streamDoneRef.current = false
-          setSpokenText('')
           setState('speaking')
           break
         case 'text':
-          if (event.text) setSpokenText(prev => (prev ? `${prev} ${event.text}` : event.text!))
           // In server mode the audio for this seq is still coming; hold the
           // text back in case it never arrives.
           if (serverTtsRef.current) {
@@ -332,6 +334,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
         : 'audio/webm'
       const rec = new MediaRecorder(stream, { mimeType: mime })
       chunksRef.current = []
+      cancelledRef.current = false
       rec.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       rec.onstop = () => {
         stopMeter()
@@ -339,10 +342,12 @@ export function useChatVoice({ onTranscript, onError }: Options) {
         streamRef.current = null
         const blob = new Blob(chunksRef.current, { type: mime })
         chunksRef.current = []
+        if (cancelledRef.current) return // Esc: discard, don't transcribe
         void transcribe(blob, mime)
       }
       rec.start()
       recorderRef.current = rec
+      setRecordingStartedAt(Date.now())
       setState('recording')
     } catch (err: any) {
       fail(err?.message ?? 'Microphone unavailable')
@@ -359,9 +364,10 @@ export function useChatVoice({ onTranscript, onError }: Options) {
    * Pressing the other button mid-recording switches what that recording
    * will do with its transcript, which is friendlier than refusing.
    */
-  const toggle = useCallback((next: ChatVoiceMode) => {
+  const toggle = useCallback((next: ChatVoiceMode, opts?: { fromHotkey?: boolean }) => {
     setMode(next)
     modeRef.current = next
+    if (stateRef.current === 'idle') setFromHotkey(opts?.fromHotkey === true)
     switch (stateRef.current) {
       case 'idle': void startRecording(); break
       case 'recording': stopRecording(); break
@@ -370,7 +376,23 @@ export function useChatVoice({ onTranscript, onError }: Options) {
     }
   }, [startRecording, stopRecording, stopPlayback])
 
+  /**
+   * Abandon the turn: drop the recording without transcribing it, or stop a
+   * reply mid-sentence. Distinct from toggle, which finishes and sends.
+   */
+  const cancel = useCallback(() => {
+    if (stateRef.current === 'idle') return
+    cancelledRef.current = true
+    try { recorderRef.current?.stop() } catch { /* already stopped */ }
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current = null
+    chunksRef.current = []
+    stopMeter()
+    stopPlayback()
+    setState('idle')
+  }, [stopMeter, stopPlayback])
+
   useEffect(() => () => { stopPlayback(); stopRecording() }, [stopPlayback, stopRecording])
 
-  return { state, mode, level, spokenText, toggle, speak, stopPlayback }
+  return { state, mode, level, fromHotkey, recordingStartedAt, toggle, cancel, speak, stopPlayback }
 }
