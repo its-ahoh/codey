@@ -367,6 +367,8 @@ declare global {
         /** Speak text through the gateway's digest + TTS pipeline. */
         speak: (text: string, conversationId?: string) => Promise<IpcResult<void>>
         stopSpeaking: () => Promise<IpcResult<void>>
+        setHudState: (state: string) => Promise<IpcResult<void>>
+        onHudState: (handler: (state: string) => void) => () => void
         onSpeakEvent: (handler: (event: any) => void) => () => void
         showError: (message: string) => Promise<IpcResult<void>>
         downloadModel: (model: string) => Promise<IpcResult<{ model: string }>>

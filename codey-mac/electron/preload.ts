@@ -274,6 +274,13 @@ contextBridge.exposeInMainWorld('codey', {
     speak: (text: string, conversationId?: string) =>
       ipcRenderer.invoke('voice:speak', { text, conversationId }),
     stopSpeaking: () => ipcRenderer.invoke('voice:stopSpeaking'),
+    /** Report converse state so the floating capsule can show/hide itself. */
+    setHudState: (state: string) => ipcRenderer.invoke('voice:hudState', state),
+    onHudState: (handler: (state: string) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: string) => handler(state)
+      ipcRenderer.on('voice:hudState', listener)
+      return () => ipcRenderer.removeListener('voice:hudState', listener)
+    },
     onSpeakEvent: (handler: (event: any) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, event: any) => handler(event)
       ipcRenderer.on('voice:speakEvent', listener)

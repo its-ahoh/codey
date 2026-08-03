@@ -290,6 +290,81 @@ function inferCaptureMimeType(name: string): string {
   return CAPTURE_MIME_BY_EXT[ext] ?? 'application/octet-stream'
 }
 
+// ── Voice conversation capsule ──────────────────────────────────────
+// A small always-on-top window showing that a spoken turn is in progress.
+// Separate from the main window because the converse hotkey is meant to work
+// while Codey is in the background, where an in-app pill would be invisible.
+let voiceHudWindow: BrowserWindow | null = null
+
+function createVoiceHudWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 220,
+    height: 64,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    focusable: false,
+    fullscreenable: false,
+    hasShadow: false,
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      // The capsule animates while the window is unfocused by definition;
+      // without this Chromium throttles it to a stutter.
+      backgroundThrottling: false,
+    },
+  })
+  // Visible over full-screen apps too — otherwise the one case where you most
+  // want a non-intrusive status readout is the case it disappears in.
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  win.setIgnoreMouseEvents(true)
+  if (isDev) {
+    win.loadURL('http://localhost:5173/#/voice-hud')
+  } else {
+    win.loadFile(join(__dirname, '../dist/index.html'), { hash: '/voice-hud' })
+  }
+  win.on('closed', () => { voiceHudWindow = null })
+  return win
+}
+
+/** Positions the capsule near the top-centre of the display under the cursor. */
+function positionVoiceHud(win: BrowserWindow) {
+  try {
+    const cursor = screen.getCursorScreenPoint()
+    const display = screen.getDisplayNearestPoint(cursor)
+    const { x, y, width } = display.workArea
+    const [w, h] = win.getSize()
+    win.setPosition(Math.round(x + (width - w) / 2), Math.round(y + 24), false)
+    void h
+  } catch { /* fall back to wherever it opened */ }
+}
+
+function showVoiceHud(state: string) {
+  if (!voiceHudWindow || voiceHudWindow.isDestroyed()) {
+    voiceHudWindow = createVoiceHudWindow()
+  }
+  const win = voiceHudWindow
+  if (!win.isVisible()) {
+    positionVoiceHud(win)
+    // showInactive, never show: taking focus would interrupt whatever the
+    // user is typing in another app.
+    win.showInactive()
+  }
+  win.webContents.send('voice:hudState', state)
+}
+
+function hideVoiceHud() {
+  if (voiceHudWindow && !voiceHudWindow.isDestroyed()) {
+    voiceHudWindow.webContents.send('voice:hudState', 'hidden')
+    voiceHudWindow.hide()
+  }
+}
+
 function createCaptureWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 560,
@@ -1073,14 +1148,10 @@ function applyVoiceConverseHotkey(rawCfg: any) {
   if (!desired || currentConverseAccelerator === desired) return
 
   const ok = globalShortcut.register(desired, () => {
-    // Bring the window forward: a spoken reply is useless if the user can't
-    // see which chat it belongs to, and the chat needs to be mounted to hear
-    // the event at all.
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.show()
-      mainWindow.focus()
-    }
+    // Deliberately does NOT raise or focus the window. The feature exists for
+    // times you're away from Codey; yanking it in front of whatever you're
+    // doing defeats that. The floating capsule reports state instead, and the
+    // user opens Codey when they actually want to read the thread.
     mainWindow?.webContents.send('voice:converseHotkey')
   })
   if (ok) {
@@ -2445,6 +2516,13 @@ app.whenReady().then(async () => {
   // stops delivering events even though synthesis already in flight can't be
   // recalled.
   let speakRun = 0
+  ipcMain.handle('voice:hudState', async (_e, state: string) =>
+    wrap(async () => {
+      if (!state || state === 'idle' || state === 'hidden') hideVoiceHud()
+      else showVoiceHud(state)
+    })
+  )
+
   ipcMain.handle('voice:stopSpeaking', async () =>
     wrap(async () => { speakRun += 1 })
   )

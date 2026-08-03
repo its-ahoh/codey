@@ -1659,6 +1659,13 @@ export const ChatTab: React.FC<Props> = ({
   // one press starts talking and the next sends — no reaching for the mouse.
   useEffect(() => window.codey.voice.onConverseHotkey(() => voice.toggle('converse')), [voice.toggle])
 
+  // Drive the floating capsule. Only converse turns get one — dictation is a
+  // brief, eyes-on-screen action that doesn't need a background indicator.
+  useEffect(() => {
+    const showable = voice.mode === 'converse' && voice.state !== 'idle'
+    void window.codey.voice.setHudState(showable ? voice.state : 'idle')
+  }, [voice.state, voice.mode])
+
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing'
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
