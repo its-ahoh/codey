@@ -11,6 +11,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 export type ChatVoiceState = 'idle' | 'recording' | 'transcribing' | 'speaking'
 
+/**
+ * `dictate` only turns speech into text for the composer. `converse` sends
+ * the turn and reads the reply back — the hands-free mode.
+ */
+export type ChatVoiceMode = 'dictate' | 'converse'
+
 interface SpeakEvent {
   type: 'start' | 'text' | 'audio' | 'done' | 'error' | 'ack' | 'command'
   tts?: 'server' | 'client'
@@ -22,14 +28,17 @@ interface SpeakEvent {
 }
 
 interface Options {
-  /** Called with the finished transcript. Return false to skip speaking. */
-  onTranscript: (text: string) => void
+  /** Called with the finished transcript and the mode it was captured in. */
+  onTranscript: (text: string, mode: ChatVoiceMode) => void
   onError?: (message: string) => void
 }
 
 export function useChatVoice({ onTranscript, onError }: Options) {
   const [state, setState] = useState<ChatVoiceState>('idle')
-  const [enabled, setEnabled] = useState(false)
+  /** Mode of the turn currently being captured or spoken. */
+  const [mode, setMode] = useState<ChatVoiceMode>('converse')
+  const modeRef = useRef<ChatVoiceMode>('converse')
+  modeRef.current = mode
 
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -142,10 +151,10 @@ export function useChatVoice({ onTranscript, onError }: Options) {
   }, [drainQueue, fail])
 
   const speak = useCallback(async (text: string, conversationId?: string) => {
-    if (!enabled || !text.trim()) return
+    if (!text.trim()) return
     const res = await window.codey.voice.speak(text, conversationId)
     if (res && res.ok === false) fail(res.error ?? 'Speech failed')
-  }, [enabled, fail])
+  }, [fail])
 
   // ── Recording ─────────────────────────────────────────────────────
 
@@ -173,7 +182,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
       if (!resp.ok) throw new Error(`Transcription failed (${resp.status})`)
       const text = ((await resp.json())?.text ?? '').trim()
       setState('idle')
-      if (text) onTranscript(text)
+      if (text) onTranscript(text, modeRef.current)
       else fail('No speech detected.')
     } catch (err: any) {
       fail(err?.message ?? String(err))
@@ -213,8 +222,14 @@ export function useChatVoice({ onTranscript, onError }: Options) {
     try { recorderRef.current?.stop() } catch { /* already stopped */ }
   }, [])
 
-  /** One button, one gesture: start, stop, or interrupt depending on state. */
-  const toggle = useCallback(() => {
+  /**
+   * One gesture per button: start, stop, or interrupt depending on state.
+   * Pressing the other button mid-recording switches what that recording
+   * will do with its transcript, which is friendlier than refusing.
+   */
+  const toggle = useCallback((next: ChatVoiceMode) => {
+    setMode(next)
+    modeRef.current = next
     switch (stateRef.current) {
       case 'idle': void startRecording(); break
       case 'recording': stopRecording(); break
@@ -225,5 +240,5 @@ export function useChatVoice({ onTranscript, onError }: Options) {
 
   useEffect(() => () => { stopPlayback(); stopRecording() }, [stopPlayback, stopRecording])
 
-  return { state, enabled, setEnabled, toggle, speak, stopPlayback }
+  return { state, mode, toggle, speak, stopPlayback }
 }

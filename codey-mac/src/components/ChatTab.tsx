@@ -839,7 +839,15 @@ export const ChatTab: React.FC<Props> = ({
   const voiceAutoSendRef = useRef(false)
   const prevFlightRef = useRef<unknown>(null)
   const voice = useChatVoice({
-    onTranscript: text => { voiceAutoSendRef.current = true; setInput(text) },
+    onTranscript: (text, mode) => {
+      if (mode === 'converse') {
+        voiceAutoSendRef.current = true
+        setInput(text)
+      } else {
+        // Dictation appends, so a second pass adds to what's already there.
+        setInput(prev => (prev.trim() ? `${prev.trim()} ${text}` : text))
+      }
+    },
     onError: msg => void window.codey.voice.showError(msg),
   })
 
@@ -1636,7 +1644,7 @@ export const ChatTab: React.FC<Props> = ({
   useEffect(() => {
     const wasInFlight = prevFlightRef.current
     prevFlightRef.current = flight
-    if (!wasInFlight || flight || !voice.enabled) return
+    if (!wasInFlight || flight || voice.mode !== 'converse') return
     const messages = chat?.messages ?? []
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i]
@@ -1647,6 +1655,7 @@ export const ChatTab: React.FC<Props> = ({
     }
   }, [flight]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing'
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
   const canSend = isGatewayRunning && !coreFailed && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
@@ -2272,39 +2281,51 @@ export const ChatTab: React.FC<Props> = ({
             >
               <PaperclipIcon color={isGatewayRunning && !isSending ? C.fg2 : C.fg3} />
             </button>
+            {/* Two ways to use your voice: dictate into the composer, or hold
+                a spoken conversation. Same capture path, different
+                destination for the transcript. */}
             <button
-              onClick={() => {
-                if (!voice.enabled) { voice.setEnabled(true); voice.toggle(); return }
-                voice.toggle()
-              }}
-              onContextMenu={e => {
-                // Right-click leaves voice mode without starting a recording.
-                e.preventDefault()
-                voice.stopPlayback()
-                voice.setEnabled(false)
-              }}
+              onClick={() => voice.toggle('dictate')}
               disabled={!isGatewayRunning || !!coreFailed}
               style={{
                 ...styles.attachButton,
-                background: voice.state === 'recording' ? C.red
-                  : voice.state === 'speaking' ? C.accent
-                  : voice.enabled ? C.surface3 : 'transparent',
+                background: voiceBusy && voice.mode === 'dictate' ? C.red : 'transparent',
               }}
               title={
-                voice.state === 'recording' ? 'Stop and send (recording…)'
-                : voice.state === 'transcribing' ? 'Transcribing…'
-                : voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
-                : voice.enabled ? 'Talk (right-click to turn voice off)'
-                : 'Talk to this chat — your reply is read aloud'
+                voiceBusy && voice.mode === 'dictate'
+                  ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop — text goes to the box')
+                  : 'Dictate into the message box'
               }
             >
               <UIIcon
                 name="mic"
                 size={16}
+                color={voiceBusy && voice.mode === 'dictate' ? '#fff' : C.fg2}
+              />
+            </button>
+            <button
+              onClick={() => voice.toggle('converse')}
+              disabled={!isGatewayRunning || !!coreFailed}
+              style={{
+                ...styles.attachButton,
+                background: voice.state === 'recording' && voice.mode === 'converse' ? C.red
+                  : voice.state === 'speaking' ? C.accent
+                  : 'transparent',
+              }}
+              title={
+                voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
+                : voiceBusy && voice.mode === 'converse'
+                  ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop and send')
+                  : 'Talk to this chat — the reply is read back'
+              }
+            >
+              <UIIcon
+                name="waveform"
+                size={16}
                 color={
-                  voice.state === 'recording' ? '#fff'
+                  voice.state === 'recording' && voice.mode === 'converse' ? '#fff'
                   : voice.state === 'speaking' ? C.onAccent
-                  : voice.enabled ? C.fg : C.fg2
+                  : C.fg2
                 }
               />
             </button>

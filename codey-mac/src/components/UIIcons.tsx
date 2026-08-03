@@ -3,7 +3,7 @@ import React from 'react'
 export type IconName =
   | 'activity' | 'add' | 'archive' | 'bell' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
   | 'clock' | 'code' | 'copy' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
-  | 'globe' | 'overview' | 'refresh' | 'search' | 'server' | 'settings' | 'sparkle' | 'split' | 'terminal' | 'tools' | 'trash' | 'users' | 'workspace'
+  | 'waveform' | 'globe' | 'overview' | 'refresh' | 'search' | 'server' | 'settings' | 'sparkle' | 'split' | 'terminal' | 'tools' | 'trash' | 'users' | 'workspace'
   | 'telegram' | 'discord' | 'imessage'
 
 interface Props {
@@ -38,6 +38,9 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     key: <><circle {...common} cx="7.5" cy="15.5" r="3.5" /><path {...common} d="M10 13l8-8M15 6l3 3M13 8l3 3" /></>,
     link: <><path {...common} d="M10 13a5 5 0 007.07.07l2-2a5 5 0 00-7.07-7.07l-1.15 1.15" /><path {...common} d="M14 11a5 5 0 00-7.07-.07l-2 2A5 5 0 0012 20l1.15-1.15" /></>,
     mic: <><rect {...common} x="8" y="3" width="8" height="12" rx="4" /><path {...common} d="M5 11a7 7 0 0014 0M12 18v3M8 21h8" /></>,
+    // Symmetric bars rising toward the centre — reads as sound at 16px, where
+    // a literal sine wave collapses into a smudge.
+    waveform: <><path {...common} d="M3 11v2M7 8v8M11 4v16M15 7v10M19 10v4" /></>,
     more: <><circle fill="currentColor" cx="5" cy="12" r="1.5" /><circle fill="currentColor" cx="12" cy="12" r="1.5" /><circle fill="currentColor" cx="19" cy="12" r="1.5" /></>,
     overview: <><rect {...common} x="3" y="4" width="18" height="16" rx="2" /><path {...common} d="M3 10h18M10 10v10" /><path {...common} d="M7 7h.01M13 14h5M13 17h3" /></>,
     panel: <><rect {...common} x="3" y="3" width="18" height="18" rx="2" /><path {...common} d="M15 3v18" />{filled && <path fill="currentColor" stroke="none" d="M15 3h6v18h-6z" />}</>,
