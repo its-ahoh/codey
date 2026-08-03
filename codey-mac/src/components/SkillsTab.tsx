@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { C } from '../theme'
 import { pillButton, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
+import { matchesToolSearch } from './tools-search'
 import type { SkillEntry, SkillsListResult } from '../codey-api'
 
 type AgentFilter = 'claude-code' | 'opencode' | 'codex'
@@ -17,7 +18,7 @@ const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
   'opencode': '~/.config/opencode/skills/',
 }
 
-export const SkillsTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 }) => {
+export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> = ({ addRequest = 0, searchQuery = '' }) => {
   const [data, setData] = useState<SkillsListResult>({ skills: [], projectDir: null })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -33,6 +34,10 @@ export const SkillsTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 })
   const [copyMenuOpen, setCopyMenuOpen] = useState(false)
   const copyRef = useRef<HTMLDivElement>(null)
   const initDone = useRef(false)
+  const filteredSkills = useMemo(
+    () => data.skills.filter(skill => matchesToolSearch(searchQuery, skill.name, skill.qualifiedName, skill.description)),
+    [data.skills, searchQuery],
+  )
 
   // The primary action lives in the parent Tools tab bar; this counter gives
   // that button a clean way to open the existing install form without a second
@@ -301,7 +306,9 @@ export const SkillsTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 })
           </div>
         </div>
         <div style={styles.agentMeta}>
-          <span>{loading ? 'Scanning…' : `${data.skills.length} skill${data.skills.length === 1 ? '' : 's'}`}</span>
+          <span>{loading ? 'Scanning…' : searchQuery.trim()
+            ? `${filteredSkills.length} of ${data.skills.length} skills`
+            : `${data.skills.length} skill${data.skills.length === 1 ? '' : 's'}`}</span>
           <button
             onClick={() => void reload(agentFilter)}
             disabled={loading}
@@ -418,9 +425,14 @@ export const SkillsTab: React.FC<{ addRequest?: number }> = ({ addRequest = 0 })
             Add a skill or place one in <code style={styles.inlineCode}>{AGENT_SKILL_HINTS[agentFilter]}</code>
           </div>
         </div>
+      ) : filteredSkills.length === 0 ? (
+        <div style={styles.emptyState}>
+          <div style={{ fontWeight: 650, color: C.fg, marginBottom: 5 }}>No matching skills</div>
+          <div style={{ fontSize: 12 }}>Try a different name or description keyword.</div>
+        </div>
       ) : (
         <div style={styles.skillGrid}>
-          {data.skills.map(renderCard)}
+          {filteredSkills.map(renderCard)}
         </div>
       )}
     </div>
