@@ -8,9 +8,9 @@ import React, { useEffect, useState } from 'react'
  * Codey is in the background — a pill drawn inside the app would be
  * invisible exactly when it matters.
  *
- * The animated gradient is what separates this from plain dictation: a
- * conversation is ongoing and two-way, and it should feel alive rather than
- * like a recording indicator that happens to be red.
+ * The capsule *is* the moving gradient: a conversation is ongoing and
+ * two-way, and should feel alive rather than like a recording light. That
+ * also keeps it distinct from dictation, whose pill stays plain.
  */
 
 type HudState = 'recording' | 'transcribing' | 'speaking' | 'hidden'
@@ -26,16 +26,21 @@ export const VoiceHud: React.FC = () => {
 
   useEffect(() => window.codey.voice.onHudState(next => setState(next as HudState)), [])
 
+  // index.html paints the theme background onto <html> before React mounts so
+  // the app's first frame isn't white-on-white. In a transparent window that
+  // shows up as a black rectangle around the capsule, so undo it here.
+  useEffect(() => {
+    document.documentElement.style.background = 'transparent'
+    document.body.style.background = 'transparent'
+  }, [])
+
   if (state === 'hidden') return null
 
   return (
     <div style={styles.root}>
-      <div style={styles.capsule}>
-        <div style={styles.aura} />
-        <div style={styles.content}>
-          <Bars state={state} />
-          <span style={styles.label}>{LABEL[state]}</span>
-        </div>
+      <div className="codey-voice-capsule" style={styles.capsule}>
+        <Bars state={state} />
+        <span style={styles.label}>{LABEL[state]}</span>
       </div>
       <style>{CSS}</style>
     </div>
@@ -43,9 +48,9 @@ export const VoiceHud: React.FC = () => {
 }
 
 /**
- * Five bars whose heights animate out of phase. While speaking they run
- * faster and taller, so the capsule reads differently at a glance depending
- * on who currently holds the turn.
+ * Five bars whose heights animate out of phase, faster while speaking than
+ * while listening, so the capsule reads differently at a glance depending on
+ * who currently holds the turn.
  */
 const Bars: React.FC<{ state: Exclude<HudState, 'hidden'> }> = ({ state }) => {
   const speed = state === 'speaking' ? 0.7 : state === 'recording' ? 1.1 : 1.8
@@ -71,53 +76,50 @@ const styles: Record<string, React.CSSProperties> = {
   root: {
     height: '100vh', width: '100vw', display: 'flex',
     alignItems: 'center', justifyContent: 'center',
-    // The window itself is transparent; only the capsule paints.
     background: 'transparent', overflow: 'hidden',
-    // The capsule is a status readout, not a control — never eat clicks
-    // meant for whatever the user is actually working in.
     WebkitUserSelect: 'none', cursor: 'default',
   },
   capsule: {
-    position: 'relative', display: 'flex', alignItems: 'center',
-    padding: '10px 18px', borderRadius: 999, overflow: 'hidden',
-    background: 'rgba(20,20,22,0.82)',
-    backdropFilter: 'blur(20px)',
-    boxShadow: '0 8px 30px rgba(0,0,0,0.45)',
-  },
-  aura: {
-    position: 'absolute', inset: -2, borderRadius: 999,
-    background: 'conic-gradient(from 0deg, #ff5f6d, #ffc371, #47e6b1, #38a3f5, #a86bf5, #ff5f6d)',
-    filter: 'blur(9px)', opacity: 0.75,
-    animation: 'codey-voice-spin 3.2s linear infinite',
-  },
-  content: {
-    position: 'relative', display: 'flex', alignItems: 'center', gap: 10,
-    padding: '2px 4px',
+    display: 'flex', alignItems: 'center', gap: 10,
+    padding: '9px 18px', borderRadius: 999,
+    // No dark plate behind it: the gradient itself is the surface.
+    boxShadow: '0 6px 22px rgba(0,0,0,0.28)',
   },
   bars: { display: 'flex', alignItems: 'center', gap: 3, height: 18 },
   label: {
-    color: 'rgba(255,255,255,0.92)', fontSize: 12, fontWeight: 600,
+    color: '#fff', fontSize: 12, fontWeight: 600,
     letterSpacing: 0.2, whiteSpace: 'nowrap',
+    textShadow: '0 1px 2px rgba(0,0,0,0.28)',
     fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif',
   },
 }
 
 const CSS = `
-@keyframes codey-voice-spin { to { transform: rotate(360deg); } }
+@keyframes codey-voice-drift {
+  0%   { background-position:   0% 50%; }
+  100% { background-position: 200% 50%; }
+}
 @keyframes codey-voice-bounce {
-  0%, 100% { height: 5px; opacity: 0.65; }
+  0%, 100% { height: 5px; opacity: 0.7; }
   50%      { height: 17px; opacity: 1; }
+}
+.codey-voice-capsule {
+  background-image: linear-gradient(90deg,
+    #ff5f6d, #ffc371, #47e6b1, #38a3f5, #a86bf5, #ff5f6d);
+  background-size: 200% 100%;
+  animation: codey-voice-drift 4s linear infinite;
 }
 .codey-voice-bar {
   display: block;
   width: 3px;
   border-radius: 2px;
-  background: #fff;
+  background: rgba(255,255,255,0.95);
   animation-name: codey-voice-bounce;
   animation-iteration-count: infinite;
   animation-timing-function: ease-in-out;
 }
 @media (prefers-reduced-motion: reduce) {
+  .codey-voice-capsule { animation: none; }
   .codey-voice-bar { animation: none; height: 11px; }
 }
 `

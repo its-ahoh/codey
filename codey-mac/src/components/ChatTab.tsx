@@ -2292,6 +2292,24 @@ export const ChatTab: React.FC<Props> = ({
             >
               <PaperclipIcon color={isGatewayRunning && !isSending ? C.fg2 : C.fg3} />
             </button>
+            <textarea
+              ref={taRef}
+              value={input}
+              onChange={e => { setInputHistoryIndex(null); setInput(e.target.value) }}
+              onKeyDown={handleKey}
+              onInput={e => {
+                if (composerHeight != null) return // manual height pinned
+                const el = e.currentTarget
+                el.style.height = 'auto'
+                el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+              }}
+              placeholder={composerPlaceholder({ coreFailed: !!coreFailed, isGatewayRunning, isSending })}
+              disabled={!isGatewayRunning || !!coreFailed}
+              rows={1}
+              style={composerHeight != null
+                ? { ...styles.input, height: composerHeight, maxHeight: 'none' }
+                : styles.input}
+            />
             {/* Two ways to use your voice: dictate into the composer, or hold
                 a spoken conversation. Same capture path, different
                 destination for the transcript. */}
@@ -2340,6 +2358,7 @@ export const ChatTab: React.FC<Props> = ({
                 }
               />
             </button>
+<<<<<<< HEAD
             <textarea
               ref={taRef}
               value={input}
@@ -2369,6 +2388,9 @@ export const ChatTab: React.FC<Props> = ({
               onChange={handleFilePick}
             />
             <div style={styles.composerTools}>
+=======
+            {isSending ? (
+>>>>>>> 8934c73 (Move the voice buttons right and fix the capsule's black box)
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!isGatewayRunning || !!coreFailed || isSending}

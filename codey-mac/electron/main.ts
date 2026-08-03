@@ -332,15 +332,24 @@ function createVoiceHudWindow(): BrowserWindow {
   return win
 }
 
-/** Positions the capsule near the top-centre of the display under the cursor. */
+/**
+ * Bottom-centre of the display under the cursor, 80px up — the same spot the
+ * Swift helper puts the dictation capsule (HudOverlay.swift), so the two
+ * never appear in different places for what is, to the user, the same thing.
+ */
+const VOICE_HUD_BOTTOM_GAP = 80
+
 function positionVoiceHud(win: BrowserWindow) {
   try {
     const cursor = screen.getCursorScreenPoint()
     const display = screen.getDisplayNearestPoint(cursor)
-    const { x, y, width } = display.workArea
+    const { x, y, width, height } = display.workArea
     const [w, h] = win.getSize()
-    win.setPosition(Math.round(x + (width - w) / 2), Math.round(y + 24), false)
-    void h
+    win.setPosition(
+      Math.round(x + (width - w) / 2),
+      Math.round(y + height - h - VOICE_HUD_BOTTOM_GAP),
+      false,
+    )
   } catch { /* fall back to wherever it opened */ }
 }
 
