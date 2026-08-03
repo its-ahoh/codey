@@ -89,3 +89,47 @@ describe('parseVoiceCommand', () => {
     expect(parseVoiceCommand('这个函数是做什么的')).toBeNull();
   });
 });
+
+describe('parseVoiceCommand — more detail', () => {
+  it('matches English phrasings', () => {
+    for (const phrase of [
+      'more detail',
+      'more details',
+      'in more detail',
+      'tell me more',
+      'say more',
+      'elaborate',
+      'expand on that',
+      'More Detail.',
+    ]) {
+      expect(parseVoiceCommand(phrase), phrase).toEqual({ type: 'more-detail' });
+    }
+  });
+
+  it('matches Chinese phrasings', () => {
+    for (const phrase of [
+      '说详细点',
+      '详细点',
+      '再详细一点',
+      '说得更详细',
+      '详细说说',
+      '更详细一些',
+      '展开讲讲',
+      '多说一点',
+      '说详细点。',
+    ]) {
+      expect(parseVoiceCommand(phrase), phrase).toEqual({ type: 'more-detail' });
+    }
+  });
+
+  it('does not swallow ordinary speech that merely mentions detail', () => {
+    for (const phrase of [
+      '把这个函数写得更详细一点的注释',
+      'add more detail to the readme',
+      '详细看看这个 bug',
+      'what are the details of the plan',
+    ]) {
+      expect(parseVoiceCommand(phrase), phrase).toBeNull();
+    }
+  });
+});

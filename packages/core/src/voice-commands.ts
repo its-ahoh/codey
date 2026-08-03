@@ -8,7 +8,11 @@
 export type VoiceCommand =
   | { type: 'switch-workspace'; workspace: string }
   | { type: 'list-notifications' }
-  | { type: 'list-workspaces' };
+  | { type: 'list-workspaces' }
+  /** Re-speak the last reply undigested. See speech-digest.ts: spoken replies
+   *  default to a short summary, and this is how the user asks for the detail
+   *  back without the agent re-running. */
+  | { type: 'more-detail' };
 
 interface Pattern {
   regex: RegExp;
@@ -27,6 +31,10 @@ const PATTERNS: Pattern[] = [
   {
     regex: /^(?:list|show)\s+(?:my\s+)?workspaces$/i,
     build: () => ({ type: 'list-workspaces' }),
+  },
+  {
+    regex: /^(?:(?:tell|say)\s+me\s+more|say\s+more|(?:in\s+)?more\s+detail(?:s)?|elaborate|expand\s+on\s+that)$/i,
+    build: () => ({ type: 'more-detail' }),
   },
   // Chinese variants — matched against a whitespace-stripped utterance since
   // spoken Chinese transcripts carry no word spacing.
@@ -55,6 +63,16 @@ const PATTERNS: Pattern[] = [
   {
     regex: /^(?:列出|显示|查看)(?:我的)?(?:所有)?(?:工作区|工作空间)(?:列表)?$/,
     build: () => ({ type: 'list-workspaces' }),
+  },
+  // 说详细点 / 再详细一点 / 详细说说 / 更详细一些
+  {
+    regex: /^(?:再|请)?(?:说|讲)?(?:得|的)?(?:更)?详细(?:一?点|一?些)?(?:说说|讲讲)?$/,
+    build: () => ({ type: 'more-detail' }),
+  },
+  // 展开讲讲 / 多说一点
+  {
+    regex: /^(?:展开(?:讲讲|说说|说一?下)|多说(?:一?点|一?些))$/,
+    build: () => ({ type: 'more-detail' }),
   },
 ];
 

@@ -58,14 +58,21 @@ final `done` so the helper knows to speak any `text` seqs that never got audio.
 ## Gateway-side pipeline (all in `packages/core` / gateway wiring)
 
 1. `parseVoiceCommand(transcript)` → match: execute, emit `command`, `done`.
+   Exception: `more-detail` ("说详细点" / "more detail") replays the cached
+   pre-digest reply as ordinary `text`/`audio` pairs rather than a one-line
+   `command` result — the agent does not re-run. With nothing cached it
+   reports so via `command` and stops.
 2. No match → emit `ack`, run the agent through the normal conversation path.
 3. Agent reply → `needsDigest(reply, verbosity)`; if true, run
-   `buildSpeechDigestPrompt` through the advisor's `{agent, model}` config.
-   Cache the **full original reply** per `conversationId` so "说详细点"
-   re-reads details without re-running the agent.
+   `buildSpeechDigestPrompt`. Cache the **full original reply** per
+   `conversationId` first, so step 1's `more-detail` path can read it back.
+   The digest runs as a direct streaming API call when the resolved model
+   carries credentials (`voice.tts.digestModel`, else the advisor's model),
+   falling back to a one-shot API call, then to an agent CLI spawn.
 4. Split digest output on sentence boundaries → for each sentence emit `text`,
-   then (server mode) synthesize and emit `audio` (OpenAI `gpt-4o-mini-tts`,
-   streamed per sentence — do not wait for full-text synthesis).
+   then (server mode) synthesize and emit `audio`. Synthesis starts as soon as
+   a sentence is complete and runs concurrently; only `audio` emission is
+   serialized, so sentence N+1 never waits on sentence N's audio.
 
 `verbosity` (`full | digest | auto`) lives in `VoiceConfig`, editable from the
 Mac app settings, delivered via existing `/voice/config`.

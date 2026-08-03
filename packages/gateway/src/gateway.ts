@@ -923,7 +923,58 @@ export class Codey {
     emit({ type: 'start', tts: ttsMode });
 
     try {
+      let ttsDegraded = false;
+      let seq = 0;
+      // Audio events must reach the client in `seq` order, but synthesis
+      // should start the instant a sentence exists. Kick each request off
+      // immediately and serialize only the emission, by chaining.
+      let audioChain: Promise<void> = Promise.resolve();
+
+      const speak = (sentence: string): void => {
+        const mySeq = seq++;
+        emit({ type: 'text', seq: mySeq, text: sentence });
+        if (ttsMode !== 'server' || ttsDegraded || !tts) return;
+
+        const synthesis = synthesizeSpeech(sentence, {
+          apiUrl: tts.apiUrl,
+          apiKey: tts.apiKey,
+          apiModel: tts.apiModel,
+          voiceId: tts.voiceId,
+        }).then(
+          (audio) => ({ ok: true as const, audio }),
+          (e) => ({ ok: false as const, e }),
+        );
+
+        audioChain = audioChain.then(async () => {
+          const result = await synthesis;
+          if (result.ok) {
+            emit({ type: 'audio', seq: mySeq, format: 'mp3', dataBase64: result.audio.toString('base64') });
+          } else {
+            this.logger.error(`Voice TTS synthesis failed, degrading to client-side speech: ${result.e}`);
+            ttsDegraded = true;
+          }
+        });
+      };
+
       const command: VoiceCommand | null = parseVoiceCommand(transcript);
+
+      // "More detail" replays the cached pre-digest reply instead of running
+      // the agent again — the digest deliberately drops detail, and this is
+      // the path that gives it back.
+      if (command?.type === 'more-detail') {
+        const cached = conversationId ? this.voiceDigestCache.get(conversationId) : undefined;
+        if (!cached) {
+          const empty = /[一-鿿]/.test(transcript) ? '没有可以展开的内容。' : 'There is nothing to expand on yet.';
+          emit({ type: 'command', action: 'more-detail', result: empty });
+          emit({ type: 'done' });
+          return;
+        }
+        splitIntoSentences(cached).forEach(speak);
+        await audioChain;
+        emit({ type: 'done', ttsDegraded: ttsDegraded || undefined });
+        return;
+      }
+
       if (command) {
         let result = '';
         switch (command.type) {
@@ -970,39 +1021,6 @@ export class Codey {
       }
 
       this.voiceDigestCache.set(convId, reply);
-
-      let ttsDegraded = false;
-      let seq = 0;
-      // Audio events must reach the client in `seq` order, but synthesis
-      // should start the instant a sentence exists. Kick each request off
-      // immediately and serialize only the emission, by chaining.
-      let audioChain: Promise<void> = Promise.resolve();
-
-      const speak = (sentence: string): void => {
-        const mySeq = seq++;
-        emit({ type: 'text', seq: mySeq, text: sentence });
-        if (ttsMode !== 'server' || ttsDegraded || !tts) return;
-
-        const synthesis = synthesizeSpeech(sentence, {
-          apiUrl: tts.apiUrl,
-          apiKey: tts.apiKey,
-          apiModel: tts.apiModel,
-          voiceId: tts.voiceId,
-        }).then(
-          (audio) => ({ ok: true as const, audio }),
-          (e) => ({ ok: false as const, e }),
-        );
-
-        audioChain = audioChain.then(async () => {
-          const result = await synthesis;
-          if (result.ok) {
-            emit({ type: 'audio', seq: mySeq, format: 'mp3', dataBase64: result.audio.toString('base64') });
-          } else {
-            this.logger.error(`Voice TTS synthesis failed, degrading to client-side speech: ${result.e}`);
-            ttsDegraded = true;
-          }
-        });
-      };
 
       const verbosity = tts?.verbosity ?? 'auto';
       if (needsDigest(reply, verbosity)) {
