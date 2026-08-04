@@ -399,9 +399,17 @@ const FallbackList: React.FC<{
                 ))}
               </select>
               {i === 0 ? (
-                <span style={{ width: 28, fontSize: 10, color: C.fg3, textAlign: 'center' }} title="The default agent — drag a row above to replace it">—</span>
+                <span style={{
+                  width: 28, height: 28, flexShrink: 0,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 10, color: C.fg3,
+                }} title="The default agent — drag a row above to replace it">—</span>
               ) : (
-                <button onClick={() => remove(i)} style={{ ...pillButton('danger'), display: 'inline-flex', alignItems: 'center' }} aria-label="Remove fallback"><UIIcon name="trash" size={13} /></button>
+                <button onClick={() => remove(i)} style={{
+                  ...pillButton('danger'),
+                  width: 28, height: 28, padding: 0, flexShrink: 0,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                }} aria-label="Remove fallback"><UIIcon name="trash" size={13} /></button>
               )}
             </div>
             {dropIdx === order.length && i === order.length - 1 && dragIdx !== null && dragIdx !== i && (
@@ -521,46 +529,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      <Section title="Models" right={
-        <button onClick={() => setCreating(true)} style={pillButton('primary')} disabled={creating}>+ Add</button>
-      }/>
-      {creating && (
-        <ModelRow
-          entry={{ apiType: 'anthropic', model: '' }}
-          apis={apis}
-          isNew
-          onSave={saveModel}
-          onCancel={() => setCreating(false)}
-        />
-      )}
-      {models.length === 0 && !creating && (
-        <div style={{ color: C.fg3, fontSize: 12, padding: '16px 0' }}>No models yet. Click + Add to create one.</div>
-      )}
-      {[...models]
-        .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
-        .map(m => <ModelRow key={m.model} entry={m} apis={apis} onSave={saveModel} onDelete={deleteModel}/>)}
-
-      <Section title="Agent priority" right={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: C.fg3, fontSize: 11 }}>{fallback.enabled ? 'Enabled' : 'Disabled'}</span>
-          <Toggle on={fallback.enabled} onChange={enabled => updateFallback({ ...fallback, enabled })}/>
-        </div>
-      }/>
-      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        Row 1 is the default agent + model. When fallback is enabled and a request fails, the gateway tries each subsequent row in order. Drag to reorder.
-      </div>
-      <FallbackList
-        order={fallback.order}
-        models={models}
-        enabledAgents={enabledAgents}
-        onChange={next => updateFallback({ ...fallback, order: next })}
-      />
-      {!fallback.enabled && (
-        <div style={{ color: C.fg3, fontSize: 11, padding: '8px 0' }}>
-          Fallback is off — only Row 1 (the default) will run. Failures surface as errors instead of trying the rest of the list.
-        </div>
-      )}
-
       <Section title="Advisor"/>
       <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
         The advisor is the routing/orchestration model: it runs the <code>/team</code> advisor and picks workers for Auto-mode teams. Set a stronger model (e.g. Opus) here for better routing decisions. Leave both as <em>Use default</em> to fall back to the gateway default agent + model.
@@ -643,6 +611,47 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
           ))}
         </select>
       </div>
+
+      <Section title="Models" right={
+        <button onClick={() => setCreating(true)} style={pillButton('primary')} disabled={creating}>+ Add</button>
+      }/>
+      {creating && (
+        <ModelRow
+          entry={{ apiType: 'anthropic', model: '' }}
+          apis={apis}
+          isNew
+          onSave={saveModel}
+          onCancel={() => setCreating(false)}
+        />
+      )}
+      {models.length === 0 && !creating && (
+        <div style={{ color: C.fg3, fontSize: 12, padding: '16px 0' }}>No models yet. Click + Add to create one.</div>
+      )}
+      {[...models]
+        .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
+        .map(m => <ModelRow key={m.model} entry={m} apis={apis} onSave={saveModel} onDelete={deleteModel}/>)}
+
+      <Section title="Agent priority" right={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: C.fg3, fontSize: 11 }}>{fallback.enabled ? 'Enabled' : 'Disabled'}</span>
+          <Toggle on={fallback.enabled} onChange={enabled => updateFallback({ ...fallback, enabled })}/>
+        </div>
+      }/>
+      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
+        Row 1 is the default agent + model. When fallback is enabled and a request fails, the gateway tries each subsequent row in order. Drag to reorder.
+      </div>
+      <FallbackList
+        order={fallback.order}
+        models={models}
+        enabledAgents={enabledAgents}
+        onChange={next => updateFallback({ ...fallback, order: next })}
+      />
+      {!fallback.enabled && (
+        <div style={{ color: C.fg3, fontSize: 11, padding: '8px 0' }}>
+          Fallback is off — only Row 1 (the default) will run. Failures surface as errors instead of trying the rest of the list.
+        </div>
+      )}
+
     </div>
   )
 }

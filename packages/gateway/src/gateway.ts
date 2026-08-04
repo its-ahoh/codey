@@ -22,7 +22,7 @@ import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
-import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
+import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
 import { resolveChoiceDigit } from './digit-mapping';
@@ -5277,16 +5277,19 @@ Example: /model gpt-4.1 write a Python script`;
     // resume) because team dispatch builds worker prompts internally.
     const selPrefix = assistantPrefixForSelection(chat);
     const canResume = chat.selection.type !== 'team';
-    const warmAnchor = canResume && chat.sessionAnchor && chat.sessionAnchor.agent === agent
-      ? chat.sessionAnchor
+    const warmAnchor = canResume
+      ? this.chatManager.getSessionAnchor(chatId, agent, model?.model)
       : undefined;
 
     let prompt: string;
     let resumeSessionId: string | undefined;
     let newSessionId: string | undefined;
     if (warmAnchor) {
-      // Resume turn: send only the new user text (+ attachments).
-      prompt = selPrefix + buildChatResumePrompt(userText, attachments);
+      // Resume the agent's own session. If other agents produced messages
+      // while it was inactive, replay only that unseen gap before the new turn.
+      prompt = selPrefix + (warmAnchor.syncedThroughMessageId
+        ? buildChatCatchupPrompt(chat, warmAnchor.syncedThroughMessageId, userText, attachments)
+        : buildChatResumePrompt(userText, attachments));
       resumeSessionId = warmAnchor.sessionId;
     } else {
       // Bootstrap turn: include prior history once. For claude-code, pre-allocate
@@ -5386,6 +5389,7 @@ Example: /model gpt-4.1 write a Python script`;
       let teamTurnId: string | undefined;
       let agentUserQuestion: AgentResponse['userQuestion'];
       let singleAgentResponse: AgentResponse | null | undefined;
+      let detachedSoloAdvisorRun = false;
       if (pendingTeam && !isSlashTurn) {
         // This turn answers a paused team's question. Resume regardless of the
         // chat's current selection — a paused team can outlive a selection change.
@@ -5476,7 +5480,7 @@ Example: /model gpt-4.1 write a Python script`;
         // drop the anchor and retry once with a full bootstrap prompt.
         if (resumeSessionId && !response?.success && !abortController.signal.aborted) {
           this.logger.warn(`[chat ${chatId}] resume of ${resumeSessionId} failed; bootstrapping`);
-          this.chatManager.clearSessionAnchor(chatId);
+          this.chatManager.clearSessionAnchor(chatId, agent, model?.model);
           streamedText = '';
           resumeSessionId = undefined;
           newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
@@ -5530,6 +5534,7 @@ Example: /model gpt-4.1 write a Python script`;
           // Intentionally no resumeSessionId/newSessionId — each re-run bootstraps
           // fresh (the prior attempt + guidance are inlined in the followup prompt)
           // so this works uniformly across all agent types, not just claude-code.
+          detachedSoloAdvisorRun = true;
           response = await this.runWithFallback(agent, {
             prompt: followup,
             agent,
@@ -5548,13 +5553,7 @@ Example: /model gpt-4.1 write a Python script`;
         output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
         if (chat.soloAdvisor) output = stripAskAdvisor(output);
         tokens = (response as any)?.tokens?.total;
-        // Persist the anchor on success for next-turn resume.
-        if (canResume && response?.success) {
-          const anchorId = newSessionId ?? (response as any)?.sessionId;
-          if (anchorId) {
-            this.chatManager.setSessionAnchor(chatId, { agent, sessionId: anchorId });
-          }
-        }
+        // The cursor is advanced after the assistant message is persisted.
         // Surface permission denials so the UI can offer to add them to the allow list.
         if (response?.permissionDenials && response.permissionDenials.length > 0) {
           sink({ type: 'permission_denials', chatId, denials: response.permissionDenials });
@@ -5632,6 +5631,22 @@ Example: /model gpt-4.1 write a Python script`;
       let teamSummaryMessageId: string | undefined;
       if (!teamTurnId) {
         const updated = this.chatManager.appendMessage(chatId, assistantMessage);
+
+        if (canResume && singleAgentResponse?.success && !detachedSoloAdvisorRun) {
+          // A fallback response belongs to the fallback adapter's emitted
+          // session, never the primary adapter's resume/new session id.
+          const anchorId = singleAgentResponse.fallback
+            ? (singleAgentResponse as any)?.sessionId
+            : resumeSessionId ?? newSessionId ?? (singleAgentResponse as any)?.sessionId;
+          if (anchorId) {
+            this.chatManager.setSessionAnchor(chatId, {
+              agent: responseAgent,
+              model: responseModel,
+              sessionId: anchorId,
+              syncedThroughMessageId: assistantMessage.id,
+            });
+          }
+        }
 
         // Persist lastAskedOptions on non-team chats so the next user reply can
         // be digit-mapped. Team flows track this via pendingTeam.options.
