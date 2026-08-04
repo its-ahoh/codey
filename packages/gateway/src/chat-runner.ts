@@ -139,6 +139,39 @@ export function buildChatResumePrompt(
   return parts.join('\n\n');
 }
 
+/**
+ * Resume a previously used agent after another agent handled some turns.
+ * Only messages newer than this session's sync cursor are replayed, so an
+ * agent receives the gap exactly once instead of being polluted by the full
+ * transcript every time the user switches back.
+ */
+export function buildChatCatchupPrompt(
+  chat: Chat,
+  syncedThroughMessageId: string,
+  userText: string,
+  attachments?: FileAttachment[],
+): string {
+  const cursor = chat.messages.findIndex(message => message.id === syncedThroughMessageId);
+  if (cursor < 0 || cursor === chat.messages.length - 1) {
+    return buildChatResumePrompt(userText, attachments);
+  }
+
+  const parts: string[] = [];
+  if (attachments && attachments.length > 0) parts.push(formatAttachmentList(attachments));
+
+  const updates = chat.messages.slice(cursor + 1).map(message => {
+    if (message.role === 'user') return `[user]\n${message.content}`;
+    const identity = [message.agent, message.model].filter(Boolean).join(' / ');
+    return `[assistant${identity ? ` via ${identity}` : ''}]\n${message.content}`;
+  }).join('\n\n');
+
+  parts.push(
+    `[Codey conversation updates since this agent was last active — context only; do not repeat or fabricate turns]\n${updates}`,
+    `[Respond to this new user message]\n${userText}`,
+  );
+  return parts.join('\n\n');
+}
+
 export function assistantPrefixForSelection(chat: Chat): string {
   switch (chat.selection.type) {
     case 'worker': return `[worker:${chat.selection.name}]\n`;

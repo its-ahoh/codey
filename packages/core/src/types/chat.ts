@@ -165,14 +165,21 @@ export interface Chat {
     }[];
     inducedFrom?: string[];
   };
-  /**
-   * Warm CLI session for this chat. When set, the next turn for the same
-   * coding agent is sent via `--resume <sessionId>` (only the new user text is
-   * passed to the agent; the agent retrieves prior context from its own
-   * session store). Cleared on agent switch, selection-type change, /clear,
-   * or when a resume attempt fails.
-   */
-  sessionAnchor?: { agent: 'claude-code' | 'opencode' | 'codex'; sessionId: string };
+  /** Warm CLI sessions retained independently for each agent/model identity. */
+  sessionAnchors?: Array<{
+    agent: 'claude-code' | 'opencode' | 'codex';
+    model?: string;
+    sessionId: string;
+    /** Last Codey transcript message already visible inside this CLI session. */
+    syncedThroughMessageId?: string;
+  }>;
+  /** Legacy single-anchor field. Read for migration, never written by new code. */
+  sessionAnchor?: {
+    agent: 'claude-code' | 'opencode' | 'codex';
+    model?: string;
+    sessionId: string;
+    syncedThroughMessageId?: string;
+  };
   /**
    * Rolling LLM-generated summary of older messages. When set, the bootstrap
    * prompt prepends `summary` and only renders the transcript tail starting at

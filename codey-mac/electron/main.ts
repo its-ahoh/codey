@@ -2406,7 +2406,6 @@ app.whenReady().then(async () => {
       // through the normal clipboard. Sending Cmd+V via System Events
       // requires Accessibility permission; if denied, the clipboard fallback
       // still lets the user paste manually.
-      let pasted = false
       const codeyFocused = mainWindow?.isFocused() === true
       if (process.platform === 'darwin' && !codeyFocused) {
         try {
@@ -2417,27 +2416,19 @@ app.whenReady().then(async () => {
               'tell application "System Events" to keystroke "v" using command down',
             ])
             const t = setTimeout(() => { try { p.kill() } catch { /* gone */ } resolve() }, 2000)
-            p.on('close', (code) => { clearTimeout(t); if (code === 0) pasted = true; resolve() })
+            p.on('close', () => { clearTimeout(t); resolve() })
             p.on('error', () => { clearTimeout(t); resolve() })
           })
-        } catch { /* fall through to notification */ }
+        } catch { /* clipboard remains available */ }
       }
-      if (!pasted && Notification.isSupported()) {
-        const n = new Notification({
-          title: 'Voice transcribed (copied to clipboard)',
-          body: text.length > 120 ? text.slice(0, 117) + '…' : text,
-          silent: true,
-        })
-        n.show()
-      }
+      // The clipboard remains the fallback when auto-paste is unavailable.
+      // Voice input deliberately does not create a system notification.
     })
   )
 
   ipcMain.handle('voice:error', async (_e, message: string) =>
     wrap(async () => {
-      if (Notification.isSupported()) {
-        new Notification({ title: 'Voice input failed', body: String(message ?? 'Unknown error') }).show()
-      }
+      console.warn('Voice input failed:', String(message ?? 'Unknown error'))
     })
   )
 

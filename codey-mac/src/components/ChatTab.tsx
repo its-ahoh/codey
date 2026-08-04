@@ -33,6 +33,16 @@ import { TerminalPanel } from './TerminalPanel'
 import { splitWhiteboardMarkers, type WhiteboardMarker } from './teamWhiteboardFormat'
 import { groupTeamMessagesByMember, type TeamMemberMessageGroup } from './teamRunModel'
 import { ToolCallList } from './ToolCallList'
+import {
+  VOICE_RESULT_EVENT,
+  VOICE_LEVEL_EVENT,
+  VOICE_STATE_EVENT,
+  toggleVoiceInput,
+  type VoiceInputState,
+  type VoiceResultDetail,
+  type VoiceLevelDetail,
+  type VoiceStateDetail,
+} from './voiceInputEvents'
 
 const EDITOR_LOGOS: Partial<Record<string, string>> = {
   vscode: vscodeLogo,
@@ -87,6 +97,32 @@ const PaperclipIcon: React.FC<{ color: string }> = ({ color }) => (
   <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
     <path d="M21.44 11.05L12.25 20.24a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 11-2.83-2.83l8.49-8.48" />
   </svg>
+)
+
+const MicrophoneIcon: React.FC<{ color: string }> = ({ color }) => (
+  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <rect x="9" y="2" width="6" height="12" rx="3" />
+    <path d="M5 10a7 7 0 0014 0M12 17v5M8 22h8" />
+  </svg>
+)
+
+const VoiceWaveform: React.FC<{ levels: number[] }> = ({ levels }) => (
+  <div
+    style={styles.voiceWaveform}
+    role="status"
+    aria-label="Recording"
+    title="Recording"
+  >
+    {levels.map((level, index) => (
+      <span
+        key={index}
+        style={{
+          ...styles.voiceWaveBar,
+          height: 3 + Math.round(level * 10),
+        }}
+      />
+    ))}
+  </div>
 )
 
 const UploadCloudIcon: React.FC<{ color: string; size?: number }> = ({ color, size = 32 }) => (
@@ -870,6 +906,60 @@ export const ChatTab: React.FC<Props> = ({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const voiceTargetId = `chat-composer:${chatId}`
+  const voiceSelectionRef = useRef<{ start: number; end: number } | null>(null)
+  const [voiceState, setVoiceState] = useState<VoiceInputState>('idle')
+  const [voiceLevels, setVoiceLevels] = useState<number[]>(() => Array(11).fill(0.08))
+
+  useEffect(() => {
+    const onState = (event: Event) => {
+      const detail = (event as CustomEvent<VoiceStateDetail>).detail
+      if (detail.targetId === voiceTargetId) {
+        setVoiceState(detail.state)
+        if (detail.state !== 'recording') setVoiceLevels(Array(11).fill(0.08))
+      }
+    }
+    const onLevel = (event: Event) => {
+      const detail = (event as CustomEvent<VoiceLevelDetail>).detail
+      if (detail.targetId === voiceTargetId) setVoiceLevels(detail.levels)
+    }
+    const onResult = (event: Event) => {
+      const detail = (event as CustomEvent<VoiceResultDetail>).detail
+      if (detail.targetId !== voiceTargetId) return
+
+      let nextCursor = 0
+      setInput(current => {
+        const selection = voiceSelectionRef.current ?? { start: current.length, end: current.length }
+        const start = Math.min(selection.start, current.length)
+        const end = Math.min(Math.max(selection.end, start), current.length)
+        const spoken = detail.text.trim()
+        const leading = start > 0 && !/\s/.test(current[start - 1]) ? ' ' : ''
+        const trailing = end < current.length && !/\s/.test(current[end]) ? ' ' : ''
+        const inserted = `${leading}${spoken}${trailing}`
+        nextCursor = start + inserted.length
+        return current.slice(0, start) + inserted + current.slice(end)
+      })
+      setInputHistoryIndex(null)
+      requestAnimationFrame(() => {
+        const textarea = taRef.current
+        if (!textarea) return
+        textarea.focus()
+        textarea.setSelectionRange(nextCursor, nextCursor)
+        if (composerHeight == null) {
+          textarea.style.height = 'auto'
+          textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px'
+        }
+      })
+    }
+    window.addEventListener(VOICE_STATE_EVENT, onState)
+    window.addEventListener(VOICE_LEVEL_EVENT, onLevel)
+    window.addEventListener(VOICE_RESULT_EVENT, onResult)
+    return () => {
+      window.removeEventListener(VOICE_STATE_EVENT, onState)
+      window.removeEventListener(VOICE_LEVEL_EVENT, onLevel)
+      window.removeEventListener(VOICE_RESULT_EVENT, onResult)
+    }
+  }, [voiceTargetId, composerHeight])
 
   useEffect(() => {
     if (composerHeight != null) localStorage.setItem('codey.composerHeight', String(composerHeight))
@@ -2129,23 +2219,7 @@ export const ChatTab: React.FC<Props> = ({
               })}
             </div>
           )}
-          <div style={styles.composerRow}>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,text/*,.json,.ts,.tsx,.js,.jsx,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.css,.html,.md,.yaml,.yml,.toml,.xml,.sh,.bash,.zsh,.log,.csv,.sql"
-              style={{ display: 'none' }}
-              onChange={handleFilePick}
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={!isGatewayRunning || !!coreFailed || isSending}
-              style={styles.attachButton}
-              title="Attach file"
-            >
-              <PaperclipIcon color={isGatewayRunning && !isSending ? C.fg2 : C.fg3} />
-            </button>
+          <div style={styles.composerInputRow}>
             <textarea
               ref={taRef}
               value={input}
@@ -2164,23 +2238,71 @@ export const ChatTab: React.FC<Props> = ({
                 ? { ...styles.input, height: composerHeight, maxHeight: 'none' }
                 : styles.input}
             />
-            {isSending ? (
+          </div>
+          <div style={styles.composerToolbar}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,text/*,.json,.ts,.tsx,.js,.jsx,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.css,.html,.md,.yaml,.yml,.toml,.xml,.sh,.bash,.zsh,.log,.csv,.sql"
+              style={{ display: 'none' }}
+              onChange={handleFilePick}
+            />
+            <div style={styles.composerTools}>
               <button
-                onClick={() => stopChat(chatId)}
-                style={{ ...styles.sendButton, background: C.red, cursor: 'pointer' }}
-                title="Stop (Esc)"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!isGatewayRunning || !!coreFailed || isSending}
+                style={styles.attachButton}
+                title="Attach file"
               >
-                <StopIcon color="#fff" />
+                <PaperclipIcon color={isGatewayRunning && !isSending ? C.fg2 : C.fg3} />
               </button>
-            ) : (
+            </div>
+            <div style={styles.composerActions}>
+              {voiceState === 'recording' && <VoiceWaveform levels={voiceLevels} />}
               <button
-                onClick={send}
-                disabled={!canSend}
-                style={{ ...styles.sendButton, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
+                type="button"
+                onMouseDown={event => {
+                  // Keep the insertion point in the textarea when the button is clicked.
+                  event.preventDefault()
+                  const textarea = taRef.current
+                  voiceSelectionRef.current = textarea
+                    ? { start: textarea.selectionStart, end: textarea.selectionEnd }
+                    : { start: input.length, end: input.length }
+                }}
+                onClick={() => toggleVoiceInput(voiceTargetId)}
+                disabled={!isGatewayRunning || !!coreFailed}
+                style={{
+                  ...styles.voiceButton,
+                  color: voiceState === 'idle' ? C.fg2 : '#fff',
+                  background: voiceState === 'recording' ? C.red : voiceState === 'transcribing' ? C.accent : 'transparent',
+                  cursor: isGatewayRunning && !coreFailed ? 'pointer' : 'default',
+                }}
+                title={voiceState === 'recording' ? 'Stop dictation' : voiceState === 'transcribing' ? 'Transcribing…' : 'Start dictation'}
+                aria-label={voiceState === 'recording' ? 'Stop dictation' : 'Start dictation'}
               >
-                <SendIcon color={canSend ? C.onAccent : C.fg3} />
+                {voiceState === 'recording'
+                  ? <StopIcon color="#fff" />
+                  : <MicrophoneIcon color={voiceState === 'idle' ? (isGatewayRunning && !coreFailed ? C.fg2 : C.fg3) : '#fff'} />}
               </button>
-            )}
+              {isSending ? (
+                <button
+                  onClick={() => stopChat(chatId)}
+                  style={{ ...styles.sendButton, background: C.red, cursor: 'pointer' }}
+                  title="Stop (Esc)"
+                >
+                  <StopIcon color="#fff" />
+                </button>
+              ) : (
+                <button
+                  onClick={send}
+                  disabled={!canSend}
+                  style={{ ...styles.sendButton, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
+                >
+                  <SendIcon color={canSend ? C.onAccent : C.fg3} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -2449,16 +2571,35 @@ const styles: Record<string, React.CSSProperties> = {
     width: 26, height: 3, borderRadius: 2, background: C.fg3,
     transition: 'opacity 0.12s ease',
   },
-  composerRow: { display: 'flex', gap: 8, alignItems: 'flex-end', padding: 7 },
+  composerInputRow: { display: 'flex', padding: '12px 13px 4px' },
+  composerToolbar: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    gap: 8, padding: '4px 7px 7px',
+  },
+  composerTools: { display: 'flex', alignItems: 'center', gap: 4 },
+  composerActions: { display: 'flex', alignItems: 'center', gap: 4 },
   input: {
-    flex: 1, background: 'transparent', border: 'none', borderRadius: 8,
-    color: C.fg, fontSize: 13, padding: '11px 6px 9px', outline: 'none', resize: 'none',
+    width: '100%', background: 'transparent', border: 'none', borderRadius: 8,
+    color: C.fg, fontSize: 13, padding: '4px 2px', outline: 'none', resize: 'none',
     lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
   },
   sendButton: {
     width: 38, height: 38, borderRadius: 11, border: 'none',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, transition: 'background 0.15s',
+  },
+  voiceButton: {
+    width: 36, height: 36, borderRadius: 9, border: 'none',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0, transition: 'background 0.15s',
+  },
+  voiceWaveform: {
+    height: 36, minWidth: 48, display: 'flex', alignItems: 'center',
+    justifyContent: 'center', gap: 2.5, flexShrink: 0,
+  },
+  voiceWaveBar: {
+    width: 2, minHeight: 3, maxHeight: 13, borderRadius: 2,
+    background: C.red, transition: 'height 45ms linear',
   },
   iconButtonPlus: { fontSize: 12, lineHeight: 1, marginLeft: 1, color: C.accent, fontWeight: 700 },
   orphanBanner: { padding: '8px 12px', background: C.warningBg, color: C.warningFg, fontSize: 12, borderTop: `1px solid ${C.border}` },
