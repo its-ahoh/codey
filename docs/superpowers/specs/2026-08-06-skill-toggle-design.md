@@ -37,6 +37,15 @@ skill Codey disabled stays disabled for every agent that scans that directory.
 - New pure function `setSkillEnabled(fsMod, pathMod, dir, enabled)`: performs the
   rename, is a no-op when the directory is already in the requested state, and
   throws when neither file exists.
+- One ambiguous case needs a decision, because a directory can end up holding
+  *both* files — `skills:install` copies a source tree wholesale, so importing a
+  folder where someone had hand-disabled a skill lands both files in a managed
+  root. The rename must never overwrite, since the existing `SKILL.md.disabled`
+  may be a hand-written backup. Enabling from that state is a correct no-op: the
+  skill really is enabled and the stale file is just litter. Disabling from it
+  throws, rather than returning success without renaming — a silent success there
+  is the one outcome that leaves the UI showing "off" for a skill the agent still
+  loads.
 
 ### 3. IPC and the slash-command palette
 
@@ -72,6 +81,8 @@ special handling.
 - `setSkillEnabled` round-trips a skill disabled and enabled again.
 - Repeated calls in the same direction are a no-op rather than an error.
 - A directory with neither file throws.
+- A directory holding both files: disabling throws, enabling is a no-op, and both
+  files survive with their original content.
 - Plugin skill scanning preserves `enabled`.
 
 ## Out of scope
