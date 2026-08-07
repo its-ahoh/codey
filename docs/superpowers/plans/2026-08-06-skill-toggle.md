@@ -161,7 +161,7 @@ with:
 cd codey-mac && npx vitest run electron/skills.test.ts
 ```
 
-Expected: PASS, 7 tests.
+Expected: PASS. (The file has 6 pre-existing tests, so 8 after this task.)
 
 - [ ] **Step 5: Commit**
 
@@ -276,7 +276,7 @@ export function setSkillEnabled(
 cd codey-mac && npx vitest run electron/skills.test.ts
 ```
 
-Expected: PASS, 11 tests.
+Expected: PASS, with four more tests than Task 1 left behind.
 
 - [ ] **Step 5: Commit**
 
