@@ -12,9 +12,9 @@ describe('SentenceAccumulator', () => {
 
   it('handles Chinese terminators', () => {
     const acc = new SentenceAccumulator();
-    expect(acc.push('改完了。细节')).toEqual(['改完了。']);
-    expect(acc.push('在屏幕上。')).toEqual([]);
-    expect(acc.flush()).toEqual(['细节在屏幕上。']);
+    expect(acc.push('改完了。细节')).toEqual(['改完了。']); // lint-allow-non-english
+    expect(acc.push('在屏幕上。')).toEqual([]); // lint-allow-non-english
+    expect(acc.flush()).toEqual(['细节在屏幕上。']); // lint-allow-non-english
   });
 
   it('holds back a terminator run that may continue in the next chunk', () => {
@@ -39,7 +39,7 @@ describe('SentenceAccumulator', () => {
   });
 
   it('agrees with splitIntoSentences when fed one character at a time', () => {
-    const text = 'Fixed it. 两个文件改好了！细节在屏幕上？好。';
+    const text = 'Fixed it. 两个文件改好了！细节在屏幕上？好。'; // lint-allow-non-english
     const acc = new SentenceAccumulator();
     const streamed: string[] = [];
     for (const ch of text) streamed.push(...acc.push(ch));
@@ -57,9 +57,9 @@ describe('splitIntoSentences', () => {
   });
 
   it('splits Chinese sentences on Chinese punctuation', () => {
-    expect(splitIntoSentences('我改了三个文件。主要逻辑在网关里。')).toEqual([
-      '我改了三个文件。',
-      '主要逻辑在网关里。',
+    expect(splitIntoSentences('我改了三个文件。主要逻辑在网关里。')).toEqual([ // lint-allow-non-english
+      '我改了三个文件。', // lint-allow-non-english
+      '主要逻辑在网关里。', // lint-allow-non-english
     ]);
   });
 

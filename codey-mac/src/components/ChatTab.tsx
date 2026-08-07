@@ -1580,7 +1580,7 @@ export const ChatTab: React.FC<Props> = ({
       // A very fast agent reply can beat acknowledgement generation. Never
       // let a late ack interrupt the actual answer or leak into a newer turn.
       if (ackGeneration !== voiceAckGenerationRef.current || !spokenTurnRef.current) return
-      const fallback = /[\u4e00-\u9fff]/.test(spoken) ? '好的，我去处理' : 'Got it, working on it.'
+      const fallback = /[\u4e00-\u9fff]/.test(spoken) ? '好的，我去处理' : 'Got it, working on it.' // lint-allow-non-english
       void voice.speak(result.ok ? result.data.text : fallback, undefined, true)
     })
   }, [input]) // eslint-disable-line react-hooks/exhaustive-deps

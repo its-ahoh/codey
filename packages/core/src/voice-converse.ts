@@ -20,11 +20,11 @@ export type VoiceConverseEvent =
 
 /**
  * Splits digest text into sentence-sized chunks for sentence-aligned
- * text/audio streaming. Handles both English (.!?) and Chinese (。！？) and
+ * text/audio streaming. Handles both English (.!?) and Chinese (。！？) and // lint-allow-non-english
  * newline breaks in one pass; keeps the terminating punctuation on the
  * sentence it closes, so spoken segments read naturally.
  */
-const TERMINATOR_CLASS = '.!?。！？';
+const TERMINATOR_CLASS = '.!?。！？'; // lint-allow-non-english
 const SENTENCE_RE = new RegExp(
   `[^${TERMINATOR_CLASS}]+[${TERMINATOR_CLASS}]+|[^${TERMINATOR_CLASS}]+$`,
   'g',

@@ -38,45 +38,45 @@ const PATTERNS: Pattern[] = [
   },
   // Chinese variants — matched against a whitespace-stripped utterance since
   // spoken Chinese transcripts carry no word spacing.
-  // Suffix-first: 切换到工作区codey / 切换到workspace codey
+  // Suffix-first: 切换到工作区codey / 切换到workspace codey // lint-allow-non-english
   {
-    regex: /^(?:切换|切到|跳转|转到)(?:到)?(?:工作区|工作空间)(.+)$/,
+    regex: /^(?:切换|切到|跳转|转到)(?:到)?(?:工作区|工作空间)(.+)$/, // lint-allow-non-english
     build: (m) => ({ type: 'switch-workspace', workspace: m[1].trim() }),
   },
   {
-    regex: /^(?:切换|切到|跳转|转到)(?:到)?workspace(.+)$/i,
+    regex: /^(?:切换|切到|跳转|转到)(?:到)?workspace(.+)$/i, // lint-allow-non-english
     build: (m) => ({ type: 'switch-workspace', workspace: m[1].trim() }),
   },
-  // Name-first: 切换到codey工作区 / 切换到codey workspace
+  // Name-first: 切换到codey工作区 / 切换到codey workspace // lint-allow-non-english
   {
-    regex: /^(?:切换|切到|跳转|转到)(?:到)?(.+?)(?:工作区|工作空间)$/,
-    build: (m) => ({ type: 'switch-workspace', workspace: m[1].trim() }),
-  },
-  {
-    regex: /^(?:切换|切到|跳转|转到)(?:到)?(.+?)workspace$/i,
+    regex: /^(?:切换|切到|跳转|转到)(?:到)?(.+?)(?:工作区|工作空间)$/, // lint-allow-non-english
     build: (m) => ({ type: 'switch-workspace', workspace: m[1].trim() }),
   },
   {
-    regex: /^(?:(?:查看|获取|检查|看看|念)?(?:一下)?(?:我的)?通知(?:有哪些|是什么)?|通知)$/,
+    regex: /^(?:切换|切到|跳转|转到)(?:到)?(.+?)workspace$/i, // lint-allow-non-english
+    build: (m) => ({ type: 'switch-workspace', workspace: m[1].trim() }),
+  },
+  {
+    regex: /^(?:(?:查看|获取|检查|看看|念)?(?:一下)?(?:我的)?通知(?:有哪些|是什么)?|通知)$/, // lint-allow-non-english
     build: () => ({ type: 'list-notifications' }),
   },
-  // 有什么通知 / 有没有新通知 / 有哪些通知吗
+  // 有什么通知 / 有没有新通知 / 有哪些通知吗 // lint-allow-non-english
   {
-    regex: /^(?:有什么|有哪些|有没有|有无)(?:新的?)?(?:未读)?通知(?:吗)?$/,
+    regex: /^(?:有什么|有哪些|有没有|有无)(?:新的?)?(?:未读)?通知(?:吗)?$/, // lint-allow-non-english
     build: () => ({ type: 'list-notifications' }),
   },
   {
-    regex: /^(?:列出|显示|查看)(?:我的)?(?:所有)?(?:工作区|工作空间)(?:列表)?$/,
+    regex: /^(?:列出|显示|查看)(?:我的)?(?:所有)?(?:工作区|工作空间)(?:列表)?$/, // lint-allow-non-english
     build: () => ({ type: 'list-workspaces' }),
   },
-  // 说详细点 / 再详细一点 / 详细说说 / 更详细一些
+  // 说详细点 / 再详细一点 / 详细说说 / 更详细一些 // lint-allow-non-english
   {
-    regex: /^(?:再|请)?(?:说|讲)?(?:得|的)?(?:更)?详细(?:一?点|一?些)?(?:说说|讲讲)?$/,
+    regex: /^(?:再|请)?(?:说|讲)?(?:得|的)?(?:更)?详细(?:一?点|一?些)?(?:说说|讲讲)?$/, // lint-allow-non-english
     build: () => ({ type: 'more-detail' }),
   },
-  // 展开讲讲 / 多说一点
+  // 展开讲讲 / 多说一点 // lint-allow-non-english
   {
-    regex: /^(?:展开(?:讲讲|说说|说一?下)|多说(?:一?点|一?些))$/,
+    regex: /^(?:展开(?:讲讲|说说|说一?下)|多说(?:一?点|一?些))$/, // lint-allow-non-english
     build: () => ({ type: 'more-detail' }),
   },
 ];
@@ -89,7 +89,7 @@ const PATTERNS: Pattern[] = [
 export function parseVoiceCommand(utterance: string): VoiceCommand | null {
   const trimmed = utterance
     .trim()
-    .replace(/[.!?。!?，,]+$/, '')
+    .replace(/[.!?。!?，,]+$/, '') // lint-allow-non-english
     .trim();
   if (!trimmed) return null;
   const noSpace = trimmed.replace(/\s+/g, '');

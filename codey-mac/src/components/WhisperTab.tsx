@@ -425,7 +425,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           <option value="">{emptyLabel}</option>
           {savedVoiceKeys.map(key => <option key={key.name} value={key.name}>{key.name}</option>)}
           <option disabled>──────────</option>
-          <option value={addNewValue}>＋ Add new key…</option>
+          <option value={addNewValue}>+ Add new key…</option>
         </select>
       </div>
     </div>

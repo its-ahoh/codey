@@ -50,10 +50,10 @@ describe('canRunDirectly', () => {
 
 describe('runTextCompletion — anthropic', () => {
   it('posts to /messages with the anthropic auth headers and returns the text', async () => {
-    state.impl = anthropicOk('改完了，三个文件。');
+    state.impl = anthropicOk('改完了，三个文件。'); // lint-allow-non-english
     const out = await runTextCompletion('hi', ANTHROPIC_MODEL);
 
-    expect(out).toBe('改完了，三个文件。');
+    expect(out).toBe('改完了，三个文件。'); // lint-allow-non-english
     const [url, opts] = calls[0];
     expect(url).toBe('https://api.anthropic.com/v1/messages');
     expect(opts.headers['x-api-key']).toBe('sk-a');
@@ -87,12 +87,12 @@ describe('runTextCompletion — openai', () => {
 
 describe('streamTextCompletion', () => {
   it('reports anthropic deltas as they arrive and returns the full text', async () => {
-    state.impl = streamRespond(200, [anthropicDelta('改完了。'), anthropicDelta('细节在屏幕上。')]);
+    state.impl = streamRespond(200, [anthropicDelta('改完了。'), anthropicDelta('细节在屏幕上。')]); // lint-allow-non-english
     const deltas: string[] = [];
     const out = await streamTextCompletion('hi', ANTHROPIC_MODEL, (d) => deltas.push(d));
 
-    expect(deltas).toEqual(['改完了。', '细节在屏幕上。']);
-    expect(out).toBe('改完了。细节在屏幕上。');
+    expect(deltas).toEqual(['改完了。', '细节在屏幕上。']); // lint-allow-non-english
+    expect(out).toBe('改完了。细节在屏幕上。'); // lint-allow-non-english
     expect(JSON.parse(calls[0][1].body).stream).toBe(true);
   });
 

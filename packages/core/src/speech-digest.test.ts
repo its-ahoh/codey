@@ -27,9 +27,9 @@ describe('buildSpeechDigestPrompt', () => {
   });
 
   it('instructs the model to keep the source language', () => {
-    const prompt = buildSpeechDigestPrompt('修复了 foo.ts 里的空指针问题。');
+    const prompt = buildSpeechDigestPrompt('修复了 foo.ts 里的空指针问题。'); // lint-allow-non-english
     expect(prompt.toLowerCase()).toContain('same language');
-    expect(prompt).toContain('修复了 foo.ts 里的空指针问题。');
+    expect(prompt).toContain('修复了 foo.ts 里的空指针问题。'); // lint-allow-non-english
   });
 });
 
@@ -58,7 +58,7 @@ describe('stripForSpeech', () => {
   });
 
   it('leaves ordinary prose untouched', () => {
-    const prose = '我改了三个文件，主要逻辑在网关里。';
+    const prose = '我改了三个文件，主要逻辑在网关里。'; // lint-allow-non-english
     expect(stripForSpeech(prose)).toBe(prose);
   });
 });

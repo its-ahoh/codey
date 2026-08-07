@@ -76,7 +76,7 @@ function makeHarness(opts: {
   });
   gateway.switchWorkspaceByName = async () => opts.switchOk ?? true;
   gateway.getWorkspaceList = () => opts.workspaces ?? ['codey', 'notes'];
-  gateway.describeUnseenNotifications = () => opts.notifications ?? '有两条未读通知。';
+  gateway.describeUnseenNotifications = () => opts.notifications ?? '有两条未读通知。'; // lint-allow-non-english
   gateway.streamVoiceDigest = async (_full: string, onSentence: (s: string) => void) => {
     if (opts.digestSentences === null || opts.digestSentences === undefined) return false;
     opts.digestSentences.forEach(onSentence);
@@ -107,30 +107,30 @@ beforeEach(() => {
 describe('runVoiceConverse — command short-circuit', () => {
   it('switches workspace without ever running the agent', async () => {
     const h = makeHarness();
-    const events = await run(h, '切换到 codey 工作区');
+    const events = await run(h, '切换到 codey 工作区'); // lint-allow-non-english
 
     expect(typesOf(events)).toEqual(['start', 'command', 'done']);
-    expect(events[1]).toMatchObject({ action: 'switch-workspace', result: '已切换到 codey' });
+    expect(events[1]).toMatchObject({ action: 'switch-workspace', result: '已切换到 codey' }); // lint-allow-non-english
     expect(h.agentCalls).toEqual([]);
   });
 
   it('reports a workspace that does not exist rather than failing silently', async () => {
     const h = makeHarness({ switchOk: false });
-    const events = await run(h, '切换到 nope 工作区');
-    expect(events[1]).toMatchObject({ result: '没有找到工作区 nope' });
+    const events = await run(h, '切换到 nope 工作区'); // lint-allow-non-english
+    expect(events[1]).toMatchObject({ result: '没有找到工作区 nope' }); // lint-allow-non-english
   });
 
   it('lists workspaces and notifications', async () => {
     const listed = await run(makeHarness(), 'list workspaces');
-    expect(listed[1]).toMatchObject({ action: 'list-workspaces', result: '工作区有：codey、notes' });
+    expect(listed[1]).toMatchObject({ action: 'list-workspaces', result: '工作区有：codey、notes' }); // lint-allow-non-english
 
-    const notified = await run(makeHarness(), '有什么通知');
-    expect(notified[1]).toMatchObject({ action: 'list-notifications', result: '有两条未读通知。' });
+    const notified = await run(makeHarness(), '有什么通知'); // lint-allow-non-english
+    expect(notified[1]).toMatchObject({ action: 'list-notifications', result: '有两条未读通知。' }); // lint-allow-non-english
   });
 
   it('says so when there are no workspaces configured', async () => {
     const events = await run(makeHarness({ workspaces: [] }), 'list workspaces');
-    expect(events[1]).toMatchObject({ result: '没有配置任何工作区。' });
+    expect(events[1]).toMatchObject({ result: '没有配置任何工作区。' }); // lint-allow-non-english
   });
 });
 
@@ -141,7 +141,7 @@ describe('runVoiceConverse — more detail', () => {
     h.events.length = 0;
     ttsCalls.length = 0;
 
-    const events = await run(h, '说详细点', 'conv-1');
+    const events = await run(h, '说详细点', 'conv-1'); // lint-allow-non-english
 
     expect(textsOf(events).map((e) => e.text)).toEqual(['Line one.', 'Line two.', 'Line three.']);
     expect(h.agentCalls).toHaveLength(1); // only the first turn
@@ -149,8 +149,8 @@ describe('runVoiceConverse — more detail', () => {
   });
 
   it('reports having nothing to expand, in the language of the request', async () => {
-    const zh = await run(makeHarness(), '说详细点', 'conv-empty');
-    expect(zh[1]).toMatchObject({ action: 'more-detail', result: '没有可以展开的内容。' });
+    const zh = await run(makeHarness(), '说详细点', 'conv-empty'); // lint-allow-non-english
+    expect(zh[1]).toMatchObject({ action: 'more-detail', result: '没有可以展开的内容。' }); // lint-allow-non-english
 
     const en = await run(makeHarness(), 'more detail', 'conv-empty');
     expect(en[1]).toMatchObject({ result: 'There is nothing to expand on yet.' });
@@ -160,7 +160,7 @@ describe('runVoiceConverse — more detail', () => {
     const h = makeHarness({ reply: 'Detailed reply.' });
     await run(h, 'hello');
     h.events.length = 0;
-    const events = await run(h, '说详细点');
+    const events = await run(h, '说详细点'); // lint-allow-non-english
     expect(events[1]).toMatchObject({ action: 'more-detail' });
   });
 });
@@ -176,8 +176,8 @@ describe('runVoiceConverse — conversation path', () => {
   });
 
   it('acknowledges in the language of the transcript', async () => {
-    const zh = await run(makeHarness({ digestSentences: ['好了。'] }), '改一下这个函数');
-    expect(zh[1]).toMatchObject({ type: 'ack', text: '好的，我去处理' });
+    const zh = await run(makeHarness({ digestSentences: ['好了。'] }), '改一下这个函数'); // lint-allow-non-english
+    expect(zh[1]).toMatchObject({ type: 'ack', text: '好的，我去处理' }); // lint-allow-non-english
 
     const en = await run(makeHarness({ digestSentences: ['Done.'] }), 'change this function');
     expect(en[1]).toMatchObject({ type: 'ack', text: 'Got it, working on it.' });
@@ -294,7 +294,7 @@ describe('runVoiceSpeak — speaking an existing reply', () => {
     await speak(h, 'Line one. Line two.', 'conv-speak');
     h.events.length = 0;
 
-    const events = await run(h, '说详细点', 'conv-speak');
+    const events = await run(h, '说详细点', 'conv-speak'); // lint-allow-non-english
     expect(textsOf(events).map((e) => e.text)).toEqual(['Line one.', 'Line two.']);
   });
 
@@ -328,10 +328,10 @@ describe('runVoiceSpeak — verbatim', () => {
   it('does not displace the cached reply behind "more detail"', async () => {
     const h = makeHarness({ digestSentences: ['Gist.'] });
     await h.gateway.runVoiceSpeak('Line one. Line two.', () => {}, 'conv-ack');
-    await h.gateway.runVoiceSpeak('好的，我去处理', () => {}, 'conv-ack', true);
+    await h.gateway.runVoiceSpeak('好的，我去处理', () => {}, 'conv-ack', true); // lint-allow-non-english
     h.events.length = 0;
 
-    const events = await run(h, '说详细点', 'conv-ack');
+    const events = await run(h, '说详细点', 'conv-ack'); // lint-allow-non-english
     expect(textsOf(events).map((e) => e.text)).toEqual(['Line one.', 'Line two.']);
   });
 
