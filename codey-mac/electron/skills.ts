@@ -3,6 +3,9 @@ import type * as Path from 'path'
 
 export type SkillScope = 'user' | 'project'
 
+/** Renaming SKILL.md to this hides the skill from every agent CLI's scan. */
+export const DISABLED_SKILL_FILE = 'SKILL.md.disabled'
+
 export interface ScannedSkill {
   name: string
   qualifiedName: string
@@ -10,6 +13,7 @@ export interface ScannedSkill {
   description: string
   scope: SkillScope
   dir: string
+  enabled: boolean
 }
 
 export function parseSkillFrontmatter(md: string): { name: string; description: string } {
@@ -79,8 +83,13 @@ export function scanSkillsDir(
     if (visited.has(real)) continue
     visited.add(real)
 
-    const skillMdPath = pathMod.join(current, 'SKILL.md')
-    if (fsMod.existsSync(skillMdPath)) {
+    // A disabled skill is still a skill: it marks the boundary so we neither
+    // lose it from the list nor walk its internals as if they were roots.
+    const activePath = pathMod.join(current, 'SKILL.md')
+    const disabledPath = pathMod.join(current, DISABLED_SKILL_FILE)
+    const enabled = fsMod.existsSync(activePath)
+    const skillMdPath = enabled ? activePath : disabledPath
+    if (enabled || fsMod.existsSync(disabledPath)) {
       try {
         const md = fsMod.readFileSync(skillMdPath, 'utf-8')
         const { name, description } = parseSkillFrontmatter(md)
@@ -91,6 +100,7 @@ export function scanSkillsDir(
           description,
           scope,
           dir: current,
+          enabled,
         })
       } catch { /* skip unreadable skill */ }
       continue

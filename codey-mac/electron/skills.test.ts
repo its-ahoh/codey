@@ -27,7 +27,31 @@ describe('agent skill discovery', () => {
     fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\r\nname: "Image Gen"\r\ndescription: Makes images\r\n---\r\n')
     fs.writeFileSync(path.join(skill, 'references', 'SKILL.md'), '---\nname: wrong\n---\n')
     expect(scanSkillsDir(fs, path, root, 'user')).toEqual([
-      { name: 'Image Gen', qualifiedName: 'Image Gen', description: 'Makes images', scope: 'user', dir: skill },
+      { name: 'Image Gen', qualifiedName: 'Image Gen', description: 'Makes images', scope: 'user', dir: skill, enabled: true },
+    ])
+  })
+
+  it('lists a disabled skill and stops descending into it', () => {
+    const root = temp()
+    const skill = path.join(root, 'noisy')
+    fs.mkdirSync(path.join(skill, 'references'), { recursive: true })
+    fs.writeFileSync(path.join(skill, 'SKILL.md.disabled'), '---\nname: noisy\ndescription: Too chatty\n---\n')
+    fs.writeFileSync(path.join(skill, 'references', 'SKILL.md'), '---\nname: wrong\n---\n')
+
+    expect(scanSkillsDir(fs, path, root, 'user')).toEqual([
+      { name: 'noisy', qualifiedName: 'noisy', description: 'Too chatty', scope: 'user', dir: skill, enabled: false },
+    ])
+  })
+
+  it('prefers the active SKILL.md when a stale disabled copy is left behind', () => {
+    const root = temp()
+    const skill = path.join(root, 'both')
+    fs.mkdirSync(skill, { recursive: true })
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: both\ndescription: Live\n---\n')
+    fs.writeFileSync(path.join(skill, 'SKILL.md.disabled'), '---\nname: both\ndescription: Stale\n---\n')
+
+    expect(scanSkillsDir(fs, path, root, 'user')).toEqual([
+      { name: 'both', qualifiedName: 'both', description: 'Live', scope: 'user', dir: skill, enabled: true },
     ])
   })
 
@@ -44,6 +68,7 @@ describe('agent skill discovery', () => {
         description: 'Explore ideas',
         scope: 'user',
         dir: skill,
+        enabled: true,
       },
     ])
   })
@@ -74,6 +99,7 @@ describe('agent skill discovery', () => {
         description: '',
         scope: 'user',
         dir: skill,
+        enabled: true,
       },
     ])
   })
