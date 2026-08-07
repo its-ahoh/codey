@@ -19,8 +19,8 @@ const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
 }
 
 // Matches the toggle idiom already used by PluginsTab / AppearanceTab.
-const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on, onChange }) => (
-  <div onClick={() => onChange(!on)} role="switch" aria-checked={on} style={{
+const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void; label?: string }> = ({ on, onChange, label }) => (
+  <div onClick={() => onChange(!on)} role="switch" aria-checked={on} aria-label={label} style={{
     width: 32, height: 18, borderRadius: 9, flexShrink: 0,
     background: on ? C.accent : C.surface3,
     border: `1px solid ${on ? C.accent : C.border2}`,
@@ -48,7 +48,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   const [selected, setSelected] = useState<SkillEntry | null>(null)
   const [copyState, setCopyState] = useState<{ label: string; status: 'copying' | 'done' | 'error'; msg?: string } | null>(null)
   const [copyMenuOpen, setCopyMenuOpen] = useState(false)
-  const [busyDir, setBusyDir] = useState<string | null>(null)
+  const [busyDirs, setBusyDirs] = useState<Set<string>>(new Set())
   const copyRef = useRef<HTMLDivElement>(null)
   const initDone = useRef(false)
   const filteredSkills = useMemo(
@@ -138,8 +138,8 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   }
 
   const handleSetEnabled = async (skill: SkillEntry, enabled: boolean) => {
-    if (busyDir === skill.dir) return
-    setBusyDir(skill.dir)
+    if (busyDirs.has(skill.dir)) return
+    setBusyDirs(prev => new Set(prev).add(skill.dir))
     setError(null)
     const apply = (value: boolean) => {
       setData(prev => ({
@@ -155,7 +155,11 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
       apply(!enabled)
       setError(e?.message ?? String(e))
     } finally {
-      setBusyDir(null)
+      setBusyDirs(prev => {
+        const next = new Set(prev)
+        next.delete(skill.dir)
+        return next
+      })
     }
   }
 
@@ -183,7 +187,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   const renderCard = (skill: SkillEntry) => (
     <button
       key={skill.dir}
-      onClick={() => { setSelected(skill); setCopyState(null); setCopyMenuOpen(false) }}
+      onClick={() => { setSelected(skill); setCopyState(null); setCopyMenuOpen(false); setError(null) }}
       style={{ ...cardStyle, opacity: skill.enabled ? 1 : 0.55 }}
       title={skill.description || skill.name}
     >
@@ -196,10 +200,18 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         </span>
         <span
           onClick={e => e.stopPropagation()}
-          style={{ display: 'inline-flex', opacity: busyDir === skill.dir ? 0.5 : 1 }}
+          style={{
+            display: 'inline-flex',
+            opacity: busyDirs.has(skill.dir) ? 0.5 : 1,
+            pointerEvents: busyDirs.has(skill.dir) ? 'none' : undefined,
+          }}
           title={skill.enabled ? 'Disable this skill' : 'Enable this skill'}
         >
-          <Toggle on={skill.enabled} onChange={value => void handleSetEnabled(skill, value)} />
+          <Toggle
+            on={skill.enabled}
+            onChange={value => void handleSetEnabled(skill, value)}
+            label={skill.enabled ? 'Disable this skill' : 'Enable this skill'}
+          />
         </span>
         <span style={{
           fontSize: 9, fontWeight: 600, letterSpacing: 0.3,
@@ -250,8 +262,18 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <span style={{ color: C.fg, fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }}>{skill.qualifiedName}</span>
-          <div style={{ opacity: busyDir === skill.dir ? 0.5 : 1 }} title={skill.enabled ? 'Disable this skill' : 'Enable this skill'}>
-            <Toggle on={skill.enabled} onChange={value => void handleSetEnabled(skill, value)} />
+          <div
+            style={{
+              opacity: busyDirs.has(skill.dir) ? 0.5 : 1,
+              pointerEvents: busyDirs.has(skill.dir) ? 'none' : undefined,
+            }}
+            title={skill.enabled ? 'Disable this skill' : 'Enable this skill'}
+          >
+            <Toggle
+              on={skill.enabled}
+              onChange={value => void handleSetEnabled(skill, value)}
+              label={skill.enabled ? 'Disable this skill' : 'Enable this skill'}
+            />
           </div>
           <span style={{
             fontSize: 10, fontWeight: 600, letterSpacing: 0.3,
@@ -377,8 +399,8 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
             : `${data.skills.length} skill${data.skills.length === 1 ? '' : 's'}`}</span>
           <button
             onClick={() => void reload(agentFilter)}
-            disabled={loading || !!busyDir}
-            style={{ ...styles.iconButton, opacity: loading || busyDir ? 0.5 : 1 }}
+            disabled={loading || busyDirs.size > 0}
+            style={{ ...styles.iconButton, opacity: loading || busyDirs.size > 0 ? 0.5 : 1 }}
             title="Rescan skills"
             aria-label="Rescan skills"
           ><UIIcon name="refresh" size={14} /></button>
