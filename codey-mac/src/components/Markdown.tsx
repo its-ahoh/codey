@@ -9,14 +9,7 @@ interface MarkdownProps {
   layout?: 'compact' | 'roomy'
 }
 
-/** Two typographic densities. `compact` is the historical chat metric and stays
- *  the default, so every secondary surface (team panels, automation, quick
- *  question) is untouched. `roomy` is for the main assistant turn, which renders
- *  as a document rather than a bubble: at 13px/1.55 a paragraph's bottom margin
- *  (8px) was barely larger than the gap between its own lines (~7px), so the
- *  paragraph stopped reading as a unit. Heading margins are deliberately
- *  asymmetric — a heading belongs to the text below it, not midway between two
- *  blocks. */
+/** Shape of one density's metrics; both entries must supply every field. */
 interface Metrics {
   fontSize: number
   lineHeight: number
@@ -32,6 +25,14 @@ interface Metrics {
   h4: { fontSize: number; margin: string }
 }
 
+/** Two typographic densities. `compact` is the historical chat metric and stays
+ *  the default, so every secondary surface (team panels, automation, quick
+ *  question) is untouched. `roomy` is for the main assistant turn, which renders
+ *  as a document rather than a bubble: at 13px/1.55 a paragraph's bottom margin
+ *  (8px) was barely larger than the gap between its own lines (~7px), so the
+ *  paragraph stopped reading as a unit. Heading margins are deliberately
+ *  asymmetric — a heading belongs to the text below it, not midway between two
+ *  blocks. */
 const METRICS = {
   compact: {
     fontSize: 13,
