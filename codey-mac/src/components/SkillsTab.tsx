@@ -20,7 +20,7 @@ const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
 
 // Matches the toggle idiom already used by PluginsTab / AppearanceTab.
 const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on, onChange }) => (
-  <div onClick={() => onChange(!on)} style={{
+  <div onClick={() => onChange(!on)} role="switch" aria-checked={on} style={{
     width: 32, height: 18, borderRadius: 9, flexShrink: 0,
     background: on ? C.accent : C.surface3,
     border: `1px solid ${on ? C.accent : C.border2}`,
@@ -138,7 +138,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   }
 
   const handleSetEnabled = async (skill: SkillEntry, enabled: boolean) => {
-    if (busyDir) return
+    if (busyDir === skill.dir) return
     setBusyDir(skill.dir)
     setError(null)
     const apply = (value: boolean) => {
@@ -195,11 +195,11 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           {skill.qualifiedName}
         </span>
         <span
-          onClick={e => { e.stopPropagation(); void handleSetEnabled(skill, !skill.enabled) }}
+          onClick={e => e.stopPropagation()}
           style={{ display: 'inline-flex', opacity: busyDir === skill.dir ? 0.5 : 1 }}
           title={skill.enabled ? 'Disable this skill' : 'Enable this skill'}
         >
-          <Toggle on={skill.enabled} onChange={() => {}} />
+          <Toggle on={skill.enabled} onChange={value => void handleSetEnabled(skill, value)} />
         </span>
         <span style={{
           fontSize: 9, fontWeight: 600, letterSpacing: 0.3,
@@ -280,6 +280,8 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           <div style={{ fontWeight: 600, marginBottom: 2, opacity: 0.7 }}>Location</div>
           <div style={{ wordBreak: 'break-all', fontFamily: 'monospace' }}>{skill.dir}</div>
         </div>
+
+        {error && <div style={{ ...styles.errorBanner, marginBottom: 12 }}>{error}</div>}
 
         {copyState && (
           <div style={{
@@ -375,8 +377,8 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
             : `${data.skills.length} skill${data.skills.length === 1 ? '' : 's'}`}</span>
           <button
             onClick={() => void reload(agentFilter)}
-            disabled={loading}
-            style={{ ...styles.iconButton, opacity: loading ? 0.5 : 1 }}
+            disabled={loading || !!busyDir}
+            style={{ ...styles.iconButton, opacity: loading || busyDir ? 0.5 : 1 }}
             title="Rescan skills"
             aria-label="Rescan skills"
           ><UIIcon name="refresh" size={14} /></button>
