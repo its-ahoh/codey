@@ -20,8 +20,10 @@ interface MarkdownProps {
 interface Metrics {
   fontSize: number
   lineHeight: number
-  /** Bottom margin for block-level elements (p, ul, ol, blockquote, code blocks, tables). */
+  /** Bottom margin for block-level elements (p, ul, ol, blockquote, code blocks). */
   blockGap: number
+  /** Bottom margin for the table wrapper. */
+  tableGap: number
   li: number
   hr: string
   h1: { fontSize: number; margin: string }
@@ -35,6 +37,7 @@ const METRICS = {
     fontSize: 13,
     lineHeight: 1.55,
     blockGap: 8,
+    tableGap: 10,
     li: 2,
     hr: '10px 0',
     h1: { fontSize: 17, margin: '8px 0 6px' },
@@ -49,6 +52,7 @@ const METRICS = {
     // for Latin text.
     lineHeight: 1.7,
     blockGap: 14,
+    tableGap: 14,
     li: 5,
     hr: '18px 0',
     h1: { fontSize: 20, margin: '22px 0 8px' },
@@ -267,7 +271,7 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
             </blockquote>
           ),
           table: ({ children }) => (
-            <div style={{ overflowX: 'auto', margin: `6px 0 ${M.blockGap}px`, maxWidth: '100%' }}>
+            <div style={{ overflowX: 'auto', margin: `6px 0 ${M.tableGap}px`, maxWidth: '100%' }}>
               <table
                 style={{
                   borderCollapse: 'collapse',
