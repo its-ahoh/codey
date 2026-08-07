@@ -2,7 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { qualifySkillName, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, uniqueSkills } from './skills'
+import { qualifySkillName, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 
 const roots: string[] = []
 const temp = () => {
@@ -133,5 +133,51 @@ describe('agent skill discovery', () => {
       ...scanSkillsDir(fs, path, `${root}${path.sep}`, 'user'),
     ]
     expect(uniqueSkills(fs, path, twice)).toHaveLength(1)
+  })
+})
+
+describe('setSkillEnabled', () => {
+  const makeSkill = (): string => {
+    const root = temp()
+    const skill = path.join(root, 'one')
+    fs.mkdirSync(skill, { recursive: true })
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: one\ndescription: A skill\n---\n')
+    return skill
+  }
+
+  it('round-trips a skill from enabled to disabled and back', () => {
+    const skill = makeSkill()
+
+    setSkillEnabled(fs, path, skill, false)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md'))).toBe(false)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md.disabled'))).toBe(true)
+    expect(scanSkillsDir(fs, path, skill, 'user')[0]?.enabled).toBe(false)
+
+    setSkillEnabled(fs, path, skill, true)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md'))).toBe(true)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md.disabled'))).toBe(false)
+    expect(scanSkillsDir(fs, path, skill, 'user')[0]?.enabled).toBe(true)
+  })
+
+  it('preserves the skill body across the rename', () => {
+    const skill = makeSkill()
+    setSkillEnabled(fs, path, skill, false)
+    expect(fs.readFileSync(path.join(skill, 'SKILL.md.disabled'), 'utf-8'))
+      .toBe('---\nname: one\ndescription: A skill\n---\n')
+  })
+
+  it('is a no-op when the skill is already in the requested state', () => {
+    const skill = makeSkill()
+    setSkillEnabled(fs, path, skill, true)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md'))).toBe(true)
+
+    setSkillEnabled(fs, path, skill, false)
+    setSkillEnabled(fs, path, skill, false)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md.disabled'))).toBe(true)
+  })
+
+  it('throws when the directory holds no skill file', () => {
+    const root = temp()
+    expect(() => setSkillEnabled(fs, path, root, false)).toThrow(/SKILL\.md/)
   })
 })

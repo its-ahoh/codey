@@ -150,6 +150,26 @@ export function scanClaudePluginSkills(
   return result.sort((a, b) => a.qualifiedName.localeCompare(b.qualifiedName))
 }
 
+/**
+ * Toggle a skill by renaming its SKILL.md. Agent CLIs only load a directory
+ * whose skill file is named exactly SKILL.md, so the rename is what actually
+ * disables it — there is no separate state to keep in sync.
+ */
+export function setSkillEnabled(
+  fsMod: typeof Fs,
+  pathMod: typeof Path,
+  dir: string,
+  enabled: boolean,
+): void {
+  const activePath = pathMod.join(dir, SKILL_FILE)
+  const disabledPath = pathMod.join(dir, DISABLED_SKILL_FILE)
+  const target = enabled ? activePath : disabledPath
+  const source = enabled ? disabledPath : activePath
+  if (fsMod.existsSync(target)) return
+  if (!fsMod.existsSync(source)) throw new Error(`No SKILL.md found in ${dir}`)
+  fsMod.renameSync(source, target)
+}
+
 export function samePath(fsMod: typeof Fs, pathMod: typeof Path, a: string, b: string): boolean {
   const resolvedA = pathMod.resolve(a)
   const resolvedB = pathMod.resolve(b)
