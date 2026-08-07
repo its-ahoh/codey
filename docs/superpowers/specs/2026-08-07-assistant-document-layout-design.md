@@ -7,7 +7,7 @@
 
 Long assistant replies read as a dense wall. Five causes, all located:
 
-1. **Line length.** `ChatTab.tsx:2008` caps the bubble at `maxWidth: '72%'`. On a wide
+1. **Line length.** `ChatTab.tsx:1982` caps the bubble at `maxWidth: '72%'`. On a wide
    window a line reaches 100+ characters; comfortable measure is 45–75. Longer lines
    cost a return sweep on every line.
 2. **No paragraph rhythm.** `Markdown.tsx:178` gives `p` a `margin-bottom` of 8px, while
@@ -39,7 +39,7 @@ A single unconditional rule has no threshold, no latch, and no mid-stream reshap
 
 ### 1. Structure
 
-Split the message container at `ChatTab.tsx:2007` on `isUser`.
+Split the message container at `ChatTab.tsx:1981` on `isUser`.
 
 - **User:** unchanged — right-aligned, `maxWidth: '72%'`, `C.userBg`, asymmetric radius.
 - **Assistant:** drop `background`, `border`, `boxShadow`, `borderRadius`; padding becomes
@@ -58,7 +58,7 @@ Code blocks and tables gain width — today they are squeezed into 72% minus bub
 The bubble had two jobs beyond decoration. Both must be replaced or this is a net regression.
 
 - **Selected state.** Today `isSelected` draws an accent border plus glow
-  (`ChatTab.tsx:2015-2018`), which needs a bubble to live on. Replace with a left accent
+  (`ChatTab.tsx:1989-1992`), which needs a bubble to live on. Replace with a left accent
   rail: `borderLeft: 3px solid C.accent`. The unselected state reserves the same 3px as
   transparent so selecting a turn does not shift text horizontally. The existing
   `translateY(-3px)` lift stays.
@@ -92,7 +92,7 @@ semantics are out of scope here.
 
 ### 4. Scope
 
-Only the main chat assistant body (`ChatTab.tsx:2038`) passes `layout="roomy"`. The other
+Only the main chat assistant body (`ChatTab.tsx:2012`) passes `layout="roomy"`. The other
 twelve `<Markdown variant="assistant">` call sites — team panels, `AutomationOnePager`,
 `TeamRunFlow`, `QuickQuestionView` — keep the `compact` default and are not edited, so the
 change cannot leak into surfaces nobody asked about.

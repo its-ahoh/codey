@@ -30,8 +30,8 @@ Do not add tests asserting the contents of `METRICS`.
 - **Modify** `codey-mac/src/components/Markdown.tsx` — add the `layout` prop and the `METRICS`
   table; replace hardcoded typographic values with lookups. Responsibility unchanged: render a
   Markdown string with app theming.
-- **Modify** `codey-mac/src/components/ChatTab.tsx:1997-2020` — split the message container on
-  `isUser`; pass `layout="roomy"` at the assistant body call site (currently line 2038).
+- **Modify** `codey-mac/src/components/ChatTab.tsx:1971-1994` — split the message container on
+  `isUser`; pass `layout="roomy"` at the assistant body call site (currently line 2012).
 - **Modify** `codey-mac/src/App.tsx:365` — add one CSS rule to the existing global `<style>`
   block, zeroing the top margin of a turn's first block.
 
@@ -235,12 +235,12 @@ git commit -m "style(mac): collapse leading heading margin in roomy markdown"
 ### Task 3: Assistant messages render as document flow
 
 **Files:**
-- Modify: `codey-mac/src/components/ChatTab.tsx:1997-2020`
+- Modify: `codey-mac/src/components/ChatTab.tsx:1971-1994`
 
 - [ ] **Step 1: Widen the gap between assistant turns**
 
 Without bubbles, consecutive assistant turns merge into each other. Spacing is what separates
-them now. In the outer row style at line 1997-2005, change:
+them now. In the outer row style at line 1971-1979, change:
 
 ```tsx
                 marginBottom: 12,
@@ -256,7 +256,8 @@ Leave everything else in that style object — including `transform` and `paddin
 
 - [ ] **Step 2: Split the container style on `isUser`**
 
-Replace the whole inner `div` opening tag at lines 2007-2020:
+Replace the whole inner `div` opening tag at lines 1981-1994 (it starts with the line
+`minWidth: 0, maxWidth: '72%', padding: '10px 14px',`):
 
 ```tsx
               <div style={isUser ? {
@@ -316,11 +317,11 @@ git commit -m "feat(mac): render assistant messages as document flow"
 ### Task 4: Use the roomy metrics for the assistant body
 
 **Files:**
-- Modify: `codey-mac/src/components/ChatTab.tsx:2038`
+- Modify: `codey-mac/src/components/ChatTab.tsx:2012`
 
 - [ ] **Step 1: Pass the prop**
 
-Change line 2038 from:
+Change line 2012 from:
 
 ```tsx
                       <Markdown variant="assistant">{text}</Markdown>
@@ -333,7 +334,7 @@ to:
 ```
 
 This is the only call site that changes. The other twelve `<Markdown variant="assistant">` uses
-— `AutomationOnePager.tsx:288,418`, `TeamRunFlow.tsx:99`, `ChatTab.tsx:334,352,368,372,436,724,734`,
+— `AutomationOnePager.tsx:288,418`, `TeamRunFlow.tsx:99`, `ChatTab.tsx:307,325,341,345,409,697,707`,
 `AutomationChatCreate.tsx:283`, `QuickQuestionView.tsx:168` — keep the `compact` default and must
 not be edited. Confirm with:
 
