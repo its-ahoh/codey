@@ -73,6 +73,24 @@ describe('agent skill discovery', () => {
     ])
   })
 
+  it('keeps the collection prefix on a disabled nested skill', () => {
+    const root = temp()
+    const skill = path.join(root, 'superpowers', 'skills', 'brainstorming')
+    fs.mkdirSync(skill, { recursive: true })
+    fs.writeFileSync(path.join(skill, 'SKILL.md.disabled'), '---\nname: brainstorming\ndescription: Explore ideas\n---\n')
+
+    expect(scanSkillsDir(fs, path, root, 'user')).toEqual([
+      {
+        name: 'brainstorming',
+        qualifiedName: 'superpowers:brainstorming',
+        description: 'Explore ideas',
+        scope: 'user',
+        dir: skill,
+        enabled: false,
+      },
+    ])
+  })
+
   it('does not duplicate an explicit namespace from frontmatter', () => {
     expect(qualifySkillName(path, '/skills', '/skills/superpowers/brainstorming', 'superpowers:brainstorming'))
       .toBe('superpowers:brainstorming')

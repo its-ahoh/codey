@@ -3,8 +3,9 @@ import type * as Path from 'path'
 
 export type SkillScope = 'user' | 'project'
 
-/** Renaming SKILL.md to this hides the skill from every agent CLI's scan. */
-export const DISABLED_SKILL_FILE = 'SKILL.md.disabled'
+export const SKILL_FILE = 'SKILL.md'
+/** Renaming to this hides the skill from CLIs that discover skills by SKILL.md. */
+export const DISABLED_SKILL_FILE = `${SKILL_FILE}.disabled`
 
 export interface ScannedSkill {
   name: string
@@ -61,8 +62,9 @@ export function qualifySkillName(
 
 /**
  * Discover skills below an agent's configured root. Nested roots are supported
- * (for example Codex's .system skills); once SKILL.md is found, that directory
- * is treated as the skill boundary and its internals are not scanned again.
+ * (for example Codex's .system skills); once a SKILL.md, or a disabled one, is
+ * found, that directory is treated as the skill boundary and its internals are
+ * not scanned again.
  */
 export function scanSkillsDir(
   fsMod: typeof Fs,
@@ -85,7 +87,7 @@ export function scanSkillsDir(
 
     // A disabled skill is still a skill: it marks the boundary so we neither
     // lose it from the list nor walk its internals as if they were roots.
-    const activePath = pathMod.join(current, 'SKILL.md')
+    const activePath = pathMod.join(current, SKILL_FILE)
     const disabledPath = pathMod.join(current, DISABLED_SKILL_FILE)
     const enabled = fsMod.existsSync(activePath)
     const skillMdPath = enabled ? activePath : disabledPath
