@@ -10,7 +10,7 @@ import { decideNotification, createTurnTracker } from './chat-notifications'
 import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from './automation-notifications'
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
-import { resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
+import { SKILL_FILE, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import type { ScannedSkill } from './skills'
@@ -3295,6 +3295,9 @@ app.whenReady().then(async () => {
         description: 'Quick Question — ask about this chat without affecting it',
         source: 'gateway',
       }
+      // Filter before mapping: `skillAliases` below is derived from this array,
+      // so a disabled skill left in would still suppress the agent's own
+      // command of the same bare name.
       const skills: SlashCommand[] = skillResult.skills
         .filter(skill => skill.enabled)
         .map(skill => ({
@@ -3357,7 +3360,7 @@ app.whenReady().then(async () => {
         if (samePath(fsMod, pathMod, src, targetRoot)) {
           return { name: pathMod.basename(targetRoot), dir: targetRoot }
         }
-        const rootSkillFile = pathMod.join(src, 'SKILL.md')
+        const rootSkillFile = pathMod.join(src, SKILL_FILE)
 
         const discovered = fsMod.existsSync(rootSkillFile)
           ? []
@@ -3414,6 +3417,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('skills:setEnabled', async (_e, dir: string, enabled: boolean) =>
     wrap(async () => {
       if (typeof dir !== 'string' || !dir) throw new Error('Invalid path')
+      if (typeof enabled !== 'boolean') throw new Error('Invalid enabled flag')
       const fsMod = await import('fs')
       const pathMod = await import('path')
       setSkillEnabled(fsMod, pathMod, dir, enabled)
