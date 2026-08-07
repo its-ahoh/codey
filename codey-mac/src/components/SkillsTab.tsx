@@ -18,6 +18,22 @@ const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
   'opencode': '~/.config/opencode/skills/',
 }
 
+// Matches the toggle idiom already used by PluginsTab / AppearanceTab.
+const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on, onChange }) => (
+  <div onClick={() => onChange(!on)} style={{
+    width: 32, height: 18, borderRadius: 9, flexShrink: 0,
+    background: on ? C.accent : C.surface3,
+    border: `1px solid ${on ? C.accent : C.border2}`,
+    cursor: 'pointer', position: 'relative', transition: 'all 0.2s',
+  }}>
+    <div style={{
+      position: 'absolute', top: 1, left: on ? 15 : 1,
+      width: 14, height: 14, borderRadius: '50%', background: '#fff',
+      transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+    }}/>
+  </div>
+)
+
 export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> = ({ addRequest = 0, searchQuery = '' }) => {
   const [data, setData] = useState<SkillsListResult>({ skills: [], projectDir: null })
   const [loading, setLoading] = useState(true)
@@ -32,6 +48,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   const [selected, setSelected] = useState<SkillEntry | null>(null)
   const [copyState, setCopyState] = useState<{ label: string; status: 'copying' | 'done' | 'error'; msg?: string } | null>(null)
   const [copyMenuOpen, setCopyMenuOpen] = useState(false)
+  const [busyDir, setBusyDir] = useState<string | null>(null)
   const copyRef = useRef<HTMLDivElement>(null)
   const initDone = useRef(false)
   const filteredSkills = useMemo(
@@ -120,6 +137,28 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     }
   }
 
+  const handleSetEnabled = async (skill: SkillEntry, enabled: boolean) => {
+    if (busyDir) return
+    setBusyDir(skill.dir)
+    setError(null)
+    const apply = (value: boolean) => {
+      setData(prev => ({
+        ...prev,
+        skills: prev.skills.map(s => (s.dir === skill.dir ? { ...s, enabled: value } : s)),
+      }))
+      setSelected(prev => (prev && prev.dir === skill.dir ? { ...prev, enabled: value } : prev))
+    }
+    apply(enabled)
+    try {
+      unwrap(await window.codey.skills.setEnabled(skill.dir, enabled))
+    } catch (e: any) {
+      apply(!enabled)
+      setError(e?.message ?? String(e))
+    } finally {
+      setBusyDir(null)
+    }
+  }
+
   const handleReveal = (dir: string) => {
     void window.codey.skills.reveal(dir)
   }
@@ -145,7 +184,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     <button
       key={skill.dir}
       onClick={() => { setSelected(skill); setCopyState(null); setCopyMenuOpen(false) }}
-      style={cardStyle}
+      style={{ ...cardStyle, opacity: skill.enabled ? 1 : 0.55 }}
       title={skill.description || skill.name}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, width: '100%' }}>
@@ -154,6 +193,13 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1,
         }}>
           {skill.qualifiedName}
+        </span>
+        <span
+          onClick={e => { e.stopPropagation(); void handleSetEnabled(skill, !skill.enabled) }}
+          style={{ display: 'inline-flex', opacity: busyDir === skill.dir ? 0.5 : 1 }}
+          title={skill.enabled ? 'Disable this skill' : 'Enable this skill'}
+        >
+          <Toggle on={skill.enabled} onChange={() => {}} />
         </span>
         <span style={{
           fontSize: 9, fontWeight: 600, letterSpacing: 0.3,
@@ -164,6 +210,15 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           {skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
         </span>
       </div>
+      {!skill.enabled && (
+        <span style={{
+          fontSize: 9, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
+          padding: '2px 6px', borderRadius: 4, marginBottom: 2,
+          background: C.surface3, color: C.fg3,
+        }}>
+          Off
+        </span>
+      )}
       {skill.description && (
         <div style={{
           color: C.fg3, fontSize: 12, lineHeight: '1.5', width: '100%',
@@ -195,6 +250,9 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <span style={{ color: C.fg, fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }}>{skill.qualifiedName}</span>
+          <div style={{ opacity: busyDir === skill.dir ? 0.5 : 1 }} title={skill.enabled ? 'Disable this skill' : 'Enable this skill'}>
+            <Toggle on={skill.enabled} onChange={value => void handleSetEnabled(skill, value)} />
+          </div>
           <span style={{
             fontSize: 10, fontWeight: 600, letterSpacing: 0.3,
             padding: '2px 6px', borderRadius: 4,
@@ -209,6 +267,12 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         {skill.description && (
           <div style={{ color: C.fg2, fontSize: 13, lineHeight: '1.55', marginBottom: 16, whiteSpace: 'pre-wrap' }}>
             {skill.description}
+          </div>
+        )}
+
+        {skill.managedBy && !skill.enabled && (
+          <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginBottom: 14 }}>
+            Plugin updates may restore this skill.
           </div>
         )}
 
