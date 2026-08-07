@@ -174,10 +174,24 @@ describe('setSkillEnabled', () => {
     setSkillEnabled(fs, path, skill, false)
     setSkillEnabled(fs, path, skill, false)
     expect(fs.existsSync(path.join(skill, 'SKILL.md.disabled'))).toBe(true)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md'))).toBe(false)
   })
 
   it('throws when the directory holds no skill file', () => {
     const root = temp()
     expect(() => setSkillEnabled(fs, path, root, false)).toThrow(/SKILL\.md/)
+  })
+
+  it('refuses to disable over an existing disabled file, and keeps both intact', () => {
+    const skill = makeSkill()
+    const active = path.join(skill, 'SKILL.md')
+    const disabled = path.join(skill, 'SKILL.md.disabled')
+    fs.writeFileSync(disabled, '---\nname: one\ndescription: A backup\n---\n')
+
+    expect(() => setSkillEnabled(fs, path, skill, false)).toThrow(/already exists/)
+    expect(() => setSkillEnabled(fs, path, skill, true)).not.toThrow()
+
+    expect(fs.readFileSync(active, 'utf-8')).toBe('---\nname: one\ndescription: A skill\n---\n')
+    expect(fs.readFileSync(disabled, 'utf-8')).toBe('---\nname: one\ndescription: A backup\n---\n')
   })
 })
