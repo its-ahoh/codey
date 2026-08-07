@@ -10,7 +10,7 @@ import { decideNotification, createTurnTracker } from './chat-notifications'
 import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from './automation-notifications'
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
-import { resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, uniqueSkills } from './skills'
+import { resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import type { ScannedSkill } from './skills'
@@ -3295,11 +3295,13 @@ app.whenReady().then(async () => {
         description: 'Quick Question — ask about this chat without affecting it',
         source: 'gateway',
       }
-      const skills: SlashCommand[] = skillResult.skills.map(skill => ({
-        name: skill.qualifiedName,
-        description: skill.description || 'Agent skill',
-        source: 'skill',
-      }))
+      const skills: SlashCommand[] = skillResult.skills
+        .filter(skill => skill.enabled)
+        .map(skill => ({
+          name: skill.qualifiedName,
+          description: skill.description || 'Agent skill',
+          source: 'skill',
+        }))
       // Gateway commands take precedence, then installed skills, then the
       // agent's own commands. A Set keeps the menu stable when a skill and an
       // agent command happen to share a name.
@@ -3406,6 +3408,15 @@ app.whenReady().then(async () => {
       }
 
       throw new Error('Either localDir or gitUrl is required')
+    })
+  )
+
+  ipcMain.handle('skills:setEnabled', async (_e, dir: string, enabled: boolean) =>
+    wrap(async () => {
+      if (typeof dir !== 'string' || !dir) throw new Error('Invalid path')
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      setSkillEnabled(fsMod, pathMod, dir, enabled)
     })
   )
 

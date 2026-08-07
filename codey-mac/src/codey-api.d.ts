@@ -18,6 +18,7 @@ export interface SkillEntry {
   description: string
   scope: 'user' | 'project'
   dir: string
+  enabled: boolean
 }
 
 export interface SkillsListResult {
@@ -254,6 +255,7 @@ declare global {
         list: (agent?: string) => Promise<IpcResult<SkillsListResult>>
         install: (payload: { agent?: string; scope: 'user' | 'project'; localDir?: string; gitUrl?: string }) => Promise<IpcResult<{ name: string; dir: string }>>
         remove: (dir: string) => Promise<IpcResult<void>>
+        setEnabled: (dir: string, enabled: boolean) => Promise<IpcResult<void>>
         reveal: (dir: string) => Promise<IpcResult<void>>
       }
       playbooks: {
