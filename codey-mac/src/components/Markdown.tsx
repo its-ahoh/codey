@@ -6,7 +6,44 @@ import { C } from '../theme'
 interface MarkdownProps {
   children: string
   variant?: 'user' | 'assistant'
+  layout?: 'compact' | 'roomy'
 }
+
+/** Two typographic densities. `compact` is the historical chat metric and stays
+ *  the default, so every secondary surface (team panels, automation, quick
+ *  question) is untouched. `roomy` is for the main assistant turn, which renders
+ *  as a document rather than a bubble: at 13px/1.55 a paragraph's bottom margin
+ *  (8px) was barely larger than the gap between its own lines (~7px), so the
+ *  paragraph stopped reading as a unit. Heading margins are deliberately
+ *  asymmetric — a heading belongs to the text below it, not midway between two
+ *  blocks. */
+const METRICS = {
+  compact: {
+    fontSize: 13,
+    lineHeight: 1.55,
+    block: 8,
+    li: 2,
+    hr: '10px 0',
+    h1: { fontSize: 17, margin: '8px 0 6px' },
+    h2: { fontSize: 15, margin: '8px 0 6px' },
+    h3: { fontSize: 14, margin: '8px 0 4px' },
+    h4: { fontSize: 13, margin: '6px 0 4px' },
+  },
+  roomy: {
+    // 1.7 rather than 1.55: Chinese has a high character-face ratio and no
+    // ascenders or descenders, so identical leading reads tighter than it does
+    // for Latin text.
+    fontSize: 14,
+    lineHeight: 1.7,
+    block: 14,
+    li: 5,
+    hr: '18px 0',
+    h1: { fontSize: 20, margin: '22px 0 8px' },
+    h2: { fontSize: 17, margin: '20px 0 8px' },
+    h3: { fontSize: 15, margin: '18px 0 6px' },
+    h4: { fontSize: 14, margin: '16px 0 6px' },
+  },
+} as const
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace'
 
@@ -157,8 +194,9 @@ function preserveLineBreaks(src: string): string {
   return out.join('\n')
 }
 
-const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant' }) => {
+const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant', layout = 'compact' }) => {
   const onUser = variant === 'user'
+  const M = METRICS[layout]
   const inlineCodeBg = onUser ? 'rgba(0,0,0,0.22)' : C.inlineCodeBg
   const inlineCodeFg = onUser ? C.onAccent : C.inlineCodeFg
   const codeBlockBg = onUser ? 'rgba(0,0,0,0.25)' : C.codeBg
@@ -171,11 +209,14 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
   const tableHeadBg = onUser ? 'rgba(0,0,0,0.2)' : C.surface3
 
   return (
-    <div style={{ minWidth: 0, maxWidth: '100%', fontSize: 13, lineHeight: 1.55, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+    <div
+      className={layout === 'roomy' ? 'md-roomy' : undefined}
+      style={{ minWidth: 0, maxWidth: '100%', fontSize: M.fontSize, lineHeight: M.lineHeight, overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          p: ({ children }) => <p style={{ margin: '0 0 8px 0' }}>{children}</p>,
+          p: ({ children }) => <p style={{ margin: `0 0 ${M.block}px 0` }}>{children}</p>,
           a: ({ href, children }) => (
             <a
               href={href}
@@ -191,20 +232,20 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
           strong: ({ children }) => <strong style={{ fontWeight: 700 }}>{children}</strong>,
           em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
           del: ({ children }) => <del style={{ opacity: 0.6 }}>{children}</del>,
-          h1: ({ children }) => <h1 style={{ fontSize: 17, fontWeight: 700, margin: '8px 0 6px' }}>{children}</h1>,
-          h2: ({ children }) => <h2 style={{ fontSize: 15, fontWeight: 700, margin: '8px 0 6px' }}>{children}</h2>,
-          h3: ({ children }) => <h3 style={{ fontSize: 14, fontWeight: 700, margin: '8px 0 4px' }}>{children}</h3>,
-          h4: ({ children }) => <h4 style={{ fontSize: 13, fontWeight: 700, margin: '6px 0 4px' }}>{children}</h4>,
-          ul: ({ children }) => <ul style={{ margin: '0 0 8px 0', paddingLeft: 20 }}>{children}</ul>,
-          ol: ({ children }) => <ol style={{ margin: '0 0 8px 0', paddingLeft: 20 }}>{children}</ol>,
-          li: ({ children }) => <li style={{ marginBottom: 2 }}>{children}</li>,
-          hr: () => <hr style={{ border: 'none', borderTop: `1px solid ${ruleColor}`, margin: '10px 0' }} />,
+          h1: ({ children }) => <h1 style={{ fontSize: M.h1.fontSize, fontWeight: 700, margin: M.h1.margin }}>{children}</h1>,
+          h2: ({ children }) => <h2 style={{ fontSize: M.h2.fontSize, fontWeight: 700, margin: M.h2.margin }}>{children}</h2>,
+          h3: ({ children }) => <h3 style={{ fontSize: M.h3.fontSize, fontWeight: 700, margin: M.h3.margin }}>{children}</h3>,
+          h4: ({ children }) => <h4 style={{ fontSize: M.h4.fontSize, fontWeight: 700, margin: M.h4.margin }}>{children}</h4>,
+          ul: ({ children }) => <ul style={{ margin: `0 0 ${M.block}px 0`, paddingLeft: 20 }}>{children}</ul>,
+          ol: ({ children }) => <ol style={{ margin: `0 0 ${M.block}px 0`, paddingLeft: 20 }}>{children}</ol>,
+          li: ({ children }) => <li style={{ marginBottom: M.li }}>{children}</li>,
+          hr: () => <hr style={{ border: 'none', borderTop: `1px solid ${ruleColor}`, margin: M.hr }} />,
           blockquote: ({ children }) => (
             <blockquote
               style={{
                 borderLeft: `3px solid ${quoteBorder}`,
                 paddingLeft: 10,
-                margin: '0 0 8px 0',
+                margin: `0 0 ${M.block}px 0`,
                 color: quoteFg,
               }}
             >
