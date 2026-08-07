@@ -17,11 +17,24 @@ interface MarkdownProps {
  *  paragraph stopped reading as a unit. Heading margins are deliberately
  *  asymmetric — a heading belongs to the text below it, not midway between two
  *  blocks. */
+interface Metrics {
+  fontSize: number
+  lineHeight: number
+  /** Bottom margin for block-level elements (p, ul, ol, blockquote, code blocks, tables). */
+  blockGap: number
+  li: number
+  hr: string
+  h1: { fontSize: number; margin: string }
+  h2: { fontSize: number; margin: string }
+  h3: { fontSize: number; margin: string }
+  h4: { fontSize: number; margin: string }
+}
+
 const METRICS = {
   compact: {
     fontSize: 13,
     lineHeight: 1.55,
-    block: 8,
+    blockGap: 8,
     li: 2,
     hr: '10px 0',
     h1: { fontSize: 17, margin: '8px 0 6px' },
@@ -30,12 +43,12 @@ const METRICS = {
     h4: { fontSize: 13, margin: '6px 0 4px' },
   },
   roomy: {
+    fontSize: 14,
     // 1.7 rather than 1.55: Chinese has a high character-face ratio and no
     // ascenders or descenders, so identical leading reads tighter than it does
     // for Latin text.
-    fontSize: 14,
     lineHeight: 1.7,
-    block: 14,
+    blockGap: 14,
     li: 5,
     hr: '18px 0',
     h1: { fontSize: 20, margin: '22px 0 8px' },
@@ -43,7 +56,7 @@ const METRICS = {
     h3: { fontSize: 15, margin: '18px 0 6px' },
     h4: { fontSize: 14, margin: '16px 0 6px' },
   },
-} as const
+} as const satisfies Record<'compact' | 'roomy', Metrics>
 
 const MONO = 'ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace'
 
@@ -51,7 +64,8 @@ const CodeBlock: React.FC<{
   children: React.ReactNode
   background: string
   borderColor: string
-}> = ({ children, background, borderColor }) => {
+  blockMargin: number
+}> = ({ children, background, borderColor, blockMargin }) => {
   const [copied, setCopied] = React.useState(false)
   const resetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const child: any = React.Children.toArray(children)[0]
@@ -83,7 +97,7 @@ const CodeBlock: React.FC<{
         background,
         border: `1px solid ${borderColor}`,
         borderRadius: 8,
-        margin: '6px 0 8px',
+        margin: `6px 0 ${blockMargin}px`,
         position: 'relative',
         overflow: 'hidden',
       }}
@@ -216,7 +230,7 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          p: ({ children }) => <p style={{ margin: `0 0 ${M.block}px 0` }}>{children}</p>,
+          p: ({ children }) => <p style={{ margin: `0 0 ${M.blockGap}px 0` }}>{children}</p>,
           a: ({ href, children }) => (
             <a
               href={href}
@@ -236,8 +250,8 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
           h2: ({ children }) => <h2 style={{ fontSize: M.h2.fontSize, fontWeight: 700, margin: M.h2.margin }}>{children}</h2>,
           h3: ({ children }) => <h3 style={{ fontSize: M.h3.fontSize, fontWeight: 700, margin: M.h3.margin }}>{children}</h3>,
           h4: ({ children }) => <h4 style={{ fontSize: M.h4.fontSize, fontWeight: 700, margin: M.h4.margin }}>{children}</h4>,
-          ul: ({ children }) => <ul style={{ margin: `0 0 ${M.block}px 0`, paddingLeft: 20 }}>{children}</ul>,
-          ol: ({ children }) => <ol style={{ margin: `0 0 ${M.block}px 0`, paddingLeft: 20 }}>{children}</ol>,
+          ul: ({ children }) => <ul style={{ margin: `0 0 ${M.blockGap}px 0`, paddingLeft: 20 }}>{children}</ul>,
+          ol: ({ children }) => <ol style={{ margin: `0 0 ${M.blockGap}px 0`, paddingLeft: 20 }}>{children}</ol>,
           li: ({ children }) => <li style={{ marginBottom: M.li }}>{children}</li>,
           hr: () => <hr style={{ border: 'none', borderTop: `1px solid ${ruleColor}`, margin: M.hr }} />,
           blockquote: ({ children }) => (
@@ -245,7 +259,7 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
               style={{
                 borderLeft: `3px solid ${quoteBorder}`,
                 paddingLeft: 10,
-                margin: `0 0 ${M.block}px 0`,
+                margin: `0 0 ${M.blockGap}px 0`,
                 color: quoteFg,
               }}
             >
@@ -253,7 +267,7 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
             </blockquote>
           ),
           table: ({ children }) => (
-            <div style={{ overflowX: 'auto', margin: '6px 0 10px', maxWidth: '100%' }}>
+            <div style={{ overflowX: 'auto', margin: `6px 0 ${M.blockGap}px`, maxWidth: '100%' }}>
               <table
                 style={{
                   borderCollapse: 'collapse',
@@ -297,7 +311,7 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
           ),
           pre: ({ children }: any) => {
             return (
-              <CodeBlock background={codeBlockBg} borderColor={codeBlockBorder}>
+              <CodeBlock background={codeBlockBg} borderColor={codeBlockBorder} blockMargin={M.blockGap}>
                 {children}
               </CodeBlock>
             )
