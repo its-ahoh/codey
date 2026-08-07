@@ -360,6 +360,7 @@ const Shell: React.FC = () => {
         )}
         {toolsOpen && <ToolsView onClose={() => setToolsOpen(false)} />}
         <VoiceRecorder />
+        {!activeChat && <VoiceHotkeyFallback />}
       </div>
       <style>{`
   /* Fallback (classic) until data-theme / data-palette are set. */
@@ -446,6 +447,19 @@ const styles: Record<string, React.CSSProperties> = {
   emptyIcon: { width: 62, height: 62, borderRadius: 20, display: 'grid', placeItems: 'center', color: C.accent, background: C.accentDim, border: `1px solid ${C.accent}` },
   emptyTitle: { color: C.fg, fontSize: 16, fontWeight: 700, marginTop: 14 },
   emptyCopy: { color: C.fg2, fontSize: 12, lineHeight: 1.5, marginTop: 6 },
+}
+
+/**
+ * The converse hotkey is handled inside ChatTab, which only mounts when a
+ * chat is selected. Without this, pressing it on the empty state does
+ * nothing at all — and since the feature is meant to be used while looking
+ * away, a silent no-op reads as a broken hotkey.
+ */
+const VoiceHotkeyFallback: React.FC = () => {
+  useEffect(() => window.codey.voice.onConverseHotkey(() => {
+    void window.codey.voice.showError('Open a chat first — voice sends to the chat you have selected.')
+  }), [])
+  return null
 }
 
 export default App

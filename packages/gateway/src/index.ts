@@ -67,7 +67,13 @@ function startGateway(): void {
     const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager, workerManager);
 
     // Start API server on the gateway port
-    const apiServer = new ApiServer(configManager.getPort(), (): any => gateway.getHealthStatus(), configManager);
+    const apiServer = new ApiServer(
+      configManager.getPort(),
+      (): any => gateway.getHealthStatus(),
+      configManager,
+      (transcript, conversationId, emit) => gateway.runVoiceConverse(transcript, conversationId, emit),
+      (text, emit, conversationId) => gateway.runVoiceSpeak(text, emit, conversationId),
+    );
     await apiServer.start();
 
     // Apply config changes to the running gateway at runtime

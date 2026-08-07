@@ -33,16 +33,8 @@ import { TerminalPanel } from './TerminalPanel'
 import { splitWhiteboardMarkers, type WhiteboardMarker } from './teamWhiteboardFormat'
 import { groupTeamMessagesByMember, type TeamMemberMessageGroup } from './teamRunModel'
 import { ToolCallList } from './ToolCallList'
-import {
-  VOICE_RESULT_EVENT,
-  VOICE_LEVEL_EVENT,
-  VOICE_STATE_EVENT,
-  toggleVoiceInput,
-  type VoiceInputState,
-  type VoiceResultDetail,
-  type VoiceLevelDetail,
-  type VoiceStateDetail,
-} from './voiceInputEvents'
+import { useChatVoice } from './useChatVoice'
+import { VoiceMeter } from './VoiceMeter'
 
 const EDITOR_LOGOS: Partial<Record<string, string>> = {
   vscode: vscodeLogo,
@@ -51,6 +43,7 @@ const EDITOR_LOGOS: Partial<Record<string, string>> = {
 }
 
 const STATUS_SIDECAR_HIDDEN_KEY = 'codey.statusSidecarHidden'
+const VOICE_GRADIENT_COLORS = ['#ff5f6d', '#ffc371', '#47e6b1', '#38a3f5', '#a86bf5']
 
 interface Props {
   chatId: string
@@ -93,36 +86,25 @@ const TypingDots: React.FC = () => {
   return <span style={{ letterSpacing: 2 }}>{'●'.repeat(n + 1).padEnd(3, '○')}</span>
 }
 
+/** Elapsed recording time. A counter answers "is it still listening?" without
+ *  a sentence of prose, and reassures during a long dictation. */
+const VoiceElapsed: React.FC<{ since: number }> = ({ since }) => {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(id)
+  }, [since])
+  const total = Math.max(0, Math.floor((now - since) / 1000))
+  const mm = Math.floor(total / 60)
+  const ss = String(total % 60).padStart(2, '0')
+  return <span style={styles.voiceStatusText}>{mm}:{ss}</span>
+}
+
 const PaperclipIcon: React.FC<{ color: string }> = ({ color }) => (
   <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
     <path d="M21.44 11.05L12.25 20.24a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 11-2.83-2.83l8.49-8.48" />
   </svg>
-)
-
-const MicrophoneIcon: React.FC<{ color: string }> = ({ color }) => (
-  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-    <rect x="9" y="2" width="6" height="12" rx="3" />
-    <path d="M5 10a7 7 0 0014 0M12 17v5M8 22h8" />
-  </svg>
-)
-
-const VoiceWaveform: React.FC<{ levels: number[] }> = ({ levels }) => (
-  <div
-    style={styles.voiceWaveform}
-    role="status"
-    aria-label="Recording"
-    title="Recording"
-  >
-    {levels.map((level, index) => (
-      <span
-        key={index}
-        style={{
-          ...styles.voiceWaveBar,
-          height: 3 + Math.round(level * 10),
-        }}
-      />
-    ))}
-  </div>
 )
 
 const UploadCloudIcon: React.FC<{ color: string; size?: number }> = ({ color, size = 32 }) => (
@@ -833,6 +815,27 @@ export const ChatTab: React.FC<Props> = ({
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
+  // Voice for this chat: the transcript is sent through the normal chat path
+  // below, and only the reply is read aloud.
+  const voiceAutoSendRef = useRef(false)
+  const prevFlightRef = useRef<unknown>(null)
+  // Whether the turn currently in flight was started by speaking. `mode` is
+  // sticky (it remembers which button you used last), so keying playback off
+  // it read every typed message aloud too.
+  const spokenTurnRef = useRef(false)
+  const voiceAckGenerationRef = useRef(0)
+  const voice = useChatVoice({
+    onTranscript: (text, mode) => {
+      if (mode === 'converse') {
+        voiceAutoSendRef.current = true
+        setInput(text)
+      } else {
+        // Dictation appends, so a second pass adds to what's already there.
+        setInput(prev => (prev.trim() ? `${prev.trim()} ${text}` : text))
+      }
+    },
+    onError: msg => void window.codey.voice.showError(msg),
+  })
   // Seed from the per-chat draft store so unsent text/attachments survive the
   // remount that happens when switching chats (App.tsx keys ChatTab by chat id).
   const [input, setInput] = useState(() => getDraft(chatId).text)
@@ -906,60 +909,6 @@ export const ChatTab: React.FC<Props> = ({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
-  const voiceTargetId = `chat-composer:${chatId}`
-  const voiceSelectionRef = useRef<{ start: number; end: number } | null>(null)
-  const [voiceState, setVoiceState] = useState<VoiceInputState>('idle')
-  const [voiceLevels, setVoiceLevels] = useState<number[]>(() => Array(11).fill(0.08))
-
-  useEffect(() => {
-    const onState = (event: Event) => {
-      const detail = (event as CustomEvent<VoiceStateDetail>).detail
-      if (detail.targetId === voiceTargetId) {
-        setVoiceState(detail.state)
-        if (detail.state !== 'recording') setVoiceLevels(Array(11).fill(0.08))
-      }
-    }
-    const onLevel = (event: Event) => {
-      const detail = (event as CustomEvent<VoiceLevelDetail>).detail
-      if (detail.targetId === voiceTargetId) setVoiceLevels(detail.levels)
-    }
-    const onResult = (event: Event) => {
-      const detail = (event as CustomEvent<VoiceResultDetail>).detail
-      if (detail.targetId !== voiceTargetId) return
-
-      let nextCursor = 0
-      setInput(current => {
-        const selection = voiceSelectionRef.current ?? { start: current.length, end: current.length }
-        const start = Math.min(selection.start, current.length)
-        const end = Math.min(Math.max(selection.end, start), current.length)
-        const spoken = detail.text.trim()
-        const leading = start > 0 && !/\s/.test(current[start - 1]) ? ' ' : ''
-        const trailing = end < current.length && !/\s/.test(current[end]) ? ' ' : ''
-        const inserted = `${leading}${spoken}${trailing}`
-        nextCursor = start + inserted.length
-        return current.slice(0, start) + inserted + current.slice(end)
-      })
-      setInputHistoryIndex(null)
-      requestAnimationFrame(() => {
-        const textarea = taRef.current
-        if (!textarea) return
-        textarea.focus()
-        textarea.setSelectionRange(nextCursor, nextCursor)
-        if (composerHeight == null) {
-          textarea.style.height = 'auto'
-          textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px'
-        }
-      })
-    }
-    window.addEventListener(VOICE_STATE_EVENT, onState)
-    window.addEventListener(VOICE_LEVEL_EVENT, onLevel)
-    window.addEventListener(VOICE_RESULT_EVENT, onResult)
-    return () => {
-      window.removeEventListener(VOICE_STATE_EVENT, onState)
-      window.removeEventListener(VOICE_LEVEL_EVENT, onLevel)
-      window.removeEventListener(VOICE_RESULT_EVENT, onResult)
-    }
-  }, [voiceTargetId, composerHeight])
 
   useEffect(() => {
     if (composerHeight != null) localStorage.setItem('codey.composerHeight', String(composerHeight))
@@ -1611,6 +1560,99 @@ export const ChatTab: React.FC<Props> = ({
     }
   }
 
+
+  // A finished transcript sends itself — the point of voice mode is not
+  // touching the keyboard, so stopping at a filled-in composer defeats it.
+  useEffect(() => {
+    if (!voiceAutoSendRef.current || !input.trim()) return
+    voiceAutoSendRef.current = false
+    const spoken = input
+    spokenTurnRef.current = true
+    void send()
+    // Acknowledge immediately. An agent turn routinely runs for 30s to
+    // several minutes, and unbroken silence in a voice interface reads as
+    // "it died" rather than "it's working". Routed through the gateway like
+    // the reply so both use the same voice; verbatim because a one-line ack
+    // has nothing to digest, and no conversationId so it can't displace the
+    // cached reply behind "more detail".
+    const ackGeneration = ++voiceAckGenerationRef.current
+    void window.codey.voice.ack(spoken).then(result => {
+      // A very fast agent reply can beat acknowledgement generation. Never
+      // let a late ack interrupt the actual answer or leak into a newer turn.
+      if (ackGeneration !== voiceAckGenerationRef.current || !spokenTurnRef.current) return
+      const fallback = /[\u4e00-\u9fff]/.test(spoken) ? '好的，我去处理' : 'Got it, working on it.' // lint-allow-non-english
+      void voice.speak(result.ok ? result.data.text : fallback, undefined, true)
+    })
+  }, [input]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Read the reply aloud once the turn settles. Keyed off the in-flight
+  // marker clearing rather than off message content, so partial streamed
+  // text is never spoken mid-generation.
+  useEffect(() => {
+    const wasInFlight = prevFlightRef.current
+    prevFlightRef.current = flight
+    if (!wasInFlight || flight) return
+    // Only speak a reply to something that was actually spoken. Typing into a
+    // chat you happen to have used voice in before should stay silent.
+    if (!spokenTurnRef.current) return
+    spokenTurnRef.current = false
+    voiceAckGenerationRef.current += 1
+    const messages = chat?.messages ?? []
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i]
+      if (message.role === 'assistant' && message.content?.trim()) {
+        void voice.speak(message.content, chatId)
+        return
+      }
+    }
+  }, [flight]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep one IPC listener mounted for the lifetime of the chat. The voice
+  // callback changes as recording state and transcript handlers update; using
+  // a ref avoids a brief unsubscribe/re-subscribe gap exactly when the second
+  // hotkey press is meant to stop and send the recording.
+  const voiceToggleRef = useRef(voice.toggle)
+  voiceToggleRef.current = voice.toggle
+  const voiceCancelRef = useRef(voice.cancel)
+  voiceCancelRef.current = voice.cancel
+  useEffect(() => window.codey.voice.onConverseHotkey(() => {
+    voiceToggleRef.current('converse', { fromHotkey: true })
+  }), [])
+  useEffect(() => window.codey.voice.onCancelConverse(() => {
+    voiceCancelRef.current()
+  }), [])
+
+  // Drive the floating capsule. Only converse turns get one — dictation is a
+  // brief, eyes-on-screen action, and its status shows inline in the composer
+  // instead.
+  useEffect(() => {
+    // Clicking the button means you're already looking at the window; the
+    // floating capsule is for the hotkey, where you may not be.
+    const showable = voice.fromHotkey && voice.mode === 'converse' && voice.state !== 'idle'
+    void window.codey.voice.setHudState(showable ? voice.state : 'idle')
+  }, [voice.state, voice.mode, voice.fromHotkey])
+
+  useEffect(() => {
+    if (voice.fromHotkey && voice.mode === 'converse' && voice.state !== 'idle') {
+      window.codey.voice.setHudLevel(voice.level)
+    }
+  }, [voice.level, voice.mode, voice.state, voice.fromHotkey])
+
+  // Esc abandons a voice turn: drop the recording rather than sending it, or
+  // stop a reply mid-sentence. Captured so it doesn't also reach the composer.
+  useEffect(() => {
+    if (voice.state === 'idle') return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      voice.cancel()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [voice.state, voice.cancel])
+
+  const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing'
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
   const canSend = isGatewayRunning && !coreFailed && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
@@ -2258,33 +2300,76 @@ export const ChatTab: React.FC<Props> = ({
                 <PaperclipIcon color={isGatewayRunning && !isSending ? C.fg2 : C.fg3} />
               </button>
             </div>
+            <div style={styles.voiceIndicatorSlot}>
+              {voice.state !== 'idle' && (
+                <div
+                  style={styles.voiceIndicator}
+                  role="status"
+                  aria-label={`${voice.mode === 'converse' ? 'Conversation' : 'Dictation'} ${voice.state}`}
+                >
+                  <VoiceMeter
+                    level={voice.level}
+                    idle={voice.state === 'transcribing' || (voice.state === 'speaking' && voice.level === 0)}
+                    height={24}
+                    barCount={7}
+                    sensitivity={2.4}
+                    color={C.green}
+                    colors={voice.mode === 'converse' ? VOICE_GRADIENT_COLORS : undefined}
+                  />
+                  {voice.state === 'recording' && <VoiceElapsed since={voice.recordingStartedAt} />}
+                </div>
+              )}
+            </div>
             <div style={styles.composerActions}>
-              {voiceState === 'recording' && <VoiceWaveform levels={voiceLevels} />}
-              <button
-                type="button"
-                onMouseDown={event => {
-                  // Keep the insertion point in the textarea when the button is clicked.
-                  event.preventDefault()
-                  const textarea = taRef.current
-                  voiceSelectionRef.current = textarea
-                    ? { start: textarea.selectionStart, end: textarea.selectionEnd }
-                    : { start: input.length, end: input.length }
-                }}
-                onClick={() => toggleVoiceInput(voiceTargetId)}
+              {/* Two ways to use your voice: dictate into the composer, or
+                  hold a spoken conversation that reads the reply back. */}
+              {!(voice.state === 'recording' && voice.mode === 'converse') && <button
+                onClick={() => voice.toggle('dictate')}
                 disabled={!isGatewayRunning || !!coreFailed}
                 style={{
                   ...styles.voiceButton,
-                  color: voiceState === 'idle' ? C.fg2 : '#fff',
-                  background: voiceState === 'recording' ? C.red : voiceState === 'transcribing' ? C.accent : 'transparent',
+                  background: voiceBusy && voice.mode === 'dictate' ? C.red : 'transparent',
                   cursor: isGatewayRunning && !coreFailed ? 'pointer' : 'default',
                 }}
-                title={voiceState === 'recording' ? 'Stop dictation' : voiceState === 'transcribing' ? 'Transcribing…' : 'Start dictation'}
-                aria-label={voiceState === 'recording' ? 'Stop dictation' : 'Start dictation'}
+                title={
+                  voiceBusy && voice.mode === 'dictate'
+                    ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop — text goes to the box')
+                    : 'Dictate into the message box'
+                }
               >
-                {voiceState === 'recording'
+                {voice.state === 'recording' && voice.mode === 'dictate'
                   ? <StopIcon color="#fff" />
-                  : <MicrophoneIcon color={voiceState === 'idle' ? (isGatewayRunning && !coreFailed ? C.fg2 : C.fg3) : '#fff'} />}
-              </button>
+                  : <UIIcon
+                      name="mic"
+                      size={19}
+                      color={voiceBusy && voice.mode === 'dictate' ? '#fff' : C.fg2}
+                    />}
+              </button>}
+              {!(voice.state === 'recording' && voice.mode === 'dictate') && <button
+                onClick={() => voice.toggle('converse')}
+                disabled={!isGatewayRunning || !!coreFailed}
+                style={{
+                  ...styles.voiceButton,
+                  background: voice.state === 'recording' && voice.mode === 'converse' ? C.red
+                    : voice.state === 'speaking' ? C.accent
+                    : 'transparent',
+                  cursor: isGatewayRunning && !coreFailed ? 'pointer' : 'default',
+                }}
+                title={
+                  voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
+                  : voiceBusy && voice.mode === 'converse'
+                    ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop and send')
+                    : 'Talk to this chat — the reply is read back'
+                }
+              >
+                {voice.state === 'recording' && voice.mode === 'converse'
+                  ? <StopIcon color="#fff" />
+                  : <UIIcon
+                      name="waveform"
+                      size={19}
+                      color={voice.state === 'speaking' ? C.onAccent : C.fg2}
+                    />}
+              </button>}
               {isSending ? (
                 <button
                   onClick={() => stopChat(chatId)}
@@ -2576,7 +2661,16 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     gap: 8, padding: '4px 7px 7px',
   },
-  composerTools: { display: 'flex', alignItems: 'center', gap: 4 },
+  composerTools: { display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 },
+  voiceIndicatorSlot: {
+    minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: '0 12px',
+  },
+  voiceIndicator: {
+    minWidth: 0, width: '100%', maxWidth: 240, height: 32,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+    padding: '0 6px', overflow: 'hidden',
+  },
   composerActions: { display: 'flex', alignItems: 'center', gap: 4 },
   input: {
     width: '100%', background: 'transparent', border: 'none', borderRadius: 8,
@@ -2592,14 +2686,6 @@ const styles: Record<string, React.CSSProperties> = {
     width: 36, height: 36, borderRadius: 9, border: 'none',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, transition: 'background 0.15s',
-  },
-  voiceWaveform: {
-    height: 36, minWidth: 48, display: 'flex', alignItems: 'center',
-    justifyContent: 'center', gap: 2.5, flexShrink: 0,
-  },
-  voiceWaveBar: {
-    width: 2, minHeight: 3, maxHeight: 13, borderRadius: 2,
-    background: C.red, transition: 'height 45ms linear',
   },
   iconButtonPlus: { fontSize: 12, lineHeight: 1, marginLeft: 1, color: C.accent, fontWeight: 700 },
   orphanBanner: { padding: '8px 12px', background: C.warningBg, color: C.warningFg, fontSize: 12, borderTop: `1px solid ${C.border}` },
@@ -2770,6 +2856,9 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg2,
     cursor: 'pointer',
     fontSize: 12,
+  },
+  voiceStatusText: {
+    color: C.fg2, fontSize: 11, fontVariantNumeric: 'tabular-nums',
   },
   attachButton: {
     width: 36, height: 36, borderRadius: 9, border: 'none',

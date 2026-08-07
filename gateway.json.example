@@ -73,14 +73,25 @@
     "agent": "claude-code",
     "model": "claude-haiku-4-5"
   },
+  "apiKeys": [
+    {
+      "name": "voice-main",
+      "apiKey": "",
+      "openaiBaseUrl": "https://api.openai.com/v1",
+      "purpose": "voice"
+    }
+  ],
   "voice": {
     "enabled": false,
+    "dictationEnabled": false,
+    "conversationEnabled": false,
     "hotkey": "F5",
+    "converseHotkey": "Shift+Fn",
     "language": "auto",
     "injection": "paste",
     "provider": "api",
     "apiUrl": "https://api.openai.com/v1",
-    "apiKey": "",
+    "apiKeyRef": "voice-main",
     "apiModel": "whisper-1",
     "localModel": "openai_whisper-large-v3-turbo"
   },

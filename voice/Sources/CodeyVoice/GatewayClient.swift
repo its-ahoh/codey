@@ -39,6 +39,16 @@ final class GatewayClient {
         }
     }
 
+    /// Tell the gateway the converse hotkey was pressed. The gateway forwards
+    /// it to the Mac app, which owns the in-chat voice turn.
+    func triggerConverseHotkey() async {
+        var request = URLRequest(url: baseURL.appendingPathComponent("voice/converse-hotkey"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        _ = try? await session.data(for: request)
+    }
+
     /// Report current status to gateway.
     func reportStatus(_ status: String) async {
         var request = URLRequest(url: baseURL.appendingPathComponent("voice/status"))

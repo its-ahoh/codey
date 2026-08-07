@@ -62,7 +62,7 @@ final class HudOverlay {
 
         switch mode {
         case .recording:
-            label.stringValue = "Listening…"
+            label.stringValue = "Listening"
             label.textColor = NSColor.labelColor
             spinner.stopAnimation(nil)
             spinner.isHidden = true
@@ -73,7 +73,7 @@ final class HudOverlay {
             applyPillLayout()
             panel.ignoresMouseEvents = true
         case .transcribing:
-            label.stringValue = "Transcribing…"
+            label.stringValue = "Transcribing"
             label.textColor = NSColor.labelColor
             setMeterVisible(false)
             spinner.isHidden = false
@@ -87,7 +87,7 @@ final class HudOverlay {
             let display = text.count > 80
                 ? "…" + text.suffix(80)
                 : text
-            label.stringValue = display.isEmpty ? "Transcribing…" : display
+            label.stringValue = display.isEmpty ? "Transcribing" : display
             label.textColor = NSColor.labelColor
             setMeterVisible(false)
             spinner.stopAnimation(nil)

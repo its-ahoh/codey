@@ -27,7 +27,10 @@ export default function WorkersTab() {
   return (
     <div style={{ display: 'flex', height: '100%', background: C.bg, color: C.fg }}>
       <div style={{ width: 240, borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: 12, fontSize: 12, color: C.fg3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Workers</div>
+        <div style={{ padding: '16px 12px 10px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.fg }}>Worker library</div>
+          <div style={{ fontSize: 11, color: C.fg3, marginTop: 2 }}>Reusable specialist profiles</div>
+        </div>
         <div style={{ overflowY: 'auto', flex: 1 }}>
           {workers.map(w => (
             <button key={w.name} onClick={() => setMode({ kind: 'select', name: w.name })}
@@ -38,7 +41,7 @@ export default function WorkersTab() {
             </button>
           ))}
         </div>
-        <button onClick={() => setMode({ kind: 'create' })} style={{ margin: 12, padding: '8px 12px', background: C.accent, color: C.onAccent, border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>+ New Worker</button>
+        <button onClick={() => setMode({ kind: 'create' })} style={{ margin: 12, padding: '8px 12px', background: C.accent, color: C.onAccent, border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>+ New Worker</button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -72,7 +75,7 @@ function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: bo
   }
 
   return (
-    <div style={{ padding: 24, maxWidth: 640 }}>
+    <div style={{ padding: 20, maxWidth: 640 }}>
       <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Describe the worker</div>
       <div style={{ fontSize: 12, color: C.fg3, marginBottom: 12 }}>The active coding agent will generate a personality and config from your description.</div>
       {error && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 12 }}>{error}</div>}
@@ -141,7 +144,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
   const labelStyle = { display: 'block', fontSize: 11, color: C.fg3, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginTop: 16, marginBottom: 6 }
 
   return (
-    <div style={{ padding: 24, maxWidth: 720 }}>
+    <div style={{ padding: 20, maxWidth: 720 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <div style={{ fontSize: 18, fontWeight: 600 }}>{worker.name}</div>
         <button onClick={confirmDelete} style={{ background: 'transparent', color: C.dangerFg, border: `1px solid ${C.dangerBorder}`, padding: '6px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>Delete</button>

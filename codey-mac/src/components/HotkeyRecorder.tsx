@@ -59,9 +59,15 @@ export function formatHotkeyString(hotkey: string): string {
 export const HotkeyRecorder: React.FC<{
   value: string
   onChange: (hotkey: string) => void
-}> = ({ value, onChange }) => {
+  onRecordingChange?: (recording: boolean) => void
+}> = ({ value, onChange, onRecordingChange }) => {
   const [recording, setRecording] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    onRecordingChange?.(recording)
+    return () => { if (recording) onRecordingChange?.(false) }
+  }, [recording, onRecordingChange])
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (LOCK_KEYS.has(e.key)) return

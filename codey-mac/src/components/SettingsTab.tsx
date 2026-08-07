@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { apiService } from '../services/api'
 import { C } from '../theme'
-import { sectionStyle, fieldStyle, inputStyle, selectStyle, pillButton, Section, unwrap } from './settingsAtoms'
+import { fieldStyle, inputStyle, pageStyle, selectStyle, pillButton, Section, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 
 interface SettingsTabProps {
@@ -9,7 +9,7 @@ interface SettingsTabProps {
 }
 
 type ApiType = 'anthropic' | 'openai'
-interface ApiKeyEntry { name: string; apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string }
+interface ApiKeyEntry { name: string; apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string; purpose?: 'general' | 'voice' }
 interface ModelEntry {
   apiType: ApiType
   model: string
@@ -270,7 +270,7 @@ const ModelRow: React.FC<{
           style={{ ...selectStyle, width: '100%' }}
         >
           <option value="">(use default — env vars)</option>
-          {[...apis].sort((a, b) => a.name.localeCompare(b.name)).map(a => (
+          {[...apis].filter(a => a.purpose !== 'voice').sort((a, b) => a.name.localeCompare(b.name)).map(a => (
             <option key={a.name} value={a.name}>{a.name}</option>
           ))}
         </select>
@@ -459,7 +459,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
 
   if (!isGatewayRunning) {
     return (
-      <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
+      <div style={pageStyle}>
         <div style={{ marginTop: 40, textAlign: 'center', color: C.fg3, fontSize: 13 }}>Gateway not available</div>
       </div>
     )
@@ -526,13 +526,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   )
 
   return (
-    <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
+    <div style={pageStyle}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      <Section title="Advisor"/>
-      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        The advisor is the routing/orchestration model: it runs the <code>/team</code> advisor and picks workers for Auto-mode teams. Set a stronger model (e.g. Opus) here for better routing decisions. Leave both as <em>Use default</em> to fall back to the gateway default agent + model.
-      </div>
+      <Section first title="Advisor" description="Routing model used by teams to choose workers and coordinate execution."/>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
         background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
@@ -571,10 +568,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         </select>
       </div>
 
-      <Section title="Aide"/>
-      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        The Aide is a lightweight background model for housekeeping tasks like chat summarization and title generation — it never talks to you directly. Pin a small, fast model here (e.g. Haiku) to keep these tasks cheap. Leave both as <em>Use default</em> to fall back to the gateway default.
-      </div>
+      <Section title="Aide" description="Background model for summaries, titles, and other lightweight housekeeping."/>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
         background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
@@ -612,7 +606,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         </select>
       </div>
 
-      <Section title="Models" right={
+      <Section title="Models" description="Models available to agents and routing settings." right={
         <button onClick={() => setCreating(true)} style={pillButton('primary')} disabled={creating}>+ Add</button>
       }/>
       {creating && (
@@ -631,7 +625,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
         .map(m => <ModelRow key={m.model} entry={m} apis={apis} onSave={saveModel} onDelete={deleteModel}/>)}
 
-      <Section title="Agent priority" right={
+      <Section title="Agent priority" description="Default agent order and fallback behavior." right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ color: C.fg3, fontSize: 11 }}>{fallback.enabled ? 'Enabled' : 'Disabled'}</span>
           <Toggle on={fallback.enabled} onChange={enabled => updateFallback({ ...fallback, enabled })}/>

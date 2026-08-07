@@ -3,3 +3,4 @@ export { TelegramHandler } from './telegram';
 export { DiscordHandler } from './discord';
 export { IMessageHandler } from './imessage';
 export { TuiHandler } from './tui';
+export { VoiceChannelHandler } from './voice';

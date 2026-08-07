@@ -120,6 +120,14 @@ let port = resolveGatewayPort()
 let coordinator = VoiceCoordinator(gatewayPort: port)
 coordinator.start()
 
+// Electron keeps the helper alive and can ask it to toggle/cancel native
+// Conversation capture through newline-delimited stdin commands.
+DispatchQueue.global(qos: .userInitiated).async {
+    while let command = readLine() {
+        DispatchQueue.main.async { coordinator.handleExternalCommand(command) }
+    }
+}
+
 NotificationCenter.default.addObserver(
     forName: NSApplication.willTerminateNotification,
     object: nil,
