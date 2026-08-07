@@ -158,6 +158,8 @@ export function scanClaudePluginSkills(
  * Never renames over an existing target: a directory holding both files (an
  * installed collection can carry one in) may hold a hand-written backup, so
  * disabling that reports an error rather than silently clobbering it.
+ * Enabling with both present is deliberately a no-op rather than an error —
+ * the skill genuinely is enabled, and the disabled copy is only litter.
  */
 export function setSkillEnabled(
   fsMod: typeof Fs,
@@ -170,8 +172,8 @@ export function setSkillEnabled(
   const target = enabled ? activePath : disabledPath
   const source = enabled ? disabledPath : activePath
   if (fsMod.existsSync(target)) {
-    if (enabled || !fsMod.existsSync(source)) return   // already in the requested state
-    throw new Error(`Cannot disable: ${DISABLED_SKILL_FILE} already exists in: ${dir}`)
+    if (enabled || !fsMod.existsSync(source)) return // already in the requested state
+    throw new Error(`Cannot disable: ${DISABLED_SKILL_FILE} already exists in ${dir} — remove or rename it first`)
   }
   if (!fsMod.existsSync(source)) throw new Error(`No SKILL.md found in: ${dir}`)
   fsMod.renameSync(source, target)

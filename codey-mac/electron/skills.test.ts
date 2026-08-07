@@ -179,7 +179,7 @@ describe('setSkillEnabled', () => {
 
   it('throws when the directory holds no skill file', () => {
     const root = temp()
-    expect(() => setSkillEnabled(fs, path, root, false)).toThrow(/SKILL\.md/)
+    expect(() => setSkillEnabled(fs, path, root, false)).toThrow(/No SKILL\.md found/)
   })
 
   it('refuses to disable over an existing disabled file, and keeps both intact', () => {
