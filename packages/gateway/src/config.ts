@@ -87,27 +87,31 @@ export interface GatewayConfigJson {
   teams?: Record<string, TeamConfigRaw>;
   /** Voice input helper (native macOS app) configuration. */
   voice?: {
+    /** Legacy aggregate kept true while either global hotkey is enabled. */
     enabled: boolean;
+    /** Dictation global hotkey only. The in-chat action remains available. */
+    dictationEnabled?: boolean;
+    /** Talk-to-chat global hotkey only. The in-chat action remains available. */
+    conversationEnabled?: boolean;
     hotkey: string;
     /**
      * Second hotkey: start/stop a spoken conversation in the focused chat.
      * `hotkey` above dictates at the cursor instead. Unset means no binding.
-     * Cannot contain Fn: Electron's globalShortcut can't bind it, and the
-     * Swift helper already owns it for dictation.
+     * Fn-based combinations are delegated to the bundled Swift helper because
+     * Electron's globalShortcut cannot bind them.
      */
     converseHotkey?: string;
     language: string;
     injection: 'paste' | 'ax';
-    /** Where a transcript goes: 'inject' pastes into the focused app (today's
-     *  behavior); 'converse' posts it to /voice/converse to talk to Codey.
-     *  Defaults to 'inject' so existing dictation users see no change. */
+    /** Legacy compatibility field. The primary hotkey always dictates and
+     *  converseHotkey always talks to the selected Chat. */
     mode?: 'inject' | 'converse';
     /** Transcription backend: hosted API or on-device WhisperKit. */
     provider: 'api' | 'local';
     /** Base URL of an OpenAI-compatible transcription endpoint (e.g. https://api.openai.com/v1). */
     apiUrl: string;
-    /** Bearer token for the API endpoint. */
-    apiKey: string;
+    /** Saved Voice key selected from Settings → API Keys. */
+    apiKeyRef?: string;
     /** Model identifier sent to the API (e.g. whisper-1). */
     apiModel: string;
     /** WhisperKit model variant for local mode (e.g. openai_whisper-large-v3-turbo). */
@@ -152,18 +156,20 @@ export interface VoiceTtsSettings {
   provider: 'api' | 'local';
   /** Base URL of an OpenAI-compatible speech endpoint (e.g. https://api.openai.com/v1). */
   apiUrl: string;
-  /** Bearer token for the API endpoint. */
-  apiKey: string;
+  /** Independently selected saved key for API speech synthesis. */
+  apiKeyRef?: string;
   /** Model identifier sent to the API (e.g. gpt-4o-mini-tts). */
   apiModel: string;
   /** Voice identifier passed to the API or AVSpeechSynthesizer. */
   voiceId: string;
+  /** Web Speech/macOS voiceURI used for client-side system speech. */
+  systemVoice?: string;
   /**
    * Model (by name, from the global model catalog) used to condense a
    * reply before speaking it. Point this at a small, fast model — the
    * digest is a tool-free text transform and its latency lands in the
    * silence before Codey starts talking. Falls back to the advisor's
-   * model when unset; when the resolved model carries an API key the
+   * Aide model when unset; when the resolved model carries an API key the
    * digest runs as a direct API call instead of an agent CLI spawn.
    */
   digestModel?: string;
@@ -174,6 +180,14 @@ export interface VoiceTtsSettings {
    */
   verbosity: 'full' | 'digest' | 'auto';
 }
+
+/** Runtime-only voice shape. Secrets are materialized from apiKeyRef for
+ * trusted consumers but are never persisted inside the voice config. */
+export type ResolvedVoiceTtsSettings = VoiceTtsSettings & { apiKey: string };
+export type ResolvedVoiceConfig = Omit<NonNullable<GatewayConfigJson['voice']>, 'tts'> & {
+  apiKey: string;
+  tts?: ResolvedVoiceTtsSettings;
+};
 
 // ── ConfigManager ────────────────────────────────────────────────────
 
@@ -369,6 +383,29 @@ export class ConfigManager extends EventEmitter {
     return this.config.apiKeys?.find(a => a.name === name);
   }
 
+  /** Voice config with its selected saved key materialized for runtime-only
+   * consumers such as the native helper. The secret remains stored once in
+   * apiKeys and is never copied back into voice settings. */
+  getResolvedVoiceConfig(): ResolvedVoiceConfig | undefined {
+    const voice = this.config.voice;
+    if (!voice) return undefined;
+    const saved = voice.apiKeyRef ? this.getApiKey(voice.apiKeyRef) : undefined;
+    const ttsKeyRef = voice.tts?.apiKeyRef;
+    const ttsSaved = ttsKeyRef ? this.getApiKey(ttsKeyRef) : undefined;
+    const apiKey = saved?.apiKey ?? '';
+    const apiUrl = saved?.openaiBaseUrl ?? voice.apiUrl;
+    return {
+      ...voice,
+      apiKey,
+      apiUrl,
+      tts: voice.tts ? {
+        ...voice.tts,
+        apiKey: ttsSaved?.apiKey ?? '',
+        apiUrl: ttsSaved?.openaiBaseUrl ?? voice.tts.apiUrl,
+      } : undefined,
+    };
+  }
+
   /**
    * Upsert an API key entry **by name** — `name` is the identity key. To change
    * the name of an existing entry, call `renameApiKey` instead, otherwise the
@@ -396,12 +433,20 @@ export class ConfigManager extends EventEmitter {
     for (const m of this.config.models) {
       if (m.apiKeyRef === oldName) m.apiKeyRef = newName;
     }
+    if (this.config.voice?.apiKeyRef === oldName) {
+      this.config.voice.apiKeyRef = newName;
+    }
+    if (this.config.voice?.tts?.apiKeyRef === oldName) {
+      this.config.voice.tts.apiKeyRef = newName;
+    }
     this.save();
     return true;
   }
 
   deleteApiKey(name: string): boolean {
     const dependents = this.config.models.filter(m => m.apiKeyRef === name).map(m => m.model);
+    if (this.config.voice?.apiKeyRef === name) dependents.push('Voice transcription');
+    if (this.config.voice?.tts?.apiKeyRef === name) dependents.push('Voice TTS');
     if (dependents.length > 0) {
       throw new Error(`API key "${name}" is referenced by: ${dependents.join(', ')}`);
     }
@@ -758,7 +803,17 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
     out.mcpServers = servers;
   }
   if (raw.voice && typeof raw.voice === 'object') {
-    out.voice = raw.voice;
+    // Inline Voice secrets were an unreleased implementation detail. Drop
+    // them completely; Voice now references a credential in apiKeys by name.
+    const { apiKey: _inlineApiKey, tts: rawTts, ...voice } = raw.voice as any;
+    const { apiKey: _inlineTtsApiKey, ...tts } = (rawTts ?? {}) as any;
+    out.voice = {
+      ...voice,
+      // Migrate the former default so existing installs receive the new,
+      // less collision-prone Conversation binding without manual reset.
+      ...(voice.converseHotkey === 'Control+Fn' ? { converseHotkey: 'Shift+Fn' } : {}),
+      ...(rawTts && typeof rawTts === 'object' ? { tts } : {}),
+    } as GatewayConfigJson['voice'];
   }
   if (raw.notifications && typeof raw.notifications === 'object') {
     out.notifications = { enabled: raw.notifications.enabled };

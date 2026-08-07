@@ -42,7 +42,14 @@ export const VoiceHud: React.FC = () => {
   return (
     <div style={styles.root}>
       <div className="codey-voice-capsule" style={styles.capsule}>
-        <VoiceMeter level={level} idle={state === 'transcribing'} />
+        <VoiceMeter
+          level={level}
+          idle={state === 'transcribing' || (state === 'speaking' && level === 0)}
+          color="#fff"
+          height={state === 'speaking' ? 20 : 28}
+          barCount={5}
+          sensitivity={state === 'speaking' ? 1.65 : 3}
+        />
         <span style={styles.label}>{LABEL[state]}</span>
       </div>
       <style>{CSS}</style>
@@ -60,7 +67,7 @@ const styles: Record<string, React.CSSProperties> = {
   capsule: {
     display: 'flex', alignItems: 'center', gap: 10,
     padding: '9px 18px', borderRadius: 999,
-    // No dark plate behind it: the gradient itself is the surface.
+    border: '2px solid transparent',
     boxShadow: '0 6px 22px rgba(0,0,0,0.28)',
   },
   label: {
@@ -73,13 +80,17 @@ const styles: Record<string, React.CSSProperties> = {
 
 const CSS = `
 @keyframes codey-voice-drift {
-  0%   { background-position:   0% 50%; }
-  100% { background-position: 200% 50%; }
+  0%   { background-position: 0 0,   0% 50%; }
+  100% { background-position: 0 0, 200% 50%; }
 }
 .codey-voice-capsule {
-  background-image: linear-gradient(90deg,
-    #ff5f6d, #ffc371, #47e6b1, #38a3f5, #a86bf5, #ff5f6d);
-  background-size: 200% 100%;
+  background-image:
+    linear-gradient(#25221d, #25221d),
+    linear-gradient(90deg,
+      #ff5f6d, #ffc371, #47e6b1, #38a3f5, #a86bf5, #ff5f6d);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  background-size: 100% 100%, 200% 100%;
   animation: codey-voice-drift 4s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {

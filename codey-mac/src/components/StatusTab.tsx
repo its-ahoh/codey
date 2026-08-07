@@ -151,11 +151,11 @@ const styles: Record<string, React.CSSProperties> = {
   statLabel: { color: C.fg3, fontSize: 11, marginBottom: 4 },
   statValue: { color: C.fg, fontSize: 22, fontWeight: 600, fontVariantNumeric: 'tabular-nums' },
   sectionHead: {
-    color: C.fg3,
-    fontSize: 11,
-    fontWeight: 600,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
+    color: C.fg,
+    fontSize: 13,
+    fontWeight: 700,
+    paddingBottom: 8,
+    borderBottom: `1px solid ${C.border}`,
     marginBottom: 10,
   },
   listItem: {

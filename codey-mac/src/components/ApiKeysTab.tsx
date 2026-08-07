@@ -1,13 +1,23 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import {
-  inputStyle, pillButton, unwrap,
+  inputStyle, pageIntroStyle, pageStyle, pillButton, Section, unwrap,
 } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 
-interface ApiKeyEntry { name: string; apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string }
+interface ApiKeyEntry {
+  name: string
+  apiKey: string
+  anthropicBaseUrl?: string
+  openaiBaseUrl?: string
+  purpose?: 'general' | 'voice'
+}
 
-interface Props { isGatewayRunning: boolean }
+interface Props {
+  isGatewayRunning: boolean
+  autoCreatePurpose?: 'voice' | 'general'
+  onAutoCreateHandled?: () => void
+}
 
 const ApiRow: React.FC<{
   entry: ApiKeyEntry
@@ -32,7 +42,8 @@ const ApiRow: React.FC<{
   }
 
   if (!editing) {
-    const hasAnthropicUrl = !!entry.anthropicBaseUrl
+    const isVoice = entry.purpose === 'voice'
+    const hasAnthropicUrl = !isVoice && !!entry.anthropicBaseUrl
     const hasOpenaiUrl = !!entry.openaiBaseUrl
     const hasAnyUrl = hasAnthropicUrl || hasOpenaiUrl
     const keyTail = entry.apiKey.trim().slice(-4)
@@ -50,6 +61,7 @@ const ApiRow: React.FC<{
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>
             {entry.name}
+            {isVoice && <span style={{ color: C.accent, fontSize: 10, marginLeft: 7 }}>VOICE</span>}
           </div>
           <div
             style={{
@@ -98,12 +110,14 @@ const ApiRow: React.FC<{
         <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
         <input type="password" value={draft.apiKey} onChange={e => setDraft({ ...draft, apiKey: e.target.value })}
           placeholder="API key" style={{ ...inputStyle, width: '100%' }} />
-        <label style={{ color: C.fg3, fontSize: 12 }}>Anthropic Base URL</label>
-        <input value={draft.anthropicBaseUrl ?? ''} onChange={e => setDraft({ ...draft, anthropicBaseUrl: e.target.value || undefined })}
-          placeholder="(optional) override anthropic endpoint" style={{ ...inputStyle, width: '100%' }} />
-        <label style={{ color: C.fg3, fontSize: 12 }}>OpenAI Base URL</label>
+        {draft.purpose !== 'voice' && <>
+          <label style={{ color: C.fg3, fontSize: 12 }}>Anthropic Base URL</label>
+          <input value={draft.anthropicBaseUrl ?? ''} onChange={e => setDraft({ ...draft, anthropicBaseUrl: e.target.value || undefined })}
+            placeholder="(optional) override anthropic endpoint" style={{ ...inputStyle, width: '100%' }} />
+        </>}
+        <label style={{ color: C.fg3, fontSize: 12 }}>{draft.purpose === 'voice' ? 'Voice API Base URL' : 'OpenAI Base URL'}</label>
         <input value={draft.openaiBaseUrl ?? ''} onChange={e => setDraft({ ...draft, openaiBaseUrl: e.target.value || undefined })}
-          placeholder="(optional) override openai endpoint" style={{ ...inputStyle, width: '100%' }} />
+          placeholder={draft.purpose === 'voice' ? 'https://api.openai.com/v1' : '(optional) override openai endpoint'} style={{ ...inputStyle, width: '100%' }} />
       </div>
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
@@ -116,9 +130,9 @@ const ApiRow: React.FC<{
   )
 }
 
-export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning }) => {
+export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning, autoCreatePurpose, onAutoCreateHandled }) => {
   const [apiKeys, setApiKeys] = useState<ApiKeyEntry[]>([])
-  const [creating, setCreating] = useState(false)
+  const [creating, setCreating] = useState<'general' | 'voice' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
@@ -128,10 +142,15 @@ export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning }) => {
   }, [])
 
   useEffect(() => { if (isGatewayRunning) reload() }, [isGatewayRunning, reload])
+  useEffect(() => {
+    if (!autoCreatePurpose) return
+    setCreating(autoCreatePurpose)
+    onAutoCreateHandled?.()
+  }, [autoCreatePurpose, onAutoCreateHandled])
 
   if (!isGatewayRunning) {
     return (
-      <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
+      <div style={pageStyle}>
         <div style={{ marginTop: 40, textAlign: 'center', color: C.fg3, fontSize: 13 }}>Gateway not available</div>
       </div>
     )
@@ -143,7 +162,7 @@ export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning }) => {
     }
     await unwrap(await window.codey.apiKeys.save(entry))
     await reload()
-    setCreating(false)
+    setCreating(null)
   }
   const deleteApiKey = async (name: string) => {
     if (!confirm(`Delete API key "${name}"?`)) return
@@ -152,27 +171,46 @@ export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning }) => {
   }
 
   return (
-    <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
+    <div style={pageStyle}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
-        <div style={{ color: C.fg3, fontSize: 11, flex: 1 }}>
-          Saved API keys &amp; endpoints. A single key can be bound from many models in the AI Models tab. Each key can carry separate base URL overrides for anthropic-typed and openai-typed models.
-        </div>
-        <button onClick={() => setCreating(true)} style={pillButton('primary')} disabled={creating}>+ Add</button>
-      </div>
-      {creating && (
+      <div style={pageIntroStyle}>Store credentials once, then select them from Models or Voice settings. Secrets are not duplicated into those feature configs.</div>
+
+      <Section first title="Voice" description="Credentials for transcription and spoken replies." right={
+        <button onClick={() => setCreating('voice')} style={pillButton('primary')} disabled={creating !== null}>+ Add</button>
+      } />
+      {creating === 'voice' && (
         <ApiRow
-          entry={{ name: '', apiKey: '', anthropicBaseUrl: '', openaiBaseUrl: '' }}
+          entry={{ name: '', apiKey: '', openaiBaseUrl: 'https://api.openai.com/v1', purpose: 'voice' }}
           isNew
           onSave={saveApiKey}
-          onCancel={() => setCreating(false)}
+          onCancel={() => setCreating(null)}
         />
       )}
-      {apiKeys.length === 0 && !creating && (
-        <div style={{ color: C.fg3, fontSize: 12, padding: '16px 0' }}>No API keys yet. Click + Add to create one.</div>
+      {apiKeys.filter(a => a.purpose === 'voice').length === 0 && creating !== 'voice' && (
+        <div style={{ color: C.fg3, fontSize: 12, padding: '8px 0 16px' }}>No Voice keys saved.</div>
       )}
       {[...apiKeys]
+        .filter(a => a.purpose === 'voice')
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(a => <ApiRow key={a.name} entry={a} onSave={saveApiKey} onDelete={deleteApiKey} />)}
+
+      <Section title="Model & Agent" description="Reusable credentials for AI models and agents." right={
+        <button onClick={() => setCreating('general')} style={pillButton('primary')} disabled={creating !== null}>+ Add</button>
+      } />
+      {creating === 'general' && (
+        <ApiRow
+          entry={{ name: '', apiKey: '', anthropicBaseUrl: '', openaiBaseUrl: '', purpose: 'general' }}
+          isNew
+          onSave={saveApiKey}
+          onCancel={() => setCreating(null)}
+        />
+      )}
+      {apiKeys.filter(a => a.purpose !== 'voice').length === 0 && creating !== 'general' && (
+        <div style={{ color: C.fg3, fontSize: 12, padding: '8px 0 16px' }}>No model keys saved.</div>
+      )}
+      {[...apiKeys]
+        .filter(a => a.purpose !== 'voice')
         .sort((a, b) => a.name.localeCompare(b.name))
         .map(a => <ApiRow key={a.name} entry={a} onSave={saveApiKey} onDelete={deleteApiKey} />)}
     </div>

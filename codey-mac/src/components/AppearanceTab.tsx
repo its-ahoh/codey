@@ -2,6 +2,7 @@
 import React from 'react'
 import { C, ThemeMode, PaletteName, PALETTES, useThemeMode, useEffectiveTheme, usePaletteName } from '../theme'
 import { HotkeyRecorder } from './HotkeyRecorder'
+import { Section, pageStyle } from './settingsAtoms'
 
 const OPTIONS: { value: ThemeMode; label: string }[] = [
   { value: 'light',  label: 'Light'  },
@@ -91,9 +92,16 @@ export const AppearanceTab: React.FC = () => {
   }
 
   return (
-    <div style={styles.wrap}>
-      <div style={styles.row}>
-        <div style={styles.label}>Appearance</div>
+    <div style={{ ...pageStyle, ...styles.wrap }}>
+      <Section first title="Appearance" description="Choose how Codey looks on this Mac." />
+      <div style={styles.settingsGroup}>
+      <div style={{ ...styles.settingRow, borderTop: 'none' }}>
+        <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
+          <div>Mode</div>
+          {mode === 'system' && (
+            <div style={styles.settingDesc}>Following macOS: {effective === 'dark' ? 'Dark' : 'Light'}</div>
+          )}
+        </div>
         <div role="radiogroup" aria-label="Appearance" style={styles.segmented}>
           {OPTIONS.map(opt => {
             const active = mode === opt.value
@@ -115,14 +123,16 @@ export const AppearanceTab: React.FC = () => {
           })}
         </div>
       </div>
-      {mode === 'system' && (
-        <div style={styles.hint}>
-          Currently following system: {effective === 'dark' ? 'Dark' : 'Light'}
-        </div>
-      )}
 
-      <div style={styles.row}>
-        <div style={styles.label}>Theme</div>
+      <div style={styles.settingRow}>
+        <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
+          <div>Theme</div>
+          <div style={styles.settingDesc}>
+            {palette === 'terminal'
+              ? 'Warm paper and terminal green.'
+              : 'The original macOS-style colors.'}
+          </div>
+        </div>
         <select
           aria-label="Color theme"
           value={palette}
@@ -134,14 +144,12 @@ export const AppearanceTab: React.FC = () => {
           ))}
         </select>
       </div>
-      <div style={styles.hint}>
-        {palette === 'terminal'
-          ? 'Terminal — warm paper & terminal green, matching the Codey site.'
-          : 'Classic — the original macOS-style colors.'}
       </div>
 
       {loaded && (
-        <div style={styles.settingsGroup}>
+        <>
+          <Section title="Behavior" description="App-wide permissions, notifications, shortcuts, and launch behavior." />
+          <div style={styles.settingsGroup}>
           <div style={{ ...styles.settingRow, borderTop: 'none' }}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Skip permissions</div>
@@ -201,9 +209,11 @@ export const AppearanceTab: React.FC = () => {
             </div>
             <Toggle on={dockless} onChange={toggleDockless}/>
           </div>
-        </div>
+          </div>
+        </>
       )}
 
+      <Section title="About" />
       <div style={styles.row}>
         <div style={styles.label}>Version</div>
         <div style={styles.value}>{version || '—'}</div>
@@ -213,13 +223,18 @@ export const AppearanceTab: React.FC = () => {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  wrap:  { padding: '24px', display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 720 },
+  // This page scrolls as one natural document. Making it a height-constrained
+  // flex column caused the large setting groups to shrink; because those
+  // groups hide overflow for their rounded corners, their final rows were
+  // clipped underneath the following section.
+  wrap:  { display: 'block' },
   row:   { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '13px 14px', borderRadius: 11, background: C.surface, border: `1px solid ${C.border}` },
   label: { fontSize: 13, color: C.fg, width: 80 },
   // Toggle/hotkey settings stacked with dividers so each row's label and
   // control read as a distinct line instead of a packed block.
   settingsGroup: {
     display: 'flex', flexDirection: 'column',
+    flexShrink: 0,
     border: `1px solid ${C.border}`, borderRadius: 12,
     background: C.surface, overflow: 'hidden', boxShadow: '0 5px 14px rgba(0,0,0,0.05)',
   },
@@ -255,6 +270,5 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     minWidth: 140,
   },
-  hint: { fontSize: 11, color: C.fg3, margin: '-8px 0 0 14px' },
   value: { fontSize: 13, color: C.fg2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
 }

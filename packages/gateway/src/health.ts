@@ -127,7 +127,10 @@ export class ApiServer {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           configured: !!voice,
-          enabled: voice?.enabled ?? false,
+          enabled: (voice?.dictationEnabled ?? voice?.enabled ?? false)
+            || (voice?.conversationEnabled ?? voice?.enabled ?? false),
+          dictationEnabled: voice?.dictationEnabled ?? voice?.enabled ?? false,
+          conversationEnabled: voice?.conversationEnabled ?? voice?.enabled ?? false,
           state: this._voiceStatus ?? null,
         }));
         return;
@@ -152,7 +155,7 @@ export class ApiServer {
       }
 
       if (url === '/voice/config' && req.method === 'GET') {
-        const voice = this.configManager.get().voice;
+        const voice = this.configManager.getResolvedVoiceConfig();
         if (!voice) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Voice not configured' }));

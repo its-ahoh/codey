@@ -33,16 +33,6 @@ import { TerminalPanel } from './TerminalPanel'
 import { splitWhiteboardMarkers, type WhiteboardMarker } from './teamWhiteboardFormat'
 import { groupTeamMessagesByMember, type TeamMemberMessageGroup } from './teamRunModel'
 import { ToolCallList } from './ToolCallList'
-import {
-  VOICE_RESULT_EVENT,
-  VOICE_LEVEL_EVENT,
-  VOICE_STATE_EVENT,
-  toggleVoiceInput,
-  type VoiceInputState,
-  type VoiceResultDetail,
-  type VoiceLevelDetail,
-  type VoiceStateDetail,
-} from './voiceInputEvents'
 import { useChatVoice } from './useChatVoice'
 import { VoiceMeter } from './VoiceMeter'
 
@@ -53,6 +43,7 @@ const EDITOR_LOGOS: Partial<Record<string, string>> = {
 }
 
 const STATUS_SIDECAR_HIDDEN_KEY = 'codey.statusSidecarHidden'
+const VOICE_GRADIENT_COLORS = ['#ff5f6d', '#ffc371', '#47e6b1', '#38a3f5', '#a86bf5']
 
 interface Props {
   chatId: string
@@ -114,32 +105,6 @@ const PaperclipIcon: React.FC<{ color: string }> = ({ color }) => (
   <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
     <path d="M21.44 11.05L12.25 20.24a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 11-2.83-2.83l8.49-8.48" />
   </svg>
-)
-
-const MicrophoneIcon: React.FC<{ color: string }> = ({ color }) => (
-  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-    <rect x="9" y="2" width="6" height="12" rx="3" />
-    <path d="M5 10a7 7 0 0014 0M12 17v5M8 22h8" />
-  </svg>
-)
-
-const VoiceWaveform: React.FC<{ levels: number[] }> = ({ levels }) => (
-  <div
-    style={styles.voiceWaveform}
-    role="status"
-    aria-label="Recording"
-    title="Recording"
-  >
-    {levels.map((level, index) => (
-      <span
-        key={index}
-        style={{
-          ...styles.voiceWaveBar,
-          height: 3 + Math.round(level * 10),
-        }}
-      />
-    ))}
-  </div>
 )
 
 const UploadCloudIcon: React.FC<{ color: string; size?: number }> = ({ color, size = 32 }) => (
@@ -858,6 +823,7 @@ export const ChatTab: React.FC<Props> = ({
   // sticky (it remembers which button you used last), so keying playback off
   // it read every typed message aloud too.
   const spokenTurnRef = useRef(false)
+  const voiceAckGenerationRef = useRef(0)
   const voice = useChatVoice({
     onTranscript: (text, mode) => {
       if (mode === 'converse') {
@@ -870,7 +836,6 @@ export const ChatTab: React.FC<Props> = ({
     },
     onError: msg => void window.codey.voice.showError(msg),
   })
-
   // Seed from the per-chat draft store so unsent text/attachments survive the
   // remount that happens when switching chats (App.tsx keys ChatTab by chat id).
   const [input, setInput] = useState(() => getDraft(chatId).text)
@@ -944,60 +909,6 @@ export const ChatTab: React.FC<Props> = ({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
-  const voiceTargetId = `chat-composer:${chatId}`
-  const voiceSelectionRef = useRef<{ start: number; end: number } | null>(null)
-  const [voiceState, setVoiceState] = useState<VoiceInputState>('idle')
-  const [voiceLevels, setVoiceLevels] = useState<number[]>(() => Array(11).fill(0.08))
-
-  useEffect(() => {
-    const onState = (event: Event) => {
-      const detail = (event as CustomEvent<VoiceStateDetail>).detail
-      if (detail.targetId === voiceTargetId) {
-        setVoiceState(detail.state)
-        if (detail.state !== 'recording') setVoiceLevels(Array(11).fill(0.08))
-      }
-    }
-    const onLevel = (event: Event) => {
-      const detail = (event as CustomEvent<VoiceLevelDetail>).detail
-      if (detail.targetId === voiceTargetId) setVoiceLevels(detail.levels)
-    }
-    const onResult = (event: Event) => {
-      const detail = (event as CustomEvent<VoiceResultDetail>).detail
-      if (detail.targetId !== voiceTargetId) return
-
-      let nextCursor = 0
-      setInput(current => {
-        const selection = voiceSelectionRef.current ?? { start: current.length, end: current.length }
-        const start = Math.min(selection.start, current.length)
-        const end = Math.min(Math.max(selection.end, start), current.length)
-        const spoken = detail.text.trim()
-        const leading = start > 0 && !/\s/.test(current[start - 1]) ? ' ' : ''
-        const trailing = end < current.length && !/\s/.test(current[end]) ? ' ' : ''
-        const inserted = `${leading}${spoken}${trailing}`
-        nextCursor = start + inserted.length
-        return current.slice(0, start) + inserted + current.slice(end)
-      })
-      setInputHistoryIndex(null)
-      requestAnimationFrame(() => {
-        const textarea = taRef.current
-        if (!textarea) return
-        textarea.focus()
-        textarea.setSelectionRange(nextCursor, nextCursor)
-        if (composerHeight == null) {
-          textarea.style.height = 'auto'
-          textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px'
-        }
-      })
-    }
-    window.addEventListener(VOICE_STATE_EVENT, onState)
-    window.addEventListener(VOICE_LEVEL_EVENT, onLevel)
-    window.addEventListener(VOICE_RESULT_EVENT, onResult)
-    return () => {
-      window.removeEventListener(VOICE_STATE_EVENT, onState)
-      window.removeEventListener(VOICE_LEVEL_EVENT, onLevel)
-      window.removeEventListener(VOICE_RESULT_EVENT, onResult)
-    }
-  }, [voiceTargetId, composerHeight])
 
   useEffect(() => {
     if (composerHeight != null) localStorage.setItem('codey.composerHeight', String(composerHeight))
@@ -1664,11 +1575,14 @@ export const ChatTab: React.FC<Props> = ({
     // the reply so both use the same voice; verbatim because a one-line ack
     // has nothing to digest, and no conversationId so it can't displace the
     // cached reply behind "more detail".
-    void voice.speak(
-      /[\u4e00-\u9fff]/.test(spoken) ? '好的，我去处理' : 'Got it, working on it.',
-      undefined,
-      true,
-    )
+    const ackGeneration = ++voiceAckGenerationRef.current
+    void window.codey.voice.ack(spoken).then(result => {
+      // A very fast agent reply can beat acknowledgement generation. Never
+      // let a late ack interrupt the actual answer or leak into a newer turn.
+      if (ackGeneration !== voiceAckGenerationRef.current || !spokenTurnRef.current) return
+      const fallback = /[\u4e00-\u9fff]/.test(spoken) ? '好的，我去处理' : 'Got it, working on it.'
+      void voice.speak(result.ok ? result.data.text : fallback, undefined, true)
+    })
   }, [input]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Read the reply aloud once the turn settles. Keyed off the in-flight
@@ -1682,6 +1596,7 @@ export const ChatTab: React.FC<Props> = ({
     // chat you happen to have used voice in before should stay silent.
     if (!spokenTurnRef.current) return
     spokenTurnRef.current = false
+    voiceAckGenerationRef.current += 1
     const messages = chat?.messages ?? []
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i]
@@ -1692,9 +1607,20 @@ export const ChatTab: React.FC<Props> = ({
     }
   }, [flight]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Global converse hotkey drives the same toggle as the waveform button, so
-  // one press starts talking and the next sends — no reaching for the mouse.
-  useEffect(() => window.codey.voice.onConverseHotkey(() => voice.toggle('converse', { fromHotkey: true })), [voice.toggle])
+  // Keep one IPC listener mounted for the lifetime of the chat. The voice
+  // callback changes as recording state and transcript handlers update; using
+  // a ref avoids a brief unsubscribe/re-subscribe gap exactly when the second
+  // hotkey press is meant to stop and send the recording.
+  const voiceToggleRef = useRef(voice.toggle)
+  voiceToggleRef.current = voice.toggle
+  const voiceCancelRef = useRef(voice.cancel)
+  voiceCancelRef.current = voice.cancel
+  useEffect(() => window.codey.voice.onConverseHotkey(() => {
+    voiceToggleRef.current('converse', { fromHotkey: true })
+  }), [])
+  useEffect(() => window.codey.voice.onCancelConverse(() => {
+    voiceCancelRef.current()
+  }), [])
 
   // Drive the floating capsule. Only converse turns get one — dictation is a
   // brief, eyes-on-screen action, and its status shows inline in the composer
@@ -2335,104 +2261,7 @@ export const ChatTab: React.FC<Props> = ({
               })}
             </div>
           )}
-          {voice.state !== 'idle' && (
-            // Inline status: dictation never raises the floating capsule,
-            // and even in converse mode the capsule can be off-screen while
-            // you're looking right at the composer.
-            <div style={styles.voiceStatus}>
-              <VoiceMeter
-                level={voice.level}
-                idle={voice.state === 'transcribing'}
-                height={14}
-                color={voice.state === 'speaking' ? C.accent : C.red}
-              />
-              {voice.state === 'recording' && <VoiceElapsed since={voice.recordingStartedAt} />}
-            </div>
-          )}
-          <div style={styles.composerRow}>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,text/*,.json,.ts,.tsx,.js,.jsx,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.css,.html,.md,.yaml,.yml,.toml,.xml,.sh,.bash,.zsh,.log,.csv,.sql"
-              style={{ display: 'none' }}
-              onChange={handleFilePick}
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={!isGatewayRunning || !!coreFailed || isSending}
-              style={styles.attachButton}
-              title="Attach file"
-            >
-              <PaperclipIcon color={isGatewayRunning && !isSending ? C.fg2 : C.fg3} />
-            </button>
-            <textarea
-              ref={taRef}
-              value={input}
-              onChange={e => { setInputHistoryIndex(null); setInput(e.target.value) }}
-              onKeyDown={handleKey}
-              onInput={e => {
-                if (composerHeight != null) return // manual height pinned
-                const el = e.currentTarget
-                el.style.height = 'auto'
-                el.style.height = Math.min(el.scrollHeight, 120) + 'px'
-              }}
-              placeholder={composerPlaceholder({ coreFailed: !!coreFailed, isGatewayRunning, isSending })}
-              disabled={!isGatewayRunning || !!coreFailed}
-              rows={1}
-              style={composerHeight != null
-                ? { ...styles.input, height: composerHeight, maxHeight: 'none' }
-                : styles.input}
-            />
-            {/* Two ways to use your voice: dictate into the composer, or hold
-                a spoken conversation. Same capture path, different
-                destination for the transcript. */}
-            <button
-              onClick={() => voice.toggle('dictate')}
-              disabled={!isGatewayRunning || !!coreFailed}
-              style={{
-                ...styles.attachButton,
-                background: voiceBusy && voice.mode === 'dictate' ? C.red : 'transparent',
-              }}
-              title={
-                voiceBusy && voice.mode === 'dictate'
-                  ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop — text goes to the box')
-                  : 'Dictate into the message box'
-              }
-            >
-              <UIIcon
-                name="mic"
-                size={19}
-                color={voiceBusy && voice.mode === 'dictate' ? '#fff' : C.fg2}
-              />
-            </button>
-            <button
-              onClick={() => voice.toggle('converse')}
-              disabled={!isGatewayRunning || !!coreFailed}
-              style={{
-                ...styles.attachButton,
-                background: voice.state === 'recording' && voice.mode === 'converse' ? C.red
-                  : voice.state === 'speaking' ? C.accent
-                  : 'transparent',
-              }}
-              title={
-                voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
-                : voiceBusy && voice.mode === 'converse'
-                  ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop and send')
-                  : 'Talk to this chat — the reply is read back'
-              }
-            >
-              <UIIcon
-                name="waveform"
-                size={19}
-                color={
-                  voice.state === 'recording' && voice.mode === 'converse' ? '#fff'
-                  : voice.state === 'speaking' ? C.onAccent
-                  : C.fg2
-                }
-              />
-            </button>
-<<<<<<< HEAD
+          <div style={styles.composerInputRow}>
             <textarea
               ref={taRef}
               value={input}
@@ -2462,9 +2291,6 @@ export const ChatTab: React.FC<Props> = ({
               onChange={handleFilePick}
             />
             <div style={styles.composerTools}>
-=======
-            {isSending ? (
->>>>>>> 8934c73 (Move the voice buttons right and fix the capsule's black box)
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!isGatewayRunning || !!coreFailed || isSending}
@@ -2474,33 +2300,76 @@ export const ChatTab: React.FC<Props> = ({
                 <PaperclipIcon color={isGatewayRunning && !isSending ? C.fg2 : C.fg3} />
               </button>
             </div>
+            <div style={styles.voiceIndicatorSlot}>
+              {voice.state !== 'idle' && (
+                <div
+                  style={styles.voiceIndicator}
+                  role="status"
+                  aria-label={`${voice.mode === 'converse' ? 'Conversation' : 'Dictation'} ${voice.state}`}
+                >
+                  <VoiceMeter
+                    level={voice.level}
+                    idle={voice.state === 'transcribing' || (voice.state === 'speaking' && voice.level === 0)}
+                    height={24}
+                    barCount={7}
+                    sensitivity={2.4}
+                    color={C.green}
+                    colors={voice.mode === 'converse' ? VOICE_GRADIENT_COLORS : undefined}
+                  />
+                  {voice.state === 'recording' && <VoiceElapsed since={voice.recordingStartedAt} />}
+                </div>
+              )}
+            </div>
             <div style={styles.composerActions}>
-              {voiceState === 'recording' && <VoiceWaveform levels={voiceLevels} />}
-              <button
-                type="button"
-                onMouseDown={event => {
-                  // Keep the insertion point in the textarea when the button is clicked.
-                  event.preventDefault()
-                  const textarea = taRef.current
-                  voiceSelectionRef.current = textarea
-                    ? { start: textarea.selectionStart, end: textarea.selectionEnd }
-                    : { start: input.length, end: input.length }
-                }}
-                onClick={() => toggleVoiceInput(voiceTargetId)}
+              {/* Two ways to use your voice: dictate into the composer, or
+                  hold a spoken conversation that reads the reply back. */}
+              {!(voice.state === 'recording' && voice.mode === 'converse') && <button
+                onClick={() => voice.toggle('dictate')}
                 disabled={!isGatewayRunning || !!coreFailed}
                 style={{
                   ...styles.voiceButton,
-                  color: voiceState === 'idle' ? C.fg2 : '#fff',
-                  background: voiceState === 'recording' ? C.red : voiceState === 'transcribing' ? C.accent : 'transparent',
+                  background: voiceBusy && voice.mode === 'dictate' ? C.red : 'transparent',
                   cursor: isGatewayRunning && !coreFailed ? 'pointer' : 'default',
                 }}
-                title={voiceState === 'recording' ? 'Stop dictation' : voiceState === 'transcribing' ? 'Transcribing…' : 'Start dictation'}
-                aria-label={voiceState === 'recording' ? 'Stop dictation' : 'Start dictation'}
+                title={
+                  voiceBusy && voice.mode === 'dictate'
+                    ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop — text goes to the box')
+                    : 'Dictate into the message box'
+                }
               >
-                {voiceState === 'recording'
+                {voice.state === 'recording' && voice.mode === 'dictate'
                   ? <StopIcon color="#fff" />
-                  : <MicrophoneIcon color={voiceState === 'idle' ? (isGatewayRunning && !coreFailed ? C.fg2 : C.fg3) : '#fff'} />}
-              </button>
+                  : <UIIcon
+                      name="mic"
+                      size={19}
+                      color={voiceBusy && voice.mode === 'dictate' ? '#fff' : C.fg2}
+                    />}
+              </button>}
+              {!(voice.state === 'recording' && voice.mode === 'dictate') && <button
+                onClick={() => voice.toggle('converse')}
+                disabled={!isGatewayRunning || !!coreFailed}
+                style={{
+                  ...styles.voiceButton,
+                  background: voice.state === 'recording' && voice.mode === 'converse' ? C.red
+                    : voice.state === 'speaking' ? C.accent
+                    : 'transparent',
+                  cursor: isGatewayRunning && !coreFailed ? 'pointer' : 'default',
+                }}
+                title={
+                  voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
+                  : voiceBusy && voice.mode === 'converse'
+                    ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop and send')
+                    : 'Talk to this chat — the reply is read back'
+                }
+              >
+                {voice.state === 'recording' && voice.mode === 'converse'
+                  ? <StopIcon color="#fff" />
+                  : <UIIcon
+                      name="waveform"
+                      size={19}
+                      color={voice.state === 'speaking' ? C.onAccent : C.fg2}
+                    />}
+              </button>}
               {isSending ? (
                 <button
                   onClick={() => stopChat(chatId)}
@@ -2792,7 +2661,16 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     gap: 8, padding: '4px 7px 7px',
   },
-  composerTools: { display: 'flex', alignItems: 'center', gap: 4 },
+  composerTools: { display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 },
+  voiceIndicatorSlot: {
+    minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: '0 12px',
+  },
+  voiceIndicator: {
+    minWidth: 0, width: '100%', maxWidth: 240, height: 32,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+    padding: '0 6px', overflow: 'hidden',
+  },
   composerActions: { display: 'flex', alignItems: 'center', gap: 4 },
   input: {
     width: '100%', background: 'transparent', border: 'none', borderRadius: 8,
@@ -2808,14 +2686,6 @@ const styles: Record<string, React.CSSProperties> = {
     width: 36, height: 36, borderRadius: 9, border: 'none',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, transition: 'background 0.15s',
-  },
-  voiceWaveform: {
-    height: 36, minWidth: 48, display: 'flex', alignItems: 'center',
-    justifyContent: 'center', gap: 2.5, flexShrink: 0,
-  },
-  voiceWaveBar: {
-    width: 2, minHeight: 3, maxHeight: 13, borderRadius: 2,
-    background: C.red, transition: 'height 45ms linear',
   },
   iconButtonPlus: { fontSize: 12, lineHeight: 1, marginLeft: 1, color: C.accent, fontWeight: 700 },
   orphanBanner: { padding: '8px 12px', background: C.warningBg, color: C.warningFg, fontSize: 12, borderTop: `1px solid ${C.border}` },
@@ -2986,11 +2856,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg2,
     cursor: 'pointer',
     fontSize: 12,
-  },
-  voiceStatus: {
-    display: 'flex', alignItems: 'center', gap: 8,
-    padding: '4px 10px', marginBottom: 6, alignSelf: 'flex-start',
-    borderRadius: 999, background: C.surface3, maxWidth: '100%',
   },
   voiceStatusText: {
     color: C.fg2, fontSize: 11, fontVariantNumeric: 'tabular-nums',

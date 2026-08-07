@@ -8,7 +8,7 @@ import Foundation
 ///
 /// Hotkey string format mirrors WhisperTab:
 ///   "Fn"                          — Fn key alone (NSEvent path)
-///   "Control+Fn"                  — Fn with modifiers held (NSEvent path)
+///   "Shift+Fn"                    — Fn with modifiers held (NSEvent path)
 ///   "F5", "F1"..."F19"            — function keys (Carbon path)
 ///   "Meta+Shift+V"                — modifier combo + key (Carbon path)
 ///   "Control+Alt+Space"
@@ -17,6 +17,12 @@ final class HotkeyManager {
     private var eventHandler: EventHandlerRef?
     private var fnMonitorGlobal: Any?
     private var fnMonitorLocal: Any?
+    private var pendingBareFnWorkItem: DispatchWorkItem?
+    /// Whether this manager's complete Fn chord (Fn plus its required
+    /// modifiers) matched on the previous flagsChanged event. Tracking the
+    /// whole chord, instead of Fn alone, makes Shift+Fn work regardless of
+    /// whether Shift or Fn goes down first and lets every released/re-pressed
+    /// chord produce a fresh toggle.
     private var fnPreviouslyDown = false
     /// Modifiers that must also be held for an Fn-based binding to fire.
     /// Empty for bare "Fn".
@@ -64,8 +70,10 @@ final class HotkeyManager {
     // MARK: - Fn key path (NSEvent flagsChanged)
 
     private func registerFnMonitor() -> Bool {
-        // Toggle on Fn-down edges. NSEvent.modifierFlags includes .function
-        // when fn is held; we trigger when it transitions 0 → 1.
+        // Toggle when the complete binding becomes active. NSEvent emits
+        // flagsChanged for every modifier, so a user may press Fn before
+        // Control (or vice versa); looking only at Fn's edge loses one of
+        // those perfectly valid orders.
         //
         // NSEvent.addGlobalMonitorForEvents requires Accessibility permission
         // for THIS binary (CodeyVoice). Granting it to the parent Electron app
@@ -83,19 +91,43 @@ final class HotkeyManager {
 
         let handler: (NSEvent) -> Void = { [weak self] event in
             guard let self = self else { return }
-            let isDown = event.modifierFlags.contains(.function)
-            if isDown && !self.fnPreviouslyDown {
-                // A modifier-qualified binding ("Control+Fn") must see those
-                // modifiers still held on the Fn-down edge; otherwise plain Fn
-                // would fire both bindings.
-                if self.fnRequiredFlags.isEmpty
-                    || event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                        .isSuperset(of: self.fnRequiredFlags) {
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let chordModifiers = flags.intersection([.command, .control, .option, .shift])
+            let fnIsDown = event.modifierFlags.contains(.function)
+
+            if self.fnRequiredFlags.isEmpty {
+                // Bare Fn must follow Fn's physical up/down edge. If we used
+                // the whole chord here, releasing Control before Fn would turn
+                // Shift+Fn into a new bare-Fn match and start Dictation as
+                // Conversation ended.
+                if fnIsDown && !self.fnPreviouslyDown && chordModifiers.isEmpty {
+                    // Wait briefly before committing to bare Fn. If Shift
+                    // arrives just after Fn, the complete gesture belongs to
+                    // Conversation and Dictation must never start.
+                    self.pendingBareFnWorkItem?.cancel()
+                    let work = DispatchWorkItem { [weak self] in
+                        guard let self else { return }
+                        self.pendingBareFnWorkItem = nil
+                        print("Bare Fn hotkey confirmed → firing")
+                        self.onToggle()
+                    }
+                    self.pendingBareFnWorkItem = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: work)
+                } else if fnIsDown && !chordModifiers.isEmpty {
+                    self.pendingBareFnWorkItem?.cancel()
+                    self.pendingBareFnWorkItem = nil
+                }
+                self.fnPreviouslyDown = fnIsDown
+            } else {
+                // Qualified bindings follow the complete chord, allowing
+                // either modifier order while still producing one event.
+                let matches = fnIsDown && chordModifiers.isSuperset(of: self.fnRequiredFlags)
+                if matches && !self.fnPreviouslyDown {
                     print("Fn hotkey matched → firing")
                     DispatchQueue.main.async { self.onToggle() }
                 }
+                self.fnPreviouslyDown = matches
             }
-            self.fnPreviouslyDown = isDown
         }
         fnMonitorGlobal = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: handler)
         fnMonitorLocal = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
@@ -163,6 +195,8 @@ final class HotkeyManager {
     }
 
     func unregister() {
+        pendingBareFnWorkItem?.cancel()
+        pendingBareFnWorkItem = nil
         if let ref = hotKeyRef {
             UnregisterEventHotKey(ref)
             hotKeyRef = nil

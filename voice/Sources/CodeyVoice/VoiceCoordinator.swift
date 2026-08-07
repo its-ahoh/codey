@@ -12,7 +12,23 @@ final class VoiceCoordinator {
         case speaking
     }
 
+    private enum CaptureDestination {
+        case dictation
+        case composerDictation
+        case conversation
+
+        var composerMode: String? {
+            switch self {
+            case .dictation: return nil
+            case .composerDictation: return "dictate"
+            case .conversation: return "converse"
+            }
+        }
+    }
+
     private var state: State = .idle
+    private var captureDestination: CaptureDestination = .dictation
+    private var conversationCaptureGeneration = 0
     private var config: VoiceConfig
 
     private let gateway: GatewayClient
@@ -92,9 +108,11 @@ final class VoiceCoordinator {
         // Register global hotkey using configured binding
         print("VoiceCoordinator.start: initial hotkey=\(config.hotkey)")
         let hotkey = HotkeyManager { [weak self] in self?.handleToggle() }
-        let ok = hotkey.register(hotkey: config.hotkey)
-        if !ok {
-            statusItem?.updateState(.error("Hotkey '\(config.hotkey)' could not be registered"))
+        if config.dictationEnabled {
+            let ok = hotkey.register(hotkey: config.hotkey)
+            if !ok {
+                statusItem?.updateState(.error("Hotkey '\(config.hotkey)' could not be registered"))
+            }
         }
         self.hotkeyManager = hotkey
         registerConverseHotkey(config.converseHotkey)
@@ -116,7 +134,9 @@ final class VoiceCoordinator {
             guard let self = self, self.state == .recording else { return }
             self.lastPartialAt = Date()
             self.lastPartialText = text
-            self.hud.show(.partial(text))
+            if self.captureDestination == .dictation {
+                self.hud.show(.partial(text))
+            }
         }
         apiEngine.onPartial = partialHandler
         localEngine.onPartial = partialHandler
@@ -135,7 +155,14 @@ final class VoiceCoordinator {
         // Stream mic RMS levels to the HUD waveform meter. Audio tap thread
         // → main hop here. The HUD itself no-ops when not in .recording.
         audioCapture.onLevel = { [weak self] level in
-            DispatchQueue.main.async { self?.hud.updateLevel(level) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if self.captureDestination.composerMode != nil {
+                    self.emitConversationEvent(type: "level", payload: ["level": level])
+                } else {
+                    self.hud.updateLevel(level)
+                }
+            }
         }
 
         // Playback draining is what actually ends a converse turn — the HTTP
@@ -178,10 +205,26 @@ final class VoiceCoordinator {
     // MARK: - Toggle handler
 
     private func handleToggle() {
+        guard config.dictationEnabled else { return }
+        handleCaptureToggle(destination: .dictation)
+    }
+
+    private func handleConverseToggle() {
+        guard config.conversationEnabled else { return }
+        // API and Realtime capture remain in Electron. On-device capture must
+        // stay here so it can reuse the already-warmed WhisperKit pipeline.
+        guard config.provider == .local else {
+            Task { await gateway.triggerConverseHotkey() }
+            return
+        }
+        handleCaptureToggle(destination: .conversation)
+    }
+
+    private func handleCaptureToggle(destination: CaptureDestination) {
         print("handleToggle: current state=\(state)")
         switch state {
         case .idle:
-            startRecording()
+            startRecording(destination: destination)
         case .recording:
             stopRecording()
         case .transcribing:
@@ -194,12 +237,14 @@ final class VoiceCoordinator {
             // detected speech would trigger the same path.)
             print("handleToggle: barge-in during playback")
             endSpeaking()
-            startRecording()
+            startRecording(destination: destination)
         }
     }
 
-    private func startRecording() {
+    private func startRecording(destination: CaptureDestination = .dictation) {
         do {
+            captureDestination = destination
+            if destination.composerMode != nil { conversationCaptureGeneration += 1 }
             try audioCapture.startRecording()
             state = .recording
             // Reset partial tracking so an old recording's partial can't
@@ -207,7 +252,12 @@ final class VoiceCoordinator {
             lastPartialAt = nil
             lastPartialText = ""
             statusItem?.updateState(.recording)
-            hud.show(.recording)
+            if destination.composerMode != nil {
+                hud.hide()
+                emitConversationEvent(type: "state", payload: ["state": "recording"])
+            } else {
+                hud.show(.recording)
+            }
             installEscMonitor()
 
             // Kick off WhisperKit's sliding-window streaming so the HUD can
@@ -248,6 +298,9 @@ final class VoiceCoordinator {
     private func stopRecording() {
         print("stopRecording: requesting stop")
         removeEscMonitor()
+        if captureDestination.composerMode != nil {
+            emitConversationEvent(type: "state", payload: ["state": "transcribing"])
+        }
         // Cancel streaming partials before we run the final transcribe so a
         // late partial can't overwrite the success HUD or trigger a duplicate
         // injection.
@@ -268,8 +321,45 @@ final class VoiceCoordinator {
         audioCapture.cancelRecording()
         state = .idle
         statusItem?.updateState(.idle)
-        hud.hide()
+        if captureDestination.composerMode != nil {
+            conversationCaptureGeneration += 1
+            emitConversationEvent(type: "state", payload: ["state": "idle"])
+        } else {
+            hud.hide()
+        }
         Task { await gateway.reportStatus("idle") }
+    }
+
+    /// Commands sent over stdin by the Electron parent. This lets in-chat
+    /// controls use the same native capture path as the global hotkey.
+    func handleExternalCommand(_ command: String) {
+        switch command.trimmingCharacters(in: .whitespacesAndNewlines) {
+        // Composer buttons remain available even when their global-hotkey
+        // switches are off; those switches only control registration.
+        case "conversation-toggle": handleCaptureToggle(destination: .conversation)
+        case "composer-dictation-toggle": handleCaptureToggle(destination: .composerDictation)
+        case "conversation-cancel", "composer-dictation-cancel":
+            if state == .recording && captureDestination.composerMode != nil {
+                cancelRecording()
+            } else if state == .transcribing && captureDestination.composerMode != nil {
+                conversationCaptureGeneration += 1
+                state = .idle
+                statusItem?.updateState(.idle)
+                emitConversationEvent(type: "state", payload: ["state": "idle"])
+            } else if state == .speaking {
+                endSpeaking()
+            }
+        default: break
+        }
+    }
+
+    private func emitConversationEvent(type: String, payload: [String: Any] = [:]) {
+        var body = payload
+        body["type"] = type
+        body["mode"] = captureDestination.composerMode ?? "converse"
+        guard let data = try? JSONSerialization.data(withJSONObject: body),
+              let json = String(data: data, encoding: .utf8) else { return }
+        print("CODEY_CONVERSATION_EVENT \(json)")
     }
 
     // MARK: - Esc-to-cancel monitor
@@ -308,6 +398,8 @@ final class VoiceCoordinator {
     // MARK: - Audio → API → Inject pipeline
 
     private func handleAudioComplete(_ buffer: [Float]) {
+        let destination = captureDestination
+        let conversationGeneration = conversationCaptureGeneration
         let durationStr = String(format: "%.2f", Double(buffer.count) / 16000.0)
         var peak: Float = 0
         var sumSq: Double = 0
@@ -322,13 +414,23 @@ final class VoiceCoordinator {
             print("handleAudioComplete: EMPTY buffer — nothing to transcribe")
             state = .idle
             statusItem?.updateState(.idle)
-            hud.hide()
+            if destination.composerMode != nil {
+                emitConversationEvent(type: "error", payload: ["message": "The recording was empty"])
+                emitConversationEvent(type: "state", payload: ["state": "idle"])
+            } else {
+                hud.hide()
+            }
             return
         }
 
         state = .transcribing
         statusItem?.updateState(.transcribing)
-        hud.show(.transcribing)
+        if destination.composerMode != nil {
+            hud.hide()
+            emitConversationEvent(type: "state", payload: ["state": "transcribing"])
+        } else {
+            hud.show(.transcribing)
+        }
         Task { await gateway.reportStatus("transcribing") }
 
         Task {
@@ -342,21 +444,23 @@ final class VoiceCoordinator {
                 print("transcribe: starting (language=\(lang.isEmpty ? "auto" : lang), provider=\(providerLabel))")
                 let text = try await activeEngine.transcribe(audio: buffer, language: lang)
 
+                if destination.composerMode != nil && conversationGeneration != conversationCaptureGeneration {
+                    print("transcribe: discarded cancelled Conversation result")
+                    return
+                }
+
                 print("transcribe: result = \"\(text)\" (\(text.count) chars)")
 
-                // Converse mode diverts the transcript to Codey instead of
-                // pasting it at the cursor. Everything above (capture,
-                // transcription) is unchanged — only the destination differs.
-                if config.mode == .converse {
-                    let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if spoken.isEmpty {
-                        state = .idle
-                        statusItem?.updateState(.idle)
-                        await MainActor.run { self.hud.hide() }
-                        Task { await gateway.reportStatus("idle") }
+                if destination.composerMode != nil {
+                    state = .idle
+                    statusItem?.updateState(.idle)
+                    if text.isEmpty {
+                        emitConversationEvent(type: "error", payload: ["message": "No speech detected."])
+                        emitConversationEvent(type: "state", payload: ["state": "idle"])
                     } else {
-                        await MainActor.run { self.startConverse(transcript: spoken) }
+                        emitConversationEvent(type: "transcript", payload: ["text": text])
                     }
+                    Task { await gateway.reportStatus("idle") }
                     return
                 }
 
@@ -386,11 +490,21 @@ final class VoiceCoordinator {
                 }
                 Task { await gateway.reportStatus("idle") }
             } catch {
+                if destination.composerMode != nil && conversationGeneration != conversationCaptureGeneration {
+                    return
+                }
                 print("transcribe FAILED: \(error.localizedDescription)")
                 state = .idle
                 statusItem?.updateState(.error(error.localizedDescription))
                 let msg = error.localizedDescription
-                await MainActor.run { self.hud.show(.error(msg)) }
+                await MainActor.run {
+                    if destination.composerMode != nil {
+                        self.emitConversationEvent(type: "error", payload: ["message": msg])
+                        self.emitConversationEvent(type: "state", payload: ["state": "idle"])
+                    } else {
+                        self.hud.show(.error(msg))
+                    }
+                }
                 Task { await gateway.reportStatus("error") }
             }
         }
@@ -515,6 +629,8 @@ final class VoiceCoordinator {
     private func applyConfig(_ newConfig: VoiceConfig) {
         let oldHotkey = config.hotkey
         let oldConverseHotkey = config.converseHotkey
+        let oldDictationEnabled = config.dictationEnabled
+        let oldConversationEnabled = config.conversationEnabled
         let oldProvider = config.provider
         config = newConfig
         textInjector = TextInjector(mode: newConfig.injection)
@@ -533,14 +649,21 @@ final class VoiceCoordinator {
             localEngine.prewarm()
         }
 
-        if newConfig.converseHotkey != oldConverseHotkey {
+        if newConfig.converseHotkey != oldConverseHotkey
+            || newConfig.conversationEnabled != oldConversationEnabled {
             registerConverseHotkey(newConfig.converseHotkey)
         }
 
-        if newConfig.hotkey != oldHotkey, let hk = hotkeyManager {
-            let ok = hk.register(hotkey: newConfig.hotkey)
-            if !ok {
-                statusItem?.updateState(.error("Hotkey '\(newConfig.hotkey)' could not be registered"))
+        if newConfig.hotkey != oldHotkey
+            || newConfig.dictationEnabled != oldDictationEnabled,
+           let hk = hotkeyManager {
+            if newConfig.dictationEnabled {
+                let ok = hk.register(hotkey: newConfig.hotkey)
+                if !ok {
+                    statusItem?.updateState(.error("Hotkey '\(newConfig.hotkey)' could not be registered"))
+                }
+            } else {
+                hk.unregister()
             }
         }
     }
@@ -550,11 +673,11 @@ final class VoiceCoordinator {
     /// key Electron's globalShortcut cannot bind.
     private func registerConverseHotkey(_ spec: String) {
         converseHotkeyManager = nil
+        guard config.conversationEnabled else { return }
         let trimmed = spec.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, trimmed.lowercased().hasSuffix("fn") else { return }
         let manager = HotkeyManager { [weak self] in
-            guard let self = self else { return }
-            Task { await self.gateway.triggerConverseHotkey() }
+            self?.handleConverseToggle()
         }
         let ok = manager.register(hotkey: trimmed)
         print("Converse hotkey '\(trimmed)' registered: \(ok)")

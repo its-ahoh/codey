@@ -44,6 +44,12 @@ describe('config normalize', () => {
     });
   });
 
+  it('migrates the former Conversation hotkey default to Shift+Fn', () => {
+    withTempConfig({ voice: { converseHotkey: 'Control+Fn' } }, cm => {
+      expect(cm.get().voice?.converseHotkey).toBe('Shift+Fn');
+    });
+  });
+
   it('getSkillsConfig returns hardcoded defaults when skills block is absent', () => {
     withTempConfig({}, cm => {
       const cfg = cm.getSkillsConfig();
@@ -93,6 +99,72 @@ describe('api key CRUD', () => {
     });
   });
 
+  it('resolves a saved Voice key without duplicating the secret in voice config', () => {
+    withTempConfig({
+      apiKeys: [{ name: 'voice-main', apiKey: 'sk-voice', openaiBaseUrl: 'https://voice.example/v1', purpose: 'voice' }],
+      voice: {
+        enabled: true, hotkey: 'Fn', language: 'auto', injection: 'paste', provider: 'api',
+        apiUrl: 'https://api.openai.com/v1', apiKeyRef: 'voice-main', apiModel: 'transcribe', localModel: 'local',
+        tts: { enabled: true, provider: 'api', apiUrl: 'https://api.openai.com/v1', apiKeyRef: 'voice-main', apiModel: 'tts', voiceId: 'alloy', verbosity: 'auto' },
+      },
+    }, cm => {
+      const resolved = cm.getResolvedVoiceConfig();
+      expect(resolved?.apiKey).toBe('sk-voice');
+      expect(resolved?.apiUrl).toBe('https://voice.example/v1');
+      expect(resolved?.tts?.apiKey).toBe('sk-voice');
+      expect(cm.get().voice).not.toHaveProperty('apiKey');
+      expect(cm.get().voice?.tts).not.toHaveProperty('apiKey');
+    });
+  });
+
+  it('allows TTS to use a different saved Voice key from transcription', () => {
+    withTempConfig({
+      apiKeys: [
+        { name: 'transcription', apiKey: 'sk-transcribe', purpose: 'voice' },
+        { name: 'speech', apiKey: 'sk-speech', openaiBaseUrl: 'https://speech.example/v1', purpose: 'voice' },
+      ],
+      voice: {
+        enabled: true, hotkey: 'Fn', language: 'auto', injection: 'paste', provider: 'api',
+        apiUrl: 'https://api.openai.com/v1', apiKeyRef: 'transcription', apiModel: 'transcribe', localModel: 'local',
+        tts: { enabled: true, provider: 'api', apiUrl: 'https://api.openai.com/v1', apiKeyRef: 'speech', apiModel: 'tts', voiceId: 'alloy', verbosity: 'auto' },
+      },
+    }, cm => {
+      const resolved = cm.getResolvedVoiceConfig();
+      expect(resolved?.apiKey).toBe('sk-transcribe');
+      expect(resolved?.tts?.apiKey).toBe('sk-speech');
+      expect(resolved?.tts?.apiUrl).toBe('https://speech.example/v1');
+    });
+  });
+
+  it('does not inherit the transcription key when TTS has no key selected', () => {
+    withTempConfig({
+      apiKeys: [{ name: 'transcription', apiKey: 'sk-transcribe', purpose: 'voice' }],
+      voice: {
+        enabled: true, hotkey: 'Fn', language: 'auto', injection: 'paste', provider: 'api',
+        apiUrl: 'https://api.openai.com/v1', apiKeyRef: 'transcription', apiModel: 'transcribe', localModel: 'local',
+        tts: { enabled: true, provider: 'api', apiUrl: 'https://api.openai.com/v1', apiModel: 'tts', voiceId: 'alloy', verbosity: 'auto' },
+      },
+    }, cm => {
+      const resolved = cm.getResolvedVoiceConfig();
+      expect(resolved?.apiKey).toBe('sk-transcribe');
+      expect(resolved?.tts?.apiKey).toBe('');
+    });
+  });
+
+  it('drops obsolete inline Voice secrets while normalizing config', () => {
+    withTempConfig({
+      voice: {
+        enabled: true, hotkey: 'Fn', language: 'auto', injection: 'paste', provider: 'api',
+        apiUrl: 'https://api.openai.com/v1', apiKey: 'old-transcription-key', apiModel: 'transcribe', localModel: 'local',
+        tts: { enabled: true, provider: 'api', apiUrl: 'https://api.openai.com/v1', apiKey: 'old-tts-key', apiModel: 'tts', voiceId: 'alloy', verbosity: 'auto' },
+      } as any,
+    }, cm => {
+      expect(cm.get().voice).not.toHaveProperty('apiKey');
+      expect(cm.get().voice?.tts).not.toHaveProperty('apiKey');
+      expect(cm.getResolvedVoiceConfig()?.apiKey).toBe('');
+    });
+  });
+
   it('renameApiKey rewrites apiKeyRef on dependent models', () => {
     withTempConfig({
       apiKeys: [{ name: 'old', apiKey: 'sk' }],
@@ -101,6 +173,17 @@ describe('api key CRUD', () => {
       expect(cm.renameApiKey('old', 'new')).toBe(true);
       expect(cm.listApiKeys()[0].name).toBe('new');
       expect(cm.listModels()[0].apiKeyRef).toBe('new');
+    });
+  });
+
+  it('renameApiKey rewrites the selected Voice key reference', () => {
+    withTempConfig({
+      apiKeys: [{ name: 'old', apiKey: 'sk', purpose: 'voice' }],
+      voice: { apiKeyRef: 'old', tts: { apiKeyRef: 'old' } },
+    }, cm => {
+      expect(cm.renameApiKey('old', 'new')).toBe(true);
+      expect(cm.get().voice?.apiKeyRef).toBe('new');
+      expect(cm.get().voice?.tts?.apiKeyRef).toBe('new');
     });
   });
 

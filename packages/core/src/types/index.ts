@@ -53,6 +53,8 @@ export interface ApiKeyEntry {
   apiKey: string;                // required — shared bearer token
   anthropicBaseUrl?: string;     // optional override for anthropic-typed models
   openaiBaseUrl?: string;        // optional override for openai-typed models
+  /** Voice entries are shown in the dedicated Voice keys section. */
+  purpose?: 'general' | 'voice';
 }
 
 export interface ModelConfig {

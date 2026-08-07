@@ -16,7 +16,7 @@ interface VoiceCfg {
   enabled?: boolean
   language?: string
   apiUrl?: string
-  apiKey?: string
+  apiKeyRef?: string
   apiModel?: string
 }
 
@@ -149,15 +149,20 @@ export const VoiceRecorder: React.FC = () => {
     try {
       const cfgRes = await window.codey.config.get()
       const voice: VoiceCfg = (cfgRes.ok ? (cfgRes.data?.voice ?? {}) : {})
+      const keysRes = await window.codey.apiKeys.list()
+      const savedKey = keysRes.ok && voice.apiKeyRef
+        ? keysRes.data.find(key => key.name === voice.apiKeyRef)
+        : undefined
+      const apiKey = savedKey?.apiKey
 
-      if (!voice.apiKey) {
-        await window.codey.voice.showError('Add an API key in Settings → Whisper.')
+      if (!apiKey) {
+        await window.codey.voice.showError('Add and select a Voice key in Settings → API Keys.')
         updateState('idle')
         targetRef.current = null
         return
       }
 
-      const base = (voice.apiUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+      const base = (savedKey?.openaiBaseUrl || voice.apiUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
       const fd = new FormData()
       fd.append('file', blob, 'audio.webm')
       fd.append('model', voice.apiModel || 'gpt-4o-mini-transcribe')
@@ -165,7 +170,7 @@ export const VoiceRecorder: React.FC = () => {
 
       const resp = await fetch(`${base}/audio/transcriptions`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${voice.apiKey}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
         body: fd,
       })
       if (!resp.ok) {
@@ -206,7 +211,7 @@ export const VoiceRecorder: React.FC = () => {
       ) : (
         <>
           <span style={styles.transcribingDot} />
-          <span style={{ color: C.fg }}>Transcribing…</span>
+          <span style={{ color: C.fg }}>Transcribing</span>
         </>
       )}
     </div>

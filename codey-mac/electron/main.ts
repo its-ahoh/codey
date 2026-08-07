@@ -233,7 +233,11 @@ function createWindow() {
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Global Conversation recording lives in this renderer even when Codey
+      // is behind another app. Throttling can stall MediaRecorder chunks and
+      // make the stop hotkey close the capsule without producing audio.
+      backgroundThrottling: false,
     }
   })
 
@@ -295,6 +299,28 @@ function inferCaptureMimeType(name: string): string {
 // Separate from the main window because the converse hotkey is meant to work
 // while Codey is in the background, where an in-app pill would be invisible.
 let voiceHudWindow: BrowserWindow | null = null
+let voiceHudOwnsEscapeShortcut = false
+let nativeConverseActive = false
+let nativeDictationActive = false
+// Direct Fn events originate in the Helper and are hotkey turns. Composer
+// clicks override this before sending their stdin command.
+let nativeConverseFromHotkey = true
+
+function registerVoiceHudEscape() {
+  if (voiceHudOwnsEscapeShortcut) return
+  try {
+    voiceHudOwnsEscapeShortcut = globalShortcut.register('Escape', () => {
+      if (nativeConverseActive) sendVoiceHelperCommand('conversation-cancel')
+      else mainWindow?.webContents.send('voice:cancelConverse')
+    })
+  } catch { voiceHudOwnsEscapeShortcut = false }
+}
+
+function unregisterVoiceHudEscape() {
+  if (!voiceHudOwnsEscapeShortcut) return
+  try { globalShortcut.unregister('Escape') } catch { /* already gone */ }
+  voiceHudOwnsEscapeShortcut = false
+}
 
 function createVoiceHudWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -328,7 +354,10 @@ function createVoiceHudWindow(): BrowserWindow {
   } else {
     win.loadFile(join(__dirname, '../dist/index.html'), { hash: '/voice-hud' })
   }
-  win.on('closed', () => { voiceHudWindow = null })
+  win.on('closed', () => {
+    voiceHudWindow = null
+    unregisterVoiceHudEscape()
+  })
   return win
 }
 
@@ -358,6 +387,7 @@ function showVoiceHud(state: string) {
     voiceHudWindow = createVoiceHudWindow()
   }
   const win = voiceHudWindow
+  registerVoiceHudEscape()
   if (!win.isVisible()) {
     positionVoiceHud(win)
     // showInactive, never show: taking focus would interrupt whatever the
@@ -368,6 +398,7 @@ function showVoiceHud(state: string) {
 }
 
 function hideVoiceHud() {
+  unregisterVoiceHudEscape()
   if (voiceHudWindow && !voiceHudWindow.isDestroyed()) {
     voiceHudWindow.webContents.send('voice:hudState', 'hidden')
     voiceHudWindow.hide()
@@ -1087,7 +1118,7 @@ async function bootInProcessCore() {
         (text, emit, conversationId) => inProcessGateway!.runVoiceSpeak(text, emit, conversationId),
         // Fn-based converse bindings are pressed in the Swift helper, which
         // reports them over HTTP; hand them to the chat like a local press.
-        () => { mainWindow?.webContents.send('voice:converseHotkey') },
+        forwardConverseHotkey,
       )
       void apiServer.start().then(() => {
         sendToRenderer('gateway-log', `[core] API server listening on ${apiPort}`)
@@ -1144,6 +1175,16 @@ function toElectronAccelerator(hotkey: string | undefined): string | null {
 }
 
 let currentConverseAccelerator: string | null = null
+let voiceHotkeyCaptureActive = false
+let lastConverseHotkeyForwardedAt = 0
+
+/** Coalesce duplicate native notifications for one physical chord. */
+function forwardConverseHotkey() {
+  const now = Date.now()
+  if (now - lastConverseHotkeyForwardedAt < 250) return
+  lastConverseHotkeyForwardedAt = now
+  mainWindow?.webContents.send('voice:converseHotkey')
+}
 /**
  * Second voice hotkey: starts (or stops) a spoken conversation in the
  * focused chat, as opposed to `voice.hotkey`, which dictates at the cursor.
@@ -1159,7 +1200,8 @@ function applyVoiceConverseHotkey(rawCfg: any) {
   // Anything ending in Fn belongs to the Swift helper: globalShortcut can't
   // bind Fn with or without modifiers.
   const isFn = typeof hk === 'string' && hk.trim().toLowerCase().endsWith('fn')
-  const desired = voice?.enabled && hk && !isFn ? toElectronAccelerator(hk) : null
+  const enabled = voice?.conversationEnabled ?? voice?.enabled ?? false
+  const desired = !voiceHotkeyCaptureActive && enabled && hk && !isFn ? toElectronAccelerator(hk) : null
 
   if (currentConverseAccelerator && currentConverseAccelerator !== desired) {
     try { globalShortcut.unregister(currentConverseAccelerator) } catch { /* not registered */ }
@@ -1172,7 +1214,7 @@ function applyVoiceConverseHotkey(rawCfg: any) {
     // times you're away from Codey; yanking it in front of whatever you're
     // doing defeats that. The floating capsule reports state instead, and the
     // user opens Codey when they actually want to read the thread.
-    mainWindow?.webContents.send('voice:converseHotkey')
+    forwardConverseHotkey()
   })
   if (ok) {
     currentConverseAccelerator = desired
@@ -1190,7 +1232,8 @@ function applyVoiceHotkey(rawCfg: any) {
   // register any in-process accelerator — the helper monitors it directly.
   const hk = voice?.hotkey
   const isFn = typeof hk === 'string' && hk.trim().toLowerCase() === 'fn'
-  const desired = voice?.enabled && !isFn ? toElectronAccelerator(hk) : null
+  const enabled = voice?.dictationEnabled ?? voice?.enabled ?? false
+  const desired = !voiceHotkeyCaptureActive && enabled && !isFn ? toElectronAccelerator(hk) : null
 
   if (currentVoiceAccelerator && currentVoiceAccelerator !== desired) {
     try { globalShortcut.unregister(currentVoiceAccelerator) } catch { /* not registered */ }
@@ -1218,12 +1261,69 @@ function applyVoiceHotkey(rawCfg: any) {
 
 // ── Bundled Swift voice helper lifecycle ────────────────────────────
 // The DMG ships CodeyVoice.app under Resources/. We spawn it whenever
-// voice.enabled is true so the user gets system-wide hotkeys (incl. Fn)
+// either voice action is enabled so the user gets its system-wide hotkey
+// (including Fn bindings handled outside Electron)
 // without any extra install steps. It runs as an LSUIElement, communicates
 // with the gateway over HTTP, and is killed on app quit.
 let voiceHelperProc: import('child_process').ChildProcess | null = null
 let voiceHelperStarted = false
 let voicePermissionPrompted = false
+let voiceHelperStdoutBuffer = ''
+
+function sendVoiceHelperCommand(command: string): boolean {
+  const stdin = voiceHelperProc?.stdin
+  if (!stdin || stdin.destroyed || !stdin.writable) return false
+  stdin.write(`${command}\n`)
+  return true
+}
+
+function handleVoiceHelperLine(line: string) {
+  const marker = 'CODEY_CONVERSATION_EVENT '
+  if (!line.startsWith(marker)) {
+    if (line) sendToRenderer('gateway-log', `[voice-helper] ${line}`)
+    return
+  }
+  try {
+    const event = JSON.parse(line.slice(marker.length)) as { type: string; mode?: 'dictate' | 'converse'; state?: string; level?: number; text?: string; message?: string }
+    const dictate = event.mode === 'dictate'
+    if (event.type === 'state' && event.state) {
+      if (dictate) {
+        nativeDictationActive = event.state !== 'idle'
+        mainWindow?.webContents.send('voice:nativeDictationState', event.state)
+      } else {
+        nativeConverseActive = event.state !== 'idle'
+        if (nativeConverseActive && nativeConverseFromHotkey) showVoiceHud(event.state)
+        else hideVoiceHud()
+        mainWindow?.webContents.send('voice:nativeConverseState', event.state, nativeConverseFromHotkey)
+        if (event.state === 'idle') nativeConverseFromHotkey = true
+      }
+    } else if (event.type === 'level' && typeof event.level === 'number') {
+      if (dictate) {
+        mainWindow?.webContents.send('voice:nativeDictationLevel', event.level)
+      } else {
+        if (voiceHudWindow?.isVisible()) voiceHudWindow.webContents.send('voice:hudLevel', event.level)
+        mainWindow?.webContents.send('voice:nativeConverseLevel', event.level)
+      }
+    } else if (event.type === 'transcript' && event.text) {
+      // Native input is complete; playback/cancellation belongs to the
+      // renderer from this point onward.
+      if (dictate) {
+        nativeDictationActive = false
+        mainWindow?.webContents.send('voice:nativeDictationTranscript', event.text)
+      } else {
+        nativeConverseActive = false
+        mainWindow?.webContents.send('voice:nativeConverseTranscript', event.text)
+        nativeConverseFromHotkey = true
+      }
+    } else if (event.type === 'error') {
+      const message = event.message || 'On-device transcription failed'
+      sendToRenderer('gateway-log', `[voice] ${message}`)
+      mainWindow?.webContents.send(dictate ? 'voice:nativeDictationError' : 'voice:nativeConverseError', message)
+    }
+  } catch (error: any) {
+    sendToRenderer('gateway-log', `[voice] invalid helper event: ${error?.message ?? error}`)
+  }
+}
 
 function promptForAccessibilityPermission(reason: string) {
   if (voicePermissionPrompted) return
@@ -1330,6 +1430,10 @@ function stopVoiceHelper() {
   }
   voiceHelperProc = null
   voiceHelperStarted = false
+  voiceHelperStdoutBuffer = ''
+  nativeConverseActive = false
+  nativeDictationActive = false
+  hideVoiceHud()
 }
 
 /**
@@ -1369,7 +1473,14 @@ async function ensureMicrophoneAccess(): Promise<boolean> {
 
 async function applyVoiceHelper(rawCfg: any) {
   if (process.platform !== 'darwin') return
-  const enabled = !!rawCfg?.voice?.enabled
+  const voice = rawCfg?.voice
+  const dictationEnabled = voice?.dictationEnabled ?? voice?.enabled ?? false
+  const conversationEnabled = voice?.conversationEnabled ?? voice?.enabled ?? false
+  // Hotkey switches do not disable the composer buttons. Keep the Helper
+  // available for their shared on-device WhisperKit path even when both
+  // global bindings are turned off.
+  const enabled = !voiceHotkeyCaptureActive
+    && (dictationEnabled || conversationEnabled || voice?.provider === 'local')
   if (!enabled) {
     if (voiceHelperStarted) sendToRenderer('gateway-log', `[voice] disabled — stopping helper`)
     stopVoiceHelper()
@@ -1411,16 +1522,24 @@ async function applyVoiceHelper(rawCfg: any) {
     const { spawn } = require('child_process') as typeof import('child_process')
     const port = activeApiPort ?? (coreConfigManager?.get() as any)?.gateway?.port ?? 3000
     voiceHelperProc = spawn(bin, ['--gateway-port', String(port)], {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       detached: false,
     })
     voiceHelperStarted = true
-    voiceHelperProc.stdout?.on('data', d => sendToRenderer('gateway-log', `[voice-helper] ${d.toString().trimEnd()}`))
+    voiceHelperProc.stdout?.on('data', d => {
+      voiceHelperStdoutBuffer += d.toString()
+      const lines = voiceHelperStdoutBuffer.split(/\r?\n/)
+      voiceHelperStdoutBuffer = lines.pop() ?? ''
+      lines.forEach(handleVoiceHelperLine)
+    })
     voiceHelperProc.stderr?.on('data', d => sendToRenderer('gateway-log', `[voice-helper] ${d.toString().trimEnd()}`))
     voiceHelperProc.on('exit', code => {
       sendToRenderer('gateway-log', `[voice-helper] exited (code ${code})`)
       voiceHelperProc = null
       voiceHelperStarted = false
+      nativeConverseActive = false
+      nativeDictationActive = false
+      hideVoiceHud()
     })
     sendToRenderer('gateway-log', `[voice] helper started: ${bin}`)
   } catch (err: any) {
@@ -2555,6 +2674,52 @@ app.whenReady().then(async () => {
     wrap(async () => { speakRun += 1 })
   )
 
+  ipcMain.handle('voice:toggleNativeConversation', async (_e, fromHotkey: boolean) =>
+    wrap(async () => {
+      const provider = coreConfigManager?.get().voice?.provider
+      if (provider !== 'local') return { native: false }
+      nativeConverseFromHotkey = fromHotkey === true
+      if (!sendVoiceHelperCommand('conversation-toggle')) {
+        nativeConverseFromHotkey = true
+        throw new Error('Voice Helper is not available')
+      }
+      return { native: true }
+    })
+  )
+
+  ipcMain.handle('voice:toggleNativeDictation', async () =>
+    wrap(async () => {
+      const provider = coreConfigManager?.get().voice?.provider
+      if (provider !== 'local') return { native: false }
+      if (!sendVoiceHelperCommand('composer-dictation-toggle')) {
+        throw new Error('Voice Helper is not available')
+      }
+      return { native: true }
+    })
+  )
+
+  ipcMain.handle('voice:cancelNativeConversation', async () =>
+    wrap(async () => {
+      if (nativeConverseActive) sendVoiceHelperCommand('conversation-cancel')
+    })
+  )
+
+  ipcMain.handle('voice:cancelNativeDictation', async () =>
+    wrap(async () => {
+      if (nativeDictationActive) sendVoiceHelperCommand('composer-dictation-cancel')
+    })
+  )
+
+  ipcMain.handle('voice:setHotkeyCaptureActive', async (_e, active: boolean) =>
+    wrap(async () => {
+      voiceHotkeyCaptureActive = active === true
+      const config = coreConfigManager?.get() ?? {}
+      applyVoiceConverseHotkey(config)
+      applyVoiceHotkey(config)
+      await applyVoiceHelper(config)
+    })
+  )
+
   ipcMain.handle('voice:speak', async (_e, { text, conversationId, verbatim }: { text: string; conversationId?: string; verbatim?: boolean }) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not running')
@@ -2565,6 +2730,13 @@ app.whenReady().then(async () => {
         if (myRun !== speakRun) return
         sendToRenderer('voice:speakEvent', event)
       }, conversationId, verbatim === true)
+    })
+  )
+
+  ipcMain.handle('voice:ack', async (_e, transcript: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not running')
+      return { text: await inProcessGateway.generateVoiceAck(String(transcript ?? '')) }
     })
   )
 
@@ -2598,9 +2770,45 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('voice:transcribe', async (_e, payload: { audio: ArrayBuffer; mime: string }) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Gateway configuration is not available')
+      const voice = coreConfigManager.getResolvedVoiceConfig()
+      if (!voice) throw new Error('Voice is not configured')
+      if (voice.provider === 'local') {
+        throw new Error('Conversation recording currently requires API transcription; choose API under Voice → Speech recognition.')
+      }
+      if (!voice.apiKey) throw new Error('Select a Transcription key under Voice → Speech recognition.')
+      const audio = payload?.audio
+      if (!(audio instanceof ArrayBuffer) || audio.byteLength === 0) throw new Error('The recording was empty')
+      const mime = typeof payload?.mime === 'string' && payload.mime ? payload.mime : 'audio/webm'
+      const base = (voice.apiUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+      const form = new FormData()
+      form.append('file', new Blob([audio], { type: mime }), mime.includes('webm') ? 'audio.webm' : 'audio.mp4')
+      form.append('model', voice.apiModel || 'gpt-4o-mini-transcribe')
+      if (voice.language && voice.language !== 'auto') form.append('language', voice.language)
+      const response = await fetch(`${base}/audio/transcriptions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${voice.apiKey}` },
+        body: form,
+      })
+      if (!response.ok) {
+        const detail = (await response.text().catch(() => '')).trim()
+        throw new Error(`Transcription failed (${response.status})${detail ? `: ${detail.slice(0, 240)}` : ''}`)
+      }
+      const body = await response.json() as any
+      return { text: typeof body?.text === 'string' ? body.text.trim() : '' }
+    })
+  )
+
   ipcMain.handle('voice:error', async (_e, message: string) =>
     wrap(async () => {
-      console.warn('Voice input failed:', String(message ?? 'Unknown error'))
+      const detail = String(message ?? 'Unknown error')
+      console.warn('Voice input failed:', detail)
+      sendToRenderer('gateway-log', `[voice] ${detail}`)
+      if (!mainWindow?.isFocused()) {
+        new Notification({ title: 'Voice input failed', body: detail }).show()
+      }
     })
   )
 

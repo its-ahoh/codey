@@ -268,12 +268,67 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.on('voice:converseHotkey', listener)
       return () => ipcRenderer.removeListener('voice:converseHotkey', listener)
     },
+    /** Fires when Escape is pressed while the unfocused conversation HUD is visible. */
+    onCancelConverse: (handler: () => void) => {
+      const listener = () => handler()
+      ipcRenderer.on('voice:cancelConverse', listener)
+      return () => ipcRenderer.removeListener('voice:cancelConverse', listener)
+    },
     notifyTranscribed: (text: string) => ipcRenderer.invoke('voice:transcribed', text),
+    /** Transcribe recorded composer audio in the main process. */
+    transcribe: (audio: ArrayBuffer, mime: string) => ipcRenderer.invoke('voice:transcribe', { audio, mime }),
+    toggleNativeConversation: (fromHotkey = false) => ipcRenderer.invoke('voice:toggleNativeConversation', fromHotkey),
+    cancelNativeConversation: () => ipcRenderer.invoke('voice:cancelNativeConversation'),
+    toggleNativeDictation: () => ipcRenderer.invoke('voice:toggleNativeDictation'),
+    cancelNativeDictation: () => ipcRenderer.invoke('voice:cancelNativeDictation'),
+    onNativeConverseState: (handler: (state: string, fromHotkey: boolean) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: string, fromHotkey: boolean) => handler(state, fromHotkey)
+      ipcRenderer.on('voice:nativeConverseState', listener)
+      return () => ipcRenderer.removeListener('voice:nativeConverseState', listener)
+    },
+    onNativeConverseLevel: (handler: (level: number) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, level: number) => handler(level)
+      ipcRenderer.on('voice:nativeConverseLevel', listener)
+      return () => ipcRenderer.removeListener('voice:nativeConverseLevel', listener)
+    },
+    onNativeConverseTranscript: (handler: (text: string) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, text: string) => handler(text)
+      ipcRenderer.on('voice:nativeConverseTranscript', listener)
+      return () => ipcRenderer.removeListener('voice:nativeConverseTranscript', listener)
+    },
+    onNativeConverseError: (handler: (message: string) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, message: string) => handler(message)
+      ipcRenderer.on('voice:nativeConverseError', listener)
+      return () => ipcRenderer.removeListener('voice:nativeConverseError', listener)
+    },
+    onNativeDictationState: (handler: (state: string) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: string) => handler(state)
+      ipcRenderer.on('voice:nativeDictationState', listener)
+      return () => ipcRenderer.removeListener('voice:nativeDictationState', listener)
+    },
+    onNativeDictationLevel: (handler: (level: number) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, level: number) => handler(level)
+      ipcRenderer.on('voice:nativeDictationLevel', listener)
+      return () => ipcRenderer.removeListener('voice:nativeDictationLevel', listener)
+    },
+    onNativeDictationTranscript: (handler: (text: string) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, text: string) => handler(text)
+      ipcRenderer.on('voice:nativeDictationTranscript', listener)
+      return () => ipcRenderer.removeListener('voice:nativeDictationTranscript', listener)
+    },
+    onNativeDictationError: (handler: (message: string) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, message: string) => handler(message)
+      ipcRenderer.on('voice:nativeDictationError', listener)
+      return () => ipcRenderer.removeListener('voice:nativeDictationError', listener)
+    },
     /** Speak `text` aloud through the gateway's digest + TTS pipeline.
      *  Events arrive via onSpeakEvent; resolves when the stream is done. */
     speak: (text: string, conversationId?: string, verbatim?: boolean) =>
       ipcRenderer.invoke('voice:speak', { text, conversationId, verbatim }),
+    ack: (transcript: string) => ipcRenderer.invoke('voice:ack', transcript),
     stopSpeaking: () => ipcRenderer.invoke('voice:stopSpeaking'),
+    /** Temporarily unregister voice hotkeys while a replacement is captured. */
+    setHotkeyCaptureActive: (active: boolean) => ipcRenderer.invoke('voice:setHotkeyCaptureActive', active),
     /** Report converse state so the floating capsule can show/hide itself. */
     setHudState: (state: string) => ipcRenderer.invoke('voice:hudState', state),
     /** Live 0..1 audio level for the capsule's meter. Fire-and-forget. */

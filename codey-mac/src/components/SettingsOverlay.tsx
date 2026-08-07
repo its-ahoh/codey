@@ -31,6 +31,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
   const [tab, setTab] = useState<Tab>(
     (initialTab && TABS.some(t => t.key === initialTab)) ? (initialTab as Tab) : 'settings'
   )
+  const [apiKeyCreateIntent, setApiKeyCreateIntent] = useState<'voice' | undefined>()
   const { isRunning, status, logs } = useGateway()
 
   const activeTab = TABS.find(t => t.key === tab)!
@@ -67,14 +68,28 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
             </div>
             <div style={styles.mainContent}>
               {tab === 'general'    && <AppearanceTab />}
-              {tab === 'apiKeys'    && <ApiKeysTab isGatewayRunning={isRunning} />}
+              {tab === 'apiKeys'    && (
+                <ApiKeysTab
+                  isGatewayRunning={isRunning}
+                  autoCreatePurpose={apiKeyCreateIntent}
+                  onAutoCreateHandled={() => setApiKeyCreateIntent(undefined)}
+                />
+              )}
               {tab === 'status'     && <StatusTab status={status} logs={logs} isRunning={isRunning} />}
               {tab === 'workspaces' && <WorkspacesTab isGatewayRunning={isRunning} />}
               {tab === 'workers'    && <WorkersTab />}
               {tab === 'teams'      && <TeamsTab />}
               {tab === 'settings'   && <SettingsTab isGatewayRunning={isRunning} />}
               {tab === 'agents'     && <AgentsTab isGatewayRunning={isRunning} />}
-              {tab === 'whisper'    && <WhisperTab isGatewayRunning={isRunning} />}
+              {tab === 'whisper'    && (
+                <WhisperTab
+                  isGatewayRunning={isRunning}
+                  onAddVoiceKey={() => {
+                    setApiKeyCreateIntent('voice')
+                    setTab('apiKeys')
+                  }}
+                />
+              )}
             </div>
           </main>
       </div>

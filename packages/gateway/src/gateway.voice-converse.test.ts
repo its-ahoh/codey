@@ -65,6 +65,7 @@ function makeHarness(opts: {
   gateway.voiceDigestCache = new ConversationDigestCache();
   gateway.configManager = {
     get: () => ({ voice: { tts: opts.tts === undefined ? TTS_CONFIG : opts.tts } }),
+    getResolvedVoiceConfig: () => ({ tts: opts.tts === undefined ? TTS_CONFIG : opts.tts }),
   };
   gateway.getVoiceHandler = () => ({
     runMessage: async (m: any) => {

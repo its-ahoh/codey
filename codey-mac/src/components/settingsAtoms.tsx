@@ -2,13 +2,17 @@ import React from 'react'
 import { C } from '../theme'
 
 export const sectionStyle: React.CSSProperties = {
-  color: C.fg3, fontSize: 10, fontWeight: 750, letterSpacing: 0.8,
-  textTransform: 'uppercase', marginTop: 26, marginBottom: 9,
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+  color: C.fg, fontSize: 13, fontWeight: 700,
+  marginTop: 22, marginBottom: 10, paddingBottom: 8,
+  borderBottom: `1px solid ${C.border}`,
 }
+export const pageStyle: React.CSSProperties = { padding: 20, height: '100%', overflowY: 'auto' }
+export const pageIntroStyle: React.CSSProperties = { color: C.fg3, fontSize: 11, lineHeight: 1.5, marginBottom: 14 }
 export const fieldStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  padding: '13px 14px', borderBottom: `1px solid ${C.border}`,
-  background: C.surface, borderRadius: 10,
+  padding: '13px 14px', border: `1px solid ${C.border}`,
+  background: C.surface, borderRadius: 10, marginBottom: 8,
 }
 export const inputStyle: React.CSSProperties = {
   background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 8,
@@ -23,9 +27,12 @@ export const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSPr
   color: variant === 'primary' ? C.onAccent : variant === 'danger' ? C.red : C.fg2,
 })
 
-export const Section: React.FC<{ title: string; right?: React.ReactNode }> = ({ title, right }) => (
-  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...sectionStyle }}>
-    <span>{title}</span>
+export const Section: React.FC<{ title: string; description?: string; right?: React.ReactNode; first?: boolean }> = ({ title, description, right, first }) => (
+  <div style={{ ...sectionStyle, marginTop: first ? 0 : sectionStyle.marginTop }}>
+    <div>
+      <div>{title}</div>
+      {description && <div style={{ color: C.fg3, fontSize: 11, fontWeight: 400, marginTop: 2 }}>{description}</div>}
+    </div>
     {right}
   </div>
 )

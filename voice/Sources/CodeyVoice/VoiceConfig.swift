@@ -2,18 +2,19 @@ import Foundation
 
 struct VoiceConfig: Codable {
     var enabled: Bool = false
+    var dictationEnabled: Bool = false
+    var conversationEnabled: Bool = false
     var hotkey: String = "Fn"
     var language: String = "auto"
     var injection: InjectionMode = .paste
-    /// Where a finished transcript goes: `inject` pastes it into whatever app
-    /// has focus (dictation, the original behavior), `converse` sends it to
-    /// Codey and speaks the reply. Defaults to `inject` so existing dictation
-    /// users are unaffected until they opt in.
+    /// Legacy config value retained so older gateway.json files still decode.
+    /// The primary hotkey now always dictates; converseHotkey always talks to
+    /// the selected Chat, so this value no longer routes transcripts.
     var mode: Mode = .inject
     /// Second binding: start/stop a spoken conversation in the focused chat.
     /// Handled here rather than in Electron because only this helper can bind
     /// Fn-based combinations. Empty means unbound.
-    var converseHotkey: String = ""
+    var converseHotkey: String = "Shift+Fn"
 
     var provider: Provider = .api
     var apiUrl: String = "https://api.openai.com/v1"
@@ -62,6 +63,8 @@ struct VoiceConfig: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = VoiceConfig()
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
+        dictationEnabled = try c.decodeIfPresent(Bool.self, forKey: .dictationEnabled) ?? enabled
+        conversationEnabled = try c.decodeIfPresent(Bool.self, forKey: .conversationEnabled) ?? enabled
         hotkey = try c.decodeIfPresent(String.self, forKey: .hotkey) ?? d.hotkey
         language = try c.decodeIfPresent(String.self, forKey: .language) ?? d.language
         injection = try c.decodeIfPresent(InjectionMode.self, forKey: .injection) ?? d.injection

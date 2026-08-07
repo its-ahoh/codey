@@ -363,10 +363,26 @@ declare global {
       voice: {
         onHotkey: (handler: () => void) => () => void
         onConverseHotkey: (handler: () => void) => () => void
+        onCancelConverse: (handler: () => void) => () => void
         notifyTranscribed: (text: string) => Promise<IpcResult<void>>
+        transcribe: (audio: ArrayBuffer, mime: string) => Promise<IpcResult<{ text: string }>>
+        toggleNativeConversation: (fromHotkey?: boolean) => Promise<IpcResult<{ native: boolean }>>
+        cancelNativeConversation: () => Promise<IpcResult<void>>
+        toggleNativeDictation: () => Promise<IpcResult<{ native: boolean }>>
+        cancelNativeDictation: () => Promise<IpcResult<void>>
+        onNativeConverseState: (handler: (state: string, fromHotkey: boolean) => void) => () => void
+        onNativeConverseLevel: (handler: (level: number) => void) => () => void
+        onNativeConverseTranscript: (handler: (text: string) => void) => () => void
+        onNativeConverseError: (handler: (message: string) => void) => () => void
+        onNativeDictationState: (handler: (state: string) => void) => () => void
+        onNativeDictationLevel: (handler: (level: number) => void) => () => void
+        onNativeDictationTranscript: (handler: (text: string) => void) => () => void
+        onNativeDictationError: (handler: (message: string) => void) => () => void
         /** Speak text through the gateway's digest + TTS pipeline. */
         speak: (text: string, conversationId?: string, verbatim?: boolean) => Promise<IpcResult<void>>
+        ack: (transcript: string) => Promise<IpcResult<{ text: string }>>
         stopSpeaking: () => Promise<IpcResult<void>>
+        setHotkeyCaptureActive: (active: boolean) => Promise<IpcResult<void>>
         setHudState: (state: string) => Promise<IpcResult<void>>
         setHudLevel: (level: number) => void
         onHudLevel: (handler: (level: number) => void) => () => void

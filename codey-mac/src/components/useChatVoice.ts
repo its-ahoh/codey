@@ -52,9 +52,13 @@ function detectSpeechLang(text: string): string {
  * in which case setting `utterance.lang` alone still gets closer than the
  * default voice would.
  */
-function pickVoiceForLang(lang: string): SpeechSynthesisVoice | null {
+function pickVoiceForLang(lang: string, preferredVoiceUri?: string): SpeechSynthesisVoice | null {
   const voices = window.speechSynthesis.getVoices()
   if (!voices.length) return null
+  if (preferredVoiceUri) {
+    const preferred = voices.find(v => v.voiceURI === preferredVoiceUri)
+    if (preferred) return preferred
+  }
   const want = lang.toLowerCase()
   const base = want.split('-')[0]
   const norm = (v: SpeechSynthesisVoice) => v.lang.replace('_', '-').toLowerCase()
@@ -83,7 +87,12 @@ export function useChatVoice({ onTranscript, onError }: Options) {
   const chunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const stateRef = useRef<ChatVoiceState>('idle')
+  const nativeCaptureRef = useRef<ChatVoiceMode | null>(null)
   stateRef.current = state
+  const updateState = useCallback((next: ChatVoiceState) => {
+    stateRef.current = next
+    setState(next)
+  }, [])
 
   // Playback queue. Audio segments and system-voice text are interleaved in
   // arrival order, which the gateway guarantees is seq order.
@@ -93,8 +102,13 @@ export function useChatVoice({ onTranscript, onError }: Options) {
   const serverTtsRef = useRef(false)
   const pendingTextRef = useRef<Map<number, string>>(new Map())
   const streamDoneRef = useRef(false)
+  const systemVoiceRef = useRef('')
 
   const fail = useCallback((msg: string) => { onError?.(msg) }, [onError])
+  const nativeTranscriptHandlerRef = useRef(onTranscript)
+  nativeTranscriptHandlerRef.current = onTranscript
+  const nativeFailHandlerRef = useRef(fail)
+  nativeFailHandlerRef.current = fail
 
   // getVoices() is empty until the list loads, and the first utterance is
   // usually the ack — early enough to miss it. Warm it on mount.
@@ -103,6 +117,12 @@ export function useChatVoice({ onTranscript, onError }: Options) {
     const onVoices = () => window.speechSynthesis.getVoices()
     window.speechSynthesis.addEventListener('voiceschanged', onVoices)
     return () => window.speechSynthesis.removeEventListener('voiceschanged', onVoices)
+  }, [])
+
+  useEffect(() => {
+    void window.codey.config.get().then(result => {
+      if (result.ok) systemVoiceRef.current = result.data?.voice?.tts?.systemVoice ?? ''
+    })
   }, [])
 
   // ── Live level meter ──────────────────────────────────────────────
@@ -182,7 +202,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
     if (!next) {
       // Only leave .speaking once the stream is closed too: playback
       // routinely outruns synthesis of the next sentence mid-reply.
-      if (streamDoneRef.current) setState('idle')
+      if (streamDoneRef.current) updateState('idle')
       return
     }
     playingRef.current = true
@@ -207,14 +227,14 @@ export function useChatVoice({ onTranscript, onError }: Options) {
       // be told which one the text is in.
       const lang = detectSpeechLang(next.text)
       utterance.lang = lang
-      const match = pickVoiceForLang(lang)
+      const match = pickVoiceForLang(lang, systemVoiceRef.current)
       if (match) utterance.voice = match
       const advance = () => { playingRef.current = false; drainQueue() }
       utterance.onend = advance
       utterance.onerror = advance
       window.speechSynthesis.speak(utterance)
     }
-  }, [meterElement])
+  }, [meterElement, updateState])
 
   const stopPlayback = useCallback(() => {
     queueRef.current.forEach(item => { if (item.kind === 'audio') URL.revokeObjectURL(item.url) })
@@ -229,6 +249,65 @@ export function useChatVoice({ onTranscript, onError }: Options) {
     void window.codey.voice.stopSpeaking()
   }, [stopMeter])
 
+  // On-device Conversation capture runs in the Swift Helper so it can reuse
+  // the same WhisperKit pipeline as Dictation. Mirror its state into this hook
+  // so the composer, capsule, auto-send, and reply playback remain unchanged.
+  useEffect(() => {
+    const offState = window.codey.voice.onNativeConverseState((next, fromHotkey) => {
+      if (next !== 'recording' && next !== 'transcribing' && next !== 'idle') return
+      nativeCaptureRef.current = next !== 'idle' ? 'converse' : null
+      modeRef.current = 'converse'
+      setMode('converse')
+      if (next === 'recording') {
+        setFromHotkey(fromHotkey)
+        setRecordingStartedAt(Date.now())
+        stopPlayback()
+      }
+      updateState(next)
+    })
+    const offLevel = window.codey.voice.onNativeConverseLevel(setLevel)
+    const offTranscript = window.codey.voice.onNativeConverseTranscript(text => {
+      nativeCaptureRef.current = null
+      if (text.trim()) nativeTranscriptHandlerRef.current(text.trim(), 'converse')
+      else updateState('idle')
+    })
+    const offError = window.codey.voice.onNativeConverseError(message => {
+      nativeCaptureRef.current = null
+      nativeFailHandlerRef.current(message)
+      updateState('idle')
+    })
+    return () => { offState(); offLevel(); offTranscript(); offError() }
+  }, [stopPlayback, updateState])
+
+  // The in-chat Dictation button uses the same on-device Helper too. Unlike
+  // Conversation it stays inline and inserts the transcript without sending.
+  useEffect(() => {
+    const offState = window.codey.voice.onNativeDictationState(next => {
+      if (next !== 'recording' && next !== 'transcribing' && next !== 'idle') return
+      nativeCaptureRef.current = next !== 'idle' ? 'dictate' : null
+      modeRef.current = 'dictate'
+      setMode('dictate')
+      if (next === 'recording') {
+        setFromHotkey(false)
+        setRecordingStartedAt(Date.now())
+        stopPlayback()
+      }
+      updateState(next)
+    })
+    const offLevel = window.codey.voice.onNativeDictationLevel(setLevel)
+    const offTranscript = window.codey.voice.onNativeDictationTranscript(text => {
+      nativeCaptureRef.current = null
+      if (text.trim()) nativeTranscriptHandlerRef.current(text.trim(), 'dictate')
+      updateState('idle')
+    })
+    const offError = window.codey.voice.onNativeDictationError(message => {
+      nativeCaptureRef.current = null
+      nativeFailHandlerRef.current(message)
+      updateState('idle')
+    })
+    return () => { offState(); offLevel(); offTranscript(); offError() }
+  }, [stopPlayback, updateState])
+
   useEffect(() => {
     const off = window.codey.voice.onSpeakEvent((event: SpeakEvent) => {
       switch (event.type) {
@@ -236,7 +315,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
           serverTtsRef.current = event.tts === 'server'
           pendingTextRef.current.clear()
           streamDoneRef.current = false
-          setState('speaking')
+          updateState('speaking')
           break
         case 'text':
           // In server mode the audio for this seq is still coming; hold the
@@ -270,12 +349,12 @@ export function useChatVoice({ onTranscript, onError }: Options) {
         case 'error':
           streamDoneRef.current = true
           fail(event.message ?? 'Speech failed')
-          setState('idle')
+          updateState('idle')
           break
       }
     })
     return off
-  }, [drainQueue, fail])
+  }, [drainQueue, fail, updateState])
 
   /**
    * Speaks `text` through the gateway, which decides between the configured
@@ -284,6 +363,8 @@ export function useChatVoice({ onTranscript, onError }: Options) {
    */
   const speak = useCallback(async (text: string, conversationId?: string, verbatim = false) => {
     if (!text.trim()) return
+    const cfg = await window.codey.config.get()
+    if (cfg.ok) systemVoiceRef.current = cfg.data?.voice?.tts?.systemVoice ?? ''
     const res = await window.codey.voice.speak(text, conversationId, verbatim)
     if (res && res.ok === false) fail(res.error ?? 'Speech failed')
   }, [fail])
@@ -291,36 +372,22 @@ export function useChatVoice({ onTranscript, onError }: Options) {
   // ── Recording ─────────────────────────────────────────────────────
 
   const transcribe = useCallback(async (blob: Blob, mime: string) => {
-    setState('transcribing')
+    updateState('transcribing')
     try {
-      const cfgRes = await window.codey.config.get()
-      const voice: any = cfgRes.ok ? (cfgRes.data?.voice ?? {}) : {}
-      if (!voice.apiKey) {
-        fail('Add a transcription API key in Settings → Voice.')
-        setState('idle')
-        return
-      }
-      const base = (voice.apiUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
-      const fd = new FormData()
-      fd.append('file', blob, mime.includes('webm') ? 'audio.webm' : 'audio.mp4')
-      fd.append('model', voice.apiModel || 'gpt-4o-mini-transcribe')
-      if (voice.language && voice.language !== 'auto') fd.append('language', voice.language)
-
-      const resp = await fetch(`${base}/audio/transcriptions`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${voice.apiKey}` },
-        body: fd,
-      })
-      if (!resp.ok) throw new Error(`Transcription failed (${resp.status})`)
-      const text = ((await resp.json())?.text ?? '').trim()
-      setState('idle')
-      if (text) onTranscript(text, modeRef.current)
-      else fail('No speech detected.')
+      const result = await window.codey.voice.transcribe(await blob.arrayBuffer(), mime)
+      if (!result.ok) throw new Error(result.error)
+      const text = result.data.text.trim()
+      if (!text) throw new Error('No speech detected.')
+      const capturedMode = modeRef.current
+      onTranscript(text, capturedMode)
+      // Conversation remains in its processing state until the acknowledgement
+      // starts speaking; hiding here made a successful stop look like failure.
+      if (capturedMode === 'dictate') updateState('idle')
     } catch (err: any) {
       fail(err?.message ?? String(err))
-      setState('idle')
+      updateState('idle')
     }
-  }, [fail, onTranscript])
+  }, [fail, onTranscript, updateState])
 
   const startRecording = useCallback(async () => {
     // Talking over a reply means barge-in: stop it and listen.
@@ -345,26 +412,33 @@ export function useChatVoice({ onTranscript, onError }: Options) {
         if (cancelledRef.current) return // Esc: discard, don't transcribe
         void transcribe(blob, mime)
       }
-      rec.start()
+      // Emit periodic chunks instead of relying entirely on the final stop
+      // event. This remains reliable while the main window is unfocused.
+      rec.start(250)
       recorderRef.current = rec
       setRecordingStartedAt(Date.now())
-      setState('recording')
+      updateState('recording')
     } catch (err: any) {
       fail(err?.message ?? 'Microphone unavailable')
-      setState('idle')
+      updateState('idle')
     }
-  }, [fail, stopPlayback, transcribe, meterStream, stopMeter])
+  }, [fail, stopPlayback, transcribe, meterStream, stopMeter, updateState])
 
   const stopRecording = useCallback(() => {
-    try { recorderRef.current?.stop() } catch { /* already stopped */ }
-  }, [])
+    const recorder = recorderRef.current
+    if (!recorder || recorder.state === 'inactive') return
+    // Reflect the second hotkey immediately. Waiting for the asynchronous
+    // onstop callback makes a successfully handled press look like a no-op.
+    updateState('transcribing')
+    try { recorder.stop() } catch { updateState('recording') }
+  }, [updateState])
 
   /**
    * One gesture per button: start, stop, or interrupt depending on state.
    * Pressing the other button mid-recording switches what that recording
    * will do with its transcript, which is friendlier than refusing.
    */
-  const toggle = useCallback((next: ChatVoiceMode, opts?: { fromHotkey?: boolean }) => {
+  const toggleBrowser = useCallback((next: ChatVoiceMode, opts?: { fromHotkey?: boolean }) => {
     setMode(next)
     modeRef.current = next
     if (stateRef.current === 'idle') setFromHotkey(opts?.fromHotkey === true)
@@ -376,12 +450,28 @@ export function useChatVoice({ onTranscript, onError }: Options) {
     }
   }, [startRecording, stopRecording, stopPlayback])
 
+  const toggle = useCallback((next: ChatVoiceMode, opts?: { fromHotkey?: boolean }) => {
+    const nativeToggle = next === 'converse'
+      ? window.codey.voice.toggleNativeConversation(opts?.fromHotkey === true)
+      : window.codey.voice.toggleNativeDictation()
+    void nativeToggle.then(result => {
+      if (result.ok && result.data.native) return
+      toggleBrowser(next, opts)
+    }).catch(() => toggleBrowser(next, opts))
+  }, [toggleBrowser])
+
   /**
    * Abandon the turn: drop the recording without transcribing it, or stop a
    * reply mid-sentence. Distinct from toggle, which finishes and sends.
    */
   const cancel = useCallback(() => {
     if (stateRef.current === 'idle') return
+    if (nativeCaptureRef.current) {
+      void (nativeCaptureRef.current === 'converse'
+        ? window.codey.voice.cancelNativeConversation()
+        : window.codey.voice.cancelNativeDictation())
+      return
+    }
     cancelledRef.current = true
     try { recorderRef.current?.stop() } catch { /* already stopped */ }
     streamRef.current?.getTracks().forEach(t => t.stop())
@@ -389,8 +479,8 @@ export function useChatVoice({ onTranscript, onError }: Options) {
     chunksRef.current = []
     stopMeter()
     stopPlayback()
-    setState('idle')
-  }, [stopMeter, stopPlayback])
+    updateState('idle')
+  }, [stopMeter, stopPlayback, updateState])
 
   useEffect(() => () => { stopPlayback(); stopRecording() }, [stopPlayback, stopRecording])
 

@@ -5,10 +5,16 @@ import { UIIcon } from './UIIcons'
 
 interface WhisperTabProps {
   isGatewayRunning: boolean
+  onAddVoiceKey?: () => void
 }
 
 interface VoiceCfg {
+  /** Legacy aggregate: true while either global voice hotkey is enabled. */
   enabled: boolean
+  /** Controls only the global shortcut; the composer action stays available. */
+  dictationEnabled: boolean
+  /** Controls only the global shortcut; the composer action stays available. */
+  conversationEnabled: boolean
   hotkey: string
   /** Second hotkey: start/stop a spoken conversation in the focused chat. */
   converseHotkey: string
@@ -16,12 +22,12 @@ interface VoiceCfg {
   injection: 'paste' | 'ax'
   provider: 'api' | 'local' | 'realtime'
   apiUrl: string
-  apiKey: string
+  apiKeyRef: string
   apiModel: string
   localModel: string
   realtimeUrl: string
   realtimeModel: string
-  /** Where a finished transcript goes: the cursor, or a conversation with Codey. */
+  /** Legacy setting kept for config compatibility. The two hotkeys now have fixed destinations. */
   mode: 'inject' | 'converse'
   tts: TtsCfg
 }
@@ -30,22 +36,27 @@ interface TtsCfg {
   enabled: boolean
   provider: 'api' | 'local'
   apiUrl: string
-  apiKey: string
+  /** Independently selected key for API speech synthesis. */
+  apiKeyRef: string
   apiModel: string
   voiceId: string
+  /** Browser/macOS system voice URI. Empty means automatic by language. */
+  systemVoice: string
   /** How much of a reply gets spoken. See speech-digest.ts. */
   verbosity: 'full' | 'digest' | 'auto'
 }
 
 const VOICE_DEFAULT: VoiceCfg = {
   enabled: false,
+  dictationEnabled: false,
+  conversationEnabled: false,
   hotkey: 'Fn',
-  converseHotkey: 'Control+Fn',
+  converseHotkey: 'Shift+Fn',
   language: 'auto',
   injection: 'paste',
   provider: 'api',
   apiUrl: 'https://api.openai.com/v1',
-  apiKey: '',
+  apiKeyRef: '',
   apiModel: 'gpt-4o-mini-transcribe',
   localModel: 'openai_whisper-large-v3_turbo_954MB',
   realtimeUrl: 'wss://api.openai.com/v1/realtime?intent=transcription',
@@ -55,14 +66,16 @@ const VOICE_DEFAULT: VoiceCfg = {
     enabled: false,
     provider: 'api',
     apiUrl: 'https://api.openai.com/v1',
-    apiKey: '',
+    apiKeyRef: '',
     apiModel: 'gpt-4o-mini-tts',
     voiceId: 'alloy',
+    systemVoice: '',
     verbosity: 'auto',
   },
 }
 
 const TTS_VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer']
+interface SavedApiKey { name: string; apiKey: string; openaiBaseUrl?: string; purpose?: 'general' | 'voice' }
 
 // Values must match real folder names in argmaxinc/whisperkit-coreml on HF.
 // The helper strips the `openai_whisper-` prefix before passing to WhisperKit.
@@ -91,13 +104,27 @@ const VOICE_LANGUAGES: Array<{ value: string; label: string }> = [
 // ── Style atoms ─────────────────────────────────────────────────────
 
 const sectionStyle: React.CSSProperties = {
-  color: C.fg3, fontSize: 11, fontWeight: 600, letterSpacing: 0.5,
-  textTransform: 'uppercase', marginTop: 22, marginBottom: 8,
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  gap: 16, padding: '13px 15px',
+  background: C.surface3, borderBottom: `1px solid ${C.border}`,
+}
+const sectionCardStyle: React.CSSProperties = {
+  marginTop: 14, borderRadius: 12, overflow: 'hidden',
+  background: C.surface2, border: `1px solid ${C.border2}`,
+}
+const sectionBodyStyle: React.CSSProperties = { padding: '2px 15px 14px' }
+const settingRowStyle: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  padding: '10px 0',
+}
+const settingBlockStyle: React.CSSProperties = {
+  borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4,
 }
 const fieldStyle: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  padding: '10px 0', borderBottom: `1px solid ${C.border}`,
+  ...settingRowStyle, borderBottom: `1px solid ${C.border}`,
 }
+const lastFieldStyle: React.CSSProperties = { ...settingRowStyle }
+const lastSettingBlockStyle: React.CSSProperties = { paddingBottom: 0, marginBottom: 0 }
 const inputStyle: React.CSSProperties = {
   background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 7,
   color: C.fg, fontSize: 13, padding: '6px 10px', outline: 'none', width: 180,
@@ -110,10 +137,19 @@ const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSPropertie
   color: variant === 'primary' ? C.onAccent : variant === 'danger' ? C.red : C.fg2,
 })
 
-const Section: React.FC<{ title: string; right?: React.ReactNode }> = ({ title, right }) => (
-  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...sectionStyle }}>
-    <span>{title}</span>
+const Section: React.FC<{ title: string; description: string; right?: React.ReactNode }> = ({ title, description, right }) => (
+  <div style={sectionStyle}>
+    <div>
+      <div style={{ color: C.fg, fontSize: 14, fontWeight: 680 }}>{title}</div>
+      <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>{description}</div>
+    </div>
     {right}
+  </div>
+)
+
+const Subsection: React.FC<{ title: string }> = ({ title }) => (
+  <div style={{ color: C.fg2, fontSize: 11, fontWeight: 700, letterSpacing: 0.55, textTransform: 'uppercase', padding: '16px 0 7px' }}>
+    {title}
   </div>
 )
 
@@ -134,10 +170,12 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on,
 
 // ── WhisperTab ──────────────────────────────────────────────────────
 
-export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
+export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddVoiceKey }) => {
   const [voice, setVoice] = useState<VoiceCfg>(VOICE_DEFAULT)
   const [savedMsg, setSavedMsg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [savedVoiceKeys, setSavedVoiceKeys] = useState<SavedApiKey[]>([])
+  const [systemVoices, setSystemVoices] = useState<SpeechSynthesisVoice[]>([])
   const [dlState, setDlState] = useState<{ active: boolean; model: string; fraction: number; msg: string | null }>({
     active: false, model: '', fraction: 0, msg: null,
   })
@@ -277,17 +315,39 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
     setError(null)
     try {
       const cfg = await unwrap(await window.codey.config.get())
+      const keys = await unwrap(await window.codey.apiKeys.list()) as SavedApiKey[]
+      setSavedVoiceKeys(keys.filter(key => key.purpose === 'voice').sort((a, b) => a.name.localeCompare(b.name)))
+      const storedVoice = cfg?.voice ?? {}
+      const legacyEnabled = storedVoice.enabled ?? false
+      const dictationEnabled = storedVoice.dictationEnabled ?? legacyEnabled
+      const conversationEnabled = storedVoice.conversationEnabled ?? legacyEnabled
       // tts merges one level deeper: a config written before a tts field
       // existed would otherwise blank out that field's default.
       setVoice({
         ...VOICE_DEFAULT,
-        ...(cfg?.voice ?? {}),
+        ...storedVoice,
+        enabled: dictationEnabled || conversationEnabled,
+        dictationEnabled,
+        conversationEnabled,
+        // Dictation and talk-to-chat now have separate triggers. Migrate old
+        // configs so the primary hotkey always keeps its dictation meaning.
+        mode: 'inject',
         tts: { ...VOICE_DEFAULT.tts, ...(cfg?.voice?.tts ?? {}) },
       })
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
   useEffect(() => { if (isGatewayRunning) reload() }, [isGatewayRunning, reload])
+
+  useEffect(() => {
+    const load = () => setSystemVoices(
+      [...window.speechSynthesis.getVoices()].sort((a, b) =>
+        a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name)),
+    )
+    load()
+    window.speechSynthesis.addEventListener('voiceschanged', load)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', load)
+  }, [])
 
   // Auto-warm: whenever the selected local model is downloaded but not warmed
   // (and we're not already busy with download/warm), kick a background warm.
@@ -315,10 +375,16 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
   const updateTts = (patch: Partial<TtsCfg>) => updateVoice({ tts: { ...voice.tts, ...patch } })
 
   const updateVoice = async (patch: Partial<VoiceCfg>) => {
-    const next = { ...voice, ...patch }
+    const patched = { ...voice, ...patch }
+    const next = {
+      ...patched,
+      enabled: patched.dictationEnabled || patched.conversationEnabled,
+      mode: 'inject' as const,
+    }
     setVoice(next)
     try {
       await unwrap(await window.codey.config.set({ voice: next }))
+      window.dispatchEvent(new CustomEvent('codey:voice-config-changed', { detail: next }))
       setSavedMsg('Saved')
       setTimeout(() => setSavedMsg(null), 1500)
     } catch (e: any) {
@@ -326,60 +392,69 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
     }
   }
 
+  const handleHotkeyRecordingChange = useCallback((active: boolean) => {
+    void window.codey.voice.setHotkeyCaptureActive(active)
+  }, [])
+
+  const renderVoiceKeyField = (
+    label: string,
+    description: string,
+    value: string,
+    onChange: (value: string) => void,
+    emptyLabel = 'No key selected',
+  ) => {
+    const addNewValue = '__add_new_voice_key__'
+    return (
+    <div style={settingBlockStyle}>
+      <div style={{ ...settingRowStyle, alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ color: C.fg, fontSize: 13 }}>{label}</div>
+          <div style={{ color: C.fg3, fontSize: 11, marginTop: 3 }}>{description}</div>
+        </div>
+        <select
+          value={value}
+          onChange={e => {
+            if (e.target.value === addNewValue) {
+              onAddVoiceKey?.()
+              return
+            }
+            onChange(e.target.value)
+          }}
+          style={{ ...selectStyle, width: 220 }}
+        >
+          <option value="">{emptyLabel}</option>
+          {savedVoiceKeys.map(key => <option key={key.name} value={key.name}>{key.name}</option>)}
+          <option disabled>──────────</option>
+          <option value={addNewValue}>＋ Add new key…</option>
+        </select>
+      </div>
+    </div>
+    )
+  }
+
   // "API" groups the two cloud modes (batch Whisper + Realtime WebSocket); they
   // share the same API key and only differ in transport. "Local" is on-device.
   const isApi = voice.provider === 'api' || voice.provider === 'realtime'
 
   return (
-    <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
+    <div style={{ padding: 20, height: '100%', overflowY: 'auto' }}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      {/* Prominent enable card — makes on/off unmistakable (was a small
-          top-right toggle that was easy to overlook). */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '12px 14px', borderRadius: 10, marginBottom: 10,
-        background: voice.enabled ? C.accentDim : C.surface3,
-        border: `1px solid ${voice.enabled ? C.accent : C.border2}`,
-        transition: 'all 0.2s',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{
-            width: 9, height: 9, borderRadius: '50%', flexShrink: 0,
-            background: voice.enabled ? C.green : C.fg3,
-          }}/>
-          <div>
-            <div style={{ color: C.fg, fontSize: 14, fontWeight: 600 }}>
-              Voice input is {voice.enabled ? 'ON' : 'OFF'}
-            </div>
-            <div style={{ color: C.fg3, fontSize: 11, marginTop: 1 }}>
-              {voice.enabled
-                ? 'Press your hotkey anywhere to dictate at your cursor.'
-                : 'Turn on to enable system-wide dictation via the codey-voice helper.'}
-            </div>
-          </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {savedMsg && <span style={{ color: C.green, fontSize: 11 }}>{savedMsg}</span>}
-          <Toggle on={voice.enabled} onChange={enabled => updateVoice({ enabled })}/>
-        </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>
+        <span>The switches control global hotkeys only; both composer actions remain available. Dictation and Conversation share the recognition settings below.</span>
+        {savedMsg && <span style={{ color: C.green, flexShrink: 0 }}>Saved</span>}
       </div>
 
-      {!voice.enabled && (
-        <div style={{ color: C.fg3, fontSize: 11, marginBottom: 10 }}>
-          Settings below stay editable, but voice input won't run until it's turned on.
-        </div>
-      )}
-
-      {/* Everything below dims while disabled, but remains editable. */}
-      <div style={{ opacity: voice.enabled ? 1 : 0.45, transition: 'opacity 0.2s' }}>
-
-      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
-        System-wide voice input via the native <code>codey-voice</code> helper (macOS). Press the hotkey anywhere to start/stop recording — transcribed text is injected at your cursor. Requires the helper app running with Microphone + Accessibility permissions.
-      </div>
+      <div style={sectionCardStyle}>
+        <Section
+          title="Dictation"
+          description="Global hotkey for typing speech at the cursor"
+          right={<Toggle on={voice.dictationEnabled} onChange={dictationEnabled => updateVoice({ dictationEnabled })}/>}
+        />
+        <div style={sectionBodyStyle}>
 
       <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Hotkey</span>
+        <span style={{ color: C.fg, fontSize: 13 }}>Dictation hotkey</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button
             onClick={() => updateVoice({ hotkey: 'Fn' })}
@@ -391,133 +466,112 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
           >
             Use Fn
           </button>
-          <HotkeyRecorder value={voice.hotkey} onChange={hotkey => updateVoice({ hotkey })}/>
+          <HotkeyRecorder
+            value={voice.hotkey}
+            onChange={hotkey => updateVoice({ hotkey })}
+            onRecordingChange={handleHotkeyRecordingChange}
+          />
         </div>
       </div>
-      {voice.hotkey === 'Fn' && (
-        <div style={{ color: C.fg3, fontSize: 11, marginTop: 4 }}>
-          Fn is handled by the bundled native helper. Make sure Codey Voice has Accessibility permission (System Settings → Privacy &amp; Security → Accessibility).
-        </div>
-      )}
 
-      <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
+      <div style={lastFieldStyle}>
+        <span style={{ color: C.fg, fontSize: 13 }}>Insertion</span>
+        <select
+          value={voice.injection}
+          onChange={e => updateVoice({ injection: e.target.value as 'paste' | 'ax' })}
+          style={selectStyle}
+        >
+          <option value="paste">Paste (⌘V — works everywhere)</option>
+          <option value="ax">Accessibility API (no clipboard touch)</option>
+        </select>
+      </div>
+        </div>
+      </div>
+
+      <div style={sectionCardStyle}>
+        <Section
+          title="Conversation"
+          description="Global hotkey for talking to the focused chat"
+          right={<Toggle on={voice.conversationEnabled} onChange={conversationEnabled => updateVoice({ conversationEnabled })}/>}
+        />
+        <div style={sectionBodyStyle}>
+
+      <div style={settingBlockStyle}>
+        <div style={settingRowStyle}>
           <span style={{ color: C.fg, fontSize: 13 }}>Talk-to-chat hotkey</span>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            {voice.converseHotkey && (
-              <button
-                onClick={() => updateVoice({ converseHotkey: '' })}
-                style={pillButton('ghost')}
-                title="Remove this binding"
-              >
-                Clear
-              </button>
-            )}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              onClick={() => updateVoice({ converseHotkey: 'Shift+Fn' })}
+              style={{
+                ...pillButton(voice.converseHotkey === 'Shift+Fn' ? 'primary' : 'ghost'),
+                fontSize: 11,
+              }}
+              title="Use Control + Fn; Fn combinations cannot be captured in the browser"
+            >
+              Use ⇧Fn
+            </button>
             <HotkeyRecorder
               value={voice.converseHotkey}
               onChange={converseHotkey => updateVoice({ converseHotkey })}
+              onRecordingChange={handleHotkeyRecordingChange}
             />
           </div>
         </div>
         <div style={{ color: C.fg3, fontSize: 11 }}>
-          Press it to speak to the focused chat and hear the reply; press again to send.
-          Separate from the dictation hotkey above, which types at the cursor instead.
-          {voice.converseHotkey.trim().toLowerCase().endsWith('fn') && (
-            <span style={{ color: C.fg3 }}> Fn combinations are handled by the bundled helper, so this
-            one needs Codey Voice to have Accessibility permission.</span>
-          )}
+          Press once to start listening and again to send.
+          {voice.converseHotkey.trim().toLowerCase().endsWith('fn') && ' Fn shortcuts require Accessibility permission.'}
         </div>
       </div>
 
-      <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Language</span>
-        <select
-          value={voice.language}
-          onChange={e => updateVoice({ language: e.target.value })}
-          style={selectStyle}
-        >
-          {VOICE_LANGUAGES.map(l => (
-            <option key={l.value} value={l.value}>{l.label}</option>
-          ))}
-        </select>
-      </div>
-
-      <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
-          <span style={{ color: C.fg, fontSize: 13 }}>What happens to the transcript</span>
+      <div style={{ padding: '15px 16px', borderRadius: 10, background: C.surface3, border: `1px solid ${C.border2}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ color: C.fg, fontSize: 13, fontWeight: 600 }}>Spoken replies</span>
           <select
-            value={voice.mode}
-            onChange={e => updateVoice({ mode: e.target.value as 'inject' | 'converse' })}
+            value={voice.tts.enabled ? 'api' : 'system'}
+            onChange={e => updateTts({ enabled: e.target.value === 'api' })}
             style={selectStyle}
           >
-            <option value="inject">Type it (dictation)</option>
-            <option value="converse">Talk to Codey</option>
+            <option value="system">System</option>
+            <option value="api">OpenAI</option>
           </select>
         </div>
-        <div style={{ color: C.fg3, fontSize: 11 }}>
-          {voice.mode === 'inject'
-            ? 'The transcript is typed into whatever app has focus.'
-            : 'The transcript goes to Codey and the reply is spoken back. Press the hotkey while it talks to interrupt; Esc stops it.'}
+        <div style={{ color: C.fg3, fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
+          {voice.tts.enabled
+            ? 'OpenAI synthesizes replies with the selected key and voice. Failures fall back to the saved system voice.'
+            : 'Uses an installed macOS voice offline with no API key.'}
         </div>
-      </div>
 
-      {voice.mode === 'inject' && (
-        <div style={fieldStyle}>
-          <span style={{ color: C.fg, fontSize: 13 }}>Injection mode</span>
-          <select
-            value={voice.injection}
-            onChange={e => updateVoice({ injection: e.target.value as 'paste' | 'ax' })}
-            style={selectStyle}
-          >
-            <option value="paste">Paste (⌘V — works everywhere)</option>
-            <option value="ax">Accessibility API (no clipboard touch)</option>
-          </select>
-        </div>
-      )}
-
-      {voice.mode === 'converse' && (
-        <>
-          <Section title="Spoken replies"/>
-
-          <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
-              <span style={{ color: C.fg, fontSize: 13 }}>Voice</span>
+        {!voice.tts.enabled ? (
+          <div style={{ ...settingRowStyle, padding: '16px 0 0' }}>
+              <div>
+                <div style={{ color: C.fg, fontSize: 13 }}>System voice</div>
+                <div style={{ color: C.fg3, fontSize: 11, marginTop: 3 }}>Installed macOS voices; Automatic follows the reply language.</div>
+              </div>
               <select
-                value={voice.tts.enabled ? 'api' : 'system'}
-                onChange={e => updateTts({ enabled: e.target.value === 'api' })}
-                style={selectStyle}
+                value={voice.tts.systemVoice}
+                onChange={e => updateTts({ systemVoice: e.target.value })}
+                style={{ ...selectStyle, maxWidth: 260 }}
               >
-                <option value="system">System voice (offline, free)</option>
-                <option value="api">OpenAI voice (better quality)</option>
+                <option value="">Automatic by language</option>
+                {voice.tts.systemVoice && !systemVoices.some(item => item.voiceURI === voice.tts.systemVoice) && (
+                  <option value={voice.tts.systemVoice}>Saved voice (currently unavailable)</option>
+                )}
+                {systemVoices.map(item => (
+                  <option key={item.voiceURI} value={item.voiceURI}>
+                    {item.name} — {item.lang}{item.default ? ' · Default' : ''}
+                  </option>
+                ))}
               </select>
-            </div>
-            <div style={{ color: C.fg3, fontSize: 11 }}>
-              {voice.tts.enabled
-                ? 'Replies are synthesized by the API. If a request fails mid-reply, the rest is read by the system voice so playback never goes silent.'
-                : 'Replies are read by the built-in macOS voice. No API key needed, but noticeably weaker on Chinese.'}
-            </div>
           </div>
-
-          <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
-              <span style={{ color: C.fg, fontSize: 13 }}>How much gets read out</span>
-              <select
-                value={voice.tts.verbosity}
-                onChange={e => updateTts({ verbosity: e.target.value as TtsCfg['verbosity'] })}
-                style={selectStyle}
-              >
-                <option value="auto">Summarize long replies</option>
-                <option value="digest">Always summarize</option>
-                <option value="full">Read everything</option>
-              </select>
-            </div>
-            <div style={{ color: C.fg3, fontSize: 11 }}>
-              Say &ldquo;more detail&rdquo; (or &ldquo;说详细点&rdquo;) to hear the full reply — it replays from cache without re-running the agent.
-            </div>
-          </div>
-
-          {voice.tts.enabled && (
-            <>
+        ) : (
+          <>
+              {renderVoiceKeyField(
+                'TTS key',
+                'Select the Voice key used for OpenAI speech synthesis.',
+                voice.tts.apiKeyRef,
+                apiKeyRef => updateTts({ apiKeyRef }),
+                'No key selected',
+              )}
               <div style={fieldStyle}>
                 <span style={{ color: C.fg, fontSize: 13 }}>Speech API URL</span>
                 <input
@@ -526,18 +580,6 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
                   onBlur={e => updateTts({ apiUrl: e.target.value })}
                   style={inputStyle}
                   placeholder="https://api.openai.com/v1"
-                />
-              </div>
-
-              <div style={fieldStyle}>
-                <span style={{ color: C.fg, fontSize: 13 }}>Speech API key</span>
-                <input
-                  type="password"
-                  value={voice.tts.apiKey}
-                  onChange={e => setVoice({ ...voice, tts: { ...voice.tts, apiKey: e.target.value } })}
-                  onBlur={e => updateTts({ apiKey: e.target.value })}
-                  style={inputStyle}
-                  placeholder="sk-..."
                 />
               </div>
 
@@ -552,7 +594,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
                 />
               </div>
 
-              <div style={fieldStyle}>
+              <div style={{ ...fieldStyle, borderBottom: 'none', paddingBottom: 0 }}>
                 <span style={{ color: C.fg, fontSize: 13 }}>Voice</span>
                 <select
                   value={voice.tts.voiceId}
@@ -562,18 +604,58 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
                   {TTS_VOICES.map(v => <option key={v} value={v}>{v}</option>)}
                 </select>
               </div>
-            </>
-          )}
-        </>
-      )}
+          </>
+        )}
+      </div>
 
-      <Section title="Transcription backend"/>
+      <div style={lastSettingBlockStyle}>
+        <div style={settingRowStyle}>
+          <div>
+            <div style={{ color: C.fg, fontSize: 13 }}>Spoken reply length</div>
+            <div style={{ color: C.fg3, fontSize: 11, marginTop: 3 }}>
+              Choose how much Codey reads aloud. Say &ldquo;more detail&rdquo; to hear the full response.
+            </div>
+          </div>
+          <select
+            value={voice.tts.verbosity}
+            onChange={e => updateTts({ verbosity: e.target.value as TtsCfg['verbosity'] })}
+            style={selectStyle}
+          >
+            <option value="auto">Smart — summarize long replies</option>
+            <option value="digest">Summary only</option>
+            <option value="full">Full reply</option>
+          </select>
+        </div>
+      </div>
+        </div>
+      </div>
+
+      <div style={sectionCardStyle}>
+        <Section
+          title="Speech recognition"
+          description="Used by both Dictation and Conversation"
+        />
+        <div style={sectionBodyStyle}>
+
+      <div style={fieldStyle}>
+        <span style={{ color: C.fg, fontSize: 13 }}>Language</span>
+        <select
+          value={voice.language}
+          onChange={e => updateVoice({ language: e.target.value })}
+          style={selectStyle}
+        >
+          {VOICE_LANGUAGES.map(l => (
+            <option key={l.value} value={l.value}>{l.label}</option>
+          ))}
+        </select>
+      </div>
+
       {/* Provider row + descriptive note grouped as a single block: the divider
           lives on the outer block, not the row itself, so the note doesn't get
           orphaned below a row-divider with awkward gap. */}
-      <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
-          <span style={{ color: C.fg, fontSize: 13 }}>Provider</span>
+      <div style={settingBlockStyle}>
+        <div style={settingRowStyle}>
+          <span style={{ color: C.fg, fontSize: 13 }}>Transcription source</span>
           <div style={{ display: 'flex', gap: 6 }}>
             <button
               onClick={() => { if (!isApi) updateVoice({ provider: 'api' }) }}
@@ -582,17 +664,17 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
             <button
               onClick={() => updateVoice({ provider: 'local' })}
               style={pillButton(voice.provider === 'local' ? 'primary' : 'ghost')}
-            >Local</button>
+            >On-device</button>
           </div>
         </div>
         {isApi && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 0 8px' }}>
-            <span style={{ color: C.fg3, fontSize: 12 }}>Mode</span>
+            <span style={{ color: C.fg3, fontSize: 12 }}>API mode</span>
             <div style={{ display: 'flex', gap: 6 }}>
               <button
                 onClick={() => updateVoice({ provider: 'api' })}
                 style={{ ...pillButton(voice.provider === 'api' ? 'primary' : 'ghost'), fontSize: 11 }}
-              >Whisper</button>
+              >Standard</button>
               <button
                 onClick={() => updateVoice({ provider: 'realtime' })}
                 style={{ ...pillButton(voice.provider === 'realtime' ? 'primary' : 'ghost'), fontSize: 11 }}
@@ -602,10 +684,10 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
         )}
         <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 2 }}>
           {voice.provider === 'local'
-            ? 'On-device transcription via WhisperKit (CoreML + Neural Engine). Model auto-downloads from HuggingFace on first use (~800MB for large-v3-turbo). Idle pipeline auto-releases after 30s.'
+            ? 'Runs privately on this Mac with WhisperKit. The selected model downloads once before first use.'
             : voice.provider === 'realtime'
-              ? 'Real-time mode: streams audio over WebSocket to an OpenAI Realtime transcription endpoint. Lower latency — the transcript appears as you speak.'
-              : 'Whisper mode: sends audio to an OpenAI-compatible /audio/transcriptions endpoint. Works with OpenAI, Groq, or self-hosted Whisper servers.'}
+              ? 'Streams audio to OpenAI for lower-latency partial transcripts while you speak.'
+              : 'Uploads each completed recording to an OpenAI-compatible transcription endpoint.'}
         </div>
       </div>
 
@@ -642,8 +724,8 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
         }
 
         return (
-          <div style={{ borderBottom: `1px solid ${C.border}`, paddingBottom: 10, marginBottom: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0' }}>
+          <div style={lastSettingBlockStyle}>
+            <div style={settingRowStyle}>
               <span style={{ color: C.fg, fontSize: 13 }}>Local model</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <select
@@ -709,20 +791,14 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
 
       {(voice.provider === 'api' || voice.provider === 'realtime') && (
       <>
-      <Section title="Transcription API"/>
+      <Subsection title="API transcription"/>
 
-      {/* API key — shared between the Whisper and Real-time modes */}
-      <div style={{ ...fieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
-        <span style={{ color: C.fg, fontSize: 13 }}>API key</span>
-        <input
-          type="password"
-          value={voice.apiKey}
-          onChange={e => setVoice({ ...voice, apiKey: e.target.value })}
-          onBlur={() => updateVoice({ apiKey: voice.apiKey })}
-          placeholder="sk-..."
-          style={{ ...inputStyle, width: '100%' }}
-        />
-      </div>
+      {renderVoiceKeyField(
+        'Transcription key',
+        'Used by Standard and Real-time API transcription.',
+        voice.apiKeyRef,
+        apiKeyRef => updateVoice({ apiKeyRef }),
+      )}
 
       {voice.provider === 'api' && (
       <>
@@ -739,7 +815,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
           POSTs to <code>{voice.apiUrl || '&lt;base&gt;'}/audio/transcriptions</code>. Works with OpenAI, Groq, or any OpenAI-compatible server.
         </span>
       </div>
-      <div style={fieldStyle}>
+      <div style={lastFieldStyle}>
         <span style={{ color: C.fg, fontSize: 13 }}>Model</span>
         <input
           value={voice.apiModel}
@@ -767,24 +843,27 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning }) => {
           Connects via WebSocket to an OpenAI Realtime transcription endpoint. Requires <code>?intent=transcription</code>.
         </span>
       </div>
-      <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Realtime model</span>
-        <input
-          value={voice.realtimeModel}
-          onChange={e => setVoice({ ...voice, realtimeModel: e.target.value })}
-          onBlur={() => updateVoice({ realtimeModel: voice.realtimeModel })}
-          placeholder="gpt-4o-mini-transcribe"
-          style={inputStyle}
-        />
-      </div>
-      <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 8, padding: '8px 12px', background: C.surface3, borderRadius: 7 }}>
-        <strong style={{ color: C.fg2 }}>ℹ️ Cost notice:</strong> Realtime API is billed per minute of audio. See <a href="https://openai.com/pricing" target="_blank" rel="noopener noreferrer" style={{ color: C.accent }}>OpenAI pricing</a> for current rates. If the WebSocket connection fails mid-utterance, the helper falls back to batch API for that utterance.
+      <div style={lastSettingBlockStyle}>
+        <div style={settingRowStyle}>
+          <span style={{ color: C.fg, fontSize: 13 }}>Realtime model</span>
+          <input
+            value={voice.realtimeModel}
+            onChange={e => setVoice({ ...voice, realtimeModel: e.target.value })}
+            onBlur={() => updateVoice({ realtimeModel: voice.realtimeModel })}
+            placeholder="gpt-4o-mini-transcribe"
+            style={inputStyle}
+          />
+        </div>
+        <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, padding: '8px 12px', background: C.surface3, borderRadius: 7 }}>
+          <strong style={{ color: C.fg2 }}>ℹ️ Cost notice:</strong> Realtime API is billed per minute of audio. See <a href="https://openai.com/pricing" target="_blank" rel="noopener noreferrer" style={{ color: C.accent }}>OpenAI pricing</a> for current rates. If the WebSocket connection fails mid-utterance, the helper falls back to batch API for that utterance.
+        </div>
       </div>
       </>
       )}
       </>
       )}
-      </div>{/* end dim wrapper */}
+        </div>
+      </div>
     </div>
   )
 }

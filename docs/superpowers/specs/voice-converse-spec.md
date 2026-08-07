@@ -9,9 +9,11 @@ idea — there is exactly one streaming endpoint for the whole voice round-trip.
   port+1), under the existing `/voice/` prefix.
 - Reuses the existing `/voice/*` guards as-is: reject browser-origin requests
   (any `Origin` header → 403) and non-darwin platforms.
-- Caller is the Swift helper (`voice/Sources/CodeyVoice/GatewayClient.swift`)
-  when `VoiceConfig` mode is `converse` (new field, delivered through the
-  existing `/voice/config` polling; default stays `inject`).
+- Dictation and conversation are separate, explicit actions. The primary
+  voice hotkey always dictates at the current cursor; `converseHotkey` always
+  talks to the selected Codey chat and reads its reply. The legacy
+  `VoiceConfig.mode` field is retained only so older configs still decode and
+  no longer routes transcripts.
 
 ## Request
 
@@ -67,7 +69,7 @@ final `done` so the helper knows to speak any `text` seqs that never got audio.
    `buildSpeechDigestPrompt`. Cache the **full original reply** per
    `conversationId` first, so step 1's `more-detail` path can read it back.
    The digest runs as a direct streaming API call when the resolved model
-   carries credentials (`voice.tts.digestModel`, else the advisor's model),
+   carries credentials (`voice.tts.digestModel`, else the Aide model),
    falling back to a one-shot API call, then to an agent CLI spawn.
 4. Split digest output on sentence boundaries → for each sentence emit `text`,
    then (server mode) synthesize and emit `audio`. Synthesis starts as soon as

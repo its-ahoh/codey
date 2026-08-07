@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
-import { fieldStyle, pillButton, unwrap } from './settingsAtoms'
+import { fieldStyle, pageStyle, pillButton, Section, unwrap } from './settingsAtoms'
 import {
   AGENT_INSTALL_URL,
   AGENT_NAMES,
@@ -46,24 +46,21 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
 
   if (!isGatewayRunning) {
     return (
-      <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
+      <div style={pageStyle}>
         <div style={{ marginTop: 40, textAlign: 'center', color: C.fg3, fontSize: 13 }}>Gateway not available</div>
       </div>
     )
   }
 
   return (
-    <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
+    <div style={pageStyle}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
-        <div style={{ color: C.fg3, fontSize: 11 }}>
-          Each agent shows whether its CLI is installed locally. Add custom environment variables that are passed through to the spawned CLI.
-        </div>
+      <Section first title="Installed agents" description="CLI availability and environment variables for each coding agent." right={
         <button onClick={refreshInstallStatus} style={pillButton('ghost')} disabled={checkingInstalls} title="Re-check whether each agent's CLI is installed">
           {checkingInstalls ? 'Checking…' : '↻ Recheck'}
         </button>
-      </div>
+      } />
       {AGENT_NAMES.map(a => {
         const status = installStatus[a]
         const env = agents[a]?.env ?? {}
