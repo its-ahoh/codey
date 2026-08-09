@@ -3,7 +3,9 @@ import { C } from '../theme'
 import { pillButton, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
-import type { SkillEntry, SkillsListResult } from '../codey-api'
+import { SKILL_SORT_MODES, sortSkills, usageFor, usageLabel } from './skillsSort'
+import type { SkillSortMode } from './skillsSort'
+import type { SkillEntry, SkillUsageMap, SkillsListResult } from '../codey-api'
 
 type AgentFilter = 'claude-code' | 'opencode' | 'codex'
 const AGENTS: { key: AgentFilter; label: string }[] = [
@@ -49,12 +51,20 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   const [copyState, setCopyState] = useState<{ label: string; status: 'copying' | 'done' | 'error'; msg?: string } | null>(null)
   const [copyMenuOpen, setCopyMenuOpen] = useState(false)
   const [busyDirs, setBusyDirs] = useState<Set<string>>(new Set())
+  const [usage, setUsage] = useState<SkillUsageMap>({})
+  const [sortMode, setSortMode] = useState<SkillSortMode>('name')
   const copyRef = useRef<HTMLDivElement>(null)
   const initDone = useRef(false)
+  const usageToken = useRef(0)
   const filteredSkills = useMemo(
-    () => data.skills.filter(skill => matchesToolSearch(searchQuery, skill.name, skill.qualifiedName, skill.description)),
-    [data.skills, searchQuery],
+    () => sortSkills(
+      data.skills.filter(skill => matchesToolSearch(searchQuery, skill.name, skill.qualifiedName, skill.description)),
+      sortMode,
+      usage,
+    ),
+    [data.skills, searchQuery, sortMode, usage],
   )
+  const now = Date.now()
 
   // The primary action lives in the parent Tools tab bar; this counter gives
   // that button a clean way to open the existing install form without a second
@@ -75,6 +85,16 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
       setError(e?.message ?? String(e))
     } finally {
       setLoading(false)
+    }
+    // Usage comes from scanning agent transcripts, which is slower than the
+    // skill scan and non-essential: let the list paint, then fill counts in.
+    // The token drops a slow scan whose agent is no longer the selected one.
+    const token = ++usageToken.current
+    try {
+      const next = unwrap(await window.codey.skills.usage(agent))
+      if (token === usageToken.current) setUsage(next)
+    } catch {
+      if (token === usageToken.current) setUsage({})
     }
   }, [])
 
@@ -184,7 +204,9 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     else setCopyState({ label, status: 'done' })
   }
 
-  const renderCard = (skill: SkillEntry) => (
+  const renderCard = (skill: SkillEntry) => {
+    const meta = usageLabel(usageFor(usage, skill), now)
+    return (
     <button
       key={skill.dir}
       onClick={() => { setSelected(skill); setCopyState(null); setCopyMenuOpen(false); setError(null) }}
@@ -231,8 +253,12 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           {skill.description}
         </div>
       )}
+      {meta && (
+        <div style={{ color: C.fg3, fontSize: 10, opacity: 0.85, marginTop: 'auto', paddingTop: 6 }}>{meta}</div>
+      )}
     </button>
-  )
+    )
+  }
 
   const renderDetail = (skill: SkillEntry) => (
     <div
@@ -385,6 +411,20 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           </div>
         </div>
         <div style={styles.agentMeta}>
+          <div style={styles.smallSwitcher} role="tablist" aria-label="Sort skills">
+            {SKILL_SORT_MODES.map(mode => (
+              <button
+                key={mode.key}
+                role="tab"
+                aria-selected={sortMode === mode.key}
+                onClick={() => setSortMode(mode.key)}
+                title={mode.title}
+                style={{ ...styles.smallSwitchButton, ...(sortMode === mode.key ? styles.smallSwitchButtonSelected : undefined) }}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
           <span>{loading ? 'Scanning…' : searchQuery.trim()
             ? `${filteredSkills.length} of ${data.skills.length} skills`
             : `${data.skills.length} skill${data.skills.length === 1 ? '' : 's'}`}</span>

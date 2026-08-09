@@ -14,6 +14,8 @@ import { SKILL_FILE, resolveUserPath, samePath, scanClaudePluginSkills, scanSkil
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import type { ScannedSkill } from './skills'
+import { scanSkillUsage } from './skill-usage'
+import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
 import { BrowserControlPermissionGate } from './browser-control-permission'
@@ -3327,6 +3329,27 @@ app.whenReady().then(async () => {
     wrap(async () => {
       const agentKey = agent ?? 'claude-code'
       return listAgentSkills(agentKey)
+    })
+  )
+
+  // Transcripts are large and append-only; the cache lives for the app session
+  // so re-opening the Skills tab only reads whatever grew since the last scan.
+  const skillUsageCache = new Map<string, UsageCacheEntry>()
+
+  ipcMain.handle('skills:usage', async (_e, agent?: string) =>
+    wrap(async () => {
+      const agentKey = agent ?? 'claude-code'
+      // Only Claude Code records skill invocations in a format we can read;
+      // for the others the Skills tab falls back to name ordering.
+      if (agentKey !== 'claude-code') return {} as SkillUsageMap
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const osMod = await import('os')
+      const env = coreConfigManager?.get().agents?.['claude-code']?.env ?? {}
+      const configRoot = env.CLAUDE_CONFIG_DIR
+        ? resolveUserPath(pathMod, env.CLAUDE_CONFIG_DIR, osMod.homedir())
+        : pathMod.join(osMod.homedir(), '.claude')
+      return scanSkillUsage(fsMod, pathMod, [pathMod.join(configRoot, 'projects')], skillUsageCache)
     })
   )
 
