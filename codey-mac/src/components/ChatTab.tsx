@@ -17,6 +17,7 @@ import { isTaskBriefStale, extractSidecarBrief } from './taskHudView'
 import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 import { defaultThinkingExpanded } from './thinkingState'
+import { formatTokens } from './turnHeaderModel'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
 import { useGitStatus } from '../hooks/useGitStatus'
@@ -72,13 +73,6 @@ const StopIcon: React.FC<{ color: string }> = ({ color }) => (
 
 const fmtTime = (ts: number) =>
   new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-
-const formatTokens = (n: number): string | null => {
-  if (!Number.isFinite(n) || n < 0) return null
-  if (n < 1000) return String(n)
-  if (n < 10_000) return `${(n / 1000).toFixed(1)}k`
-  return `${Math.round(n / 1000)}k`
-}
 
 const TypingDots: React.FC = () => {
   const [n, setN] = useState(0)
