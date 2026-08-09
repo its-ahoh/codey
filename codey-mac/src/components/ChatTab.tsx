@@ -18,7 +18,10 @@ import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 import { defaultThinkingExpanded } from './thinkingState'
 import { formatTokens } from './turnHeaderModel'
-import { TurnHeader } from './TurnHeader'
+import {
+  TurnHeader, MESSAGE_ROW_INSET, TURN_RAIL_WIDTH, TURN_TEXT_PADDING, TURN_TEXT_INSET,
+  USER_BUBBLE_PADDING_X,
+} from './TurnHeader'
 import { ACTIVITY_LABEL } from './agentActivity'
 import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
@@ -2022,13 +2025,13 @@ export const ChatTab: React.FC<Props> = ({
                 alignItems: isUser ? 'flex-end' : 'flex-start',
                 marginBottom: isUser ? 12 : 20,
                 cursor: isUser ? 'default' : 'pointer',
-                paddingLeft: !isUser ? 6 : 0,
+                paddingLeft: !isUser ? MESSAGE_ROW_INSET : 0,
                 transform: isSelected ? 'translateY(-3px)' : 'translateY(0)',
                 transition: 'transform 0.18s ease',
               }}
             >
               <div style={isUser ? {
-                minWidth: 0, maxWidth: '72%', padding: '10px 14px',
+                minWidth: 0, maxWidth: '72%', padding: `10px ${USER_BUBBLE_PADDING_X}px`,
                 borderRadius: '16px 16px 4px 16px',
                 background: C.userBg,
                 color: C.onAccent, fontSize: 13, lineHeight: 1.55,
@@ -2039,26 +2042,41 @@ export const ChatTab: React.FC<Props> = ({
                 // boundary the bubble used to provide.
                 //
                 // `ch` resolves against this element's 13px font, so 78ch is
-                // ~562px — about 72 characters of the 14px roomy body text, or
-                // ~43 Chinese characters. Unlike the old 72%, it does not grow
-                // with the window.
+                // ~562px. box-sizing is border-box, so the rail and the 27px of
+                // horizontal padding come out of that, leaving ~535px of text —
+                // about 68 characters of the 14px roomy body, or ~41 Chinese
+                // characters. Unlike the old 72%, it does not grow with the
+                // window.
                 minWidth: 0, width: '100%', maxWidth: 'min(100%, 78ch)',
-                // 6px top is the vertical padding the first attempt at this
-                // silently dropped when it replaced the bubble's '10px 14px'.
-                // Left: 3 (rail) + 12 = the old 1 (border) + 14 (bubble).
-                padding: '6px 0 0 12px',
-                // The rail is always 3px, transparent when unselected, so
+                // Padding on all four sides so the selected highlight reads as a
+                // card rather than a rectangle cut through the text. It is
+                // unconditional — applying it only when selected would shift the
+                // whole reply the moment you click it.
+                //
+                // Right padding equals rail + left padding, so the text sits the
+                // same distance from both inner edges of the highlight.
+                padding: `8px ${TURN_RAIL_WIDTH + TURN_TEXT_PADDING}px 10px ${TURN_TEXT_PADDING}px`,
+                // The rail is always present, transparent when unselected, so
                 // selecting a turn never shifts the text column sideways.
-                borderLeft: `3px solid ${isSelected ? C.accent : 'transparent'}`,
+                borderLeft: `${TURN_RAIL_WIDTH}px solid ${isSelected ? C.accent : 'transparent'}`,
+                borderRadius: 10,
                 background: isSelected ? C.accentDim : 'transparent',
+                // Same treatment the rest of the app gives an active card
+                // (teamStepCardActive, teamRoundTableMemberActive): a tint plus a
+                // 1px accent ring, which defines the edge without a hard border.
+                boxShadow: isSelected ? `0 0 0 1px ${C.accentDim}` : 'none',
                 // fontSize/lineHeight stay compact: non-Markdown children
                 // inherit them. Roomy applies inside <Markdown layout="roomy">.
                 color: C.fg, fontSize: 13, lineHeight: 1.55,
                 overflowWrap: 'anywhere', wordBreak: 'break-word',
-                transition: 'border-color 0.18s ease, background 0.18s ease',
+                transition: 'border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease',
               }}>
                 {!isUser && (() => {
                   const thinking = msg.thinking?.trim() ?? ''
+                  // Keyed off the in-flight turn rather than msg.isComplete:
+                  // messages persisted before isComplete existed would
+                  // otherwise lose their rule and timestamp for good.
+                  const streaming = !!flight && msg === lastMsg
                   const expanded = thinkingToggles[msg.id]
                     ?? defaultThinkingExpanded({
                       hasAnswer: !!msg.content.trim(),
@@ -2069,6 +2087,7 @@ export const ChatTab: React.FC<Props> = ({
                       <TurnHeader
                         msg={msg}
                         hasThinking={!!thinking}
+                        turnComplete={!streaming}
                         expanded={expanded}
                         onToggle={() => setThinkingToggles(p => ({ ...p, [msg.id]: !expanded }))}
                       />
@@ -2235,9 +2254,24 @@ export const ChatTab: React.FC<Props> = ({
               {/* Model, fallback, tokens and duration now live in TurnHeader.
                   The timestamp stays here so it does not compete with the
                   turn's identity for the reader's attention. */}
-              <div style={styles.tsLabel}>
+              {/* The timestamp records when the turn landed, so it waits until
+                  the turn has landed. */}
+              {!(!isUser && !!flight && msg === lastMsg) && (
+              <div
+                style={{
+                  ...styles.tsLabel,
+                  // A user turn is right-aligned, so its timestamp lines up on
+                  // the bubble's right text edge; an assistant turn is
+                  // left-aligned, so its timestamp lines up on the left. The
+                  // footer sits inside the message row, which already carries
+                  // MESSAGE_ROW_INSET, so only the remainder is needed there.
+                  paddingLeft: isUser ? 0 : TURN_TEXT_INSET - MESSAGE_ROW_INSET,
+                  paddingRight: isUser ? USER_BUBBLE_PADDING_X : 0,
+                }}
+              >
                 <span>{fmtTime(msg.timestamp)}</span>
               </div>
+              )}
             </div>
           )
         })}
@@ -2677,8 +2711,16 @@ const styles: Record<string, React.CSSProperties> = {
   editorOpeningLabel: { color: C.fg2, fontSize: 11, whiteSpace: 'nowrap' },
   editorMenuEmpty: { color: C.fg3, fontSize: 11, lineHeight: 1.4, padding: '8px 9px', maxWidth: 220 },
   messages: { flex: 1, overflowY: 'auto', padding: '22px max(22px, 5%)', background: C.bg },
-  typingRow: { display: 'flex', alignItems: 'center', gap: 8, color: C.fg3, fontSize: 13, marginBottom: 12 },
-  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, paddingLeft: 4, paddingRight: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  // The status row is a direct child of `messages`, not of a message row, so it
+  // carries the full inset rather than the remainder.
+  typingRow: {
+    display: 'flex', alignItems: 'center', gap: 8, color: C.fg3, fontSize: 13,
+    marginBottom: 12, paddingLeft: TURN_TEXT_INSET,
+  },
+  // Horizontal padding is set per role at the render site — the timestamp has to
+  // line up with the reply above it, which is inset differently (and from the
+  // opposite edge) for user and assistant.
+  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   // modelBadge is still used by team worker messages; tsRight, tsMeta and
   // fallbackBadge moved into TurnHeader with the metadata they styled.
   modelBadge: {
