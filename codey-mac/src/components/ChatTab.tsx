@@ -18,7 +18,9 @@ import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 import { defaultThinkingExpanded } from './thinkingState'
 import { formatTokens } from './turnHeaderModel'
-import { TurnHeader } from './TurnHeader'
+import {
+  TurnHeader, MESSAGE_ROW_INSET, TURN_RAIL_WIDTH, TURN_TEXT_PADDING, TURN_TEXT_INSET,
+} from './TurnHeader'
 import { ACTIVITY_LABEL } from './agentActivity'
 import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
@@ -2022,7 +2024,7 @@ export const ChatTab: React.FC<Props> = ({
                 alignItems: isUser ? 'flex-end' : 'flex-start',
                 marginBottom: isUser ? 12 : 20,
                 cursor: isUser ? 'default' : 'pointer',
-                paddingLeft: !isUser ? 6 : 0,
+                paddingLeft: !isUser ? MESSAGE_ROW_INSET : 0,
                 transform: isSelected ? 'translateY(-3px)' : 'translateY(0)',
                 transition: 'transform 0.18s ease',
               }}
@@ -2045,11 +2047,10 @@ export const ChatTab: React.FC<Props> = ({
                 minWidth: 0, width: '100%', maxWidth: 'min(100%, 78ch)',
                 // 6px top is the vertical padding the first attempt at this
                 // silently dropped when it replaced the bubble's '10px 14px'.
-                // Left: 3 (rail) + 12 = the old 1 (border) + 14 (bubble).
-                padding: '6px 0 0 12px',
-                // The rail is always 3px, transparent when unselected, so
+                padding: `6px 0 0 ${TURN_TEXT_PADDING}px`,
+                // The rail is always present, transparent when unselected, so
                 // selecting a turn never shifts the text column sideways.
-                borderLeft: `3px solid ${isSelected ? C.accent : 'transparent'}`,
+                borderLeft: `${TURN_RAIL_WIDTH}px solid ${isSelected ? C.accent : 'transparent'}`,
                 background: isSelected ? C.accentDim : 'transparent',
                 // fontSize/lineHeight stay compact: non-Markdown children
                 // inherit them. Roomy applies inside <Markdown layout="roomy">.
@@ -2235,7 +2236,15 @@ export const ChatTab: React.FC<Props> = ({
               {/* Model, fallback, tokens and duration now live in TurnHeader.
                   The timestamp stays here so it does not compete with the
                   turn's identity for the reader's attention. */}
-              <div style={styles.tsLabel}>
+              <div
+                style={{
+                  ...styles.tsLabel,
+                  // The footer sits inside the message row, which already
+                  // carries MESSAGE_ROW_INSET, so only the remainder is needed
+                  // to line the timestamp up with the reply above it.
+                  paddingLeft: isUser ? 4 : TURN_TEXT_INSET - MESSAGE_ROW_INSET,
+                }}
+              >
                 <span>{fmtTime(msg.timestamp)}</span>
               </div>
             </div>
@@ -2677,8 +2686,15 @@ const styles: Record<string, React.CSSProperties> = {
   editorOpeningLabel: { color: C.fg2, fontSize: 11, whiteSpace: 'nowrap' },
   editorMenuEmpty: { color: C.fg3, fontSize: 11, lineHeight: 1.4, padding: '8px 9px', maxWidth: 220 },
   messages: { flex: 1, overflowY: 'auto', padding: '22px max(22px, 5%)', background: C.bg },
-  typingRow: { display: 'flex', alignItems: 'center', gap: 8, color: C.fg3, fontSize: 13, marginBottom: 12 },
-  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, paddingLeft: 4, paddingRight: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  // The status row is a direct child of `messages`, not of a message row, so it
+  // carries the full inset rather than the remainder.
+  typingRow: {
+    display: 'flex', alignItems: 'center', gap: 8, color: C.fg3, fontSize: 13,
+    marginBottom: 12, paddingLeft: TURN_TEXT_INSET,
+  },
+  // paddingLeft is set per role at the render site — it has to line up with the
+  // reply above it, which is inset differently for user and assistant.
+  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, paddingRight: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   // modelBadge is still used by team worker messages; tsRight, tsMeta and
   // fallbackBadge moved into TurnHeader with the metadata they styled.
   modelBadge: {

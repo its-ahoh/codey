@@ -3,6 +3,21 @@ import { C } from '../theme'
 import { turnHeaderMeta } from './turnHeaderModel'
 import type { ChatMessage } from '../types'
 
+/** Left inset applied to a whole message row. */
+export const MESSAGE_ROW_INSET = 6
+/** Width of the selection rail down the left of an assistant turn. */
+export const TURN_RAIL_WIDTH = 3
+/** Gap between the rail and the text. Chosen so the text column lands exactly
+ *  where the old bubble put it: rail 3 + 12 == the bubble's border 1 + padding 14. */
+export const TURN_TEXT_PADDING = 12
+
+/** Left inset of an assistant turn's text column, measured from the messages
+ *  container. Everything that belongs to the turn — the header, the reply, the
+ *  timestamp footer, the status row — aligns to this one value. They used to
+ *  carry independent numbers (21, 10 and 0), which read as three ragged left
+ *  edges. */
+export const TURN_TEXT_INSET = MESSAGE_ROW_INSET + TURN_RAIL_WIDTH + TURN_TEXT_PADDING
+
 interface Props {
   msg: ChatMessage
   /** Rendered only when the turn has thinking to disclose. */
