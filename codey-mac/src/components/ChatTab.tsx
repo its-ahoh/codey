@@ -1971,26 +1971,44 @@ export const ChatTab: React.FC<Props> = ({
               style={{
                 display: 'flex', flexDirection: 'column',
                 alignItems: isUser ? 'flex-end' : 'flex-start',
-                marginBottom: 12,
+                // Assistant turns have no bubble to bound them, so spacing is
+                // what keeps two consecutive replies from reading as one.
+                marginBottom: isUser ? 12 : 20,
                 cursor: isUser ? 'default' : 'pointer',
                 paddingLeft: !isUser ? 6 : 0,
                 transform: isSelected ? 'translateY(-3px)' : 'translateY(0)',
                 transition: 'transform 0.18s ease',
               }}
             >
-              <div style={{
+              <div style={isUser ? {
                 minWidth: 0, maxWidth: '72%', padding: '10px 14px',
-                borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                background: isUser ? C.userBg : C.aiBg,
-                color: isUser ? C.onAccent : C.fg, fontSize: 13, lineHeight: 1.55,
+                borderRadius: '16px 16px 4px 16px',
+                background: C.userBg,
+                color: C.onAccent, fontSize: 13, lineHeight: 1.55,
                 overflowWrap: 'anywhere', wordBreak: 'break-word',
-                boxShadow: isUser
-                  ? 'none'
-                  : (isSelected
-                      ? `0 10px 24px ${C.accentDim}, 0 6px 14px ${C.accentDim}`
-                      : '0 1px 3px rgba(0,0,0,0.18)'),
-                border: isUser ? 'none' : `1px solid ${isSelected ? C.accent : C.border2}`,
-                transition: 'box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease',
+              } : {
+                // The bubble marks "what the user said". An assistant reply
+                // reads better as a document, and at length the bubble was the
+                // thing making it dense.
+                //
+                // `ch` resolves against this element's 13px font, so 78ch is
+                // ~562px — about 72 characters of the 14px roomy body text, or
+                // ~43 Chinese characters. Unlike the old 72%, it does not grow
+                // with the window.
+                minWidth: 0, width: '100%', maxWidth: 'min(100%, 78ch)',
+                // The rail is always 3px, transparent when unselected, so
+                // selecting a turn never shifts the text column sideways.
+                // 6 (row) + 3 (rail) + 12 = 21px, exactly the old inset of
+                // 6 (row) + 1 (border) + 14 (bubble padding).
+                padding: '0 0 0 12px',
+                borderLeft: `3px solid ${isSelected ? C.accent : 'transparent'}`,
+                background: isSelected ? C.accentDim : 'transparent',
+                // fontSize/lineHeight stay compact: non-Markdown children
+                // (LiveActivity, tool chips) inherit them. The roomy metrics
+                // apply inside <Markdown layout="roomy"> only.
+                color: C.fg, fontSize: 13, lineHeight: 1.55,
+                overflowWrap: 'anywhere', wordBreak: 'break-word',
+                transition: 'border-color 0.18s ease, background 0.18s ease',
               }}>
                 {!isUser && !!flight && msg === lastMsg && (
                   <LiveActivity toolCalls={msg.toolCalls} />
@@ -2009,7 +2027,7 @@ export const ChatTab: React.FC<Props> = ({
                           isComplete={msg.isComplete ?? false}
                         />
                       )}
-                      <Markdown variant="assistant">{text}</Markdown>
+                      <Markdown variant="assistant" layout="roomy">{text}</Markdown>
                     </div>
                   )
                   return (
