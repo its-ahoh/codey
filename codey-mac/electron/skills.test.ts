@@ -2,7 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { qualifySkillName, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, uniqueSkills } from './skills'
+import { qualifySkillName, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 
 const roots: string[] = []
 const temp = () => {
@@ -27,7 +27,31 @@ describe('agent skill discovery', () => {
     fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\r\nname: "Image Gen"\r\ndescription: Makes images\r\n---\r\n')
     fs.writeFileSync(path.join(skill, 'references', 'SKILL.md'), '---\nname: wrong\n---\n')
     expect(scanSkillsDir(fs, path, root, 'user')).toEqual([
-      { name: 'Image Gen', qualifiedName: 'Image Gen', description: 'Makes images', scope: 'user', dir: skill },
+      { name: 'Image Gen', qualifiedName: 'Image Gen', description: 'Makes images', scope: 'user', dir: skill, enabled: true },
+    ])
+  })
+
+  it('lists a disabled skill and stops descending into it', () => {
+    const root = temp()
+    const skill = path.join(root, 'noisy')
+    fs.mkdirSync(path.join(skill, 'references'), { recursive: true })
+    fs.writeFileSync(path.join(skill, 'SKILL.md.disabled'), '---\nname: noisy\ndescription: Too chatty\n---\n')
+    fs.writeFileSync(path.join(skill, 'references', 'SKILL.md'), '---\nname: wrong\n---\n')
+
+    expect(scanSkillsDir(fs, path, root, 'user')).toEqual([
+      { name: 'noisy', qualifiedName: 'noisy', description: 'Too chatty', scope: 'user', dir: skill, enabled: false },
+    ])
+  })
+
+  it('prefers the active SKILL.md when a stale disabled copy is left behind', () => {
+    const root = temp()
+    const skill = path.join(root, 'both')
+    fs.mkdirSync(skill, { recursive: true })
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: both\ndescription: Live\n---\n')
+    fs.writeFileSync(path.join(skill, 'SKILL.md.disabled'), '---\nname: both\ndescription: Stale\n---\n')
+
+    expect(scanSkillsDir(fs, path, root, 'user')).toEqual([
+      { name: 'both', qualifiedName: 'both', description: 'Live', scope: 'user', dir: skill, enabled: true },
     ])
   })
 
@@ -44,6 +68,25 @@ describe('agent skill discovery', () => {
         description: 'Explore ideas',
         scope: 'user',
         dir: skill,
+        enabled: true,
+      },
+    ])
+  })
+
+  it('keeps the collection prefix on a disabled nested skill', () => {
+    const root = temp()
+    const skill = path.join(root, 'superpowers', 'skills', 'brainstorming')
+    fs.mkdirSync(skill, { recursive: true })
+    fs.writeFileSync(path.join(skill, 'SKILL.md.disabled'), '---\nname: brainstorming\ndescription: Explore ideas\n---\n')
+
+    expect(scanSkillsDir(fs, path, root, 'user')).toEqual([
+      {
+        name: 'brainstorming',
+        qualifiedName: 'superpowers:brainstorming',
+        description: 'Explore ideas',
+        scope: 'user',
+        dir: skill,
+        enabled: false,
       },
     ])
   })
@@ -74,6 +117,7 @@ describe('agent skill discovery', () => {
         description: '',
         scope: 'user',
         dir: skill,
+        enabled: true,
       },
     ])
   })
@@ -89,5 +133,65 @@ describe('agent skill discovery', () => {
       ...scanSkillsDir(fs, path, `${root}${path.sep}`, 'user'),
     ]
     expect(uniqueSkills(fs, path, twice)).toHaveLength(1)
+  })
+})
+
+describe('setSkillEnabled', () => {
+  const makeSkill = (): string => {
+    const root = temp()
+    const skill = path.join(root, 'one')
+    fs.mkdirSync(skill, { recursive: true })
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: one\ndescription: A skill\n---\n')
+    return skill
+  }
+
+  it('round-trips a skill from enabled to disabled and back', () => {
+    const skill = makeSkill()
+
+    setSkillEnabled(fs, path, skill, false)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md'))).toBe(false)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md.disabled'))).toBe(true)
+    expect(scanSkillsDir(fs, path, skill, 'user')[0]?.enabled).toBe(false)
+
+    setSkillEnabled(fs, path, skill, true)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md'))).toBe(true)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md.disabled'))).toBe(false)
+    expect(scanSkillsDir(fs, path, skill, 'user')[0]?.enabled).toBe(true)
+  })
+
+  it('preserves the skill body across the rename', () => {
+    const skill = makeSkill()
+    setSkillEnabled(fs, path, skill, false)
+    expect(fs.readFileSync(path.join(skill, 'SKILL.md.disabled'), 'utf-8'))
+      .toBe('---\nname: one\ndescription: A skill\n---\n')
+  })
+
+  it('is a no-op when the skill is already in the requested state', () => {
+    const skill = makeSkill()
+    setSkillEnabled(fs, path, skill, true)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md'))).toBe(true)
+
+    setSkillEnabled(fs, path, skill, false)
+    setSkillEnabled(fs, path, skill, false)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md.disabled'))).toBe(true)
+    expect(fs.existsSync(path.join(skill, 'SKILL.md'))).toBe(false)
+  })
+
+  it('throws when the directory holds no skill file', () => {
+    const root = temp()
+    expect(() => setSkillEnabled(fs, path, root, false)).toThrow(/No SKILL\.md found/)
+  })
+
+  it('refuses to disable over an existing disabled file, and keeps both intact', () => {
+    const skill = makeSkill()
+    const active = path.join(skill, 'SKILL.md')
+    const disabled = path.join(skill, 'SKILL.md.disabled')
+    fs.writeFileSync(disabled, '---\nname: one\ndescription: A backup\n---\n')
+
+    expect(() => setSkillEnabled(fs, path, skill, false)).toThrow(/already exists/)
+    expect(() => setSkillEnabled(fs, path, skill, true)).not.toThrow()
+
+    expect(fs.readFileSync(active, 'utf-8')).toBe('---\nname: one\ndescription: A skill\n---\n')
+    expect(fs.readFileSync(disabled, 'utf-8')).toBe('---\nname: one\ndescription: A backup\n---\n')
   })
 })

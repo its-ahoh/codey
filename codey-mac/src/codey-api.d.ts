@@ -5,20 +5,14 @@ import type { TeamConfigRaw } from '../../packages/core/src/workspace'
 import type { ApiKeyEntry } from '../../packages/core/src/types/index'
 import type { UpdaterEvent } from './hooks/updaterState'
 import type { CoreState } from '../electron/core-state'
+import type { ScannedSkill } from '../electron/skills'
 import type { Automation, AutomationRun, AutomationEvent } from '../../packages/core/src/types/automation'
 import type { AutomationDraft } from '../../packages/core/src/aide-automation'
 import type { ChatStep } from '../../packages/gateway/src/automations/chat'
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
-export interface SkillEntry {
-  name: string
-  qualifiedName: string
-  managedBy?: string
-  description: string
-  scope: 'user' | 'project'
-  dir: string
-}
+export type SkillEntry = ScannedSkill
 
 export interface SkillsListResult {
   skills: SkillEntry[]
@@ -254,6 +248,7 @@ declare global {
         list: (agent?: string) => Promise<IpcResult<SkillsListResult>>
         install: (payload: { agent?: string; scope: 'user' | 'project'; localDir?: string; gitUrl?: string }) => Promise<IpcResult<{ name: string; dir: string }>>
         remove: (dir: string) => Promise<IpcResult<void>>
+        setEnabled: (dir: string, enabled: boolean) => Promise<IpcResult<void>>
         reveal: (dir: string) => Promise<IpcResult<void>>
       }
       playbooks: {

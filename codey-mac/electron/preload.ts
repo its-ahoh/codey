@@ -128,6 +128,7 @@ contextBridge.exposeInMainWorld('codey', {
     install: (payload: { agent?: string; scope: 'user' | 'project'; localDir?: string; gitUrl?: string }) =>
       ipcRenderer.invoke('skills:install', payload),
     remove: (dir: string) => ipcRenderer.invoke('skills:remove', dir),
+    setEnabled: (dir: string, enabled: boolean) => ipcRenderer.invoke('skills:setEnabled', dir, enabled),
     reveal: (dir: string) => ipcRenderer.invoke('skills:reveal', dir),
   },
   playbooks: {

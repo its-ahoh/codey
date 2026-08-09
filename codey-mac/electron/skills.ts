@@ -3,6 +3,10 @@ import type * as Path from 'path'
 
 export type SkillScope = 'user' | 'project'
 
+export const SKILL_FILE = 'SKILL.md'
+/** Renaming to this hides the skill from CLIs that discover skills by SKILL.md. */
+export const DISABLED_SKILL_FILE = `${SKILL_FILE}.disabled`
+
 export interface ScannedSkill {
   name: string
   qualifiedName: string
@@ -10,6 +14,7 @@ export interface ScannedSkill {
   description: string
   scope: SkillScope
   dir: string
+  enabled: boolean
 }
 
 export function parseSkillFrontmatter(md: string): { name: string; description: string } {
@@ -57,8 +62,9 @@ export function qualifySkillName(
 
 /**
  * Discover skills below an agent's configured root. Nested roots are supported
- * (for example Codex's .system skills); once SKILL.md is found, that directory
- * is treated as the skill boundary and its internals are not scanned again.
+ * (for example Codex's .system skills); once a SKILL.md, or a disabled one, is
+ * found, that directory is treated as the skill boundary and its internals are
+ * not scanned again.
  */
 export function scanSkillsDir(
   fsMod: typeof Fs,
@@ -79,8 +85,13 @@ export function scanSkillsDir(
     if (visited.has(real)) continue
     visited.add(real)
 
-    const skillMdPath = pathMod.join(current, 'SKILL.md')
-    if (fsMod.existsSync(skillMdPath)) {
+    // A disabled skill is still a skill: it marks the boundary so we neither
+    // lose it from the list nor walk its internals as if they were roots.
+    const activePath = pathMod.join(current, SKILL_FILE)
+    const disabledPath = pathMod.join(current, DISABLED_SKILL_FILE)
+    const enabled = fsMod.existsSync(activePath)
+    const skillMdPath = enabled ? activePath : disabledPath
+    if (enabled || fsMod.existsSync(disabledPath)) {
       try {
         const md = fsMod.readFileSync(skillMdPath, 'utf-8')
         const { name, description } = parseSkillFrontmatter(md)
@@ -91,6 +102,7 @@ export function scanSkillsDir(
           description,
           scope,
           dir: current,
+          enabled,
         })
       } catch { /* skip unreadable skill */ }
       continue
@@ -136,6 +148,35 @@ export function scanClaudePluginSkills(
     }
   }
   return result.sort((a, b) => a.qualifiedName.localeCompare(b.qualifiedName))
+}
+
+/**
+ * Toggle a skill by renaming its SKILL.md. Agent CLIs only load a directory
+ * whose skill file is named exactly SKILL.md, so the rename is what actually
+ * disables it — there is no separate state to keep in sync.
+ *
+ * Never renames over an existing target: a directory holding both files (an
+ * installed collection can carry one in) may hold a hand-written backup, so
+ * disabling that reports an error rather than silently clobbering it.
+ * Enabling with both present is deliberately a no-op rather than an error —
+ * the skill genuinely is enabled, and the disabled copy is only litter.
+ */
+export function setSkillEnabled(
+  fsMod: typeof Fs,
+  pathMod: typeof Path,
+  dir: string,
+  enabled: boolean,
+): void {
+  const activePath = pathMod.join(dir, SKILL_FILE)
+  const disabledPath = pathMod.join(dir, DISABLED_SKILL_FILE)
+  const target = enabled ? activePath : disabledPath
+  const source = enabled ? disabledPath : activePath
+  if (fsMod.existsSync(target)) {
+    if (enabled || !fsMod.existsSync(source)) return // already in the requested state
+    throw new Error(`Cannot disable: ${DISABLED_SKILL_FILE} already exists in ${dir} — remove or rename it first`)
+  }
+  if (!fsMod.existsSync(source)) throw new Error(`No SKILL.md found in: ${dir}`)
+  fsMod.renameSync(source, target)
 }
 
 export function samePath(fsMod: typeof Fs, pathMod: typeof Path, a: string, b: string): boolean {
