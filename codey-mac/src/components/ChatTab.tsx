@@ -2027,7 +2027,7 @@ export const ChatTab: React.FC<Props> = ({
                           isComplete={msg.isComplete ?? false}
                         />
                       )}
-                      <Markdown variant="assistant">{text}</Markdown>
+                      <Markdown variant="assistant" layout="roomy">{text}</Markdown>
                     </div>
                   )
                   return (
