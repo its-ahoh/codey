@@ -388,6 +388,9 @@ ${paletteToCssVars(terminalLight)}
 ${paletteToCssVars(terminalDark)}
   }
   html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }
+  /* Roomy headings open a section with a large top margin. The first block in a
+     turn has nothing above it to separate from, so that margin is dead space. */
+  .md-roomy > :first-child { margin-top: 0 !important; }
   body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; color: ${C.fg}; }
   * { box-sizing: border-box; }
   ::-webkit-scrollbar { width: 5px; height: 5px; }
