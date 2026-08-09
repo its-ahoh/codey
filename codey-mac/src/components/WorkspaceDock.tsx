@@ -78,6 +78,7 @@ export const WorkspaceDock: React.FC<Props> = ({
           />
         ) : workingDir ? (
           <TerminalPanel
+            key={`${chatId}:${workingDir}`}
             chatId={chatId}
             workingDir={workingDir}
             placement="right"

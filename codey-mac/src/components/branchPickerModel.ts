@@ -25,3 +25,17 @@ export function partitionWorktrees(list: Worktree[]): { main?: Worktree; others:
   const others = list.filter(w => !w.isMain);
   return { main, others };
 }
+
+/** Compact a filesystem path without hiding its identifying final segments. */
+export function compactWorktreePath(path: string, maxSegments = 3): string {
+  const parts = path.split('/').filter(Boolean);
+  if (parts.length <= maxSegments) return path || '—';
+  return `…/${parts.slice(-maxSegments).join('/')}`;
+}
+
+/** Move the current item to the front while preserving every other item's order. */
+export function currentFirst<T>(list: T[], isCurrent: (item: T) => boolean): T[] {
+  const currentIndex = list.findIndex(isCurrent);
+  if (currentIndex <= 0) return list;
+  return [list[currentIndex], ...list.slice(0, currentIndex), ...list.slice(currentIndex + 1)];
+}
