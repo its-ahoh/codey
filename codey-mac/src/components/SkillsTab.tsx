@@ -222,15 +222,6 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           {skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
         </span>
       </div>
-      {!skill.enabled && (
-        <span style={{
-          fontSize: 9, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
-          padding: '2px 6px', borderRadius: 4, marginBottom: 2,
-          background: C.surface3, color: C.fg3,
-        }}>
-          Off
-        </span>
-      )}
       {skill.description && (
         <div style={{
           color: C.fg3, fontSize: 12, lineHeight: '1.5', width: '100%',
