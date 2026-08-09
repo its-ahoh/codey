@@ -1,12 +1,13 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react'
 import { apiService } from '../services/api'
-import type { Chat, ChatSelection, ChatMessage, ToolCallEntry, FileAttachment, TaskBrief, TeamRunSummary } from '../types'
+import type { Chat, ChatSelection, ChatMessage, ChecklistItem, ToolCallEntry, FileAttachment, TaskBrief, TeamRunSummary } from '../types'
 import type { ChatStreamEvent } from '../../../packages/gateway/src/chat-runner'
+import { activityForTool, type AgentActivity } from '../components/agentActivity'
 
 interface InFlight {
   assistantMessageId: string
   userMessageId: string
-  agentStatus: 'idle' | 'thinking' | 'working' | 'writing'
+  agentStatus: AgentActivity
   queuedPosition?: number
   thinking?: string
   thinkingByStep?: Record<number, string>
@@ -40,7 +41,8 @@ type Action =
   | { type: 'startSend'; chatId: string; userMessage: ChatMessage; assistantMessageId: string }
   | { type: 'streamToken'; chatId: string; token: string; messageId?: string }
   | { type: 'thinkingToken'; chatId: string; token: string; step?: number; messageId?: string }
-  | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: 'working' | 'writing'; messageId?: string }
+  | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: AgentActivity; messageId?: string }
+  | { type: 'patchChecklist'; chatId: string; items: ChecklistItem[] }
   | { type: 'queued'; chatId: string; position: number }
   | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; teamTurnId?: string }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
@@ -158,6 +160,16 @@ export function reducer(state: State, action: Action): State {
       const updated: Chat = { ...chat, soloAdvisor: action.enabled ? true : undefined }
       return { ...state, chats: { ...state.chats, [chat.id]: updated } }
     }
+    case 'patchChecklist': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      // The agent restates its whole list on every revision, so replace rather
+      // than merge. updatedAt is left alone: the chat list orders by real
+      // conversation activity, and a plan revision is not a new message.
+      const updated: Chat = action.items.length ? { ...chat, checklist: action.items } : { ...chat }
+      if (!action.items.length) delete updated.checklist
+      return { ...state, chats: { ...state.chats, [chat.id]: updated } }
+    }
     case 'patchTaskBrief': {
       const chat = state.chats[action.chatId]
       if (!chat) return state
@@ -208,6 +220,9 @@ export function reducer(state: State, action: Action): State {
         messages: [...chat.messages, action.userMessage, assistantStub],
         updatedAt: Date.now(),
       }
+      // Last turn's task list describes last turn's task. Showing it against a
+      // new prompt would report progress on work nobody asked for again.
+      delete updated.checklist
       return {
         ...state,
         chats: { ...state.chats, [chat.id]: updated },
@@ -540,7 +555,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             type: 'toolCall',
             chatId: ev.chatId,
             entry: { id: `tc-${Date.now()}-${Math.random()}`, type: 'tool_start', tool: ev.tool, message: ev.message, input: ev.input },
-            status: 'working',
+            status: activityForTool(ev.tool),
             messageId: ev.messageId,
           })
           break
@@ -549,9 +564,15 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             type: 'toolCall',
             chatId: ev.chatId,
             entry: { id: `tc-${Date.now()}-${Math.random()}`, type: 'tool_end', tool: ev.tool, message: ev.message, output: ev.output },
-            status: 'working',
+            // Hold the tool's own activity rather than snapping back to
+            // "Working": the label would flicker between every paired event.
+            status: activityForTool(ev.tool),
             messageId: ev.messageId,
           })
+          break
+        case 'checklist':
+          // State, not a tool row: it never enters the message transcript.
+          dispatch({ type: 'patchChecklist', chatId: ev.chatId, items: ev.items })
           break
         case 'info':
           if (ev.skillNotice) {

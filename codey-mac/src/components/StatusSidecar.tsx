@@ -3,9 +3,15 @@ import { C } from '../theme'
 import { statusMeta, formatAgo, type SidecarView, type StatusTone } from './taskHudView'
 import { createPrButtonState } from './createPrModel'
 import { UIIcon } from './UIIcons'
+import { checklistProgress, checklistWindow, currentChecklistItem, currentItemLabel } from './checklistView'
+import type { ChecklistItem } from '../types'
 
 interface Props {
   view: SidecarView
+  /** The agent's own task list for this turn, when it reported one. It
+   *  outranks view.progress: the brief's percentage is an LLM's guess about
+   *  the conversation, this is the agent stating what it has finished. */
+  checklist?: ChecklistItem[]
   /** True while a (re)generation of the brief is in flight. */
   loading: boolean
   /** Render only the global, right-edge status control. */
@@ -33,9 +39,13 @@ const clamp = (lines: number): React.CSSProperties => ({
 const COLLAPSE_KEY = 'codey.statusSidecarCollapsed'
 
 export const StatusSidecar: React.FC<Props> = ({
-  view, loading, compact = false, onOpen, onHide, onRestore, width, branchAhead, onCreatePr,
+  view, checklist, loading, compact = false, onOpen, onHide, onRestore, width, branchAhead, onCreatePr,
 }) => {
   const sm = statusMeta(view.status)
+  const tasks = checklist?.length ? checklist : undefined
+  const counted = tasks ? checklistProgress(tasks) : null
+  const progress = counted ? counted.percent : view.progress
+  const current = tasks ? currentChecklistItem(tasks) : null
   const prState = createPrButtonState(view.status, !!branchAhead)
   const [collapsed, setCollapsed] = React.useState<boolean>(() => localStorage.getItem(COLLAPSE_KEY) === '1')
   React.useEffect(() => { localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0') }, [collapsed])
@@ -47,7 +57,7 @@ export const StatusSidecar: React.FC<Props> = ({
         style={styles.compactRoot}
         onClick={onRestore}
         title="Show status panel"
-        aria-label={`Show status panel: ${sm.label}, ${view.progress}%`}
+        aria-label={`Show status panel: ${sm.label}, ${progress}%`}
       >
         <span
           style={{
@@ -57,7 +67,7 @@ export const StatusSidecar: React.FC<Props> = ({
           }}
         />
         <span style={styles.compactStatus}>{sm.label}</span>
-        <span style={styles.compactProgress}>{view.progress}%</span>
+        <span style={styles.compactProgress}>{progress}%</span>
         <UIIcon name="chevron" size={11} />
       </button>
     )
@@ -111,7 +121,7 @@ export const StatusSidecar: React.FC<Props> = ({
       {collapsed ? (
         <div style={styles.statusRow}>
           {pill}
-          <span style={styles.progress}>{view.progress}%</span>
+          <span style={styles.progress}>{progress}%</span>
         </div>
       ) : (
         <>
@@ -119,11 +129,52 @@ export const StatusSidecar: React.FC<Props> = ({
 
           <div style={styles.statusRow}>
             {pill}
-            <span style={styles.progress}>{view.progress}%</span>
+            <span style={styles.progress}>{progress}%</span>
           </div>
           <div style={styles.barTrack}>
-            <div style={{ ...styles.barFill, width: `${view.progress}%` }} />
+            <div style={{ ...styles.barFill, width: `${progress}%` }} />
           </div>
+
+          {tasks && counted && (
+            <div style={styles.nextBox}>
+              <div style={styles.tasksHeader}>
+                <span style={styles.sectionLabel}>Tasks</span>
+                <span style={styles.tasksCount}>{counted.label}</span>
+              </div>
+              {(() => {
+                const w = checklistWindow(tasks)
+                return (
+                  <>
+                    {w.hiddenBefore > 0 && <div style={styles.taskElided}>+{w.hiddenBefore} earlier</div>}
+                    {w.shown.map((t, i) => {
+                      const isCurrent = current?.item === t
+                      // An inferred current item gets the pending marker: only
+                      // the agent's own in_progress earns the active one.
+                      const active = isCurrent && !current?.inferred
+                      return (
+                        <div key={`${i}-${t.text}`} style={styles.taskRow}>
+                          <span style={{ ...styles.taskMark, color: t.status === 'completed' ? C.green : active ? C.accent : C.fg3 }}>
+                            {t.status === 'completed' ? '✓' : active ? '◐' : '○'}
+                          </span>
+                          <span
+                            style={{
+                              ...styles.taskText,
+                              color: t.status === 'completed' ? C.fg3 : isCurrent ? C.fg : C.fg2,
+                              fontWeight: active ? 600 : 400,
+                              textDecoration: t.status === 'completed' ? 'line-through' : 'none',
+                            }}
+                          >
+                            {active ? currentItemLabel(t) : t.text}
+                          </span>
+                        </div>
+                      )
+                    })}
+                    {w.hiddenAfter > 0 && <div style={styles.taskElided}>+{w.hiddenAfter} more</div>}
+                  </>
+                )
+              })()}
+            </div>
+          )}
 
           {view.nextActionText && (
             <div style={styles.nextBox}>
@@ -210,6 +261,12 @@ const styles: Record<string, React.CSSProperties> = {
   progress: { fontSize: 12, fontWeight: 600, color: C.fg, fontVariantNumeric: 'tabular-nums' },
   barTrack: { height: 4, background: C.surface3, borderRadius: 2, overflow: 'hidden' },
   barFill: { height: '100%', background: C.accent, borderRadius: 2 },
+  tasksHeader: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' },
+  tasksCount: { fontSize: 11, fontWeight: 600, color: C.fg3, fontVariantNumeric: 'tabular-nums' },
+  taskRow: { display: 'flex', alignItems: 'flex-start', gap: 6, padding: '2px 0' },
+  taskMark: { flex: 'none', width: 10, fontSize: 11, lineHeight: '17px', textAlign: 'center' },
+  taskText: { flex: 1, minWidth: 0, fontSize: 12, lineHeight: 1.4, ...clamp(2) },
+  taskElided: { fontSize: 10, color: C.fg3, padding: '2px 0 2px 16px' },
   nextBox: { background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 8, padding: '8px 9px' },
   sectionLabel: { fontSize: 10, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', color: C.fg3, marginBottom: 5 },
   nextText: { fontSize: 12, fontWeight: 600, color: C.fg, lineHeight: 1.4, ...clamp(2) },

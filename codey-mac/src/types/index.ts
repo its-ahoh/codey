@@ -1,4 +1,4 @@
-export type { ChatMessage, ToolCallEntry, Chat, ChatSelection, FileAttachment, ChatRoute, TaskBrief, TaskEvent, TeamRunSummary, TeamRunSummaryEntry } from '@codey/core';
+export type { ChatMessage, ToolCallEntry, Chat, ChatSelection, ChecklistItem, FileAttachment, ChatRoute, TaskBrief, TaskEvent, TeamRunSummary, TeamRunSummaryEntry } from '@codey/core';
 
 export interface GatewayStatus {
   status: string;

@@ -24,6 +24,7 @@ import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
+import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
 import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
@@ -5781,22 +5782,23 @@ Example: /model gpt-4.1 write a Python script`;
     const onStatus = (update: any) => {
       try {
         const parsed = typeof update === 'string' ? JSON.parse(update) : update;
-        const entry: ToolCallEntry = {
-          id: randomUUID(),
-          type: parsed.type ?? 'info',
-          tool: parsed.tool,
-          message: parsed.message ?? '',
-          input: parsed.input,
-          output: parsed.output,
-        };
-        toolCalls.push(entry);
-        if (entry.type === 'tool_start') {
-          sink({ type: 'tool_start', chatId, tool: entry.tool, message: entry.message, input: entry.input });
-        } else if (entry.type === 'tool_end') {
-          sink({ type: 'tool_end', chatId, tool: entry.tool, message: entry.message, output: entry.output });
-        } else {
-          sink({ type: 'info', chatId, message: entry.message });
+        if (isPersistableToolCall(parsed.type)) {
+          toolCalls.push({
+            id: randomUUID(),
+            type: parsed.type ?? 'info',
+            tool: parsed.tool,
+            message: parsed.message ?? '',
+            input: parsed.input,
+            output: parsed.output,
+          });
         }
+        if (parsed.type === 'checklist' && parsed.checklist?.length) {
+          // Persist so a client that adopts this run mid-flight (or reloads)
+          // sees the list without waiting for the agent's next revision.
+          this.chatManager.setChecklist(chatId, parsed.checklist);
+        }
+        const event = chatStreamEventForStatus(chatId, parsed);
+        if (event) sink(event);
       } catch { /* non-JSON status */ }
     };
 

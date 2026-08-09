@@ -7,6 +7,7 @@ import { AgentRequest, AgentResponse, AgentStateEntry } from '../types';
 import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
 import { ToolCallCollector } from './tool-events';
+import { ChecklistTracker, checklistFromCodexItem } from './checklist';
 import { codexMcpArgs } from './mcp-config';
 
 /**
@@ -56,6 +57,8 @@ export interface CodexItem {
   result?: unknown;
   // web_search
   query?: string;
+  // todo_list — codex's task list, restated in full on every revision.
+  items?: Array<{ text?: string; completed?: boolean }>;
 }
 
 /** Item types that represent the agent DOING something, as opposed to saying
@@ -169,6 +172,7 @@ export class CodexAdapter extends BaseAgentAdapter {
       const tools = new ToolCallCollector(request.onStatus);
       const statusUpdates = tools.statusUpdates;
       const states = tools.states;
+      const checklist = new ChecklistTracker(request.onStatus);
 
       const safeResolve = (response: AgentResponse) => {
         if (resolved) return;
@@ -198,6 +202,10 @@ export class CodexAdapter extends BaseAgentAdapter {
           case 'item.started':
           case 'item.updated':
           case 'item.completed': {
+            // The task list arrives as its own item type, not a tool call.
+            // The tracker de-dupes the identical payload codex sends on both
+            // item.started and item.completed.
+            checklist.record(checklistFromCodexItem(event.item));
             // The current codex surface: work is reported as items, and only
             // some item types are tool activity.
             if (!event.item || !CODEX_TOOL_ITEMS.has(event.item.type ?? '')) break;

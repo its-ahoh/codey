@@ -1,6 +1,21 @@
 import { ChatRoute } from './route';
 import { PendingTeamState } from './pending-team';
 
+/** The three CLIs report task lists in three shapes; the adapters normalize
+ *  onto this one. codex has only a completed boolean, so it never produces
+ *  'in_progress' — a list with no in-progress item means "not stated", not
+ *  "nothing is running". */
+export type ChecklistStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface ChecklistItem {
+  text: string;
+  status: ChecklistStatus;
+  /** claude-code's present-tense phrasing of the same item ("Implementing the
+   *  reducer"), written by the model for exactly this display. The other two
+   *  agents supply only the imperative text. */
+  activeForm?: string;
+}
+
 export interface FileAttachment {
   id: string;
   name: string;        // original filename
@@ -191,6 +206,10 @@ export interface Chat {
    *  and the cached value is stale; never bumps Chat.updatedAt (see
    *  ChatManager.setTaskBrief) so staleness can compare updatedAt vs generatedAt. */
   taskBrief?: TaskBrief;
+  /** The agent's own task list for the current turn, as last reported. Unlike
+   *  taskBrief this is not inferred by an LLM — the agent stated it — so the
+   *  status panel prefers it for progress. Cleared when a new turn starts. */
+  checklist?: ChecklistItem[];
   /** Set when this chat is hosting a parallel-team (roundtable) discussion. */
   discussion?: DiscussionMeta;
 }
