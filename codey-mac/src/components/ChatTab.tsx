@@ -2060,6 +2060,10 @@ export const ChatTab: React.FC<Props> = ({
               }}>
                 {!isUser && (() => {
                   const thinking = msg.thinking?.trim() ?? ''
+                  // Keyed off the in-flight turn rather than msg.isComplete:
+                  // messages persisted before isComplete existed would
+                  // otherwise lose their rule and timestamp for good.
+                  const streaming = !!flight && msg === lastMsg
                   const expanded = thinkingToggles[msg.id]
                     ?? defaultThinkingExpanded({
                       hasAnswer: !!msg.content.trim(),
@@ -2070,6 +2074,7 @@ export const ChatTab: React.FC<Props> = ({
                       <TurnHeader
                         msg={msg}
                         hasThinking={!!thinking}
+                        turnComplete={!streaming}
                         expanded={expanded}
                         onToggle={() => setThinkingToggles(p => ({ ...p, [msg.id]: !expanded }))}
                       />
@@ -2236,6 +2241,9 @@ export const ChatTab: React.FC<Props> = ({
               {/* Model, fallback, tokens and duration now live in TurnHeader.
                   The timestamp stays here so it does not compete with the
                   turn's identity for the reader's attention. */}
+              {/* The timestamp records when the turn landed, so it waits until
+                  the turn has landed. */}
+              {!(!isUser && !!flight && msg === lastMsg) && (
               <div
                 style={{
                   ...styles.tsLabel,
@@ -2247,6 +2255,7 @@ export const ChatTab: React.FC<Props> = ({
               >
                 <span>{fmtTime(msg.timestamp)}</span>
               </div>
+              )}
             </div>
           )
         })}

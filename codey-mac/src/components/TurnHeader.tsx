@@ -24,6 +24,10 @@ interface Props {
   hasThinking: boolean
   expanded: boolean
   onToggle: () => void
+  /** The rule closes a finished turn. While one is still streaming there is
+   *  nothing below it to bound, and a line drawn under a growing reply reads as
+   *  a separator in the wrong place. */
+  turnComplete: boolean
 }
 
 /** Identifies an assistant turn and bounds it.
@@ -38,13 +42,15 @@ interface Props {
  *  The rule always renders; the metadata row renders only when there is
  *  something to put in it, so a turn with no metadata is a bare hairline rather
  *  than a blank row. */
-export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle }) => {
+export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete }) => {
   const meta = turnHeaderMeta(msg)
-  if (meta.isEmpty && !hasThinking) return <div style={styles.rule} />
+  const rule = turnComplete ? <div style={styles.rule} /> : null
+  if (meta.isEmpty && !hasThinking) return rule
 
   return (
     <div>
-      <div style={styles.row}>
+      {/* Without the rule below it, the row supplies its own bottom gap. */}
+      <div style={{ ...styles.row, marginBottom: turnComplete ? 4 : 12 }}>
         <div style={styles.left}>
           {meta.identity && (
             <span style={styles.identity} title={meta.identity}>{meta.identity}</span>
@@ -75,7 +81,7 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
           )}
         </div>
       </div>
-      <div style={styles.rule} />
+      {rule}
     </div>
   )
 }
