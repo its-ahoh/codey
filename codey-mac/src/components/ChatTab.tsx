@@ -2042,22 +2042,34 @@ export const ChatTab: React.FC<Props> = ({
                 // boundary the bubble used to provide.
                 //
                 // `ch` resolves against this element's 13px font, so 78ch is
-                // ~562px — about 72 characters of the 14px roomy body text, or
-                // ~43 Chinese characters. Unlike the old 72%, it does not grow
-                // with the window.
+                // ~562px. box-sizing is border-box, so the rail and the 27px of
+                // horizontal padding come out of that, leaving ~535px of text —
+                // about 68 characters of the 14px roomy body, or ~41 Chinese
+                // characters. Unlike the old 72%, it does not grow with the
+                // window.
                 minWidth: 0, width: '100%', maxWidth: 'min(100%, 78ch)',
-                // 6px top is the vertical padding the first attempt at this
-                // silently dropped when it replaced the bubble's '10px 14px'.
-                padding: `6px 0 0 ${TURN_TEXT_PADDING}px`,
+                // Padding on all four sides so the selected highlight reads as a
+                // card rather than a rectangle cut through the text. It is
+                // unconditional — applying it only when selected would shift the
+                // whole reply the moment you click it.
+                //
+                // Right padding equals rail + left padding, so the text sits the
+                // same distance from both inner edges of the highlight.
+                padding: `8px ${TURN_RAIL_WIDTH + TURN_TEXT_PADDING}px 10px ${TURN_TEXT_PADDING}px`,
                 // The rail is always present, transparent when unselected, so
                 // selecting a turn never shifts the text column sideways.
                 borderLeft: `${TURN_RAIL_WIDTH}px solid ${isSelected ? C.accent : 'transparent'}`,
+                borderRadius: 10,
                 background: isSelected ? C.accentDim : 'transparent',
+                // Same treatment the rest of the app gives an active card
+                // (teamStepCardActive, teamRoundTableMemberActive): a tint plus a
+                // 1px accent ring, which defines the edge without a hard border.
+                boxShadow: isSelected ? `0 0 0 1px ${C.accentDim}` : 'none',
                 // fontSize/lineHeight stay compact: non-Markdown children
                 // inherit them. Roomy applies inside <Markdown layout="roomy">.
                 color: C.fg, fontSize: 13, lineHeight: 1.55,
                 overflowWrap: 'anywhere', wordBreak: 'break-word',
-                transition: 'border-color 0.18s ease, background 0.18s ease',
+                transition: 'border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease',
               }}>
                 {!isUser && (() => {
                   const thinking = msg.thinking?.trim() ?? ''
