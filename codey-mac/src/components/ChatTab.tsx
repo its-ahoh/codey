@@ -20,6 +20,7 @@ import { defaultThinkingExpanded } from './thinkingState'
 import { formatTokens } from './turnHeaderModel'
 import {
   TurnHeader, MESSAGE_ROW_INSET, TURN_RAIL_WIDTH, TURN_TEXT_PADDING, TURN_TEXT_INSET,
+  USER_BUBBLE_PADDING_X,
 } from './TurnHeader'
 import { ACTIVITY_LABEL } from './agentActivity'
 import { statusLine } from './checklistView'
@@ -2030,7 +2031,7 @@ export const ChatTab: React.FC<Props> = ({
               }}
             >
               <div style={isUser ? {
-                minWidth: 0, maxWidth: '72%', padding: '10px 14px',
+                minWidth: 0, maxWidth: '72%', padding: `10px ${USER_BUBBLE_PADDING_X}px`,
                 borderRadius: '16px 16px 4px 16px',
                 background: C.userBg,
                 color: C.onAccent, fontSize: 13, lineHeight: 1.55,
@@ -2247,10 +2248,13 @@ export const ChatTab: React.FC<Props> = ({
               <div
                 style={{
                   ...styles.tsLabel,
-                  // The footer sits inside the message row, which already
-                  // carries MESSAGE_ROW_INSET, so only the remainder is needed
-                  // to line the timestamp up with the reply above it.
-                  paddingLeft: isUser ? 4 : TURN_TEXT_INSET - MESSAGE_ROW_INSET,
+                  // A user turn is right-aligned, so its timestamp lines up on
+                  // the bubble's right text edge; an assistant turn is
+                  // left-aligned, so its timestamp lines up on the left. The
+                  // footer sits inside the message row, which already carries
+                  // MESSAGE_ROW_INSET, so only the remainder is needed there.
+                  paddingLeft: isUser ? 0 : TURN_TEXT_INSET - MESSAGE_ROW_INSET,
+                  paddingRight: isUser ? USER_BUBBLE_PADDING_X : 0,
                 }}
               >
                 <span>{fmtTime(msg.timestamp)}</span>
@@ -2701,9 +2705,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', gap: 8, color: C.fg3, fontSize: 13,
     marginBottom: 12, paddingLeft: TURN_TEXT_INSET,
   },
-  // paddingLeft is set per role at the render site — it has to line up with the
-  // reply above it, which is inset differently for user and assistant.
-  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, paddingRight: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  // Horizontal padding is set per role at the render site — the timestamp has to
+  // line up with the reply above it, which is inset differently (and from the
+  // opposite edge) for user and assistant.
+  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   // modelBadge is still used by team worker messages; tsRight, tsMeta and
   // fallbackBadge moved into TurnHeader with the metadata they styled.
   modelBadge: {

@@ -18,6 +18,10 @@ export const TURN_TEXT_PADDING = 12
  *  edges. */
 export const TURN_TEXT_INSET = MESSAGE_ROW_INSET + TURN_RAIL_WIDTH + TURN_TEXT_PADDING
 
+/** Horizontal padding inside the user bubble. A user turn is right-aligned, so
+ *  its timestamp lines up on the right edge and needs this, not TURN_TEXT_INSET. */
+export const USER_BUBBLE_PADDING_X = 14
+
 interface Props {
   msg: ChatMessage
   /** Rendered only when the turn has thinking to disclose. */
