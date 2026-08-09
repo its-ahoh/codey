@@ -1663,6 +1663,12 @@ export const ChatTab: React.FC<Props> = ({
     : flight?.agentStatus === 'writing'  ? 'Writing…'
     : ''
 
+  const openChatTerminal = () => {
+    if (!workingDir) return
+    setBottomTerminalOpen(true)
+    if (resolvedRightPanelMode === 'terminal') changeRightPanelMode('overview')
+  }
+
   const panelWorkerName = chat.selection.type === 'worker' ? chat.selection.name : undefined
   const panelTeamName = chat.selection.type === 'team' ? chat.selection.name : undefined
   const runSettingsSummary = chat.selection.type === 'team'
@@ -1711,6 +1717,7 @@ export const ChatTab: React.FC<Props> = ({
             if (!chat) return
             await setChatWorkingDir(chat.id, path)
           }}
+          onOpenTerminal={openChatTerminal}
         />
         <div style={{ ...styles.openInWrap, marginLeft: 'auto' }}>
           <div style={styles.openInSplit}>
@@ -1922,13 +1929,12 @@ export const ChatTab: React.FC<Props> = ({
           )}
         </div>
         <button
-          onClick={() => setBottomTerminalOpen(open => {
-            const next = !open
-            if (next && resolvedRightPanelMode === 'terminal') changeRightPanelMode('overview')
-            return next
-          })}
+          onClick={() => bottomTerminalOpen ? setBottomTerminalOpen(false) : openChatTerminal()}
           style={{ ...styles.linkBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px' }}
-          title={bottomTerminalOpen ? 'Hide bottom Terminal (⌘J)' : 'Show bottom Terminal (⌘J)'}
+          title={bottomTerminalOpen
+            ? 'Hide bottom Terminal (⌘J)'
+            : workingDir ? `Open Terminal in ${workingDir} (⌘J)` : 'Chat worktree is unavailable'}
+          disabled={!workingDir}
           aria-label={bottomTerminalOpen ? 'Hide bottom Terminal' : 'Show bottom Terminal'}
         >
           <UIIcon name="terminal" color={C.fg} filled={bottomTerminalOpen} />
@@ -2432,6 +2438,7 @@ export const ChatTab: React.FC<Props> = ({
             title="Resize bottom Terminal"
           />
           <TerminalPanel
+            key={`${chat.id}:${workingDir}`}
             chatId={chat.id}
             workingDir={workingDir}
             placement="bottom"

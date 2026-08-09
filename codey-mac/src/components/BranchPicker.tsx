@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react'
 import { C } from '../theme'
 import { useGitBranches } from '../hooks/useGitBranches'
-import { filterBranches, defaultWorktreePath, partitionWorktrees } from './branchPickerModel'
+import { compactWorktreePath, currentFirst, defaultWorktreePath, filterBranches, partitionWorktrees } from './branchPickerModel'
 import { UIIcon } from './UIIcons'
 
 interface Props {
@@ -9,14 +9,17 @@ interface Props {
   repoRoot: string | undefined           // for default worktree path; falls back to workingDir
   boundWorktreePath?: string             // chat.workingDirOverride
   onBindWorktree: (path: string | null) => void
+  onOpenTerminal?: () => void
 }
 
 type Mode = { kind: 'list' } | { kind: 'create' } | { kind: 'dirty'; target: string }
+type PickerView = 'branches' | 'worktrees'
 
-export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorktreePath, onBindWorktree }) => {
+export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorktreePath, onBindWorktree, onOpenTerminal }) => {
   const git = useGitBranches(workingDir)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [view, setView] = useState<PickerView>('branches')
   const [mode, setMode] = useState<Mode>({ kind: 'list' })
   const [newName, setNewName] = useState('')
   const [useWorktree, setUseWorktree] = useState(true)   // worktree is the DEFAULT
@@ -34,11 +37,32 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
 
   const s = git.state
   const { main, others } = useMemo(() => partitionWorktrees(s?.worktrees ?? []), [s])
-  const localFiltered = useMemo(() => filterBranches(s?.local ?? [], query), [s, query])
+  const localFiltered = useMemo(
+    () => currentFirst(filterBranches(s?.local ?? [], query), branch => branch === s?.branch),
+    [s, query],
+  )
   const remoteFiltered = useMemo(() => filterBranches(s?.remote ?? [], query), [s, query])
   const repo = repoRoot || workingDir || ''
+  const worktreePath = boundWorktreePath || workingDir || ''
+  const orderedWorktrees = useMemo(
+    () => currentFirst(
+      [...(main ? [main] : []), ...others],
+      worktree => boundWorktreePath ? worktree.path === boundWorktreePath : worktree.isMain,
+    ),
+    [main, others, boundWorktreePath],
+  )
   const previewPath = useWorktree && newName ? defaultWorktreePath(repo, newName) : ''
-  const boundLabel = others.find(w => w.path === boundWorktreePath)?.branch
+
+  const copyWorktreePath = async () => {
+    const value = worktreePath
+    if (!value) return
+    try {
+      await navigator.clipboard.writeText(value)
+      setNote('Worktree path copied')
+    } catch {
+      setNote('Could not copy worktree path')
+    }
+  }
 
   const doSwitch = async (name: string) => {
     const r = await git.checkout(name)
@@ -76,10 +100,19 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
           void git.refresh()
         }
         return !o
-      })} title="Branch & worktree">
-        <UIIcon name="code" size={14} /><span>{s?.branch ?? '—'}</span>
-        {s && s.dirty > 0 && <span style={styles.dirty}>+{s.dirty}</span>}
-        {boundLabel && <span style={styles.wt}><UIIcon name="workspace" size={13} />{boundLabel}</span>}
+      })}
+        title={worktreePath ? `${s?.branch ?? 'Unknown branch'}\n${worktreePath}` : 'Chat workspace unavailable'}
+        aria-label={`Chat workspace: ${s?.branch ?? 'unknown branch'}, ${worktreePath || 'unavailable'}`}
+        aria-expanded={open}
+      >
+        <UIIcon name="code" size={15} />
+        <span style={styles.pillIdentity}>
+          <span style={styles.pillBranch}>
+            <span style={styles.ellipsis}>{s?.branch ?? '—'}</span>
+            {s && s.dirty > 0 && <span style={styles.dirty}>+{s.dirty}</span>}
+          </span>
+          <span style={styles.pillPath}>{compactWorktreePath(worktreePath)}</span>
+        </span>
         <span style={{ ...styles.caret, transform: open ? 'rotate(-90deg)' : 'rotate(90deg)' }}>
           <UIIcon name="chevron" size={12} />
         </span>
@@ -87,6 +120,21 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
 
       {open && (
         <div style={styles.menu}>
+          <div style={styles.currentWorkspace}>
+            <UIIcon name="workspace" size={15} />
+            <div style={styles.currentIdentity}>
+              <div style={styles.currentBranch}>{s?.branch ?? '—'}</div>
+              <div style={styles.currentPath} title={worktreePath}>{compactWorktreePath(worktreePath)}</div>
+            </div>
+            <button style={styles.iconButton} onClick={() => void copyWorktreePath()} title="Copy worktree path" aria-label="Copy worktree path">
+              <UIIcon name="copy" size={13} />
+            </button>
+            {onOpenTerminal && (
+              <button style={styles.iconButton} onClick={() => { onOpenTerminal(); setOpen(false) }} disabled={!worktreePath} title="Open Terminal here" aria-label="Open Terminal in this worktree">
+                <UIIcon name="terminal" size={14} />
+              </button>
+            )}
+          </div>
           {mode.kind === 'dirty' ? (
             <div style={styles.section}>
               <div style={styles.warn}>Switching would overwrite local changes.</div>
@@ -115,38 +163,53 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
             </div>
           ) : (
             <>
-              <input placeholder="Filter branches…" value={query}
-                onChange={e => setQuery(e.target.value)} style={styles.input} />
+              <div style={styles.viewTabs} role="tablist" aria-label="Workspace choices">
+                <button role="tab" aria-selected={view === 'branches'} style={view === 'branches' ? styles.viewTabActive : styles.viewTab} onClick={() => setView('branches')}>Branches</button>
+                <button role="tab" aria-selected={view === 'worktrees'} style={view === 'worktrees' ? styles.viewTabActive : styles.viewTab} onClick={() => setView('worktrees')}>Worktrees</button>
+              </div>
+              {view === 'branches' && (
+                <input placeholder="Filter branches…" value={query}
+                  onChange={e => setQuery(e.target.value)} style={styles.input} />
+              )}
               <div style={styles.scroll}>
-                {localFiltered.length > 0 && <div style={styles.divider}>Local · {s?.local.length ?? 0}</div>}
-                {localFiltered.map(b => (
-                  <button key={b} style={styles.item} disabled={b === s?.branch} onClick={() => doSwitch(b)}>
-                    {b === s?.branch && <UIIcon name="check" size={13} />}{b}
-                  </button>
-                ))}
-                {remoteFiltered.length > 0 && <div style={styles.divider}>Remote · {s?.remote.length ?? 0}</div>}
-                {remoteFiltered.map(b => (
-                  <button key={b} style={styles.item} onClick={() => doSwitchRemote(b)}>
-                    {b}
-                  </button>
-                ))}
-                {others.length > 0 && <div style={styles.divider}>Worktrees</div>}
-                {main && (
-                  <button style={styles.item} onClick={() => { onBindWorktree(null); setOpen(false) }}>
-                    {!boundWorktreePath && <UIIcon name="check" size={13} />}{main.branch} (main)
-                  </button>
+                {view === 'branches' ? (
+                  <>
+                    {localFiltered.length > 0 && <div style={styles.divider}>Local</div>}
+                    {localFiltered.map(b => (
+                      <button key={b} style={styles.item} disabled={b === s?.branch} onClick={() => doSwitch(b)}>
+                        <span style={styles.checkSlot}>{b === s?.branch && <UIIcon name="check" size={13} />}</span>{b}
+                      </button>
+                    ))}
+                    {remoteFiltered.length > 0 && <div style={styles.divider}>Remote</div>}
+                    {remoteFiltered.map(b => (
+                      <button key={b} style={styles.item} onClick={() => doSwitchRemote(b)}>
+                        <span style={styles.checkSlot} />{b}
+                      </button>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    {orderedWorktrees.map(w => {
+                      const isCurrent = boundWorktreePath ? w.path === boundWorktreePath : w.isMain
+                      return (
+                        <button key={w.path} style={styles.worktreeItem} onClick={() => { onBindWorktree(w.isMain ? null : w.path); setOpen(false) }}>
+                          <span style={styles.checkSlot}>{isCurrent && <UIIcon name="check" size={13} />}</span>
+                          <span style={styles.worktreeIdentity}>
+                            <span>{w.branch} {w.isMain && <span style={styles.mainLabel}>main</span>}</span>
+                            <span style={styles.worktreePath} title={w.path}>{compactWorktreePath(w.path)}</span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                    {orderedWorktrees.length === 0 && <div style={styles.empty}>No worktrees found</div>}
+                  </>
                 )}
-                {others.map(w => (
-                  <button key={w.path} style={styles.item} onClick={() => { onBindWorktree(w.path); setOpen(false) }}>
-                    {w.path === boundWorktreePath && <UIIcon name="check" size={13} />}<UIIcon name="workspace" size={13} />{w.branch}
-                  </button>
-                ))}
               </div>
               {git.error && <div style={styles.err}>{git.error}</div>}
-              {note && <div style={styles.noteBox}>{note}</div>}
+              {note && <div style={styles.noteBox} role="status">{note}</div>}
               <div style={styles.footer}>
-                <button style={styles.ghost} onClick={() => { setNewName(''); setUseWorktree(true); setMode({ kind: 'create' }) }}>+ New branch…</button>
-                <button style={styles.ghost} onClick={() => git.fetchRemote()}>Fetch remote</button>
+                <button style={styles.ghost} onClick={() => { setNewName(''); setUseWorktree(view === 'worktrees'); setMode({ kind: 'create' }) }}>+ New…</button>
+                {view === 'branches' && <button style={styles.ghost} onClick={() => git.fetchRemote()}>Fetch</button>}
               </div>
             </>
           )}
@@ -157,12 +220,15 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  pill: { display: 'inline-flex', alignItems: 'center', gap: 6, color: C.fg2, fontSize: 11,
+  pill: { display: 'inline-flex', alignItems: 'center', gap: 7, color: C.fg2, fontSize: 11,
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 7, padding: '5px 8px',
-    fontFamily: 'SF Mono, Menlo, monospace', cursor: 'pointer', flexShrink: 0, maxWidth: 260,
-    overflow: 'hidden', whiteSpace: 'nowrap' },
+    cursor: 'pointer', flexShrink: 1, minWidth: 150, maxWidth: 310,
+    overflow: 'hidden', textAlign: 'left' },
+  pillIdentity: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: 1 },
+  pillBranch: { display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, fontFamily: 'SF Mono, Menlo, monospace' },
+  pillPath: { color: C.fg3, fontSize: 9, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  ellipsis: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   dirty: { color: C.yellow, opacity: 0.85 },
-  wt: { color: C.green, display: 'inline-flex', alignItems: 'center', gap: 3 },
   caret: {
     color: C.fg3,
     display: 'inline-flex',
@@ -174,13 +240,27 @@ const styles: Record<string, React.CSSProperties> = {
     transformOrigin: 'center',
     transition: 'transform 0.15s ease',
   },
-  menu: { position: 'absolute', top: 'calc(100% + 7px)', left: 0, zIndex: 20, width: 300,
+  menu: { position: 'absolute', top: 'calc(100% + 7px)', left: 0, zIndex: 20, width: 340,
     background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
     boxShadow: '0 14px 30px rgba(0,0,0,0.26)', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 },
+  currentWorkspace: { display: 'flex', alignItems: 'center', gap: 7, padding: '6px 7px 8px', borderBottom: `1px solid ${C.border}` },
+  currentIdentity: { minWidth: 0, flex: 1 },
+  currentBranch: { color: C.fg, fontSize: 11, fontWeight: 600, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  currentPath: { color: C.fg3, fontSize: 9, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  iconButton: { width: 27, height: 27, padding: 0, border: `1px solid ${C.border2}`, borderRadius: 6, background: C.surface3, color: C.fg2, cursor: 'pointer', display: 'grid', placeItems: 'center', flexShrink: 0 },
+  viewTabs: { display: 'flex', padding: 2, borderRadius: 6, background: C.surface3 },
+  viewTab: { flex: 1, border: 'none', borderRadius: 5, padding: '5px 8px', background: 'transparent', color: C.fg3, cursor: 'pointer', fontSize: 11 },
+  viewTabActive: { flex: 1, border: `1px solid ${C.border2}`, borderRadius: 5, padding: '4px 8px', background: C.surface2, color: C.fg, cursor: 'pointer', fontSize: 11, fontWeight: 600 },
   section: { display: 'flex', flexDirection: 'column', gap: 8 },
   scroll: { maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column' },
   item: { textAlign: 'left', background: 'transparent', border: 'none', color: C.fg, fontSize: 12,
     padding: '6px 8px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 },
+  checkSlot: { width: 14, flexShrink: 0, display: 'inline-flex', alignItems: 'center' },
+  worktreeItem: { width: '100%', textAlign: 'left', background: 'transparent', border: 'none', color: C.fg, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 },
+  worktreeIdentity: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1, fontSize: 12 },
+  worktreePath: { color: C.fg3, fontSize: 9, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  mainLabel: { color: C.fg3, fontSize: 9, fontWeight: 500 },
+  empty: { color: C.fg3, fontSize: 11, padding: '14px 8px', textAlign: 'center' },
   divider: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: C.fg3, padding: '8px 8px 2px' },
   input: { background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6, color: C.fg,
     fontSize: 12, padding: '5px 8px', outline: 'none' },

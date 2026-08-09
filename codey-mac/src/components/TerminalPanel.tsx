@@ -23,6 +23,10 @@ const layoutCache = new Map<string, TerminalLayout>()
 const layoutLoads = new Map<string, Promise<TerminalLayout>>()
 const sessionTitleCache = new Map<string, string>()
 
+// A chat can be rebound to another worktree. Keep layouts isolated by cwd so
+// reopening Terminal never revives a shell from the chat's previous worktree.
+const layoutKey = (chatId: string, cwd: string) => `${chatId}\u0000${cwd}`
+
 const newTabId = () => `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
 const dropZoneAt = (event: React.DragEvent<HTMLElement>): DropZone => {
@@ -48,25 +52,29 @@ const createSession = async (chatId: string, cwd: string): Promise<string> => {
 }
 
 const loadLayout = (chatId: string, cwd: string): Promise<TerminalLayout> => {
-  const cached = layoutCache.get(chatId)
+  const key = layoutKey(chatId, cwd)
+  const cached = layoutCache.get(key)
   if (cached) return Promise.resolve(cached)
-  const pending = layoutLoads.get(chatId)
+  const pending = layoutLoads.get(key)
   if (pending) return pending
   const load = (async () => {
     const listed = await window.codey.terminal.list(chatId)
-    let sessions = listed.ok ? listed.data.map(item => item.sessionId) : []
+    // Preserve sessions belonging to previous worktrees, but never surface
+    // them in this layout. Switching back can recover them by the same key.
+    let sessions = listed.ok ? listed.data.filter(item => item.cwd === cwd).map(item => item.sessionId) : []
     if (sessions.length === 0) sessions = [await createSession(chatId, cwd)]
     const tabs = sessions.map(sessionId => ({ id: newTabId(), sessions: [sessionId], activeSessionId: sessionId }))
     const layout = { tabs, activeTabId: tabs[0].id }
-    layoutCache.set(chatId, layout)
+    layoutCache.set(key, layout)
     return layout
-  })().finally(() => layoutLoads.delete(chatId))
-  layoutLoads.set(chatId, load)
+  })().finally(() => layoutLoads.delete(key))
+  layoutLoads.set(key, load)
   return load
 }
 
 export const TerminalPanel: React.FC<Props> = ({ chatId, workingDir, placement, onMove, onClose }) => {
-  const [layout, setLayout] = React.useState<TerminalLayout | null>(() => layoutCache.get(chatId) ?? null)
+  const key = layoutKey(chatId, workingDir)
+  const [layout, setLayout] = React.useState<TerminalLayout | null>(() => layoutCache.get(key) ?? null)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [sessionTitles, setSessionTitles] = React.useState<Record<string, string>>(() => Object.fromEntries(sessionTitleCache))
@@ -79,17 +87,18 @@ export const TerminalPanel: React.FC<Props> = ({ chatId, workingDir, placement, 
   const tabDropIndexRef = React.useRef<number | null>(null)
 
   const commit = React.useCallback((next: TerminalLayout) => {
-    layoutCache.set(chatId, next)
+    layoutCache.set(key, next)
     setLayout(next)
-  }, [chatId])
+  }, [key])
 
   React.useEffect(() => {
     let cancelled = false
+    setLayout(layoutCache.get(key) ?? null)
     void loadLayout(chatId, workingDir)
       .then(next => { if (!cancelled) setLayout(next) })
       .catch(reason => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)) })
     return () => { cancelled = true }
-  }, [chatId, workingDir])
+  }, [chatId, workingDir, key])
 
   const activeTab = layout?.tabs.find(tab => tab.id === layout.activeTabId) ?? layout?.tabs[0]
 
