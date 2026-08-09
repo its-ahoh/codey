@@ -3,13 +3,11 @@ import { C } from '../theme'
 import { useChats } from '../hooks/useChats'
 import { deriveNotifications, type InFlightLike } from './notificationLogic'
 import { UIIcon } from './UIIcons'
+import { ACTIVITY_LABEL } from './agentActivity'
 
-const STATUS_LABEL: Record<InFlightLike['agentStatus'], string> = {
-  idle: 'Idle',
-  thinking: 'Thinking…',
-  working: 'Working…',
-  writing: 'Writing…',
-}
+const STATUS_LABEL: Record<InFlightLike['agentStatus'], string> = Object.fromEntries(
+  Object.entries(ACTIVITY_LABEL).map(([k, v]) => [k, k === 'idle' ? v : `${v}…`]),
+) as Record<InFlightLike['agentStatus'], string>
 
 export const NotificationCenter: React.FC = () => {
   const { state, selectChat } = useChats()

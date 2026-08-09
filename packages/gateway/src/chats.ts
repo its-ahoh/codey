@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { Chat, ChatCompaction, ChatMessage, ChatSelection, ChatRoute, ChannelKind, TaskBrief } from '@codey/core';
+import { Chat, ChatCompaction, ChatMessage, ChatSelection, ChatRoute, ChannelKind, ChecklistItem, TaskBrief } from '@codey/core';
 import { Logger } from './logger';
 
 const log = Logger.getInstance();
@@ -360,6 +360,24 @@ export class ChatManager {
     const chat = this.cache.get(chatId);
     if (!chat) return;
     chat.taskBrief = brief;
+    this.persist(chat);
+  }
+
+  /** Store the agent's current task list. Like setTaskBrief this leaves
+   *  updatedAt alone — the chat list is ordered by real conversation activity,
+   *  and an agent revising its own plan is not that. */
+  setChecklist(chatId: string, items: ChecklistItem[]): void {
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    chat.checklist = items;
+    this.persist(chat);
+  }
+
+  /** Drop the list so a new turn starts without inheriting the last one. */
+  clearChecklist(chatId: string): void {
+    const chat = this.cache.get(chatId);
+    if (!chat || !chat.checklist) return;
+    delete chat.checklist;
     this.persist(chat);
   }
 

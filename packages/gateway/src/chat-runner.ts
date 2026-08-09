@@ -1,4 +1,4 @@
-import { Chat, ChatMessage, CodingAgent, FileAttachment, TaskBrief, TeamRunSummary, ToolCallEntry } from '@codey/core';
+import { Chat, ChatMessage, ChecklistItem, CodingAgent, FileAttachment, TaskBrief, TeamRunSummary, ToolCallEntry } from '@codey/core';
 
 export const MAX_CONCURRENT_AGENTS = 4;
 export const CHAT_CONTEXT_WINDOW = 40;
@@ -19,6 +19,9 @@ export type ChatStreamEvent =
   | { type: 'tool_start'; chatId: string; tool?: string; message: string; input?: Record<string, unknown>; messageId?: string; step?: number }
   | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string; messageId?: string; step?: number }
   | { type: 'info'; chatId: string; message: string; skillNotice?: boolean }
+  // The agent's own task list, restated in full. Consumers replace whatever
+  // they were showing; the list is authoritative, not incremental.
+  | { type: 'checklist'; chatId: string; message: string; items: ChecklistItem[] }
   | { type: 'stream'; chatId: string; token: string; messageId?: string; step?: number }
   | { type: 'thinking'; chatId: string; token: string; step?: number; messageId?: string }
   | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: CodingAgent; model?: string }> }

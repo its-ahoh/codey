@@ -4,6 +4,7 @@ import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
 import { thinkingDeltaFrom } from './thinking-stream';
 import { writeClaudeMcpConfig } from './mcp-config';
+import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checklist';
 
 interface StreamEvent {
   type: string;
@@ -165,6 +166,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       const states: AgentStateEntry[] = [];
       // Track pending tool_use calls by id so we can pair them with tool_result
       const pendingTools = new Map<string, { name: string; input?: Record<string, unknown> }>();
+      const checklist = new ChecklistTracker(request.onStatus);
       let permissionDenials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> = [];
       let userQuestion: AgentResponse['userQuestion'];
       let askUserInputJson = '';
@@ -273,6 +275,10 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
                     return `${k}: ${val && val.length > 80 ? val.substring(0, 80) + '...' : val}`;
                   }).join(', ')
                 : '';
+              if (isChecklistTool(toolName)) {
+                checklist.record(checklistFromTodos(block.input));
+              }
+
               statusUpdates.push(`${toolName}: running`);
               states.push({
                 source: toolName,

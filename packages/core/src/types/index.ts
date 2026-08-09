@@ -182,12 +182,20 @@ export interface AgentRequest {
   mcpServers?: Record<string, McpServerSpec>;
 }
 
+import { ChecklistItem } from './chat';
+
 export interface StatusUpdate {
-  type: 'tool_start' | 'tool_end' | 'info';
+  /** 'checklist' carries the agent's whole task list, restated. It is not a
+   *  tool event: codex reports its list as a `todo_list` item rather than a
+   *  tool call, so routing it through tool_start would invent tool rows that
+   *  never happened. Consumers replace their stored list wholesale. */
+  type: 'tool_start' | 'tool_end' | 'info' | 'checklist';
   tool?: string;
   message: string;
   input?: Record<string, unknown>;
   output?: string;
+  /** Set on 'checklist' updates only. */
+  checklist?: ChecklistItem[];
 }
 
 export interface AgentStateEntry {

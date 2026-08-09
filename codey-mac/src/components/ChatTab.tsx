@@ -19,6 +19,8 @@ import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolForm
 import { defaultThinkingExpanded } from './thinkingState'
 import { formatTokens } from './turnHeaderModel'
 import { TurnHeader } from './TurnHeader'
+import { ACTIVITY_LABEL } from './agentActivity'
+import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
 import { useGitStatus } from '../hooks/useGitStatus'
@@ -75,11 +77,38 @@ const StopIcon: React.FC<{ color: string }> = ({ color }) => (
 const fmtTime = (ts: number) =>
   new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 
-const TypingDots: React.FC = () => {
-  const [n, setN] = useState(0)
-  useEffect(() => { const t = setInterval(() => setN(v => (v + 1) % 4), 400); return () => clearInterval(t) }, [])
-  return <span style={{ letterSpacing: 2 }}>{'●'.repeat(n + 1).padEnd(3, '○')}</span>
-}
+/** The live status word ("Thinking", "Reading", …). The motion is a light
+ *  sweeping across the letters — no marching dots beside it, so the word alone
+ *  carries "still running" without pulling the eye off the transcript. */
+const ShimmerStatus: React.FC<{ label: string }> = ({ label }) => (
+  <>
+    <style>{`
+      @keyframes codey-status-shimmer {
+        0%   { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .codey-status-shimmer { animation: none !important; }
+      }
+    `}</style>
+    <span
+      className="codey-status-shimmer"
+      aria-live="polite"
+      style={{
+        backgroundImage: `linear-gradient(90deg, ${C.fg3} 0%, ${C.fg3} 35%, ${C.fg} 50%, ${C.fg3} 65%, ${C.fg3} 100%)`,
+        backgroundSize: '200% 100%',
+        WebkitBackgroundClip: 'text',
+        backgroundClip: 'text',
+        color: 'transparent',
+        WebkitTextFillColor: 'transparent',
+        animation: 'codey-status-shimmer 2s linear infinite',
+        fontWeight: 600,
+      }}
+    >
+      {label}
+    </span>
+  </>
+)
 
 /** Elapsed recording time. A counter answers "is it still listening?" without
  *  a sentence of prose, and reassures during a long dictation. */
@@ -1656,11 +1685,25 @@ export const ChatTab: React.FC<Props> = ({
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
   const canSend = isGatewayRunning && !coreFailed && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
+  // Three layers when the agent gave us its task list: what it is on, the tool
+  // it is running right now, and how far through it is — a bare "Editing…"
+  // withholds information we already have in hand.
+  const flightToolCalls = flight
+    ? chat.messages.find(m => m.id === flight.assistantMessageId)?.toolCalls
+    : undefined
+  const live = flight && flight.agentStatus !== 'idle'
+    ? statusLine({
+        checklist: chat.checklist,
+        entries: flightToolCalls,
+        format: formatHeadline,
+        fallback: ACTIVITY_LABEL[flight.agentStatus],
+      })
+    : null
   const statusLabel = flight?.queuedPosition
     ? `Queued (#${flight.queuedPosition})`
-    : flight?.agentStatus === 'thinking' ? 'Thinking…'
-    : flight?.agentStatus === 'working'  ? 'Working…'
-    : flight?.agentStatus === 'writing'  ? 'Writing…'
+    // The trailing ellipsis is the "still going" cue for a lone verb; with real
+    // detail the shimmer already says that, and the dots just add noise.
+    : live ? (live.parts.length > 1 ? live.parts.join(' · ') : `${live.parts[0]}…`)
     : ''
 
   const openChatTerminal = () => {
@@ -2200,8 +2243,7 @@ export const ChatTab: React.FC<Props> = ({
         })}
         {statusLabel && (
           <div style={styles.typingRow}>
-            <TypingDots />
-            <span>{statusLabel}</span>
+            <ShimmerStatus label={statusLabel} />
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -2529,6 +2571,7 @@ export const ChatTab: React.FC<Props> = ({
         return (
           <StatusSidecar
             view={extractSidecarBrief(chat.taskBrief)}
+            checklist={chat.checklist}
             loading={taskBriefLoading}
             compact={statusSidecarHidden}
             width={SIDECAR_W}

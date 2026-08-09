@@ -1,8 +1,9 @@
 import type { Chat } from '../types'
+import type { AgentActivity } from './agentActivity'
 
 /** Subset of useChats' internal InFlight needed to render a notification. */
 export interface InFlightLike {
-  agentStatus: 'idle' | 'thinking' | 'working' | 'writing'
+  agentStatus: AgentActivity
   queuedPosition?: number
 }
 

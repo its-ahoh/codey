@@ -4,6 +4,7 @@ import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
 import { writeOpenCodeMcpConfig } from './mcp-config';
 import { ObservedToolEvent, ToolCallCollector } from './tool-events';
+import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checklist';
 
 export interface OpenCodeEvent {
   type: string;
@@ -120,6 +121,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       const tools = new ToolCallCollector(request.onStatus);
       const statusUpdates = tools.statusUpdates;
       const states = tools.states;
+      const checklist = new ChecklistTracker(request.onStatus);
       // Captured from the top-level `sessionID` field present on every event
       // (e.g. `step_start`, `text`, `step_finish`). The first event we see
       // tells us which session OpenCode opened so the gateway can resume it.
@@ -159,6 +161,9 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
             if (event.type === 'tool_use' && event.part) {
               const observed = opencodeToolEvent(event.part);
               if (observed) tools.record(observed);
+              if (isChecklistTool(event.part.tool)) {
+                checklist.record(checklistFromTodos(event.part.state?.input));
+              }
             }
           } catch {
             // Not JSON, skip

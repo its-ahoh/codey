@@ -1,6 +1,6 @@
 // IPC proxy — all calls go through window.codey.* (Electron preload)
 
-import type { Chat, ChatSelection, TaskBrief, TeamRunSummary } from '../types'
+import type { Chat, ChatSelection, ChecklistItem, TaskBrief, TeamRunSummary } from '../types'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 
 // Inline ChatStreamEvent to avoid cross-package import
@@ -9,6 +9,7 @@ export type ChatStreamEvent =
   | { type: 'tool_start'; chatId: string; tool?: string; message: string; input?: Record<string, unknown>; messageId?: string; step?: number }
   | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string; messageId?: string; step?: number }
   | { type: 'info'; chatId: string; message: string }
+  | { type: 'checklist'; chatId: string; message: string; items: ChecklistItem[] }
   | { type: 'stream'; chatId: string; token: string; messageId?: string; step?: number }
   | { type: 'thinking'; chatId: string; token: string; step?: number; messageId?: string }
   | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex'; model?: string }> }
