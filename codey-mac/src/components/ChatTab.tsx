@@ -18,6 +18,7 @@ import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 import { defaultThinkingExpanded } from './thinkingState'
 import { formatTokens } from './turnHeaderModel'
+import { TurnHeader } from './TurnHeader'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
 import { useGitStatus } from '../hooks/useGitStatus'
@@ -876,6 +877,11 @@ export const ChatTab: React.FC<Props> = ({
   const [multiChoice, setMultiChoice] = useState<string[]>([])
   const [selectedTurnIdState, setSelectedTurnIdState] = useState<string | null>(null)
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
+  // The turn header owns the thinking chevron, so the disclosure state has to
+  // live above it. Only a user's explicit toggle is stored; `undefined` means
+  // fall back to defaultThinkingExpanded, which auto-opens thinking while the
+  // agent is still working and has produced no answer yet.
+  const [thinkingToggles, setThinkingToggles] = useState<Record<string, boolean>>({})
   const [taskBriefLoading, setTaskBriefLoading] = useState(false)
   // This is a single app-wide display preference, not chat state. ChatTab is
   // remounted on chat switches, so seed it from localStorage and write changes
@@ -1965,27 +1971,64 @@ export const ChatTab: React.FC<Props> = ({
               style={{
                 display: 'flex', flexDirection: 'column',
                 alignItems: isUser ? 'flex-end' : 'flex-start',
-                marginBottom: 12,
+                marginBottom: isUser ? 12 : 20,
                 cursor: isUser ? 'default' : 'pointer',
                 paddingLeft: !isUser ? 6 : 0,
                 transform: isSelected ? 'translateY(-3px)' : 'translateY(0)',
                 transition: 'transform 0.18s ease',
               }}
             >
-              <div style={{
+              <div style={isUser ? {
                 minWidth: 0, maxWidth: '72%', padding: '10px 14px',
-                borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                background: isUser ? C.userBg : C.aiBg,
-                color: isUser ? C.onAccent : C.fg, fontSize: 13, lineHeight: 1.55,
+                borderRadius: '16px 16px 4px 16px',
+                background: C.userBg,
+                color: C.onAccent, fontSize: 13, lineHeight: 1.55,
                 overflowWrap: 'anywhere', wordBreak: 'break-word',
-                boxShadow: isUser
-                  ? 'none'
-                  : (isSelected
-                      ? `0 10px 24px ${C.accentDim}, 0 6px 14px ${C.accentDim}`
-                      : '0 1px 3px rgba(0,0,0,0.18)'),
-                border: isUser ? 'none' : `1px solid ${isSelected ? C.accent : C.border2}`,
-                transition: 'box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease',
+              } : {
+                // The bubble marks "what the user said". An assistant reply
+                // reads as a document; the header rule below carries the
+                // boundary the bubble used to provide.
+                //
+                // `ch` resolves against this element's 13px font, so 78ch is
+                // ~562px — about 72 characters of the 14px roomy body text, or
+                // ~43 Chinese characters. Unlike the old 72%, it does not grow
+                // with the window.
+                minWidth: 0, width: '100%', maxWidth: 'min(100%, 78ch)',
+                // 6px top is the vertical padding the first attempt at this
+                // silently dropped when it replaced the bubble's '10px 14px'.
+                // Left: 3 (rail) + 12 = the old 1 (border) + 14 (bubble).
+                padding: '6px 0 0 12px',
+                // The rail is always 3px, transparent when unselected, so
+                // selecting a turn never shifts the text column sideways.
+                borderLeft: `3px solid ${isSelected ? C.accent : 'transparent'}`,
+                background: isSelected ? C.accentDim : 'transparent',
+                // fontSize/lineHeight stay compact: non-Markdown children
+                // inherit them. Roomy applies inside <Markdown layout="roomy">.
+                color: C.fg, fontSize: 13, lineHeight: 1.55,
+                overflowWrap: 'anywhere', wordBreak: 'break-word',
+                transition: 'border-color 0.18s ease, background 0.18s ease',
               }}>
+                {!isUser && (() => {
+                  const thinking = msg.thinking?.trim() ?? ''
+                  const expanded = thinkingToggles[msg.id]
+                    ?? defaultThinkingExpanded({
+                      hasAnswer: !!msg.content.trim(),
+                      isComplete: msg.isComplete ?? false,
+                    })
+                  return (
+                    <>
+                      <TurnHeader
+                        msg={msg}
+                        hasThinking={!!thinking}
+                        expanded={expanded}
+                        onToggle={() => setThinkingToggles(p => ({ ...p, [msg.id]: !expanded }))}
+                      />
+                      {!!thinking && expanded && (
+                        <div style={styles.thinkingBody}>{thinking}</div>
+                      )}
+                    </>
+                  )
+                })()}
                 {!isUser && !!flight && msg === lastMsg && (
                   <LiveActivity toolCalls={msg.toolCalls} />
                 )}
@@ -1996,14 +2039,7 @@ export const ChatTab: React.FC<Props> = ({
                   const isStreaming = !!flight && msg === lastMsg
                   if (!parsed) return (
                     <div>
-                      {msg.thinking && (
-                        <ThinkingBlock
-                          thinking={msg.thinking}
-                          hasAnswer={!!text.trim()}
-                          isComplete={msg.isComplete ?? false}
-                        />
-                      )}
-                      <Markdown variant="assistant">{text}</Markdown>
+                      <Markdown variant="assistant" layout="roomy">{text}</Markdown>
                     </div>
                   )
                   return (
@@ -2147,38 +2183,11 @@ export const ChatTab: React.FC<Props> = ({
                   </div>
                 )
               }
+              {/* Model, fallback, tokens and duration now live in TurnHeader.
+                  The timestamp stays here so it does not compete with the
+                  turn's identity for the reader's attention. */}
               <div style={styles.tsLabel}>
                 <span>{fmtTime(msg.timestamp)}</span>
-                <span style={styles.tsRight}>
-                  {msg.role === 'assistant' && msg.model && (
-                    <span
-                      style={styles.modelBadge}
-                      title={`${msg.agent ?? 'Agent'} model`}
-                    >
-                      {msg.model}
-                    </span>
-                  )}
-                  {msg.fallback && (
-                    <span
-                      style={styles.fallbackBadge}
-                      title={`Primary ${msg.fallback.from} failed — answered by fallback ${msg.fallback.to}`}
-                    >
-                      ⤷ {msg.fallback.to}
-                    </span>
-                  )}
-                  {(() => {
-                    const tokStr = msg.tokens != null ? formatTokens(msg.tokens) : null
-                    const durStr = msg.durationSec != null && Number.isFinite(msg.durationSec) ? `${msg.durationSec}s` : null
-                    if (!tokStr && !durStr) return null
-                    return (
-                      <span style={styles.tsMeta}>
-                        {tokStr && `${tokStr} tok`}
-                        {tokStr && durStr && ' · '}
-                        {durStr}
-                      </span>
-                    )
-                  })()}
-                </span>
               </div>
             </div>
           )
@@ -2620,17 +2629,12 @@ const styles: Record<string, React.CSSProperties> = {
   messages: { flex: 1, overflowY: 'auto', padding: '22px max(22px, 5%)', background: C.bg },
   typingRow: { display: 'flex', alignItems: 'center', gap: 8, color: C.fg3, fontSize: 13, marginBottom: 12 },
   tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, paddingLeft: 4, paddingRight: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  tsMeta: { color: C.fg3, opacity: 0.55, fontVariantNumeric: 'tabular-nums' },
-  tsRight: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
+  // modelBadge is still used by team worker messages; tsRight, tsMeta and
+  // fallbackBadge moved into TurnHeader with the metadata they styled.
   modelBadge: {
     color: C.fg3, background: C.surface3, border: `1px solid ${C.border2}`,
     borderRadius: 5, padding: '1px 6px', fontSize: 10,
     fontFamily: 'SF Mono, Menlo, monospace',
-    maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-  },
-  fallbackBadge: {
-    color: C.warningFg, background: C.warningBg,
-    borderRadius: 6, padding: '1px 6px', fontSize: 10,
     maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
   inputContainer: { padding: '12px max(16px, 4%) 16px', borderTop: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, background: C.surface },
