@@ -42,7 +42,7 @@ type Action =
   | { type: 'thinkingToken'; chatId: string; token: string; step?: number; messageId?: string }
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: 'working' | 'writing'; messageId?: string }
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; teamTurnId?: string }
+  | { type: 'completeSend'; chatId: string; assistantMessageId: string; content: string; thinking?: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; teamTurnId?: string }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
@@ -361,7 +361,10 @@ export function reducer(state: State, action: Action): State {
       } else {
         messages = chat.messages.map(m =>
           m.id === action.assistantMessageId
-            ? { ...m, content: action.content, tokens: action.tokens, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
+            // `?? m.thinking` rather than a plain assignment: thinking that
+            // already streamed in through thinkingToken must not be wiped by a
+            // done event that carries none.
+            ? { ...m, content: action.content, thinking: action.thinking ?? m.thinking, tokens: action.tokens, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
             : m
         )
       }
@@ -597,6 +600,12 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               chatId: ev.chatId,
               assistantMessageId: asstId,
               content: ev.response,
+              // The agent may report thinking only at the end rather than
+              // streaming it (claude-code does exactly that when the deltas
+              // arrive as whole assistant blocks). Without this the renderer
+              // has no thinking for those turns even though the gateway
+              // persisted it, so the disclosure never appears until refetch.
+              thinking: ev.thinking,
               tokens: ev.tokens,
               durationSec: ev.durationSec,
               agent: ev.agent,
