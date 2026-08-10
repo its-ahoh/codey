@@ -2055,7 +2055,7 @@ export const ChatTab: React.FC<Props> = ({
                 //
                 // Right padding equals rail + left padding, so the text sits the
                 // same distance from both inner edges of the highlight.
-                padding: `8px ${TURN_RAIL_WIDTH + TURN_TEXT_PADDING}px 10px ${TURN_TEXT_PADDING}px`,
+                padding: `8px ${TURN_RAIL_WIDTH + TURN_TEXT_PADDING}px 6px ${TURN_TEXT_PADDING}px`,
                 // The rail is always present, transparent when unselected, so
                 // selecting a turn never shifts the text column sideways.
                 borderLeft: `${TURN_RAIL_WIDTH}px solid ${isSelected ? C.accent : 'transparent'}`,
@@ -2720,7 +2720,7 @@ const styles: Record<string, React.CSSProperties> = {
   // Horizontal padding is set per role at the render site — the timestamp has to
   // line up with the reply above it, which is inset differently (and from the
   // opposite edge) for user and assistant.
-  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   // modelBadge is still used by team worker messages; tsRight, tsMeta and
   // fallbackBadge moved into TurnHeader with the metadata they styled.
   modelBadge: {
