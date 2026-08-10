@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, pr
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
+import { hudStateCommand, hudLevelCommand } from './voice-hud'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
@@ -297,113 +298,36 @@ function inferCaptureMimeType(name: string): string {
 }
 
 // ── Voice conversation capsule ──────────────────────────────────────
-// A small always-on-top window showing that a spoken turn is in progress.
-// Separate from the main window because the converse hotkey is meant to work
-// while Codey is in the background, where an in-app pill would be invisible.
-let voiceHudWindow: BrowserWindow | null = null
-let voiceHudOwnsEscapeShortcut = false
+// The capsule is drawn by the CodeyVoice helper (HudOverlay.swift), the same
+// AppKit panel that shows dictation status. It used to be a second, Electron
+// BrowserWindow; that window had to call setVisibleOnAllWorkspaces to float
+// over other Spaces, which transforms the process type between UIElement and
+// Foreground and knocked the user's focus out of whatever app they were in on
+// the first converse hotkey press of each launch.
+//
+// Electron still decides *whether* a capsule appears — it is the only side that
+// knows a turn came from the hotkey rather than the composer button, and the
+// only side that sees the speaking phase.
 let nativeConverseActive = false
 let nativeDictationActive = false
 // Direct Fn events originate in the Helper and are hotkey turns. Composer
 // clicks override this before sending their stdin command.
 let nativeConverseFromHotkey = true
 
-function registerVoiceHudEscape() {
-  if (voiceHudOwnsEscapeShortcut) return
-  try {
-    voiceHudOwnsEscapeShortcut = globalShortcut.register('Escape', () => {
-      if (nativeConverseActive) sendVoiceHelperCommand('conversation-cancel')
-      else mainWindow?.webContents.send('voice:cancelConverse')
-    })
-  } catch { voiceHudOwnsEscapeShortcut = false }
-}
-
-function unregisterVoiceHudEscape() {
-  if (!voiceHudOwnsEscapeShortcut) return
-  try { globalShortcut.unregister('Escape') } catch { /* already gone */ }
-  voiceHudOwnsEscapeShortcut = false
-}
-
-function createVoiceHudWindow(): BrowserWindow {
-  const win = new BrowserWindow({
-    width: 220,
-    height: 64,
-    show: false,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    movable: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    focusable: false,
-    fullscreenable: false,
-    hasShadow: false,
-    webPreferences: {
-      preload: join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      // The capsule animates while the window is unfocused by definition;
-      // without this Chromium throttles it to a stutter.
-      backgroundThrottling: false,
-    },
-  })
-  // Visible over full-screen apps too — otherwise the one case where you most
-  // want a non-intrusive status readout is the case it disappears in.
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  win.setIgnoreMouseEvents(true)
-  if (isDev) {
-    win.loadURL('http://localhost:5173/#/voice-hud')
-  } else {
-    win.loadFile(join(__dirname, '../dist/index.html'), { hash: '/voice-hud' })
-  }
-  win.on('closed', () => {
-    voiceHudWindow = null
-    unregisterVoiceHudEscape()
-  })
-  return win
-}
-
-/**
- * Bottom-centre of the display under the cursor, 80px up — the same spot the
- * Swift helper puts the dictation capsule (HudOverlay.swift), so the two
- * never appear in different places for what is, to the user, the same thing.
- */
-const VOICE_HUD_BOTTOM_GAP = 80
-
-function positionVoiceHud(win: BrowserWindow) {
-  try {
-    const cursor = screen.getCursorScreenPoint()
-    const display = screen.getDisplayNearestPoint(cursor)
-    const { x, y, width, height } = display.workArea
-    const [w, h] = win.getSize()
-    win.setPosition(
-      Math.round(x + (width - w) / 2),
-      Math.round(y + height - h - VOICE_HUD_BOTTOM_GAP),
-      false,
-    )
-  } catch { /* fall back to wherever it opened */ }
-}
-
 function showVoiceHud(state: string) {
-  if (!voiceHudWindow || voiceHudWindow.isDestroyed()) {
-    voiceHudWindow = createVoiceHudWindow()
-  }
-  const win = voiceHudWindow
-  registerVoiceHudEscape()
-  if (!win.isVisible()) {
-    positionVoiceHud(win)
-    // showInactive, never show: taking focus would interrupt whatever the
-    // user is typing in another app.
-    win.showInactive()
-  }
-  win.webContents.send('voice:hudState', state)
+  sendVoiceHudCommand(hudStateCommand(state))
 }
 
 function hideVoiceHud() {
-  unregisterVoiceHudEscape()
-  if (voiceHudWindow && !voiceHudWindow.isDestroyed()) {
-    voiceHudWindow.webContents.send('voice:hudState', 'hidden')
-    voiceHudWindow.hide()
+  sendVoiceHudCommand(hudStateCommand('idle'))
+}
+
+function sendVoiceHudCommand(command: string | null) {
+  if (!command) return
+  if (!sendVoiceHelperCommand(command)) {
+    // No helper means no capsule, but it also means capture is already broken;
+    // one log line beats a dialog the user cannot act on.
+    sendToRenderer('gateway-log', `[voice] helper unavailable, capsule skipped: ${command}`)
   }
 }
 
@@ -1303,7 +1227,10 @@ function handleVoiceHelperLine(line: string) {
       if (dictate) {
         mainWindow?.webContents.send('voice:nativeDictationLevel', event.level)
       } else {
-        if (voiceHudWindow?.isVisible()) voiceHudWindow.webContents.send('voice:hudLevel', event.level)
+        // Round trip: the helper reported this level, and we hand it straight
+        // back for the capsule. Worth it to keep one control point for the
+        // meter across both the native and browser capture paths.
+        if (nativeConverseFromHotkey) sendVoiceHudCommand(hudLevelCommand(event.level))
         mainWindow?.webContents.send('voice:nativeConverseLevel', event.level)
       }
     } else if (event.type === 'transcript' && event.text) {
@@ -2660,9 +2587,7 @@ app.whenReady().then(async () => {
   // Level updates arrive ~20x/s; `send` rather than `invoke` so they never
   // queue up behind a reply the sender doesn't need anyway.
   ipcMain.on('voice:hudLevel', (_e, level: number) => {
-    if (voiceHudWindow && !voiceHudWindow.isDestroyed() && voiceHudWindow.isVisible()) {
-      voiceHudWindow.webContents.send('voice:hudLevel', level)
-    }
+    sendVoiceHudCommand(hudLevelCommand(level))
   })
 
   ipcMain.handle('voice:hudState', async (_e, state: string) =>
