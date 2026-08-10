@@ -51,6 +51,40 @@ interface StreamEvent {
   permission_denials?: Array<{ tool_name: string; tool_input?: Record<string, unknown> }>;
 }
 
+export interface ClaudeRunClassification {
+  success: boolean;
+  output: string;
+  error?: string;
+}
+
+/**
+ * Classify a finished `claude` process into a success or failure response.
+ *
+ * The CLI reports API-level failures (402 Insufficient Balance, session
+ * limits, unknown models) as a stream-json `result` event with `is_error:
+ * true` and the message in `result` — and it can exit 0 for those. Exit code
+ * alone is therefore not a reliable failure signal; the result event's
+ * `is_error` flag must win. When it is set, the API message is also preferred
+ * over stderr, which may only hold an auth-source warning.
+ */
+export function classifyClaudeRunResult(input: {
+  code: number | null;
+  result: string;
+  streamedText: string;
+  stderr: string;
+  resultIsError: boolean;
+  hasUserQuestion: boolean;
+}): ClaudeRunClassification {
+  const { code, result, streamedText, stderr, resultIsError, hasUserQuestion } = input;
+  const output = result || streamedText;
+  if (hasUserQuestion) return { success: true, output };
+  if (code === 0 && output && !resultIsError) return { success: true, output };
+  const error = resultIsError
+    ? (output || stderr || `Claude Code exited with code ${code}`)
+    : (stderr || (code !== 0 ? `Claude Code exited with code ${code}` : 'Claude Code returned empty response'));
+  return { success: false, output, error };
+}
+
 export class ClaudeCodeAdapter extends BaseAgentAdapter {
   name = 'claude-code';
   private sessionId?: string;
@@ -160,6 +194,10 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       let streamedText = '';
       let buffer = '';
       let stderr = '';
+      // The CLI reports API failures (402, session limit, unknown model) as a
+      // `result` event with is_error:true — sometimes with a 0 exit code.
+      // Track it so the close handler can classify the run as a failure.
+      let resultIsError = false;
       let tokens: AgentResponse['tokens'];
       let durationSec: number | undefined;
       const statusUpdates: string[] = [];
@@ -325,6 +363,9 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           if (event.result) {
             result = event.result;
           }
+          if (event.is_error) {
+            resultIsError = true;
+          }
           if (event.usage) {
             const input = event.usage.input_tokens;
             const output = event.usage.output_tokens;
@@ -396,20 +437,29 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           if (parsed) userQuestion = parsed;
         }
 
+        const cls = classifyClaudeRunResult({
+          code,
+          result,
+          streamedText,
+          stderr,
+          resultIsError,
+          hasUserQuestion: !!userQuestion,
+        });
+
         if (userQuestion) {
-          const resp = this.createResponse(output || userQuestion.question, true, tokens, finalDuration, statusUpdates, states);
+          const resp = this.createResponse(cls.output || userQuestion.question, true, tokens, finalDuration, statusUpdates, states);
           resp.userQuestion = userQuestion;
           safeResolve(resp);
-        } else if (code === 0 && output) {
-          const successResp = this.createResponse(output, true, tokens, finalDuration, statusUpdates, states, permissionDenials);
+        } else if (cls.success) {
+          const successResp = this.createResponse(cls.output, true, tokens, finalDuration, statusUpdates, states, permissionDenials);
           successResp.thinking = thinkingText || undefined;
           safeResolve(successResp);
         } else {
           // Clear session on failure to avoid "session already in use" errors
           this.sessionId = undefined;
-          const error = stderr || (code !== 0 ? `Claude Code exited with code ${code}` : 'Claude Code returned empty response');
-          this.debug(`[claude-code] Error: ${error}`);
-          safeResolve(this.createResponse(error, false, undefined, finalDuration, statusUpdates, states));
+          const message = cls.error ?? (code !== 0 ? `Claude Code exited with code ${code}` : 'Claude Code returned empty response');
+          this.debug(`[claude-code] Error: ${message}`);
+          safeResolve(this.createResponse(message, false, undefined, finalDuration, statusUpdates, states));
         }
       });
 
