@@ -12,7 +12,7 @@ final class VoiceCoordinator {
         case speaking
     }
 
-    private enum CaptureDestination {
+    private enum CaptureDestination: Equatable {
         case dictation
         case composerDictation
         case conversation
@@ -333,7 +333,12 @@ final class VoiceCoordinator {
     /// Commands sent over stdin by the Electron parent. This lets in-chat
     /// controls use the same native capture path as the global hotkey.
     func handleExternalCommand(_ command: String) {
-        switch command.trimmingCharacters(in: .whitespacesAndNewlines) {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed.split(separator: " ", maxSplits: 1).map(String.init)
+        guard let verb = parts.first else { return }
+        let argument = parts.count > 1 ? parts[1] : ""
+
+        switch verb {
         // Composer buttons remain available even when their global-hotkey
         // switches are off; those switches only control registration.
         case "conversation-toggle": handleCaptureToggle(destination: .conversation)
@@ -349,7 +354,31 @@ final class VoiceCoordinator {
             } else if state == .speaking {
                 endSpeaking()
             }
+        // Electron drives the conversation capsule: it is the only side that
+        // knows whether a turn came from the hotkey (capsule) or the composer
+        // button (no capsule), and the only side that sees the speaking phase.
+        case "hud-state": applyConversationHud(argument)
+        case "hud-level":
+            guard !dictationCaptureInFlight, let level = Float(argument) else { break }
+            hud.updateLevel(level)
         default: break
+        }
+    }
+
+    /// A dictation capture owns the panel outright. Conversation commands are
+    /// dropped while one is running rather than fighting over it — the two
+    /// cannot legitimately overlap, since there is one microphone.
+    private var dictationCaptureInFlight: Bool {
+        captureDestination == .dictation && state != .idle
+    }
+
+    private func applyConversationHud(_ raw: String) {
+        guard !dictationCaptureInFlight else { return }
+        switch raw {
+        case "listening": hud.show(.conversation(.listening))
+        case "thinking":  hud.show(.conversation(.thinking))
+        case "speaking":  hud.show(.conversation(.speaking))
+        default:          hud.hide()   // "idle", "hidden", anything unrecognized
         }
     }
 
