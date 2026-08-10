@@ -401,8 +401,11 @@ Add below `setMeterVisible` (line 248):
             capsule.isHidden = false
             capsuleLayer = capsule
             // The capsule paints its own fill and edge, so the HUD's blur and
-            // hairline would only muddy it.
-            blur.isHidden = true
+            // hairline would only muddy it. Strip the hairline and any
+            // background, but keep the view itself visible: the capsule's
+            // opaque fill fully covers the blur material underneath, and hiding
+            // the view would take the capsule, the meter bars and the label
+            // down with it since they all live in the same layer tree.
             host.backgroundColor = NSColor.clear.cgColor
             host.borderWidth = 0
             // Meter bars are white in both modes, which reads on the dark fill.
