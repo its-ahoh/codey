@@ -57,6 +57,22 @@ export interface ApiKeyEntry {
   purpose?: 'general' | 'voice';
 }
 
+/**
+ * Reasoning-effort level, forwarded verbatim to every agent CLI.
+ *
+ * These five values are claude-code's `--effort` enum and are a strict subset
+ * of codex's `model_reasoning_effort` enum, so no per-agent translation is
+ * needed — only the flag syntax differs. `undefined` means "pass no flag" and
+ * lets each CLI use its own default; there is deliberately no 'default'
+ * literal, so there is exactly one representation of "unset".
+ */
+export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/** Runtime guard for values arriving from JSON config or chat commands. */
+export function isThinkingEffort(v: unknown): v is ThinkingEffort {
+  return v === 'low' || v === 'medium' || v === 'high' || v === 'xhigh' || v === 'max';
+}
+
 export interface ModelConfig {
   provider: string;
   model: string;
@@ -118,6 +134,12 @@ export interface AgentRequest {
   prompt: string;
   agent: CodingAgent;
   model?: ModelConfig;
+  /**
+   * Reasoning-effort level for this single invocation. Deliberately NOT part of
+   * ModelConfig: effort is per-call intent, not a property of a model
+   * definition, and storing it there would pollute the gateway.json catalog.
+   */
+  effort?: ThinkingEffort;
   timeout?: number;
   interactive?: boolean;
   skipPermissions?: boolean;
@@ -269,6 +291,13 @@ export interface AgentModelConfig {
   provider?: 'anthropic' | 'openai' | 'google';
   defaultModel?: string;
   models?: string[];  // model names only, provider determined by agent.provider
+  /**
+   * Per-agent default reasoning effort. Per-agent rather than one global value
+   * because codex's valid subset varies by model, and `max` costs a different
+   * order of magnitude across agents — a single value would force everyone onto
+   * the most conservative agent's ceiling.
+   */
+  defaultEffort?: ThinkingEffort;
 }
 
 // Advisor configuration — routing/orchestration LLM used by /team and
