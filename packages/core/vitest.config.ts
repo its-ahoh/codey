@@ -27,6 +27,7 @@ export default defineConfig({
       'src/playbook-induction.test.ts',
       'src/agents/tool-events.test.ts',
       'src/agents/claude-code.test.ts',
+      'src/agents/effort.test.ts',
       'src/context.extract-meta.test.ts',
       'src/aide-automation.test.ts',
       'src/speech-digest.test.ts',
