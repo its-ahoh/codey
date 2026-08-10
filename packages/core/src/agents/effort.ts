@@ -41,5 +41,11 @@ export function isEffortRejection(text: string, passedEffort: string): boolean {
   if (!text) return false;
   return text.includes('invalid_enum_value')
     && text.includes('reasoning.effort')
+    // Anchored to "Invalid value: '<L>'" — never a bare `'${passedEffort}'`
+    // match. The same error also lists every valid level in a trailing
+    // "Supported values are: 'none', 'minimal', 'low', ..." enumeration, so a
+    // bare quoted-value check would match on 'low' being *listed as
+    // supported* even when the run actually passed and got rejected for
+    // 'max'. Caught this via TDD — keep the anchor.
     && text.includes(`Invalid value: '${passedEffort}'`);
 }
