@@ -1910,7 +1910,7 @@ app.whenReady().then(async () => {
       const known = workspaceManager.listWorkspaces()
       const resolved = resolveCaptureSubmit(payload?.text ?? '', payload?.workspaceName, known)
       if (!resolved.ok) throw new Error(resolved.error)
-      const chat = await inProcessGateway.createChat({ workspaceName: resolved.workspaceName })
+      const chat = inProcessGateway.getChatManager().create({ workspaceName: resolved.workspaceName })
 
       // Copy any picked files into the target workspace's .codey/uploads/ and
       // build FileAttachments — mirrors the chats:upload handler so the agent
@@ -3547,14 +3547,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('chats:create', async (_e, input: { workspaceName: string; selection?: any; title?: string }) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
-      return inProcessGateway.createChat(input)
-    })
-  )
-
-  ipcMain.handle('chats:ensureWorktree', async (_e, id: string) =>
-    wrap(async () => {
-      if (!inProcessGateway) throw new Error('Gateway not initialized')
-      return inProcessGateway.ensureChatWorktree(id)
+      return inProcessGateway.getChatManager().create(input)
     })
   )
 

@@ -159,15 +159,6 @@ export interface Chat {
    *  runs here instead of the workspace's workingDir — used to bind a chat to a
    *  git worktree. Cleared (deleted) to fall back to the workspace dir. */
   workingDirOverride?: string;
-  /** Git environment owned by this chat. Normal chats in Git workspaces are
-   *  provisioned with one dedicated branch and worktree; all execution
-   *  surfaces use `workingDir` as their cwd. */
-  gitContext?: {
-    repositoryRoot: string;
-    branch: string;
-    worktreePath: string;
-    workingDir: string;
-  };
   /** Last unanswered choice question in a non-team chat. Cleared on next user message. */
   lastAskedOptions?: { messageId: string; options: string[] };
   /** Set when the skill distiller has proposed a new skill and is waiting for

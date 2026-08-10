@@ -8,7 +8,6 @@ interface Props {
   workingDir: string | undefined
   repoRoot: string | undefined           // for default worktree path; falls back to workingDir
   boundWorktreePath?: string             // chat.workingDirOverride
-  gitContext?: { branch: string; worktreePath: string }
   onBindWorktree: (path: string | null) => void
   onOpenTerminal?: () => void
 }
@@ -16,7 +15,7 @@ interface Props {
 type Mode = { kind: 'list' } | { kind: 'create' } | { kind: 'dirty'; target: string }
 type PickerView = 'branches' | 'worktrees'
 
-export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorktreePath, gitContext, onBindWorktree, onOpenTerminal }) => {
+export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorktreePath, onBindWorktree, onOpenTerminal }) => {
   const git = useGitBranches(workingDir)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -44,9 +43,7 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
   )
   const remoteFiltered = useMemo(() => filterBranches(s?.remote ?? [], query), [s, query])
   const repo = repoRoot || workingDir || ''
-  const worktreePath = gitContext?.worktreePath || boundWorktreePath || workingDir || ''
-  const branchLabel = s?.branch || gitContext?.branch || '—'
-  const branchDrift = !!gitContext && !!s?.branch && s.branch !== gitContext.branch
+  const worktreePath = boundWorktreePath || workingDir || ''
   const orderedWorktrees = useMemo(
     () => currentFirst(
       [...(main ? [main] : []), ...others],
@@ -104,14 +101,14 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
         }
         return !o
       })}
-        title={worktreePath ? `${branchLabel}\n${worktreePath}` : 'Chat workspace unavailable'}
-        aria-label={`Chat workspace: ${branchLabel}, ${worktreePath || 'unavailable'}`}
+        title={worktreePath ? `${s?.branch ?? 'Unknown branch'}\n${worktreePath}` : 'Chat workspace unavailable'}
+        aria-label={`Chat workspace: ${s?.branch ?? 'unknown branch'}, ${worktreePath || 'unavailable'}`}
         aria-expanded={open}
       >
         <UIIcon name="code" size={15} />
         <span style={styles.pillIdentity}>
           <span style={styles.pillBranch}>
-            <span style={styles.ellipsis}>{branchLabel}</span>
+            <span style={styles.ellipsis}>{s?.branch ?? '—'}</span>
             {s && s.dirty > 0 && <span style={styles.dirty}>+{s.dirty}</span>}
           </span>
           <span style={styles.pillPath}>{compactWorktreePath(worktreePath)}</span>
@@ -126,7 +123,7 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
           <div style={styles.currentWorkspace}>
             <UIIcon name="workspace" size={15} />
             <div style={styles.currentIdentity}>
-              <div style={styles.currentBranch}>{branchLabel}</div>
+              <div style={styles.currentBranch}>{s?.branch ?? '—'}</div>
               <div style={styles.currentPath} title={worktreePath}>{compactWorktreePath(worktreePath)}</div>
             </div>
             <button style={styles.iconButton} onClick={() => void copyWorktreePath()} title="Copy worktree path" aria-label="Copy worktree path">
@@ -138,15 +135,7 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
               </button>
             )}
           </div>
-          {gitContext ? (
-            <div style={branchDrift ? styles.driftNote : styles.dedicatedNote}>
-              <UIIcon name={branchDrift ? 'activity' : 'check'} size={13} />
-              {branchDrift ? `Expected ${gitContext.branch}` : 'Dedicated to this chat'}
-            </div>
-          ) : (
-            <>
-              <div style={styles.sharedNote}>Shared workspace</div>
-              {mode.kind === 'dirty' ? (
+          {mode.kind === 'dirty' ? (
             <div style={styles.section}>
               <div style={styles.warn}>Switching would overwrite local changes.</div>
               <div style={styles.row}>
@@ -158,7 +147,7 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
                 <button style={styles.ghost} onClick={() => setMode({ kind: 'list' })}>Cancel</button>
               </div>
             </div>
-              ) : mode.kind === 'create' ? (
+          ) : mode.kind === 'create' ? (
             <div style={styles.section}>
               <input autoFocus placeholder="new-branch-name" value={newName}
                 onChange={e => setNewName(e.target.value)} style={styles.input} />
@@ -172,7 +161,7 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
                 <button style={styles.ghost} onClick={() => setMode({ kind: 'list' })}>Cancel</button>
               </div>
             </div>
-              ) : (
+          ) : (
             <>
               <div style={styles.viewTabs} role="tablist" aria-label="Workspace choices">
                 <button role="tab" aria-selected={view === 'branches'} style={view === 'branches' ? styles.viewTabActive : styles.viewTab} onClick={() => setView('branches')}>Branches</button>
@@ -223,8 +212,6 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
                 {view === 'branches' && <button style={styles.ghost} onClick={() => git.fetchRemote()}>Fetch</button>}
               </div>
             </>
-              )}
-            </>
           )}
         </div>
       )}
@@ -261,9 +248,6 @@ const styles: Record<string, React.CSSProperties> = {
   currentBranch: { color: C.fg, fontSize: 11, fontWeight: 600, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   currentPath: { color: C.fg3, fontSize: 9, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   iconButton: { width: 27, height: 27, padding: 0, border: `1px solid ${C.border2}`, borderRadius: 6, background: C.surface3, color: C.fg2, cursor: 'pointer', display: 'grid', placeItems: 'center', flexShrink: 0 },
-  dedicatedNote: { display: 'flex', alignItems: 'center', gap: 6, color: C.green, fontSize: 10, padding: '5px 7px 2px' },
-  driftNote: { display: 'flex', alignItems: 'center', gap: 6, color: C.red, fontSize: 10, padding: '5px 7px 2px', fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden' },
-  sharedNote: { color: C.yellow, fontSize: 9, fontWeight: 600, padding: '3px 7px 0' },
   viewTabs: { display: 'flex', padding: 2, borderRadius: 6, background: C.surface3 },
   viewTab: { flex: 1, border: 'none', borderRadius: 5, padding: '5px 8px', background: 'transparent', color: C.fg3, cursor: 'pointer', fontSize: 11 },
   viewTabActive: { flex: 1, border: `1px solid ${C.border2}`, borderRadius: 5, padding: '4px 8px', background: C.surface2, color: C.fg, cursor: 'pointer', fontSize: 11, fontWeight: 600 },

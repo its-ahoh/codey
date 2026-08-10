@@ -21,8 +21,7 @@ import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS } from '@codey/core';
 import { WorkerManager } from '@codey/core';
-import { ChatManager, CreateChatInput } from './chats';
-import { inspectChatWorktree, provisionChatWorktree } from './chat-worktree';
+import { ChatManager } from './chats';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
@@ -120,7 +119,6 @@ export class Codey {
    *  so a later workspace switch can't save it into the wrong skills store.
    *  (Chat-surface suggestions are persisted on the Chat via ChatManager instead.) */
   private pendingSkillSuggestions = new Map<string, { suggestion: DistillResult; workspaceName: string }>();
-  private pendingChatWorktrees = new Map<string, Promise<Chat>>();
   private skillRunCounter = 0;
   private lastSkillDistillTime = 0;
   private static SKILL_DISTILL_COOLDOWN_MS = 300_000; // 5 min
@@ -693,63 +691,6 @@ export class Codey {
 
   getWorkspaceManager(): WorkspaceManager { return this.workspaceManager; }
   getChatManager(): ChatManager { return this.chatManager; }
-
-  /** Create a user chat and provision its owned Git environment before the
-   *  caller can select or run it. Non-Git workspaces continue to work without
-   *  a gitContext; Git provisioning failures remove the half-created chat. */
-  public async createChat(input: CreateChatInput): Promise<Chat> {
-    const chat = this.chatManager.create(input);
-    if (input.kind === 'automation') return chat;
-    try {
-      return await this.ensureChatWorktree(chat.id);
-    } catch (error) {
-      this.chatManager.delete(chat.id);
-      throw error;
-    }
-  }
-
-  /** Lazily migrate an existing normal chat onto its own branch/worktree. */
-  public async ensureChatWorktree(chatId: string): Promise<Chat> {
-    const chat = this.chatManager.get(chatId);
-    if (!chat) throw new Error(`Chat not found: ${chatId}`);
-    if (chat.kind === 'automation') return chat;
-    if (chat.gitContext && fs.existsSync(chat.gitContext.workingDir)) {
-      const actual = await inspectChatWorktree(chat.gitContext.workingDir);
-      if (actual?.branch === chat.gitContext.branch && actual.worktreePath === chat.gitContext.worktreePath) return chat;
-      throw new Error(`Chat worktree branch changed outside Codey; expected ${chat.gitContext.branch}, found ${actual?.branch || 'unknown'}`);
-    }
-
-    const pending = this.pendingChatWorktrees.get(chatId);
-    if (pending) return pending;
-    const provision = (async () => {
-      // Chats explicitly bound to a legacy worktree already have isolation;
-      // adopt that identity instead of manufacturing a replacement checkout.
-      if (chat.workingDirOverride && fs.existsSync(chat.workingDirOverride)) {
-        const existing = await inspectChatWorktree(chat.workingDirOverride);
-        if (existing && existing.worktreePath !== existing.repositoryRoot) {
-          return this.chatManager.setGitContext(chat.id, existing);
-        }
-        // An override pointing at the repository's main worktree is still
-        // shared, so continue below and create a genuinely dedicated one.
-        if (!existing) return chat;
-      }
-      const context = await provisionChatWorktree({
-        workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
-        workspacesRoot: this.workspaceManager.getWorkspacesRoot(),
-        workspaceName: chat.workspaceName,
-        chatId: chat.id,
-        requireCleanSource: chat.messages.length > 0,
-      });
-      if (!context) {
-        this.logger.info(`Chat ${chat.id} workspace is not a Git repository; using workspace directory`);
-        return chat;
-      }
-      this.logger.info(`Chat ${chat.id} isolated on ${context.branch} at ${context.worktreePath}`);
-      return this.chatManager.setGitContext(chat.id, context);
-    })().finally(() => this.pendingChatWorktrees.delete(chatId));
-    this.pendingChatWorktrees.set(chatId, provision);
-    return provision;
-  }
 
   public setChatEventListener(fn: (ev: any) => void): void {
     this.chatEventListener = fn;
@@ -3230,7 +3171,7 @@ export class Codey {
     }
     const workspace = binding.prefs?.workspace ?? this.workspaceManager.getCurrentWorkspace();
     const title = args.join(' ').trim() || undefined;
-    const chat = await this.createChat({ workspaceName: workspace, title });
+    const chat = this.chatManager.create({ workspaceName: workspace, title });
     if (binding.prefs?.agent || binding.prefs?.model) {
       this.chatManager.updateAgentModel(chat.id, binding.prefs.agent, binding.prefs.model);
     }
@@ -5427,9 +5368,8 @@ Example: /model gpt-4.1 write a Python script`;
     sink: (e: QQStreamEvent) => void,
     attachments?: import('@codey/core').FileAttachment[],
   ): Promise<{ response: string; tokens?: number; durationSec?: number }> {
-    let chat = this.chatManager.get(chatId);
+    const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
-    if (chat.kind !== 'automation') chat = await this.ensureChatWorktree(chatId);
 
     // Resolve workingDir from the chat's workspace.json (mirrors sendToChat).
     const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
@@ -5553,9 +5493,8 @@ Example: /model gpt-4.1 write a Python script`;
     // skill pre-run pass, taking precedence over the auto-apply matcher).
     origin?: { channel: ChannelType; channelUserId: string; skillInvoke?: SkillInvoke },
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
-    let chat = this.chatManager.get(chatId);
+    const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
-    if (chat.kind !== 'automation') chat = await this.ensureChatWorktree(chatId);
 
     // Resolvable copy of the incoming text. A digit reply to a paused team is
     // rewritten to the chosen option's text BEFORE it is persisted as the user
