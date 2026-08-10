@@ -838,9 +838,19 @@ export const ChatTab: React.FC<Props> = ({
   rightPanelMode, onRightPanelModeChange, rightPanelWidth, onRightPanelResize,
   browserLoginWait, onConfirmBrowserLogin, onDismissBrowserLogin,
 }) => {
-  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setWorkingDir: setChatWorkingDir, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, sendMessage, stopChat, clearRestore, ensureWorktree, setSelection, setAgentModel, setWorkingDir: setChatWorkingDir, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
+  const worktreeEnsureAttemptedRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!chat || chat.kind === 'automation' || !isGatewayRunning || chat.gitContext) return
+    if (worktreeEnsureAttemptedRef.current === chat.id) return
+    worktreeEnsureAttemptedRef.current = chat.id
+    void ensureWorktree(chat.id).catch(error => {
+      console.error(`Failed to isolate chat ${chat.id}:`, error)
+    })
+  }, [chat?.id, chat?.kind, chat?.gitContext, isGatewayRunning, ensureWorktree])
 
   // Voice for this chat: the transcript is sent through the normal chat path
   // below, and only the reply is read aloud.
@@ -1758,7 +1768,8 @@ export const ChatTab: React.FC<Props> = ({
         <BranchPicker
           workingDir={workingDir}
           repoRoot={workspaceDir}
-          boundWorktreePath={chat?.workingDirOverride}
+          boundWorktreePath={chat?.gitContext?.worktreePath ?? chat?.workingDirOverride}
+          gitContext={chat?.gitContext}
           onBindWorktree={async (path) => {
             if (!chat) return
             await setChatWorkingDir(chat.id, path)

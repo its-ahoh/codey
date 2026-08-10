@@ -286,6 +286,7 @@ declare global {
         list: (workspaceName?: string) => Promise<IpcResult<Chat[]>>
         get: (id: string) => Promise<IpcResult<Chat>>
         create: (input: { workspaceName: string; selection?: ChatSelection; title?: string }) => Promise<IpcResult<Chat>>
+        ensureWorktree: (id: string) => Promise<IpcResult<Chat>>
         rename: (id: string, title: string) => Promise<IpcResult<Chat>>
         taskBrief: (id: string) => Promise<IpcResult<TaskBrief | null>>
         delete: (id: string) => Promise<IpcResult<null>>

@@ -153,6 +153,7 @@ contextBridge.exposeInMainWorld('codey', {
     get: (id: string) => ipcRenderer.invoke('chats:get', id),
     create: (input: { workspaceName: string; selection?: any; title?: string }) =>
       ipcRenderer.invoke('chats:create', input),
+    ensureWorktree: (id: string) => ipcRenderer.invoke('chats:ensureWorktree', id),
     rename: (id: string, title: string) => ipcRenderer.invoke('chats:rename', id, title),
     taskBrief: (id: string) => ipcRenderer.invoke('chats:taskBrief', id),
     delete: (id: string) => ipcRenderer.invoke('chats:delete', id),
