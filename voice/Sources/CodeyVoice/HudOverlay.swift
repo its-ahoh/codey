@@ -19,6 +19,27 @@ final class HudOverlay {
         case success
         case error(String)
         case dictation(String)
+        /// The conversation capsule. Distinct from the dictation pill on
+        /// purpose: a conversation is ongoing and two-way, so it gets the live
+        /// rainbow rather than a static chrome.
+        case conversation(ConversationPhase)
+    }
+
+    /// Mirrors the three states Electron reports for a converse turn. The
+    /// labels match what the former `VoiceHud.tsx` showed, so the wording users
+    /// already know does not change.
+    enum ConversationPhase: String {
+        case listening
+        case thinking
+        case speaking
+
+        var label: String {
+            switch self {
+            case .listening: return "Listening"
+            case .thinking:  return "Thinking"
+            case .speaking:  return "Speaking"
+            }
+        }
     }
 
     private var panel: NSPanel?
@@ -30,6 +51,11 @@ final class HudOverlay {
     /// ran during the ~0.18s fade it will have flipped this back to `true`, so the
     /// stale teardown is skipped instead of yanking the panel out from under us.
     private var wantVisible = false
+    /// Lazily attached to the panel's content view the first time a
+    /// conversation capsule is shown. Kept around afterwards — a converse turn
+    /// is a repeated action and rebuilding the gradient each time is waste.
+    private var capsuleLayer: RainbowCapsuleLayer?
+    private var isCapsuleMode = false
 
     private let pillHeight: CGFloat = 44
     private let pillSidePadding: CGFloat = 16
@@ -62,6 +88,7 @@ final class HudOverlay {
 
         switch mode {
         case .recording:
+            setCapsuleMode(false)
             label.stringValue = "Listening"
             label.textColor = NSColor.labelColor
             spinner.stopAnimation(nil)
@@ -73,6 +100,7 @@ final class HudOverlay {
             applyPillLayout()
             panel.ignoresMouseEvents = true
         case .transcribing:
+            setCapsuleMode(false)
             label.stringValue = "Transcribing"
             label.textColor = NSColor.labelColor
             setMeterVisible(false)
@@ -81,6 +109,7 @@ final class HudOverlay {
             applyPillLayout()
             panel.ignoresMouseEvents = true
         case .partial(let text):
+            setCapsuleMode(false)
             // Strip the spinner once the server starts producing words — the
             // text itself is the progress indicator. Truncate for the pill so
             // long sentences don't blow past `pillMaxWidth`.
@@ -95,6 +124,7 @@ final class HudOverlay {
             applyPillLayout()
             panel.ignoresMouseEvents = true
         case .success:
+            setCapsuleMode(false)
             label.stringValue = "✓ Inserted"
             label.textColor = NSColor.systemGreen
             setMeterVisible(false)
@@ -104,6 +134,7 @@ final class HudOverlay {
             panel.ignoresMouseEvents = true
             scheduleHide(after: 1.0)
         case .error(let msg):
+            setCapsuleMode(false)
             label.stringValue = "✕ \(msg)"
             label.textColor = NSColor.systemRed
             setMeterVisible(false)
@@ -113,6 +144,7 @@ final class HudOverlay {
             panel.ignoresMouseEvents = true
             scheduleHide(after: 2.5)
         case .dictation(let text):
+            setCapsuleMode(false)
             // Side effect: stash the transcript on the clipboard so the user
             // can paste it manually wherever they end up. The HUD copy is a
             // backup display, not the primary delivery mechanism.
@@ -127,6 +159,21 @@ final class HudOverlay {
             applyDictationLayout()
             panel.ignoresMouseEvents = false
             // No scheduled hide — user dismisses by clicking.
+        case .conversation(let phase):
+            label.stringValue = phase.label
+            label.textColor = NSColor.white
+            spinner.stopAnimation(nil)
+            spinner.isHidden = true
+            // The meter stands in for the level while listening and speaking.
+            // Thinking has no audio to show, so the rainbow carries it alone.
+            setMeterVisible(phase != .thinking)
+            if phase != .thinking {
+                meterLevels = Array(repeating: 0, count: meterBarCount)
+                renderMeter()
+            }
+            setCapsuleMode(true)
+            applyPillLayout()
+            panel.ignoresMouseEvents = true
         }
 
         // Robustly assert top-of-stack visibility. If a previous auto-hide left
@@ -249,6 +296,41 @@ final class HudOverlay {
         for bar in meterBars { bar.isHidden = !visible }
     }
 
+    /// Swap the panel between the plain HUD chrome (blur + hairline border) and
+    /// the conversation capsule (rainbow outline over a dark fill). The capsule
+    /// layer sits behind the meter bars and label, which are subviews/sublayers
+    /// of the same content view.
+    private func setCapsuleMode(_ on: Bool) {
+        guard isCapsuleMode != on,
+              let blur = panel?.contentView as? NSVisualEffectView,
+              let host = blur.layer else { isCapsuleMode = on; return }
+        isCapsuleMode = on
+
+        if on {
+            let capsule = capsuleLayer ?? RainbowCapsuleLayer()
+            capsule.contentsScale = panel?.backingScaleFactor ?? 2
+            capsule.frame = blur.bounds
+            if capsule.superlayer == nil {
+                host.insertSublayer(capsule, at: 0)
+            }
+            capsule.isHidden = false
+            capsuleLayer = capsule
+            // The capsule paints its own fill and edge, so the HUD's blur and
+            // hairline would only muddy it. We strip the hairline and any
+            // background, but keep the view itself visible: the capsule's
+            // opaque fill fully covers the blur material underneath, and hiding
+            // the view would take the capsule, the meter bars and the label
+            // down with it since they all live in the same layer tree.
+            host.backgroundColor = NSColor.clear.cgColor
+            host.borderWidth = 0
+            // Meter bars are white in both modes, which reads on the dark fill.
+        } else {
+            capsuleLayer?.isHidden = true
+            host.backgroundColor = nil
+            host.borderWidth = 0.5
+        }
+    }
+
     /// Lay out the meter bars inside the pill. Called after applyPillLayout
     /// has set the panel width, and from updateLevel to refresh heights.
     private func renderMeter() {
@@ -342,6 +424,16 @@ final class HudOverlay {
         }
         label.frame = NSRect(x: x, y: (pillHeight - labelHeight) / 2, width: finalLabelWidth, height: labelHeight)
         if meterVisible { renderMeter() }
+
+        // The capsule rides along with the panel: applyPillLayout may have
+        // resized the panel, so the capsule must follow or the rainbow ring
+        // ends up offset from the pill.
+        if let capsule = capsuleLayer, isCapsuleMode {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            capsule.frame = CGRect(x: 0, y: 0, width: panelWidth, height: pillHeight)
+            CATransaction.commit()
+        }
     }
 
     /// Multi-line card: wraps text up to dictationMaxWidth, height grows to fit.
