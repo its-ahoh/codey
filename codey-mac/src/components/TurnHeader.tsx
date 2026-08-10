@@ -2,6 +2,7 @@ import React from 'react'
 import { C } from '../theme'
 import { turnHeaderMeta } from './turnHeaderModel'
 import type { ChatMessage } from '../types'
+import { UIIcon } from './UIIcons'
 
 /** Left inset applied to a whole message row. */
 export const MESSAGE_ROW_INSET = 6
@@ -56,22 +57,25 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
       {/* Without the rule below it, the row supplies its own bottom gap. */}
       <div style={{ ...styles.row, marginBottom: turnComplete ? 4 : 12 }}>
         <div style={styles.left}>
-          {meta.identity && (
-            <span style={styles.identity} title={meta.identity}>{meta.identity}</span>
-          )}
-          {hasThinking && (
-            <span
-              style={styles.chevron}
+          {hasThinking ? (
+            <button
+              type="button"
+              style={styles.disclosure}
               onClick={onToggle}
-              role="button"
               aria-expanded={expanded}
+              aria-label={`${expanded ? 'Hide' : 'Show'} thinking${meta.identity ? ` for ${meta.identity}` : ''}`}
               title={expanded ? 'Hide thinking' : 'Show thinking'}
             >
-              {expanded ? '▾' : '▸'}
-            </span>
-          )}
-        </div>
-        <div style={styles.right}>
+              {meta.identity && (
+                <span style={styles.identity} title={meta.identity}>{meta.identity}</span>
+              )}
+              <span style={{ ...styles.chevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                <UIIcon name="chevron" size={14} strokeWidth={2} />
+              </span>
+            </button>
+          ) : meta.identity ? (
+            <span style={styles.identity} title={meta.identity}>{meta.identity}</span>
+          ) : null}
           {meta.fallback && (
             <span
               style={styles.fallback}
@@ -80,6 +84,8 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
               ⤷ {meta.fallback.to}
             </span>
           )}
+        </div>
+        <div style={styles.right}>
           {meta.stats.length > 0 && (
             <span style={styles.stats}>{meta.stats.join(' · ')}</span>
           )}
@@ -92,21 +98,30 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
 
 const styles: Record<string, React.CSSProperties> = {
   row: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: 8, fontSize: 11, color: C.fg3, marginBottom: 4,
+    display: 'flex', alignItems: 'center',
+    gap: 10, fontSize: 11, color: C.fg3, marginBottom: 4,
   },
   left: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 },
-  right: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
+  right: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' },
   identity: {
     fontFamily: 'SF Mono, Menlo, monospace',
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
-  chevron: { cursor: 'pointer', fontSize: 9, userSelect: 'none', flexShrink: 0 },
+  disclosure: {
+    appearance: 'none', border: 0, background: 'transparent', color: 'inherit',
+    font: 'inherit', padding: '3px 2px', margin: '-3px -2px', minWidth: 0,
+    display: 'inline-flex', alignItems: 'center', gap: 4,
+    cursor: 'pointer', textAlign: 'left',
+  },
+  chevron: {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0, userSelect: 'none', transition: 'transform 0.15s ease',
+  },
   stats: { fontVariantNumeric: 'tabular-nums', opacity: 0.55 },
   fallback: {
     color: C.warningFg, background: C.warningBg,
     borderRadius: 6, padding: '1px 6px', fontSize: 10,
-    maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    minWidth: 0, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
   rule: { borderTop: `1px solid ${C.border2}`, marginBottom: 8 },
 }
