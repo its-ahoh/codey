@@ -9,6 +9,7 @@ import { AgentSpawnError } from '../errors';
 import { ToolCallCollector } from './tool-events';
 import { ChecklistTracker, checklistFromCodexItem } from './checklist';
 import { codexMcpArgs } from './mcp-config';
+import { codexEffortArgs, isEffortRejection, type EffortRetryable } from './effort';
 
 /**
  * Codex emits JSONL events to stdout when invoked with `--json`.
@@ -129,6 +130,7 @@ export class CodexAdapter extends BaseAgentAdapter {
         '--json',
         '--skip-git-repo-check',
       );
+      args.push(...codexEffortArgs(request.effort));
       if (request.skipPermissions) {
         args.push('--dangerously-bypass-approvals-and-sandbox');
       }
@@ -286,6 +288,28 @@ export class CodexAdapter extends BaseAgentAdapter {
           }
         } catch { /* fall through to streamedText */ }
         if (!output) output = streamedText.trim();
+
+        // codex validates model_reasoning_effort server-side and fails the whole
+        // run on a level the current model doesn't accept. Retry once without
+        // the flag so a stale effort setting can never wedge the user.
+        const attempted = request.effort;
+        const retryable = request as AgentRequest & EffortRetryable;
+        if (attempted && !retryable.__effortRetried
+            && isEffortRejection(`${errorMessage ?? ''}\n${stderr}\n${output}`, attempted)) {
+          const retryReq: AgentRequest & EffortRetryable = { ...request, effort: undefined };
+          retryReq.__effortRetried = true;
+          // resumeSessionId is carried through unchanged: the first attempt
+          // failed at parameter validation, so the session state is untouched.
+          void this.run(retryReq).then(retried => {
+            safeResolve(retried.success
+              ? {
+                  ...retried,
+                  output: `> Effort \`${attempted}\` isn't accepted by the current codex model — reran with the model's default effort.\n\n${retried.output}`,
+                }
+              : retried);
+          });
+          return;
+        }
 
         const response: AgentResponse = {
           success: code === 0 && !errorMessage && !!output,
