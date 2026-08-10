@@ -450,6 +450,7 @@ export function reducer(state: State, action: Action): State {
 interface ChatsContextValue {
   state: State
   createChat: (workspaceName: string) => Promise<Chat>
+  ensureWorktree: (chatId: string) => Promise<Chat>
   selectChat: (chatId: string | null) => void
   /** Fetch a chat by id (works for hidden automation chats) and select it. */
   openChatById: (chatId: string) => Promise<void>
@@ -709,6 +710,11 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const chat = await apiService.chats.create({ workspaceName })
       dispatch({ type: 'upsert', chat })
       dispatch({ type: 'select', chatId: chat.id })
+      return chat
+    },
+    async ensureWorktree(chatId) {
+      const chat = await apiService.chats.ensureWorktree(chatId)
+      dispatch({ type: 'upsert', chat })
       return chat
     },
     selectChat(chatId) { dispatch({ type: 'select', chatId }) },

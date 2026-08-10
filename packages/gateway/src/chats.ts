@@ -340,6 +340,19 @@ export class ChatManager {
     const chat = this.requireChat(chatId);
     if (dir === null || dir === undefined || dir === '') delete chat.workingDirOverride;
     else chat.workingDirOverride = dir;
+    // A manual override predates the owned git-context model. Never retain a
+    // stale branch/worktree identity when the cwd is changed independently.
+    delete chat.gitContext;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
+  /** Persist the dedicated Git environment provisioned for a chat. */
+  setGitContext(chatId: string, context: NonNullable<Chat['gitContext']>): Chat {
+    const chat = this.requireChat(chatId);
+    chat.gitContext = context;
+    chat.workingDirOverride = context.workingDir;
     chat.updatedAt = Date.now();
     this.persist(chat);
     return chat;

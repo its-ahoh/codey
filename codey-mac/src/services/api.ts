@@ -183,6 +183,8 @@ export const apiService = {
       unwrap(await window.codey.chats.get(id)),
     create: async (input: { workspaceName: string; selection?: ChatSelection; title?: string }): Promise<Chat> =>
       unwrap(await window.codey.chats.create(input)),
+    ensureWorktree: async (id: string): Promise<Chat> =>
+      unwrap(await window.codey.chats.ensureWorktree(id)),
     rename: async (id: string, title: string): Promise<Chat> =>
       unwrap(await window.codey.chats.rename(id, title)),
     taskBrief: async (id: string): Promise<TaskBrief | null> =>

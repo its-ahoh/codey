@@ -22,6 +22,22 @@ describe('ChatManager.setWorkingDirOverride', () => {
     const cleared = mgr.setWorkingDirOverride(chat.id, null);
     expect(cleared.workingDirOverride).toBeUndefined();
   });
+
+  it('persists an owned git context and clears stale identity on manual override', () => {
+    const chat = mgr.create({ workspaceName: 'ws' });
+    const context = {
+      repositoryRoot: '/repo',
+      branch: 'codey/chat-123',
+      worktreePath: '/worktrees/chat-123',
+      workingDir: '/worktrees/chat-123/packages/app',
+    };
+    const isolated = mgr.setGitContext(chat.id, context);
+    expect(isolated.gitContext).toEqual(context);
+    expect(isolated.workingDirOverride).toBe(context.workingDir);
+
+    const rebound = mgr.setWorkingDirOverride(chat.id, '/tmp/other');
+    expect(rebound.gitContext).toBeUndefined();
+  });
 });
 
 describe('ChatManager.updateAgentModel', () => {
