@@ -125,6 +125,7 @@ contextBridge.exposeInMainWorld('codey', {
   },
   skills: {
     list: (agent?: string) => ipcRenderer.invoke('skills:list', agent),
+    usage: (agent?: string) => ipcRenderer.invoke('skills:usage', agent),
     install: (payload: { agent?: string; scope: 'user' | 'project'; localDir?: string; gitUrl?: string }) =>
       ipcRenderer.invoke('skills:install', payload),
     remove: (dir: string) => ipcRenderer.invoke('skills:remove', dir),
