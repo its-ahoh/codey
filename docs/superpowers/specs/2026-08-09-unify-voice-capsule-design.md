@@ -87,28 +87,51 @@ Two deliberate changes from today's look, both requested:
 Both are named constants at the top of `RainbowCapsuleLayer` so they can be
 adjusted after a look on real hardware.
 
-### When the capsule shows
+### When the capsule shows: Electron stays the sole decider
 
-Only for **hotkey-triggered conversation turns**. Composer-button dictation and
-composer-button conversation keep calling `hud.hide()`: the user is looking at
-the window, so a floating overlay is redundant. This preserves exactly what
-Electron's `nativeConverseFromHotkey` gate does today (`main.ts:1297`).
+Electron already owns the "should there be a capsule" decision, in exactly two
+places, and both already gate correctly:
+
+- native/local turns: `main.ts:1297`, gated on `nativeConverseFromHotkey`
+- browser turns (non-local provider): the renderer's `voice:hudState` IPC,
+  gated by `ChatTab.tsx:1663`'s `voice.fromHotkey` check
+
+So `showVoiceHud` / `hideVoiceHud` become thin stdin senders and every call site
+upstream stays untouched. Composer-button turns get no capsule for the same
+reason they get none today: neither gate fires.
+
+This drops a piece an earlier draft of this spec called for — a
+`conversation-toggle hotkey` command variant letting the helper decide for
+itself. It is unnecessary. The helper does not need to know why a turn started;
+it needs to draw what it is told to draw.
+
+Two facts confirm Electron must stay the driver:
+
+- `VoiceCoordinator.startConverse` (line 519) has no callers. The helper's
+  `.speaking` state is unreachable in the current build — a conversation reply
+  and its TTS live in Electron. Only Electron knows when a turn is speaking.
+- The level signal already round-trips through Electron on local turns
+  (`onLevel` → `emitConversationEvent` → `main.ts:1306`). One source for the
+  meter is worth more than saving a hop on a 20 Hz signal over a local pipe.
 
 ### stdin protocol
 
-`VoiceCoordinator.handleExternalCommand` gains:
+`VoiceCoordinator.handleExternalCommand` gains two commands:
 
-- `conversation-toggle hotkey` — the existing `conversation-toggle` keeps its
-  current no-capsule meaning; the `hotkey` argument opts into the capsule. The
-  Fn path calls `handleConverseToggle()` inside the helper and is a hotkey turn
-  by definition.
-- `hud-state <listening|thinking|speaking|idle>`
+- `hud-state <listening|thinking|speaking|idle>` — `idle` hides
 - `hud-level <0..1>`
 
-The last two exist for the non-local provider path, where the renderer does the
-recording and therefore owns state and level. When `sendVoiceHelperCommand`
-returns false (helper not running), skip silently and write one
-`[voice]` log line — in that situation recording is already failing.
+Both are ignored while a **dictation** capture is in flight
+(`captureDestination == .dictation && state != .idle`), so a stray command
+cannot pull the pill out from under dictation. A local-provider conversation
+does not trip the guard: its `captureDestination` is `.conversation`.
+
+When `sendVoiceHelperCommand` returns false (helper not running), skip silently
+and write one `[voice]` log line — recording is already failing in that case.
+
+`HudOverlay` keeps a single `NSPanel` for both the dictation pill and the
+conversation capsule. The two cannot logically co-occur: one microphone, one
+capture at a time.
 
 ### Electron: deletions
 
@@ -133,10 +156,15 @@ it configured. The bug is not fixed; its home is removed.
 
 **Automated (vitest, alongside `codey-mac/electron/capture.test.ts`)**
 
-- `conversation-toggle hotkey` is emitted for hotkey turns and plain
-  `conversation-toggle` for composer-button turns.
-- `voice:hudState` / `voice:hudLevel` forward the right stdin commands.
-- Both degrade without throwing when the helper is absent.
+Command encoding moves into a pure `electron/voice-hud.ts` module with no
+Electron imports, following the pattern `electron/capture.ts` established, so it
+can be tested directly:
+
+- `hudStateCommand` maps each renderer state onto the right stdin line, and maps
+  `idle` / `hidden` / unknown values onto `hud-state idle`.
+- `hudLevelCommand` clamps to `0..1` and emits a fixed-precision level, so a
+  `NaN` or out-of-range reading can never produce a malformed line.
+- `main.ts`'s senders degrade without throwing when the helper is absent.
 
 **Manual, on real hardware — cannot be automated, will not be claimed as verified**
 
