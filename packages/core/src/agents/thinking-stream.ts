@@ -4,7 +4,6 @@ export interface ThinkingProbe {
   event?: {
     type?: string;
     delta?: { type?: string; thinking?: string; text?: string };
-    content_block?: { type?: string; name?: string };
   };
 }
 
@@ -17,11 +16,4 @@ export function thinkingDeltaFrom(event: ThinkingProbe): string | null {
     return delta.thinking;
   }
   return null;
-}
-
-/** True when this event opens a (non-redacted) thinking content block. */
-export function isThinkingBlockStart(event: ThinkingProbe): boolean {
-  if (event.type !== 'stream_event') return false;
-  if (event.event?.type !== 'content_block_start') return false;
-  return event.event.content_block?.type === 'thinking';
 }
