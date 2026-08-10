@@ -149,8 +149,11 @@ final class RainbowCapsuleLayer: CALayer {
     }
 
     /// A capsule-shaped ring that is opaque at the edge and transparent
-    /// `bleedDepth` points in. Used as an alpha mask, so only luminance and
-    /// alpha matter. Drawn once per size change rather than per frame.
+    /// `bleedDepth` points in. Used as an alpha mask — `CALayer.mask` reads the
+    /// image's alpha channel only, so the falloff must be encoded as alpha, not
+    /// as grey levels (a context with no alpha channel would make every pixel
+    /// fully opaque regardless of colour, masking nothing). Drawn once per size
+    /// change rather than per frame.
     private static func bleedMaskImage(size: CGSize) -> CGImage? {
         guard size.width > 0, size.height > 0 else { return nil }
         let width = Int(size.width.rounded(.up))
@@ -161,15 +164,15 @@ final class RainbowCapsuleLayer: CALayer {
             height: height,
             bitsPerComponent: 8,
             bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceGray(),
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
 
-        ctx.setFillColor(gray: 0, alpha: 1)
-        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.clear(CGRect(x: 0, y: 0, width: width, height: height))
 
-        // Concentric strokes stepping inward, each dimmer than the last. Simple
-        // and exact at these sizes; a blur would cost more and look the same.
+        // Concentric strokes stepping inward, each more transparent than the
+        // last. Simple and exact at these sizes; a blur would cost more and
+        // look the same.
         let steps = max(1, Int(bleedDepth.rounded()))
         for step in 0..<steps {
             let t = CGFloat(step) / CGFloat(steps)          // 0 at edge, →1 inward
@@ -179,7 +182,7 @@ final class RainbowCapsuleLayer: CALayer {
                 .insetBy(dx: inset, dy: inset)
             guard rect.width > 0, rect.height > 0 else { break }
             let radius = rect.height / 2
-            ctx.setStrokeColor(gray: alpha, alpha: 1)
+            ctx.setStrokeColor(gray: 0, alpha: alpha)
             ctx.setLineWidth(1)
             ctx.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
             ctx.strokePath()
