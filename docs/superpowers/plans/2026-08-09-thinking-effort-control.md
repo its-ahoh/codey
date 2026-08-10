@@ -309,7 +309,11 @@ export function isEffortRejection(text: string, passedEffort: string): boolean {
   if (!text) return false;
   return text.includes('invalid_enum_value')
     && text.includes('reasoning.effort')
-    && text.includes(`'${passedEffort}'`);
+    // Anchored to "Invalid value: '<L>'", never a bare '<L>' match: the error's
+    // own "Supported values are: 'none', 'minimal', 'low', ..." enumeration
+    // quotes every level, so a bare match fires on 'low' even when the run
+    // passed 'max'.
+    && text.includes(`Invalid value: '${passedEffort}'`);
 }
 ```
 
