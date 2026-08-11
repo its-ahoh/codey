@@ -56,6 +56,10 @@ final class HudOverlay {
     /// is a repeated action and rebuilding the gradient each time is waste.
     private var capsuleLayer: RainbowCapsuleLayer?
     private var isCapsuleMode = false
+    /// Size/radius the blur view's `maskImage` was last drawn for, so a resize
+    /// that changes neither skips the redraw.
+    private var maskedSize: CGSize = .zero
+    private var maskedRadius: CGFloat = -1
 
     private let pillHeight: CGFloat = 44
     private let pillSidePadding: CGFloat = 16
@@ -245,6 +249,7 @@ final class HudOverlay {
         blur.layer?.borderWidth = 0.5
         blur.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.4).cgColor
         p.contentView = blur
+        applyMask(to: blur, size: rect.size, radius: pillHeight / 2)
 
         // Click-to-dismiss for the dictation card. Active even in pill modes,
         // but those have ignoresMouseEvents = true so clicks pass through.
@@ -372,6 +377,37 @@ final class HudOverlay {
         hide()
     }
 
+    // MARK: - Shape
+
+    /// Clip the blur view to the rounded shape with an explicit `maskImage`.
+    ///
+    /// `layer.cornerRadius` is not enough on its own: a `.behindWindow`
+    /// visual-effect view's material is composited by the window server, not
+    /// drawn into that layer, so the corner radius is not a reliable clip. When
+    /// the blur degrades to a flat opaque fill — Accessibility's "Reduce
+    /// transparency"/"Increase contrast", screen sharing, or any session where
+    /// background blur is unavailable — the material paints the full rectangle
+    /// and a box shows up around the pill. `maskImage` is honoured on every one
+    /// of those paths, and it also makes the window shadow follow the rounded
+    /// shape instead of the bounding box.
+    ///
+    /// Redrawn at the exact view size on each shape change (cheap, and it only
+    /// happens when the panel resizes) rather than using a stretched cap-inset
+    /// image, whose center slice would collapse at the pill's height.
+    private func applyMask(to blur: NSVisualEffectView, size: CGSize, radius: CGFloat) {
+        guard size.width > 0, size.height > 0 else { return }
+        if maskedSize == size, maskedRadius == radius, blur.maskImage != nil { return }
+        let r = max(0, min(radius, min(size.width, size.height) / 2))
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).fill()
+            return true
+        }
+        blur.maskImage = image
+        maskedSize = size
+        maskedRadius = radius
+    }
+
     // MARK: - Layouts
 
     /// Single-line pill: icon (dot or spinner) + status text. Panel width
@@ -412,6 +448,7 @@ final class HudOverlay {
 
         resizePanel(width: panelWidth, height: pillHeight)
         blur.layer?.cornerRadius = pillHeight / 2
+        applyMask(to: blur, size: CGSize(width: panelWidth, height: pillHeight), radius: pillHeight / 2)
 
         let usedContentWidth = iconWidth + gap + finalLabelWidth
         var x = floor((panelWidth - usedContentWidth) / 2)
@@ -453,6 +490,7 @@ final class HudOverlay {
 
         resizePanel(width: dictationMaxWidth, height: totalHeight)
         blur.layer?.cornerRadius = 14
+        applyMask(to: blur, size: CGSize(width: dictationMaxWidth, height: totalHeight), radius: 14)
 
         label.frame = NSRect(x: dictationPadding, y: dictationPadding, width: textWidth, height: labelHeight)
     }
