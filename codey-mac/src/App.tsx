@@ -8,7 +8,7 @@ import { ChatsProvider, useChats } from './hooks/useChats'
 import { QuickQuestionProvider } from './hooks/useQuickQuestion'
 import { useGateway } from './hooks/useGateway'
 import { CoreOfflineBanner } from './components/CoreOfflineBanner'
-import { CodeyMark, UIIcon } from './components/UIIcons'
+import { UIIcon } from './components/UIIcons'
 import { AutomationsView } from './components/AutomationsView'
 import { ToolsView } from './components/ToolsView'
 import type { BrowserLoginWaitEvent } from './codey-api'
@@ -281,7 +281,6 @@ const Shell: React.FC = () => {
             </svg>
           </button>
           <div style={styles.titleCenter}>
-            <CodeyMark size={22} />
             {(rightTool || activeChat) && (
               <span style={styles.appName} title={activeChat?.title ?? (rightTool === 'browser' ? 'Browser' : 'Terminal')}>
                 {activeChat?.title ?? (rightTool === 'browser' ? 'Browser' : 'Terminal')}

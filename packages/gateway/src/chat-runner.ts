@@ -248,7 +248,7 @@ export interface QQHistoryEntry {
 /** Stream events for a Quick Question run. `chatId` is the parent chat it belongs to. */
 export type QQStreamEvent =
   | { type: 'stream'; chatId: string; token: string }
-  | { type: 'tool'; chatId: string; message: string }
+  | { type: 'tool'; chatId: string; message: string; tool?: string }
   | { type: 'done'; chatId: string; response: string; tokens?: number; durationSec?: number }
   | { type: 'stopped'; chatId: string }
   | { type: 'error'; chatId: string; message: string };

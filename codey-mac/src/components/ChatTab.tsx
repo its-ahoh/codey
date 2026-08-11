@@ -23,6 +23,7 @@ import {
   USER_BUBBLE_PADDING_X,
 } from './TurnHeader'
 import { ACTIVITY_LABEL } from './agentActivity'
+import { ShimmerStatus } from './ShimmerStatus'
 import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
@@ -79,39 +80,6 @@ const StopIcon: React.FC<{ color: string }> = ({ color }) => (
 
 const fmtTime = (ts: number) =>
   new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-
-/** The live status word ("Thinking", "Reading", …). The motion is a light
- *  sweeping across the letters — no marching dots beside it, so the word alone
- *  carries "still running" without pulling the eye off the transcript. */
-const ShimmerStatus: React.FC<{ label: string }> = ({ label }) => (
-  <>
-    <style>{`
-      @keyframes codey-status-shimmer {
-        0%   { background-position: 200% 0; }
-        100% { background-position: -200% 0; }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .codey-status-shimmer { animation: none !important; }
-      }
-    `}</style>
-    <span
-      className="codey-status-shimmer"
-      aria-live="polite"
-      style={{
-        backgroundImage: `linear-gradient(90deg, ${C.fg3} 0%, ${C.fg3} 35%, ${C.fg} 50%, ${C.fg3} 65%, ${C.fg3} 100%)`,
-        backgroundSize: '200% 100%',
-        WebkitBackgroundClip: 'text',
-        backgroundClip: 'text',
-        color: 'transparent',
-        WebkitTextFillColor: 'transparent',
-        animation: 'codey-status-shimmer 2s linear infinite',
-        fontWeight: 600,
-      }}
-    >
-      {label}
-    </span>
-  </>
-)
 
 /** Elapsed recording time. A counter answers "is it still listening?" without
  *  a sentence of prose, and reassures during a long dictation. */

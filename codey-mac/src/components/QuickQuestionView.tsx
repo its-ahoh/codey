@@ -4,6 +4,8 @@ import { Markdown } from './Markdown'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { apiService } from '../services/api'
 import type { FileAttachment } from '../types'
+import { ACTIVITY_LABEL } from './agentActivity'
+import { ShimmerStatus } from './ShimmerStatus'
 
 interface Props {
   chatId: string
@@ -127,6 +129,13 @@ export const QuickQuestionView: React.FC<Props> = ({ chatId, inputRef }) => {
 
   const canSend = (!!draft.trim() || pending.length > 0) && !thread.inFlight
 
+  // Same activity vocabulary as the main chat. The tool's own message is kept
+  // as the detail half when the agent sent one; the verb alone otherwise.
+  const status = thread.status && thread.status !== 'idle' ? thread.status : 'thinking'
+  const activityLabel = thread.activity
+    ? `${ACTIVITY_LABEL[status]} · ${thread.activity}`
+    : `${ACTIVITY_LABEL[status]}…`
+
   const submit = () => {
     if (!canSend) return
     const q = draft
@@ -184,8 +193,10 @@ export const QuickQuestionView: React.FC<Props> = ({ chatId, inputRef }) => {
             )}
           </div>
         ))}
-        {thread.inFlight && thread.activity && (
-          <div style={qqStyles.activity}>{thread.activity}</div>
+        {thread.inFlight && (
+          <div style={qqStyles.activity}>
+            <ShimmerStatus label={activityLabel} fontSize={11} />
+          </div>
         )}
       </div>
 
@@ -274,7 +285,7 @@ const qqStyles: Record<string, React.CSSProperties> = {
   userText: { color: C.fg, fontSize: 12, whiteSpace: 'pre-wrap' },
   asstMsg: { alignSelf: 'flex-start', maxWidth: '100%', fontSize: 12, color: C.fg2, minWidth: 0 },
   errText: { color: C.dangerFg ?? '#e66', fontSize: 12, whiteSpace: 'pre-wrap' },
-  activity: { color: C.fg3, fontSize: 10, fontStyle: 'italic' },
+  activity: { fontSize: 11, padding: '2px 0' },
 
   msgAttRow: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 },
   msgAttImg: { width: 64, height: 64, objectFit: 'cover', borderRadius: 6, border: `1px solid ${C.border2}`, cursor: 'pointer' },
