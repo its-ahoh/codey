@@ -456,7 +456,11 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                     {/* Fixed-width leading slot so a chat's name never shifts
                         sideways the moment its run starts or ends. */}
                     <span style={styles.activitySlot}>
-                      {flight && <span style={styles.dot} title="Running" aria-label="Running" />}
+                      {flight
+                        ? <span style={styles.dot} title="Running" aria-label="Running" />
+                        : unread && !active
+                          ? <span style={styles.unreadDot} title="Unread" aria-label="Unread" />
+                          : null}
                     </span>
                     {isRenaming ? (
                       <input
@@ -482,7 +486,6 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                       <span style={styles.title}>{chat.title?.trim() || 'New Chat'}</span>
                     )}
                     <RouteIcons routes={chat.routes} />
-                    {unread && !active && <span style={styles.unreadDot} />}
                     {!isRenaming && (
                       <span style={styles.trailingAction}>
                         {hoveredChatId === chat.id ? (
