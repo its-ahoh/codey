@@ -7,6 +7,14 @@ export interface BranchState {
   remote: string[]
 }
 
+export interface PullOutcome {
+  ok: boolean
+  updated?: number
+  upstream?: string
+  error?: string
+  reason?: 'dirty' | 'diverged' | 'no-upstream'
+}
+
 export function useGitBranches(workingDir: string | undefined) {
   const [state, setState] = useState<BranchState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -71,5 +79,15 @@ export function useGitBranches(workingDir: string | undefined) {
     else setError((r.ok ? r.data.error : r.error) || 'fetch failed')
   }, [workingDir, refresh])
 
-  return { state, error, setError, refresh, checkout, stashAndSwitch, createBranch, fetchRemote }
+  const pull = useCallback(async (): Promise<PullOutcome> => {
+    if (!workingDir) return { ok: false, error: 'no dir' }
+    setError(null)
+    const r = await window.codey.git.pull(workingDir)
+    if (!r.ok) { setError(r.error || 'pull failed'); return { ok: false, error: r.error } }
+    const d = r.data
+    if (d.ok) { await refresh(); return { ok: true, updated: d.updated ?? 0, upstream: d.upstream } }
+    return { ok: false, error: d.error, reason: d.reason }
+  }, [workingDir, refresh])
+
+  return { state, error, setError, refresh, checkout, stashAndSwitch, createBranch, fetchRemote, pull }
 }

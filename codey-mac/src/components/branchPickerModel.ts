@@ -18,6 +18,27 @@ export function compactWorktreePath(path: string, maxSegments = 3): string {
   return `…/${parts.slice(-maxSegments).join('/')}`;
 }
 
+export interface PullResult {
+  ok: boolean;
+  updated?: number;
+  upstream?: string;
+  error?: string;
+  reason?: 'dirty' | 'diverged' | 'no-upstream';
+}
+
+/** Human-readable note for a sync attempt, shown under the branch list. */
+export function describePullResult(result: PullResult): string {
+  if (result.ok) {
+    const count = result.updated ?? 0;
+    if (count === 0) return 'Already up to date';
+    return `Pulled ${count} commit${count === 1 ? '' : 's'}${result.upstream ? ` from ${result.upstream}` : ''}`;
+  }
+  if (result.reason === 'no-upstream') return 'No upstream branch — push this branch first';
+  if (result.reason === 'dirty') return 'Local changes would be overwritten — commit or stash first';
+  if (result.reason === 'diverged') return 'Branch has diverged from its upstream — rebase or merge manually';
+  return result.error?.split('\n')[0] || 'Could not sync';
+}
+
 /** Move the current item to the front while preserving every other item's order. */
 export function currentFirst<T>(list: T[], isCurrent: (item: T) => boolean): T[] {
   const currentIndex = list.findIndex(isCurrent);

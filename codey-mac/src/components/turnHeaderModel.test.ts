@@ -51,6 +51,28 @@ describe('turnHeaderMeta', () => {
     expect(turnHeaderMeta(msg({ tokens: 45_000 })).stats).toEqual(['45k tok'])
   })
 
+  // A streaming turn counts locally; the agent's own duration is authoritative
+  // the moment it arrives, so it must win over the live counter.
+  it('shows the live elapsed count while the turn has no reported duration', () => {
+    expect(turnHeaderMeta(msg(), { elapsedSec: 7 }).stats).toEqual(['7s'])
+    expect(turnHeaderMeta(msg({ tokens: 3400 }), { elapsedSec: 7 }).stats)
+      .toEqual(['7s', '3.4k tok'])
+  })
+
+  it('prefers the reported duration over the live count', () => {
+    expect(turnHeaderMeta(msg({ durationSec: 12 }), { elapsedSec: 7 }).stats).toEqual(['12s'])
+  })
+
+  it('floors and rejects unusable elapsed values', () => {
+    expect(turnHeaderMeta(msg(), { elapsedSec: 7.9 }).stats).toEqual(['7s'])
+    expect(turnHeaderMeta(msg(), { elapsedSec: -1 }).stats).toEqual([])
+    expect(turnHeaderMeta(msg(), { elapsedSec: NaN }).stats).toEqual([])
+  })
+
+  it('is not empty while only the live count is known', () => {
+    expect(turnHeaderMeta(msg(), { elapsedSec: 3 }).isEmpty).toBe(false)
+  })
+
   it('passes the fallback through', () => {
     const f = { from: 'claude-code(opus)', to: 'codex(gpt-5)' }
     expect(turnHeaderMeta(msg({ fallback: f })).fallback).toEqual(f)

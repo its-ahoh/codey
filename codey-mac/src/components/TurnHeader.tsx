@@ -23,6 +23,23 @@ export const TURN_TEXT_INSET = MESSAGE_ROW_INSET + TURN_RAIL_WIDTH + TURN_TEXT_P
  *  its timestamp lines up on the right edge and needs this, not TURN_TEXT_INSET. */
 export const USER_BUBBLE_PADDING_X = 14
 
+/** Seconds since `since`, re-rendering once a second while `active`.
+ *
+ *  The agent only reports its own duration with the final result event, so a
+ *  turn in flight has to count locally. Off while inactive: a finished turn
+ *  must not keep a timer alive per message in the transcript. */
+function useElapsedSeconds(active: boolean, since: number): number | undefined {
+  const [now, setNow] = React.useState(() => Date.now())
+  React.useEffect(() => {
+    if (!active) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [active, since])
+  if (!active || !Number.isFinite(since)) return undefined
+  return Math.max(0, Math.floor((now - since) / 1000))
+}
+
 interface Props {
   msg: ChatMessage
   /** Rendered only when the turn has thinking to disclose. */
@@ -48,7 +65,8 @@ interface Props {
  *  something to put in it, so a turn with no metadata is a bare hairline rather
  *  than a blank row. */
 export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete }) => {
-  const meta = turnHeaderMeta(msg)
+  const elapsedSec = useElapsedSeconds(!turnComplete, msg.timestamp)
+  const meta = turnHeaderMeta(msg, { elapsedSec })
   const rule = turnComplete ? <div style={styles.rule} /> : null
   if (meta.isEmpty && !hasThinking) return rule
 

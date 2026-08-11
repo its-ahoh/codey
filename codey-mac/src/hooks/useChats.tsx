@@ -38,7 +38,7 @@ type Action =
   | { type: 'remove'; chatId: string }
   | { type: 'select'; chatId: string | null }
   | { type: 'toggleWorkspace'; workspaceName: string }
-  | { type: 'startSend'; chatId: string; userMessage: ChatMessage; assistantMessageId: string }
+  | { type: 'startSend'; chatId: string; userMessage: ChatMessage; assistantMessageId: string; agent?: ChatMessage['agent']; model?: string }
   | { type: 'streamToken'; chatId: string; token: string; messageId?: string }
   | { type: 'thinkingToken'; chatId: string; token: string; step?: number; messageId?: string }
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: AgentActivity; messageId?: string }
@@ -223,6 +223,13 @@ export function reducer(state: State, action: Action): State {
         timestamp: Date.now(),
         toolCalls: [],
         isComplete: false,
+        // Provisional identity so the header exists while the reply streams
+        // instead of appearing only once `done` lands. The caller passes the
+        // resolved agent/model (per-chat → worker → gateway default); the
+        // chat's own overrides are the fallback for senders without that
+        // context. `completeSend` overwrites both with what actually ran.
+        agent: action.agent ?? chat.agent,
+        model: action.model ?? chat.model,
       }
       const updated: Chat = {
         ...chat,
@@ -476,7 +483,10 @@ interface ChatsContextValue {
   generateTaskBrief: (chatId: string) => Promise<TaskBrief | null>
   linkChannel: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<void>
   unlinkChannel: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<void>
-  sendMessage: (chatId: string, text: string, attachments?: FileAttachment[]) => Promise<void>
+  /** `identity` is the agent/model the caller resolved for this chat; it seeds
+   *  the turn header while the reply streams. Omit it and the chat's own
+   *  overrides are used instead. */
+  sendMessage: (chatId: string, text: string, attachments?: FileAttachment[], identity?: { agent?: ChatMessage['agent']; model?: string }) => Promise<void>
   stopChat: (chatId: string) => Promise<void>
   resolvePermission: (chatId: string, allow: boolean) => Promise<void>
   clearRestore: (chatId: string) => void
@@ -701,7 +711,12 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return off
   }, [])
 
-  const sendMessage = useCallback(async (chatId: string, text: string, attachments?: FileAttachment[]) => {
+  const sendMessage = useCallback(async (
+    chatId: string,
+    text: string,
+    attachments?: FileAttachment[],
+    identity?: { agent?: ChatMessage['agent']; model?: string },
+  ) => {
     const assistantMessageId = `asst-${Date.now()}-${Math.random()}`
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}-${Math.random()}`,
@@ -712,7 +727,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       isComplete: true,
     }
     pendingAssistantId.current[chatId] = assistantMessageId
-    dispatch({ type: 'startSend', chatId, userMessage, assistantMessageId })
+    dispatch({ type: 'startSend', chatId, userMessage, assistantMessageId, agent: identity?.agent, model: identity?.model })
     try {
       await apiService.chats.send(chatId, text, attachments)
     } catch (err) {

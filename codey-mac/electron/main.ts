@@ -2092,6 +2092,44 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('git:pull', async (_e, workingDir: string) =>
+    wrap(async () => {
+      if (!workingDir) return { ok: false, error: 'missing workingDir' }
+      const { execFile } = await import('child_process')
+      const run = (args: string[], timeout = 30000) => new Promise<{ ok: boolean; stdout: string; error?: string }>((resolve) => {
+        execFile('git', args, { cwd: workingDir, timeout }, (err, stdout, stderr) => {
+          if (err) resolve({ ok: false, stdout: stdout || '', error: (stderr || String(err)).trim() })
+          else resolve({ ok: true, stdout: stdout || '' })
+        })
+      })
+
+      const upstream = await run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], 3000)
+      if (!upstream.ok) return { ok: false, reason: 'no-upstream' as const, error: 'This branch has no upstream branch' }
+      const upstreamRef = upstream.stdout.trim()
+      const remote = upstreamRef.split('/')[0]
+
+      const fetched = await run(['fetch', '--prune', remote, `+refs/heads/*:refs/remotes/${remote}/*`])
+      if (!fetched.ok) return { ok: false, error: fetched.error }
+
+      const behindOut = await run(['rev-list', '--count', `HEAD..${upstreamRef}`], 5000)
+      const behind = behindOut.ok ? parseInt(behindOut.stdout.trim(), 10) || 0 : 0
+      if (behind === 0) return { ok: true, updated: 0, upstream: upstreamRef }
+
+      // --ff-only keeps the pull non-destructive: divergent history stops here
+      // instead of leaving a surprise merge (or conflicts) in the checkout.
+      const pulled = await run(['pull', '--ff-only'], 60000)
+      if (pulled.ok) return { ok: true, updated: behind, upstream: upstreamRef }
+      const stderr = pulled.error || ''
+      const dirty = /would be overwritten|Your local changes|commit your changes or stash/i.test(stderr)
+      const diverged = /Not possible to fast-forward|non-fast-forward|diverged/i.test(stderr)
+      return {
+        ok: false,
+        reason: dirty ? 'dirty' as const : diverged ? 'diverged' as const : undefined,
+        error: stderr.trim(),
+      }
+    })
+  )
+
   ipcMain.handle('git:worktrees', async (_e, workingDir: string) =>
     wrap(async () => {
       if (!workingDir) return { list: [] }
