@@ -184,6 +184,11 @@ export class WorkerManager {
     return this.getWorker(name)?.config.model || '';
   }
 
+  /** The worker's configured reasoning effort, or undefined when unset. */
+  getWorkerEffort(name: string): ThinkingEffort | undefined {
+    return this.getWorker(name)?.config.effort;
+  }
+
   /**
    * Returns the one-line summary the auto-dispatcher should see for this worker.
    * Prefers `config.dispatchHint`; otherwise falls back to the first line of

@@ -212,6 +212,9 @@ export class Codey {
     const baseReq = {
       agent: opts.codingAgent,
       model: opts.modelConfig,
+      // Worker tier. No chat is in scope on this path, and the per-agent
+      // global default is filled in by runWithFallback when this is undefined.
+      effort: resolveEffort({ worker: wm.getWorkerEffort(opts.workerName) }),
       context: { workingDir: opts.workingDir ?? this.workingDir },
       browserTools: true,
       browserChatId: opts.browserChatId,
