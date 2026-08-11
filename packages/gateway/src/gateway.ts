@@ -21,7 +21,8 @@ import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS } from '@codey/core';
 import { WorkerManager } from '@codey/core';
-import { ChatManager } from './chats';
+import { ChatManager, CreateChatInput } from './chats';
+import { chatWorktreeParent, describeLegacyChatWorktree, discoverChatWorktree, provisionChatWorktree, removeCleanChatWorktree, workspaceHasUncommittedChanges } from './chat-worktree';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
@@ -119,6 +120,7 @@ export class Codey {
    *  so a later workspace switch can't save it into the wrong skills store.
    *  (Chat-surface suggestions are persisted on the Chat via ChatManager instead.) */
   private pendingSkillSuggestions = new Map<string, { suggestion: DistillResult; workspaceName: string }>();
+  private pendingChatWorkspaces = new Map<string, Promise<Chat>>();
   private skillRunCounter = 0;
   private lastSkillDistillTime = 0;
   private static SKILL_DISTILL_COOLDOWN_MS = 300_000; // 5 min
@@ -691,6 +693,137 @@ export class Codey {
 
   getWorkspaceManager(): WorkspaceManager { return this.workspaceManager; }
   getChatManager(): ChatManager { return this.chatManager; }
+
+  /** New chats begin in the shared checkout. A worktree is created either by
+   *  the explicit Branch Selector action or when the running agent opts in. */
+  public async createChat(input: CreateChatInput): Promise<Chat> {
+    return this.chatManager.create({ ...input, executionMode: 'shared-checkout' });
+  }
+
+  private async migrateLegacyChatWorkspace(chat: Chat): Promise<Chat> {
+    if (chat.chatWorkspace || !chat.workingDirOverride) return chat;
+    try {
+      const workspace = await describeLegacyChatWorktree({
+        workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
+        workingDirOverride: chat.workingDirOverride,
+        createdAt: chat.createdAt,
+      });
+      return workspace ? this.chatManager.migrateChatWorkspace(chat.id, workspace) : chat;
+    } catch (error) {
+      this.logger.warn(`Could not migrate legacy worktree for chat ${chat.id}: ${error}`);
+      return chat;
+    }
+  }
+
+  public async listChats(workspaceName?: string): Promise<Chat[]> {
+    return Promise.all(this.chatManager.list(workspaceName).map(chat => this.migrateLegacyChatWorkspace(chat)));
+  }
+
+  public async getChat(chatId: string): Promise<Chat> {
+    const chat = this.chatManager.get(chatId);
+    if (!chat) throw new Error(`Chat not found: ${chatId}`);
+    return this.migrateLegacyChatWorkspace(chat);
+  }
+
+  public async deleteChat(chatId: string): Promise<void> {
+    const chat = await this.getChat(chatId);
+    if (this.chatAborts.has(chatId)) throw new Error('Wait for the current agent turn to finish before deleting this chat');
+    if (chat.chatWorkspace) await removeCleanChatWorktree(chat.chatWorkspace);
+    this.chatManager.delete(chatId);
+  }
+
+  /** Preflight every chat worktree before deleting a Workspace, then remove
+   *  only their clean checkouts. Branches remain available in the repository. */
+  public async prepareWorkspaceDeletion(workspaceName: string): Promise<void> {
+    const chats = await Promise.all(
+      this.chatManager.list(workspaceName, { includeAutomation: true })
+        .map(chat => this.migrateLegacyChatWorkspace(chat)),
+    );
+    const worktrees = chats.flatMap(chat => chat.chatWorkspace ? [chat.chatWorkspace] : []);
+    for (const workspace of worktrees) {
+      if (fs.existsSync(workspace.worktreePath) && await workspaceHasUncommittedChanges(workspace.worktreePath)) {
+        throw new Error(`Worktree "${workspace.name ?? path.basename(workspace.worktreePath)}" has uncommitted changes. Commit or stash them before deleting this workspace.`);
+      }
+    }
+    for (const workspace of worktrees) await removeCleanChatWorktree(workspace);
+  }
+
+  /** Idempotently provision the explicitly named filesystem environment owned by a chat. */
+  public async ensureChatWorkspace(chatId: string, worktreeName?: string): Promise<Chat> {
+    const chat = this.chatManager.get(chatId);
+    if (!chat) throw new Error(`Chat not found: ${chatId}`);
+    if (chat.executionMode !== 'isolated-worktree') return chat;
+    if (chat.chatWorkspace) {
+      if (fs.existsSync(chat.chatWorkspace.workingDir)) return chat;
+      throw new Error(`Chat workspace is missing: ${chat.chatWorkspace.workingDir}`);
+    }
+    if (!worktreeName) throw new Error('Create and name a worktree from the Branch Selector first');
+    const pending = this.pendingChatWorkspaces.get(chatId);
+    if (pending) return pending;
+    const provision = provisionChatWorktree({
+      workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
+      workspacesRoot: this.workspaceManager.getWorkspacesRoot(),
+      workspaceName: chat.workspaceName,
+      chatId: chat.id,
+      worktreeName,
+    }).then(workspace => {
+      const updated = this.chatManager.setChatWorkspace(chat.id, workspace);
+      return updated;
+    })
+      .finally(() => this.pendingChatWorkspaces.delete(chatId));
+    this.pendingChatWorkspaces.set(chatId, provision);
+    return provision;
+  }
+
+  /** Adopt a worktree that an agent created in this chat's private directory.
+   *  No model call is involved: ownership is determined from local Git state. */
+  private async adoptAgentCreatedWorktree(chatId: string): Promise<Chat | undefined> {
+    const chat = this.chatManager.get(chatId);
+    if (!chat || chat.chatWorkspace) return undefined;
+    try {
+      const workspace = await discoverChatWorktree({
+        workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
+        workspacesRoot: this.workspaceManager.getWorkspacesRoot(),
+        workspaceName: chat.workspaceName,
+        chatId: chat.id,
+      });
+      if (!workspace) return undefined;
+      const updated = this.chatManager.setChatWorkspace(chat.id, workspace);
+      this.logger.info(`[chat ${chat.id}] adopted agent-created worktree ${workspace.name ?? workspace.worktreePath}`);
+      return updated;
+    } catch (error) {
+      this.logger.warn(`[chat ${chat.id}] could not adopt agent-created worktree: ${(error as Error).message}`);
+      return undefined;
+    }
+  }
+
+  /** Explicitly create and bind a user-named worktree to one chat. */
+  public async createChatWorktree(chatId: string, worktreeName: string): Promise<Chat> {
+    const chat = await this.getChat(chatId);
+    if (chat.chatWorkspace) throw new Error(`This chat already owns the worktree "${chat.chatWorkspace.name ?? path.basename(chat.chatWorkspace.worktreePath)}"`);
+    if (this.chatAborts.has(chatId)) throw new Error('Wait for the current agent turn to finish before creating a worktree');
+    const previousMode = chat.executionMode ?? 'shared-checkout';
+    this.chatManager.setExecutionMode(chatId, 'isolated-worktree');
+    try {
+      return await this.ensureChatWorkspace(chatId, worktreeName);
+    } catch (error) {
+      this.chatManager.setExecutionMode(chatId, previousMode);
+      throw error;
+    }
+  }
+
+  /** Switch the checkout used by one chat. Worktrees are retained when a chat
+   *  switches back to the shared checkout so the operation is reversible. */
+  public async setChatExecutionMode(chatId: string, mode: NonNullable<Chat['executionMode']>): Promise<Chat> {
+    const chat = await this.getChat(chatId);
+    if (this.chatAborts.has(chatId)) throw new Error('Wait for the current agent turn to finish before switching checkout mode');
+    if (mode === 'isolated-worktree') {
+      if (!chat.chatWorkspace) throw new Error('Create and name a worktree first');
+      this.chatManager.setExecutionMode(chatId, mode);
+      return this.ensureChatWorkspace(chatId);
+    }
+    return this.chatManager.setExecutionMode(chatId, mode);
+  }
 
   public setChatEventListener(fn: (ev: any) => void): void {
     this.chatEventListener = fn;
@@ -1688,6 +1821,13 @@ export class Codey {
   }
 
   private resolveChatWorkingDir(chat: Chat): string {
+    if (chat.executionMode === 'isolated-worktree') {
+      const isolatedDir = chat.chatWorkspace?.workingDir;
+      if (isolatedDir && fs.existsSync(isolatedDir)) return isolatedDir;
+      throw new Error(isolatedDir
+        ? `Chat workspace is missing: ${isolatedDir}`
+        : `Chat workspace has not been provisioned: ${chat.id}`);
+    }
     if (chat.workingDirOverride) {
       if (fs.existsSync(chat.workingDirOverride)) return chat.workingDirOverride;
       this.logger.warn(`Chat ${chat.id} workingDirOverride=${chat.workingDirOverride} is gone; falling back to workspace dir`);
@@ -3171,7 +3311,7 @@ export class Codey {
     }
     const workspace = binding.prefs?.workspace ?? this.workspaceManager.getCurrentWorkspace();
     const title = args.join(' ').trim() || undefined;
-    const chat = this.chatManager.create({ workspaceName: workspace, title });
+    const chat = await this.createChat({ workspaceName: workspace, title });
     if (binding.prefs?.agent || binding.prefs?.model) {
       this.chatManager.updateAgentModel(chat.id, binding.prefs.agent, binding.prefs.model);
     }
@@ -5368,8 +5508,13 @@ Example: /model gpt-4.1 write a Python script`;
     sink: (e: QQStreamEvent) => void,
     attachments?: import('@codey/core').FileAttachment[],
   ): Promise<{ response: string; tokens?: number; durationSec?: number }> {
-    const chat = this.chatManager.get(chatId);
+    let chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
+    if (chat.executionMode === 'isolated-worktree') {
+      chat = chat.chatWorkspace
+        ? await this.ensureChatWorkspace(chatId)
+        : this.chatManager.setExecutionMode(chatId, 'shared-checkout');
+    }
 
     // Resolve workingDir from the chat's workspace.json (mirrors sendToChat).
     const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
@@ -5385,6 +5530,7 @@ Example: /model gpt-4.1 write a Python script`;
       sink({ type: 'error', chatId, message: msg });
       throw new Error(msg);
     }
+    workingDir = this.resolveChatWorkingDir(chat);
 
     // Aide agent/model if configured, else the chat's effective agent/model.
     const aideCfg = this.config.aide;
@@ -5493,8 +5639,23 @@ Example: /model gpt-4.1 write a Python script`;
     // skill pre-run pass, taking precedence over the auto-apply matcher).
     origin?: { channel: ChannelType; channelUserId: string; skillInvoke?: SkillInvoke },
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
-    const chat = this.chatManager.get(chatId);
+    let chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
+    let workspaceAdoptedBeforeTurn = false;
+    // Recover a checkout created during a previous interrupted turn before
+    // selecting this turn's cwd.
+    if (!chat.chatWorkspace) {
+      const adopted = await this.adoptAgentCreatedWorktree(chatId);
+      if (adopted) {
+        chat = adopted;
+        workspaceAdoptedBeforeTurn = true;
+      }
+    }
+    if (chat.executionMode === 'isolated-worktree') {
+      chat = chat.chatWorkspace
+        ? await this.ensureChatWorkspace(chatId)
+        : this.chatManager.setExecutionMode(chatId, 'shared-checkout');
+    }
 
     // Resolvable copy of the incoming text. A digit reply to a paused team is
     // rewritten to the chosen option's text BEFORE it is persisted as the user
@@ -5538,6 +5699,7 @@ Example: /model gpt-4.1 write a Python script`;
         try { this.chatEventListener(ev); } catch { /* swallow */ }
       }
     };
+    if (workspaceAdoptedBeforeTurn) sink({ type: 'workspace_ready', chatId });
 
     // Short-circuit helper for skill-related conversational replies that never
     // reach an agent: persist both sides of the exchange, announce completion,
@@ -5666,13 +5828,7 @@ Example: /model gpt-4.1 write a Python script`;
       throw new Error(msg);
     }
 
-    // Per-chat worktree binding: an explicit workingDirOverride wins over the
-    // workspace's workingDir so the agent actually runs in the bound worktree
-    // (mirrors resolveChatWorkingDir's precedence).
-    if (chat.workingDirOverride) {
-      if (fs.existsSync(chat.workingDirOverride)) workingDir = chat.workingDirOverride;
-      else this.logger.warn(`Chat ${chat.id} workingDirOverride=${chat.workingDirOverride} is gone; falling back to workspace dir`);
-    }
+    workingDir = this.resolveChatWorkingDir(chat);
 
     // Per-chat override takes precedence over the gateway default.
     const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
@@ -5704,6 +5860,15 @@ Example: /model gpt-4.1 write a Python script`;
     let prompt: string;
     let resumeSessionId: string | undefined;
     let newSessionId: string | undefined;
+    const agentWorktreeParent = chat.executionMode !== 'isolated-worktree' && !chat.chatWorkspace
+      ? chatWorktreeParent(workspacesRoot, chat.workspaceName, chat.id)
+      : undefined;
+    if (agentWorktreeParent) fs.mkdirSync(agentWorktreeParent, { recursive: true });
+    const chatWorkspaceInstruction = chat.executionMode === 'isolated-worktree'
+      ? '\n\n[Codey chat workspace]\nThis chat owns the current worktree and starts on its own same-named branch. You may rename or switch branches as the task evolves; do not operate in another chat’s worktree.'
+      : agentWorktreeParent
+        ? `\n\n[Codey chat workspace]\nThis chat currently uses the shared checkout. If the task benefits from isolation, you may create one worktree for this chat without asking first. Choose a short semantic lower-kebab name with no slash, then run \`git worktree add -b <name> ${JSON.stringify(path.join(agentWorktreeParent, '<name>'))} HEAD\` and perform all subsequent work in that new directory. Create it only as a direct child of ${JSON.stringify(agentWorktreeParent)} so Codey can bind and display it. Do not create a worktree when the task does not need one.`
+        : '\n\n[Codey chat workspace]\nThis chat already has a user-managed worktree. Continue using the selected checkout; do not create another worktree.';
     if (warmAnchor) {
       // Resume the agent's own session. If other agents produced messages
       // while it was inactive, replay only that unseen gap before the new turn.
@@ -5719,6 +5884,7 @@ Example: /model gpt-4.1 write a Python script`;
         newSessionId = randomUUID();
       }
     }
+    prompt += chatWorkspaceInstruction;
 
     // Solo advisor: when enabled (and not a team), tell the agent how to escalate.
     if (chat.soloAdvisor && chat.selection.type !== 'team') {
@@ -5905,7 +6071,7 @@ Example: /model gpt-4.1 write a Python script`;
           streamedText = '';
           resumeSessionId = undefined;
           newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
-          prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments);
+          prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments) + chatWorkspaceInstruction;
           // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
           // the one that carried it (still exactly once per prompt build).
           if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);
@@ -5990,6 +6156,8 @@ Example: /model gpt-4.1 write a Python script`;
         // it into the input box. Don't append a "Stopped" assistant message
         // and don't fan out to other routes.
         this.chatManager.removeMessage(chatId, userMessage.id);
+        const adoptedWorkspace = await this.adoptAgentCreatedWorktree(chatId);
+        if (adoptedWorkspace) sink({ type: 'workspace_ready', chatId });
         sink({ type: 'stopped', chatId, userMessageId: userMessage.id, text: userText });
         return { response: '', chatId };
       }
@@ -6126,6 +6294,8 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
 
+      const adoptedWorkspace = await this.adoptAgentCreatedWorktree(chatId);
+      if (adoptedWorkspace) sink({ type: 'workspace_ready', chatId });
       sink({ type: 'done', chatId, response: output, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
 
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
@@ -6209,6 +6379,8 @@ Example: /model gpt-4.1 write a Python script`;
         // Same rollback as the abort branch above — agent runners surface
         // aborts as thrown errors, but we still want to restore the prompt.
         this.chatManager.removeMessage(chatId, userMessage.id);
+        const adoptedWorkspace = await this.adoptAgentCreatedWorktree(chatId);
+        if (adoptedWorkspace) sink({ type: 'workspace_ready', chatId });
         sink({ type: 'stopped', chatId, userMessageId: userMessage.id, text: userText });
         return { response: '', chatId };
       }
@@ -6224,6 +6396,8 @@ Example: /model gpt-4.1 write a Python script`;
         ...(model?.model ? { model: model.model } : {}),
       };
       this.chatManager.appendMessage(chatId, assistantMessage);
+      const adoptedWorkspace = await this.adoptAgentCreatedWorktree(chatId);
+      if (adoptedWorkspace) sink({ type: 'workspace_ready', chatId });
       sink({ type: 'error', chatId, message });
       throw err;
     } finally {

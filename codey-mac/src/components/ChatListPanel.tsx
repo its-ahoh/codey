@@ -26,6 +26,25 @@ interface WsMenuState {
   y: number
 }
 
+const DeliveryBadge: React.FC<{ pullRequest?: Chat['pullRequest'] }> = ({ pullRequest }) => {
+  if (!pullRequest) return null
+  const pr = pullRequest.number ? `PR #${pullRequest.number}` : 'Pull request'
+  if (pullRequest.state === 'pr-open') {
+    return <span style={{ ...styles.deliveryBadge, color: C.accent }} title={`${pr} is open`}><UIIcon name="link" size={10} /></span>
+  }
+  if (pullRequest.state === 'merged') {
+    return <span style={{ ...styles.deliveryBadge, color: C.green }} title={`${pr} merged${pullRequest.baseBranch ? ` into ${pullRequest.baseBranch}` : ''}`}><UIIcon name="check" size={11} /></span>
+  }
+  if (pullRequest.state === 'merged-with-changes') {
+    return (
+      <span style={{ ...styles.deliveryBadge, color: C.yellow }} title={`${pr} merged · new changes`}>
+        <UIIcon name="check" size={11} /><span style={styles.deliveryDot} />
+      </span>
+    )
+  }
+  return <span style={{ ...styles.deliveryBadge, color: C.fg3 }} title={`${pr} closed without merge`}>×</span>
+}
+
 export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, onOpenBrowser, onOpenTools, onSelectChat, automationsUnseenCount, activeChatId }) => {
   const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces, refreshChats, linkChannel, unlinkChannel } = useChats()
   const [addingWorkspace, setAddingWorkspace] = useState(false)
@@ -39,6 +58,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   const [wsRenameValue, setWsRenameValue] = useState('')
   const [chatMenu, setChatMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [chatMenuView, setChatMenuView] = useState<'main' | 'connect'>('main')
+  const [hoveredChatId, setHoveredChatId] = useState<string | null>(null)
   const [wsOrder, setWsOrder] = useState<string[]>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('codey.workspaceOrder') || '[]')
@@ -90,8 +110,25 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   const handleNewChat = async (workspaceName?: string) => {
     const target = workspaceName || selectedWorkspace || lastWorkspace
     if (!target) return
-    const chat = await createChat(target)
-    setLastWorkspace(chat.workspaceName)
+    try {
+      const chat = await createChat(target)
+      setLastWorkspace(chat.workspaceName)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to create chat')
+    }
+  }
+
+  const confirmDeleteChat = async (chat: Chat) => {
+    const title = chat.title?.trim() || 'New Chat'
+    const detail = chat.chatWorkspace
+      ? '\n\nIts clean worktree will be removed. The Git branch will be kept.'
+      : ''
+    if (!confirm(`Delete chat "${title}"?${detail}`)) return
+    try {
+      await deleteChat(chat.id)
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to delete chat')
+    }
   }
 
   const closeWsMenu = () => setWsMenu(null)
@@ -382,10 +419,25 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                 return (
                   <div
                     key={chat.id}
+                    tabIndex={0}
                     title={orphaned ? 'Workspace deleted' : undefined}
                     style={{ ...styles.item, background: active ? C.accentDim : 'transparent', borderColor: active ? C.accent : 'transparent', opacity: orphaned ? 0.5 : 1 }}
                     onClick={() => {
                       if (isRenaming) return
+                      onSelectChat()
+                      selectChat(chat.id)
+                    }}
+                    onMouseEnter={() => setHoveredChatId(chat.id)}
+                    onMouseLeave={() => setHoveredChatId(current => current === chat.id ? null : current)}
+                    onFocus={() => setHoveredChatId(chat.id)}
+                    onBlur={event => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        setHoveredChatId(current => current === chat.id ? null : current)
+                      }
+                    }}
+                    onKeyDown={event => {
+                      if (event.target !== event.currentTarget || isRenaming || (event.key !== 'Enter' && event.key !== ' ')) return
+                      event.preventDefault()
                       onSelectChat()
                       selectChat(chat.id)
                     }}
@@ -429,16 +481,20 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                     {unread && !active && <span style={styles.unreadDot} />}
                     {flight && <span style={styles.dot} />}
                     {!isRenaming && (
-                      <button
-                        style={styles.xBtn}
-                        onClick={async (e) => {
-                          e.stopPropagation()
-                          if (confirm(`Delete chat "${chat.title?.trim() || 'New Chat'}"?`)) {
-                            await deleteChat(chat.id)
-                          }
-                        }}
-                        title="Delete chat"
-                      ><UIIcon name="trash" size={13} /></button>
+                      <span style={styles.trailingAction}>
+                        {hoveredChatId === chat.id ? (
+                          <button
+                            style={styles.xBtn}
+                            onClick={async (e) => {
+                              e.stopPropagation()
+                              await confirmDeleteChat(chat)
+                            }}
+                            title="Delete chat"
+                          ><UIIcon name="trash" size={13} /></button>
+                        ) : (
+                          <DeliveryBadge pullRequest={chat.pullRequest} />
+                        )}
+                      </span>
                     )}
                   </div>
                 )
@@ -523,9 +579,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                 onClick={async () => {
                   const c = chatMenu.chat
                   setChatMenu(null)
-                  if (confirm(`Delete chat "${c.title?.trim() || 'New Chat'}"?`)) {
-                    await deleteChat(c.id)
-                  }
+                  await confirmDeleteChat(c)
                 }}
               ><UIIcon name="trash" size={14} />Delete chat</button>
             </>
@@ -587,13 +641,15 @@ const styles: Record<string, React.CSSProperties> = {
     backdropFilter: 'blur(22px) saturate(1.2)',
     WebkitBackdropFilter: 'blur(22px) saturate(1.2)',
   },
-  brandArea: { padding: '4px' },
+  brandArea: { padding: '4px', position: 'relative' },
   newChatBtn: {
-    width: '100%', border: 'none', borderRadius: 9, padding: '9px 10px',
+    minWidth: 0, width: '100%', border: 'none', borderRadius: 9, padding: '9px 10px',
     background: C.accent, color: C.onAccent, cursor: 'pointer', fontSize: 12, fontWeight: 700,
     display: 'flex', alignItems: 'center', gap: 7, boxShadow: `0 6px 16px ${C.accentDim}`,
   },
   newChatWorkspace: { marginLeft: 'auto', minWidth: 0, maxWidth: 92, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.72, fontWeight: 550, fontSize: 10 },
+  deliveryBadge: { position: 'relative', width: 16, height: 16, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, background: C.surface3, border: `1px solid ${C.border2}`, fontSize: 14, lineHeight: 1, fontWeight: 700 },
+  deliveryDot: { position: 'absolute', right: 1, bottom: 1, width: 4, height: 4, borderRadius: '50%', background: C.yellow, boxShadow: `0 0 0 1px ${C.surface3}` },
   header: { padding: '10px 12px', borderBottom: `1px solid ${C.border}` },
   newBtn: {
     width: '100%',
@@ -659,9 +715,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   dot: { width: 6, height: 6, borderRadius: '50%', background: C.accent, animation: 'codey-pulse-dot 1.2s infinite' },
   unreadDot: { width: 6, height: 6, borderRadius: '50%', background: C.accent, flexShrink: 0 },
+  trailingAction: { width: 22, height: 22, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   xBtn: {
     background: 'transparent', border: 'none', color: C.fg3,
-    cursor: 'pointer', padding: 3, display: 'inline-flex', borderRadius: 4,
+    cursor: 'pointer', padding: 3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4,
   },
   manageSection: { padding: 8, borderRadius: 12, background: C.surface2, border: `1px solid ${C.sidebarBorder}` },
   footer: { display: 'flex', flexDirection: 'column', gap: 2 },

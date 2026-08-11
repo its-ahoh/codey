@@ -51,6 +51,7 @@ type Action =
   | { type: 'patchContextPanelOpen'; chatId: string; open: boolean | null }
   | { type: 'patchSoloAdvisor'; chatId: string; enabled: boolean }
   | { type: 'patchTaskBrief'; chatId: string; brief: TaskBrief }
+  | { type: 'patchPullRequest'; chatId: string; pullRequest: NonNullable<Chat['pullRequest']> }
   | { type: 'permissionRequest'; chatId: string; toolNames: string[] }
   | { type: 'dismissPermission'; chatId: string }
   | { type: 'teamStart'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string }> }
@@ -153,6 +154,14 @@ export function reducer(state: State, action: Action): State {
       if (!chat) return state
       const updated: Chat = { ...chat, contextPanelOpen: action.open ?? undefined }
       return { ...state, chats: { ...state.chats, [chat.id]: updated } }
+    }
+    case 'patchPullRequest': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      return {
+        ...state,
+        chats: { ...state.chats, [chat.id]: { ...chat, pullRequest: action.pullRequest } },
+      }
     }
     case 'patchSoloAdvisor': {
       const chat = state.chats[action.chatId]
@@ -458,6 +467,9 @@ interface ChatsContextValue {
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
   setAgentModel: (chatId: string, agent: string | null, model: string | null) => Promise<void>
   setWorkingDir: (chatId: string, dir: string | null) => Promise<void>
+  setExecutionMode: (chatId: string, mode: 'shared-checkout' | 'isolated-worktree') => Promise<Chat>
+  createWorktree: (chatId: string, name: string) => Promise<Chat>
+  setPullRequest: (chatId: string, pullRequest: NonNullable<Chat['pullRequest']>) => Promise<void>
   setContextPanelOpen: (chatId: string, open: boolean | null) => Promise<void>
   setSoloAdvisor: (chatId: string, enabled: boolean) => Promise<void>
   generateTaskBrief: (chatId: string) => Promise<TaskBrief | null>
@@ -612,6 +624,11 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         case 'team_end':
           dispatch({ type: 'teamEnd', chatId: ev.chatId, teamTurnId: ev.teamTurnId, summary: ev.summary, taskBrief: ev.taskBrief })
           break
+        case 'workspace_ready':
+          apiService.chats.get(ev.chatId)
+            .then(chat => dispatch({ type: 'upsert', chat }))
+            .catch(() => {})
+          break
         case 'done': {
           adopting.current.delete(ev.chatId)
           const asstId = pendingAssistantId.current[ev.chatId]
@@ -741,6 +758,20 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // bound chip reflects the binding immediately.
       const chat = await apiService.chats.setWorkingDir(chatId, dir)
       dispatch({ type: 'upsert', chat })
+    },
+    async setExecutionMode(chatId, mode) {
+      const chat = await apiService.chats.setExecutionMode(chatId, mode)
+      dispatch({ type: 'upsert', chat })
+      return chat
+    },
+    async createWorktree(chatId, name) {
+      const chat = await apiService.chats.createWorktree(chatId, name)
+      dispatch({ type: 'upsert', chat })
+      return chat
+    },
+    async setPullRequest(chatId, pullRequest) {
+      dispatch({ type: 'patchPullRequest', chatId, pullRequest })
+      try { await apiService.chats.setPullRequest(chatId, pullRequest) } catch { /* refresh is best effort */ }
     },
     async setContextPanelOpen(chatId, open) {
       // Optimistically patch the local state so we don't replace the chat

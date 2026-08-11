@@ -15,6 +15,7 @@ export interface CreateChatInput {
   /** Per-chat agent/model overrides, set at creation (used by automations). */
   agent?: Chat['agent'];
   model?: string;
+  executionMode?: Chat['executionMode'];
 }
 
 /**
@@ -195,6 +196,7 @@ export class ChatManager {
       ...(input.kind ? { kind: input.kind } : {}),
       ...(input.agent ? { agent: input.agent } : {}),
       ...(input.model ? { model: input.model } : {}),
+      ...(input.executionMode ? { executionMode: input.executionMode } : {}),
     };
     this.cache.set(chat.id, chat);
     this.persist(chat);
@@ -341,6 +343,57 @@ export class ChatManager {
     if (dir === null || dir === undefined || dir === '') delete chat.workingDirOverride;
     else chat.workingDirOverride = dir;
     chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
+  setChatWorkspace(chatId: string, workspace: NonNullable<Chat['chatWorkspace']>): Chat {
+    const chat = this.requireChat(chatId);
+    const workingDirChanged = chat.workingDirOverride !== workspace.workingDir;
+    chat.executionMode = 'isolated-worktree';
+    chat.chatWorkspace = workspace;
+    // Keep the legacy override populated while execution surfaces migrate to
+    // the explicit chatWorkspace model.
+    chat.workingDirOverride = workspace.workingDir;
+    if (workingDirChanged) {
+      delete chat.sessionAnchor;
+      delete chat.sessionAnchors;
+    }
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
+  /** One-time compatibility migration for chats bound through the legacy
+   *  workingDirOverride field. Preserve updatedAt so migration does not reorder chats. */
+  migrateChatWorkspace(chatId: string, workspace: NonNullable<Chat['chatWorkspace']>): Chat {
+    const chat = this.requireChat(chatId);
+    if (chat.chatWorkspace) return chat;
+    chat.executionMode = 'isolated-worktree';
+    chat.chatWorkspace = workspace;
+    chat.workingDirOverride = workspace.workingDir;
+    this.persist(chat);
+    return chat;
+  }
+
+  setExecutionMode(chatId: string, mode: NonNullable<Chat['executionMode']>): Chat {
+    const chat = this.requireChat(chatId);
+    const previousWorkingDir = chat.workingDirOverride;
+    chat.executionMode = mode;
+    if (mode === 'shared-checkout') delete chat.workingDirOverride;
+    else if (chat.chatWorkspace) chat.workingDirOverride = chat.chatWorkspace.workingDir;
+    if (previousWorkingDir !== chat.workingDirOverride) {
+      delete chat.sessionAnchor;
+      delete chat.sessionAnchors;
+    }
+    this.persist(chat);
+    return chat;
+  }
+
+  /** Persist PR delivery metadata without reordering the conversation. */
+  setPullRequest(chatId: string, pullRequest: NonNullable<Chat['pullRequest']>): Chat {
+    const chat = this.requireChat(chatId);
+    chat.pullRequest = pullRequest;
     this.persist(chat);
     return chat;
   }

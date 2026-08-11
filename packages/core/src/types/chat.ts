@@ -159,6 +159,31 @@ export interface Chat {
    *  runs here instead of the workspace's workingDir — used to bind a chat to a
    *  git worktree. Cleared (deleted) to fall back to the workspace dir. */
   workingDirOverride?: string;
+  /** Checkout currently used by this chat. Missing on legacy chats means the
+   *  shared project checkout. */
+  executionMode?: 'shared-checkout' | 'isolated-worktree';
+  /** Stable filesystem environment owned by an isolated chat. The branch is
+   *  deliberately not persisted: it is live Git state managed by the agent. */
+  chatWorkspace?: {
+    /** User-chosen, filesystem-safe name for this chat's worktree. */
+    name?: string;
+    repositoryRoot: string;
+    worktreePath: string;
+    workingDir: string;
+    baseCommit: string;
+    createdAt: number;
+  };
+  /** Pull request delivery state associated with this chat's current branch. */
+  pullRequest?: {
+    url: string;
+    number?: number;
+    state: 'pr-open' | 'merged' | 'merged-with-changes' | 'closed-unmerged';
+    headBranch?: string;
+    baseBranch?: string;
+    headCommit?: string;
+    mergedAt?: number;
+    lastCheckedAt: number;
+  };
   /** Last unanswered choice question in a non-team chat. Cleared on next user message. */
   lastAskedOptions?: { messageId: string; options: string[] };
   /** Set when the skill distiller has proposed a new skill and is waiting for

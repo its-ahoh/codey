@@ -299,6 +299,9 @@ declare global {
         updateContextPanelOpen: (id: string, open: boolean | null) => Promise<IpcResult<Chat>>
         setSoloAdvisor: (id: string, enabled: boolean) => Promise<IpcResult<Chat>>
         setWorkingDir: (id: string, dir: string | null) => Promise<IpcResult<Chat>>
+        setExecutionMode: (id: string, mode: 'shared-checkout' | 'isolated-worktree') => Promise<IpcResult<Chat>>
+        createWorktree: (id: string, name: string) => Promise<IpcResult<Chat>>
+        setPullRequest: (id: string, pullRequest: NonNullable<Chat['pullRequest']>) => Promise<IpcResult<Chat>>
       }
       qq: {
         ask: (payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }>; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) => Promise<IpcResult<{ response: string; tokens?: number; durationSec?: number }>>
@@ -328,6 +331,7 @@ declare global {
         worktrees: (workingDir: string) => Promise<IpcResult<{ list: { branch: string; path: string; isMain: boolean }[] }>>
         worktreeAdd: (workingDir: string, args: { name: string; path: string }) => Promise<IpcResult<{ ok: boolean; path?: string; error?: string }>>
         createPr: (workingDir: string, input: { title: string; body?: string }) => Promise<IpcResult<{ ok: boolean; url?: string; error?: string }>>
+        prStatus: (workingDir: string, url?: string) => Promise<IpcResult<NonNullable<Chat['pullRequest']>>>
         watch: (workingDir: string) => Promise<IpcResult<{ ok: boolean }>>
         unwatch: (workingDir: string) => Promise<IpcResult<{ ok: boolean }>>
         onChanged: (handler: (ev: { workingDir: string }) => void) => () => void

@@ -1,117 +1,139 @@
-import React, { useMemo, useRef, useState, useEffect } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { C } from '../theme'
 import { useGitBranches } from '../hooks/useGitBranches'
-import { compactWorktreePath, currentFirst, defaultWorktreePath, filterBranches, partitionWorktrees } from './branchPickerModel'
+import { compactWorktreePath, currentFirst, filterBranches } from './branchPickerModel'
 import { UIIcon } from './UIIcons'
 
 interface Props {
   workingDir: string | undefined
-  repoRoot: string | undefined           // for default worktree path; falls back to workingDir
-  boundWorktreePath?: string             // chat.workingDirOverride
-  onBindWorktree: (path: string | null) => void
+  chatWorktree?: { name?: string; path: string }
+  executionMode?: 'shared-checkout' | 'isolated-worktree'
+  onCreateWorktree: (name: string) => Promise<void>
+  onExecutionModeChange: (mode: 'shared-checkout' | 'isolated-worktree') => Promise<void>
   onOpenTerminal?: () => void
 }
 
-type Mode = { kind: 'list' } | { kind: 'create' } | { kind: 'dirty'; target: string }
-type PickerView = 'branches' | 'worktrees'
+type Mode = { kind: 'list' } | { kind: 'createBranch' } | { kind: 'createWorktree' } | { kind: 'dirty'; target: string }
 
-export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorktreePath, onBindWorktree, onOpenTerminal }) => {
+export const BranchPicker: React.FC<Props> = ({
+  workingDir, chatWorktree, executionMode = 'shared-checkout', onCreateWorktree, onExecutionModeChange, onOpenTerminal,
+}) => {
   const git = useGitBranches(workingDir)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [view, setView] = useState<PickerView>('branches')
   const [mode, setMode] = useState<Mode>({ kind: 'list' })
-  const [newName, setNewName] = useState('')
-  const [useWorktree, setUseWorktree] = useState(true)   // worktree is the DEFAULT
+  const [newBranchName, setNewBranchName] = useState('')
+  const [newWorktreeName, setNewWorktreeName] = useState('')
   const [note, setNote] = useState<string | null>(null)
+  const [changingMode, setChangingMode] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    const onDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [open])
 
-  const s = git.state
-  const { main, others } = useMemo(() => partitionWorktrees(s?.worktrees ?? []), [s])
-  const localFiltered = useMemo(
-    () => currentFirst(filterBranches(s?.local ?? [], query), branch => branch === s?.branch),
-    [s, query],
+  const state = git.state
+  const localBranches = useMemo(
+    () => currentFirst(filterBranches(state?.local ?? [], query), branch => branch === state?.branch),
+    [state, query],
   )
-  const remoteFiltered = useMemo(() => filterBranches(s?.remote ?? [], query), [s, query])
-  const repo = repoRoot || workingDir || ''
-  const worktreePath = boundWorktreePath || workingDir || ''
-  const orderedWorktrees = useMemo(
-    () => currentFirst(
-      [...(main ? [main] : []), ...others],
-      worktree => boundWorktreePath ? worktree.path === boundWorktreePath : worktree.isMain,
-    ),
-    [main, others, boundWorktreePath],
-  )
-  const previewPath = useWorktree && newName ? defaultWorktreePath(repo, newName) : ''
+  const remoteBranches = useMemo(() => filterBranches(state?.remote ?? [], query), [state, query])
+  const path = workingDir || ''
+  const isolated = executionMode === 'isolated-worktree'
+  const worktreeLabel = chatWorktree?.name || chatWorktree?.path.split('/').filter(Boolean).pop() || 'Isolated worktree'
+  const branchLabel = state?.branch === 'HEAD' ? '—' : (state?.branch ?? '—')
+  const pathLabel = compactWorktreePath(path)
+  const checkoutLabel = isolated ? worktreeLabel : 'Current checkout'
 
-  const copyWorktreePath = async () => {
-    const value = worktreePath
-    if (!value) return
+  const copyPath = async () => {
+    if (!path) return
     try {
-      await navigator.clipboard.writeText(value)
+      await navigator.clipboard.writeText(path)
       setNote('Worktree path copied')
     } catch {
       setNote('Could not copy worktree path')
     }
   }
 
-  const doSwitch = async (name: string) => {
-    const r = await git.checkout(name)
-    if (r.ok) { setOpen(false); return }
-    if (r.reason === 'dirty') setMode({ kind: 'dirty', target: name })
+  const switchBranch = async (name: string) => {
+    const result = await git.checkout(name)
+    if (result.ok) { setOpen(false); return }
+    if (result.reason === 'dirty') setMode({ kind: 'dirty', target: name })
   }
 
-  const doSwitchRemote = async (b: string) => {
-    // `git checkout --track` needs the remote-tracking ref (origin/foo), not the local name.
-    const r = await git.checkout(b, { track: true })
-    if (r.ok) { setOpen(false); return }
-    // On retry after stash, plain `git checkout foo` DWIMs to a tracking branch.
-    if (r.reason === 'dirty') setMode({ kind: 'dirty', target: b.replace(/^[^/]+\//, '') })
+  const switchRemoteBranch = async (name: string) => {
+    const result = await git.checkout(name, { track: true })
+    if (result.ok) { setOpen(false); return }
+    if (result.reason === 'dirty') setMode({ kind: 'dirty', target: name.replace(/^[^/]+\//, '') })
   }
 
-  const doCreate = async () => {
-    if (!newName.trim()) return
-    if (useWorktree) {
-      const r = await git.addWorktree(newName.trim(), defaultWorktreePath(repo, newName.trim()))
-      if (r.ok && r.path) { onBindWorktree(r.path); setOpen(false) }
-    } else {
-      const r = await git.createBranch(newName.trim())
-      if (r.ok) { setOpen(false) }
+  const createBranch = async () => {
+    const name = newBranchName.trim()
+    if (!name) return
+    const result = await git.createBranch(name)
+    if (result.ok) setOpen(false)
+  }
+
+  const createWorktree = async () => {
+    const name = newWorktreeName.trim()
+    if (!name || changingMode) return
+    setChangingMode(true); setNote(null)
+    try {
+      await onCreateWorktree(name)
+      setNote('Worktree and same-named branch created')
+      setMode({ kind: 'list' })
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : 'Could not create worktree')
+    } finally {
+      setChangingMode(false)
+    }
+  }
+
+  const changeExecutionMode = async (nextMode: 'shared-checkout' | 'isolated-worktree') => {
+    if (changingMode || nextMode === executionMode) return
+    setChangingMode(true); setNote(null)
+    try {
+      await onExecutionModeChange(nextMode)
+      setNote(nextMode === 'isolated-worktree'
+        ? 'Using this chat’s worktree'
+        : 'Using the current checkout; the isolated worktree is preserved')
+      setMode({ kind: 'list' })
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : 'Could not switch checkout mode')
+    } finally {
+      setChangingMode(false)
     }
   }
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <button style={styles.pill} onClick={() => setOpen(o => {
-        if (!o) {
-          setNote(null)
-          // A branch may have been created by Codex/Terminal while the app was
-          // in the background. Refresh at the moment the user opens the menu
-          // instead of relying only on the .git watcher or 5s polling fallback.
-          void git.refresh()
-        }
-        return !o
-      })}
-        title={worktreePath ? `${s?.branch ?? 'Unknown branch'}\n${worktreePath}` : 'Chat workspace unavailable'}
-        aria-label={`Chat workspace: ${s?.branch ?? 'unknown branch'}, ${worktreePath || 'unavailable'}`}
+      <button
+        style={styles.pill}
+        onClick={() => setOpen(value => {
+          if (!value) { setNote(null); void git.refresh() }
+          return !value
+        })}
+        title={path ? `${branchLabel}\n${path}` : 'Chat checkout unavailable'}
+        aria-label={`Chat branch: ${branchLabel}, ${path || 'unavailable'}`}
         aria-expanded={open}
       >
         <UIIcon name="code" size={15} />
         <span style={styles.pillIdentity}>
           <span style={styles.pillBranch}>
-            <span style={styles.ellipsis}>{s?.branch ?? '—'}</span>
-            {s && s.dirty > 0 && <span style={styles.dirty}>+{s.dirty}</span>}
+            <span style={styles.ellipsis}>{branchLabel}</span>
+            {state && state.dirty > 0 && <span style={styles.dirty}>+{state.dirty}</span>}
           </span>
-          <span style={styles.pillPath}>{compactWorktreePath(worktreePath)}</span>
+          <span style={styles.pillPath} title={path}>{checkoutLabel}</span>
         </span>
         <span style={{ ...styles.caret, transform: open ? 'rotate(-90deg)' : 'rotate(90deg)' }}>
           <UIIcon name="chevron" size={12} />
@@ -120,96 +142,109 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
 
       {open && (
         <div style={styles.menu}>
-          <div style={styles.currentWorkspace}>
-            <UIIcon name="workspace" size={15} />
+          <div style={styles.currentCheckout}>
             <div style={styles.currentIdentity}>
-              <div style={styles.currentBranch}>{s?.branch ?? '—'}</div>
-              <div style={styles.currentPath} title={worktreePath}>{compactWorktreePath(worktreePath)}</div>
+              <div style={styles.currentBranch}>{branchLabel}</div>
+              <div style={styles.currentPath} title={path}>{pathLabel}</div>
             </div>
-            <button style={styles.iconButton} onClick={() => void copyWorktreePath()} title="Copy worktree path" aria-label="Copy worktree path">
+            <button style={styles.iconButton} onClick={() => void copyPath()} title="Copy path" aria-label="Copy worktree path">
               <UIIcon name="copy" size={13} />
             </button>
             {onOpenTerminal && (
-              <button style={styles.iconButton} onClick={() => { onOpenTerminal(); setOpen(false) }} disabled={!worktreePath} title="Open Terminal here" aria-label="Open Terminal in this worktree">
+              <button style={styles.iconButton} onClick={() => { onOpenTerminal(); setOpen(false) }} disabled={!workingDir} title="Open Terminal here" aria-label="Open Terminal in this checkout">
                 <UIIcon name="terminal" size={14} />
               </button>
             )}
           </div>
+
+          <div style={styles.checkoutMode}>
+            <span style={isolated ? styles.worktreeBadge : styles.modeLabel} title={chatWorktree?.path}>
+              {isolated ? worktreeLabel : 'Current checkout'}
+            </span>
+            {!chatWorktree ? (
+              <button style={styles.createWorktreeButton} onClick={() => { setNewWorktreeName(''); setMode({ kind: 'createWorktree' }) }}>
+                + Create worktree
+              </button>
+            ) : (
+              <button style={styles.ghost} disabled={changingMode} onClick={() => void changeExecutionMode(isolated ? 'shared-checkout' : 'isolated-worktree')}>
+                {isolated ? 'Use current' : 'Use worktree'}
+              </button>
+            )}
+          </div>
+
           {mode.kind === 'dirty' ? (
             <div style={styles.section}>
               <div style={styles.warn}>Switching would overwrite local changes.</div>
               <div style={styles.row}>
                 <button style={styles.primary} onClick={async () => {
-                  const r = await git.stashAndSwitch(mode.target)
-                  // Keep the menu open so the stash note is actually visible.
-                  if (r.ok) { setNote('Local changes stashed — restore with `git stash pop`'); setMode({ kind: 'list' }) }
+                  const result = await git.stashAndSwitch(mode.target)
+                  if (result.ok) {
+                    setNote('Local changes stashed — restore with `git stash pop`')
+                    setMode({ kind: 'list' })
+                  }
                 }}>Stash & switch</button>
                 <button style={styles.ghost} onClick={() => setMode({ kind: 'list' })}>Cancel</button>
               </div>
             </div>
-          ) : mode.kind === 'create' ? (
+          ) : mode.kind === 'createWorktree' ? (
             <div style={styles.section}>
-              <input autoFocus placeholder="new-branch-name" value={newName}
-                onChange={e => setNewName(e.target.value)} style={styles.input} />
-              <div style={styles.toggle}>
-                <button style={useWorktree ? styles.segOn : styles.seg} onClick={() => setUseWorktree(true)}>Worktree</button>
-                <button style={!useWorktree ? styles.segOn : styles.seg} onClick={() => setUseWorktree(false)}>Branch</button>
-              </div>
-              {previewPath && <div style={styles.preview}>{previewPath}</div>}
+              <div style={styles.sectionLabel}>Worktree name</div>
+              <input
+                autoFocus
+                placeholder="feature-auth"
+                value={newWorktreeName}
+                onChange={event => setNewWorktreeName(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Enter') void createWorktree() }}
+                style={styles.input}
+              />
+              <div style={styles.hint}>Creates a worktree and same-named branch from HEAD. Uncommitted changes stay in the current checkout.</div>
+              {note && <div style={styles.err}>{note}</div>}
               <div style={styles.row}>
-                <button style={styles.primary} onClick={doCreate}>Create</button>
+                <button style={styles.primary} disabled={!newWorktreeName.trim() || changingMode} onClick={() => void createWorktree()}>{changingMode ? 'Creating…' : 'Create worktree'}</button>
+                <button style={styles.ghost} disabled={changingMode} onClick={() => setMode({ kind: 'list' })}>Cancel</button>
+              </div>
+            </div>
+          ) : mode.kind === 'createBranch' ? (
+            <div style={styles.section}>
+              <div style={styles.sectionLabel}>Create branch in this checkout</div>
+              <input
+                autoFocus
+                placeholder="new-branch-name"
+                value={newBranchName}
+                onChange={event => setNewBranchName(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Enter') void createBranch() }}
+                style={styles.input}
+              />
+              <div style={styles.row}>
+                <button style={styles.primary} onClick={() => void createBranch()}>Create</button>
                 <button style={styles.ghost} onClick={() => setMode({ kind: 'list' })}>Cancel</button>
               </div>
             </div>
           ) : (
             <>
-              <div style={styles.viewTabs} role="tablist" aria-label="Workspace choices">
-                <button role="tab" aria-selected={view === 'branches'} style={view === 'branches' ? styles.viewTabActive : styles.viewTab} onClick={() => setView('branches')}>Branches</button>
-                <button role="tab" aria-selected={view === 'worktrees'} style={view === 'worktrees' ? styles.viewTabActive : styles.viewTab} onClick={() => setView('worktrees')}>Worktrees</button>
-              </div>
-              {view === 'branches' && (
-                <input placeholder="Filter branches…" value={query}
-                  onChange={e => setQuery(e.target.value)} style={styles.input} />
-              )}
+              <input placeholder="Filter branches…" value={query} onChange={event => setQuery(event.target.value)} style={styles.input} />
               <div style={styles.scroll}>
-                {view === 'branches' ? (
-                  <>
-                    {localFiltered.length > 0 && <div style={styles.divider}>Local</div>}
-                    {localFiltered.map(b => (
-                      <button key={b} style={styles.item} disabled={b === s?.branch} onClick={() => doSwitch(b)}>
-                        <span style={styles.checkSlot}>{b === s?.branch && <UIIcon name="check" size={13} />}</span>{b}
-                      </button>
-                    ))}
-                    {remoteFiltered.length > 0 && <div style={styles.divider}>Remote</div>}
-                    {remoteFiltered.map(b => (
-                      <button key={b} style={styles.item} onClick={() => doSwitchRemote(b)}>
-                        <span style={styles.checkSlot} />{b}
-                      </button>
-                    ))}
-                  </>
-                ) : (
-                  <>
-                    {orderedWorktrees.map(w => {
-                      const isCurrent = boundWorktreePath ? w.path === boundWorktreePath : w.isMain
-                      return (
-                        <button key={w.path} style={styles.worktreeItem} onClick={() => { onBindWorktree(w.isMain ? null : w.path); setOpen(false) }}>
-                          <span style={styles.checkSlot}>{isCurrent && <UIIcon name="check" size={13} />}</span>
-                          <span style={styles.worktreeIdentity}>
-                            <span>{w.branch} {w.isMain && <span style={styles.mainLabel}>main</span>}</span>
-                            <span style={styles.worktreePath} title={w.path}>{compactWorktreePath(w.path)}</span>
-                          </span>
-                        </button>
-                      )
-                    })}
-                    {orderedWorktrees.length === 0 && <div style={styles.empty}>No worktrees found</div>}
-                  </>
-                )}
+                {localBranches.length > 0 && <div style={styles.divider}>Local</div>}
+                {localBranches.map(branch => (
+                  <button key={branch} style={styles.item} disabled={branch === state?.branch} onClick={() => void switchBranch(branch)}>
+                    <span style={styles.checkSlot}>{branch === state?.branch && <UIIcon name="check" size={13} />}</span>
+                    <span style={styles.branchName}>{branch}</span>
+                  </button>
+                ))}
+                {remoteBranches.length > 0 && <div style={styles.divider}>Remote</div>}
+                {remoteBranches.map(branch => (
+                  <button key={branch} style={styles.item} onClick={() => void switchRemoteBranch(branch)}>
+                    <span style={styles.checkSlot} />
+                    <span style={styles.branchName}>{branch}</span>
+                  </button>
+                ))}
+                {localBranches.length === 0 && remoteBranches.length === 0 && <div style={styles.empty}>No branches found</div>}
               </div>
               {git.error && <div style={styles.err}>{git.error}</div>}
               {note && <div style={styles.noteBox} role="status">{note}</div>}
               <div style={styles.footer}>
-                <button style={styles.ghost} onClick={() => { setNewName(''); setUseWorktree(view === 'worktrees'); setMode({ kind: 'create' }) }}>+ New…</button>
-                {view === 'branches' && <button style={styles.ghost} onClick={() => git.fetchRemote()}>Fetch</button>}
+                <button style={styles.ghost} onClick={() => { setNewBranchName(''); setMode({ kind: 'createBranch' }) }}>+ New branch</button>
+                <button style={styles.ghost} onClick={() => void git.fetchRemote()}>Fetch</button>
               </div>
             </>
           )}
@@ -220,59 +255,36 @@ export const BranchPicker: React.FC<Props> = ({ workingDir, repoRoot, boundWorkt
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  pill: { display: 'inline-flex', alignItems: 'center', gap: 7, color: C.fg2, fontSize: 11,
-    background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 7, padding: '5px 8px',
-    cursor: 'pointer', flexShrink: 1, minWidth: 150, maxWidth: 310,
-    overflow: 'hidden', textAlign: 'left' },
+  pill: { display: 'inline-flex', alignItems: 'center', gap: 7, color: C.fg2, fontSize: 11, background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 7, padding: '5px 8px', cursor: 'pointer', flexShrink: 1, minWidth: 150, maxWidth: 310, overflow: 'hidden', textAlign: 'left' },
   pillIdentity: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: 1 },
   pillBranch: { display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, fontFamily: 'SF Mono, Menlo, monospace' },
   pillPath: { color: C.fg3, fontSize: 9, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   ellipsis: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   dirty: { color: C.yellow, opacity: 0.85 },
-  caret: {
-    color: C.fg3,
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 14,
-    height: 14,
-    flexShrink: 0,
-    transformOrigin: 'center',
-    transition: 'transform 0.15s ease',
-  },
-  menu: { position: 'absolute', top: 'calc(100% + 7px)', left: 0, zIndex: 20, width: 340,
-    background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
-    boxShadow: '0 14px 30px rgba(0,0,0,0.26)', padding: 8, display: 'flex', flexDirection: 'column', gap: 6 },
-  currentWorkspace: { display: 'flex', alignItems: 'center', gap: 7, padding: '6px 7px 8px', borderBottom: `1px solid ${C.border}` },
+  caret: { color: C.fg3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, flexShrink: 0, transformOrigin: 'center', transition: 'transform 0.15s ease' },
+  menu: { position: 'absolute', top: 'calc(100% + 7px)', left: 0, zIndex: 20, width: 340, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 14px 30px rgba(0,0,0,0.26)', padding: 8, display: 'flex', flexDirection: 'column', gap: 7 },
+  currentCheckout: { display: 'flex', alignItems: 'center', gap: 7, padding: '6px 7px 8px', borderBottom: `1px solid ${C.border}` },
   currentIdentity: { minWidth: 0, flex: 1 },
   currentBranch: { color: C.fg, fontSize: 11, fontWeight: 600, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   currentPath: { color: C.fg3, fontSize: 9, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   iconButton: { width: 27, height: 27, padding: 0, border: `1px solid ${C.border2}`, borderRadius: 6, background: C.surface3, color: C.fg2, cursor: 'pointer', display: 'grid', placeItems: 'center', flexShrink: 0 },
-  viewTabs: { display: 'flex', padding: 2, borderRadius: 6, background: C.surface3 },
-  viewTab: { flex: 1, border: 'none', borderRadius: 5, padding: '5px 8px', background: 'transparent', color: C.fg3, cursor: 'pointer', fontSize: 11 },
-  viewTabActive: { flex: 1, border: `1px solid ${C.border2}`, borderRadius: 5, padding: '4px 8px', background: C.surface2, color: C.fg, cursor: 'pointer', fontSize: 11, fontWeight: 600 },
+  checkoutMode: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '1px 3px 2px' },
+  modeLabel: { display: 'inline-flex', alignItems: 'center', gap: 5, color: C.fg3, fontSize: 10, paddingLeft: 3 },
+  worktreeBadge: { display: 'inline-flex', alignItems: 'center', gap: 5, color: C.green, fontSize: 10, paddingLeft: 3, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  createWorktreeButton: { background: C.accentDim, color: C.accent, border: `1px solid ${C.accent}55`, borderRadius: 6, padding: '5px 8px', fontSize: 10, cursor: 'pointer' },
   section: { display: 'flex', flexDirection: 'column', gap: 8 },
+  sectionLabel: { color: C.fg3, fontSize: 10 },
   scroll: { maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column' },
-  item: { textAlign: 'left', background: 'transparent', border: 'none', color: C.fg, fontSize: 12,
-    padding: '6px 8px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 },
+  item: { width: '100%', textAlign: 'left', background: 'transparent', border: 'none', color: C.fg, fontSize: 12, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 },
+  branchName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   checkSlot: { width: 14, flexShrink: 0, display: 'inline-flex', alignItems: 'center' },
-  worktreeItem: { width: '100%', textAlign: 'left', background: 'transparent', border: 'none', color: C.fg, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 },
-  worktreeIdentity: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1, fontSize: 12 },
-  worktreePath: { color: C.fg3, fontSize: 9, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  mainLabel: { color: C.fg3, fontSize: 9, fontWeight: 500 },
   empty: { color: C.fg3, fontSize: 11, padding: '14px 8px', textAlign: 'center' },
+  hint: { color: C.fg3, fontSize: 10, lineHeight: 1.4 },
   divider: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: C.fg3, padding: '8px 8px 2px' },
-  input: { background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6, color: C.fg,
-    fontSize: 12, padding: '5px 8px', outline: 'none' },
-  toggle: { display: 'flex', gap: 4 },
-  seg: { flex: 1, background: C.surface3, border: `1px solid ${C.border2}`, color: C.fg2, fontSize: 11,
-    padding: '5px 6px', borderRadius: 6, cursor: 'pointer' },
-  segOn: { flex: 1, background: C.accent, border: `1px solid ${C.accent}`, color: C.onAccent, fontSize: 11,
-    padding: '5px 6px', borderRadius: 6, cursor: 'pointer' },
-  preview: { fontSize: 10, color: C.fg3, fontFamily: 'SF Mono, Menlo, monospace', wordBreak: 'break-all' },
+  input: { background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6, color: C.fg, fontSize: 12, padding: '5px 8px', outline: 'none' },
   row: { display: 'flex', gap: 6 },
   primary: { background: C.accent, color: C.onAccent, border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, cursor: 'pointer' },
-  ghost: { background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '5px 10px', fontSize: 12, cursor: 'pointer' },
+  ghost: { background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '5px 10px', fontSize: 11, cursor: 'pointer' },
   footer: { display: 'flex', justifyContent: 'space-between', borderTop: `1px solid ${C.border}`, paddingTop: 6 },
   warn: { fontSize: 12, color: C.yellow },
   err: { fontSize: 11, color: C.red, padding: '2px 4px' },
