@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { chatsNeedingPrRefresh, prStatusChanged, prWorkingDir } from './usePullRequestWatcher'
+import { chatsWithTrackedPr, needsPrRefresh, prStatusChanged, prWorkingDir } from './usePullRequestWatcher'
 import type { Chat } from '../types'
 
 const makeChat = (overrides: Partial<Chat> = {}): Chat => ({
@@ -12,21 +12,37 @@ const pr = (overrides: Partial<NonNullable<Chat['pullRequest']>> = {}): NonNulla
   url: 'https://github.com/o/r/pull/1', number: 1, state: 'pr-open', lastCheckedAt: 100, ...overrides,
 })
 
-describe('chatsNeedingPrRefresh', () => {
-  it('picks chats with an open PR', () => {
+describe('chatsWithTrackedPr', () => {
+  it('picks chats carrying a PR url', () => {
     const open = makeChat({ id: 'open', pullRequest: pr() })
-    const chats = [
-      open,
-      makeChat({ id: 'none' }),
-      makeChat({ id: 'merged', pullRequest: pr({ state: 'merged' }) }),
-      makeChat({ id: 'closed', pullRequest: pr({ state: 'closed-unmerged' }) }),
-      makeChat({ id: 'changes', pullRequest: pr({ state: 'merged-with-changes' }) }),
-    ]
-    expect(chatsNeedingPrRefresh(chats)).toEqual([open])
+    const merged = makeChat({ id: 'merged', pullRequest: pr({ state: 'merged' }) })
+    const chats = [open, makeChat({ id: 'none' }), merged, makeChat({ id: 'urlless', pullRequest: pr({ url: '' }) })]
+    expect(chatsWithTrackedPr(chats)).toEqual([open, merged])
+  })
+})
+
+describe('needsPrRefresh', () => {
+  it('always checks an open PR', () => {
+    expect(needsPrRefresh(pr(), 'feature')).toBe(true)
   })
 
-  it('skips an open PR with no url to check', () => {
-    expect(chatsNeedingPrRefresh([makeChat({ pullRequest: pr({ url: '' }) })])).toEqual([])
+  it('skips a merged PR while the checkout is still on its branch', () => {
+    expect(needsPrRefresh(pr({ state: 'merged', headBranch: 'feature' }), 'feature')).toBe(false)
+  })
+
+  it('re-checks a merged PR once the checkout moved to another branch', () => {
+    expect(needsPrRefresh(pr({ state: 'merged', headBranch: 'shipped' }), 'next-thing')).toBe(true)
+  })
+
+  it('leaves a terminal PR alone when the branch is unknown or detached', () => {
+    const merged = pr({ state: 'merged', headBranch: 'shipped' })
+    expect(needsPrRefresh(merged, undefined)).toBe(false)
+    expect(needsPrRefresh(merged, 'HEAD')).toBe(false)
+    expect(needsPrRefresh(pr({ state: 'merged' }), 'next-thing')).toBe(false)
+  })
+
+  it('ignores chats with no PR', () => {
+    expect(needsPrRefresh(undefined, 'feature')).toBe(false)
   })
 })
 

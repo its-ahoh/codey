@@ -10,11 +10,19 @@ export const PR_POLL_INTERVAL_MS = 2 * 60_000
 
 type PullRequest = NonNullable<Chat['pullRequest']>
 
-/** Chats worth polling: those whose PR is still open. Merged/closed chats are
- *  terminal for the watcher — ChatTab still refreshes the active chat, which is
- *  what turns `merged` into `merged-with-changes` once new commits land. */
-export function chatsNeedingPrRefresh(chats: Chat[]): Chat[] {
-  return chats.filter(chat => chat.pullRequest?.state === 'pr-open' && !!chat.pullRequest.url)
+/** Chats that carry a PR the watcher could check. */
+export function chatsWithTrackedPr(chats: Chat[]): Chat[] {
+  return chats.filter(chat => !!chat.pullRequest?.url)
+}
+
+/** Whether this chat's PR is worth a `gh` call right now. An open PR always is
+ *  — that's the merge we're watching for. A terminal one only is when the
+ *  checkout has moved off the branch that PR belongs to, which means the badge
+ *  is describing finished work and needs to be re-resolved for the new branch. */
+export function needsPrRefresh(pullRequest: PullRequest | undefined, branch: string | undefined): boolean {
+  if (!pullRequest?.url) return false
+  if (pullRequest.state === 'pr-open') return true
+  return !!branch && branch !== 'HEAD' && !!pullRequest.headBranch && branch !== pullRequest.headBranch
 }
 
 /** True when a fetched status differs in a way the ChatList badge cares about.
@@ -59,6 +67,13 @@ export function usePullRequestWatcher(): void {
     return prWorkingDir(chat, workspaceDirs.current)
   }, [])
 
+  const currentBranch = useCallback(async (workingDir: string): Promise<string | undefined> => {
+    try {
+      const result = await window.codey.git.status(workingDir)
+      return result.ok ? result.data?.branch : undefined
+    } catch { return undefined }
+  }, [])
+
   const sweep = useCallback(async () => {
     // Skip while the window is hidden: nobody is looking at the badges, and
     // the focus listener below catches up as soon as they are.
@@ -66,9 +81,13 @@ export function usePullRequestWatcher(): void {
     running.current = true
     try {
       // Sequential on purpose — each check spawns a `gh` process.
-      for (const chat of chatsNeedingPrRefresh(Object.values(chatsRef.current))) {
+      for (const chat of chatsWithTrackedPr(Object.values(chatsRef.current))) {
         const workingDir = await resolveWorkingDir(chat)
         if (!workingDir) continue
+        // Local git first: it's cheap, and it tells us whether a terminal-state
+        // PR still describes this chat's branch before we pay for a gh call.
+        const branch = await currentBranch(workingDir)
+        if (!needsPrRefresh(chat.pullRequest, branch)) continue
         try {
           const result = await window.codey.git.prStatus(workingDir, chat.pullRequest!.url)
           const current = chatsRef.current[chat.id]?.pullRequest
@@ -80,7 +99,7 @@ export function usePullRequestWatcher(): void {
     } finally {
       running.current = false
     }
-  }, [resolveWorkingDir, setPullRequest])
+  }, [currentBranch, resolveWorkingDir, setPullRequest])
 
   useEffect(() => {
     void sweep()

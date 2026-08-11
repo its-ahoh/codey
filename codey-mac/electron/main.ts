@@ -14,7 +14,7 @@ import { applyEvent, clearAttention, summarize } from './tray-state'
 import { SKILL_FILE, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
-import { deriveDeliveryState } from './delivery-status'
+import { deriveDeliveryState, shouldRediscoverPr } from './delivery-status'
 import type { ScannedSkill } from './skills'
 import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
@@ -2231,11 +2231,8 @@ app.whenReady().then(async () => {
       })
       const gh = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh']
         .find(candidate => fsMod.existsSync(candidate)) || 'gh'
-      const raw = await run(gh, [
-        'pr', 'view', ...(url ? [url] : []),
-        '--json', 'url,number,state,mergedAt,headRefName,headRefOid,baseRefName',
-      ], 15_000)
-      const view = JSON.parse(raw) as {
+      const PR_FIELDS = 'url,number,state,mergedAt,headRefName,headRefOid,baseRefName'
+      type PrView = {
         url: string
         number?: number
         state: string
@@ -2244,11 +2241,23 @@ app.whenReady().then(async () => {
         headRefOid?: string
         baseRefName?: string
       }
+      // No url means "whatever PR the current branch has" — gh resolves it.
+      const view$ = async (prUrl?: string): Promise<PrView> =>
+        JSON.parse(await run(gh, ['pr', 'view', ...(prUrl ? [prUrl] : []), '--json', PR_FIELDS], 15_000))
+
+      let view = await view$(url)
       const [localHead, currentBranch, porcelain] = await Promise.all([
         run('git', ['rev-parse', 'HEAD'], 3_000),
         run('git', ['branch', '--show-current'], 3_000),
         run('git', ['status', '--porcelain'], 3_000),
       ])
+      // The caller's stored url can outlive the branch it belongs to: finish a
+      // chat's PR, start the next branch in the same checkout, and the old
+      // (merged) PR would keep answering forever. When the pinned PR's head is
+      // not the branch we're on, ask again for this branch's own PR.
+      if (shouldRediscoverPr({ pinnedHeadBranch: view.headRefName, currentBranch })) {
+        try { view = await view$() } catch { /* no PR for this branch; keep the pinned one */ }
+      }
       const sameBranch = !!view.headRefName && currentBranch === view.headRefName
       let commitsAfterMerge = false
       if (sameBranch && view.state.toUpperCase() === 'MERGED' && view.headRefOid && localHead !== view.headRefOid) {
