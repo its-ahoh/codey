@@ -838,7 +838,7 @@ export const ChatTab: React.FC<Props> = ({
   rightPanelMode, onRightPanelModeChange, rightPanelWidth, onRightPanelResize,
   browserLoginWait, onConfirmBrowserLogin, onDismissBrowserLogin,
 }) => {
-  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setWorkingDir: setChatWorkingDir, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setWorkingDir: setChatWorkingDir, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -873,6 +873,9 @@ export const ChatTab: React.FC<Props> = ({
   const [enabledAgents, setEnabledAgents] = useState<string[]>([...AGENT_NAMES])
   const [defaultAgent, setDefaultAgent] = useState<string | null>(null)
   const [agentDefaultModels, setAgentDefaultModels] = useState<Record<string, string | undefined>>({})
+  // Per-agent default effort lives in the agents config, not in fallback.order
+  // (which carries no effort), so it needs its own lookup.
+  const [agentDefaultEfforts, setAgentDefaultEfforts] = useState<Record<string, string | undefined>>({})
   const [advisorConfig, setAdvisorConfig] = useState<{ agent?: string; model?: string }>({})
   const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>(() => getDraft(chatId).attachments)
   const [isDragging, setIsDragging] = useState(false)
@@ -1114,6 +1117,17 @@ export const ChatTab: React.FC<Props> = ({
           }
           setAgentDefaultModels(defaults)
         }
+        // Effort isn't part of fallback.order — read it off the agents config.
+        // Fetched separately so a failure here still leaves models populated.
+        try {
+          const ag = await window.codey.agents.get()
+          if (ag.ok) {
+            const slots = ag.data as Record<string, { defaultEffort?: string } | undefined>
+            const efforts: Record<string, string | undefined> = {}
+            for (const n of AGENT_NAMES) efforts[n] = slots[n]?.defaultEffort
+            setAgentDefaultEfforts(efforts)
+          }
+        } catch { /* leave the effort dropdown on its "CLI default" placeholder */ }
       } catch { /* surface via dropdown placeholders */ }
     })()
   }, [isGatewayRunning])
@@ -1311,6 +1325,8 @@ export const ChatTab: React.FC<Props> = ({
   const workerModel = selectedWorker?.config.model
   const effectiveAgent: string = chat.agent ?? workerAgent ?? defaultAgent ?? 'claude-code'
   const effectiveModel: string | undefined = chat.model ?? workerModel ?? agentDefaultModels[effectiveAgent]
+  const workerEffort = selectedWorker?.config.effort
+  const effectiveEffort: string | undefined = chat.effort ?? workerEffort ?? agentDefaultEfforts[effectiveAgent]
   const effectiveAdvisorAgent = advisorConfig.agent ?? defaultAgent ?? 'claude-code'
   const effectiveAdvisorModel = advisorConfig.model ?? agentDefaultModels[effectiveAdvisorAgent] ?? 'Default model'
   const apiTypeForAgent = AGENT_API_TYPE[effectiveAgent]
@@ -1356,6 +1372,10 @@ export const ChatTab: React.FC<Props> = ({
   }
   const onModelChange = async (v: string) => {
     await setAgentModel(chat.id, chat.agent ?? null, v === '' ? null : v)
+  }
+  const onEffortChange = async (v: string) => {
+    // '' is the Inherit option — clears the chat override.
+    await setEffort(chat.id, v === '' ? null : v)
   }
 
   const uploadFiles = async (files: FileList | File[]) => {
@@ -1881,6 +1901,22 @@ export const ChatTab: React.FC<Props> = ({
                         {modelsForAgent.map(m => (
                           <option key={m.model} value={m.model}>{m.model}</option>
                         ))}
+                      </select>
+                    </label>
+                    <label style={styles.runSettingGroup}>
+                      <span style={styles.runSettingLabel}>Effort</span>
+                      <select
+                        value={chat.effort ?? ''}
+                        onChange={e => void onEffortChange(e.target.value)}
+                        style={styles.runSettingSelect}
+                        title={`Effort: ${effectiveEffort ?? 'CLI default'}${chat.effort ? ' (override)' : workerEffort ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
+                      >
+                        <option value="">Inherit ({effectiveEffort ?? 'CLI default'})</option>
+                        <option value="low">low</option>
+                        <option value="medium">medium</option>
+                        <option value="high">high</option>
+                        <option value="xhigh">xhigh</option>
+                        <option value="max">max</option>
                       </select>
                     </label>
                     <button
