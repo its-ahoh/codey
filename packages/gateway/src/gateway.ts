@@ -5402,11 +5402,18 @@ Example: /model gpt-4.1 write a Python script`;
     const aideCfg = this.config.aide;
     let agent: CodingAgent;
     let model: ModelConfig | undefined;
+    let effort: ThinkingEffort | undefined;
     try {
       if (aideCfg?.agent || aideCfg?.model) {
         ({ agent, model } = this.getAideAgentAndModel());
+        // Deliberately no chat effort here: the Aide override replaces agent AND
+        // model wholesale, so the chat's tier would land on a model picked for
+        // speed. Left undefined so runWithFallback applies the Aide agent's own
+        // configured default instead.
+        effort = undefined;
       } else {
         agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
+        effort = resolveEffort({ chat: chat.effort });
         model = chat.model
           ? this.getModelConfig(agent, chat.model)
           : this.getDefaultModelConfig(agent);
@@ -5442,7 +5449,7 @@ Example: /model gpt-4.1 write a Python script`;
         prompt,
         agent,
         model,
-        effort: resolveEffort({ chat: chat.effort }),
+        effort,
         context: { workingDir },
         skipPermissions: true,
         allowedTools: READ_ONLY_TOOLS,
