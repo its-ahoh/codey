@@ -20,17 +20,25 @@ export interface TurnHeaderMeta {
   isEmpty: boolean
 }
 
+export interface TurnHeaderInput {
+  /** Seconds this turn has been running, measured in the renderer. Used only
+   *  while the turn streams; the agent's own durationSec wins once it lands. */
+  elapsedSec?: number
+}
+
 /** The metadata identifying one assistant turn, ready to render.
  *
  *  Every field on a ChatMessage that this reads is optional: older messages
- *  predate the model/token bookkeeping, and duration and tokens are only set
- *  once a turn completes, so a streaming turn legitimately has neither. */
-export function turnHeaderMeta(msg: ChatMessage): TurnHeaderMeta {
+ *  predate the model/token bookkeeping, and tokens only arrive with the agent's
+ *  final result event, so a streaming turn legitimately has none. */
+export function turnHeaderMeta(msg: ChatMessage, input: TurnHeaderInput = {}): TurnHeaderMeta {
   const identity = [msg.agent, msg.model].filter(Boolean).join(' · ') || null
 
   const stats: string[] = []
   if (msg.durationSec != null && Number.isFinite(msg.durationSec)) {
     stats.push(`${msg.durationSec}s`)
+  } else if (input.elapsedSec != null && Number.isFinite(input.elapsedSec) && input.elapsedSec >= 0) {
+    stats.push(`${Math.floor(input.elapsedSec)}s`)
   }
   if (msg.tokens != null) {
     const tok = formatTokens(msg.tokens)

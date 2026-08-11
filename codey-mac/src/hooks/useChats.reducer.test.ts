@@ -142,3 +142,39 @@ describe('reducer: adoptInFlight (externally-initiated turns)', () => {
     )).toBe(true)
   })
 })
+
+describe('startSend seeds the turn header', () => {
+  const userMessage = { id: 'u1', role: 'user' as const, content: 'go', timestamp: 1, isComplete: true }
+  const sendState = (chat: Partial<Chat> = {}): State => ({
+    ...emptyState(),
+    chats: { c1: { id: 'c1', title: 't', workspaceName: 'ws', selection: { type: 'none' }, messages: [], createdAt: 0, updatedAt: 0, ...chat } },
+    order: ['c1'], selectedChatId: 'c1',
+  })
+
+  it('puts the caller-resolved agent/model on the assistant stub', () => {
+    const s = reducer(sendState(), { type: 'startSend', chatId: 'c1', userMessage, assistantMessageId: 'a1', agent: 'claude-code', model: 'claude-opus-5' })
+    expect(s.chats.c1.messages.find(m => m.id === 'a1')).toMatchObject({
+      agent: 'claude-code', model: 'claude-opus-5', isComplete: false,
+    })
+  })
+
+  it("falls back to the chat's own overrides when the caller passes none", () => {
+    const s = reducer(sendState({ agent: 'codex', model: 'gpt-5' }), { type: 'startSend', chatId: 'c1', userMessage, assistantMessageId: 'a1' })
+    expect(s.chats.c1.messages.find(m => m.id === 'a1')).toMatchObject({ agent: 'codex', model: 'gpt-5' })
+  })
+
+  it('leaves the stub unidentified when nothing is known', () => {
+    const s = reducer(sendState(), { type: 'startSend', chatId: 'c1', userMessage, assistantMessageId: 'a1' })
+    const stub = s.chats.c1.messages.find(m => m.id === 'a1')!
+    expect(stub.agent).toBeUndefined()
+    expect(stub.model).toBeUndefined()
+  })
+
+  it('completeSend overwrites the provisional identity with what actually ran', () => {
+    let s = reducer(sendState(), { type: 'startSend', chatId: 'c1', userMessage, assistantMessageId: 'a1', agent: 'claude-code', model: 'claude-opus-5' })
+    s = reducer(s, { type: 'completeSend', chatId: 'c1', assistantMessageId: 'a1', content: 'done', agent: 'codex', model: 'gpt-5', tokens: 2100, durationSec: 60 })
+    expect(s.chats.c1.messages.find(m => m.id === 'a1')).toMatchObject({
+      agent: 'codex', model: 'gpt-5', tokens: 2100, durationSec: 60, isComplete: true,
+    })
+  })
+})

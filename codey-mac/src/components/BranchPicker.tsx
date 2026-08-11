@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { C } from '../theme'
 import { useGitBranches } from '../hooks/useGitBranches'
-import { compactWorktreePath, currentFirst, filterBranches } from './branchPickerModel'
+import { compactWorktreePath, currentFirst, describePullResult, filterBranches } from './branchPickerModel'
 import { UIIcon } from './UIIcons'
 
 interface Props {
@@ -26,6 +26,7 @@ export const BranchPicker: React.FC<Props> = ({
   const [newWorktreeName, setNewWorktreeName] = useState('')
   const [note, setNote] = useState<string | null>(null)
   const [changingMode, setChangingMode] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -75,6 +76,18 @@ export const BranchPicker: React.FC<Props> = ({
     const result = await git.checkout(name, { track: true })
     if (result.ok) { setOpen(false); return }
     if (result.reason === 'dirty') setMode({ kind: 'dirty', target: name.replace(/^[^/]+\//, '') })
+  }
+
+  const syncWithRemote = async () => {
+    if (syncing) return
+    setSyncing(true); setNote(null); git.setError(null)
+    try {
+      const result = await git.pull()
+      setNote(describePullResult(result))
+      git.setError(null) // the note already carries the failure reason
+    } finally {
+      setSyncing(false)
+    }
   }
 
   const createBranch = async () => {
@@ -244,7 +257,21 @@ export const BranchPicker: React.FC<Props> = ({
               {note && <div style={styles.noteBox} role="status">{note}</div>}
               <div style={styles.footer}>
                 <button style={styles.ghost} onClick={() => { setNewBranchName(''); setMode({ kind: 'createBranch' }) }}>+ New branch</button>
-                <button style={styles.ghost} onClick={() => void git.fetchRemote()}>Fetch</button>
+                <div style={styles.footerActions}>
+                  <button style={styles.ghost} onClick={() => void git.fetchRemote()}>Fetch</button>
+                  <button
+                    style={styles.iconButton}
+                    disabled={!workingDir || syncing}
+                    onClick={() => void syncWithRemote()}
+                    title={syncing ? 'Syncing…' : 'Sync: fetch and fast-forward this branch to its upstream'}
+                    aria-label="Sync with the latest upstream commits"
+                  >
+                    <style>{'@keyframes codey-branch-sync-spin { to { transform: rotate(360deg) } }'}</style>
+                    <span style={syncing ? styles.spinning : undefined}>
+                      <UIIcon name="refresh" size={13} />
+                    </span>
+                  </button>
+                </div>
               </div>
             </>
           )}
@@ -285,7 +312,9 @@ const styles: Record<string, React.CSSProperties> = {
   row: { display: 'flex', gap: 6 },
   primary: { background: C.accent, color: C.onAccent, border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, cursor: 'pointer' },
   ghost: { background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '5px 10px', fontSize: 11, cursor: 'pointer' },
-  footer: { display: 'flex', justifyContent: 'space-between', borderTop: `1px solid ${C.border}`, paddingTop: 6 },
+  footer: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${C.border}`, paddingTop: 6 },
+  footerActions: { display: 'flex', alignItems: 'center', gap: 6 },
+  spinning: { display: 'inline-flex', animation: 'codey-branch-sync-spin 0.9s linear infinite' },
   warn: { fontSize: 12, color: C.yellow },
   err: { fontSize: 11, color: C.red, padding: '2px 4px' },
   noteBox: { fontSize: 11, color: C.fg3, padding: '2px 4px' },

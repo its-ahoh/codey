@@ -329,6 +329,7 @@ declare global {
         checkout: (workingDir: string, name: string, opts?: { create?: boolean; track?: boolean }) => Promise<IpcResult<{ ok: boolean; error?: string; reason?: 'dirty' }>>
         stash: (workingDir: string, message?: string) => Promise<IpcResult<{ ok: boolean; error?: string }>>
         fetch: (workingDir: string) => Promise<IpcResult<{ ok: boolean; error?: string }>>
+        pull: (workingDir: string) => Promise<IpcResult<{ ok: boolean; updated?: number; upstream?: string; error?: string; reason?: 'dirty' | 'diverged' | 'no-upstream' }>>
         worktrees: (workingDir: string) => Promise<IpcResult<{ list: { branch: string; path: string; isMain: boolean }[] }>>
         worktreeAdd: (workingDir: string, args: { name: string; path: string }) => Promise<IpcResult<{ ok: boolean; path?: string; error?: string }>>
         createPr: (workingDir: string, input: { title: string; body?: string }) => Promise<IpcResult<{ ok: boolean; url?: string; error?: string }>>

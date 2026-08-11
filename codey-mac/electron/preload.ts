@@ -214,6 +214,7 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.invoke('git:checkout', workingDir, name, opts),
     stash: (workingDir: string, message?: string) => ipcRenderer.invoke('git:stash', workingDir, message),
     fetch: (workingDir: string) => ipcRenderer.invoke('git:fetch', workingDir),
+    pull: (workingDir: string) => ipcRenderer.invoke('git:pull', workingDir),
     worktrees: (workingDir: string) => ipcRenderer.invoke('git:worktrees', workingDir),
     worktreeAdd: (workingDir: string, args: { name: string; path: string }) =>
       ipcRenderer.invoke('git:worktreeAdd', workingDir, args),

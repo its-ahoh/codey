@@ -1324,6 +1324,11 @@ export const ChatTab: React.FC<Props> = ({
   const effectiveEffort: string | undefined = chat.effort ?? workerEffort ?? agentDefaultEfforts[effectiveAgent]
   const effectiveAdvisorAgent = advisorConfig.agent ?? defaultAgent ?? 'claude-code'
   const effectiveAdvisorModel = advisorConfig.model ?? agentDefaultModels[effectiveAdvisorAgent] ?? 'Default model'
+  // Seeds the streaming turn's header. A team run has no single identity — its
+  // members each carry their own — so it opts out and waits for the real values.
+  const turnIdentity = chat.selection.type === 'team'
+    ? undefined
+    : { agent: effectiveAgent as ChatMessage['agent'], model: effectiveModel }
   const apiTypeForAgent = AGENT_API_TYPE[effectiveAgent]
   const modelsForAgent = models.filter(m => m.apiType === apiTypeForAgent)
 
@@ -1523,7 +1528,7 @@ export const ChatTab: React.FC<Props> = ({
     setPendingAttachments([])
     if (taRef.current && composerHeight == null) taRef.current.style.height = 'auto'
     setFollowLatest(true)
-    await sendMessage(chat.id, text, atts)
+    await sendMessage(chat.id, text, atts, turnIdentity)
   }
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -2220,7 +2225,7 @@ export const ChatTab: React.FC<Props> = ({
                           cursor: multiChoice.length === 0 ? 'default' : 'pointer',
                         }}
                         disabled={isSending || !!flight || multiChoice.length === 0}
-                        onClick={() => { void sendMessage(chat.id, multiChoice.join(', ')) }}
+                        onClick={() => { void sendMessage(chat.id, multiChoice.join(', '), undefined, turnIdentity) }}
                       >
                         Submit{multiChoice.length > 0 ? ` (${multiChoice.length})` : ''}
                       </button>
@@ -2232,7 +2237,7 @@ export const ChatTab: React.FC<Props> = ({
                           key={i}
                           style={styles.choiceButton}
                           disabled={isSending || !!flight}
-                          onClick={() => { void sendMessage(chat.id, opt.label) }}
+                          onClick={() => { void sendMessage(chat.id, opt.label, undefined, turnIdentity) }}
                         >
                           <span style={styles.choiceLabel}>{opt.label}</span>
                           {opt.description && <span style={styles.choiceDesc}>{opt.description}</span>}
@@ -2255,7 +2260,7 @@ export const ChatTab: React.FC<Props> = ({
                         key={i}
                         style={styles.choiceButton}
                         disabled={isSending || !!flight}
-                        onClick={() => { void sendMessage(chat.id, label) }}
+                        onClick={() => { void sendMessage(chat.id, label, undefined, turnIdentity) }}
                       >
                         {label}
                       </button>
