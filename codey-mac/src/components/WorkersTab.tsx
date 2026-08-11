@@ -37,7 +37,7 @@ export default function WorkersTab() {
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: mode.kind === 'select' && mode.name === w.name ? C.surface2 : 'transparent', border: 'none', color: C.fg, cursor: 'pointer' }}>
               <div style={{ fontWeight: 600 }}>{w.name}</div>
               <div style={{ fontSize: 11, color: C.fg3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.personality.role}</div>
-              <div style={{ fontSize: 10, color: C.fg3, marginTop: 2 }}>{w.config.codingAgent} · {w.config.model}</div>
+              <div style={{ fontSize: 10, color: C.fg3, marginTop: 2 }}>{w.config.codingAgent} · {w.config.model}{w.config.effort ? ` · ${w.config.effort}` : ''}</div>
             </button>
           ))}
         </div>
@@ -99,6 +99,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
   const [instructions, setInstructions] = useState(worker.personality.instructions)
   const [codingAgent, setCodingAgent] = useState(worker.config.codingAgent)
   const [model, setModel] = useState(worker.config.model)
+  const [effort, setEffort] = useState(worker.config.effort ?? '')
   const [toolsText, setToolsText] = useState(worker.config.tools.join(', '))
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -112,6 +113,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
   useEffect(() => {
     setRole(worker.personality.role); setSoul(worker.personality.soul); setInstructions(worker.personality.instructions)
     setCodingAgent(worker.config.codingAgent); setModel(worker.config.model); setToolsText(worker.config.tools.join(', '))
+    setEffort(worker.config.effort ?? '')
     setSaved(false); setError(null)
   }, [worker.name])
 
@@ -125,7 +127,12 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
     try {
       await apiService.updateWorker(worker.name, {
         personality: { role, soul, instructions },
-        config: { codingAgent, model, tools: toolsText.split(',').map(s => s.trim()).filter(Boolean) },
+        config: {
+          codingAgent,
+          model,
+          tools: toolsText.split(',').map(s => s.trim()).filter(Boolean),
+          ...(effort ? { effort } : {}),
+        },
       })
       setSaved(true); setTimeout(() => setSaved(false), 1500); onSaved()
     } catch (err: any) {
@@ -183,6 +190,16 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
           <option key={m.model} value={m.model}>{m.model}</option>
         ))}
         {filteredModels.length === 0 && <option value={model}>{model || '(no models available)'}</option>}
+      </select>
+
+      <label style={labelStyle}>Effort</label>
+      <select value={effort} onChange={e => setEffort(e.target.value)} style={fieldStyle}>
+        <option value="">Unset (inherit)</option>
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+        <option value="xhigh">xhigh</option>
+        <option value="max">max</option>
       </select>
 
       <label style={labelStyle}>Tools (comma-separated)</label>
