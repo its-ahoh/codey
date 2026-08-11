@@ -5,6 +5,7 @@ import { AgentSpawnError } from '../errors';
 import { writeOpenCodeMcpConfig } from './mcp-config';
 import { ObservedToolEvent, ToolCallCollector } from './tool-events';
 import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checklist';
+import { opencodeEffortArgs } from './effort';
 
 export interface OpenCodeEvent {
   type: string;
@@ -80,6 +81,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       if (request.model?.model) {
         args.push('--model', request.model.model);
       }
+      args.push(...opencodeEffortArgs(request.effort));
 
       let mcpCleanup: (() => void) | undefined;
       let mcpEnv: Record<string, string> = {};

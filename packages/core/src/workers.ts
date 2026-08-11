@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { BLACKBOARD_MARKER_INSTRUCTIONS } from './team-blackboard';
+import type { ThinkingEffort } from './types';
 
 export interface WorkerPersonality {
   role: string;
@@ -19,6 +20,8 @@ export interface WorkerConfig {
    * `personality.soul` and `.instructions` are never sent to the dispatcher.
    */
   dispatchHint?: string;
+  /** Optional per-worker reasoning effort. Overridden by a chat-level effort. */
+  effort?: ThinkingEffort;
 }
 
 export interface Worker {
@@ -179,6 +182,11 @@ export class WorkerManager {
 
   getWorkerModel(name: string): string {
     return this.getWorker(name)?.config.model || '';
+  }
+
+  /** The worker's configured reasoning effort, or undefined when unset. */
+  getWorkerEffort(name: string): ThinkingEffort | undefined {
+    return this.getWorker(name)?.config.effort;
   }
 
   /**

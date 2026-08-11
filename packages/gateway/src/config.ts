@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
-import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, McpServerSpec, ModelEntry, TeamConfigRaw } from '@codey/core';
+import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, McpServerSpec, ModelEntry, TeamConfigRaw, ThinkingEffort } from '@codey/core';
 
 // ── Configuration types ─────────────────────────────────────────────
 
@@ -147,6 +147,8 @@ export interface GatewayConfigJson {
  */
 export interface AgentSlot {
   env?: Record<string, string>;
+  /** Default reasoning effort for this agent, when the user has set one. */
+  defaultEffort?: ThinkingEffort;
 }
 
 /** Text-to-speech settings for spoken replies. */
@@ -533,6 +535,17 @@ export class ConfigManager extends EventEmitter {
   // ── Agent config ───────────────────────────────────────────────────
   getAgentConfig(agent: string): AgentSlot | undefined {
     return this.config.agents[agent as keyof typeof this.config.agents];
+  }
+
+  /** Set or clear an agent's default reasoning effort and persist gateway.json. */
+  setAgentDefaultEffort(agent: CodingAgent, effort?: ThinkingEffort): void {
+    if (!this.config.agents) this.config.agents = {};
+    const key = agent as keyof typeof this.config.agents;
+    const slot: AgentSlot = this.config.agents[key] ?? {};
+    if (effort === undefined) delete slot.defaultEffort;
+    else slot.defaultEffort = effort;
+    this.config.agents[key] = slot;
+    this.save();
   }
 
   /** True only when the user has explicitly enabled the named plugin. */

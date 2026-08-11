@@ -89,6 +89,41 @@ describe('ChatManager.updateAgentModel', () => {
   });
 });
 
+describe('ChatManager.updateEffort', () => {
+  let root: string;
+  let mgr: ChatManager;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chats-'));
+    fs.mkdirSync(path.join(root, 'ws'), { recursive: true });
+    mgr = new ChatManager(root);
+  });
+
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('sets and clears the per-chat effort override, bumping updatedAt', () => {
+    const chat = mgr.create({ workspaceName: 'ws' });
+    const beforeUpdatedAt = chat.updatedAt;
+
+    const set = mgr.updateEffort(chat.id, 'high');
+    expect(set.effort).toBe('high');
+    expect(set.updatedAt).toBeGreaterThanOrEqual(beforeUpdatedAt);
+
+    const cleared = mgr.updateEffort(chat.id, null);
+    expect(cleared.effort).toBeUndefined();
+    expect('effort' in cleared).toBe(false);
+  });
+
+  it('persists the cleared effort so it does not round-trip from disk', () => {
+    const chat = mgr.create({ workspaceName: 'ws' });
+    mgr.updateEffort(chat.id, 'max');
+    mgr.updateEffort(chat.id, undefined);
+
+    const reloaded = new ChatManager(root);
+    expect(reloaded.get(chat.id)?.effort).toBeUndefined();
+  });
+});
+
 describe('buildChatCatchupPrompt', () => {
   let root: string;
   let mgr: ChatManager;

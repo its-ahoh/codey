@@ -35,6 +35,7 @@ export default defineConfig({
       'src/automations/engine.test.ts',
       'src/automations/chats-hidden.test.ts',
       'src/automations/dry-run.test.ts',
+      'src/effort-resolve.test.ts',
     ],
     exclude: ['dist/**', 'node_modules/**'],
   },

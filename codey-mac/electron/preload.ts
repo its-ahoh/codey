@@ -160,6 +160,8 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.invoke('chats:updateSelection', id, selection),
     updateAgentModel: (id: string, agent: string | null, model: string | null) =>
       ipcRenderer.invoke('chats:updateAgentModel', id, agent, model),
+    updateEffort: (id: string, effort: string | null) =>
+      ipcRenderer.invoke('chats:updateEffort', id, effort),
     link: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) =>
       ipcRenderer.invoke('chats:link', chatId, channel, channelUserId),
     unlink: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) =>

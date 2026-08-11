@@ -466,6 +466,7 @@ interface ChatsContextValue {
   deleteChat: (chatId: string) => Promise<void>
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
   setAgentModel: (chatId: string, agent: string | null, model: string | null) => Promise<void>
+  setEffort: (chatId: string, effort: string | null) => Promise<void>
   setWorkingDir: (chatId: string, dir: string | null) => Promise<void>
   setExecutionMode: (chatId: string, mode: 'shared-checkout' | 'isolated-worktree') => Promise<Chat>
   createWorktree: (chatId: string, name: string) => Promise<Chat>
@@ -750,6 +751,10 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     async setAgentModel(chatId, agent, model) {
       const chat = await apiService.chats.updateAgentModel(chatId, agent, model)
+      dispatch({ type: 'upsert', chat })
+    },
+    async setEffort(chatId, effort) {
+      const chat = await apiService.chats.updateEffort(chatId, effort)
       dispatch({ type: 'upsert', chat })
     },
     async setWorkingDir(chatId, dir) {

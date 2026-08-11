@@ -3569,6 +3569,13 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('chats:updateEffort', async (_e, id: string, effort: string | null) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.getChatManager().updateEffort(id, effort as any)
+    })
+  )
+
   ipcMain.handle('chats:updateContextPanelOpen', async (_e, id: string, open: boolean | null) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')

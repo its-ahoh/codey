@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, needsDigest, buildSpeechDigestPrompt, stripForSpeech, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, needsDigest, buildSpeechDigestPrompt, stripForSpeech, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -15,7 +15,7 @@ import { ConfigManager, ResolvedVoiceTtsSettings } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, VoiceChannelHandler, ChannelHandler } from './channels';
 import { synthesizeSpeech } from './voice-tts';
 import { runTextCompletion, streamTextCompletion, canRunDirectly } from './text-completion';
-import { AgentFactory } from '@codey/core';
+import { AgentFactory, isThinkingEffort } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
@@ -23,6 +23,7 @@ import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS 
 import { WorkerManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
 import { chatWorktreeParent, describeLegacyChatWorktree, discoverChatWorktree, provisionChatWorktree, removeCleanChatWorktree, workspaceHasUncommittedChanges } from './chat-worktree';
+import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
@@ -213,6 +214,9 @@ export class Codey {
     const baseReq = {
       agent: opts.codingAgent,
       model: opts.modelConfig,
+      // Worker tier. No chat is in scope on this path, and the per-agent
+      // global default is filled in by runWithFallback when this is undefined.
+      effort: resolveEffort({ worker: wm.getWorkerEffort(opts.workerName) }),
       context: { workingDir: opts.workingDir ?? this.workingDir },
       browserTools: true,
       browserChatId: opts.browserChatId,
@@ -422,6 +426,11 @@ export class Codey {
     const modelName = this.getDefaultModelName(agent);
     if (!modelName) return undefined;
     return this.getModelConfig(agent, modelName);
+  }
+
+  /** The per-agent configured default effort, if any. */
+  private getDefaultEffort(agent: CodingAgent): ThinkingEffort | undefined {
+    return this.config.agents?.[agent]?.defaultEffort;
   }
 
   private getAdvisorAgentAndModel(): { agent: CodingAgent; model?: ModelConfig } {
@@ -2518,6 +2527,9 @@ export class Codey {
       case 'model':
         await this.cmdModel(args, chatId, channel);
         break;
+      case 'effort':
+        await this.cmdEffort(args, chatId, channel);
+        break;
       case 'agent':
         await this.cmdAgent(args, chatId, channel);
         if (this.isPairableChannel(channel) && args.length > 0) {
@@ -2719,6 +2731,53 @@ export class Codey {
         text: `Current default model: ${this.getEffectiveModel()}`,
       });
     }
+  }
+
+  /**
+   * Show, set, or clear the reasoning effort for the current default agent.
+   * Chat platforms have no Chat record, so the per-chat override tier is not
+   * reachable here — like /agent, this writes the global per-agent default.
+   */
+  private async cmdEffort(args: string[], chatId: string, channel: ChannelType): Promise<void> {
+    const agent = this.getDefaultAgent() as CodingAgent;
+    const current = this.getDefaultEffort(agent);
+
+    if (args.length === 0) {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `Current effort for **${agent}**: ${current ?? 'unset (CLI default)'}\n\n` +
+          `Set with: /effort <low|medium|high|xhigh|max>\nClear with: /effort clear`,
+      });
+      return;
+    }
+
+    const raw = args[0].toLowerCase();
+    if (raw === 'clear') {
+      this.configManager?.setAgentDefaultEffort(agent, undefined);
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `✅ Cleared effort for **${agent}** — using the CLI default.`,
+      });
+      return;
+    }
+
+    if (!isThinkingEffort(raw)) {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `Unknown effort: ${raw}\n\nAvailable: low, medium, high, xhigh, max`,
+      });
+      return;
+    }
+
+    this.configManager?.setAgentDefaultEffort(agent, raw);
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `✅ Effort for **${agent}** set to **${raw}**.`,
+    });
   }
 
   private async cmdAgent(args: string[], chatId: string, channel: ChannelType): Promise<void> {
@@ -3409,6 +3468,7 @@ export class Codey {
 /clear - Clear conversation history
 /reset - Start a new conversation
 /model [name] - Show/set model
+/effort <level> - Set reasoning effort (low/medium/high/xhigh/max)
 /config - Show current config
 
 Example: /worker architect design a REST API
@@ -4834,6 +4894,13 @@ Example: /model gpt-4.1 write a Python script`;
           prompt: req.prompt,
           agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
           model: chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent),
+          // Effort follows agent/model: this path already honours the chat's
+          // agent and model, so it honours the chat's effort too. The worker
+          // tier is deliberately skipped here — parallel mode runs every member
+          // on the chat's agent/model rather than per-worker config, so mixing
+          // in a per-worker effort would contradict that. Global default still
+          // fills in via runWithFallback when the chat has no override.
+          effort: resolveEffort({ chat: chat.effort }),
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
@@ -5201,6 +5268,12 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   private async runWithFallback(agent: CodingAgent, request: AgentRequest): Promise<AgentResponse> {
+    // Global tier: any caller that didn't set an explicit chat/worker effort
+    // inherits the agent's configured default. Applied here rather than at each
+    // of the ~20 call sites.
+    if (request.effort === undefined) {
+      request = { ...request, effort: this.getDefaultEffort(agent) };
+    }
     const response = await this.runAgentWithNetworkRetry(agent, request);
     if (response.success) return response;
 
@@ -5536,11 +5609,18 @@ Example: /model gpt-4.1 write a Python script`;
     const aideCfg = this.config.aide;
     let agent: CodingAgent;
     let model: ModelConfig | undefined;
+    let effort: ThinkingEffort | undefined;
     try {
       if (aideCfg?.agent || aideCfg?.model) {
         ({ agent, model } = this.getAideAgentAndModel());
+        // Deliberately no chat effort here: the Aide override replaces agent AND
+        // model wholesale, so the chat's tier would land on a model picked for
+        // speed. Left undefined so runWithFallback applies the Aide agent's own
+        // configured default instead.
+        effort = undefined;
       } else {
         agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
+        effort = resolveEffort({ chat: chat.effort });
         model = chat.model
           ? this.getModelConfig(agent, chat.model)
           : this.getDefaultModelConfig(agent);
@@ -5576,6 +5656,7 @@ Example: /model gpt-4.1 write a Python script`;
         prompt,
         agent,
         model,
+        effort,
         context: { workingDir },
         skipPermissions: true,
         allowedTools: READ_ONLY_TOOLS,
@@ -5832,6 +5913,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Per-chat override takes precedence over the gateway default.
     const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
+    const chatEffort = resolveEffort({ chat: chat.effort });
     let model: ModelConfig | undefined;
     try {
       model = chat.model
@@ -6052,6 +6134,7 @@ Example: /model gpt-4.1 write a Python script`;
           prompt,
           agent,
           model,
+          effort: chatEffort,
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
@@ -6079,6 +6162,7 @@ Example: /model gpt-4.1 write a Python script`;
             prompt,
             agent,
             model,
+            effort: chatEffort,
             context: { workingDir },
             browserTools: true,
             browserChatId: chatId,
@@ -6126,6 +6210,7 @@ Example: /model gpt-4.1 write a Python script`;
             prompt: followup,
             agent,
             model,
+            effort: chatEffort,
             context: { workingDir },
             browserTools: true,
             browserChatId: chatId,

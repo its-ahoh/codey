@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { Chat, ChatCompaction, ChatMessage, ChatSelection, ChatRoute, ChannelKind, ChecklistItem, TaskBrief } from '@codey/core';
+import { Chat, ChatCompaction, ChatMessage, ChatSelection, ChatRoute, ChannelKind, ChecklistItem, TaskBrief, ThinkingEffort } from '@codey/core';
 import { Logger } from './logger';
 
 const log = Logger.getInstance();
@@ -310,6 +310,24 @@ export class ChatManager {
     else chat.model = model;
     // Keep every agent/model session. The next turn selects the matching
     // anchor and incrementally synchronizes only the messages it has missed.
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
+  /**
+   * Set or clear the per-chat reasoning-effort override. Pass null/undefined to
+   * clear and fall back to the worker/global tiers.
+   *
+   * Deliberately separate from updateAgentModel: that setter's session-anchor
+   * behavior is tied to agent/model identity, and changing effort must NOT
+   * rotate the session — raising effort and continuing the same thread is the
+   * primary use case, and rotating would drop the conversation context.
+   */
+  updateEffort(chatId: string, effort?: ThinkingEffort | null): Chat {
+    const chat = this.requireChat(chatId);
+    if (effort === null || effort === undefined) delete chat.effort;
+    else chat.effort = effort;
     chat.updatedAt = Date.now();
     this.persist(chat);
     return chat;

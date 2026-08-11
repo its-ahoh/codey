@@ -5,6 +5,7 @@ import { AgentSpawnError } from '../errors';
 import { thinkingDeltaFrom } from './thinking-stream';
 import { writeClaudeMcpConfig } from './mcp-config';
 import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checklist';
+import { claudeEffortArgs } from './effort';
 
 interface StreamEvent {
   type: string;
@@ -103,6 +104,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         '--output-format', 'stream-json',
         '--include-partial-messages',
       ];
+      args.push(...claudeEffortArgs(request.effort));
 
       if (request.skipPermissions) {
         args.push('--dangerously-skip-permissions');
