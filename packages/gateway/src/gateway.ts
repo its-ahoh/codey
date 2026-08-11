@@ -4703,6 +4703,13 @@ Example: /model gpt-4.1 write a Python script`;
           prompt: req.prompt,
           agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
           model: chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent),
+          // Effort follows agent/model: this path already honours the chat's
+          // agent and model, so it honours the chat's effort too. The worker
+          // tier is deliberately skipped here — parallel mode runs every member
+          // on the chat's agent/model rather than per-worker config, so mixing
+          // in a per-worker effort would contradict that. Global default still
+          // fills in via runWithFallback when the chat has no override.
+          effort: resolveEffort({ chat: chat.effort }),
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
