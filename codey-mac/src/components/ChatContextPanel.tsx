@@ -48,6 +48,8 @@ interface Props {
   taskBriefLoading: boolean
   /** Called when the task tab becomes visible — triggers brief generation. */
   onTaskTabShown: () => void
+  /** Settings switch. Off drops the Status tab entirely. Defaults to on. */
+  statusPanelEnabled?: boolean
   /** Render inside the shared right-panel shell, which owns resize and close controls. */
   embedded?: boolean
 }
@@ -68,6 +70,7 @@ export const ChatContextPanel: React.FC<Props> = ({
   width, onFollowLatest, onClose, onResize, onRevealFile, onScrollToStep, isTurnStreaming,
   activeTab, onTabChange, qqInputRef,
   onAnswerNextAction, taskBriefLoading, onTaskTabShown,
+  statusPanelEnabled = true,
   embedded = false,
 }) => {
   const turn: ChatMessage | undefined = selectedTurnId
@@ -94,7 +97,10 @@ export const ChatContextPanel: React.FC<Props> = ({
   })()
 
   const [localTab, setLocalTab] = React.useState<ContextPanelTab>('current')
-  const tab: ContextPanelTab = activeTab ?? localTab
+  const requestedTab: ContextPanelTab = activeTab ?? localTab
+  // With the Status panel switched off the tab disappears; a chat left sitting
+  // on it falls back to Tools rather than rendering an empty body.
+  const tab: ContextPanelTab = requestedTab === 'task' && !statusPanelEnabled ? 'current' : requestedTab
   const setTab = (t: ContextPanelTab) => { onTabChange ? onTabChange(t) : setLocalTab(t) }
 
   React.useEffect(() => { if (tab === 'task') onTaskTabShown() }, [tab])
@@ -153,12 +159,14 @@ export const ChatContextPanel: React.FC<Props> = ({
 
       {/* Tabs */}
       <div style={styles.tabs} role="tablist">
-        <button
-          role="tab"
-          aria-selected={tab === 'task'}
-          style={{ ...styles.tab, ...(tab === 'task' ? styles.tabActive : null) }}
-          onClick={() => setTab('task')}
-        >Status</button>
+        {statusPanelEnabled && (
+          <button
+            role="tab"
+            aria-selected={tab === 'task'}
+            style={{ ...styles.tab, ...(tab === 'task' ? styles.tabActive : null) }}
+            onClick={() => setTab('task')}
+          >Status</button>
+        )}
         <button
           role="tab"
           aria-selected={tab === 'current'}
