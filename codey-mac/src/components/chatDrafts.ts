@@ -27,10 +27,6 @@ export function setDraft(chatId: string, draft: ChatDraft): void {
   drafts.set(chatId, draft)
 }
 
-export function clearDraft(chatId: string): void {
-  drafts.delete(chatId)
-}
-
 // Test-only: reset the store between cases.
 export function __resetDrafts(): void {
   drafts.clear()

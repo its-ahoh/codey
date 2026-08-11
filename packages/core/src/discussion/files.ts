@@ -71,11 +71,6 @@ export async function initDiscussionDir(
   }
 }
 
-export async function destroyDiscussionDir(workspacesRoot: string, workspace: string, chatId: string): Promise<void> {
-  const dir = discussionDir(workspacesRoot, workspace, chatId);
-  await fsp.rm(dir, { recursive: true, force: true });
-}
-
 export async function listOpinionFiles(workspacesRoot: string, workspace: string, chatId: string): Promise<string[]> {
   const dir = opinionsDir(workspacesRoot, workspace, chatId);
   if (!fs.existsSync(dir)) return [];

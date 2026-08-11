@@ -8,9 +8,3 @@ export function createPrButtonState(status: Status, branchAhead: boolean): { sho
   const show = status === 'waiting' || status === 'done';
   return { show, enabled: show && branchAhead };
 }
-
-/** Default PR title: trimmed commit subject, falling back to the branch name. */
-export function defaultPrTitle(commitSubject: string | undefined, branch: string): string {
-  const s = (commitSubject ?? '').trim();
-  return s || branch;
-}

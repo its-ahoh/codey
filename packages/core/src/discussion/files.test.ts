@@ -11,7 +11,6 @@ import {
   topicPath,
   transcriptPath,
   initDiscussionDir,
-  destroyDiscussionDir,
   listOpinionFiles,
   appendTranscript,
 } from './files';
@@ -55,19 +54,6 @@ describe('listOpinionFiles', () => {
     await initDiscussionDir(root, ws, chat, 't', ['charlie', 'alice', 'bob']);
     const names = await listOpinionFiles(root, ws, chat);
     expect(names).toEqual(['alice', 'bob', 'charlie']);
-  });
-});
-
-describe('destroyDiscussionDir', () => {
-  it('removes entire dir', async () => {
-    await initDiscussionDir(root, ws, chat, 't', ['alice']);
-    expect(fs.existsSync(discussionDir(root, ws, chat))).toBe(true);
-    await destroyDiscussionDir(root, ws, chat);
-    expect(fs.existsSync(discussionDir(root, ws, chat))).toBe(false);
-  });
-
-  it('is a no-op when missing', async () => {
-    await expect(destroyDiscussionDir(root, ws, chat)).resolves.toBeUndefined();
   });
 });
 
