@@ -129,14 +129,43 @@ export function buildChatBootstrapPrompt(
   return buildChatPrompt(chat, userText, attachments, windowSize);
 }
 
-/** Resume-turn prompt: just the new user text, optionally prefixed by attachments. */
+const RESUME_CONTEXT_MAX_CHARS = 8_000;
+const RESUME_CONTEXT_HEAD_CHARS = 2_000;
+
+/** Keep a bounded head + tail checkpoint for warm-session turns. */
+export function resumeContextExcerpt(text: string): string {
+  if (text.length <= RESUME_CONTEXT_MAX_CHARS) return text;
+  const tailChars = RESUME_CONTEXT_MAX_CHARS - RESUME_CONTEXT_HEAD_CHARS;
+  return text.slice(0, RESUME_CONTEXT_HEAD_CHARS)
+    + '\n\n[… middle of prior assistant message omitted …]\n\n'
+    + text.slice(-tailChars);
+}
+
+/**
+ * Resume-turn prompt. Always pin the most recent persisted assistant message
+ * so Codey's durable transcript remains the semantic checkpoint even when the
+ * CLI inserts permission/interruption events or automatically replays a prompt.
+ * The checkpoint is bounded to avoid repeatedly injecting an unbounded reply.
+ */
 export function buildChatResumePrompt(
+  chat: Chat,
   userText: string,
   attachments?: FileAttachment[],
 ): string {
   const parts: string[] = [];
   if (attachments && attachments.length > 0) {
     parts.push(formatAttachmentList(attachments));
+  }
+  const latestAssistant = [...chat.messages].reverse()
+    .find(message => message.role === 'assistant' && message.content.trim());
+  if (latestAssistant) {
+    parts.push(
+      '[Most recent persisted assistant message — conversation checkpoint. ' +
+      'CLI-internal permission or interruption events may have occurred afterward; use this ' +
+      'checkpoint together with the new user message below.]\n' + resumeContextExcerpt(latestAssistant.content),
+      `[Respond to this new user message]\n${userText}`,
+    );
+    return parts.join('\n\n');
   }
   parts.push(userText);
   return parts.join('\n\n');
@@ -156,7 +185,7 @@ export function buildChatCatchupPrompt(
 ): string {
   const cursor = chat.messages.findIndex(message => message.id === syncedThroughMessageId);
   if (cursor < 0 || cursor === chat.messages.length - 1) {
-    return buildChatResumePrompt(userText, attachments);
+    return buildChatResumePrompt(chat, userText, attachments);
   }
 
   const parts: string[] = [];
