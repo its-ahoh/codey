@@ -16,6 +16,7 @@ export type ChatStreamEvent =
   | { type: 'worker_start'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex'; model?: string; reason?: string }
   | { type: 'worker_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number }
   | { type: 'team_end'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
+  | { type: 'workspace_ready'; chatId: string }
   | { type: 'done'; chatId: string; response: string; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string }; teamTurnId?: string }
   | { type: 'stopped'; chatId: string; userMessageId: string; text: string }
   | { type: 'error'; chatId: string; message: string }
@@ -202,6 +203,12 @@ export const apiService = {
       unwrap(await window.codey.chats.setSoloAdvisor(id, enabled)),
     setWorkingDir: async (id: string, dir: string | null): Promise<Chat> =>
       unwrap(await window.codey.chats.setWorkingDir(id, dir)),
+    setExecutionMode: async (id: string, mode: 'shared-checkout' | 'isolated-worktree'): Promise<Chat> =>
+      unwrap(await window.codey.chats.setExecutionMode(id, mode)),
+    createWorktree: async (id: string, name: string): Promise<Chat> =>
+      unwrap(await window.codey.chats.createWorktree(id, name)),
+    setPullRequest: async (id: string, pullRequest: NonNullable<Chat['pullRequest']>): Promise<Chat> =>
+      unwrap(await window.codey.chats.setPullRequest(id, pullRequest)),
     upload: async (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer): Promise<{ id: string; name: string; path: string; mimeType: string; size: number }> =>
       unwrap(await window.codey.chats.upload(chatId, fileName, mimeType, data)),
     send: async (chatId: string, text: string, attachments?: { id: string; name: string; path: string; mimeType: string; size: number }[]): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> =>

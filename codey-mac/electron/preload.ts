@@ -172,6 +172,10 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.invoke('chats:setSoloAdvisor', id, enabled),
     setWorkingDir: (id: string, dir: string | null) =>
       ipcRenderer.invoke('chats:setWorkingDir', id, dir),
+    setExecutionMode: (id: string, mode: 'shared-checkout' | 'isolated-worktree') => ipcRenderer.invoke('chats:setExecutionMode', id, mode),
+    createWorktree: (id: string, name: string) => ipcRenderer.invoke('chats:createWorktree', id, name),
+    setPullRequest: (id: string, pullRequest: any) =>
+      ipcRenderer.invoke('chats:setPullRequest', id, pullRequest),
     send: (payload: { chatId: string; text: string; attachments?: any[] }) =>
       ipcRenderer.invoke('chats:send', payload),
     stop: (chatId: string) => ipcRenderer.invoke('chats:stop', chatId),
@@ -215,6 +219,7 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.invoke('git:worktreeAdd', workingDir, args),
     createPr: (workingDir: string, input: { title: string; body?: string }) =>
       ipcRenderer.invoke('git:createPr', workingDir, input),
+    prStatus: (workingDir: string, url?: string) => ipcRenderer.invoke('git:prStatus', workingDir, url),
     watch: (workingDir: string) => ipcRenderer.invoke('git:watch', workingDir),
     unwatch: (workingDir: string) => ipcRenderer.invoke('git:unwatch', workingDir),
     onChanged: (handler: (ev: { workingDir: string }) => void) => {

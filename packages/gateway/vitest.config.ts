@@ -24,6 +24,7 @@ export default defineConfig({
       'src/team-emitter.test.ts',
       'src/worker-message-emitter.test.ts',
       'src/chats.workingDirOverride.test.ts',
+      'src/chat-worktree.test.ts',
       'src/chats.pendingSkillSuggestion.test.ts',
       'src/automations/chat.test.ts',
       'src/automations/schedule.test.ts',

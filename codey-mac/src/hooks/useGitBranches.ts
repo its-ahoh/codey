@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import type { Worktree } from '../components/branchPickerModel'
 
 export interface BranchState {
   branch: string
   dirty: number
   local: string[]
   remote: string[]
-  worktrees: Worktree[]
 }
 
 export function useGitBranches(workingDir: string | undefined) {
@@ -16,15 +14,13 @@ export function useGitBranches(workingDir: string | undefined) {
   const refresh = useCallback(async () => {
     if (!workingDir) { setState(null); return }
     try {
-      const [s, b, w] = await Promise.all([
+      const [s, b] = await Promise.all([
         window.codey.git.status(workingDir),
         window.codey.git.branches(workingDir),
-        window.codey.git.worktrees(workingDir),
       ])
       if (!s.ok || !s.data) { setState(null); return }
       const br = b.ok ? b.data : { current: s.data.branch, local: [], remote: [] }
-      const wl = w.ok ? w.data.list : []
-      setState({ branch: s.data.branch, dirty: s.data.dirty, local: br.local, remote: br.remote, worktrees: wl })
+      setState({ branch: s.data.branch, dirty: s.data.dirty, local: br.local, remote: br.remote })
     } catch { setState(null) }
   }, [workingDir])
 
@@ -75,12 +71,5 @@ export function useGitBranches(workingDir: string | undefined) {
     else setError((r.ok ? r.data.error : r.error) || 'fetch failed')
   }, [workingDir, refresh])
 
-  const addWorktree = useCallback(async (name: string, path: string) => {
-    if (!workingDir) return { ok: false }
-    const r = await window.codey.git.worktreeAdd(workingDir, { name, path })
-    if (r.ok && r.data.ok) { await refresh(); return { ok: true, path: r.data.path } }
-    setError((r.ok ? r.data.error : r.error) || 'worktree add failed'); return { ok: false }
-  }, [workingDir, refresh])
-
-  return { state, error, setError, refresh, checkout, stashAndSwitch, createBranch, fetchRemote, addWorktree }
+  return { state, error, setError, refresh, checkout, stashAndSwitch, createBranch, fetchRemote }
 }

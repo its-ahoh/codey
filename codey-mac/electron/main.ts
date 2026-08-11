@@ -14,6 +14,7 @@ import { applyEvent, clearAttention, summarize } from './tray-state'
 import { SKILL_FILE, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
+import { deriveDeliveryState } from './delivery-status'
 import type { ScannedSkill } from './skills'
 import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
@@ -1837,7 +1838,7 @@ app.whenReady().then(async () => {
       const known = workspaceManager.listWorkspaces()
       const resolved = resolveCaptureSubmit(payload?.text ?? '', payload?.workspaceName, known)
       if (!resolved.ok) throw new Error(resolved.error)
-      const chat = inProcessGateway.getChatManager().create({ workspaceName: resolved.workspaceName })
+      const chat = await inProcessGateway.createChat({ workspaceName: resolved.workspaceName })
 
       // Copy any picked files into the target workspace's .codey/uploads/ and
       // build FileAttachments — mirrors the chats:upload handler so the agent
@@ -2179,6 +2180,63 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('git:prStatus', async (_e, workingDir: string, url?: string) =>
+    wrap(async () => {
+      if (!workingDir) throw new Error('A working directory is required')
+      const { execFile } = await import('child_process')
+      const fsMod = await import('fs')
+      const run = (cmd: string, args: string[], timeout: number) => new Promise<string>((resolve, reject) => {
+        execFile(cmd, args, { cwd: workingDir, timeout }, (error, stdout, stderr) => {
+          if (error) reject(new Error((stderr || String(error)).trim()))
+          else resolve(stdout.trim())
+        })
+      })
+      const gh = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh']
+        .find(candidate => fsMod.existsSync(candidate)) || 'gh'
+      const raw = await run(gh, [
+        'pr', 'view', ...(url ? [url] : []),
+        '--json', 'url,number,state,mergedAt,headRefName,headRefOid,baseRefName',
+      ], 15_000)
+      const view = JSON.parse(raw) as {
+        url: string
+        number?: number
+        state: string
+        mergedAt?: string | null
+        headRefName?: string
+        headRefOid?: string
+        baseRefName?: string
+      }
+      const [localHead, currentBranch, porcelain] = await Promise.all([
+        run('git', ['rev-parse', 'HEAD'], 3_000),
+        run('git', ['branch', '--show-current'], 3_000),
+        run('git', ['status', '--porcelain'], 3_000),
+      ])
+      const sameBranch = !!view.headRefName && currentBranch === view.headRefName
+      let commitsAfterMerge = false
+      if (sameBranch && view.state.toUpperCase() === 'MERGED' && view.headRefOid && localHead !== view.headRefOid) {
+        try {
+          const count = await run('git', ['rev-list', '--count', `${view.headRefOid}..HEAD`], 3_000)
+          commitsAfterMerge = Number.parseInt(count, 10) > 0
+        } catch { /* a missing remote object is not evidence of new work */ }
+      }
+      return {
+        url: view.url || url || '',
+        number: view.number,
+        state: deriveDeliveryState({
+          providerState: view.state,
+          sameBranch,
+          commitsAfterMerge,
+          dirty: sameBranch && porcelain.length > 0,
+        }),
+        headBranch: view.headRefName,
+        baseBranch: view.baseRefName,
+        headCommit: view.headRefOid,
+        mergedAt: view.mergedAt ? Date.parse(view.mergedAt) : undefined,
+        lastCheckedAt: Date.now(),
+      }
+    })
+  )
+
   ipcMain.handle('git:watch', async (_e, workingDir: string) =>
     wrap(async () => {
       if (!workingDir) return { ok: false }
@@ -2341,6 +2399,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('workspaces:delete', async (_e, name: string) =>
     wrap(async () => {
       if (!workspaceManager) throw new Error('Workspace manager not ready')
+      await inProcessGateway?.prepareWorkspaceDeletion(name)
       await workspaceManager.deleteWorkspace(name)
       inProcessGateway?.getChatManager().cascadeDeleteWorkspace(name)
     })
@@ -3456,23 +3515,21 @@ app.whenReady().then(async () => {
   ipcMain.handle('chats:list', async (_e, workspaceName?: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
-      return inProcessGateway.getChatManager().list(workspaceName)
+      return inProcessGateway.listChats(workspaceName)
     })
   )
 
   ipcMain.handle('chats:get', async (_e, id: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
-      const c = inProcessGateway.getChatManager().get(id)
-      if (!c) throw new Error(`Chat not found: ${id}`)
-      return c
+      return inProcessGateway.getChat(id)
     })
   )
 
   ipcMain.handle('chats:create', async (_e, input: { workspaceName: string; selection?: any; title?: string }) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
-      return inProcessGateway.getChatManager().create(input)
+      return inProcessGateway.createChat(input)
     })
   )
 
@@ -3493,7 +3550,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('chats:delete', async (_e, id: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
-      inProcessGateway.getChatManager().delete(id)
+      await inProcessGateway.deleteChat(id)
       return null
     })
   )
@@ -3537,6 +3594,27 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       return inProcessGateway.getChatManager().setWorkingDirOverride(id, dir)
+    })
+  )
+
+  ipcMain.handle('chats:setExecutionMode', async (_e, id: string, mode: 'shared-checkout' | 'isolated-worktree') =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.setChatExecutionMode(id, mode)
+    })
+  )
+
+  ipcMain.handle('chats:createWorktree', async (_e, id: string, name: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.createChatWorktree(id, name)
+    })
+  )
+
+  ipcMain.handle('chats:setPullRequest', async (_e, id: string, pullRequest: NonNullable<import('@codey/core').Chat['pullRequest']>) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.getChatManager().setPullRequest(id, pullRequest)
     })
   )
 

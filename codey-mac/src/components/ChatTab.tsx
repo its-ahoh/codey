@@ -838,7 +838,7 @@ export const ChatTab: React.FC<Props> = ({
   rightPanelMode, onRightPanelModeChange, rightPanelWidth, onRightPanelResize,
   browserLoginWait, onConfirmBrowserLogin, onDismissBrowserLogin,
 }) => {
-  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setWorkingDir: setChatWorkingDir, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -1025,7 +1025,9 @@ export const ChatTab: React.FC<Props> = ({
   // The effective working dir is the chat's per-chat override (a bound
   // worktree) when set, otherwise the workspace's repo root. Git status and the
   // header BranchPicker both operate on this effective dir.
-  const workingDir = chat?.workingDirOverride || workspaceDir
+  const workingDir = chat?.executionMode === 'isolated-worktree'
+    ? chat.chatWorkspace?.workingDir
+    : chat?.workingDirOverride || workspaceDir
 
   const changeRightPanelMode = useCallback((mode: WorkspaceDockTool | null) => {
     onRightPanelModeChange(mode)
@@ -1087,6 +1089,27 @@ export const ChatTab: React.FC<Props> = ({
 
   const { status: gitStatus, refresh: refreshGit } = useGitStatus(workingDir)
   const [showPrModal, setShowPrModal] = useState(false)
+  const refreshPullRequestStatus = useCallback(async (urlOverride?: string) => {
+    const url = urlOverride || chat?.pullRequest?.url
+    if (!workingDir) return
+    const branch = gitStatus?.branch
+    const canDiscover = !!branch && branch !== 'HEAD' && branch !== (gitStatus?.defaultBranch ?? 'main')
+    if (!url && !canDiscover) return
+    try {
+      const result = await window.codey.git.prStatus(workingDir, url)
+      if (result.ok) await setPullRequest(chatId, result.data)
+    } catch { /* PR status is best effort */ }
+  }, [workingDir, chatId, chat?.pullRequest?.url, gitStatus?.branch, gitStatus?.defaultBranch])
+
+  useEffect(() => {
+    void refreshPullRequestStatus()
+  }, [chat?.id, chat?.pullRequest?.url, workingDir, gitStatus?.branch])
+
+  useEffect(() => {
+    const onFocus = () => void refreshPullRequestStatus()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refreshPullRequestStatus])
   // Derived from the gitStatus useGitStatus already fetches — no extra IPC round-trip.
   // PR-able: on a non-default branch with commits the default branch doesn't have
   // (ahead is null when there's no remote default ref — fall back to branch check only).
@@ -1743,7 +1766,6 @@ export const ChatTab: React.FC<Props> = ({
         chat.selection.type === 'worker' ? chat.selection.name : null,
         effectiveAgent,
         effectiveModel ?? 'default model',
-        chat.soloAdvisor ? 'Advisor on' : null,
       ].filter(Boolean).join(' · ')
   const [panelTeamGraph, setPanelTeamGraph] = useState<import('../../../packages/core/src/team-graph').TeamGraph | undefined>(undefined)
   useEffect(() => {
@@ -1777,12 +1799,13 @@ export const ChatTab: React.FC<Props> = ({
         </div>
         <BranchPicker
           workingDir={workingDir}
-          repoRoot={workspaceDir}
-          boundWorktreePath={chat?.workingDirOverride}
-          onBindWorktree={async (path) => {
-            if (!chat) return
-            await setChatWorkingDir(chat.id, path)
-          }}
+          chatWorktree={chat.chatWorkspace ? {
+            name: chat.chatWorkspace.name,
+            path: chat.chatWorkspace.worktreePath,
+          } : undefined}
+          executionMode={chat?.executionMode ?? 'shared-checkout'}
+          onCreateWorktree={async name => { await createWorktree(chat.id, name) }}
+          onExecutionModeChange={async mode => { await setExecutionMode(chat.id, mode) }}
           onOpenTerminal={openChatTerminal}
         />
         <div style={{ ...styles.openInWrap, marginLeft: 'auto' }}>
@@ -1931,9 +1954,8 @@ export const ChatTab: React.FC<Props> = ({
                       <span style={styles.advisorSettingIdentity}>
                         <UIIcon name="sparkle" size={14} />
                         <span>Advisor</span>
-                        <span style={styles.advisorModelName}>{effectiveAdvisorModel}</span>
                       </span>
-                      <span>{chat.soloAdvisor ? 'On' : 'Off'}</span>
+                      <span style={styles.advisorModelName}>{effectiveAdvisorModel}</span>
                     </button>
                   </>
                 )}
@@ -2538,6 +2560,7 @@ export const ChatTab: React.FC<Props> = ({
           onCreate={async (input) => {
             if (!workingDir) return { ok: false, error: 'No working dir' }
             const r = await window.codey.git.createPr(workingDir, input)
+            if (r.ok && r.data.ok && r.data.url) await refreshPullRequestStatus(r.data.url)
             return r.ok ? r.data : { ok: false, error: r.error || 'Failed' }
           }}
         />
