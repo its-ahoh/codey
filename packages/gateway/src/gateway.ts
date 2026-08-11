@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, needsDigest, buildSpeechDigestPrompt, stripForSpeech, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, needsDigest, buildSpeechDigestPrompt, stripForSpeech, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -22,6 +22,7 @@ import { MemoryStore } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager } from './chats';
+import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
@@ -420,6 +421,11 @@ export class Codey {
     const modelName = this.getDefaultModelName(agent);
     if (!modelName) return undefined;
     return this.getModelConfig(agent, modelName);
+  }
+
+  /** The per-agent configured default effort, if any. */
+  private getDefaultEffort(agent: CodingAgent): ThinkingEffort | undefined {
+    return this.config.agents?.[agent]?.defaultEffort;
   }
 
   private getAdvisorAgentAndModel(): { agent: CodingAgent; model?: ModelConfig } {
@@ -5061,6 +5067,12 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   private async runWithFallback(agent: CodingAgent, request: AgentRequest): Promise<AgentResponse> {
+    // Global tier: any caller that didn't set an explicit chat/worker effort
+    // inherits the agent's configured default. Applied here rather than at each
+    // of the ~20 call sites.
+    if (request.effort === undefined) {
+      request = { ...request, effort: this.getDefaultEffort(agent) };
+    }
     const response = await this.runAgentWithNetworkRetry(agent, request);
     if (response.success) return response;
 
@@ -5430,6 +5442,7 @@ Example: /model gpt-4.1 write a Python script`;
         prompt,
         agent,
         model,
+        effort: resolveEffort({ chat: chat.effort }),
         context: { workingDir },
         skipPermissions: true,
         allowedTools: READ_ONLY_TOOLS,
@@ -5676,6 +5689,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Per-chat override takes precedence over the gateway default.
     const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
+    const chatEffort = resolveEffort({ chat: chat.effort });
     let model: ModelConfig | undefined;
     try {
       model = chat.model
@@ -5886,6 +5900,7 @@ Example: /model gpt-4.1 write a Python script`;
           prompt,
           agent,
           model,
+          effort: chatEffort,
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
@@ -5913,6 +5928,7 @@ Example: /model gpt-4.1 write a Python script`;
             prompt,
             agent,
             model,
+            effort: chatEffort,
             context: { workingDir },
             browserTools: true,
             browserChatId: chatId,
@@ -5960,6 +5976,7 @@ Example: /model gpt-4.1 write a Python script`;
             prompt: followup,
             agent,
             model,
+            effort: chatEffort,
             context: { workingDir },
             browserTools: true,
             browserChatId: chatId,
