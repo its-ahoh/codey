@@ -19,6 +19,7 @@ interface Palette {
   accent: string
   accentDim: string
   green: string
+  purple: string
   red: string
   yellow: string
   userBg: string
@@ -63,6 +64,7 @@ export const classicDark: Palette = {
   accent:    '#6d7cff',
   accentDim: '#6d7cff22',
   green:     '#32D74B',
+  purple:    '#A371F7',
   red:       '#FF453A',
   yellow:    '#FFD60A',
   userBg:    '#6475f5',
@@ -97,6 +99,7 @@ export const classicLight: Palette = {
   accent:    '#5265e8',
   accentDim: '#5265e81c',
   green:     '#34C759',
+  purple:    '#8250DF',
   red:       '#FF3B30',
   yellow:    '#FFCC00',
   userBg:    '#5265e8',
@@ -132,6 +135,7 @@ export const terminalDark: Palette = {
   accent:    '#2BE69B',
   accentDim: '#2BE69B22',
   green:     '#2BE69B',
+  purple:    '#A371F7',
   red:       '#FF6B5E',
   yellow:    '#F5C451',
   userBg:    '#2BE69B',
@@ -166,6 +170,7 @@ export const terminalLight: Palette = {
   accent:    '#0C9E70',
   accentDim: '#0C9E7022',
   green:     '#0C9E70',
+  purple:    '#8250DF',
   red:       '#DC4438',
   yellow:    '#B8841C',
   userBg:    '#067A53',
