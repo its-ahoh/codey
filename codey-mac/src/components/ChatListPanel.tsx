@@ -30,19 +30,19 @@ const DeliveryBadge: React.FC<{ pullRequest?: Chat['pullRequest'] }> = ({ pullRe
   if (!pullRequest) return null
   const pr = pullRequest.number ? `PR #${pullRequest.number}` : 'Pull request'
   if (pullRequest.state === 'pr-open') {
-    return <span style={{ ...styles.deliveryBadge, color: C.accent }} title={`${pr} is open`}><UIIcon name="link" size={10} /></span>
+    return <span style={{ ...styles.deliveryBadge, color: C.green }} title={`${pr} is open`}><UIIcon name="pull-request" size={12} strokeWidth={2} /></span>
   }
   if (pullRequest.state === 'merged') {
-    return <span style={{ ...styles.deliveryBadge, color: C.green }} title={`${pr} merged${pullRequest.baseBranch ? ` into ${pullRequest.baseBranch}` : ''}`}><UIIcon name="check" size={11} /></span>
+    return <span style={{ ...styles.deliveryBadge, color: C.purple }} title={`${pr} merged${pullRequest.baseBranch ? ` into ${pullRequest.baseBranch}` : ''}`}><UIIcon name="git-merge" size={12} strokeWidth={2} /></span>
   }
   if (pullRequest.state === 'merged-with-changes') {
     return (
       <span style={{ ...styles.deliveryBadge, color: C.yellow }} title={`${pr} merged · new changes`}>
-        <UIIcon name="check" size={11} /><span style={styles.deliveryDot} />
+        <UIIcon name="git-merge" size={12} strokeWidth={2} /><span style={styles.deliveryDot} />
       </span>
     )
   }
-  return <span style={{ ...styles.deliveryBadge, color: C.fg3 }} title={`${pr} closed without merge`}>×</span>
+  return <span style={{ ...styles.deliveryBadge, color: C.red }} title={`${pr} closed without merge`}><UIIcon name="pull-request" size={12} strokeWidth={2} /></span>
 }
 
 export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, onOpenBrowser, onOpenTools, onSelectChat, automationsUnseenCount, activeChatId }) => {
