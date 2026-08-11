@@ -13,6 +13,7 @@ import { extractPreview, parseTeamMessage } from './teamMessageFormat'
 import { groupMessages } from './teamGroup'
 import type { RenderItem } from './teamGroup'
 import { StatusSidecar } from './StatusSidecar'
+import { useStatusPanelEnabled } from './statusPanelPref'
 import { isTaskBriefStale, extractSidecarBrief } from './taskHudView'
 import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
@@ -892,6 +893,8 @@ export const ChatTab: React.FC<Props> = ({
   const [statusSidecarHidden, setStatusSidecarHidden] = useState(
     () => localStorage.getItem(STATUS_SIDECAR_HIDDEN_KEY) === '1',
   )
+  // Settings switch. Off hides both status surfaces and suppresses brief generation.
+  const statusPanelEnabled = useStatusPanelEnabled()
   const [bottomTerminalOpen, setBottomTerminalOpen] = useState(false)
   const [bottomTerminalHeight, setBottomTerminalHeight] = useState<number>(() => {
     const value = Number(localStorage.getItem('codey.bottomTerminalHeight'))
@@ -1152,7 +1155,7 @@ export const ChatTab: React.FC<Props> = ({
     prevTurnActiveRef.current = turnActive
     if (!toggled) return
     if (!turnActive) void refreshGit()
-    if (!chat || panelTab !== 'task') return
+    if (!chat || panelTab !== 'task' || !statusPanelEnabled) return
     const sharedDigestIsCurrent = !turnActive
       && !!chat.taskBrief?.teamTurnId
       && chat.messages.some(message =>
@@ -1160,7 +1163,7 @@ export const ChatTab: React.FC<Props> = ({
     if (sharedDigestIsCurrent) return
     setTaskBriefLoading(true)
     generateTaskBrief(chat.id).finally(() => setTaskBriefLoading(false))
-  }, [turnActive, panelTab, chatId])
+  }, [turnActive, panelTab, chatId, statusPanelEnabled])
   // Keep the per-chat draft store in sync so the current text/attachments are
   // preserved when ChatTab remounts on a chat switch. setDraft drops the entry
   // once both are empty (e.g. after send), so this also clears sent drafts.
@@ -1270,7 +1273,8 @@ export const ChatTab: React.FC<Props> = ({
   const SIDECAR_W = 264
   const sidecarFits = windowWidth >= 720
   const hasAssistantMsg = (chat?.messages ?? []).some(m => m.role === 'assistant')
-  const sidecarVisible = !panelOpen
+  const sidecarVisible = statusPanelEnabled
+    && !panelOpen
     && (statusSidecarHidden || sidecarFits)
     && !!chat
     && hasAssistantMsg
@@ -2593,8 +2597,9 @@ export const ChatTab: React.FC<Props> = ({
               qqInputRef={qqInputRef}
               onAnswerNextAction={() => taRef.current?.focus()}
               taskBriefLoading={taskBriefLoading}
+              statusPanelEnabled={statusPanelEnabled}
               onTaskTabShown={async () => {
-                if (!isTaskBriefStale(chat)) return
+                if (!statusPanelEnabled || !isTaskBriefStale(chat)) return
                 setTaskBriefLoading(true)
                 try { await generateTaskBrief(chat.id) } finally { setTaskBriefLoading(false) }
               }}

@@ -3,6 +3,7 @@ import React from 'react'
 import { C, ThemeMode, PaletteName, PALETTES, useThemeMode, useEffectiveTheme, usePaletteName } from '../theme'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { Section, pageStyle } from './settingsAtoms'
+import { getStatusPanelEnabled, setStatusPanelEnabled } from './statusPanelPref'
 
 const OPTIONS: { value: ThemeMode; label: string }[] = [
   { value: 'light',  label: 'Light'  },
@@ -41,6 +42,7 @@ export const AppearanceTab: React.FC = () => {
   const [screenshotHotkey, setScreenshotHotkey] = React.useState<string>('Control+Alt+Space')
   const [launchAtLogin, setLaunchAtLogin] = React.useState<boolean>(false)
   const [dockless, setDockless] = React.useState<boolean>(false)
+  const [statusPanel, setStatusPanel] = React.useState<boolean>(getStatusPanelEnabled)
   const [loaded, setLoaded] = React.useState(false)
 
   React.useEffect(() => {
@@ -143,6 +145,19 @@ export const AppearanceTab: React.FC = () => {
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>
+      </div>
+
+      <div style={styles.settingRow}>
+        <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
+          <div>Status panel</div>
+          <div style={styles.settingDesc}>
+            Show the Status tab and the floating status card in the chat's right panel. Off also stops Codey from generating the status brief.
+          </div>
+        </div>
+        <Toggle
+          on={statusPanel}
+          onChange={(v) => { setStatusPanel(v); setStatusPanelEnabled(v) }}
+        />
       </div>
       </div>
 
