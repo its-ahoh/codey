@@ -275,8 +275,8 @@ declare global {
         promote: (name: string) => Promise<IpcResult<{ name: string; dir: string }>>
       }
       agents: {
-        get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>>>
-        set: (updates: Record<string, { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }>) => Promise<IpcResult<void>>
+        get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; defaultEffort?: string; env?: Record<string, string> }>>>
+        set: (updates: Record<string, { enabled?: boolean; defaultModel?: string; defaultEffort?: string; env?: Record<string, string> }>) => Promise<IpcResult<void>>
         checkInstalled: () => Promise<IpcResult<Record<string, { installed: boolean; path?: string }>>>
         slashCommands: (agent: string) => Promise<IpcResult<Array<{ name: string; description: string; source: 'agent' | 'gateway' | 'skill' }>>>
       }
@@ -291,6 +291,7 @@ declare global {
         delete: (id: string) => Promise<IpcResult<null>>
         updateSelection: (id: string, selection: ChatSelection) => Promise<IpcResult<Chat>>
         updateAgentModel: (id: string, agent: string | null, model: string | null) => Promise<IpcResult<Chat>>
+        updateEffort: (id: string, effort: string | null) => Promise<IpcResult<Chat>>
         send: (payload: { chatId: string; text: string; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) => Promise<IpcResult<{ response: string; chatId: string; tokens?: number; durationSec?: number }>>
         stop: (chatId: string) => Promise<IpcResult<boolean>>
         onEvent: (handler: (ev: ChatStreamEvent) => void) => () => void

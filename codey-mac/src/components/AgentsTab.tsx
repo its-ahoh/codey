@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
-import { fieldStyle, pageStyle, pillButton, Section, unwrap } from './settingsAtoms'
+import { fieldStyle, pageStyle, pillButton, Section, selectStyle, unwrap } from './settingsAtoms'
 import {
   AGENT_INSTALL_URL,
   AGENT_NAMES,
@@ -13,7 +13,9 @@ interface Props {
   isGatewayRunning: boolean
 }
 
-type AgentSlot = { enabled?: boolean; defaultModel?: string; env?: Record<string, string> }
+type AgentSlot = { enabled?: boolean; defaultModel?: string; defaultEffort?: string; env?: Record<string, string> }
+
+const EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
 export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
   const [agents, setAgents] = useState<Record<string, AgentSlot>>({})
@@ -73,6 +75,31 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
                 checking={checkingInstalls && !status}
                 onInstall={() => window.codey.openExternal(AGENT_INSTALL_URL[a])}
               />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10 }}>
+              <span style={{ color: C.fg3, fontSize: 12 }}>Default effort</span>
+              <select
+                value={agents[a]?.defaultEffort ?? ''}
+                onChange={async e => {
+                  // Empty option clears the key rather than storing ''.
+                  const next = e.target.value || undefined
+                  const updated: Record<string, AgentSlot> = {
+                    ...agents,
+                    [a]: { ...(agents[a] ?? {}), defaultEffort: next },
+                  }
+                  setAgents(updated)
+                  // agents:set merges shallowly, so sending just this agent's
+                  // slot is enough — no need to re-send the others.
+                  await unwrap(await window.codey.agents.set({ [a]: updated[a] }))
+                }}
+                style={{ ...selectStyle, width: 180 }}
+                title="Thinking effort used when neither the chat nor a worker overrides it"
+              >
+                <option value="">Unset (CLI default)</option>
+                {EFFORT_OPTIONS.map(o => (
+                  <option key={o} value={o}>{o}</option>
+                ))}
+              </select>
             </div>
             <EnvEditor
               env={env}

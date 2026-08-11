@@ -77,6 +77,40 @@ describe('config normalize', () => {
   });
 });
 
+describe('setAgentDefaultEffort', () => {
+  it('sets an effort and persists it to disk', () => {
+    withTempConfig({}, (cm, p) => {
+      cm.setAgentDefaultEffort('codex', 'high');
+      expect(cm.getAgentConfig('codex')?.defaultEffort).toBe('high');
+      const onDisk = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      expect(onDisk.agents.codex.defaultEffort).toBe('high');
+    });
+  });
+
+  it('deletes the key entirely when cleared', () => {
+    withTempConfig({ agents: { codex: { defaultEffort: 'max', env: { FOO: 'bar' } } } }, (cm, p) => {
+      cm.setAgentDefaultEffort('codex', undefined);
+      expect(cm.getAgentConfig('codex')?.defaultEffort).toBeUndefined();
+      const onDisk = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      expect('defaultEffort' in onDisk.agents.codex).toBe(false);
+      // Unrelated slot fields survive the clear.
+      expect(onDisk.agents.codex.env).toEqual({ FOO: 'bar' });
+    });
+  });
+
+  it('round-trips a set effort through a fresh ConfigManager', () => {
+    withTempConfig({}, (cm, p) => {
+      cm.setAgentDefaultEffort('claude-code', 'xhigh');
+      const reloaded = new ConfigManager(p);
+      try {
+        expect(reloaded.getAgentConfig('claude-code')?.defaultEffort).toBe('xhigh');
+      } finally {
+        reloaded.stop();
+      }
+    });
+  });
+});
+
 describe('api key CRUD', () => {
   it('saveApiKey rejects missing name or key', () => {
     withTempConfig({}, cm => {

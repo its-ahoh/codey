@@ -1,5 +1,6 @@
 import { ChatRoute } from './route';
 import { PendingTeamState } from './pending-team';
+import type { ThinkingEffort } from './index';
 
 /** The three CLIs report task lists in three shapes; the adapters normalize
  *  onto this one. codex has only a completed boolean, so it never produces
@@ -143,6 +144,8 @@ export interface Chat {
   agent?: 'claude-code' | 'opencode' | 'codex';
   /** Per-chat model override (model id from the global catalog). Falls back to the agent's default model when unset. */
   model?: string;
+  /** Per-chat reasoning-effort override. Falls back to the worker's effort, then the agent's defaultEffort. */
+  effort?: ThinkingEffort;
   /** Per-chat "solo advisor" backup toggle. When true and the chat is NOT a team,
    *  a stuck single agent (one that emits `[ASK_ADVISOR]: <reason>`) is escalated
    *  to the stronger advisor model for guidance, then re-run. Default off. */
