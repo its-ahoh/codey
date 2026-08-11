@@ -165,6 +165,18 @@ export const BranchPicker: React.FC<Props> = ({
             <button style={styles.iconButton} onClick={() => void copyPath()} title="Copy path" aria-label="Copy worktree path">
               <UIIcon name="copy" size={13} />
             </button>
+            <button
+              style={styles.iconButton}
+              disabled={!workingDir || syncing}
+              onClick={() => void syncWithRemote()}
+              title={syncing ? 'Syncing…' : 'Sync: fetch and fast-forward this branch to its upstream'}
+              aria-label="Sync with the latest upstream commits"
+            >
+              <style>{'@keyframes codey-branch-sync-spin { to { transform: rotate(360deg) } }'}</style>
+              <span style={syncing ? styles.spinning : undefined}>
+                <UIIcon name="refresh" size={13} />
+              </span>
+            </button>
             {onOpenTerminal && (
               <button style={styles.iconButton} onClick={() => { onOpenTerminal(); setOpen(false) }} disabled={!workingDir} title="Open Terminal here" aria-label="Open Terminal in this checkout">
                 <UIIcon name="terminal" size={14} />
@@ -259,21 +271,7 @@ export const BranchPicker: React.FC<Props> = ({
               {note && <div style={styles.noteBox} role="status">{note}</div>}
               <div style={styles.footer}>
                 <button style={styles.ghost} onClick={() => { setNewBranchName(''); setMode({ kind: 'createBranch' }) }}>+ New branch</button>
-                <div style={styles.footerActions}>
-                  <button style={styles.ghost} onClick={() => void git.fetchRemote()}>Fetch</button>
-                  <button
-                    style={styles.iconButton}
-                    disabled={!workingDir || syncing}
-                    onClick={() => void syncWithRemote()}
-                    title={syncing ? 'Syncing…' : 'Sync: fetch and fast-forward this branch to its upstream'}
-                    aria-label="Sync with the latest upstream commits"
-                  >
-                    <style>{'@keyframes codey-branch-sync-spin { to { transform: rotate(360deg) } }'}</style>
-                    <span style={syncing ? styles.spinning : undefined}>
-                      <UIIcon name="refresh" size={13} />
-                    </span>
-                  </button>
-                </div>
+                <button style={styles.ghost} onClick={() => void git.fetchRemote()}>Fetch</button>
               </div>
             </>
           )}
@@ -315,7 +313,6 @@ const styles: Record<string, React.CSSProperties> = {
   primary: { background: C.accent, color: C.onAccent, border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, cursor: 'pointer' },
   ghost: { background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '5px 10px', fontSize: 11, cursor: 'pointer' },
   footer: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${C.border}`, paddingTop: 6 },
-  footerActions: { display: 'flex', alignItems: 'center', gap: 6 },
   spinning: { display: 'inline-flex', animation: 'codey-branch-sync-spin 0.9s linear infinite' },
   warn: { fontSize: 12, color: C.yellow },
   err: { fontSize: 11, color: C.red, padding: '2px 4px' },
