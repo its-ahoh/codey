@@ -1382,7 +1382,7 @@ export const ChatTab: React.FC<Props> = ({
     await setAgentModel(chat.id, chat.agent ?? null, v === '' ? null : v)
   }
   const onEffortChange = async (v: string) => {
-    // '' is the Inherit option — clears the chat override.
+    // '' is the inherited-effort option — clears the chat override.
     await setEffort(chat.id, v === '' ? null : v)
   }
 
@@ -1919,7 +1919,7 @@ export const ChatTab: React.FC<Props> = ({
                         style={styles.runSettingSelect}
                         title={`Effort: ${effectiveEffort ?? 'CLI default'}${chat.effort ? ' (override)' : workerEffort ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
                       >
-                        <option value="">Inherit ({effectiveEffort ?? 'CLI default'})</option>
+                        <option value="">{effectiveEffort ?? 'CLI default'}</option>
                         <option value="low">low</option>
                         <option value="medium">medium</option>
                         <option value="high">high</option>
