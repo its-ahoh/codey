@@ -5647,7 +5647,16 @@ Example: /model gpt-4.1 write a Python script`;
     const onStatus = (update: any) => {
       try {
         const parsed = typeof update === 'string' ? JSON.parse(update) : update;
-        if (parsed?.message) sink({ type: 'tool', chatId, message: String(parsed.message) });
+        // The tool name drives the UI's activity word ("Reading", "Searching");
+        // some adapters send it with no human-readable message at all.
+        if (parsed?.message || parsed?.tool) {
+          sink({
+            type: 'tool',
+            chatId,
+            message: parsed.message ? String(parsed.message) : '',
+            tool: parsed.tool ? String(parsed.tool) : undefined,
+          });
+        }
       } catch { /* non-JSON status */ }
     };
 

@@ -453,7 +453,11 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                       setChatMenu({ chat, x: e.clientX, y: e.clientY })
                     }}
                   >
-                    <span style={{ ...styles.chatIcon, color: active ? C.accent : C.fg3 }}><UIIcon name="chat" size={14} /></span>
+                    {/* Fixed-width leading slot so a chat's name never shifts
+                        sideways the moment its run starts or ends. */}
+                    <span style={styles.activitySlot}>
+                      {flight && <span style={styles.dot} title="Running" aria-label="Running" />}
+                    </span>
                     {isRenaming ? (
                       <input
                         autoFocus
@@ -479,7 +483,6 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                     )}
                     <RouteIcons routes={chat.routes} />
                     {unread && !active && <span style={styles.unreadDot} />}
-                    {flight && <span style={styles.dot} />}
                     {!isRenaming && (
                       <span style={styles.trailingAction}>
                         {hoveredChatId === chat.id ? (
@@ -707,13 +710,13 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '7px 9px', borderRadius: 8, cursor: 'pointer',
     fontSize: 12, color: C.fg2, margin: '2px 2px 2px 20px', border: '1px solid transparent',
   },
-  chatIcon: { display: 'inline-flex', flexShrink: 0 },
+  activitySlot: { width: 8, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   title: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   renameInput: {
     flex: 1, background: C.surface3, border: `1px solid ${C.border2}`,
     borderRadius: 4, padding: '2px 6px', color: C.fg, fontSize: 12, outline: 'none',
   },
-  dot: { width: 6, height: 6, borderRadius: '50%', background: C.accent, animation: 'codey-pulse-dot 1.2s infinite' },
+  dot: { width: 6, height: 6, borderRadius: '50%', background: C.accent, flexShrink: 0, animation: 'codey-pulse-dot 1.2s infinite' },
   unreadDot: { width: 6, height: 6, borderRadius: '50%', background: C.accent, flexShrink: 0 },
   trailingAction: { width: 22, height: 22, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   xBtn: {

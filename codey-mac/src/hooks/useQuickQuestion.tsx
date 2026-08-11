@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useReducer } from
 import { apiService } from '../services/api'
 import type { QQStreamEvent } from '../services/api'
 import type { FileAttachment } from '../types'
+import { activityForTool, type AgentActivity } from '../components/agentActivity'
 
 export interface QQMessage {
   id: string
@@ -16,6 +17,9 @@ export interface QQThread {
   messages: QQMessage[]
   inFlight: boolean
   activity?: string // latest tool/status line while running
+  /** Same vocabulary as the main chat ("thinking", "reading", …) so both
+   *  surfaces name what the agent is doing the same way. */
+  status?: AgentActivity
 }
 
 interface State {
@@ -25,7 +29,7 @@ interface State {
 type Action =
   | { type: 'startAsk'; chatId: string; userMsg: QQMessage; assistantId: string }
   | { type: 'token'; chatId: string; token: string }
-  | { type: 'activity'; chatId: string; message: string }
+  | { type: 'activity'; chatId: string; message: string; status: AgentActivity }
   | { type: 'done'; chatId: string; content: string }
   | { type: 'error'; chatId: string; message: string }
   | { type: 'stopped'; chatId: string }
@@ -47,6 +51,9 @@ function reducer(state: State, action: Action): State {
             ],
             inFlight: true,
             activity: undefined,
+            // Nothing has run yet, so the honest first word is "Thinking" —
+            // same opening state as a main-chat turn.
+            status: 'thinking',
           },
         },
       }
@@ -57,7 +64,7 @@ function reducer(state: State, action: Action): State {
       return { threads: { ...state.threads, [action.chatId]: { ...t, messages: msgs } } }
     }
     case 'activity':
-      return { threads: { ...state.threads, [action.chatId]: { ...t, activity: action.message } } }
+      return { threads: { ...state.threads, [action.chatId]: { ...t, activity: action.message, status: action.status } } }
     case 'done': {
       const msgs = t.messages.map(m =>
         m.streaming ? { ...m, content: action.content || m.content, streaming: false } : m,
@@ -97,7 +104,7 @@ export const QuickQuestionProvider: React.FC<{ children: React.ReactNode }> = ({
           dispatch({ type: 'token', chatId: ev.chatId, token: ev.token })
           break
         case 'tool':
-          dispatch({ type: 'activity', chatId: ev.chatId, message: ev.message })
+          dispatch({ type: 'activity', chatId: ev.chatId, message: ev.message, status: activityForTool(ev.tool) })
           break
         case 'done':
           dispatch({ type: 'done', chatId: ev.chatId, content: ev.response })
