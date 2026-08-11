@@ -15,7 +15,7 @@ import { ConfigManager, ResolvedVoiceTtsSettings } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, VoiceChannelHandler, ChannelHandler } from './channels';
 import { synthesizeSpeech } from './voice-tts';
 import { runTextCompletion, streamTextCompletion, canRunDirectly } from './text-completion';
-import { AgentFactory } from '@codey/core';
+import { AgentFactory, isThinkingEffort } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
@@ -2387,6 +2387,9 @@ export class Codey {
       case 'model':
         await this.cmdModel(args, chatId, channel);
         break;
+      case 'effort':
+        await this.cmdEffort(args, chatId, channel);
+        break;
       case 'agent':
         await this.cmdAgent(args, chatId, channel);
         if (this.isPairableChannel(channel) && args.length > 0) {
@@ -2588,6 +2591,53 @@ export class Codey {
         text: `Current default model: ${this.getEffectiveModel()}`,
       });
     }
+  }
+
+  /**
+   * Show, set, or clear the reasoning effort for the current default agent.
+   * Chat platforms have no Chat record, so the per-chat override tier is not
+   * reachable here — like /agent, this writes the global per-agent default.
+   */
+  private async cmdEffort(args: string[], chatId: string, channel: ChannelType): Promise<void> {
+    const agent = this.getDefaultAgent() as CodingAgent;
+    const current = this.getDefaultEffort(agent);
+
+    if (args.length === 0) {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `Current effort for **${agent}**: ${current ?? 'unset (CLI default)'}\n\n` +
+          `Set with: /effort <low|medium|high|xhigh|max>\nClear with: /effort clear`,
+      });
+      return;
+    }
+
+    const raw = args[0].toLowerCase();
+    if (raw === 'clear') {
+      this.configManager?.setAgentDefaultEffort(agent, undefined);
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `✅ Cleared effort for **${agent}** — using the CLI default.`,
+      });
+      return;
+    }
+
+    if (!isThinkingEffort(raw)) {
+      await this.sendResponse({
+        chatId,
+        channel,
+        text: `Unknown effort: ${raw}\n\nAvailable: low, medium, high, xhigh, max`,
+      });
+      return;
+    }
+
+    this.configManager?.setAgentDefaultEffort(agent, raw);
+    await this.sendResponse({
+      chatId,
+      channel,
+      text: `✅ Effort for **${agent}** set to **${raw}**.`,
+    });
   }
 
   private async cmdAgent(args: string[], chatId: string, channel: ChannelType): Promise<void> {
@@ -3278,6 +3328,7 @@ export class Codey {
 /clear - Clear conversation history
 /reset - Start a new conversation
 /model [name] - Show/set model
+/effort <level> - Set reasoning effort (low/medium/high/xhigh/max)
 /config - Show current config
 
 Example: /worker architect design a REST API
