@@ -1122,7 +1122,7 @@ export const ChatTab: React.FC<Props> = ({
         try {
           const ag = await window.codey.agents.get()
           if (ag.ok) {
-            const slots = ag.data as Record<string, { defaultEffort?: string } | undefined>
+            const slots = ag.data
             const efforts: Record<string, string | undefined> = {}
             for (const n of AGENT_NAMES) efforts[n] = slots[n]?.defaultEffort
             setAgentDefaultEfforts(efforts)
