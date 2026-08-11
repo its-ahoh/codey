@@ -2089,7 +2089,7 @@ export const ChatTab: React.FC<Props> = ({
               }}
             >
               <div style={isUser ? {
-                minWidth: 0, maxWidth: '72%', padding: `10px ${USER_BUBBLE_PADDING_X}px`,
+                minWidth: 0, maxWidth: 'min(84%, 88ch)', padding: `10px ${USER_BUBBLE_PADDING_X}px`,
                 borderRadius: '16px 16px 4px 16px',
                 background: C.userBg,
                 color: C.onAccent, fontSize: 13, lineHeight: 1.55,
@@ -2099,13 +2099,12 @@ export const ChatTab: React.FC<Props> = ({
                 // reads as a document; the header rule below carries the
                 // boundary the bubble used to provide.
                 //
-                // `ch` resolves against this element's 13px font, so 78ch is
-                // ~562px. box-sizing is border-box, so the rail and the 27px of
-                // horizontal padding come out of that, leaving ~535px of text —
-                // about 68 characters of the 14px roomy body, or ~41 Chinese
-                // characters. Unlike the old 72%, it does not grow with the
-                // window.
-                minWidth: 0, width: '100%', maxWidth: 'min(100%, 78ch)',
+                // `ch` resolves against this element's 13px font, so 96ch is
+                // roughly 700px. This gives prose, code, and tables more room
+                // than the previous 78ch column while retaining a readable
+                // line-length ceiling on wide windows. Small windows still use
+                // all available space via the 100% cap.
+                minWidth: 0, width: '100%', maxWidth: 'min(100%, 96ch)',
                 // Padding on all four sides so the selected highlight reads as a
                 // card rather than a rectangle cut through the text. It is
                 // unconditional — applying it only when selected would shift the
