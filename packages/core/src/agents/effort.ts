@@ -5,11 +5,15 @@ import type { AgentRequest, AgentResponse, ThinkingEffort } from '../types';
  *
  * All three agents take the same five level strings, so these are verbatim
  * passthroughs that differ only in flag syntax. Verified against claude-code
- * 2.1.221, codex v0.145.0 and opencode:
+ * 2.1.221, codex v0.145.0 and opencode 1.14.18:
  *
  *   claude-code  --effort <L>                      lenient (warns, uses default)
  *   codex        -c model_reasoning_effort="<L>"   STRICT (API rejects the run)
  *   opencode     --variant <L>                     lenient (silently ignored)
+ *
+ * opencode's variants are provider-specific (its help cites `high, max,
+ * minimal`), so `low`/`xhigh` may not map on every provider. That is safe
+ * precisely because it is lenient: an unmapped level is a no-op, not a failure.
  */
 export function claudeEffortArgs(effort?: ThinkingEffort): string[] {
   return effort ? ['--effort', effort] : [];
