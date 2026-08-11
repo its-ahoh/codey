@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { deriveDeliveryState } from './delivery-status'
+import { deriveDeliveryState, shouldRediscoverPr } from './delivery-status'
+
+describe('shouldRediscoverPr', () => {
+  it('re-resolves when the checkout moved to another branch', () => {
+    expect(shouldRediscoverPr({ pinnedHeadBranch: 'old-work', currentBranch: 'new-work' })).toBe(true)
+  })
+
+  it('keeps the pinned PR on its own branch', () => {
+    expect(shouldRediscoverPr({ pinnedHeadBranch: 'work', currentBranch: 'work' })).toBe(false)
+  })
+
+  it('keeps the pinned PR when the branch is unknown or detached', () => {
+    expect(shouldRediscoverPr({ pinnedHeadBranch: 'work', currentBranch: '' })).toBe(false)
+    expect(shouldRediscoverPr({ pinnedHeadBranch: 'work', currentBranch: 'HEAD' })).toBe(false)
+    expect(shouldRediscoverPr({ currentBranch: 'work' })).toBe(false)
+  })
+})
 
 describe('deriveDeliveryState', () => {
   it('maps open and closed pull requests', () => {

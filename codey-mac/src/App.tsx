@@ -5,6 +5,7 @@ import { SettingsOverlay } from './components/SettingsOverlay'
 import { VoiceRecorder } from './components/VoiceRecorder'
 import { NotificationCenter } from './components/NotificationCenter'
 import { ChatsProvider, useChats } from './hooks/useChats'
+import { usePullRequestWatcher } from './hooks/usePullRequestWatcher'
 import { QuickQuestionProvider } from './hooks/useQuickQuestion'
 import { useGateway } from './hooks/useGateway'
 import { CoreOfflineBanner } from './components/CoreOfflineBanner'
@@ -36,6 +37,8 @@ const clampLeftPanelWidth = (width: number) => {
 const Shell: React.FC = () => {
   const { isRunning, coreState, relaunchApp } = useGateway()
   const { state, createChat, selectChat, openChatById, refreshWorkspaces, sendMessage } = useChats()
+  // Keeps the ChatList PR badges current for chats the user isn't looking at.
+  usePullRequestWatcher()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
   const [automationsOpen, setAutomationsOpen] = useState(false)
