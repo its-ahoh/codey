@@ -103,8 +103,10 @@ export const BranchPicker: React.FC<Props> = ({
     setChangingMode(true); setNote(null)
     try {
       await onCreateWorktree(name)
-      setNote('Worktree and same-named branch created')
+      // Creation succeeded — dismiss the picker instead of dropping back to the
+      // branch list; the pill itself now shows the new worktree and branch.
       setMode({ kind: 'list' })
+      setOpen(false)
     } catch (error) {
       setNote(error instanceof Error ? error.message : 'Could not create worktree')
     } finally {
