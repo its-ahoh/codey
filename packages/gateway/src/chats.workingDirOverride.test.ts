@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ChatManager } from './chats';
-import { buildChatCatchupPrompt } from './chat-runner';
+import { buildChatCatchupPrompt, buildChatResumePrompt, resumeContextExcerpt } from './chat-runner';
 
 describe('ChatManager.setWorkingDirOverride', () => {
   let root: string;
@@ -150,5 +150,53 @@ describe('buildChatCatchupPrompt', () => {
     expect(prompt).toContain('new question');
     expect(prompt).not.toContain('already known user turn');
     expect(prompt).not.toContain('already known answer');
+  });
+});
+
+describe('buildChatResumePrompt', () => {
+  let root: string;
+  let mgr: ChatManager;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chats-'));
+    fs.mkdirSync(path.join(root, 'ws'), { recursive: true });
+    mgr = new ChatManager(root);
+  });
+
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('pins the latest persisted assistant message for a digit reply', () => {
+    const chat = mgr.create({ workspaceName: 'ws' });
+    mgr.appendMessage(chat.id, { id: 'u1', role: 'user', content: 'How should we execute?', timestamp: 1, isComplete: true });
+    mgr.appendMessage(chat.id, {
+      id: 'a1', role: 'assistant', content: '1. Subagent-driven\n2. Inline execution\n\nWhich one?', timestamp: 2, isComplete: true,
+    });
+
+    const prompt = buildChatResumePrompt(mgr.get(chat.id)!, '1');
+
+    expect(prompt).toContain('Most recent persisted assistant message');
+    expect(prompt).toContain('1. Subagent-driven');
+    expect(prompt).toContain('Respond to this new user message]\n1');
+  });
+
+  it('pins the checkpoint for a substantive new request too', () => {
+    const chat = mgr.create({ workspaceName: 'ws' });
+    mgr.appendMessage(chat.id, { id: 'a1', role: 'assistant', content: 'old answer', timestamp: 1, isComplete: true });
+
+    const prompt = buildChatResumePrompt(mgr.get(chat.id)!, 'Implement the authentication middleware');
+
+    expect(prompt).toContain('old answer');
+    expect(prompt).toContain('Implement the authentication middleware');
+  });
+
+  it('bounds a large checkpoint while preserving its head and tail', () => {
+    const prior = `HEAD:${'a'.repeat(5_000)}:TAIL:${'z'.repeat(5_000)}`;
+
+    const excerpt = resumeContextExcerpt(prior);
+
+    expect(excerpt.length).toBeLessThan(prior.length);
+    expect(excerpt).toContain('HEAD:');
+    expect(excerpt).toContain(':TAIL:');
+    expect(excerpt).toContain('middle of prior assistant message omitted');
   });
 });

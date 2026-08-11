@@ -5743,9 +5743,10 @@ Example: /model gpt-4.1 write a Python script`;
     // message and handed to the resume path.
     let userText = userTextParam;
 
-    // Detect a paused team and decide how this turn relates to it. A slash turn
-    // cancels the paused run and proceeds normally; otherwise this turn is an
-    // answer to the team's question, so map any digit reply to the option text.
+    // Detect a paused team or a structured choice from the last normal-chat
+    // response. A digit reply must be resolved here as well as in the channel
+    // handler: Mac-origin turns call sendToChat directly and bypass
+    // handleMessage's choice mapping.
     const pendingTeam = chat.pendingTeam;
     // A channel-origin explicit `/skill` invoke arrives with userText already
     // rewritten to the raw task (handleMessage stripped the slash), so count
@@ -5759,6 +5760,15 @@ Example: /model gpt-4.1 write a Python script`;
         const resolved = resolveChoiceDigit(userText, pendingTeam.options);
         if (resolved !== null) userText = resolved;
       }
+    } else if (!isSlashTurn && chat.lastAskedOptions?.options.length) {
+      const resolved = resolveChoiceDigit(userText, chat.lastAskedOptions.options);
+      if (resolved !== null) userText = resolved;
+    }
+
+    // A structured choice applies to exactly one subsequent user message,
+    // whether it came from a channel or the Mac app.
+    if (chat.lastAskedOptions) {
+      this.chatManager.clearLastAskedOptions(chatId);
     }
 
     // Persisted alongside the assistant message at completion. Declared here
@@ -5956,7 +5966,7 @@ Example: /model gpt-4.1 write a Python script`;
       // while it was inactive, replay only that unseen gap before the new turn.
       prompt = selPrefix + (warmAnchor.syncedThroughMessageId
         ? buildChatCatchupPrompt(chat, warmAnchor.syncedThroughMessageId, userText, attachments)
-        : buildChatResumePrompt(userText, attachments));
+        : buildChatResumePrompt(chat, userText, attachments));
       resumeSessionId = warmAnchor.sessionId;
     } else {
       // Bootstrap turn: include prior history once. For claude-code, pre-allocate
