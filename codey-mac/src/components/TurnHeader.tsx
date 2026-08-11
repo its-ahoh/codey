@@ -46,9 +46,6 @@ interface Props {
   hasThinking: boolean
   expanded: boolean
   onToggle: () => void
-  /** The rule closes a finished turn. While one is still streaming there is
-   *  nothing below it to bound, and a line drawn under a growing reply reads as
-   *  a separator in the wrong place. */
   turnComplete: boolean
 }
 
@@ -61,19 +58,20 @@ interface Props {
  *  and the header gives the thinking disclosure a permanent home instead of
  *  leaving it as an unanchored 11px line above the reply.
  *
- *  The rule always renders; the metadata row renders only when there is
- *  something to put in it, so a turn with no metadata is a bare hairline rather
- *  than a blank row. */
+ *  The rule always renders — including while the turn is still streaming, so
+ *  the header keeps the same shape from the first token to the last instead of
+ *  gaining a line when the turn lands. The metadata row renders only when there
+ *  is something to put in it, so a turn with no metadata is a bare hairline
+ *  rather than a blank row. */
 export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete }) => {
   const elapsedSec = useElapsedSeconds(!turnComplete, msg.timestamp)
   const meta = turnHeaderMeta(msg, { elapsedSec })
-  const rule = turnComplete ? <div style={styles.rule} /> : null
+  const rule = <div style={styles.rule} />
   if (meta.isEmpty && !hasThinking) return rule
 
   return (
     <div>
-      {/* Without the rule below it, the row supplies its own bottom gap. */}
-      <div style={{ ...styles.row, marginBottom: turnComplete ? 4 : 12 }}>
+      <div style={styles.row}>
         <div style={styles.left}>
           {hasThinking ? (
             <button

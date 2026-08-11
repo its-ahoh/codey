@@ -28,16 +28,6 @@ export function renderQuestion(
   return options && options.length > 0 ? { text, choices: options } : { text };
 }
 
-/** Legacy string-returning helper kept for callers that don't yet pass choices through. */
-export function renderQuestionMessage(
-  workerName: string,
-  preamble: string,
-  question: string,
-  truncate = 500,
-): string {
-  return renderQuestion(workerName, preamble, question, undefined, truncate).text;
-}
-
 /** Notice shown when a slash command arrives while a team is paused. */
 export function renderCancelNotice(pending: PendingTeamState): string {
   return `Cancelled paused team \`${pending.teamName}\` (was waiting on: ${pending.question}).`;

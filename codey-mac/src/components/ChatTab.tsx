@@ -243,7 +243,7 @@ const LiveActivity: React.FC<{ toolCalls?: import('../types').ToolCallEntry[] }>
               <UIIcon name="disclosure" size={12} />
             </span>
           ) : (
-            <span style={styles.liveActivityDot} />
+            <span style={active ? styles.liveActivityDotActive : styles.liveActivityDot} />
           )}
         </span>
         <span style={styles.liveActivityText}>{headline}</span>
@@ -3345,16 +3345,22 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg3, width: 12, height: 16, flexShrink: 0,
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   },
+  // Accent colour alone marks the running row. The pulse lives on the dot
+  // (below), never on this wrapper: the wrapper also holds the disclosure
+  // chevron, and a blinking control reads as a glitch rather than as progress.
   liveActivityMarkerActive: {
     color: C.accent, width: 12, height: 16, flexShrink: 0,
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    animation: 'codey-pulse 1.4s ease-in-out infinite',
   },
   liveActivityChevron: {
     width: 12, height: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     transformOrigin: 'center', transition: 'transform 0.15s ease',
   },
   liveActivityDot: { width: 5, height: 5, borderRadius: '50%', background: 'currentColor' },
+  liveActivityDotActive: {
+    width: 5, height: 5, borderRadius: '50%', background: 'currentColor',
+    animation: 'codey-pulse 1.4s ease-in-out infinite',
+  },
   liveActivityText: {
     color: C.fg2, fontSize: 12, fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',

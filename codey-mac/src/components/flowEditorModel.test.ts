@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toFlow, fromFlow, newNodeId, emptyGraph, branchColors } from './flowEditorModel'
+import { toFlow, fromFlow, newNodeId, emptyGraph } from './flowEditorModel'
 import type { TeamGraph } from '../../../packages/core/src/team-graph'
 
 const g: TeamGraph = {
@@ -64,25 +64,6 @@ describe('flowEditorModel condition + handles round-trip', () => {
   })
 })
 
-describe('branchColors', () => {
-  it('colors non-default branch edges distinctly and default gray', () => {
-    const colors = branchColors([] as any, [
-      { id: 'e2a', source: 'c1', data: { isDefault: false } },
-      { id: 'e2b', source: 'c1', data: { isDefault: true } },
-    ] as any)
-    expect(colors['e2a']).toBeTruthy()
-    expect(colors['e2b']).toBe('#888')
-    expect(colors['e2a']).not.toBe('#888')
-  })
-
-  it('does not color edges out of a single-output node', () => {
-    const colors = branchColors([] as any, [
-      { id: 'only', source: 'w1', data: {} },
-    ] as any)
-    expect(colors['only']).toBeUndefined()
-  })
-})
-
 describe('flowEditorModel diamond + maxCalls round-trip', () => {
   const g: TeamGraph = {
     entry: 'start', maxHops: 20,
@@ -104,17 +85,5 @@ describe('flowEditorModel diamond + maxCalls round-trip', () => {
     const flow = toFlow(g);
     const back = fromFlow(flow.nodes, flow.edges, g.entry, g.maxHops);
     expect(back).toEqual(g);
-  });
-});
-
-describe('branchColors diamond colors', () => {
-  it('colors a diamond yes green and no red', () => {
-    const nodes = [{ id: 'd1', position: { x: 0, y: 0 }, data: { label: 'd1', type: 'condition' } }] as any;
-    const colors = branchColors(nodes, [
-      { id: 'y', source: 'd1', data: { branch: 'yes' } },
-      { id: 'n', source: 'd1', data: { branch: 'no' } },
-    ] as any);
-    expect(colors['y']).toBe('#22c55e');
-    expect(colors['n']).toBe('#ef4444');
   });
 });

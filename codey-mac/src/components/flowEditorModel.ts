@@ -59,31 +59,3 @@ export function emptyGraph(): TeamGraph {
   }
 }
 
-const BRANCH_PALETTE = ['#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#ec4899', '#14b8a6']
-
-/**
- * Map edge id -> color for edges leaving a branch node (a node with >1 outgoing
- * edge). Non-default edges get distinct palette colors by index; the default
- * (else) edge is gray. Edges from single-output nodes are left uncolored.
- */
-export function branchColors(nodes: FlowNode[], edges: FlowEdge[]): Record<string, string> {
-  const typeById = new Map(nodes.map(n => [n.id, n.data?.type]))
-  const bySource = new Map<string, FlowEdge[]>()
-  for (const e of edges) {
-    if (!bySource.has(e.source)) bySource.set(e.source, [])
-    bySource.get(e.source)!.push(e)
-  }
-  const out: Record<string, string> = {}
-  for (const [source, group] of bySource) {
-    if (typeById.get(source) === 'condition') {
-      for (const e of group) out[e.id] = e.data?.branch === 'no' ? '#ef4444' : '#22c55e'
-      continue
-    }
-    if (group.length < 2) continue
-    let i = 0
-    for (const e of group) {
-      out[e.id] = e.data?.isDefault ? '#888' : BRANCH_PALETTE[i++ % BRANCH_PALETTE.length]
-    }
-  }
-  return out
-}

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { getDraft, setDraft, clearDraft, __resetDrafts } from './chatDrafts'
+import { getDraft, setDraft, __resetDrafts } from './chatDrafts'
 import type { FileAttachment } from '../types'
 
 const att = (id: string): FileAttachment => ({
@@ -33,12 +33,6 @@ describe('chatDrafts', () => {
   it('drops the entry when the draft becomes empty', () => {
     setDraft('a', { text: 'hi', attachments: [] })
     setDraft('a', { text: '', attachments: [] })
-    expect(getDraft('a')).toEqual({ text: '', attachments: [] })
-  })
-
-  it('clearDraft removes a chat draft', () => {
-    setDraft('a', { text: 'hi', attachments: [att('x')] })
-    clearDraft('a')
     expect(getDraft('a')).toEqual({ text: '', attachments: [] })
   })
 })

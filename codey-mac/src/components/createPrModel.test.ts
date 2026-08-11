@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createPrButtonState, defaultPrTitle } from './createPrModel';
+import { createPrButtonState } from './createPrModel';
 
 describe('createPrButtonState', () => {
   it('hidden while working/blocked', () => {
@@ -13,15 +13,5 @@ describe('createPrButtonState', () => {
   it('enabled only when branch is ahead', () => {
     expect(createPrButtonState('done', true).enabled).toBe(true);
     expect(createPrButtonState('done', false).enabled).toBe(false);
-  });
-});
-
-describe('defaultPrTitle', () => {
-  it('prefers the commit subject', () => {
-    expect(defaultPrTitle('  Add cool thing ', 'feat/x')).toBe('Add cool thing');
-  });
-  it('falls back to the branch name', () => {
-    expect(defaultPrTitle('', 'feat/x')).toBe('feat/x');
-    expect(defaultPrTitle(undefined, 'feat/x')).toBe('feat/x');
   });
 });
