@@ -1,4 +1,4 @@
-import type { ThinkingEffort } from '../types';
+import type { AgentRequest, AgentResponse, ThinkingEffort } from '../types';
 
 /**
  * Per-agent argv for a reasoning-effort level.
@@ -48,4 +48,39 @@ export function isEffortRejection(text: string, passedEffort: string): boolean {
     // supported* even when the run actually passed and got rejected for
     // 'max'. Caught this via TDD — keep the anchor.
     && text.includes(`Invalid value: '${passedEffort}'`);
+}
+
+/** The only part of a request the degrade decision actually reads. */
+export type EffortDegradable = Pick<AgentRequest, 'effort'> & EffortRetryable;
+
+/**
+ * Whether a finished codex run should be retried once without the effort flag.
+ *
+ * Three conditions, all required: an effort was actually passed, this isn't
+ * already the retry, and the run output is a rejection of *that* level. The
+ * type predicate narrows `effort` for the caller, so the retry path can read
+ * the attempted level without a non-null assertion.
+ */
+export function shouldDegradeEffort(
+  request: EffortDegradable,
+  text: string,
+): request is EffortDegradable & { effort: ThinkingEffort } {
+  return !!request.effort
+    && !request.__effortRetried
+    && isEffortRejection(text, request.effort);
+}
+
+/**
+ * Prepend the "we degraded your effort" notice to a successful retry.
+ *
+ * A FAILED retry is returned completely untouched: the retry's own error is
+ * what the user needs to see, and claiming we reran successfully on top of a
+ * failure would be actively misleading.
+ */
+export function withDegradeNotice(attempted: ThinkingEffort, retried: AgentResponse): AgentResponse {
+  if (!retried.success) return retried;
+  return {
+    ...retried,
+    output: `> Effort \`${attempted}\` isn't accepted by the current codex model — reran with the model's default effort.\n\n${retried.output}`,
+  };
 }
