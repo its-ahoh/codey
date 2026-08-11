@@ -4,12 +4,24 @@ import type { AgentRequest, AgentResponse, ThinkingEffort } from '../types';
  * Per-agent argv for a reasoning-effort level.
  *
  * All three agents take the same five level strings, so these are verbatim
- * passthroughs that differ only in flag syntax. Verified against claude-code
- * 2.1.221, codex v0.145.0 and opencode 1.14.18:
+ * passthroughs that differ only in flag syntax:
  *
  *   claude-code  --effort <L>                      lenient (warns, uses default)
  *   codex        -c model_reasoning_effort="<L>"   STRICT (API rejects the run)
  *   opencode     --variant <L>                     lenient (silently ignored)
+ *
+ * None of that comes from published docs — it was probed directly. The versions
+ * below are what those observations were made ON, not a minimum requirement:
+ * nothing enforces them, and no lower bound has been tested. They are here only
+ * so a future reader can tell how stale the observations are and re-probe when
+ * something looks wrong.
+ *
+ *   observed on: claude-code 2.1.221, codex v0.145.0, opencode 1.14.18
+ *
+ * The leniency column is the load-bearing part. codex being the only strict one
+ * is why the degrade-retry below exists and why the other two need no fallback.
+ * If a future version makes claude-code or opencode strict, they need the same
+ * treatment.
  *
  * opencode's variants are provider-specific (its help cites `high, max,
  * minimal`), so `low`/`xhigh` may not map on every provider. That is safe
