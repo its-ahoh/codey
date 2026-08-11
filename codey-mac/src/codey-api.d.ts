@@ -291,6 +291,7 @@ declare global {
         delete: (id: string) => Promise<IpcResult<null>>
         updateSelection: (id: string, selection: ChatSelection) => Promise<IpcResult<Chat>>
         updateAgentModel: (id: string, agent: string | null, model: string | null) => Promise<IpcResult<Chat>>
+        updateEffort: (id: string, effort: string | null) => Promise<IpcResult<Chat>>
         send: (payload: { chatId: string; text: string; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) => Promise<IpcResult<{ response: string; chatId: string; tokens?: number; durationSec?: number }>>
         stop: (chatId: string) => Promise<IpcResult<boolean>>
         onEvent: (handler: (ev: ChatStreamEvent) => void) => () => void

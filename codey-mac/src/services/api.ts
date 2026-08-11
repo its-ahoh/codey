@@ -194,6 +194,8 @@ export const apiService = {
       unwrap(await window.codey.chats.updateSelection(id, selection)),
     updateAgentModel: async (id: string, agent: string | null, model: string | null): Promise<Chat> =>
       unwrap(await window.codey.chats.updateAgentModel(id, agent, model)),
+    updateEffort: async (id: string, effort: string | null): Promise<Chat> =>
+      unwrap(await window.codey.chats.updateEffort(id, effort)),
     updateContextPanelOpen: async (id: string, open: boolean | null): Promise<Chat> =>
       unwrap(await window.codey.chats.updateContextPanelOpen(id, open)),
     setSoloAdvisor: async (id: string, enabled: boolean): Promise<Chat> =>

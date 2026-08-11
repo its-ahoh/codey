@@ -457,6 +457,7 @@ interface ChatsContextValue {
   deleteChat: (chatId: string) => Promise<void>
   setSelection: (chatId: string, selection: ChatSelection) => Promise<void>
   setAgentModel: (chatId: string, agent: string | null, model: string | null) => Promise<void>
+  setEffort: (chatId: string, effort: string | null) => Promise<void>
   setWorkingDir: (chatId: string, dir: string | null) => Promise<void>
   setContextPanelOpen: (chatId: string, open: boolean | null) => Promise<void>
   setSoloAdvisor: (chatId: string, enabled: boolean) => Promise<void>
@@ -733,6 +734,10 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     async setAgentModel(chatId, agent, model) {
       const chat = await apiService.chats.updateAgentModel(chatId, agent, model)
+      dispatch({ type: 'upsert', chat })
+    },
+    async setEffort(chatId, effort) {
+      const chat = await apiService.chats.updateEffort(chatId, effort)
       dispatch({ type: 'upsert', chat })
     },
     async setWorkingDir(chatId, dir) {
