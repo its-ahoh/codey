@@ -237,8 +237,16 @@ const LiveActivity: React.FC<{ toolCalls?: import('../types').ToolCallEntry[] }>
         style={{ ...styles.liveActivity, cursor: canExpand ? 'pointer' : 'default' }}
         onClick={canExpand ? () => setExpanded(v => !v) : undefined}
       >
-        <span style={styles.liveActivityDot}>{active ? (expanded ? '▾' : '●') : canExpand ? (expanded ? '▾' : '▸') : '○'}</span>
-        <span>{headline}</span>
+        <span style={active ? styles.liveActivityMarkerActive : styles.liveActivityMarker}>
+          {canExpand ? (
+            <span style={{ ...styles.liveActivityChevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+              <UIIcon name="disclosure" size={12} />
+            </span>
+          ) : (
+            <span style={styles.liveActivityDot} />
+          )}
+        </span>
+        <span style={styles.liveActivityText}>{headline}</span>
       </div>
       {expanded && canExpand && detailTarget && (
         <div style={styles.liveActivityDetail}>
@@ -3322,18 +3330,35 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg2, fontSize: 12, lineHeight: 1.55,
     whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const,
   },
+  // Reads as one quiet line of the transcript rather than a boxed callout: same
+  // typography as the tool rows in `ToolCallList` (minimal), no fill, no border.
   liveActivity: {
-    display: 'flex', alignItems: 'center', gap: 6,
-    fontSize: 11, color: C.fg3, fontStyle: 'italic',
-    padding: '2px 6px', marginBottom: 6,
-    background: 'rgba(43,230,155,0.08)',
-    borderRadius: 4, border: `1px solid ${C.border2}`,
+    display: 'flex', alignItems: 'flex-start', gap: 6,
+    padding: '2px 0', marginBottom: 6,
   },
-  liveActivityDot: { color: C.accent, fontSize: 9 },
+  liveActivityMarker: {
+    color: C.fg3, width: 12, height: 16, flexShrink: 0,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  },
+  liveActivityMarkerActive: {
+    color: C.accent, width: 12, height: 16, flexShrink: 0,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    animation: 'codey-pulse 1.4s ease-in-out infinite',
+  },
+  liveActivityChevron: {
+    width: 12, height: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    transformOrigin: 'center', transition: 'transform 0.15s ease',
+  },
+  liveActivityDot: { width: 5, height: 5, borderRadius: '50%', background: 'currentColor' },
+  liveActivityText: {
+    color: C.fg2, fontSize: 12, fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
   liveActivityDetail: {
-    marginTop: 4, marginBottom: 6,
-    padding: 8, background: 'rgba(0,0,0,0.25)', borderRadius: 4,
-    border: `1px solid ${C.border}`,
+    marginLeft: 18, marginTop: 4, marginBottom: 6,
+    padding: 9, background: C.surface3,
+    border: `1px solid ${C.border2}`, borderRadius: 7,
+    maxHeight: 280, overflowY: 'auto',
   },
   slashMenu: {
     position: 'absolute' as const, bottom: '100%', left: 0, right: 0,
