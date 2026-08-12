@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { C } from '../theme'
 import { useGitBranches } from '../hooks/useGitBranches'
-import { compactWorktreePath, currentFirst, describePullResult, filterBranches } from './branchPickerModel'
+import { BranchNote, compactWorktreePath, currentFirst, describePullResult, filterBranches } from './branchPickerModel'
 import { UIIcon } from './UIIcons'
 
 interface Props {
@@ -23,7 +23,7 @@ export const BranchPicker: React.FC<Props> = ({
   const [mode, setMode] = useState<Mode>({ kind: 'list' })
   const [newBranchName, setNewBranchName] = useState('')
   const [newWorktreeName, setNewWorktreeName] = useState('')
-  const [note, setNote] = useState<string | null>(null)
+  const [note, setNote] = useState<BranchNote | null>(null)
   const [changingMode, setChangingMode] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -54,14 +54,17 @@ export const BranchPicker: React.FC<Props> = ({
   const branchLabel = state?.branch === 'HEAD' ? '—' : (state?.branch ?? '—')
   const pathLabel = compactWorktreePath(path)
   const checkoutLabel = isolated ? worktreeLabel : 'Current checkout'
+  // One status line for the whole picker: an explicit note wins, otherwise the
+  // last git failure surfaces in the same place instead of at the bottom.
+  const banner: BranchNote | null = note ?? (git.error ? { tone: 'error', text: git.error } : null)
 
   const copyPath = async () => {
     if (!path) return
     try {
       await navigator.clipboard.writeText(path)
-      setNote('Worktree path copied')
+      setNote({ tone: 'ok', text: 'Worktree path copied' })
     } catch {
-      setNote('Could not copy worktree path')
+      setNote({ tone: 'error', text: 'Could not copy worktree path' })
     }
   }
 
@@ -107,7 +110,7 @@ export const BranchPicker: React.FC<Props> = ({
       setMode({ kind: 'list' })
       setOpen(false)
     } catch (error) {
-      setNote(error instanceof Error ? error.message : 'Could not create worktree')
+      setNote({ tone: 'error', text: error instanceof Error ? error.message : 'Could not create worktree' })
     } finally {
       setChangingMode(false)
     }
@@ -118,12 +121,15 @@ export const BranchPicker: React.FC<Props> = ({
     setChangingMode(true); setNote(null)
     try {
       await onExecutionModeChange(nextMode)
-      setNote(nextMode === 'isolated-worktree'
-        ? 'Using this chat’s worktree'
-        : 'Using the current checkout; the isolated worktree is preserved')
+      setNote({
+        tone: 'ok',
+        text: nextMode === 'isolated-worktree'
+          ? 'Using this chat’s worktree'
+          : 'Using the current checkout; the isolated worktree is preserved',
+      })
       setMode({ kind: 'list' })
     } catch (error) {
-      setNote(error instanceof Error ? error.message : 'Could not switch checkout mode')
+      setNote({ tone: 'error', text: error instanceof Error ? error.message : 'Could not switch checkout mode' })
     } finally {
       setChangingMode(false)
     }
@@ -157,25 +163,35 @@ export const BranchPicker: React.FC<Props> = ({
       {open && (
         <div style={styles.menu}>
           <div style={styles.currentCheckout}>
-            <div style={styles.currentIdentity}>
-              <div style={styles.currentBranch}>{branchLabel}</div>
-              <div style={styles.currentPath} title={path}>{pathLabel}</div>
+            <div style={styles.currentRow}>
+              <div style={styles.currentIdentity}>
+                <div style={styles.currentBranch}>{branchLabel}</div>
+                <div style={styles.currentPath} title={path}>{pathLabel}</div>
+              </div>
+              <button style={styles.iconButton} onClick={() => void copyPath()} title="Copy path" aria-label="Copy worktree path">
+                <UIIcon name="copy" size={13} />
+              </button>
+              <button
+                style={styles.iconButton}
+                disabled={!workingDir || syncing}
+                onClick={() => void syncWithRemote()}
+                title={syncing ? 'Syncing…' : 'Sync: fetch and fast-forward this branch to its upstream'}
+                aria-label="Sync with the latest upstream commits"
+              >
+                <style>{'@keyframes codey-branch-sync-spin { to { transform: rotate(360deg) } }'}</style>
+                <span style={syncing ? styles.spinning : undefined}>
+                  <UIIcon name="refresh" size={13} />
+                </span>
+              </button>
             </div>
-            <button style={styles.iconButton} onClick={() => void copyPath()} title="Copy path" aria-label="Copy worktree path">
-              <UIIcon name="copy" size={13} />
-            </button>
-            <button
-              style={styles.iconButton}
-              disabled={!workingDir || syncing}
-              onClick={() => void syncWithRemote()}
-              title={syncing ? 'Syncing…' : 'Sync: fetch and fast-forward this branch to its upstream'}
-              aria-label="Sync with the latest upstream commits"
-            >
-              <style>{'@keyframes codey-branch-sync-spin { to { transform: rotate(360deg) } }'}</style>
-              <span style={syncing ? styles.spinning : undefined}>
-                <UIIcon name="refresh" size={13} />
-              </span>
-            </button>
+            {/* Sync and checkout outcomes belong next to the branch they describe,
+              * not buried under the branch list where they used to sit. */}
+            {banner && (
+              <div style={{ ...styles.banner, color: noteColors[banner.tone] }} role="status" title={banner.text}>
+                <span style={styles.bannerIcon}><UIIcon name={banner.tone === 'ok' ? 'check' : 'alert'} size={12} /></span>
+                <span style={styles.bannerText}>{banner.text}</span>
+              </div>
+            )}
           </div>
 
           <div style={styles.checkoutMode}>
@@ -200,7 +216,7 @@ export const BranchPicker: React.FC<Props> = ({
                 <button style={styles.primary} onClick={async () => {
                   const result = await git.stashAndSwitch(mode.target)
                   if (result.ok) {
-                    setNote('Local changes stashed — restore with `git stash pop`')
+                    setNote({ tone: 'ok', text: 'Local changes stashed — restore with `git stash pop`' })
                     setMode({ kind: 'list' })
                   }
                 }}>Stash & switch</button>
@@ -219,7 +235,6 @@ export const BranchPicker: React.FC<Props> = ({
                 style={styles.input}
               />
               <div style={styles.hint}>Creates a worktree and same-named branch from HEAD. Uncommitted changes stay in the current checkout.</div>
-              {note && <div style={styles.err}>{note}</div>}
               <div style={styles.row}>
                 <button style={styles.primary} disabled={!newWorktreeName.trim() || changingMode} onClick={() => void createWorktree()}>{changingMode ? 'Creating…' : 'Create worktree'}</button>
                 <button style={styles.ghost} disabled={changingMode} onClick={() => setMode({ kind: 'list' })}>Cancel</button>
@@ -261,8 +276,6 @@ export const BranchPicker: React.FC<Props> = ({
                 ))}
                 {localBranches.length === 0 && remoteBranches.length === 0 && <div style={styles.empty}>No branches found</div>}
               </div>
-              {git.error && <div style={styles.err}>{git.error}</div>}
-              {note && <div style={styles.noteBox} role="status">{note}</div>}
               <div style={styles.footer}>
                 <button style={styles.ghost} onClick={() => { setNewBranchName(''); setMode({ kind: 'createBranch' }) }}>+ New branch</button>
                 <button style={styles.ghost} onClick={() => void git.fetchRemote()}>Fetch</button>
@@ -284,7 +297,11 @@ const styles: Record<string, React.CSSProperties> = {
   dirty: { color: C.yellow, opacity: 0.85 },
   caret: { color: C.fg3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, flexShrink: 0, transformOrigin: 'center', transition: 'transform 0.15s ease' },
   menu: { position: 'absolute', top: 'calc(100% + 7px)', left: 0, zIndex: 20, width: 340, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 14px 30px rgba(0,0,0,0.26)', padding: 8, display: 'flex', flexDirection: 'column', gap: 7 },
-  currentCheckout: { display: 'flex', alignItems: 'center', gap: 7, padding: '6px 7px 8px', borderBottom: `1px solid ${C.border}` },
+  currentCheckout: { display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 7px 8px', borderBottom: `1px solid ${C.border}` },
+  currentRow: { display: 'flex', alignItems: 'center', gap: 7 },
+  banner: { display: 'flex', alignItems: 'flex-start', gap: 5, fontSize: 10, lineHeight: 1.35 },
+  bannerIcon: { display: 'inline-flex', flexShrink: 0, paddingTop: 1 },
+  bannerText: { minWidth: 0, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' },
   currentIdentity: { minWidth: 0, flex: 1 },
   currentBranch: { color: C.fg, fontSize: 11, fontWeight: 600, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   currentPath: { color: C.fg3, fontSize: 9, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -309,6 +326,6 @@ const styles: Record<string, React.CSSProperties> = {
   footer: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${C.border}`, paddingTop: 6 },
   spinning: { display: 'inline-flex', animation: 'codey-branch-sync-spin 0.9s linear infinite' },
   warn: { fontSize: 12, color: C.yellow },
-  err: { fontSize: 11, color: C.red, padding: '2px 4px' },
-  noteBox: { fontSize: 11, color: C.fg3, padding: '2px 4px' },
 }
+
+const noteColors: Record<BranchNote['tone'], string> = { ok: C.green, warn: C.yellow, error: C.red }

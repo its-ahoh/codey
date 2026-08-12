@@ -26,17 +26,24 @@ export interface PullResult {
   reason?: 'dirty' | 'diverged' | 'no-upstream';
 }
 
-/** Human-readable note for a sync attempt, shown under the branch list. */
-export function describePullResult(result: PullResult): string {
+/** A short status line shown at the top of the picker, next to the branch identity. */
+export interface BranchNote { tone: 'ok' | 'warn' | 'error'; text: string }
+
+/** Human-readable note for a sync attempt. Blocked syncs are warnings rather than
+ * errors: the branch is fine, it just needs the user to decide what to do next. */
+export function describePullResult(result: PullResult): BranchNote {
   if (result.ok) {
     const count = result.updated ?? 0;
-    if (count === 0) return 'Already up to date';
-    return `Pulled ${count} commit${count === 1 ? '' : 's'}${result.upstream ? ` from ${result.upstream}` : ''}`;
+    if (count === 0) return { tone: 'ok', text: 'Already up to date' };
+    return {
+      tone: 'ok',
+      text: `Pulled ${count} commit${count === 1 ? '' : 's'}${result.upstream ? ` from ${result.upstream}` : ''}`,
+    };
   }
-  if (result.reason === 'no-upstream') return 'No upstream branch — push this branch first';
-  if (result.reason === 'dirty') return 'Local changes would be overwritten — commit or stash first';
-  if (result.reason === 'diverged') return 'Branch has diverged from its upstream — rebase or merge manually';
-  return result.error?.split('\n')[0] || 'Could not sync';
+  if (result.reason === 'no-upstream') return { tone: 'warn', text: 'No upstream branch — push this branch first' };
+  if (result.reason === 'dirty') return { tone: 'warn', text: 'Local changes would be overwritten — commit or stash first' };
+  if (result.reason === 'diverged') return { tone: 'warn', text: 'Branch has diverged from its upstream — rebase or merge manually' };
+  return { tone: 'error', text: result.error?.split('\n')[0] || 'Could not sync' };
 }
 
 /** Move the current item to the front while preserving every other item's order. */
