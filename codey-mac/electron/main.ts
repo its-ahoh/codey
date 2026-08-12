@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, pr
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
-import { hudStateCommand, hudLevelCommand } from './voice-hud'
+import { hudStateCommand, hudLevelCommand, conversationToggleCommand } from './voice-hud'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
@@ -1211,18 +1211,25 @@ function handleVoiceHelperLine(line: string) {
     return
   }
   try {
-    const event = JSON.parse(line.slice(marker.length)) as { type: string; mode?: 'dictate' | 'converse'; state?: string; level?: number; text?: string; message?: string }
+    const event = JSON.parse(line.slice(marker.length)) as { type: string; mode?: 'dictate' | 'converse'; state?: string; level?: number; text?: string; message?: string; fromHotkey?: boolean }
     const dictate = event.mode === 'dictate'
+    // The helper owns this now and stamps it on every conversation event, so
+    // Electron mirrors rather than tracks it. A toggle the helper declines
+    // (one arriving mid-transcription) used to leave our copy stuck at false,
+    // suppressing the capsule on every later hotkey turn.
+    if (typeof event.fromHotkey === 'boolean') nativeConverseFromHotkey = event.fromHotkey
     if (event.type === 'state' && event.state) {
       if (dictate) {
         nativeDictationActive = event.state !== 'idle'
         mainWindow?.webContents.send('voice:nativeDictationState', event.state)
       } else {
         nativeConverseActive = event.state !== 'idle'
+        // Redundant with the helper's own assertion for recording/transcribing
+        // — kept so a turn started before this build's helper still gets a
+        // capsule, and so idle always tears one down.
         if (nativeConverseActive && nativeConverseFromHotkey) showVoiceHud(event.state)
         else hideVoiceHud()
         mainWindow?.webContents.send('voice:nativeConverseState', event.state, nativeConverseFromHotkey)
-        if (event.state === 'idle') nativeConverseFromHotkey = true
       }
     } else if (event.type === 'level' && typeof event.level === 'number') {
       if (dictate) {
@@ -1241,10 +1248,19 @@ function handleVoiceHelperLine(line: string) {
         nativeDictationActive = false
         mainWindow?.webContents.send('voice:nativeDictationTranscript', event.text)
       } else {
+        // The capsule stays up on `thinking`: the helper is done, but the turn
+        // isn't — the renderer carries it through the agent run and the reply.
         nativeConverseActive = false
         mainWindow?.webContents.send('voice:nativeConverseTranscript', event.text)
-        nativeConverseFromHotkey = true
       }
+    } else if (event.type === 'cancel') {
+      // Esc reached the helper's global monitor while the turn was in
+      // Electron's half — the window is usually not focused for a hotkey turn,
+      // so its own key handler never sees the press. The helper has already
+      // taken the capsule down; the renderer drops the playback.
+      nativeConverseActive = false
+      hideVoiceHud()
+      mainWindow?.webContents.send('voice:cancelConverse')
     } else if (event.type === 'error') {
       const message = event.message || 'On-device transcription failed'
       sendToRenderer('gateway-log', `[voice] ${message}`)
@@ -2711,9 +2727,10 @@ app.whenReady().then(async () => {
     wrap(async () => {
       const provider = coreConfigManager?.get().voice?.provider
       if (provider !== 'local') return { native: false }
-      nativeConverseFromHotkey = fromHotkey === true
-      if (!sendVoiceHelperCommand('conversation-toggle')) {
-        nativeConverseFromHotkey = true
+      // Carried on the command instead of stashed here first: the helper
+      // silently declines a toggle that arrives mid-transcription, and a
+      // pre-emptive assignment then had nothing to reset it.
+      if (!sendVoiceHelperCommand(conversationToggleCommand(fromHotkey === true))) {
         throw new Error('Voice Helper is not available')
       }
       return { native: true }
@@ -2769,7 +2786,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('voice:ack', async (_e, transcript: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not running')
-      return { text: await inProcessGateway.generateVoiceAck(String(transcript ?? '')) }
+      return { text: inProcessGateway.generateVoiceAck(String(transcript ?? '')) }
     })
   )
 

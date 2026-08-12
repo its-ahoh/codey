@@ -18,6 +18,19 @@ export function hudStateCommand(state: string): string {
 }
 
 /**
+ * Who started this conversation turn, carried on the toggle itself.
+ *
+ * The helper needs it before it starts recording, so it can raise the capsule
+ * on the same run-loop turn as the key press rather than waiting for Electron
+ * to send one back. Carrying it here also means a toggle the helper declines —
+ * one arriving while it is still transcribing — can't leave the two sides
+ * disagreeing about who owns the next turn.
+ */
+export function conversationToggleCommand(fromHotkey: boolean): string {
+  return `conversation-toggle ${fromHotkey ? 'hotkey' : 'button'}`
+}
+
+/**
  * Levels arrive ~20x/s from either the helper's own audio tap or the
  * renderer's meter. Returns null for anything the Swift side's `Float(_:)`
  * would turn into a NaN — a poisoned sample sticks in the meter's sliding

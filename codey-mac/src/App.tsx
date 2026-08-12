@@ -7,6 +7,7 @@ import { NotificationCenter } from './components/NotificationCenter'
 import { ChatsProvider, useChats } from './hooks/useChats'
 import { usePullRequestWatcher } from './hooks/usePullRequestWatcher'
 import { QuickQuestionProvider } from './hooks/useQuickQuestion'
+import { VoiceTurnProvider } from './hooks/useVoiceTurn'
 import { useGateway } from './hooks/useGateway'
 import { CoreOfflineBanner } from './components/CoreOfflineBanner'
 import { UIIcon } from './components/UIIcons'
@@ -418,7 +419,11 @@ ${paletteToCssVars(terminalDark)}
 const App: React.FC = () => (
   <ChatsProvider>
     <QuickQuestionProvider>
-      <Shell />
+      {/* Above the chat-keyed subtree: a spoken turn outlives the chat view it
+          started in, so switching chats can't cut off its reply. */}
+      <VoiceTurnProvider>
+        <Shell />
+      </VoiceTurnProvider>
     </QuickQuestionProvider>
   </ChatsProvider>
 )
