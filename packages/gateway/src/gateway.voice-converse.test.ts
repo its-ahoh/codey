@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ConversationDigestCache, VoiceConverseEvent } from '@codey/core';
+import { ConversationDigestCache, VoiceConverseEvent, VOICE_ACKS_EN, VOICE_ACKS_ZH } from '@codey/core';
 
 /**
  * Control-flow tests for Gateway.runVoiceConverse — the branchiest part of
@@ -177,10 +177,20 @@ describe('runVoiceConverse — conversation path', () => {
 
   it('acknowledges in the language of the transcript', async () => {
     const zh = await run(makeHarness({ digestSentences: ['好了。'] }), '改一下这个函数'); // lint-allow-non-english
-    expect(zh[1]).toMatchObject({ type: 'ack', text: '好的，我去处理' }); // lint-allow-non-english
+    expect(VOICE_ACKS_ZH).toContain((zh[1] as { text: string }).text);
 
     const en = await run(makeHarness({ digestSentences: ['Done.'] }), 'change this function');
-    expect(en[1]).toMatchObject({ type: 'ack', text: 'Got it, working on it.' });
+    expect(VOICE_ACKS_EN).toContain((en[1] as { text: string }).text);
+  });
+
+  it('does not repeat the same acknowledgement twice running', async () => {
+    // The ack is written rather than generated, so rotation is the only thing
+    // standing between the user and a parrot.
+    const h = makeHarness({ digestSentences: ['Done.'] });
+    const first = ((await run(h, 'change this function'))[1] as { text: string }).text;
+    h.events.length = 0;
+    const second = ((await run(h, 'and the other one'))[1] as { text: string }).text;
+    expect(second).not.toBe(first);
   });
 
   it('pairs each text event with an audio event at the same seq', async () => {

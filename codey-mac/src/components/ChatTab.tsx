@@ -42,7 +42,7 @@ import { TerminalPanel } from './TerminalPanel'
 import { splitWhiteboardMarkers, type WhiteboardMarker } from './teamWhiteboardFormat'
 import { groupTeamMessagesByMember, type TeamMemberMessageGroup } from './teamRunModel'
 import { ToolCallList } from './ToolCallList'
-import { useChatVoice } from './useChatVoice'
+import { useVoiceTurn } from '../hooks/useVoiceTurn'
 import { VoiceMeter } from './VoiceMeter'
 
 const EDITOR_LOGOS: Partial<Record<string, string>> = {
@@ -819,17 +819,14 @@ export const ChatTab: React.FC<Props> = ({
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
-  // Voice for this chat: the transcript is sent through the normal chat path
-  // below, and only the reply is read aloud.
+  // Voice: capture, playback and the turn itself live above this component
+  // (see VoiceTurnProvider) so they survive switching chats. What stays here
+  // is the composer half — a transcript has to land in this chat's text box.
   const voiceAutoSendRef = useRef(false)
-  const prevFlightRef = useRef<unknown>(null)
-  // Whether the turn currently in flight was started by speaking. `mode` is
-  // sticky (it remembers which button you used last), so keying playback off
-  // it read every typed message aloud too.
-  const spokenTurnRef = useRef(false)
-  const voiceAckGenerationRef = useRef(0)
-  const voice = useChatVoice({
-    onTranscript: (text, mode) => {
+  const voice = useVoiceTurn()
+  const { setTranscriptHandler, beginSpokenTurn } = voice
+  useEffect(() => {
+    setTranscriptHandler((text, mode) => {
       if (mode === 'converse') {
         voiceAutoSendRef.current = true
         setInput(text)
@@ -837,9 +834,9 @@ export const ChatTab: React.FC<Props> = ({
         // Dictation appends, so a second pass adds to what's already there.
         setInput(prev => (prev.trim() ? `${prev.trim()} ${text}` : text))
       }
-    },
-    onError: msg => void window.codey.voice.showError(msg),
-  })
+    })
+    return () => setTranscriptHandler(null)
+  }, [setTranscriptHandler])
   // Seed from the per-chat draft store so unsent text/attachments survive the
   // remount that happens when switching chats (App.tsx keys ChatTab by chat id).
   const [input, setInput] = useState(() => getDraft(chatId).text)
@@ -1627,90 +1624,12 @@ export const ChatTab: React.FC<Props> = ({
     if (!voiceAutoSendRef.current || !input.trim()) return
     voiceAutoSendRef.current = false
     const spoken = input
-    spokenTurnRef.current = true
     void send()
-    // Acknowledge immediately. An agent turn routinely runs for 30s to
-    // several minutes, and unbroken silence in a voice interface reads as
-    // "it died" rather than "it's working". Routed through the gateway like
-    // the reply so both use the same voice; verbatim because a one-line ack
-    // has nothing to digest, and no conversationId so it can't displace the
-    // cached reply behind "more detail".
-    const ackGeneration = ++voiceAckGenerationRef.current
-    void window.codey.voice.ack(spoken).then(result => {
-      // A very fast agent reply can beat acknowledgement generation. Never
-      // let a late ack interrupt the actual answer or leak into a newer turn.
-      if (ackGeneration !== voiceAckGenerationRef.current || !spokenTurnRef.current) return
-      const fallback = /[\u4e00-\u9fff]/.test(spoken) ? '好的，我去处理' : 'Got it, working on it.' // lint-allow-non-english
-      void voice.speak(result.ok ? result.data.text : fallback, undefined, true)
-    })
+    // Hand the turn over: acknowledging it and reading the reply back outlive
+    // this component, which unmounts the moment you switch chats.
+    beginSpokenTurn(chatId, spoken)
   }, [input]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Read the reply aloud once the turn settles. Keyed off the in-flight
-  // marker clearing rather than off message content, so partial streamed
-  // text is never spoken mid-generation.
-  useEffect(() => {
-    const wasInFlight = prevFlightRef.current
-    prevFlightRef.current = flight
-    if (!wasInFlight || flight) return
-    // Only speak a reply to something that was actually spoken. Typing into a
-    // chat you happen to have used voice in before should stay silent.
-    if (!spokenTurnRef.current) return
-    spokenTurnRef.current = false
-    voiceAckGenerationRef.current += 1
-    const messages = chat?.messages ?? []
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i]
-      if (message.role === 'assistant' && message.content?.trim()) {
-        void voice.speak(message.content, chatId)
-        return
-      }
-    }
-  }, [flight]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Keep one IPC listener mounted for the lifetime of the chat. The voice
-  // callback changes as recording state and transcript handlers update; using
-  // a ref avoids a brief unsubscribe/re-subscribe gap exactly when the second
-  // hotkey press is meant to stop and send the recording.
-  const voiceToggleRef = useRef(voice.toggle)
-  voiceToggleRef.current = voice.toggle
-  const voiceCancelRef = useRef(voice.cancel)
-  voiceCancelRef.current = voice.cancel
-  useEffect(() => window.codey.voice.onConverseHotkey(() => {
-    voiceToggleRef.current('converse', { fromHotkey: true })
-  }), [])
-  useEffect(() => window.codey.voice.onCancelConverse(() => {
-    voiceCancelRef.current()
-  }), [])
-
-  // Drive the floating capsule. Only converse turns get one — dictation is a
-  // brief, eyes-on-screen action, and its status shows inline in the composer
-  // instead.
-  useEffect(() => {
-    // Clicking the button means you're already looking at the window; the
-    // floating capsule is for the hotkey, where you may not be.
-    const showable = voice.fromHotkey && voice.mode === 'converse' && voice.state !== 'idle'
-    void window.codey.voice.setHudState(showable ? voice.state : 'idle')
-  }, [voice.state, voice.mode, voice.fromHotkey])
-
-  useEffect(() => {
-    if (voice.fromHotkey && voice.mode === 'converse' && voice.state !== 'idle') {
-      window.codey.voice.setHudLevel(voice.level)
-    }
-  }, [voice.level, voice.mode, voice.state, voice.fromHotkey])
-
-  // Esc abandons a voice turn: drop the recording rather than sending it, or
-  // stop a reply mid-sentence. Captured so it doesn't also reach the composer.
-  useEffect(() => {
-    if (voice.state === 'idle') return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopPropagation()
-      voice.cancel()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [voice.state, voice.cancel])
 
   const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing'
   const isSending = !!flight

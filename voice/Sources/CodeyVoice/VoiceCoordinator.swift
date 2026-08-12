@@ -29,6 +29,15 @@ final class VoiceCoordinator {
     private var state: State = .idle
     private var captureDestination: CaptureDestination = .dictation
     private var conversationCaptureGeneration = 0
+    /// Whether the conversation turn in progress was started by the hotkey
+    /// rather than the composer button. Only hotkey turns get a capsule — if
+    /// you clicked the button you are already looking at the window.
+    ///
+    /// This lives here, not in Electron, because the helper is the side that
+    /// starts recording: it can raise the capsule on the same run-loop turn as
+    /// the key press instead of waiting for a round trip. Every conversation
+    /// event echoes the flag back so Electron's copy can never drift.
+    private var conversationFromHotkey = false
     private var config: VoiceConfig
 
     private let gateway: GatewayClient
@@ -46,6 +55,9 @@ final class VoiceCoordinator {
     private var pollTimer: Timer?
     private var idleUnloadTimer: Timer?
     private let gatewayPort: Int
+    /// True while Electron owns the visible half of a conversation turn (the
+    /// agent run or the spoken reply). Esc belongs to it in that window.
+    private var electronTurnActive = false
     private var escMonitorGlobal: Any?
     private var escMonitorLocal: Any?
     /// Timestamp of the most recent `.partial` HUD push (local streaming).
@@ -217,7 +229,25 @@ final class VoiceCoordinator {
             Task { await gateway.triggerConverseHotkey() }
             return
         }
+        conversationFromHotkey = true
         handleCaptureToggle(destination: .conversation)
+    }
+
+    /// True while this helper is the one that should be drawing the
+    /// conversation capsule: a hotkey-started conversation turn, as opposed to
+    /// a composer-button turn (no capsule) or a dictation turn (its own pill).
+    private var ownsConversationCapsule: Bool {
+        captureDestination == .conversation && conversationFromHotkey
+    }
+
+    /// Raise the capsule for `phase` if this turn owns it, otherwise clear the
+    /// panel so a composer-button turn doesn't inherit a stale pill.
+    private func setConversationCapsule(_ phase: HudOverlay.ConversationPhase) {
+        if ownsConversationCapsule {
+            hud.show(.conversation(phase))
+        } else {
+            hud.hide()
+        }
     }
 
     private func handleCaptureToggle(destination: CaptureDestination) {
@@ -253,7 +283,11 @@ final class VoiceCoordinator {
             lastPartialText = ""
             statusItem?.updateState(.recording)
             if destination.composerMode != nil {
-                hud.hide()
+                // Raise the capsule here rather than waiting for Electron to
+                // send `hud-state listening` back: recording has already
+                // started, so anything that drops or countermands that round
+                // trip leaves a turn recording with nothing on screen.
+                setConversationCapsule(.listening)
                 emitConversationEvent(type: "state", payload: ["state": "recording"])
             } else {
                 hud.show(.recording)
@@ -299,6 +333,7 @@ final class VoiceCoordinator {
         print("stopRecording: requesting stop")
         removeEscMonitor()
         if captureDestination.composerMode != nil {
+            setConversationCapsule(.thinking)
             emitConversationEvent(type: "state", payload: ["state": "transcribing"])
         }
         // Cancel streaming partials before we run the final transcribe so a
@@ -324,9 +359,11 @@ final class VoiceCoordinator {
         if captureDestination.composerMode != nil {
             conversationCaptureGeneration += 1
             emitConversationEvent(type: "state", payload: ["state": "idle"])
-        } else {
-            hud.hide()
         }
+        // Unconditional now that the helper raises the capsule itself: a
+        // cancelled turn must take down whatever it put on screen without
+        // waiting for Electron to notice.
+        hud.hide()
         Task { await gateway.reportStatus("idle") }
     }
 
@@ -341,7 +378,14 @@ final class VoiceCoordinator {
         switch verb {
         // Composer buttons remain available even when their global-hotkey
         // switches are off; those switches only control registration.
-        case "conversation-toggle": handleCaptureToggle(destination: .conversation)
+        // `conversation-toggle hotkey` marks a turn that should get a capsule;
+        // anything else (the composer button) does not. Carried on the command
+        // rather than held in Electron so a toggle this helper declines — one
+        // arriving mid-transcription, say — can't leave the two sides
+        // disagreeing about the next turn.
+        case "conversation-toggle":
+            conversationFromHotkey = argument == "hotkey"
+            handleCaptureToggle(destination: .conversation)
         case "composer-dictation-toggle": handleCaptureToggle(destination: .composerDictation)
         case "conversation-cancel", "composer-dictation-cancel":
             if state == .recording && captureDestination.composerMode != nil {
@@ -351,15 +395,23 @@ final class VoiceCoordinator {
                 state = .idle
                 statusItem?.updateState(.idle)
                 emitConversationEvent(type: "state", payload: ["state": "idle"])
+                hud.hide()
             } else if state == .speaking {
                 endSpeaking()
             }
-        // Electron drives the conversation capsule: it is the only side that
-        // knows whether a turn came from the hotkey (capsule) or the composer
-        // button (no capsule), and the only side that sees the speaking phase.
+        // Electron drives the capsule's later phases: it is the only side that
+        // sees the agent working and the reply being read back. `listening` and
+        // the first `thinking` are asserted locally in startRecording /
+        // stopRecording, so they don't depend on this round trip.
         case "hud-state": applyConversationHud(argument)
         case "hud-level":
             guard !dictationCaptureInFlight, let level = Float(argument) else { break }
+            // Self-heal: the capsule is asserted from three processes, so a
+            // stale `hud-state idle` from any of them can hide it mid-turn.
+            // The level stream is the one signal still flowing at that point.
+            if ownsConversationCapsule, state == .recording, !hud.isOnScreen {
+                hud.show(.conversation(.listening))
+            }
             hud.updateLevel(level)
         default: break
         }
@@ -380,12 +432,27 @@ final class VoiceCoordinator {
         case "speaking":  hud.show(.conversation(.speaking))
         default:          hud.hide()   // "idle", "hidden", anything unrecognized
         }
+        // Esc has to keep working after this helper's part of the turn is over.
+        // Capture ends at the transcript, but the turn runs on in Electron for
+        // the agent run and the spoken reply — and Electron's own key handler
+        // only fires when its window is focused, which in a hotkey turn it
+        // usually isn't. So the monitor stays up for as long as the capsule is.
+        electronTurnActive = raw == "thinking" || raw == "speaking"
+        if electronTurnActive {
+            installEscMonitor()
+        } else if state == .idle {
+            // Never while recording: that turn installed the monitor itself.
+            removeEscMonitor()
+        }
     }
 
     private func emitConversationEvent(type: String, payload: [String: Any] = [:]) {
         var body = payload
         body["type"] = type
         body["mode"] = captureDestination.composerMode ?? "converse"
+        // Echo who started the turn so Electron mirrors this side rather than
+        // tracking it independently and drifting.
+        if captureDestination == .conversation { body["fromHotkey"] = conversationFromHotkey }
         guard let data = try? JSONSerialization.data(withJSONObject: body),
               let json = String(data: data, encoding: .utf8) else { return }
         print("CODEY_CONVERSATION_EVENT \(json)")
@@ -398,14 +465,16 @@ final class VoiceCoordinator {
     /// local doesn't fire when another app is frontmost. Together they cover
     /// both cases.
     private func installEscMonitor() {
+        guard escMonitorGlobal == nil, escMonitorLocal == nil else { return }
         let handler: (NSEvent) -> Void = { [weak self] event in
             guard let self = self, event.keyCode == 0x35 /* kVK_Escape */ else { return }
             DispatchQueue.main.async {
-                // Esc means "stop, and don't do anything with it" in both
-                // states: discard the recording, or shut Codey up mid-reply.
+                // Esc means "stop, and don't do anything with it" in every
+                // state: discard the recording, or shut Codey up mid-reply.
                 switch self.state {
                 case .speaking: self.endSpeaking()
-                default: self.cancelRecording()
+                case .recording, .transcribing: self.cancelRecording()
+                default: self.cancelElectronTurn()
                 }
             }
         }
@@ -417,6 +486,19 @@ final class VoiceCoordinator {
             }
             return event
         }
+    }
+
+    /// Esc during the Electron half of a turn — the agent run or the spoken
+    /// reply. This helper has nothing of its own left to stop, so it reports
+    /// the key and lets Electron drop the playback; the capsule is ours to
+    /// take down, and waiting for Electron to say so would leave it up.
+    private func cancelElectronTurn() {
+        guard electronTurnActive else { return }
+        print("cancelElectronTurn: Esc pressed during the Electron half of the turn")
+        electronTurnActive = false
+        removeEscMonitor()
+        hud.hide()
+        emitConversationEvent(type: "cancel")
     }
 
     private func removeEscMonitor() {
@@ -446,16 +528,15 @@ final class VoiceCoordinator {
             if destination.composerMode != nil {
                 emitConversationEvent(type: "error", payload: ["message": "The recording was empty"])
                 emitConversationEvent(type: "state", payload: ["state": "idle"])
-            } else {
-                hud.hide()
             }
+            hud.hide()
             return
         }
 
         state = .transcribing
         statusItem?.updateState(.transcribing)
         if destination.composerMode != nil {
-            hud.hide()
+            setConversationCapsule(.thinking)
             emitConversationEvent(type: "state", payload: ["state": "transcribing"])
         } else {
             hud.show(.transcribing)
@@ -486,7 +567,10 @@ final class VoiceCoordinator {
                     if text.isEmpty {
                         emitConversationEvent(type: "error", payload: ["message": "No speech detected."])
                         emitConversationEvent(type: "state", payload: ["state": "idle"])
+                        await MainActor.run { self.hud.hide() }
                     } else {
+                        // Leave the capsule on `thinking`: the turn now belongs
+                        // to the agent, and Electron drives it from here.
                         emitConversationEvent(type: "transcript", payload: ["text": text])
                     }
                     Task { await gateway.reportStatus("idle") }
@@ -530,6 +614,7 @@ final class VoiceCoordinator {
                     if destination.composerMode != nil {
                         self.emitConversationEvent(type: "error", payload: ["message": msg])
                         self.emitConversationEvent(type: "state", payload: ["state": "idle"])
+                        self.hud.hide()
                     } else {
                         self.hud.show(.error(msg))
                     }

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { hudStateCommand, hudLevelCommand } from './voice-hud'
+import { hudStateCommand, hudLevelCommand, conversationToggleCommand } from './voice-hud'
+
+describe('conversationToggleCommand', () => {
+  it('tells the helper which turns own a capsule', () => {
+    expect(conversationToggleCommand(true)).toBe('conversation-toggle hotkey')
+    expect(conversationToggleCommand(false)).toBe('conversation-toggle button')
+  })
+})
 
 describe('hudStateCommand', () => {
   it('maps the three live phases onto helper commands', () => {

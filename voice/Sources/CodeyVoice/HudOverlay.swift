@@ -80,6 +80,13 @@ final class HudOverlay {
     private let meterMaxHeight: CGFloat = 26
     private let meterMinHeight: CGFloat = 3
 
+    /// Whether the panel is actually on screen and not fading out. Callers use
+    /// this to re-assert a phase that something else hid out from under them.
+    var isOnScreen: Bool {
+        guard let panel = panel, panel.isVisible else { return false }
+        return wantVisible
+    }
+
     func show(_ mode: Mode) {
         ensurePanel()
         guard let panel = panel, let label = label, let spinner = spinner else { return }
