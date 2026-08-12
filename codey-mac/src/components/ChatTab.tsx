@@ -1791,7 +1791,6 @@ export const ChatTab: React.FC<Props> = ({
           executionMode={chat?.executionMode ?? 'shared-checkout'}
           onCreateWorktree={async name => { await createWorktree(chat.id, name) }}
           onExecutionModeChange={async mode => { await setExecutionMode(chat.id, mode) }}
-          onOpenTerminal={openChatTerminal}
         />
         <div style={{ ...styles.openInWrap, marginLeft: 'auto' }}>
           <div style={styles.openInSplit}>
