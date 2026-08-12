@@ -10,13 +10,12 @@ interface Props {
   executionMode?: 'shared-checkout' | 'isolated-worktree'
   onCreateWorktree: (name: string) => Promise<void>
   onExecutionModeChange: (mode: 'shared-checkout' | 'isolated-worktree') => Promise<void>
-  onOpenTerminal?: () => void
 }
 
 type Mode = { kind: 'list' } | { kind: 'createBranch' } | { kind: 'createWorktree' } | { kind: 'dirty'; target: string }
 
 export const BranchPicker: React.FC<Props> = ({
-  workingDir, chatWorktree, executionMode = 'shared-checkout', onCreateWorktree, onExecutionModeChange, onOpenTerminal,
+  workingDir, chatWorktree, executionMode = 'shared-checkout', onCreateWorktree, onExecutionModeChange,
 }) => {
   const git = useGitBranches(workingDir)
   const [open, setOpen] = useState(false)
@@ -177,11 +176,6 @@ export const BranchPicker: React.FC<Props> = ({
                 <UIIcon name="refresh" size={13} />
               </span>
             </button>
-            {onOpenTerminal && (
-              <button style={styles.iconButton} onClick={() => { onOpenTerminal(); setOpen(false) }} disabled={!workingDir} title="Open Terminal here" aria-label="Open Terminal in this checkout">
-                <UIIcon name="terminal" size={14} />
-              </button>
-            )}
           </div>
 
           <div style={styles.checkoutMode}>
