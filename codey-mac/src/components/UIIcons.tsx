@@ -1,7 +1,7 @@
 import React from 'react'
 
 export type IconName =
-  | 'activity' | 'add' | 'archive' | 'bell' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
+  | 'activity' | 'add' | 'alert' | 'archive' | 'bell' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
   | 'clock' | 'code' | 'copy' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
   | 'waveform' | 'git-merge' | 'pull-request' | 'globe' | 'overview' | 'refresh' | 'search' | 'server' | 'settings' | 'sparkle' | 'split' | 'terminal' | 'tools' | 'trash' | 'users' | 'workspace'
   | 'telegram' | 'discord' | 'imessage'
@@ -21,6 +21,7 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
   const paths: Record<IconName, React.ReactNode> = {
     activity: <><path {...common} d="M3 12h4l3-7 4 14 3-7h4" /></>,
     add: <><circle {...common} cx="12" cy="12" r="9" /><path {...common} d="M12 8v8M8 12h8" /></>,
+    alert: <><path {...common} d="M12 4.5L21 19.5H3L12 4.5z" /><path {...common} d="M12 10v4M12 17h.01" /></>,
     archive: <><path {...common} d="M4 7h16v13H4zM3 4h18v3H3zM9 12h6" /></>,
     bell: <><path {...common} d="M18 9a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path {...common} d="M10 21h4" /></>,
     bot: <><rect {...common} x="4" y="7" width="16" height="13" rx="3" /><path {...common} d="M12 3v4M9 13h.01M15 13h.01M8 17h8" /><circle fill="currentColor" cx="9" cy="13" r="1" /><circle fill="currentColor" cx="15" cy="13" r="1" /></>,
