@@ -312,6 +312,9 @@ declare global {
       permissions: {
         addAllowed: (toolNames: string[], chatId?: string) => Promise<IpcResult<{ added: number }>>
       }
+      workspaceFiles: {
+        list: (workingDir: string) => Promise<IpcResult<Array<{ path: string; name: string; isDir: boolean }>>>
+      }
       pairing: {
         start: (channel: 'telegram' | 'discord' | 'imessage') => Promise<IpcResult<{ code: string; deepLink?: string }>>
         list: () => Promise<IpcResult<Array<{
