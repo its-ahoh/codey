@@ -312,7 +312,10 @@ const styles: Record<string, React.CSSProperties> = {
   createWorktreeButton: { background: C.accentDim, color: C.accent, border: `1px solid ${C.accent}55`, borderRadius: 6, padding: '5px 8px', fontSize: 10, cursor: 'pointer' },
   section: { display: 'flex', flexDirection: 'column', gap: 8 },
   sectionLabel: { color: C.fg3, fontSize: 10 },
-  scroll: { maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column' },
+  // The rule sits on the scroll box itself, not on the footer: with the menu's
+  // flex gap between them a footer border floats below the clipped last row and
+  // stops reading as the list's edge.
+  scroll: { maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', borderBottom: `1px solid ${C.border}` },
   item: { width: '100%', textAlign: 'left', background: 'transparent', border: 'none', color: C.fg, fontSize: 12, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 },
   branchName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   checkSlot: { width: 14, flexShrink: 0, display: 'inline-flex', alignItems: 'center' },
@@ -323,7 +326,7 @@ const styles: Record<string, React.CSSProperties> = {
   row: { display: 'flex', gap: 6 },
   primary: { background: C.accent, color: C.onAccent, border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, cursor: 'pointer' },
   ghost: { background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '5px 10px', fontSize: 11, cursor: 'pointer' },
-  footer: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${C.border}`, paddingTop: 6 },
+  footer: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   spinning: { display: 'inline-flex', animation: 'codey-branch-sync-spin 0.9s linear infinite' },
   warn: { fontSize: 12, color: C.yellow },
 }
