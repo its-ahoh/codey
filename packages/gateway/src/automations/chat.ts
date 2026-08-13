@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import type { AutomationChatContext, AutomationChatTurn, AutomationDraft, AutomationChatMessage, AutomationCheckStatus } from '@codey/core';
+import type { AutomationChatContext, AutomationChatTurn, AutomationDraft, AutomationChatMessage } from '@codey/core';
 
 export interface ChatManagerDeps {
   /** Bound automationChatTurn with AideOptions pre-applied. */
@@ -10,8 +10,6 @@ export interface ChatManagerDeps {
   ) => Promise<AutomationChatTurn>;
   /** Live grounding lists - re-read per turn so new workspaces/teams appear. */
   context: () => Omit<AutomationChatContext, 'mode'>;
-  /** Fired when the user explicitly requests an unattended dry-run check. */
-  onReadyTransition?: (sessionId: string, draft: AutomationDraft) => void;
   now?: () => number;
 }
 
@@ -21,9 +19,9 @@ export interface ChatStep {
   /** Full draft after the patch - drives the live summary panel. */
   draft: AutomationDraft;
   suggestions: string[];
+  /** The assistant has no open questions. Drives copy only - saving is gated
+   *  by draftComplete alone. */
   ready: boolean;
-  /** Dry-run check state; undefined until the first ready transition. */
-  check?: AutomationCheckStatus;
   /** Live choices used by the structured editor. */
   context: Omit<AutomationChatContext, 'mode' | 'nowIso'>;
 }
@@ -35,9 +33,6 @@ interface Session {
   inFlight: boolean;
   touchedAt: number;
   sourceAutomationId?: string;
-  check?: AutomationCheckStatus;
-  /** Execution configuration covered by the current check. */
-  checkFingerprint?: string;
 }
 
 export const SESSION_TTL_MS = 30 * 60_000;
@@ -79,18 +74,10 @@ export class AutomationChatManager {
       touchedAt: this.now(),
       sourceAutomationId,
     };
-    // A persisted automation is already a valid, reviewed baseline. Treat it
-    // as ready so the structured form can save metadata/schedule/notification
-    // edits without forcing an otherwise empty assistant turn. Changes to the
-    // execution fingerprint (target, brief, or params) still trigger a fresh
-    // unattended check through patch().
-    const ready = mode === 'edit' && draftComplete(s.draft);
-    if (ready) {
-      s.check = 'clean';
-      s.checkFingerprint = executionFingerprint(s.draft);
-    }
     this.sessions.set(sessionId, s);
-    return this.step(sessionId, s, reply, [], ready);
+    // A persisted automation is already a complete, reviewed baseline, so an
+    // edit session opens ready without forcing an otherwise empty turn.
+    return this.step(sessionId, s, reply, [], mode === 'edit' && draftComplete(s.draft));
   }
 
   async send(sessionId: string, text: string): Promise<ChatStep> {
@@ -112,7 +99,6 @@ export class AutomationChatManager {
       s.messages.push({ role: 'user', text }, { role: 'assistant', text: turn.reply });
       applyDraftPatch(s.draft, turn.draftPatch);
       const ready = turn.ready && draftComplete(s.draft);
-      this.reconcileCheck(sessionId, s, ready);
       return this.step(sessionId, s, turn.reply, turn.suggestions, ready);
     } finally {
       s.inFlight = false;
@@ -132,72 +118,25 @@ export class AutomationChatManager {
     s.touchedAt = this.now();
     applyDraftPatch(s.draft, patch);
     const ready = draftComplete(s.draft);
-    this.reconcileCheck(sessionId, s, ready);
     return this.step(sessionId, s, '', [], ready);
   }
 
-  retryCheck(sessionId: string): ChatStep {
-    this.sweep();
-    const s = this.sessions.get(sessionId);
-    if (!s) throw new Error(`Unknown automation chat session: ${sessionId}`);
-    const ready = draftComplete(s.draft);
-    if (!ready) throw new Error('Automation draft is incomplete');
-    s.check = undefined;
-    s.checkFingerprint = undefined;
-    this.reconcileCheck(sessionId, s, true, true);
-    return this.step(sessionId, s, '', [], true);
-  }
-
-  /** Return a server-owned draft only when it is safe to persist. */
-  finalize(sessionId: string, allowUnchecked = false): {
+  /** Return a server-owned draft. A complete draft is always saveable: the
+   *  dry run is advisory and runs after the automation is persisted. */
+  finalize(sessionId: string): {
     mode: 'create' | 'edit'; sourceAutomationId?: string; draft: AutomationDraft;
   } {
     this.sweep();
     const s = this.sessions.get(sessionId);
     if (!s) throw new Error(`Unknown automation chat session: ${sessionId}`);
     if (!draftComplete(s.draft)) throw new Error('Automation draft is incomplete');
-    if (s.check !== 'clean' && !(allowUnchecked && s.check === 'error')) {
-      throw new Error(s.check === 'pending' ? 'Unattended check is still running' : 'Automation must pass its unattended check');
-    }
     return { mode: s.mode, sourceAutomationId: s.sourceAutomationId, draft: { ...s.draft } };
-  }
-
-  /**
-   * Record a dry-run verdict. Accepted only while the session's check is
-   * still pending - rejected (returns false) when the session is gone,
-   * ready dropped back to false, or the check was already resolved; the
-   * caller must discard such a stale verdict.
-   * `message` is appended to the transcript so later turns see it.
-   */
-  resolveCheck(sessionId: string, check: Exclude<AutomationCheckStatus, 'pending'>, message?: string): boolean {
-    const s = this.sessions.get(sessionId);
-    if (!s || s.check !== 'pending') return false;
-    s.check = check;
-    if (message) s.messages.push({ role: 'assistant', text: message });
-    return true;
-  }
-
-  private reconcileCheck(sessionId: string, s: Session, ready: boolean, startCheck = false): void {
-    if (!ready) {
-      s.check = undefined;
-      s.checkFingerprint = undefined;
-      return;
-    }
-    const fingerprint = executionFingerprint(s.draft);
-    if (s.checkFingerprint === fingerprint && s.check) return;
-    s.check = undefined;
-    s.checkFingerprint = undefined;
-    if (!startCheck) return;
-    s.check = 'pending';
-    s.checkFingerprint = fingerprint;
-    try { this.deps.onReadyTransition?.(sessionId, { ...s.draft }); }
-    catch { /* dry-run trigger must not fail the edit */ }
   }
 
   private step(sessionId: string, s: Session, reply: string, suggestions: string[], ready: boolean): ChatStep {
     const { workspaces, teams, agents, models, tz } = this.deps.context();
     return {
-      sessionId, reply, draft: { ...s.draft }, suggestions, ready, check: s.check,
+      sessionId, reply, draft: { ...s.draft }, suggestions, ready,
       context: { workspaces, teams, agents, models, tz },
     };
   }
@@ -206,10 +145,6 @@ export class AutomationChatManager {
 export function draftComplete(draft: AutomationDraft): boolean {
   if (!draft.name?.trim() || !draft.brief?.trim() || !draft.target?.workspaceName?.trim()) return false;
   return draft.target.kind !== 'team' || !!draft.target.teamName?.trim();
-}
-
-function executionFingerprint(draft: AutomationDraft): string {
-  return JSON.stringify({ target: draft.target, brief: draft.brief?.trim(), params: draft.params ?? {} });
 }
 
 /** Shallow merge; an explicit null clears the field. */
