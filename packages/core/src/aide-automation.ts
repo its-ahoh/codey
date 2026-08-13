@@ -70,6 +70,20 @@ function isValidTargetPatch(v: unknown): v is AutomationTarget {
   return false;
 }
 
+/** Newest turns kept verbatim in the prompt. The draft is a complete state
+ *  snapshot, so older turns carry tone and nothing else — dropping them keeps
+ *  a long conversation from growing the prompt until it times out. */
+export const MAX_CHAT_HISTORY = 24;
+
+export function formatTranscript(
+  messages: AutomationChatMessage[], max = MAX_CHAT_HISTORY,
+): string {
+  const recent = messages.slice(-max);
+  const lines = recent.map(m => `${m.role === 'user' ? 'User' : 'You'}: ${m.text}`);
+  if (recent.length < messages.length) lines.unshift('[earlier turns omitted]');
+  return lines.join('\n');
+}
+
 const CHAT_TURN_PROMPT = (
   messages: AutomationChatMessage[], draft: AutomationDraft, ctx: AutomationChatContext,
 ) => `You are Codey's automation-setup assistant, configuring an UNATTENDED automation through a short chat. It will run on a schedule with nobody available to answer questions, so every ambiguity that would block a run must be resolved during this conversation.
@@ -86,7 +100,7 @@ Current draft (gathered so far):
 ${JSON.stringify(draft, null, 2)}
 
 Conversation so far:
-${messages.map(m => `${m.role === 'user' ? 'User' : 'You'}: ${m.text}`).join('\n')}
+${formatTranscript(messages)}
 
 Your job this turn:
 1. Update the draft with anything the user's latest message settles. draftPatch contains ONLY fields that changed; set a top-level field to null to clear it. Nested target updates may contain only the properties being changed; they are merged with the current target. Params updates are also merged with the current params; set one param value to null to remove only that variable. Draft fields: name (short title), target ({"kind":"prompt","workspaceName":"...","agent":"optional","model":"optional"} or {"kind":"team","teamName":"...","workspaceName":"..."}), schedule ({"slots":[{"hour":0-23,"minute":0-59,"daysOfWeek":[0-6] optional},...],"tz":"${ctx.tz}"} or null for manual-only). Each slot owns its weekdays; absent daysOfWeek means every day. Example: Mon-Wed at 9pm plus Thu-Fri at noon is {"slots":[{"hour":21,"minute":0,"daysOfWeek":[1,2,3]},{"hour":12,"minute":0,"daysOfWeek":[4,5]}],"tz":"${ctx.tz}"}. notify ("all" | "failure" | "success" | "none" - which run outcomes fire an OS notification; default "none"), brief (string), params (object of string values or null for a removed variable).

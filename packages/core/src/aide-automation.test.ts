@@ -1,6 +1,9 @@
 // packages/core/src/aide-automation.test.ts
 import { describe, it, expect } from 'vitest';
-import { renderBrief, automationChatTurn, buildDryRunPrompt, classifyDryRun } from './aide-automation';
+import {
+  renderBrief, automationChatTurn, buildDryRunPrompt, classifyDryRun,
+  formatTranscript, MAX_CHAT_HISTORY,
+} from './aide-automation';
 import type { AideOptions } from './aide';
 import type { AgentRequest, AgentResponse } from './types';
 
@@ -170,5 +173,26 @@ describe('classifyDryRun', () => {
     await expect(classifyDryRun('out', aide('{"verdict":"gaps","questions":[]}'))).rejects.toThrow();
     await expect(classifyDryRun('out', aide('{"verdict":"maybe"}'))).rejects.toThrow();
     await expect(classifyDryRun('out', aide('not json'))).rejects.toThrow();
+  });
+});
+
+describe('formatTranscript', () => {
+  const msgs = (n: number) => Array.from({ length: n }, (_, i) => ({
+    role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+    text: `m${i}`,
+  }));
+
+  it('renders every message when under the cap', () => {
+    expect(formatTranscript(msgs(2))).toBe('User: m0\nYou: m1');
+  });
+
+  it('keeps the newest MAX_CHAT_HISTORY and marks the elision', () => {
+    const out = formatTranscript(msgs(30));
+    const lines = out.split('\n');
+    expect(lines[0]).toBe('[earlier turns omitted]');
+    expect(lines).toHaveLength(MAX_CHAT_HISTORY + 1);
+    expect(lines[1]).toBe('User: m6');
+    expect(lines[lines.length - 1]).toBe('You: m29');
+    expect(out).not.toContain('m5');
   });
 });
