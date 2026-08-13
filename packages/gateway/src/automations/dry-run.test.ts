@@ -19,7 +19,7 @@ describe('DryRunManager', () => {
     const onResult = vi.fn();
     const mgr = new DryRunManager({ execute, classify, teamContext: () => undefined, onResult });
 
-    mgr.start('s1', draft());
+    mgr.start('a1', draft());
     await flush();
 
     expect(execute).toHaveBeenCalledTimes(1);
@@ -28,7 +28,7 @@ describe('DryRunManager', () => {
     expect(prompt).toMatch(/DRY RUN/);
     expect(prompt).toContain('Post 5 items.');
     expect(classify).toHaveBeenCalledWith('agent output');
-    expect(onResult).toHaveBeenCalledWith('s1', { status: 'clean' });
+    expect(onResult).toHaveBeenCalledWith('a1', { status: 'clean' });
   });
 
   it('inlines team context for team targets and never team-dispatches', async () => {
@@ -39,7 +39,7 @@ describe('DryRunManager', () => {
       execute, classify: vi.fn().mockResolvedValue({ status: 'clean' as const }), teamContext, onResult,
     });
 
-    mgr.start('s1', draft({ target: { kind: 'team', teamName: 'news', workspaceName: 'blog' } }));
+    mgr.start('a1', draft({ target: { kind: 'team', teamName: 'news', workspaceName: 'blog' } }));
     await flush();
 
     expect(teamContext).toHaveBeenCalledWith('blog', 'news');
@@ -54,7 +54,7 @@ describe('DryRunManager', () => {
       teamContext: () => undefined, onResult: vi.fn(),
     });
     const target = { kind: 'prompt' as const, workspaceName: 'default', agent: 'codex' as const, model: 'gpt-x' };
-    mgr.start('s1', draft({ target }));
+    mgr.start('a1', draft({ target }));
     await flush();
     expect(execute.mock.calls[0][0]).toEqual(target);
   });
@@ -67,9 +67,9 @@ describe('DryRunManager', () => {
       teamContext: () => undefined,
       onResult,
     });
-    mgr.start('s1', draft());
+    mgr.start('a1', draft());
     await flush();
-    expect(onResult).toHaveBeenCalledWith('s1', { status: 'error', message: 'agent timed out' });
+    expect(onResult).toHaveBeenCalledWith('a1', { status: 'error', message: 'agent timed out' });
   });
 
   it('an incomplete draft yields an error verdict', async () => {
@@ -80,9 +80,9 @@ describe('DryRunManager', () => {
       teamContext: () => undefined,
       onResult,
     });
-    mgr.start('s1', { name: 'N' }); // no target/brief
+    mgr.start('a1', { name: 'N' }); // no target/brief
     await flush();
-    expect(onResult).toHaveBeenCalledWith('s1', expect.objectContaining({ status: 'error' }));
+    expect(onResult).toHaveBeenCalledWith('a1', expect.objectContaining({ status: 'error' }));
   });
 
   it('a newer start supersedes an in-flight run - the stale verdict is dropped', async () => {
@@ -97,14 +97,14 @@ describe('DryRunManager', () => {
       teamContext: () => undefined, onResult,
     });
 
-    mgr.start('s1', draft());
-    mgr.start('s1', draft({ brief: 'v2' }));
+    mgr.start('a1', draft());
+    mgr.start('a1', draft({ brief: 'v2' }));
     await flush();
     releaseFirst('first output');
     await flush();
 
     expect(onResult).toHaveBeenCalledTimes(1);
-    expect(onResult).toHaveBeenCalledWith('s1', { status: 'gaps', questions: ['second output'] });
+    expect(onResult).toHaveBeenCalledWith('a1', { status: 'gaps', questions: ['second output'] });
   });
 
   it('a run surviving a cancel-then-restart cannot deliver a stale verdict', async () => {
@@ -119,15 +119,15 @@ describe('DryRunManager', () => {
       classify: vi.fn().mockImplementation(async (o: string) => ({ status: 'gaps' as const, questions: [o] })),
       teamContext: () => undefined, onResult,
     });
-    mgr.start('s1', draft());
-    mgr.cancel('s1');
-    mgr.start('s1', draft({ brief: 'v2' }));
+    mgr.start('a1', draft());
+    mgr.cancel('a1');
+    mgr.start('a1', draft({ brief: 'v2' }));
     releaseFirst('first output'); // stale run resolves while the new run is in flight
     await flush();
     releaseSecond('second output');
     await flush();
     expect(onResult).toHaveBeenCalledTimes(1);
-    expect(onResult).toHaveBeenCalledWith('s1', { status: 'gaps', questions: ['second output'] });
+    expect(onResult).toHaveBeenCalledWith('a1', { status: 'gaps', questions: ['second output'] });
   });
 
   it('cancel drops an in-flight result', async () => {
@@ -138,8 +138,8 @@ describe('DryRunManager', () => {
       classify: vi.fn().mockResolvedValue({ status: 'clean' as const }),
       teamContext: () => undefined, onResult,
     });
-    mgr.start('s1', draft());
-    mgr.cancel('s1');
+    mgr.start('a1', draft());
+    mgr.cancel('a1');
     release('out');
     await flush();
     expect(onResult).not.toHaveBeenCalled();
@@ -152,8 +152,8 @@ describe('DryRunManager', () => {
       classify: vi.fn().mockResolvedValue({ status: 'clean' as const }),
       teamContext: () => undefined, onResult,
     });
-    mgr.start('s1', draft());
-    mgr.start('s2', draft());
+    mgr.start('a1', draft());
+    mgr.start('a2', draft());
     await flush();
     expect(onResult).toHaveBeenCalledTimes(2);
   });
