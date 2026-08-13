@@ -61,7 +61,7 @@ export interface ChatMessage {
   durationSec?: number;
   /** Agent/model that produced this assistant message. Stored per turn so
    * historical labels remain accurate after the chat configuration changes. */
-  agent?: 'claude-code' | 'opencode' | 'codex';
+  agent?: 'claude-code' | 'opencode' | 'codex' | 'pi';
   model?: string;
   /**
    * Present when this turn was produced by a fallback agent after the primary
@@ -141,7 +141,7 @@ export interface Chat {
   createdAt: number;
   updatedAt: number;
   /** Per-chat coding agent override. Falls back to gateway default when unset. */
-  agent?: 'claude-code' | 'opencode' | 'codex';
+  agent?: 'claude-code' | 'opencode' | 'codex' | 'pi';
   /** Per-chat model override (model id from the global catalog). Falls back to the agent's default model when unset. */
   model?: string;
   /** Per-chat reasoning-effort override. Falls back to the worker's effort, then the agent's defaultEffort. */
@@ -210,7 +210,7 @@ export interface Chat {
   };
   /** Warm CLI sessions retained independently for each agent/model identity. */
   sessionAnchors?: Array<{
-    agent: 'claude-code' | 'opencode' | 'codex';
+    agent: 'claude-code' | 'opencode' | 'codex' | 'pi';
     model?: string;
     sessionId: string;
     /** Last Codey transcript message already visible inside this CLI session. */
@@ -218,7 +218,7 @@ export interface Chat {
   }>;
   /** Legacy single-anchor field. Read for migration, never written by new code. */
   sessionAnchor?: {
-    agent: 'claude-code' | 'opencode' | 'codex';
+    agent: 'claude-code' | 'opencode' | 'codex' | 'pi';
     model?: string;
     sessionId: string;
     syncedThroughMessageId?: string;

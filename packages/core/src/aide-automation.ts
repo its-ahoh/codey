@@ -62,7 +62,7 @@ function isValidTargetPatch(v: unknown): v is AutomationTarget {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   const t = v as Record<string, unknown>;
   if (t.kind === 'prompt') {
-    const agentOk = t.agent === undefined || t.agent === 'claude-code' || t.agent === 'opencode' || t.agent === 'codex';
+    const agentOk = t.agent === undefined || t.agent === 'claude-code' || t.agent === 'opencode' || t.agent === 'codex' || t.agent === 'pi';
     const modelOk = t.model === undefined || (typeof t.model === 'string' && !!t.model.trim());
     return typeof t.workspaceName === 'string' && !!t.workspaceName && agentOk && modelOk;
   }

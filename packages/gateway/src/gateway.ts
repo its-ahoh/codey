@@ -134,8 +134,8 @@ export class Codey {
   private static readonly REGEX_COMMAND = /^\/(\w+)(?:\s+(.*))?$/;
   private static readonly REGEX_WORKER = /\/worker\s+(\w+)\s+(.+)/i;
   private static readonly REGEX_TEAM = /\/team\s+(\w+)(?:\s+(--all))?\s+(?!--all\s*$)(.+)/i;
-  private static readonly REGEX_AGENT_PROMPT = /\/agent\s+(claude-code|opencode|codex)\s+(.+)/i;
-  private static readonly REGEX_AGENT = /\/agent\s+(claude-code|opencode|codex)/i;
+  private static readonly REGEX_AGENT_PROMPT = /\/agent\s+(claude-code|opencode|codex|pi)\s+(.+)/i;
+  private static readonly REGEX_AGENT = /\/agent\s+(claude-code|opencode|codex|pi)/i;
   private static readonly REGEX_MODEL_PROMPT = /\/model\s+(\S+)(?:\s+(.+))?/i;
   private static readonly REGEX_MODEL = /\/model\s+(\S+)/i;
   private static readonly REGEX_HELP_COMMAND = /^\/(help|status|clear|reset|model|agents|config)\s*/i;
@@ -1506,7 +1506,7 @@ export class Codey {
       context: () => ({
         workspaces: this.getWorkspaceList(),
         teams: Object.keys(this.configManager?.getTeams() ?? {}),
-        agents: ['claude-code', 'opencode', 'codex'] as CodingAgent[],
+        agents: ['claude-code', 'opencode', 'codex', 'pi'] as CodingAgent[],
         models: (this.configManager?.listModels() ?? this.config.models ?? []).map(m => m.model),
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         nowIso: new Date().toString(),
@@ -2493,8 +2493,8 @@ export class Codey {
         await this.cmdAgent(args, chatId, channel);
         if (this.isPairableChannel(channel) && args.length > 0) {
           const a = args[0].toLowerCase();
-          if (['claude-code', 'opencode', 'codex'].includes(a)) {
-            this.pairingStore.updatePrefs(channel, message.userId, { agent: a as 'claude-code' | 'opencode' | 'codex' });
+          if (['claude-code', 'opencode', 'codex', 'pi'].includes(a)) {
+            this.pairingStore.updatePrefs(channel, message.userId, { agent: a as 'claude-code' | 'opencode' | 'codex' | 'pi' });
           }
         }
         break;
@@ -2742,7 +2742,7 @@ export class Codey {
   private async cmdAgent(args: string[], chatId: string, channel: ChannelType): Promise<void> {
     if (args.length > 0) {
       const agentName = args[0].toLowerCase();
-      const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex'];
+      const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi'];
       if (validAgents.includes(agentName as CodingAgent)) {
         // Persist via the canonical setter so fallback.order[0] stays in sync;
         // the runtime config gets refreshed on the next applyConfig() event.
@@ -2758,7 +2758,7 @@ export class Codey {
         await this.sendResponse({
           chatId,
           channel,
-          text: `Unknown agent: ${agentName}\n\nAvailable: claude-code, opencode, codex`,
+          text: `Unknown agent: ${agentName}\n\nAvailable: claude-code, opencode, codex, pi`,
         });
       }
     } else {
@@ -3456,7 +3456,7 @@ Example: /model gpt-4.1 write a Python script`;
     });
 
     // Get enabled agents
-    const enabledAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex'];
+    const enabledAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi'];
 
     // Run all agents in parallel (with per-agent fallback)
     const results = await Promise.allSettled(
@@ -5141,7 +5141,7 @@ Example: /model gpt-4.1 write a Python script`;
       let prompt = '';
 
       // Check if combined with prompt
-      const promptMatch = text.match(/\/agent\s+(claude-code|opencode|codex)\s+(.+)/i);
+      const promptMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi)\s+(.+)/i);
       if (promptMatch) {
         agent = promptMatch[1] as CodingAgent;
         prompt = promptMatch[2];
@@ -5159,7 +5159,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // Not a command - parse agent/model from anywhere in text
-    const agentMatch = text.match(/\/agent\s+(claude-code|opencode|codex)/i);
+    const agentMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi)/i);
     const agent = (agentMatch ? agentMatch[1] : this.getDefaultAgent()) as CodingAgent;
 
     const modelMatch = text.match(/\/model\s+(\S+)/i);
@@ -5170,7 +5170,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Remove inline commands from prompt, but preserve the rest
     let prompt = text
-      .replace(/\/agent\s+(claude-code|opencode|codex)\s*/i, '')
+      .replace(/\/agent\s+(claude-code|opencode|codex|pi)\s*/i, '')
       .replace(/\/model\s+\S+\s*/i, '')
       .replace(/^\/(help|status|clear|reset|model|agents|config)\s*/i, '')
       .trim();
@@ -5178,7 +5178,7 @@ Example: /model gpt-4.1 write a Python script`;
     return { command: '', args: [], agent, model, prompt };
   }
 
-  private static readonly ALL_AGENTS: CodingAgent[] = ['claude-code', 'opencode', 'codex'];
+  private static readonly ALL_AGENTS: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi'];
 
   private getEnabledAgents(): CodingAgent[] {
     // Enablement is membership in fallback.order. Order matters: the priority

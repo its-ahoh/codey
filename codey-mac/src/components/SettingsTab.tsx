@@ -25,8 +25,9 @@ export const AGENT_API_TYPE: Record<string, ApiType> = {
   'claude-code': 'anthropic',
   'opencode': 'openai',
   'codex': 'openai',
+  'pi': 'anthropic',
 }
-export const AGENT_NAMES = ['claude-code', 'opencode', 'codex'] as const
+export const AGENT_NAMES = ['claude-code', 'opencode', 'codex', 'pi'] as const
 
 // Where the user goes to install each agent's CLI when it isn't on PATH.
 // Picked to land on the official quickstart / install page rather than a
@@ -35,6 +36,7 @@ export const AGENT_INSTALL_URL: Record<string, string> = {
   'claude-code': 'https://docs.claude.com/en/docs/claude-code/quickstart',
   'opencode':    'https://opencode.ai',
   'codex':       'https://github.com/openai/codex',
+  'pi':          'https://pi.dev',
 }
 
 // ── Small helpers ────────────────────────────────────────────────────

@@ -32,7 +32,7 @@ export interface GatewayResponse {
 }
 
 // Coding agent types
-export type CodingAgent = 'claude-code' | 'opencode' | 'codex';
+export type CodingAgent = 'claude-code' | 'opencode' | 'codex' | 'pi';
 
 // Model configuration for agents
 export type ApiType = 'anthropic' | 'openai';
@@ -248,7 +248,8 @@ export interface AgentResponse {
   states?: AgentStateEntry[];
   /**
    * Session id captured from the CLI on this run when the CLI generates
-   * its own id (codex `thread_id`, opencode `sessionID`). Adapters that
+   * its own id (codex `thread_id`, opencode `sessionID`, pi `session.id`).
+   * Adapters that
    * accept a pre-allocated `newSessionId` (claude-code) leave this unset —
    * the gateway already knows the id it sent.
    */
@@ -343,6 +344,7 @@ export interface GatewayConfig {
     'claude-code'?: AgentModelConfig;
     'opencode'?: AgentModelConfig;
     'codex'?: AgentModelConfig;
+    'pi'?: AgentModelConfig;
   };
   /** Global model catalog — mirrors GatewayConfigJson.models. */
   models?: ModelEntry[];

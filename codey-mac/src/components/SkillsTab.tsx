@@ -7,17 +7,19 @@ import { SKILL_SORT_MODES, sortSkills, usageFor, usageLabel } from './skillsSort
 import type { SkillSortMode } from './skillsSort'
 import type { SkillEntry, SkillUsageMap, SkillsListResult } from '../codey-api'
 
-type AgentFilter = 'claude-code' | 'opencode' | 'codex'
+type AgentFilter = 'claude-code' | 'opencode' | 'codex' | 'pi'
 const AGENTS: { key: AgentFilter; label: string }[] = [
   { key: 'claude-code', label: 'Claude Code' },
   { key: 'opencode',    label: 'OpenCode' },
   { key: 'codex',       label: 'Codex' },
+  { key: 'pi',          label: 'Pi' },
 ]
 
 const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
   'claude-code': '~/.claude/skills/',
   'codex': '~/.codex/skills/',
   'opencode': '~/.config/opencode/skills/',
+  'pi': '~/.pi/agent/skills/',
 }
 
 // Matches the toggle idiom already used by PluginsTab / AppearanceTab.

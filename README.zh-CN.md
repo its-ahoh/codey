@@ -111,6 +111,7 @@ npm run build:mac -w codey-mac  # 在 codey-mac/release/ 生成 DMG
   "agents": {
     "claude-code": { "enabled": true, "provider": "anthropic", "defaultModel": "claude-sonnet-4-20250514" },
     "opencode": { "enabled": true, "provider": "openai", "defaultModel": "gpt-4.1" },
+    "pi": { "enabled": true, "provider": "anthropic", "defaultModel": "claude-sonnet-4-5" },
     "codex": { "enabled": true, "provider": "openai", "defaultModel": "gpt-5-codex" }
   },
   "profiles": [
@@ -306,7 +307,7 @@ packages/
 │   └── src/
 └── gateway/             # 网关服务、渠道、代理
     └── src/
-        ├── agents/      # 编码代理适配器（claude-code、opencode、codex）
+        ├── agents/      # 编码代理适配器（claude-code、opencode、codex、pi）
         ├── channels/    # 聊天平台处理器（telegram、discord、imessage）
         ├── config.ts
         ├── conversation.ts

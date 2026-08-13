@@ -39,6 +39,21 @@ export function opencodeEffortArgs(effort?: ThinkingEffort): string[] {
   return effort ? ['--variant', effort] : [];
 }
 
+/**
+ * pi takes `--thinking <level>` with off, minimal, low, medium, high, xhigh,
+ * max — a superset of ThinkingEffort, so every level we can pass is a level pi
+ * documents. That is why this needs no degrade-retry: unlike codex's
+ * server-side enum, there is no level we can send that pi has to reject.
+ *
+ *   pi           --thinking <L>                    documented enum, superset
+ *
+ * Read from pi's published CLI reference rather than probed, unlike the three
+ * above; re-probe if a run ever fails on the flag itself.
+ */
+export function piEffortArgs(effort?: ThinkingEffort): string[] {
+  return effort ? ['--thinking', effort] : [];
+}
+
 /** Marker set on a retried request so a degrade can never loop. */
 export interface EffortRetryable {
   __effortRetried?: boolean;

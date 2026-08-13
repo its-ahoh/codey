@@ -13,7 +13,7 @@
   <a href="https://github.com/its-ahoh/codey/stargazers"><img src="https://img.shields.io/github/stars/its-ahoh/codey?style=social" alt="GitHub stars" /></a>
 </p>
 
-**A multi-agent workbench for coding agents.** Codey is one place to organize, switch between, and orchestrate Claude Code, OpenCode, Codex (and more) across your projects — give each project its own workspace, build worker teams with different agents/models per role, run several agents in parallel on the same task to compare, and reach all of it from a native macOS app, chat platforms (Telegram / Discord / iMessage), or system-wide push-to-talk voice.
+**A multi-agent workbench for coding agents.** Codey is one place to organize, switch between, and orchestrate Claude Code, OpenCode, Codex, pi (and more) across your projects — give each project its own workspace, build worker teams with different agents/models per role, run several agents in parallel on the same task to compare, and reach all of it from a native macOS app, chat platforms (Telegram / Discord / iMessage), or system-wide push-to-talk voice.
 
 Think of it less as a chat bridge and more as **the control plane for the coding agents you already use**.
 
@@ -42,7 +42,7 @@ Builds are currently unsigned — on first launch, right-click the app → **Ope
 ## Features
 
 **Agent management**
-- **Multiple coding agents**: Claude Code, OpenCode, Codex (with session resume)
+- **Multiple coding agents**: Claude Code, OpenCode, Codex, [pi](https://pi.dev) (with session resume)
 - **Parallel execution**: Run multiple agents on the same prompt simultaneously to compare
 - **Per-workspace defaults**: Each project picks its own default agent + model
 - **Auto-dispatcher**: Optional built-in dispatcher routes a task to the right subset of a team
@@ -111,6 +111,7 @@ Edit `gateway.json`:
   "agents": {
     "claude-code": { "enabled": true, "provider": "anthropic", "defaultModel": "claude-sonnet-4-20250514" },
     "opencode": { "enabled": true, "provider": "openai", "defaultModel": "gpt-4.1" },
+    "pi": { "enabled": true, "provider": "anthropic", "defaultModel": "claude-sonnet-4-5" },
     "codex": { "enabled": true, "provider": "openai", "defaultModel": "gpt-5-codex" }
   },
   "profiles": [
@@ -314,7 +315,7 @@ packages/
 │   └── src/
 └── gateway/             # Gateway server, channels, agents
     └── src/
-        ├── agents/      # Coding agent adapters (claude-code, opencode, codex)
+        ├── agents/      # Coding agent adapters (claude-code, opencode, codex, pi)
         ├── channels/    # Chat platform handlers (telegram, discord, imessage)
         ├── config.ts
         ├── conversation.ts

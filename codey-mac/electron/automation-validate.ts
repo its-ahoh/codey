@@ -80,7 +80,7 @@ function validateReport(report: unknown): void {
 const CREATE_FIELDS = new Set(['name', 'icon', 'enabled', 'target', 'brief', 'params', 'schedule', 'report'])
 const UPDATE_FIELDS = new Set(['name', 'icon', 'target', 'brief', 'params', 'schedule', 'report'])
 const CHAT_FIELDS = new Set(['name', 'target', 'brief', 'params', 'schedule', 'notify'])
-const AGENTS = new Set(['claude-code', 'opencode', 'codex'])
+const AGENTS = new Set(['claude-code', 'opencode', 'codex', 'pi'])
 
 function validateObject(value: unknown, label: string): asserts value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

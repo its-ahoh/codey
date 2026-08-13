@@ -206,11 +206,12 @@ const userFoldStyles: Record<string, React.CSSProperties> = {
 
 // Agents that the gateway supports. Mirror of AGENT_NAMES in SettingsTab — kept
 // local so the chat header doesn't depend on the settings module.
-const AGENT_NAMES = ['claude-code', 'opencode', 'codex'] as const
+const AGENT_NAMES = ['claude-code', 'opencode', 'codex', 'pi'] as const
 const AGENT_API_TYPE: Record<string, 'anthropic' | 'openai'> = {
   'claude-code': 'anthropic',
   'opencode': 'openai',
   'codex': 'openai',
+  'pi': 'anthropic',
 }
 type ModelEntry = { apiType: 'anthropic' | 'openai'; model: string }
 
