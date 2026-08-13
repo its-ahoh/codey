@@ -23,11 +23,7 @@ import {
   getStoredThemeMode,
   getStoredPalette,
   resolveEffectiveTheme,
-  paletteToCssVars,
-  classicLight,
-  classicDark,
-  terminalLight,
-  terminalDark,
+  paletteThemeCss,
 } from './theme'
 
 const clampLeftPanelWidth = (width: number) => {
@@ -366,30 +362,8 @@ const Shell: React.FC = () => {
         {!activeChat && <VoiceHotkeyFallback />}
       </div>
       <style>{`
-  /* Fallback (classic) until data-theme / data-palette are set. */
-  :root {
-${paletteToCssVars(classicDark)}
-  }
-  :root[data-theme="light"] {
-${paletteToCssVars(classicLight)}
-  }
-  :root[data-theme="dark"] {
-${paletteToCssVars(classicDark)}
-  }
-  /* Classic theme */
-  :root[data-palette="classic"][data-theme="light"] {
-${paletteToCssVars(classicLight)}
-  }
-  :root[data-palette="classic"][data-theme="dark"] {
-${paletteToCssVars(classicDark)}
-  }
-  /* Terminal theme */
-  :root[data-palette="terminal"][data-theme="light"] {
-${paletteToCssVars(terminalLight)}
-  }
-  :root[data-palette="terminal"][data-theme="dark"] {
-${paletteToCssVars(terminalDark)}
-  }
+  /* Fallback plus every palette's light/dark variant. */
+  ${paletteThemeCss()}
   html, body, #root { height: 100%; margin: 0; background: ${C.bg}; }
   /* Roomy headings open a section with a large top margin. The first block in a
      turn has nothing above it to separate from, so that margin is dead space. */
