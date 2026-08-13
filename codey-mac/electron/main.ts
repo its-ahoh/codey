@@ -24,6 +24,7 @@ import { BrowserControlPermissionGate } from './browser-control-permission'
 import { BrowserSitePermissionManager } from './browser-site-permissions'
 import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLabel, type BrowserPasskeyPickerRequest } from './browser-webauthn'
 import { BrowserExtensionManager } from './browser-extensions'
+import { deriveEntries, parseGitFileList, walkDirectory, type FileEntry } from './workspace-files'
 import * as pty from 'node-pty'
 
 protocol.registerSchemesAsPrivileged([
@@ -1972,6 +1973,43 @@ app.whenReady().then(async () => {
   // boot would be lost. Expose the ring buffer so the renderer can backfill.
   ipcMain.handle('gateway:recentLogs', async () =>
     wrap(async () => recentGatewayLogs.slice())
+  )
+
+  // ── Workspace file index IPC (composer "@" mentions) ──────────────
+  // Indexing a large repo costs a fork + a walk, and the composer asks on every
+  // "@". Cache per working dir for a few seconds so a burst of keystrokes only
+  // pays once, while still picking up new files during a normal session.
+  const fileIndexCache = new Map<string, { at: number; entries: FileEntry[] }>()
+  const FILE_INDEX_TTL_MS = 5000
+
+  ipcMain.handle('workspace:files', async (_e, workingDir: string) =>
+    wrap(async () => {
+      if (!workingDir || typeof workingDir !== 'string') return []
+      const cached = fileIndexCache.get(workingDir)
+      if (cached && Date.now() - cached.at < FILE_INDEX_TTL_MS) return cached.entries
+
+      const { execFile } = await import('child_process')
+      const fsMod = await import('fs')
+      let paths: string[]
+      try {
+        // -z keeps paths with spaces/unicode intact (git quotes them otherwise);
+        // --exclude-standard applies .gitignore to the untracked half.
+        const stdout = await new Promise<string>((resolve, reject) => {
+          execFile(
+            'git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+            { cwd: workingDir, timeout: 4000, maxBuffer: 32 * 1024 * 1024 },
+            (err, out) => (err ? reject(err) : resolve(out)),
+          )
+        })
+        paths = parseGitFileList(stdout)
+      } catch {
+        // Not a repo (or git unavailable) — fall back to a bounded walk.
+        paths = walkDirectory(workingDir, fsMod as never)
+      }
+      const entries = deriveEntries(paths)
+      fileIndexCache.set(workingDir, { at: Date.now(), entries })
+      return entries
+    })
   )
 
   // ── Git status IPC ────────────────────────────────────────────────

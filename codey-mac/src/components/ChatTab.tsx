@@ -28,6 +28,8 @@ import { ShimmerStatus } from './ShimmerStatus'
 import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
+import { applyMention, filterEntries, findActiveMention, splitMentionSegments } from './mentions'
+import type { ActiveMention, MentionFile } from './mentions'
 import { useGitStatus } from '../hooks/useGitStatus'
 import { BranchPicker } from './BranchPicker'
 import { CreatePrModal } from './CreatePrModal'
@@ -116,6 +118,12 @@ const FileIcon: React.FC<{ color: string; size?: number }> = ({ color, size = 14
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
     <path d="M14 2v6h6" />
+  </svg>
+)
+
+const FolderIcon: React.FC<{ color: string; size?: number }> = ({ color, size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
   </svg>
 )
 
@@ -841,6 +849,11 @@ export const ChatTab: React.FC<Props> = ({
   // remount that happens when switching chats (App.tsx keys ChatTab by chat id).
   const [input, setInput] = useState(() => getDraft(chatId).text)
   const [inputHistoryIndex, setInputHistoryIndex] = useState<number | null>(null)
+  // "@" file mentions: the workspace index, the token the caret is inside, and
+  // the highlighted row in the menu.
+  const [fileIndex, setFileIndex] = useState<MentionFile[]>([])
+  const [mention, setMention] = useState<ActiveMention | null>(null)
+  const [mentionIdx, setMentionIdx] = useState(0)
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   const [teamNames, setTeamNames] = useState<string[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
@@ -856,6 +869,8 @@ export const ChatTab: React.FC<Props> = ({
   const [slashCommands, setSlashCommands] = useState<Array<{ name: string; description: string; source: 'agent' | 'gateway' | 'skill' }>>([])
   const [slashIdx, setSlashIdx] = useState(0)
   const slashMenuRef = useRef<HTMLDivElement>(null)
+  const mentionMenuRef = useRef<HTMLDivElement>(null)
+  const highlightRef = useRef<HTMLDivElement>(null)
   const [panelTab, setPanelTab] = useState<ContextPanelTab>('current')
   const qqInputRef = useRef<HTMLTextAreaElement>(null)
   const { ask: askQuickQuestion } = useQuickQuestion()
@@ -1369,6 +1384,62 @@ export const ChatTab: React.FC<Props> = ({
     : []
   const showSlashMenu = filteredSlash.length > 0
 
+  // ── "@" file mentions ─────────────────────────────────────────────
+  // The index is fetched lazily: only once the user actually opens a mention,
+  // and never while the composer has no working dir to index.
+  useEffect(() => {
+    if (!mention || !workingDir) return
+    let stale = false
+    window.codey.workspaceFiles.list(workingDir).then(r => {
+      if (!stale && r.ok) setFileIndex(r.data)
+    })
+    return () => { stale = true }
+  }, [mention !== null, workingDir]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A chat can be rebound to a different worktree while mounted; the old
+  // repo's paths must not linger in the menu.
+  useEffect(() => { setFileIndex([]) }, [workingDir])
+
+  const mentionMatches = mention ? filterEntries(fileIndex, mention.query) : []
+  const showMentionMenu = mentionMatches.length > 0
+  useEffect(() => { setMentionIdx(0) }, [mention?.query, mention?.start])
+  useEffect(() => {
+    const el = mentionMenuRef.current?.children[mentionIdx] as HTMLElement | undefined
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [mentionIdx])
+
+  /** Re-read the caret after any edit/selection change and refresh the token. */
+  const syncMention = useCallback((text?: string) => {
+    const ta = taRef.current
+    if (!ta) return
+    setMention(findActiveMention(text ?? ta.value, ta.selectionStart ?? 0))
+  }, [])
+
+  // Sending, clearing, or restoring a draft all go through setInput without a
+  // caret event, so close the menu whenever the composer empties out.
+  useEffect(() => { if (!input) setMention(null) }, [input])
+
+  const knownPaths = React.useMemo(() => new Set(fileIndex.map(e => e.path)), [fileIndex])
+  const inputSegments = React.useMemo(
+    () => splitMentionSegments(input, p => knownPaths.has(p)),
+    [input, knownPaths],
+  )
+
+  const chooseMention = (entry: MentionFile) => {
+    if (!mention) return
+    const next = applyMention(input, mention, entry.path, entry.isDir)
+    setInputHistoryIndex(null)
+    setInput(next.text)
+    requestAnimationFrame(() => {
+      const ta = taRef.current
+      if (!ta) return
+      ta.focus()
+      try { ta.setSelectionRange(next.caret, next.caret) } catch { /* unsupported */ }
+      // A directory keeps the menu open so the next segment can be picked.
+      setMention(findActiveMention(next.text, next.caret))
+    })
+  }
+
   const onAgentChange = async (v: string) => {
     const nextAgent = v === '' ? null : v
     // Clear the model override when switching agents — the previous model id
@@ -1537,6 +1608,32 @@ export const ChatTab: React.FC<Props> = ({
   }
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // The mention menu claims the arrow/Enter keys first — it is only open when
+    // the caret is inside an "@" token, so it never shadows history navigation.
+    if (showMentionMenu) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setMentionIdx(i => Math.min(i + 1, mentionMatches.length - 1))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setMentionIdx(i => Math.max(i - 1, 0))
+        return
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault()
+        const entry = mentionMatches[mentionIdx]
+        if (entry) chooseMention(entry)
+        return
+      }
+      if (e.key === 'Escape') {
+        // Dismiss the menu only — the typed text stays put.
+        e.preventDefault()
+        setMention(null)
+        return
+      }
+    }
     if (showSlashMenu) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -2264,6 +2361,24 @@ export const ChatTab: React.FC<Props> = ({
             ))}
           </div>
         )}
+        {showMentionMenu && (
+          <div ref={mentionMenuRef} style={styles.slashMenu}>
+            {mentionMatches.map((entry, i) => (
+              <div
+                key={entry.path}
+                style={{ ...styles.slashMenuItem, ...(i === mentionIdx ? styles.slashMenuItemActive : {}) }}
+                onMouseDown={e => { e.preventDefault(); chooseMention(entry) }}
+                onMouseEnter={() => setMentionIdx(i)}
+              >
+                <span style={styles.mentionIcon}>
+                  {entry.isDir ? <FolderIcon color={C.fg3} size={13} /> : <FileIcon color={C.fg3} size={13} />}
+                </span>
+                <span style={styles.slashCmdName}>{entry.name}{entry.isDir ? '/' : ''}</span>
+                <span style={styles.slashCmdDesc}>{entry.path}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {uploadError && (
           <div style={styles.uploadError}>{uploadError}</div>
         )}
@@ -2307,24 +2422,46 @@ export const ChatTab: React.FC<Props> = ({
             </div>
           )}
           <div style={styles.composerInputRow}>
-            <textarea
-              ref={taRef}
-              value={input}
-              onChange={e => { setInputHistoryIndex(null); setInput(e.target.value) }}
-              onKeyDown={handleKey}
-              onInput={e => {
-                if (composerHeight != null) return // manual height pinned
-                const el = e.currentTarget
-                el.style.height = 'auto'
-                el.style.height = Math.min(el.scrollHeight, 120) + 'px'
-              }}
-              placeholder={composerPlaceholder({ coreFailed: !!coreFailed, isGatewayRunning, isSending })}
-              disabled={!isGatewayRunning || !!coreFailed}
-              rows={1}
-              style={composerHeight != null
-                ? { ...styles.input, height: composerHeight, maxHeight: 'none' }
-                : styles.input}
-            />
+            {/* The textarea sits on a mirror layer that paints a pill behind
+                every resolved "@" mention. The mirror renders the same text in
+                the same metrics but fully transparent, so only the pills show
+                through and the real text/caret/selection stay in the textarea. */}
+            <div style={styles.composerInputStack}>
+              <div
+                ref={highlightRef}
+                aria-hidden
+                style={composerHeight != null
+                  ? { ...styles.inputHighlight, height: composerHeight, maxHeight: 'none' }
+                  : styles.inputHighlight}
+              >
+                {inputSegments.map((seg, i) => (
+                  <span key={i} style={seg.isMention ? styles.inputHighlightMention : undefined}>{seg.text}</span>
+                ))}
+              </div>
+              <textarea
+                ref={taRef}
+                value={input}
+                onChange={e => { setInputHistoryIndex(null); setInput(e.target.value); syncMention(e.target.value) }}
+                onKeyDown={handleKey}
+                onKeyUp={() => syncMention()}
+                onClick={() => syncMention()}
+                onBlur={() => setMention(null)}
+                onScroll={e => { if (highlightRef.current) highlightRef.current.scrollTop = e.currentTarget.scrollTop }}
+                onInput={e => {
+                  if (composerHeight != null) return // manual height pinned
+                  const el = e.currentTarget
+                  el.style.height = 'auto'
+                  el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+                  if (highlightRef.current) highlightRef.current.style.height = el.style.height
+                }}
+                placeholder={composerPlaceholder({ coreFailed: !!coreFailed, isGatewayRunning, isSending })}
+                disabled={!isGatewayRunning || !!coreFailed}
+                rows={1}
+                style={composerHeight != null
+                  ? { ...styles.input, height: composerHeight, maxHeight: 'none' }
+                  : styles.input}
+              />
+            </div>
           </div>
           <div style={styles.composerToolbar}>
             <input
@@ -2728,7 +2865,23 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%', background: 'transparent', border: 'none', borderRadius: 8,
     color: C.fg, fontSize: 13, padding: '4px 2px', outline: 'none', resize: 'none',
     lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
+    position: 'relative' as const, zIndex: 1,
   },
+  composerInputStack: { position: 'relative' as const, flex: 1, minWidth: 0 },
+  // Must mirror `input`'s box and text metrics exactly, or the mention pills
+  // drift away from the characters they sit behind.
+  inputHighlight: {
+    position: 'absolute' as const, inset: 0, pointerEvents: 'none' as const,
+    fontSize: 13, padding: '4px 2px', lineHeight: 1.5,
+    maxHeight: 120, overflow: 'hidden' as const,
+    whiteSpace: 'pre-wrap' as const, overflowWrap: 'break-word' as const,
+    color: 'transparent',
+  },
+  inputHighlightMention: {
+    background: 'rgba(43,230,155,0.18)', borderRadius: 4,
+    boxShadow: '0 0 0 1px rgba(43,230,155,0.35)',
+  },
+  mentionIcon: { display: 'flex', alignItems: 'center', flexShrink: 0 },
   sendButton: {
     width: 38, height: 38, borderRadius: 11, border: 'none',
     display: 'flex', alignItems: 'center', justifyContent: 'center',

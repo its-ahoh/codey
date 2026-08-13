@@ -207,6 +207,9 @@ contextBridge.exposeInMainWorld('codey', {
       return () => ipcRenderer.removeListener('pairing:event', listener)
     },
   },
+  workspaceFiles: {
+    list: (workingDir: string) => ipcRenderer.invoke('workspace:files', workingDir),
+  },
   git: {
     status: (workingDir: string) => ipcRenderer.invoke('git:status', workingDir),
     branches: (workingDir: string) => ipcRenderer.invoke('git:branches', workingDir),
