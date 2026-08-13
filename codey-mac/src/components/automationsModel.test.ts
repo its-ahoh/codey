@@ -1,6 +1,6 @@
 // codey-mac/src/components/automationsModel.test.ts
 import { describe, it, expect } from 'vitest'
-import { scheduleSummary, scheduleChipLabel, slotsToSchedule, nextRunAt, humanizeDelta, draftComplete, formatHHMM, knobsFrom, knobsEqual, checkLabel } from './automationsModel'
+import { scheduleSummary, scheduleChipLabel, slotsToSchedule, nextRunAt, humanizeDelta, draftComplete, formatHHMM, knobsFrom, knobsEqual, checkBanner } from './automationsModel'
 
 const t = (hour: number, minute: number, daysOfWeek?: number[]) => ({ hour, minute, ...(daysOfWeek ? { daysOfWeek } : {}) })
 
@@ -220,12 +220,27 @@ describe('draftComplete', () => {
   })
 })
 
-describe('checkLabel', () => {
-  it('maps each check state to its status-row label', () => {
-    expect(checkLabel('pending')).toEqual({ text: 'Checking setup…', tone: 'dim' })
-    expect(checkLabel('clean')).toEqual({ text: 'Ready to run unattended', tone: 'good' })
-    expect(checkLabel('gaps')).toEqual({ text: 'Needs clarification', tone: 'warn' })
-    expect(checkLabel('error')).toEqual({ text: 'Check couldn’t run', tone: 'dim' })
-    expect(checkLabel(undefined)).toEqual({ text: 'Not verified yet', tone: 'dim' })
+describe('checkBanner', () => {
+  it('shows nothing for a clean or absent check', () => {
+    expect(checkBanner(undefined)).toBeNull()
+    expect(checkBanner({ status: 'clean', at: 1 })).toBeNull()
+  })
+
+  it('announces a run in progress without offering actions', () => {
+    expect(checkBanner({ status: 'pending', at: 1 }))
+      .toEqual({ tone: 'neutral', title: 'Dry run in progress…', actions: false })
+  })
+
+  it('lists the questions for gaps', () => {
+    expect(checkBanner({ status: 'gaps', questions: ['Which account?'], at: 1 })).toEqual({
+      tone: 'warn', title: 'Dry run found things to pin down',
+      questions: ['Which account?'], actions: true,
+    })
+  })
+
+  it('keeps an errored run low-key — it is usually the environment, not the setup', () => {
+    expect(checkBanner({ status: 'error', detail: 'agent died', at: 1 })).toEqual({
+      tone: 'muted', title: 'Last dry run didn’t complete', actions: true,
+    })
   })
 })

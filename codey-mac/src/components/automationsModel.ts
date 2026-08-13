@@ -2,6 +2,7 @@
 // Pure helpers for the Automations view — kept separate for unit tests.
 
 import { isScheduled } from '../../../packages/core/src/types/automation'
+import type { AutomationCheck } from '../../../packages/core/src/types/automation'
 
 export interface ScheduleSlotLike { hour: number; minute: number; daysOfWeek?: number[] }
 export interface ScheduleLike { slots: ScheduleSlotLike[]; tz: string }
@@ -218,17 +219,28 @@ export function draftComplete(d: DraftLike): boolean {
   )
 }
 
-export type CheckTone = 'dim' | 'good' | 'warn'
+export type CheckTone = 'neutral' | 'warn' | 'muted'
 
-/** Status-row label for the authoring dry-run check. */
-export function checkLabel(
-  check: 'pending' | 'clean' | 'gaps' | 'error' | undefined,
-): { text: string; tone: CheckTone } {
-  switch (check) {
-    case 'pending': return { text: 'Checking setup…', tone: 'dim' }
-    case 'clean': return { text: 'Ready to run unattended', tone: 'good' }
-    case 'gaps': return { text: 'Needs clarification', tone: 'warn' }
-    case 'error': return { text: 'Check couldn’t run', tone: 'dim' }
-    default: return { text: 'Not verified yet', tone: 'dim' }
+export interface CheckBanner {
+  tone: CheckTone
+  title: string
+  /** Present for 'gaps'. */
+  questions?: string[]
+  /** Re-run / Dismiss only make sense once a run has finished. */
+  actions: boolean
+}
+
+/** One-pager banner for the advisory dry run. A clean or absent check renders
+ *  nothing — the banner exists to raise problems, not to congratulate. */
+export function checkBanner(check: AutomationCheck | undefined): CheckBanner | null {
+  switch (check?.status) {
+    case 'pending':
+      return { tone: 'neutral', title: 'Dry run in progress…', actions: false }
+    case 'gaps':
+      return { tone: 'warn', title: 'Dry run found things to pin down', questions: check.questions ?? [], actions: true }
+    case 'error':
+      return { tone: 'muted', title: 'Last dry run didn’t complete', actions: true }
+    default:
+      return null
   }
 }
