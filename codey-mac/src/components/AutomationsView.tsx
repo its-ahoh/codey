@@ -243,6 +243,9 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
                     <span style={nameRow}>
                       <strong style={automationName}>{a.name}</strong>
                       <span style={statusPill(health.color)}><span style={{ ...statusDot, background: health.color }} />{health.label}</span>
+                      {a.check?.status === 'gaps' && (
+                        <span style={gapsMarker} title="Dry run found things to pin down">!</span>
+                      )}
                     </span>
                     <span style={metaRow}>
                       {scheduled ? (
@@ -318,6 +321,11 @@ const cardCopy: React.CSSProperties = { display: 'flex', flexDirection: 'column'
 const nameRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }
 const automationName: React.CSSProperties = { color: C.fg, fontSize: 13, fontWeight: 720, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const statusPill = (color: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, padding: '2px 6px', borderRadius: 999, color, background: C.surface3, fontSize: 9, fontWeight: 700 })
+const gapsMarker: React.CSSProperties = {
+  width: 15, height: 15, borderRadius: 999, flexShrink: 0,
+  display: 'grid', placeItems: 'center',
+  background: C.yellow, color: C.bg, fontSize: 10, fontWeight: 800,
+}
 const statusDot: React.CSSProperties = { width: 5, height: 5, borderRadius: 999 }
 const targetLine: React.CSSProperties = { color: C.fg3, fontSize: 10, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const metaRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }
