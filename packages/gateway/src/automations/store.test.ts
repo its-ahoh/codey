@@ -114,6 +114,24 @@ describe('definitions', () => {
     expect(back.enabled).toBe(false);
     expect(back.lastFiredAt).toBe(333);
   });
+
+  it('writes and clears the advisory check without touching updatedAt', () => {
+    const a = store.create(draft(), 111);
+    store.setCheck(a.id, { status: 'pending', at: 222 });
+    expect(store.get(a.id)!.check).toEqual({ status: 'pending', at: 222 });
+    expect(store.get(a.id)!.updatedAt).toBe(111);
+
+    store.setCheck(a.id, { status: 'gaps', questions: ['Which account?'], at: 333 });
+    expect(store.get(a.id)!.check).toEqual({ status: 'gaps', questions: ['Which account?'], at: 333 });
+
+    store.setCheck(a.id, undefined);
+    expect(store.get(a.id)!.check).toBeUndefined();
+    expect(JSON.stringify(store.get(a.id))).not.toContain('check');
+  });
+
+  it('setCheck on an unknown id is a no-op', () => {
+    expect(() => store.setCheck('nope', { status: 'clean', at: 1 })).not.toThrow();
+  });
 });
 
 describe('run history', () => {
