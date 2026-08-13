@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   C, applyTheme, applyPalette, getStoredThemeMode, getStoredPalette,
-  paletteToCssVars, classicLight, classicDark, terminalLight, terminalDark,
+  paletteThemeCss,
 } from '../theme'
 
 // Spotlight-style capture UI rendered in its own frameless BrowserWindow
@@ -232,13 +232,7 @@ export const CaptureWindow: React.FC = () => {
       {error && <div style={styles.error}>{error}</div>}
       <style>{`
   /* Same theme matrix as App.tsx so applyTheme/applyPalette take effect. */
-  :root { ${paletteToCssVars(classicDark)} }
-  :root[data-theme="light"] { ${paletteToCssVars(classicLight)} }
-  :root[data-theme="dark"] { ${paletteToCssVars(classicDark)} }
-  :root[data-palette="classic"][data-theme="light"] { ${paletteToCssVars(classicLight)} }
-  :root[data-palette="classic"][data-theme="dark"] { ${paletteToCssVars(classicDark)} }
-  :root[data-palette="terminal"][data-theme="light"] { ${paletteToCssVars(terminalLight)} }
-  :root[data-palette="terminal"][data-theme="dark"] { ${paletteToCssVars(terminalDark)} }
+  ${paletteThemeCss()}
   html, body, #root { margin: 0; background: transparent; }
   body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
   * { box-sizing: border-box; }

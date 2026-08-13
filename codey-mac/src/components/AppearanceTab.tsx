@@ -1,6 +1,6 @@
 // codey-mac/src/components/AppearanceTab.tsx
 import React from 'react'
-import { C, ThemeMode, PaletteName, PALETTES, useThemeMode, useEffectiveTheme, usePaletteName } from '../theme'
+import { C, ThemeMode, PaletteName, PaletteDefinition, PALETTES, useThemeMode, useEffectiveTheme, usePaletteName } from '../theme'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { Section, pageStyle } from './settingsAtoms'
 import { getStatusPanelEnabled, setStatusPanelEnabled } from './statusPanelPref'
@@ -11,10 +11,7 @@ const OPTIONS: { value: ThemeMode; label: string }[] = [
   { value: 'system', label: 'System' },
 ]
 
-const PALETTE_OPTIONS: { value: PaletteName; label: string }[] = [
-  { value: 'classic',  label: PALETTES.classic.label  },
-  { value: 'terminal', label: PALETTES.terminal.label },
-]
+const PALETTE_OPTIONS = Object.entries(PALETTES) as [PaletteName, PaletteDefinition][]
 
 const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void }> = ({ on, onChange }) => (
   <div onClick={() => onChange(!on)} style={{
@@ -35,6 +32,7 @@ export const AppearanceTab: React.FC = () => {
   const [mode, setMode] = useThemeMode()
   const [palette, setPalette] = usePaletteName()
   const effective = useEffectiveTheme()
+  const previewMode = mode === 'system' ? effective : mode
   const [version, setVersion] = React.useState<string>('')
   const [skipPerms, setSkipPerms] = React.useState<boolean>(true)
   const [notifyEnabled, setNotifyEnabled] = React.useState<boolean>(true)
@@ -126,25 +124,42 @@ export const AppearanceTab: React.FC = () => {
         </div>
       </div>
 
-      <div style={styles.settingRow}>
-        <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
-          <div>Theme</div>
-          <div style={styles.settingDesc}>
-            {palette === 'terminal'
-              ? 'Warm paper and terminal green.'
-              : 'The original macOS-style colors.'}
-          </div>
+      <div style={{ ...styles.settingRow, ...styles.themeRow }}>
+        <div style={{ ...styles.label, width: 'auto' }}>
+          <div>Color theme</div>
+          <div style={styles.settingDesc}>Choose a palette. Each one adapts to Light and Dark mode.</div>
         </div>
-        <select
-          aria-label="Color theme"
-          value={palette}
-          onChange={(e) => setPalette(e.target.value as PaletteName)}
-          style={styles.select}
-        >
-          {PALETTE_OPTIONS.map(opt => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
+        <div role="radiogroup" aria-label="Color theme" style={styles.paletteGrid}>
+          {PALETTE_OPTIONS.map(([name, definition]) => {
+            const active = palette === name
+            const preview = definition[previewMode]
+            return (
+              <button
+                key={name}
+                role="radio"
+                aria-checked={active}
+                onClick={() => setPalette(name)}
+                style={{
+                  ...styles.paletteCard,
+                  background: active ? C.accentDim : C.surface2,
+                  borderColor: active ? C.accent : C.border,
+                  boxShadow: active ? `0 0 0 1px ${C.accentDim}` : 'none',
+                }}
+              >
+                <span style={{ ...styles.palettePreview, background: preview.bg, borderColor: preview.border2 }}>
+                  <span style={{ ...styles.previewSidebar, background: preview.surface }} />
+                  <span style={{ ...styles.previewLine, background: preview.fg3 }} />
+                  <span style={{ ...styles.previewAccent, background: preview.accent }} />
+                </span>
+                <span style={styles.paletteCopy}>
+                  <span style={{ ...styles.paletteName, color: active ? C.accent : C.fg }}>{definition.label}</span>
+                  <span style={styles.paletteDescription}>{definition.description}</span>
+                </span>
+                <span aria-hidden="true" style={{ ...styles.check, opacity: active ? 1 : 0 }}>✓</span>
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       <div style={styles.settingRow}>
@@ -274,16 +289,22 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
     cursor: 'pointer',
   },
-  select: {
-    background: C.surface2,
-    color: C.fg,
-    border: `1px solid ${C.border}`,
-    borderRadius: 8,
-    padding: '8px 10px',
-    fontSize: 12,
-    fontWeight: 500,
-    cursor: 'pointer',
-    minWidth: 140,
+  themeRow: { flexDirection: 'column', alignItems: 'stretch', gap: 12 },
+  paletteGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 },
+  paletteCard: {
+    minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, position: 'relative',
+    padding: 10, border: '1px solid', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
   },
+  palettePreview: {
+    width: 48, height: 36, flexShrink: 0, position: 'relative', overflow: 'hidden',
+    border: '1px solid', borderRadius: 7,
+  },
+  previewSidebar: { position: 'absolute', inset: '0 auto 0 0', width: 14 },
+  previewLine: { position: 'absolute', left: 20, top: 10, width: 18, height: 3, borderRadius: 2, opacity: 0.72 },
+  previewAccent: { position: 'absolute', left: 20, top: 19, width: 21, height: 8, borderRadius: 4 },
+  paletteCopy: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 },
+  paletteName: { fontSize: 12, fontWeight: 650 },
+  paletteDescription: { color: C.fg3, fontSize: 10, lineHeight: 1.35 },
+  check: { marginLeft: 'auto', color: C.accent, fontSize: 12, fontWeight: 800 },
   value: { fontSize: 13, color: C.fg2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
 }
