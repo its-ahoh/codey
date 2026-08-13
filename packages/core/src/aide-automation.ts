@@ -19,6 +19,24 @@ export function renderBrief(brief: string, params: Record<string, string>): stri
   return `${out}\n\nParameters:\n${leftovers.map(([k, v]) => `- ${k}: ${v}`).join('\n')}`;
 }
 
+/** What actually executes, canonicalized. Renaming, rescheduling or changing
+ *  the notify mode leaves this unchanged, so those edits never cost the user a
+ *  fresh dry run. Key order and surrounding whitespace are normalized because
+ *  a spurious difference here spawns a real agent process. */
+export function executionFingerprint(a: {
+  target?: AutomationTarget;
+  brief?: string;
+  params?: Record<string, string>;
+}): string {
+  const t = a.target;
+  const target = !t ? null
+    : t.kind === 'team'
+      ? { kind: 'team', workspaceName: t.workspaceName, teamName: t.teamName }
+      : { kind: 'prompt', workspaceName: t.workspaceName, agent: t.agent ?? null, model: t.model ?? null };
+  const params = Object.entries(a.params ?? {}).sort(([x], [y]) => x.localeCompare(y));
+  return JSON.stringify({ target, brief: a.brief?.trim() ?? '', params });
+}
+
 // ---- Conversational authoring (chat-driven creation/edit) ----
 
 /** Partial automation assembled turn-by-turn during the authoring chat. */

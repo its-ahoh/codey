@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   renderBrief, automationChatTurn, buildDryRunPrompt, classifyDryRun,
-  formatTranscript, MAX_CHAT_HISTORY,
+  formatTranscript, MAX_CHAT_HISTORY, executionFingerprint,
 } from './aide-automation';
 import type { AideOptions } from './aide';
 import type { AgentRequest, AgentResponse } from './types';
@@ -228,5 +228,35 @@ describe('automationChatTurn budget', () => {
       agent: 'claude-code', runner, retries: 0,
     })).rejects.toThrow('socket hang up');
     expect(calls).toBe(1);
+  });
+});
+
+describe('executionFingerprint', () => {
+  const base = {
+    target: { kind: 'prompt' as const, workspaceName: 'default' },
+    brief: 'Post five items.',
+    params: { a: '1', b: '2' },
+  };
+
+  it('ignores everything that does not change what runs', () => {
+    expect(executionFingerprint({ ...base, brief: '  Post five items.  ' }))
+      .toBe(executionFingerprint(base));
+    expect(executionFingerprint({ ...base, params: { b: '2', a: '1' } }))
+      .toBe(executionFingerprint(base));
+    expect(executionFingerprint({ ...base, target: { kind: 'prompt', workspaceName: 'default', agent: undefined } }))
+      .toBe(executionFingerprint(base));
+  });
+
+  it('changes when the target, brief or params change', () => {
+    expect(executionFingerprint({ ...base, brief: 'Post six items.' })).not.toBe(executionFingerprint(base));
+    expect(executionFingerprint({ ...base, params: { a: '9', b: '2' } })).not.toBe(executionFingerprint(base));
+    expect(executionFingerprint({ ...base, target: { kind: 'prompt', workspaceName: 'blog' } }))
+      .not.toBe(executionFingerprint(base));
+    expect(executionFingerprint({ ...base, target: { kind: 'prompt', workspaceName: 'default', model: 'opus' } }))
+      .not.toBe(executionFingerprint(base));
+  });
+
+  it('treats an empty draft as its own fingerprint', () => {
+    expect(executionFingerprint({})).toBe(executionFingerprint({ params: {} }));
   });
 });
