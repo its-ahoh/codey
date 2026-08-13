@@ -111,6 +111,9 @@ export interface Automation {
   report: AutomationReport;
   /** Hidden system chat this automation executes in (created lazily). */
   chatId?: string;
+  /** Advisory verdict from the last background dry run. Absent on records
+   *  written before this existed, and after the user dismisses it. */
+  check?: AutomationCheck;
   /** Last slot fired, for double-fire protection. Never used to back-fire. */
   lastFiredAt?: number;
   createdAt: number;
@@ -161,8 +164,19 @@ export interface AutomationRun {
   notifiedAt?: number;
 }
 
-/** Status of the authoring-time dry-run check for a chat session. */
+/** Status of an automation's advisory dry-run check. */
 export type AutomationCheckStatus = 'pending' | 'clean' | 'gaps' | 'error';
+
+/** Advisory result of the last unattended dry run. Never blocks saving:
+ *  the automation is already persisted by the time a verdict arrives. */
+export interface AutomationCheck {
+  status: AutomationCheckStatus;
+  /** Present when status === 'gaps'. */
+  questions?: string[];
+  /** Present when status === 'error'. */
+  detail?: string;
+  at: number;
+}
 
 export type AutomationEvent =
   | {
@@ -172,15 +186,9 @@ export type AutomationEvent =
       run?: AutomationRun;
     }
   | {
-      /** Dry-run verdict for an authoring chat session (never 'pending' -
-       *  pending is signaled by the ChatStep that triggered the check). */
-      type: 'chat-check';
-      sessionId: string;
-      check: Exclude<AutomationCheckStatus, 'pending'>;
-      questions?: string[];
-      /** Assistant message the gateway appended to the session, so the
-       *  renderer can show it without waiting for the next turn. */
-      message?: string;
-      /** Failure detail when check === 'error' (tooltip only, not a chat message). */
-      detail?: string;
+      /** The automation's advisory check changed. An absent `check` means it
+       *  was dismissed and the banner should disappear. */
+      type: 'automation-check';
+      automationId: string;
+      check?: AutomationCheck;
     };
