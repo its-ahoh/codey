@@ -131,7 +131,7 @@ describe('CHAT_TURN_PROMPT readiness gate', () => {
     expect(captured).not.toMatch(/scheduling has been explicitly discussed/i);
     expect(captured).toMatch(/scheduling is NOT required for ready/i);
     expect(captured).not.toMatch(/and eventually scheduling/i);
-    expect(captured).toMatch(/dry-run findings/i);
+    expect(captured).not.toMatch(/dry-run findings/i);
     expect(captured).toMatch(/clearly scoped change/i);
     expect(captured).toMatch(/DO NOT restart the setup interview/i);
     expect(captured).toMatch(/Ask a follow-up only when the requested edit itself is ambiguous/i);
@@ -194,5 +194,39 @@ describe('formatTranscript', () => {
     expect(lines[1]).toBe('User: m6');
     expect(lines[lines.length - 1]).toBe('You: m29');
     expect(out).not.toContain('m5');
+  });
+});
+
+describe('automationChatTurn budget', () => {
+  const ctx2 = {
+    workspaces: ['default'], teams: [], tz: 'Asia/Shanghai',
+    nowIso: 'Fri Jul 11 2026 10:00:00 GMT+0800', mode: 'create' as const,
+  };
+
+  it('asks for a 90s budget and one retry, and survives one transient failure', async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    let calls = 0;
+    const runner = async (req: AgentRequest): Promise<AgentResponse> => {
+      seen.push(req.signal);
+      if (++calls === 1) throw new Error('socket hang up');
+      return { success: true, output: '{"reply":"ok"}' } as AgentResponse;
+    };
+    const t = await automationChatTurn([{ role: 'user', text: 'hi' }], {}, ctx2, {
+      agent: 'claude-code', runner, retryDelayMs: 0,
+    });
+    expect(t.reply).toBe('ok');
+    expect(calls).toBe(2);
+  });
+
+  it('lets an explicit caller budget win', async () => {
+    let calls = 0;
+    const runner = async (_req: AgentRequest): Promise<AgentResponse> => {
+      calls++;
+      throw new Error('socket hang up');
+    };
+    await expect(automationChatTurn([{ role: 'user', text: 'hi' }], {}, ctx2, {
+      agent: 'claude-code', runner, retries: 0,
+    })).rejects.toThrow('socket hang up');
+    expect(calls).toBe(1);
   });
 });

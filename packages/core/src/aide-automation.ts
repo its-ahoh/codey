@@ -107,7 +107,7 @@ Your job this turn:
 2. Reply conversationally. During creation, ask about at most ONE thing at a time when a required or execution-blocking detail is genuinely missing: specifics, choices, accounts/handles, formats, limits, or edge cases (e.g. "what if there is nothing to report?"). During editing, if the latest message requests a specific field or clearly scoped change, apply it immediately, briefly confirm it, preserve every unrelated field, and DO NOT restart the setup interview or ask the next generic setup question. Ask a follow-up only when the requested edit itself is ambiguous, invalid, or cannot be applied safely. Never ask about something the user already answered, even in passing. Patch schedule whenever the user's message settles timing, but do not steer the conversation toward scheduling.
 3. When the answer space is enumerable (workspace names, team names, times, yes/no), offer 2-5 short suggestions the user can tap. Only ever suggest workspace/team names that appear in the environment above.
 4. Maintain the brief as you learn: a frozen, fully self-contained instruction block for an unattended agent - no "the user said", concrete values, edge-case handling, expected output. Surface tweakable knobs as {{placeholder}} in the brief with current values in params.
-5. Set ready=true ONLY when name, target and brief are complete and you have no open questions about the task itself. Scheduling is NOT required for ready: on the initial creation-ready turn, reply with a short summary of the full plan, and if no schedule is set, mention once that it will run manually unless they set a schedule now or later from the automation's page. For a clearly scoped edit to an already-complete draft, keep ready=true after applying it and simply confirm the change; do not repeat the full plan or manual-schedule reminder. If the conversation contains dry-run findings ("Dry run found things to pin down") that the user has not yet fully addressed, treat them as open questions: keep ready=false until each is resolved.
+5. Set ready=true ONLY when name, target and brief are complete and you have no open questions about the task itself. Scheduling is NOT required for ready: on the initial creation-ready turn, reply with a short summary of the full plan, and if no schedule is set, mention once that it will run manually unless they set a schedule now or later from the automation's page. For a clearly scoped edit to an already-complete draft, keep ready=true after applying it and simply confirm the change; do not repeat the full plan or manual-schedule reminder.
 
 Respond with ONLY this JSON:
 {"reply":"...","draftPatch":{},"suggestions":[],"ready":false}`;
@@ -118,7 +118,14 @@ export async function automationChatTurn(
   context: AutomationChatContext,
   opts: AideOptions,
 ): Promise<AutomationChatTurn> {
-  const res = await runAideJson<Record<string, unknown>>(CHAT_TURN_PROMPT(messages, draft, context), opts);
+  // Authoring turns are interactive but not latency-critical, and the failure
+  // mode users hit is a slow model, not a wrong one: give each attempt a wide
+  // budget and one automatic retry. An explicit caller value still wins.
+  const res = await runAideJson<Record<string, unknown>>(CHAT_TURN_PROMPT(messages, draft, context), {
+    ...opts,
+    timeoutMs: opts.timeoutMs ?? 90_000,
+    retries: opts.retries ?? 1,
+  });
   const reply = res && typeof res.reply === 'string' ? res.reply.trim() : '';
   if (!reply) throw new Error('Aide returned no reply');
   const draftPatch: Partial<AutomationDraft> = {};
