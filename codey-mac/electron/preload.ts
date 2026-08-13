@@ -49,8 +49,9 @@ contextBridge.exposeInMainWorld('codey', {
     chatStart: (mode: 'create' | 'edit', automationId?: string) => ipcRenderer.invoke('automations:chat:start', mode, automationId),
     chatSend: (sessionId: string, text: string) => ipcRenderer.invoke('automations:chat:send', sessionId, text),
     chatPatch: (sessionId: string, patch: any) => ipcRenderer.invoke('automations:chat:patch', sessionId, patch),
-    chatRetryCheck: (sessionId: string) => ipcRenderer.invoke('automations:chat:retryCheck', sessionId),
-    chatSave: (sessionId: string, allowUnchecked?: boolean) => ipcRenderer.invoke('automations:chat:save', sessionId, allowUnchecked),
+    chatSave: (sessionId: string) => ipcRenderer.invoke('automations:chat:save', sessionId),
+    recheck: (id: string) => ipcRenderer.invoke('automations:recheck', id),
+    dismissCheck: (id: string) => ipcRenderer.invoke('automations:dismissCheck', id),
     chatCancel: (sessionId: string) => ipcRenderer.invoke('automations:chat:cancel', sessionId),
     onEvent: (handler: (ev: any) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, ev: any) => handler(ev)

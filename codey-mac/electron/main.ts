@@ -2717,17 +2717,24 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('automations:chat:retryCheck', async (_e, sessionId: string) =>
+  ipcMain.handle('automations:chat:save', async (_e, sessionId: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not ready')
-      return inProcessGateway.retryAutomationChatCheck(sessionId)
+      return inProcessGateway.saveAutomationChat(sessionId)
     })
   )
 
-  ipcMain.handle('automations:chat:save', async (_e, sessionId: string, allowUnchecked?: boolean) =>
+  ipcMain.handle('automations:recheck', async (_e, id: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not ready')
-      return inProcessGateway.saveAutomationChat(sessionId, allowUnchecked === true)
+      inProcessGateway.recheckAutomation(id)
+    })
+  )
+
+  ipcMain.handle('automations:dismissCheck', async (_e, id: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      inProcessGateway.dismissAutomationCheck(id)
     })
   )
 

@@ -193,8 +193,9 @@ declare global {
         chatStart: (mode: 'create' | 'edit', automationId?: string) => Promise<IpcResult<ChatStep>>
         chatSend: (sessionId: string, text: string) => Promise<IpcResult<ChatStep>>
         chatPatch: (sessionId: string, patch: Partial<AutomationDraft>) => Promise<IpcResult<ChatStep>>
-        chatRetryCheck: (sessionId: string) => Promise<IpcResult<ChatStep>>
-        chatSave: (sessionId: string, allowUnchecked?: boolean) => Promise<IpcResult<Automation>>
+        chatSave: (sessionId: string) => Promise<IpcResult<Automation>>
+        recheck: (id: string) => Promise<IpcResult<void>>
+        dismissCheck: (id: string) => Promise<IpcResult<void>>
         chatCancel: (sessionId: string) => Promise<IpcResult<void>>
         onEvent: (handler: (ev: AutomationEvent) => void) => () => void
         onUnseen: (handler: (msg: { automationId: string; runIds: string[] }) => void) => () => void
