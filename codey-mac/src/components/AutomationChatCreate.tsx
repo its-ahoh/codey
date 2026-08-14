@@ -5,7 +5,7 @@ import { C } from '../theme'
 import { pillButton, unwrap, inputStyle, selectStyle } from './settingsAtoms'
 import { Markdown } from './Markdown'
 import {
-  checkLabel, draftComplete, formatHHMM, NOTIFY_OPTIONS, scheduleSummary,
+  draftComplete, formatHHMM, NOTIFY_OPTIONS, scheduleSummary,
   slotsToSchedule, type NotifyMode, type ScheduleSlotInput,
 } from './automationsModel'
 import type { AutomationDraft } from '../../../packages/core/src/aide-automation'
@@ -37,31 +37,20 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
   const [draft, setDraft] = useState<AutomationDraft>({})
   const [context, setContext] = useState<ComposerContext>({ workspaces: [], teams: [], agents: [], models: [], tz: Intl.DateTimeFormat().resolvedOptions().timeZone })
   const [suggestions, setSuggestions] = useState<string[]>([])
-  const [ready, setReady] = useState(false)
-  const [check, setCheck] = useState<ChatStep['check']>(undefined)
-  const [checkDetail, setCheckDetail] = useState<string | undefined>()
   const [chatBusy, setChatBusy] = useState(false)
   const [formBusy, setFormBusy] = useState(false)
   const [saving, setSaving] = useState(false)
   const [failedText, setFailedText] = useState<string | null>(null)
+  const [failedError, setFailedError] = useState<string | null>(null)
   const [sessionLost, setSessionLost] = useState(false)
   const [input, setInput] = useState('')
   const [newParam, setNewParam] = useState('')
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const saveAfterCheckRef = useRef(false)
-
-  // A check event can beat the request response that triggered it. A resolved
-  // verdict wins over a stale pending response; callers clear first when they
-  // intentionally re-arm a check.
-  const applyCheck = (incoming: ChatStep['check']) =>
-    setCheck(prev => incoming === 'pending' && prev !== undefined && prev !== 'pending' ? prev : incoming)
 
   const applyStep = (step: ChatStep, appendReply = false) => {
     setDraft(step.draft)
     setContext(step.context)
     setSuggestions(step.suggestions)
-    setReady(step.ready)
-    applyCheck(step.check)
     if (appendReply && step.reply) setMessages(prev => [...prev, { role: 'assistant', text: step.reply }])
   }
 
@@ -81,7 +70,6 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     setSessionId(step.sessionId)
     setMessages([{ role: 'assistant', text: step.reply }])
     setSessionLost(false)
-    setCheckDetail(undefined)
     applyStep(step)
   }, [mode, automationId])
 
@@ -90,16 +78,6 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     void begin().catch((e: any) => { if (!cancelled) setError(e?.message ?? String(e)) })
     return () => { cancelled = true }
   }, [begin, setError])
-
-  useEffect(() => {
-    if (!sessionId) return
-    return window.codey.automations.onEvent(ev => {
-      if (ev.type !== 'chat-check' || ev.sessionId !== sessionId) return
-      applyCheck(ev.check)
-      setCheckDetail(ev.detail)
-      if (ev.message) setMessages(ms => [...ms, { role: 'assistant', text: ev.message! }])
-    })
-  }, [sessionId])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
@@ -111,18 +89,20 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     if (!sid || !trimmed || chatBusy || formBusy) return
     setChatBusy(true)
     setFailedText(null)
+    setFailedError(null)
     setSuggestions([])
-    setCheck(undefined)
     if (!retry) setMessages(prev => [...prev, { role: 'user', text: trimmed }])
     try {
       const step: ChatStep = unwrap(await window.codey.automations.chatSend(sid, trimmed))
       applyStep(step, true)
     } catch (e: any) {
-      if (/Unknown automation chat session/.test(e?.message ?? '')) {
+      const message = e?.message ?? String(e)
+      if (/Unknown automation chat session/.test(message)) {
         setSessionLost(true)
         setInput(trimmed)
       } else {
         setFailedText(trimmed)
+        setFailedError(message)
       }
     } finally {
       setChatBusy(false)
@@ -133,7 +113,6 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     const sid = sessionIdRef.current
     if (!sid || formBusy || chatBusy) return
     setFormBusy(true)
-    setCheck(undefined)
     try {
       const step: ChatStep = unwrap(await window.codey.automations.chatPatch(sid, patch as any))
       applyStep(step)
@@ -151,22 +130,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     void send(text)
   }
 
-  const finishSave = async (sid: string, allowUnchecked = false) => {
-    if (allowUnchecked && !confirm('The unattended check failed. Save this automation anyway?')) {
-      setSaving(false)
-      return
-    }
-    try {
-      unwrap(await window.codey.automations.chatSave(sid, allowUnchecked))
-      sessionIdRef.current = null
-      onDone()
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
-      setSaving(false)
-    }
-  }
-
-  const save = async (allowUnchecked = false) => {
+  const save = async () => {
     const sid = sessionIdRef.current
     if (!sid || saving) return
     setSaving(true)
@@ -174,7 +138,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
       // Flush the visible form before finalizing. Text fields intentionally
       // keep local state while typing, so relying only on blur can otherwise
       // race a click on Save and persist the previous value.
-      const synced: ChatStep = unwrap(await window.codey.automations.chatPatch(sid, {
+      unwrap(await window.codey.automations.chatPatch(sid, {
         name: (draft.name?.trim() || null) as any,
         target: (draft.target ?? null) as any,
         schedule: (draft.schedule ?? null) as any,
@@ -182,47 +146,14 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
         brief: (draft.brief?.trim() || null) as any,
         params: draft.params ?? {},
       }))
-      applyStep(synced)
-      if (synced.check === 'clean' || (allowUnchecked && synced.check === 'error')) {
-        await finishSave(sid, allowUnchecked)
-        return
-      }
-      // Saving doubles as the verification fallback. Keep the save intent
-      // armed so a clean result persists automatically without a second click.
-      saveAfterCheckRef.current = true
-      const checking: ChatStep = unwrap(await window.codey.automations.chatRetryCheck(sid))
-      applyStep(checking)
+      unwrap(await window.codey.automations.chatSave(sid))
+      sessionIdRef.current = null
+      onDone()
     } catch (e: any) {
-      saveAfterCheckRef.current = false
       setError(e?.message ?? String(e))
       setSaving(false)
     }
   }
-
-  const retryCheck = async () => {
-    const sid = sessionIdRef.current
-    if (!sid || check === 'pending') return
-    setCheck('pending')
-    try {
-      const step: ChatStep = unwrap(await window.codey.automations.chatRetryCheck(sid))
-      applyStep(step)
-    } catch (e: any) {
-      setCheck(undefined)
-      setError(e?.message ?? String(e))
-    }
-  }
-
-  useEffect(() => {
-    if (!saveAfterCheckRef.current) return
-    if (check === 'clean') {
-      saveAfterCheckRef.current = false
-      const sid = sessionIdRef.current
-      if (sid) void finishSave(sid)
-    } else if (check === 'gaps' || check === 'error') {
-      saveAfterCheckRef.current = false
-      setSaving(false)
-    }
-  }, [check])
 
   const setTargetKind = (kind: 'prompt' | 'team') => {
     const workspaceName = draft.target?.workspaceName || context.workspaces[0] || ''
@@ -264,7 +195,6 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
     draft.target?.kind === 'team' && !draft.target.teamName?.trim() && 'team',
     !draft.brief?.trim() && 'instructions',
   ].filter(Boolean) as string[]
-  const checkInfo = checkLabel(check)
   const locked = chatBusy || formBusy || saving || sessionLost
 
   return (
@@ -284,7 +214,9 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
           {chatBusy && <div style={{ ...bubbleAssistant, color: C.fg3, fontStyle: 'italic' }}>Refining the automation…</div>}
           {failedText && (
             <div style={{ ...bubbleAssistant, borderColor: C.red, color: C.red }}>
-              That message did not go through. <button style={inlineButton} onClick={() => void send(failedText, true)}>Retry</button>
+              {failedError ?? 'That message did not go through.'}
+              {' '}<button style={inlineButton} onClick={() => void send(failedText, true)}>Retry</button>
+              <div style={{ color: C.fg3, marginTop: 6 }}>You can also fill in the form on the right and save directly.</div>
             </div>
           )}
           {sessionLost && (
@@ -464,33 +396,17 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
 
         <footer style={footerStyle}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            {missing.length > 0 ? (
-              <div style={statusMuted}>Complete: {missing.join(', ')}</div>
-            ) : checkInfo ? (
-              <div style={{ color: checkInfo.tone === 'good' ? C.green : checkInfo.tone === 'warn' ? C.yellow : C.fg3, fontSize: 12 }}>
-                {checkInfo.text}
-                {check === 'gaps' && ' — answer the assistant’s questions'}
-                {check === 'error' && checkDetail && <span title={checkDetail}> — verification unavailable</span>}
-              </div>
-            ) : (
-              <div style={statusMuted}>Not verified yet</div>
-            )}
+            {missing.length > 0
+              ? <div style={statusMuted}>Complete: {missing.join(', ')}</div>
+              : <div style={statusMuted}>Ready to save</div>}
           </div>
-          {ready && draftComplete(draft) && check !== 'pending' && check !== 'clean' && (
-            <button style={pillButton('ghost')} disabled={saving} onClick={() => void retryCheck()}>
-              {check === 'error' ? 'Retry verification' : 'Verify setup'}
-            </button>
-          )}
-          {ready && draftComplete(draft) && check === 'clean' && (
-            <button style={pillButton('primary')} disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Create automation'}</button>
-          )}
-          {ready && draftComplete(draft) && check === undefined && (
-            <button style={pillButton('primary')} disabled={saving} onClick={() => void save()}>{saving ? 'Verifying…' : mode === 'edit' ? 'Save changes' : 'Create automation'}</button>
-          )}
-          {ready && draftComplete(draft) && check === 'pending' && <button style={pillButton('primary')} disabled>Checking…</button>}
-          {ready && draftComplete(draft) && check === 'error' && (
-            <button style={pillButton('ghost')} disabled={saving} onClick={() => void save(true)}>Save anyway…</button>
-          )}
+          <button
+            style={pillButton('primary')}
+            disabled={!draftComplete(draft) || saving || locked}
+            onClick={() => void save()}
+          >
+            {saving ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Create automation'}
+          </button>
         </footer>
       </section>
     </div>

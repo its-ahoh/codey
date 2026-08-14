@@ -1,6 +1,9 @@
 // packages/core/src/aide-automation.test.ts
 import { describe, it, expect } from 'vitest';
-import { renderBrief, automationChatTurn, buildDryRunPrompt, classifyDryRun } from './aide-automation';
+import {
+  renderBrief, automationChatTurn, buildDryRunPrompt, classifyDryRun,
+  formatTranscript, MAX_CHAT_HISTORY, executionFingerprint,
+} from './aide-automation';
 import type { AideOptions } from './aide';
 import type { AgentRequest, AgentResponse } from './types';
 
@@ -128,7 +131,7 @@ describe('CHAT_TURN_PROMPT readiness gate', () => {
     expect(captured).not.toMatch(/scheduling has been explicitly discussed/i);
     expect(captured).toMatch(/scheduling is NOT required for ready/i);
     expect(captured).not.toMatch(/and eventually scheduling/i);
-    expect(captured).toMatch(/dry-run findings/i);
+    expect(captured).not.toMatch(/dry-run findings/i);
     expect(captured).toMatch(/clearly scoped change/i);
     expect(captured).toMatch(/DO NOT restart the setup interview/i);
     expect(captured).toMatch(/Ask a follow-up only when the requested edit itself is ambiguous/i);
@@ -170,5 +173,90 @@ describe('classifyDryRun', () => {
     await expect(classifyDryRun('out', aide('{"verdict":"gaps","questions":[]}'))).rejects.toThrow();
     await expect(classifyDryRun('out', aide('{"verdict":"maybe"}'))).rejects.toThrow();
     await expect(classifyDryRun('out', aide('not json'))).rejects.toThrow();
+  });
+});
+
+describe('formatTranscript', () => {
+  const msgs = (n: number) => Array.from({ length: n }, (_, i) => ({
+    role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+    text: `m${i}`,
+  }));
+
+  it('renders every message when under the cap', () => {
+    expect(formatTranscript(msgs(2))).toBe('User: m0\nYou: m1');
+  });
+
+  it('keeps the newest MAX_CHAT_HISTORY and marks the elision', () => {
+    const out = formatTranscript(msgs(30));
+    const lines = out.split('\n');
+    expect(lines[0]).toBe('[earlier turns omitted]');
+    expect(lines).toHaveLength(MAX_CHAT_HISTORY + 1);
+    expect(lines[1]).toBe('User: m6');
+    expect(lines[lines.length - 1]).toBe('You: m29');
+    expect(out).not.toContain('m5');
+  });
+});
+
+describe('automationChatTurn budget', () => {
+  const ctx2 = {
+    workspaces: ['default'], teams: [], tz: 'Asia/Shanghai',
+    nowIso: 'Fri Jul 11 2026 10:00:00 GMT+0800', mode: 'create' as const,
+  };
+
+  it('asks for a 90s budget and one retry, and survives one transient failure', async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    let calls = 0;
+    const runner = async (req: AgentRequest): Promise<AgentResponse> => {
+      seen.push(req.signal);
+      if (++calls === 1) throw new Error('socket hang up');
+      return { success: true, output: '{"reply":"ok"}' } as AgentResponse;
+    };
+    const t = await automationChatTurn([{ role: 'user', text: 'hi' }], {}, ctx2, {
+      agent: 'claude-code', runner, retryDelayMs: 0,
+    });
+    expect(t.reply).toBe('ok');
+    expect(calls).toBe(2);
+  });
+
+  it('lets an explicit caller budget win', async () => {
+    let calls = 0;
+    const runner = async (_req: AgentRequest): Promise<AgentResponse> => {
+      calls++;
+      throw new Error('socket hang up');
+    };
+    await expect(automationChatTurn([{ role: 'user', text: 'hi' }], {}, ctx2, {
+      agent: 'claude-code', runner, retries: 0,
+    })).rejects.toThrow('socket hang up');
+    expect(calls).toBe(1);
+  });
+});
+
+describe('executionFingerprint', () => {
+  const base = {
+    target: { kind: 'prompt' as const, workspaceName: 'default' },
+    brief: 'Post five items.',
+    params: { a: '1', b: '2' },
+  };
+
+  it('ignores everything that does not change what runs', () => {
+    expect(executionFingerprint({ ...base, brief: '  Post five items.  ' }))
+      .toBe(executionFingerprint(base));
+    expect(executionFingerprint({ ...base, params: { b: '2', a: '1' } }))
+      .toBe(executionFingerprint(base));
+    expect(executionFingerprint({ ...base, target: { kind: 'prompt', workspaceName: 'default', agent: undefined } }))
+      .toBe(executionFingerprint(base));
+  });
+
+  it('changes when the target, brief or params change', () => {
+    expect(executionFingerprint({ ...base, brief: 'Post six items.' })).not.toBe(executionFingerprint(base));
+    expect(executionFingerprint({ ...base, params: { a: '9', b: '2' } })).not.toBe(executionFingerprint(base));
+    expect(executionFingerprint({ ...base, target: { kind: 'prompt', workspaceName: 'blog' } }))
+      .not.toBe(executionFingerprint(base));
+    expect(executionFingerprint({ ...base, target: { kind: 'prompt', workspaceName: 'default', model: 'opus' } }))
+      .not.toBe(executionFingerprint(base));
+  });
+
+  it('treats an empty draft as its own fingerprint', () => {
+    expect(executionFingerprint({})).toBe(executionFingerprint({ params: {} }));
   });
 });

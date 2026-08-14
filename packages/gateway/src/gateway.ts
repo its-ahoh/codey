@@ -1,13 +1,14 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
 import { SchedulerLease } from './automations/lease';
 import { AutomationChatManager, ChatStep } from './automations/chat';
 import { DryRunManager } from './automations/dry-run';
+import { needsRecheck, verdictToCheck } from './automations/check';
 import { detectParked } from './automations/parked';
 import { formatRunSummary } from './automations/report';
 import { formatRunLogEvent } from './automations/run-log';
@@ -1498,7 +1499,7 @@ export class Codey {
         }).join('\n\n');
         return `Team config:\n${JSON.stringify(team, null, 2)}\n\nWorker roles:\n${personas}`;
       },
-      onResult: (sessionId, verdict) => this.onDryRunResult(sessionId, verdict),
+      onResult: (automationId, verdict) => this.onDryRunResult(automationId, verdict),
       log: (msg) => this.logger.info(`[automations] ${msg}`),
     });
     this.automationChats = new AutomationChatManager({
@@ -1511,7 +1512,6 @@ export class Codey {
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         nowIso: new Date().toString(),
       }),
-      onReadyTransition: (sessionId, draft) => this.automationDryRuns!.start(sessionId, draft),
     });
   }
 
@@ -1630,25 +1630,30 @@ export class Codey {
     return response.output;
   }
 
-  /** Deliver a dry-run verdict into the chat session and to the renderer. */
-  private onDryRunResult(sessionId: string, verdict: DryRunVerdict): void {
-    const message = verdict.status === 'clean'
-      ? 'Dry run passed - this can run unattended. Save when ready.'
-      : verdict.status === 'gaps'
-        ? `Dry run found things to pin down:\n${verdict.questions.map(q => `- ${q}`).join('\n')}`
-        : undefined; // errors surface only in the summary-panel status
-    const accepted = this.automationChats?.resolveCheck(sessionId, verdict.status, message) ?? false;
-    if (!accepted) return; // session gone or check superseded
-    try {
-      this.automationEventListener?.({
-        type: 'chat-check',
-        sessionId,
-        check: verdict.status,
-        questions: verdict.status === 'gaps' ? verdict.questions : undefined,
-        message,
-        detail: verdict.status === 'error' ? verdict.message : undefined,
-      });
-    } catch { /* swallow - listener failures must not break the chat */ }
+  /** Emit an automation event without letting a listener failure escape. */
+  private emitAutomationEvent(ev: AutomationEvent): void {
+    try { this.automationEventListener?.(ev); }
+    catch { /* swallow - listener failures must not break automations */ }
+  }
+
+  /** Start an advisory background dry run for an already-persisted automation. */
+  private startAutomationCheck(a: Automation): void {
+    const check: AutomationCheck = { status: 'pending', at: Date.now() };
+    this.automationStore?.setCheck(a.id, check);
+    this.emitAutomationEvent({ type: 'automation-check', automationId: a.id, check });
+    this.automationDryRuns?.start(a.id, {
+      name: a.name, target: a.target, brief: a.brief, params: a.params,
+    });
+  }
+
+  /** Persist a dry-run verdict and tell the renderer. Purely advisory - the
+   *  automation has been saved and runnable since before this started. */
+  private onDryRunResult(automationId: string, verdict: DryRunVerdict): void {
+    // Deleted while the run was in flight: nothing left to annotate.
+    if (!this.automationStore?.get(automationId)) return;
+    const check = verdictToCheck(verdict, Date.now());
+    this.automationStore.setCheck(automationId, check);
+    this.emitAutomationEvent({ type: 'automation-check', automationId, check });
   }
 
   // ---- Automations public API ----
@@ -1685,6 +1690,7 @@ export class Codey {
   deleteAutomation(id: string): void {
     const a = this.requireAutomationStore().get(id);
     if (!a) throw new Error(`Automation not found: ${id}`);
+    this.automationDryRuns?.cancel(id);
     if (a.chatId) {
       this.chatManager.reload(a.chatId);
       try { this.chatManager.delete(a.chatId); } catch { /* already gone */ }
@@ -1742,25 +1748,44 @@ export class Codey {
   patchAutomationChat(sessionId: string, patch: Parameters<AutomationChatManager['patch']>[1]): ChatStep {
     return this.requireAutomationChats().patch(sessionId, patch);
   }
-  retryAutomationChatCheck(sessionId: string): ChatStep {
-    return this.requireAutomationChats().retryCheck(sessionId);
-  }
-  saveAutomationChat(sessionId: string, allowUnchecked = false): Automation {
-    const { mode, sourceAutomationId, draft } = this.requireAutomationChats().finalize(sessionId, allowUnchecked);
+  saveAutomationChat(sessionId: string): Automation {
+    const { mode, sourceAutomationId, draft } = this.requireAutomationChats().finalize(sessionId);
     const payload = {
       name: draft.name!.trim(), target: draft.target!, brief: draft.brief!.trim(),
       params: draft.params ?? {}, schedule: draft.schedule,
       report: { notify: draft.notify ?? 'none' },
     };
+    // Read the pre-edit record first: the fingerprint comparison is what keeps
+    // a rename or reschedule from costing the user a fresh agent run.
+    const prev = mode === 'edit' ? this.automationStore?.get(sourceAutomationId!) : undefined;
     const saved = mode === 'edit'
       ? this.updateAutomation(sourceAutomationId!, payload)
       : this.createAutomation({ ...payload, enabled: true });
     this.cancelAutomationChat(sessionId);
+    // Advisory only: the automation is already persisted, so a failure to
+    // record or start the check must never surface as a failed save.
+    if (needsRecheck(prev, saved)) {
+      try { this.startAutomationCheck(saved); }
+      catch (err) { this.logger.info(`[automations] could not start check for ${saved.id}: ${(err as Error).message}`); }
+    }
     return saved;
+  }
+
+  /** Re-arm the advisory dry run for a saved automation (banner "Re-run"). */
+  recheckAutomation(id: string): void {
+    const a = this.requireAutomationStore().get(id);
+    if (!a) throw new Error(`Automation not found: ${id}`);
+    this.startAutomationCheck(a);
+  }
+
+  /** Clear the advisory check and drop any in-flight verdict (banner "Dismiss"). */
+  dismissAutomationCheck(id: string): void {
+    this.automationDryRuns?.cancel(id);
+    this.requireAutomationStore().setCheck(id, undefined);
+    this.emitAutomationEvent({ type: 'automation-check', automationId: id });
   }
   cancelAutomationChat(sessionId: string): void {
     this.automationChats?.cancel(sessionId);
-    this.automationDryRuns?.cancel(sessionId);
   }
   setAutomationEventListener(fn: (ev: AutomationEvent) => void): void {
     this.automationEventListener = fn;

@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import type { Automation, AutomationRun } from '@codey/core';
+import type { Automation, AutomationCheck, AutomationRun } from '@codey/core';
 import { normalizeNotifyMode, normalizeSchedule } from '@codey/core';
 
 /** Fields callers supply on create; id/timestamps are generated. */
@@ -132,6 +132,18 @@ export class AutomationStore {
     const cur = raw.automations.find(a => a.id === id);
     if (!cur) return; // unknown id — don't rewrite the file for a no-op
     cur.lastFiredAt = ts;
+    this.writeRaw(raw);
+  }
+
+  /** Advisory dry-run verdict. Not a user edit, so updatedAt is untouched —
+   *  a background verdict must not make the one-pager claim the automation
+   *  was just modified. `undefined` removes the field (user dismissed it). */
+  setCheck(id: string, check: AutomationCheck | undefined): void {
+    const raw = this.loadRaw();
+    const cur = raw.automations.find(a => a.id === id);
+    if (!cur) return; // unknown id — don't rewrite the file for a no-op
+    if (check) cur.check = check;
+    else delete cur.check;
     this.writeRaw(raw);
   }
 

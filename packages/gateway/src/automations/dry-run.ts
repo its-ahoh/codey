@@ -10,15 +10,16 @@ export interface DryRunDeps {
   /** Team definitions to inline for team targets (undefined = none found). */
   teamContext: (workspaceName: string, teamName: string) => string | undefined;
   /** Delivered once per surviving run; superseded/cancelled runs are silent. */
-  onResult: (sessionId: string, verdict: DryRunVerdict) => void;
+  onResult: (automationId: string, verdict: DryRunVerdict) => void;
   log?: (msg: string) => void;
 }
 
 /**
- * Fire-and-forget dry-runs keyed by authoring-chat session. At most one
- * verdict is delivered per session generation: a newer start() or a cancel()
- * makes any in-flight run's result be dropped on arrival (the underlying
- * agent process is not killed - the adapter's own timeout bounds it).
+ * Fire-and-forget dry-runs keyed by automation id. At most one verdict is
+ * delivered per automation generation: a newer start() or a cancel() makes any
+ * in-flight run's result be dropped on arrival (the underlying agent process is
+ * not killed - the adapter's own timeout bounds it). Runs are advisory and
+ * start only after the automation is already persisted.
  */
 export class DryRunManager {
   private generations = new Map<string, number>();
@@ -28,18 +29,18 @@ export class DryRunManager {
 
   constructor(private deps: DryRunDeps) {}
 
-  start(sessionId: string, draft: AutomationDraft): void {
+  start(automationId: string, draft: AutomationDraft): void {
     const gen = this.nextGen++;
-    this.generations.set(sessionId, gen);
-    void this.run(sessionId, gen, draft);
+    this.generations.set(automationId, gen);
+    void this.run(automationId, gen, draft);
   }
 
-  /** Drop any in-flight run's result (authoring UI closed / session over). */
-  cancel(sessionId: string): void {
-    this.generations.delete(sessionId);
+  /** Drop any in-flight run's result (superseded edit, or deleted automation). */
+  cancel(automationId: string): void {
+    this.generations.delete(automationId);
   }
 
-  private async run(sessionId: string, gen: number, draft: AutomationDraft): Promise<void> {
+  private async run(automationId: string, gen: number, draft: AutomationDraft): Promise<void> {
     let verdict: DryRunVerdict;
     try {
       if (!draft.target || !draft.brief) throw new Error('Draft is missing target or brief');
@@ -52,12 +53,12 @@ export class DryRunManager {
     } catch (err) {
       verdict = { status: 'error', message: (err as Error).message };
     }
-    if (this.generations.get(sessionId) !== gen) {
-      this.deps.log?.(`dry-run for ${sessionId} superseded; verdict dropped`);
+    if (this.generations.get(automationId) !== gen) {
+      this.deps.log?.(`dry-run for ${automationId} superseded; verdict dropped`);
       return;
     }
-    this.generations.delete(sessionId);
-    try { this.deps.onResult(sessionId, verdict); }
+    this.generations.delete(automationId);
+    try { this.deps.onResult(automationId, verdict); }
     catch (err) { this.deps.log?.(`dry-run onResult failed: ${(err as Error).message}`); }
   }
 }

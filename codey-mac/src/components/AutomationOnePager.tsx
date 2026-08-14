@@ -6,7 +6,7 @@ import { C } from '../theme'
 import { pillButton, unwrap, inputStyle, selectStyle } from './settingsAtoms'
 import {
   scheduleSummary, slotsToSchedule, nextRunAt, humanizeDelta,
-  knobsFrom, knobsEqual, NOTIFY_OPTIONS, type Knobs, type NotifyMode,
+  knobsFrom, knobsEqual, NOTIFY_OPTIONS, checkBanner, type Knobs, type NotifyMode,
 } from './automationsModel'
 import { isScheduled } from '../../../packages/core/src/types/automation'
 import type { Automation, AutomationRun } from '../../../packages/core/src/types/automation'
@@ -208,6 +208,24 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
     }
   }
 
+  const recheck = async () => {
+    try {
+      unwrap(await window.codey.automations.recheck(id))
+      void refresh()
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    }
+  }
+
+  const dismissCheck = async () => {
+    try {
+      unwrap(await window.codey.automations.dismissCheck(id))
+      void refresh()
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    }
+  }
+
   if (!a) return <div style={{ color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 24 }}>Loading…</div>
 
   const scheduled = isScheduled(a)
@@ -241,6 +259,29 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
           </button>
         </div>
       </header>
+
+      {(() => {
+        const banner = checkBanner(a.check)
+        if (!banner) return null
+        return (
+          <div style={checkBannerStyle(banner.tone)}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: C.fg, fontSize: 12, fontWeight: 700 }}>{banner.title}</div>
+              {banner.questions && banner.questions.length > 0 && (
+                <ul style={checkQuestionList}>
+                  {banner.questions.map((q, i) => <li key={i}>{q}</li>)}
+                </ul>
+              )}
+            </div>
+            {banner.actions && (
+              <div style={{ display: 'flex', gap: 7, flexShrink: 0 }}>
+                <button style={pillButton('ghost')} onClick={() => void recheck()}>Re-run</button>
+                <button style={pillButton('ghost')} onClick={() => void dismissCheck()}>Dismiss</button>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {latest?.status === 'parked' && latest.question && (
         <div style={parkedBanner}>
@@ -507,6 +548,19 @@ const parkedBanner: React.CSSProperties = {
   border: `1px solid ${C.yellow}`, background: C.warningBg,
 }
 const attentionIcon: React.CSSProperties = { width: 24, height: 24, flexShrink: 0, display: 'grid', placeItems: 'center', borderRadius: 8, background: C.yellow, color: C.bg, fontWeight: 900, fontSize: 12 }
+
+/** The error tone is deliberately quiet: a failed dry run almost always means
+ *  an environment problem, not a misconfigured automation. */
+const checkBannerStyle = (tone: 'neutral' | 'warn' | 'muted'): React.CSSProperties => ({
+  display: 'flex', alignItems: 'center', gap: 12, margin: '0 0 12px',
+  padding: '10px 12px', borderRadius: 10,
+  border: `1px solid ${tone === 'warn' ? C.yellow : C.border}`,
+  background: tone === 'warn' ? C.surface2 : C.surface,
+  opacity: tone === 'muted' ? 0.8 : 1,
+})
+const checkQuestionList: React.CSSProperties = {
+  margin: '4px 0 0', paddingLeft: 18, color: C.fg2, fontSize: 12, lineHeight: 1.5,
+}
 
 const summaryGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 9, marginTop: 15 }
 const summaryCard: React.CSSProperties = { display: 'flex', gap: 10, minWidth: 0, padding: '11px 12px', border: `1px solid ${C.border}`, borderRadius: 11, background: C.surface }
