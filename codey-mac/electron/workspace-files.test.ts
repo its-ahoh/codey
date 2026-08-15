@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveEntries, parseGitFileList, walkDirectory } from './workspace-files'
+import { deriveEntries, parseGitFileList, walkDirectory, MAX_ENTRIES } from './workspace-files'
 
 describe('parseGitFileList', () => {
   it('splits NUL-delimited output and drops empties', () => {
@@ -8,6 +8,11 @@ describe('parseGitFileList', () => {
 
   it('returns nothing for empty output', () => {
     expect(parseGitFileList('')).toEqual([])
+  })
+
+  it('keeps gitignored paths but drops heavy directories', () => {
+    expect(parseGitFileList('.env\0node_modules/foo/index.js\0dist/app.js\0src/a.ts\0'))
+      .toEqual(['.env', 'src/a.ts'])
   })
 })
 
@@ -30,6 +35,20 @@ describe('deriveEntries', () => {
   it('sets name to the last path segment', () => {
     const entry = deriveEntries(['src/components/ChatTab.tsx']).find(e => !e.isDir)
     expect(entry?.name).toBe('ChatTab.tsx')
+  })
+
+  it('drops the deepest paths when over the cap, not the alphabetical tail', () => {
+    // One shallow file per top-level dir, plus enough deep junk to blow the cap.
+    const shallow = ['a.ts', 'zzz.ts']
+    const deep: string[] = []
+    for (let i = 0; i < MAX_ENTRIES + 10; i++) deep.push(`deep/l1/l2/l3/f${i}.ts`)
+    const entries = deriveEntries([...shallow, ...deep])
+
+    expect(entries).toHaveLength(MAX_ENTRIES)
+    // Both shallow files survive — including "zzz.ts", which an alphabetical
+    // slice would have been the first to discard.
+    expect(entries.map(e => e.path)).toEqual(expect.arrayContaining(['a.ts', 'zzz.ts']))
+    expect(entries.map(e => e.path)).toEqual([...entries.map(e => e.path)].sort((x, y) => x.localeCompare(y)))
   })
 })
 
@@ -59,12 +78,13 @@ describe('walkDirectory', () => {
     expect(walkDirectory('/root', fs as never)).toEqual(['a.ts'])
   })
 
-  it('skips dotfiles but keeps .github', () => {
+  it('keeps dotfiles but still skips .git', () => {
     const fs = fakeFs({
-      '/root': [{ name: '.env', dir: false }, { name: '.github', dir: true }],
+      '/root': [{ name: '.env', dir: false }, { name: '.github', dir: true }, { name: '.git', dir: true }],
       '/root/.github': [{ name: 'ci.yml', dir: false }],
+      '/root/.git': [{ name: 'HEAD', dir: false }],
     })
-    expect(walkDirectory('/root', fs as never)).toEqual(['.github/ci.yml'])
+    expect(walkDirectory('/root', fs as never).sort()).toEqual(['.env', '.github/ci.yml'])
   })
 
   it('stops at the limit', () => {
