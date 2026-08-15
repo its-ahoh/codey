@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useChats } from '../hooks/useChats'
 import { apiService } from '../services/api'
 import type { Chat } from '../types'
@@ -9,6 +9,8 @@ import { setPendingPairing } from './pendingPairing'
 import { onWorkspacesChanged } from './workspacesChanged'
 import { UIIcon } from './UIIcons'
 import { moveWorkspace, reconcileWorkspaceOrder } from './workspaceOrder'
+import { ChatHoverCard } from './ChatHoverCard'
+import { buildChatHoverCard, HOVER_CARD_DELAY_MS, type HoverCardAnchor } from './chatHoverCardView'
 
 interface Props {
   onOpenSettings: (tab?: string) => void
@@ -59,6 +61,9 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   const [chatMenu, setChatMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [chatMenuView, setChatMenuView] = useState<'main' | 'connect'>('main')
   const [hoveredChatId, setHoveredChatId] = useState<string | null>(null)
+  const [hoverCard, setHoverCard] = useState<{ chatId: string; anchor: HoverCardAnchor } | null>(null)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [defaultAgent, setDefaultAgent] = useState<string>('')
   const [wsOrder, setWsOrder] = useState<string[]>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('codey.workspaceOrder') || '[]')
@@ -228,6 +233,54 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
     }
   }, [wsMenu, chatMenu])
 
+  // Only for the "(default)" note on chats with no agent override; a failure
+  // here just falls back to the generic label.
+  useEffect(() => {
+    apiService.getConfig()
+      .then(cfg => setDefaultAgent(typeof cfg?.defaultAgent === 'string' ? cfg.defaultAgent : ''))
+      .catch(() => {})
+  }, [])
+
+  const closeHoverCard = useCallback(() => {
+    if (hoverTimer.current) {
+      clearTimeout(hoverTimer.current)
+      hoverTimer.current = null
+    }
+    setHoverCard(null)
+  }, [])
+
+  /** The card is worth showing only if the pointer stays put, so the anchor is
+   *  captured now — by the time the timer fires the event object is gone. */
+  const scheduleHoverCard = useCallback((chatId: string, element: HTMLElement) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    const { top, bottom, left, right } = element.getBoundingClientRect()
+    hoverTimer.current = setTimeout(() => {
+      hoverTimer.current = null
+      setHoverCard({ chatId, anchor: { top, bottom, left, right } })
+    }, HOVER_CARD_DELAY_MS)
+  }, [])
+
+  useEffect(() => () => { if (hoverTimer.current) clearTimeout(hoverTimer.current) }, [])
+
+  // Escape is the expected way out for a keyboard user who focused the row, and
+  // a resize invalidates the anchor the card was placed against.
+  useEffect(() => {
+    if (!hoverCard) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeHoverCard() }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('resize', closeHoverCard)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', closeHoverCard)
+    }
+  }, [hoverCard, closeHoverCard])
+
+  // A fixed-position card can't follow its row, and a menu or rename box means
+  // the user is acting on the chat rather than reading about it.
+  useEffect(() => {
+    if (wsMenu || chatMenu || renamingId) closeHoverCard()
+  }, [wsMenu, chatMenu, renamingId, closeHoverCard])
+
   const handleAddWorkspace = async () => {
     if (addingWorkspace) return
     setAddingWorkspace(true)
@@ -304,7 +357,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
       </div>
       <div style={styles.chatSection}>
         <div style={styles.chatSectionHeader}><span>Chats</span><span>{state.order.length}</span></div>
-        <div style={styles.scroll}>
+        <div style={styles.scroll} onScroll={closeHoverCard}>
         {groupNames.length === 0 && (
           <div style={styles.empty}>No chats yet. Click "New Chat".</div>
         )}
@@ -424,15 +477,26 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                     style={{ ...styles.item, background: active ? C.accentDim : 'transparent', borderColor: active ? C.accent : 'transparent', opacity: orphaned ? 0.5 : 1 }}
                     onClick={() => {
                       if (isRenaming) return
+                      closeHoverCard()
                       onSelectChat()
                       selectChat(chat.id)
                     }}
-                    onMouseEnter={() => setHoveredChatId(chat.id)}
-                    onMouseLeave={() => setHoveredChatId(current => current === chat.id ? null : current)}
-                    onFocus={() => setHoveredChatId(chat.id)}
+                    onMouseEnter={event => {
+                      setHoveredChatId(chat.id)
+                      scheduleHoverCard(chat.id, event.currentTarget)
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredChatId(current => current === chat.id ? null : current)
+                      closeHoverCard()
+                    }}
+                    onFocus={event => {
+                      setHoveredChatId(chat.id)
+                      scheduleHoverCard(chat.id, event.currentTarget)
+                    }}
                     onBlur={event => {
                       if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
                         setHoveredChatId(current => current === chat.id ? null : current)
+                        closeHoverCard()
                       }
                     }}
                     onKeyDown={event => {
@@ -522,6 +586,19 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
         <button style={styles.footerButton} onClick={() => onOpenSettings()}><UIIcon name="settings" size={15} />Settings</button>
         </div>
       </div>
+      {hoverCard && state.chats[hoverCard.chatId] && (
+        <ChatHoverCard
+          key={hoverCard.chatId}
+          anchor={hoverCard.anchor}
+          card={buildChatHoverCard({
+            chat: state.chats[hoverCard.chatId],
+            flight: state.inFlight[hoverCard.chatId],
+            unread: !!state.unreadChats[hoverCard.chatId],
+            pendingPermissions: state.pendingPermissions[hoverCard.chatId],
+            defaultAgent: defaultAgent || undefined,
+          })}
+        />
+      )}
       {wsMenu && (
         <div
           style={{ ...styles.menu, top: wsMenu.y, left: wsMenu.x }}
