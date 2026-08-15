@@ -3,11 +3,13 @@ import { CodingAgentAdapter } from './base';
 import { ClaudeCodeAdapter } from './claude-code';
 import { OpenCodeAdapter } from './opencode';
 import { CodexAdapter } from './codex';
+import { PiAdapter } from './pi';
 
 export type { CodingAgentAdapter } from './base';
 export { ClaudeCodeAdapter } from './claude-code';
 export { OpenCodeAdapter } from './opencode';
 export { CodexAdapter } from './codex';
+export { PiAdapter } from './pi';
 export { applyModelEnv } from './env';
 
 /**
@@ -81,6 +83,7 @@ export class AgentFactory {
     this.register('claude-code', new ClaudeCodeAdapter());
     this.register('opencode', new OpenCodeAdapter());
     this.register('codex', new CodexAdapter());
+    this.register('pi', new PiAdapter());
   }
 
   register(agent: CodingAgent, adapter: CodingAgentAdapter): void {

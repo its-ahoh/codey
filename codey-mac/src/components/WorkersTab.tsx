@@ -7,6 +7,7 @@ const AGENT_API_TYPE: Record<string, 'anthropic' | 'openai'> = {
   'claude-code': 'anthropic',
   'opencode': 'openai',
   'codex': 'openai',
+  'pi': 'anthropic',
 }
 
 type Mode = { kind: 'idle' } | { kind: 'select'; name: string } | { kind: 'create' }
@@ -182,6 +183,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
         <option value="claude-code">claude-code</option>
         <option value="opencode">opencode</option>
         <option value="codex">codex</option>
+        <option value="pi">pi</option>
       </select>
 
       <label style={labelStyle}>Model</label>

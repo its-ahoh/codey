@@ -18,7 +18,7 @@ interface GeneratedWorker {
   role: string;
   soul: string;
   instructions: string;
-  codingAgent: 'claude-code' | 'opencode' | 'codex';
+  codingAgent: 'claude-code' | 'opencode' | 'codex' | 'pi';
   model: string;
   tools: string[];
 }
@@ -30,7 +30,7 @@ const SCHEMA_INSTRUCTION = `You are generating a Codey worker definition. Given 
   "role": "one or two sentences describing what this worker does",
   "soul": "two to four sentences describing the worker's personality and working style",
   "instructions": "numbered or bulleted steps the worker follows when given a task",
-  "codingAgent": "claude-code" | "opencode" | "codex",
+  "codingAgent": "claude-code" | "opencode" | "codex" | "pi",
   "model": "a model id like claude-opus-4-6 or claude-sonnet-4-6",
   "tools": ["array", "of", "tool-tokens"]
 }
@@ -52,7 +52,7 @@ function tryParse(raw: string): GeneratedWorker | null {
 function validate(g: GeneratedWorker | null): string | null {
   if (!g) return 'Response was not valid JSON';
   if (!/^[a-z][a-z0-9-]*$/.test(g.name || '')) return `name "${g.name}" is not a valid lowercase-kebab-case identifier`;
-  if (!['claude-code', 'opencode', 'codex'].includes(g.codingAgent)) return `codingAgent "${g.codingAgent}" is invalid`;
+  if (!['claude-code', 'opencode', 'codex', 'pi'].includes(g.codingAgent)) return `codingAgent "${g.codingAgent}" is invalid`;
   if (!g.model || typeof g.model !== 'string') return 'model must be a non-empty string';
   if (!Array.isArray(g.tools)) return 'tools must be an array';
   if (!g.role || !g.soul || !g.instructions) return 'role, soul, and instructions are all required';

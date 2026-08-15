@@ -702,6 +702,7 @@ async function detectInstalledAgents(): Promise<Record<string, { installed: bool
     'claude-code': 'claude',
     'opencode': 'opencode',
     'codex': 'codex',
+    'pi': 'pi',
   }
   const shell = process.env.SHELL || '/bin/zsh'
   const probe = (bin: string) => new Promise<string | null>(resolve => {
@@ -770,6 +771,20 @@ const BUILTIN_SLASH: Record<string, SlashCommand[]> = {
     { name: 'upgrade', description: 'Upgrade opencode to the latest version', source: 'agent' },
     { name: 'debug', description: 'Debugging and troubleshooting tools', source: 'agent' },
   ],
+  'pi': [
+    { name: 'model', description: 'Switch models', source: 'agent' },
+    { name: 'resume', description: 'Pick from previous sessions', source: 'agent' },
+    { name: 'new', description: 'Start a new session', source: 'agent' },
+    { name: 'session', description: 'Show session file, id, tokens, and cost', source: 'agent' },
+    { name: 'tree', description: 'Jump to any point in the session', source: 'agent' },
+    { name: 'fork', description: 'Create a new session from an earlier message', source: 'agent' },
+    { name: 'compact', description: 'Compact context, optionally with instructions', source: 'agent' },
+    { name: 'export', description: 'Export session to HTML or JSONL', source: 'agent' },
+    { name: 'share', description: 'Upload as a private gist with a shareable link', source: 'agent' },
+    { name: 'settings', description: 'Thinking level, theme, message delivery', source: 'agent' },
+    { name: 'trust', description: 'Save the project trust decision', source: 'agent' },
+    { name: 'login', description: 'Manage OAuth or API-key credentials', source: 'agent' },
+  ],
   'codex': [
     { name: 'exec', description: 'Run Codex non-interactively', source: 'agent' },
     { name: 'review', description: 'Run a code review non-interactively', source: 'agent' },
@@ -823,6 +838,7 @@ async function fetchSlashCommands(agent: string): Promise<SlashCommand[]> {
     'claude-code': 'claude',
     'opencode': 'opencode',
     'codex': 'codex',
+    'pi': 'pi',
   }
   const bin = binaries[agent]
   if (!bin) return []
@@ -3313,6 +3329,7 @@ app.whenReady().then(async () => {
     // Codex and OpenCode also discover the cross-agent .agents convention.
     'codex':       { userDirs: ['.codex/skills', '.agents/skills'], projectSubdirs: ['.codex/skills', '.agents/skills'] },
     'opencode':    { userDirs: ['.config/opencode/skills', '.opencode/skills', '.agents/skills'], projectSubdirs: ['.opencode/skills', '.agents/skills'] },
+    'pi':          { userDirs: ['.pi/agent/skills', '.agents/skills'], projectSubdirs: ['.pi/skills', '.agents/skills'] },
   }
 
   function configuredUserSkillDirs(agentKey: string, home: string, pathMod: typeof import('path')): string[] {

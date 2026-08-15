@@ -10,7 +10,7 @@ export interface WorkerPersonality {
 }
 
 export interface WorkerConfig {
-  codingAgent: 'claude-code' | 'opencode' | 'codex';
+  codingAgent: 'claude-code' | 'opencode' | 'codex' | 'pi';
   model: string;
   tools: string[];
   /**
@@ -38,7 +38,7 @@ export interface ParallelPromptInputs {
   peerOpinions: Array<{ name: string; path: string }>;
 }
 
-const VALID_CODING_AGENTS: readonly WorkerConfig['codingAgent'][] = ['claude-code', 'opencode', 'codex'];
+const VALID_CODING_AGENTS: readonly WorkerConfig['codingAgent'][] = ['claude-code', 'opencode', 'codex', 'pi'];
 
 export class WorkerManager {
   private workersDir: string;

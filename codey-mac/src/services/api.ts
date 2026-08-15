@@ -12,12 +12,12 @@ export type ChatStreamEvent =
   | { type: 'checklist'; chatId: string; message: string; items: ChecklistItem[] }
   | { type: 'stream'; chatId: string; token: string; messageId?: string; step?: number }
   | { type: 'thinking'; chatId: string; token: string; step?: number; messageId?: string }
-  | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex'; model?: string }> }
-  | { type: 'worker_start'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex'; model?: string; reason?: string }
+  | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string }> }
+  | { type: 'worker_start'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; reason?: string }
   | { type: 'worker_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number }
   | { type: 'team_end'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
   | { type: 'workspace_ready'; chatId: string }
-  | { type: 'done'; chatId: string; response: string; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string }; teamTurnId?: string }
+  | { type: 'done'; chatId: string; response: string; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string }; teamTurnId?: string }
   | { type: 'stopped'; chatId: string; userMessageId: string; text: string }
   | { type: 'error'; chatId: string; message: string }
   | { type: 'permission_denials'; chatId: string; denials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> };
@@ -36,7 +36,7 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 
 // Type aliases for the shapes returned by core
 export interface WorkerPersonality { role: string; soul: string; instructions: string }
-export interface WorkerConfig { codingAgent: 'claude-code' | 'opencode' | 'codex'; model: string; tools: string[]; effort?: string; dispatchHint?: string }
+export interface WorkerConfig { codingAgent: 'claude-code' | 'opencode' | 'codex' | 'pi'; model: string; tools: string[]; effort?: string; dispatchHint?: string }
 export interface WorkerDto {
   name: string
   personality: WorkerPersonality
