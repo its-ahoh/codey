@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Codey Logo" width="300" />
+  <img src="assets/logo.png" alt="Codey — multi-agent workbench for Claude Code, Codex, OpenCode and pi" width="300" />
 </p>
 
-# Codey 🚀
+# Codey 🚀 — a multi-agent workbench for Claude Code, Codex, OpenCode & pi
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -15,7 +15,9 @@
 
 **A multi-agent workbench for coding agents.** Codey is one place to organize, switch between, and orchestrate Claude Code, OpenCode, Codex, pi (and more) across your projects — give each project its own workspace, build worker teams with different agents/models per role, run several agents in parallel on the same task to compare, and reach all of it from a native macOS app, chat platforms (Telegram / Discord / iMessage), or system-wide push-to-talk voice.
 
-Think of it less as a chat bridge and more as **the control plane for the coding agents you already use**.
+Think of it less as a chat bridge and more as **the control plane for the coding agents you already use**. It runs entirely on your own machine, using your existing agent CLIs and accounts — no proxy server, no extra subscription.
+
+**Contents:** [Why Codey](#why-codey) · [Download](#download) · [Features](#features) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Teams & flow graphs](#worker-configuration) · [Commands](#commands) · [Voice](#voice-input-macos) · [FAQ](#faq)
 
 <p align="center">
   <img src="assets/demo.gif" alt="Codey demo: a scheduled Automation drafts a post and publishes it through the built-in agent-controlled browser, hands-free" width="800" />
@@ -45,20 +47,31 @@ Builds are currently unsigned — on first launch, right-click the app → **Ope
 - **Multiple coding agents**: Claude Code, OpenCode, Codex, [pi](https://pi.dev) (with session resume)
 - **Parallel execution**: Run multiple agents on the same prompt simultaneously to compare
 - **Per-workspace defaults**: Each project picks its own default agent + model
+- **Thinking effort**: One low → max control that maps onto each CLI's own reasoning knob
 - **Auto-dispatcher**: Optional built-in dispatcher routes a task to the right subset of a team
 
 **Workspaces & workers**
 - **Multi-workspace**: Each workspace has its own working directory, memory, and workers
 - **Worker teams**: Define workers with roles, personalities, tools, and per-worker agent/model
+- **Flow graphs**: Draw a team as a graph on a canvas — a judge LLM picks the next edge by its condition, so runs can branch, loop back for revisions, or pause to ask you
+- **Memory**: Workspace + user-global memory that workers read on every run and write insights back to
 - **Conversation context**: Remembers previous messages within a session
 
 **Interfaces**
 - **macOS menu-bar app** with multi-chat tabs, workspace switcher, and inline settings
 - **Chat platforms**: Telegram, Discord, iMessage
-- **Voice input (macOS)**: Hotkey-triggered dictation with on-device WhisperKit (CoreML / ANE) or OpenAI-compatible APIs — pastes directly into whichever app you're focused on
+- **Voice (macOS)**: Push-to-talk dictation into any focused app, plus a spoken back-and-forth conversation mode — on-device WhisperKit (CoreML / ANE), OpenAI-compatible APIs, or streaming realtime
 - **Health endpoints**: Built-in health check and metrics
 
-**Automation & web**
+**In the chat window**
+- **Live status panel**: The agent's own todo list and what it's working on right now, normalized across all four CLIs
+- **File changes**: Every edit in the chat, grouped by file, as git-style diffs
+- **Git-aware**: Branch picker, sync status, and optional per-chat git worktree isolation so parallel chats never collide
+- **Quick Question**: A read-only side thread that answers questions about the current chat without touching it
+- **`@` file mentions, attachments, and themes**: Type `@` to pull in workspace files; paste or drop images and files; pick a color theme
+
+**Skills, automation & web**
+- **Skills & playbooks**: Toggle skills per workspace; Codey watches what your runs actually do and crystallizes repeated procedures into reusable playbooks
 - **Automations**: Put agents on a schedule — daily posts, recurring checks, cron-style workflows managed from the Mac app
 - **Agent-controlled browser**: A built-in secure browser agents can open, read, click, and fill — view-only by default, with every state-changing action gated on your approval
 - **External MCP servers**: Plug extra tools into your agents from the Mac app's MCP tab
@@ -222,6 +235,12 @@ When prompted, analyze requirements and provide...
     and decides when to ask the user, continue, or terminate.
     Optional settings under `parallel: { maxDurationMs, idleTimeoutMs, advisorPollMs }`.
     See [design spec](docs/superpowers/specs/2026-05-24-team-parallel-mode-design.md).
+  - A sequential (`all`) team can also carry a **flow graph** — `graph: { entry, maxHops, nodes, edges }`.
+    Nodes are workers (plus `start` / `end`); each edge carries a natural-language condition.
+    After every worker runs, a judge LLM (the Advisor's agent/model) picks the next edge, so a flow can
+    branch or loop back to an earlier worker for revision until it reaches `end` or hits `maxHops`.
+    Workers can pause the flow with `[ASK_USER]`; the run resumes when you reply, on chat or in the Mac app.
+    Draw one on the drag-and-drop canvas in the Mac app's flow editor.
 
 ### Workspaces
 | Command | Description |
@@ -330,6 +349,26 @@ voice/                   # Native Swift helper for hotkey + capture + WhisperKit
 └── Sources/CodeyVoice/  # AudioCapture, HotkeyManager, HudOverlay, WhisperKitEngine, ...
 workspaces/              # Per-workspace config, memory, and workers
 ```
+
+## FAQ
+
+**Does Codey replace Claude Code / Codex / OpenCode?**
+No — it drives them. Codey shells out to the agent CLIs you already have installed and signed in, and adds the layer above them: workspaces, worker teams, parallel runs, scheduling, and remote access.
+
+**Do I need an API key?**
+Only for what you use. If your agent CLI is already authenticated (e.g. a Claude subscription), Codey uses it as-is. API keys in `gateway.json` are for agents/models you want to reach directly, and for cloud voice transcription.
+
+**Is my code sent anywhere?**
+Codey itself is local — the gateway, the macOS app, and the voice helper all run on your machine. Your code goes wherever your chosen agent CLI already sends it, and nowhere else. On-device WhisperKit keeps voice local too.
+
+**Which platforms are supported?**
+The gateway is Node.js and runs anywhere Node does; the desktop app and voice input are macOS-only today.
+
+**Can I use it from my phone?**
+Yes — connect Telegram, Discord, or iMessage (scan a QR code to pair) and send prompts to the same workspaces from anywhere.
+
+**How is this different from running several terminals?**
+Shared workspaces and memory across agents, teams and flow graphs instead of one-shot prompts, per-chat git worktrees so parallel work doesn't collide, scheduled automations, and one UI that shows every run's status, diffs, and todo list.
 
 ## License
 
