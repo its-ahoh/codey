@@ -5,7 +5,7 @@
   "engines": {
     "node": ">=22.12.0"
   },
-  "description": "Codey — a gateway that routes prompts from chat platforms to coding agents",
+  "description": "Codey — a multi-agent workbench and control plane for coding agents (Claude Code, Codex, OpenCode, pi): per-project workspaces, worker teams, parallel runs, and access from a macOS app, Telegram/Discord/iMessage, or voice.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -35,5 +35,28 @@
     "@types/node": "^22.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.0"
-  }
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "opencode",
+    "coding-agent",
+    "ai-agents",
+    "multi-agent",
+    "agent-orchestration",
+    "ai-coding-assistant",
+    "developer-tools",
+    "llm",
+    "mcp",
+    "telegram-bot",
+    "discord-bot",
+    "imessage",
+    "macos",
+    "electron",
+    "typescript",
+    "automation",
+    "voice-input",
+    "whisper"
+  ],
+  "homepage": "https://its-ahoh.github.io/codey/"
 }

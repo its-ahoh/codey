@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Codey Logo" width="300" />
+  <img src="assets/logo.png" alt="Codey —— Claude Code / Codex / OpenCode / pi 的多 Agent 工作台" width="300" />
 </p>
 
-# Codey 🚀
+# Codey 🚀 —— Claude Code / Codex / OpenCode / pi 的多 Agent 工作台
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -15,7 +15,9 @@
 
 **面向编码 Agent 的多 Agent 工作台。** Codey 把 Claude Code、OpenCode、Codex 等编码 Agent 统一管起来：给每个项目独立的 workspace，按角色为 worker 配不同的 Agent / 模型，在同一个任务上并行跑多个 Agent 做对比；从原生 macOS 应用、聊天平台（Telegram / Discord / iMessage）或者全局语音输入都能用。
 
-与其说它是"聊天平台到 Agent 的桥"，不如说它是**你已经在用的那些编码 Agent 的控制台**。
+与其说它是"聊天平台到 Agent 的桥"，不如说它是**你已经在用的那些编码 Agent 的控制台**。它完全跑在你自己的机器上，直接复用你已装好、已登录的 Agent CLI —— 没有中间代理服务器，也不用额外订阅。
+
+**目录：** [为什么用 Codey](#为什么用-codey) · [下载](#下载) · [功能特性](#功能特性) · [快速开始](#快速开始) · [配置](#配置) · [Team 与流程图](#工作者配置) · [命令](#命令) · [语音](#语音输入-macos) · [常见问题](#常见问题)
 
 <p align="center">
   <img src="assets/demo.gif" alt="Codey 演示：定时 Automation 自动起草内容，并通过内置的 Agent 控制浏览器完成发帖" width="800" />
@@ -42,23 +44,34 @@
 ## 功能特性
 
 **Agent 管理**
-- **多种编码代理**：Claude Code、OpenCode、Codex（支持会话恢复）
+- **多种编码代理**：Claude Code、OpenCode、Codex、[pi](https://pi.dev)（支持会话恢复）
 - **并行执行**：同一个 prompt 让多个 Agent 同时跑，方便对比
 - **每个 workspace 独立默认**：每个项目挑自己的默认 Agent + 模型
+- **思考强度**：一个 low → max 的统一档位，自动映射到各家 CLI 自己的推理参数
 - **自动 Dispatcher**：内置 dispatcher 可选，按任务自动路由到 team 的相关子集
 
 **工作区与 Worker**
 - **多工作区**：每个工作区拥有独立的工作目录、记忆与工作者
 - **工作者团队**：每个 worker 可定义角色、个性、工具，以及自己的 Agent / 模型
+- **流程图**：在画布上把一个 team 画成图，由裁判 LLM 按边上的自然语言条件决定下一步 —— 可以分支、回退返工，也可以停下来问你
+- **记忆**：workspace 级 + 用户全局记忆，worker 每次运行都会读取，并把新结论写回去
 - **对话上下文**：在会话中记忆之前的消息
 
 **接入方式**
 - **macOS 菜单栏应用**：多对话标签、工作区切换器、内嵌设置面板
 - **聊天平台**：Telegram、Discord、iMessage
-- **语音输入 (macOS)**：热键触发的语音转录，支持本地 WhisperKit（CoreML / Neural Engine）和 OpenAI 兼容 API — 识别结果直接粘贴到当前光标所在的输入框
+- **语音 (macOS)**：按住热键说话，直接粘进任何前台应用；也支持语音对话模式 —— 可选本地 WhisperKit（CoreML / Neural Engine）、OpenAI 兼容 API 或流式实时转写
 - **健康检查端点**：内置健康检查和指标监控
 
-**自动化与网页**
+**对话窗口内**
+- **实时状态面板**：Agent 自己的 todo 列表和当前正在做的事，四家 CLI 统一呈现
+- **文件改动**：整个对话里的所有修改，按文件分组，以 git 风格 diff 展示
+- **Git 感知**：分支选择器、同步状态，以及可选的「每个对话一个 git worktree」隔离，多个对话并行也不会互相干扰
+- **Quick Question**：只读的旁路提问线程，回答关于当前对话的问题但不影响它
+- **`@` 引用文件、附件与主题**：输入 `@` 引用工作区文件；粘贴或拖入图片和文件；可切换配色主题
+
+**技能、自动化与网页**
+- **Skills 与 Playbooks**：技能可按 workspace 开关；Codey 会观察你的运行实际做了什么，把重复的流程沉淀成可复用的 playbook
 - **Automations 定时自动化**：给 Agent 排日程 —— 每日发帖、定期检查、cron 式工作流，都在 Mac 应用里管理
 - **Agent 控制的内置浏览器**：Agent 可以打开、阅读、点击、填表 —— 默认只读，所有会改变状态的操作都需要你确认
 - **外部 MCP 服务器**：在 Mac 应用的 MCP 标签页里给 Agent 接入更多工具
@@ -213,7 +226,16 @@ file-system, git, web-search
   - 默认 `dispatch: 'all'`（所有成员参与）。
   - 配置为 `dispatch: 'auto'` 的 team 会先调用内置 dispatcher，自动选择本次任务真正需要的成员子集。临时跳过 dispatcher 可以加 `--all` 标志。
   - 在 worker 的 `config.json` 里加可选的 `dispatchHint` 字段（一句话）可以提升路由准确性。
-  - Dispatcher 用的 agent/model 在 `gateway.json` 的 `dispatcher.{agent, model}` 字段配置，未配置时回退到 gateway 默认 agent/model。
+  - Advisor 用的 agent/model 在 `gateway.json` 的 `advisor.{agent, model}` 字段配置，未配置时回退到 gateway 默认 agent/model。
+  - 配置为 `dispatch: 'parallel'` 的 team 会以 **Advisor 主持的圆桌** 方式运行：所有 worker 作为长驻会话并发执行，
+    在 `chats/<chatId>/discussion/` 下共享各自的意见文件；Advisor 循环评估进展、维护共享摘要，并决定何时问你、
+    何时继续、何时结束。可选参数在 `parallel: { maxDurationMs, idleTimeoutMs, advisorPollMs }`。
+    参见[设计文档](docs/superpowers/specs/2026-05-24-team-parallel-mode-design.md)。
+  - 串行（`all`）team 还可以带一张**流程图** —— `graph: { entry, maxHops, nodes, edges }`。
+    节点是 worker（外加 `start` / `end`），每条边上写一句自然语言条件。每个 worker 跑完后，
+    由裁判 LLM（复用 Advisor 的 agent/model）按条件挑下一条边，因此流程可以分支，也可以回退到更早的 worker 返工，
+    直到走到 `end` 或达到 `maxHops` 上限。worker 可以用 `[ASK_USER]` 暂停流程，你回复后会从暂停处继续。
+    流程图可以在 Mac 应用的拖拽画布里直接画。
 
 ### 工作区
 | 命令 | 描述 |
@@ -322,6 +344,26 @@ voice/                   # 原生 Swift helper（热键 + 录音 + WhisperKit）
 └── Sources/CodeyVoice/  # AudioCapture、HotkeyManager、HudOverlay、WhisperKitEngine 等
 workspaces/              # 各工作区的配置、记忆与工作者
 ```
+
+## 常见问题
+
+**Codey 是要替代 Claude Code / Codex / OpenCode 吗？**
+不是，它是来驱动它们的。Codey 调用你本机已经装好、已经登录的 Agent CLI，在它们之上补一层：workspace、worker 团队、并行对比、定时任务和远程访问。
+
+**必须要 API key 吗？**
+用到才需要。如果你的 Agent CLI 已经登录（比如 Claude 订阅），Codey 直接沿用。`gateway.json` 里的 API key 只用于你想直连的 Agent / 模型，以及云端语音转写。
+
+**我的代码会被上传吗？**
+Codey 本身完全本地 —— gateway、macOS 应用、语音 helper 都跑在你自己机器上。代码只会去它本来就会去的地方（你选的那个 Agent CLI），不会多走一步。用本地 WhisperKit 时语音也不出本机。
+
+**支持哪些平台？**
+gateway 是 Node.js，Node 能跑的地方都能跑；桌面应用和语音输入目前仅限 macOS。
+
+**能在手机上用吗？**
+可以 —— 接上 Telegram、Discord 或 iMessage（扫码配对即可），在任何地方对同一批 workspace 发任务。
+
+**这和开一堆终端窗口有什么区别？**
+跨 Agent 共享的 workspace 与记忆、用 team 和流程图代替一次性 prompt、每个对话独立 git worktree 避免并行冲突、可定时的自动化，以及一个能同时看到所有运行状态、diff 和 todo 的界面。
 
 ## 许可证
 
