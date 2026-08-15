@@ -20,20 +20,29 @@ export function normalizeWorktreeName(name: string): string {
   return normalized;
 }
 
-export function chatWorktreeParent(workspacesRoot: string, workspaceName: string, chatId: string): string {
-  const safeWorkspace = workspaceName.replace(/[^a-zA-Z0-9._-]/g, '-');
-  const safeChatId = chatId.replace(/[^a-zA-Z0-9._-]/g, '-');
-  // The UUID is intentionally confined to this hidden ownership boundary. It
-  // never becomes the user-facing worktree/branch name, but prevents two
-  // concurrently running chats from adopting each other's new checkout.
-  return path.join(path.dirname(workspacesRoot), 'chat-worktrees', safeWorkspace, `chat-${safeChatId}`);
+/** Chat checkouts live beside the code they branch from, inside the workspace
+ *  directory, so everything belonging to a project stays under that project. */
+export const WORKTREE_CONTAINER = '.worktrees';
+
+export function chatWorktreeParent(workspaceWorkingDir: string): string {
+  return path.join(path.resolve(workspaceWorkingDir), WORKTREE_CONTAINER);
 }
 
-export function chatWorktreeDirectory(workspacesRoot: string, workspaceName: string, chatId: string, worktreeName: string): string {
+export function chatWorktreeDirectory(workspaceWorkingDir: string, worktreeName: string): string {
   const safeName = normalizeWorktreeName(worktreeName);
-  // Keep code checkouts outside the workspace metadata directory. Deleting or
-  // renaming a Workspace must not silently erase a chat's uncommitted files.
-  return path.join(chatWorktreeParent(workspacesRoot, workspaceName, chatId), safeName);
+  return path.join(chatWorktreeParent(workspaceWorkingDir), safeName);
+}
+
+/** The container sits inside a checkout, so it must exclude itself from Git:
+ *  without this, every chat worktree would surface as untracked noise in the
+ *  workspace's own `git status`. Repos that already ignore `.worktrees/` are
+ *  unaffected — a second, narrower ignore rule is harmless. */
+export function ensureWorktreeContainer(workspaceWorkingDir: string): string {
+  const container = path.join(path.resolve(workspaceWorkingDir), WORKTREE_CONTAINER);
+  fs.mkdirSync(container, { recursive: true });
+  const ignoreFile = path.join(container, '.gitignore');
+  if (!fs.existsSync(ignoreFile)) fs.writeFileSync(ignoreFile, '*\n');
+  return container;
 }
 
 interface WorktreeRecord {
@@ -59,13 +68,18 @@ function parseWorktreeList(output: string): WorktreeRecord[] {
   return records;
 }
 
-/** Discover a worktree created by an agent inside this chat's private
- *  ownership directory. A direct-child rule keeps adoption deterministic. */
+/** Discover a worktree an agent created for this chat. The container is shared
+ *  by every chat in the workspace and by the user's own worktrees, so ownership
+ *  is established without a path marker: a candidate must be a direct child of
+ *  the container, unclaimed by another chat, and newer than this chat. When two
+ *  candidates qualify, none is adopted — leaving a chat in the shared checkout
+ *  is recoverable, binding it to someone else's worktree is not. */
 export async function discoverChatWorktree(input: {
   workspaceWorkingDir: string;
-  workspacesRoot: string;
-  workspaceName: string;
-  chatId: string;
+  /** Only worktrees created after this moment can belong to the chat. */
+  notBefore: number;
+  /** Worktree paths already bound to a chat. */
+  claimedPaths?: string[];
   createdAt?: number;
 }): Promise<ChatWorkspace | undefined> {
   const sourceDir = fs.realpathSync(path.resolve(input.workspaceWorkingDir));
@@ -78,13 +92,19 @@ export async function discoverChatWorktree(input: {
   const relativeWorkingDir = path.relative(repositoryRoot, sourceDir);
   if (relativeWorkingDir.startsWith('..') || path.isAbsolute(relativeWorkingDir)) return undefined;
 
-  const parent = chatWorktreeParent(input.workspacesRoot, input.workspaceName, input.chatId);
+  const parent = chatWorktreeParent(input.workspaceWorkingDir);
   if (!fs.existsSync(parent)) return undefined;
   const realParent = fs.realpathSync(parent);
+  const claimed = new Set((input.claimedPaths ?? [])
+    .filter(claimedPath => fs.existsSync(claimedPath))
+    .map(claimedPath => fs.realpathSync(claimedPath)));
   const records = parseWorktreeList(await git(repositoryRoot, ['worktree', 'list', '--porcelain']));
   const owned = records.filter(record => {
     if (!fs.existsSync(record.worktreePath)) return false;
-    return path.dirname(fs.realpathSync(record.worktreePath)) === realParent;
+    const realPath = fs.realpathSync(record.worktreePath);
+    if (path.dirname(realPath) !== realParent) return false;
+    if (claimed.has(realPath)) return false;
+    return fs.statSync(realPath).birthtimeMs >= input.notBefore;
   });
   if (owned.length !== 1) return undefined;
 
@@ -163,9 +183,6 @@ export async function removeCleanChatWorktree(workspace: ChatWorkspace): Promise
 /** Create a chat-owned worktree and a same-named branch from the source HEAD. */
 export async function provisionChatWorktree(input: {
   workspaceWorkingDir: string;
-  workspacesRoot: string;
-  workspaceName: string;
-  chatId: string;
   worktreeName: string;
 }): Promise<ChatWorkspace> {
   const sourceDir = fs.realpathSync(path.resolve(input.workspaceWorkingDir));
@@ -183,7 +200,8 @@ export async function provisionChatWorktree(input: {
 
   const baseCommit = await git(sourceDir, ['rev-parse', 'HEAD']);
   const name = normalizeWorktreeName(input.worktreeName);
-  const requestedPath = chatWorktreeDirectory(input.workspacesRoot, input.workspaceName, input.chatId, name);
+  const requestedPath = chatWorktreeDirectory(sourceDir, name);
+  ensureWorktreeContainer(sourceDir);
   fs.mkdirSync(path.dirname(requestedPath), { recursive: true });
   const worktreePath = path.join(fs.realpathSync(path.dirname(requestedPath)), path.basename(requestedPath));
   const workingDir = path.join(worktreePath, relativeWorkingDir);

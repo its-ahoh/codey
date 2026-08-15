@@ -29,16 +29,14 @@ describe('provisionChatWorktree', () => {
 
     const result = await provisionChatWorktree({
       workspaceWorkingDir,
-      workspacesRoot: path.join(root, 'data', 'workspaces'),
-      workspaceName: 'demo',
-      chatId: 'chat-123',
       worktreeName: 'feature-auth',
     });
 
     expect(result.workingDir).toBe(path.join(result.worktreePath, 'packages', 'app'));
     expect(result.name).toBe('feature-auth');
     expect(path.basename(result.worktreePath)).toBe('feature-auth');
-    expect(result.worktreePath).toContain(`${path.sep}chat-worktrees${path.sep}demo${path.sep}chat-chat-123${path.sep}`);
+    expect(result.worktreePath).toBe(path.join(fs.realpathSync(workspaceWorkingDir), '.worktrees', 'feature-auth'));
+    expect(fs.readFileSync(path.join(fs.realpathSync(workspaceWorkingDir), '.worktrees', '.gitignore'), 'utf8')).toBe('*\n');
     expect(result.baseCommit).toBe(git(repositoryRoot, ['rev-parse', 'HEAD']));
     expect(git(result.worktreePath, ['branch', '--show-current'])).toBe('feature-auth');
     expect(fs.statSync(result.workingDir).isDirectory()).toBe(true);
@@ -49,21 +47,17 @@ describe('provisionChatWorktree', () => {
     roots.push(root);
     await expect(provisionChatWorktree({
       workspaceWorkingDir: root,
-      workspacesRoot: path.join(root, 'workspaces'),
-      workspaceName: 'plain',
-      chatId: 'chat-plain',
       worktreeName: 'plain-work',
     })).rejects.toThrow(/Git workspace/);
   });
 });
 
 describe('discoverChatWorktree', () => {
-  it('adopts the one direct-child worktree owned by a chat and keeps its semantic name', async () => {
+  it('adopts the one new direct-child worktree and keeps its semantic name', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chat-agent-worktree-'));
     roots.push(root);
     const repositoryRoot = path.join(root, 'repo');
     const workspaceWorkingDir = path.join(repositoryRoot, 'packages', 'app');
-    const workspacesRoot = path.join(root, 'data', 'workspaces');
     fs.mkdirSync(workspaceWorkingDir, { recursive: true });
     git(repositoryRoot, ['init', '-b', 'main']);
     git(repositoryRoot, ['config', 'user.email', 'test@codey.local']);
@@ -72,14 +66,14 @@ describe('discoverChatWorktree', () => {
     git(repositoryRoot, ['add', 'README.md']);
     git(repositoryRoot, ['commit', '-m', 'initial']);
 
-    const parent = chatWorktreeParent(workspacesRoot, 'demo', 'abc-123');
+    const parent = chatWorktreeParent(workspaceWorkingDir);
     const worktreePath = path.join(parent, 'feature-search');
     fs.mkdirSync(parent, { recursive: true });
     git(repositoryRoot, ['worktree', 'add', '-b', 'feature-search', worktreePath, 'HEAD']);
     fs.mkdirSync(path.join(worktreePath, 'packages', 'app'), { recursive: true });
 
     const workspace = await discoverChatWorktree({
-      workspaceWorkingDir, workspacesRoot, workspaceName: 'demo', chatId: 'abc-123', createdAt: 42,
+      workspaceWorkingDir, notBefore: 0, createdAt: 42,
     });
 
     expect(workspace).toMatchObject({
@@ -90,11 +84,10 @@ describe('discoverChatWorktree', () => {
     });
   });
 
-  it('does not adopt a worktree belonging to another chat', async () => {
+  it('does not adopt a worktree already bound to another chat', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chat-agent-owner-'));
     roots.push(root);
     const repositoryRoot = path.join(root, 'repo');
-    const workspacesRoot = path.join(root, 'data', 'workspaces');
     fs.mkdirSync(repositoryRoot, { recursive: true });
     git(repositoryRoot, ['init', '-b', 'main']);
     git(repositoryRoot, ['config', 'user.email', 'test@codey.local']);
@@ -102,12 +95,54 @@ describe('discoverChatWorktree', () => {
     fs.writeFileSync(path.join(repositoryRoot, 'README.md'), 'hello\n');
     git(repositoryRoot, ['add', 'README.md']);
     git(repositoryRoot, ['commit', '-m', 'initial']);
-    const otherPath = path.join(chatWorktreeParent(workspacesRoot, 'demo', 'other-chat'), 'feature-other');
+    const otherPath = path.join(chatWorktreeParent(repositoryRoot), 'feature-other');
     fs.mkdirSync(path.dirname(otherPath), { recursive: true });
     git(repositoryRoot, ['worktree', 'add', '-b', 'feature-other', otherPath, 'HEAD']);
 
     await expect(discoverChatWorktree({
-      workspaceWorkingDir: repositoryRoot, workspacesRoot, workspaceName: 'demo', chatId: 'this-chat',
+      workspaceWorkingDir: repositoryRoot, notBefore: 0, claimedPaths: [otherPath],
+    })).resolves.toBeUndefined();
+  });
+
+  it('does not adopt a worktree that predates the chat', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chat-agent-age-'));
+    roots.push(root);
+    const repositoryRoot = path.join(root, 'repo');
+    fs.mkdirSync(repositoryRoot, { recursive: true });
+    git(repositoryRoot, ['init', '-b', 'main']);
+    git(repositoryRoot, ['config', 'user.email', 'test@codey.local']);
+    git(repositoryRoot, ['config', 'user.name', 'Codey Test']);
+    fs.writeFileSync(path.join(repositoryRoot, 'README.md'), 'hello\n');
+    git(repositoryRoot, ['add', 'README.md']);
+    git(repositoryRoot, ['commit', '-m', 'initial']);
+    const preexisting = path.join(chatWorktreeParent(repositoryRoot), 'hand-made');
+    fs.mkdirSync(path.dirname(preexisting), { recursive: true });
+    git(repositoryRoot, ['worktree', 'add', '-b', 'hand-made', preexisting, 'HEAD']);
+
+    await expect(discoverChatWorktree({
+      workspaceWorkingDir: repositoryRoot, notBefore: Date.now() + 60_000,
+    })).resolves.toBeUndefined();
+  });
+
+  it('adopts nothing when two candidates qualify', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chat-agent-tie-'));
+    roots.push(root);
+    const repositoryRoot = path.join(root, 'repo');
+    fs.mkdirSync(repositoryRoot, { recursive: true });
+    git(repositoryRoot, ['init', '-b', 'main']);
+    git(repositoryRoot, ['config', 'user.email', 'test@codey.local']);
+    git(repositoryRoot, ['config', 'user.name', 'Codey Test']);
+    fs.writeFileSync(path.join(repositoryRoot, 'README.md'), 'hello\n');
+    git(repositoryRoot, ['add', 'README.md']);
+    git(repositoryRoot, ['commit', '-m', 'initial']);
+    for (const name of ['first', 'second']) {
+      const target = path.join(chatWorktreeParent(repositoryRoot), name);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      git(repositoryRoot, ['worktree', 'add', '-b', name, target, 'HEAD']);
+    }
+
+    await expect(discoverChatWorktree({
+      workspaceWorkingDir: repositoryRoot, notBefore: 0,
     })).resolves.toBeUndefined();
   });
 });

@@ -22,7 +22,7 @@ import { MemoryStore } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
-import { chatWorktreeParent, describeLegacyChatWorktree, discoverChatWorktree, provisionChatWorktree, removeCleanChatWorktree, workspaceHasUncommittedChanges } from './chat-worktree';
+import { chatWorktreeParent, describeLegacyChatWorktree, discoverChatWorktree, ensureWorktreeContainer, provisionChatWorktree, removeCleanChatWorktree, workspaceHasUncommittedChanges } from './chat-worktree';
 import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
@@ -773,9 +773,6 @@ export class Codey {
     if (pending) return pending;
     const provision = provisionChatWorktree({
       workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
-      workspacesRoot: this.workspaceManager.getWorkspacesRoot(),
-      workspaceName: chat.workspaceName,
-      chatId: chat.id,
       worktreeName,
     }).then(workspace => {
       const updated = this.chatManager.setChatWorkspace(chat.id, workspace);
@@ -786,19 +783,24 @@ export class Codey {
     return provision;
   }
 
-  /** Adopt a worktree that an agent created in this chat's private directory.
-   *  No model call is involved: ownership is determined from local Git state. */
+  /** Adopt a worktree that an agent created for this chat. No model call is
+   *  involved: ownership is determined from local Git state. */
   private async adoptAgentCreatedWorktree(chatId: string): Promise<Chat | undefined> {
     const chat = this.chatManager.get(chatId);
     if (!chat || chat.chatWorkspace) return undefined;
     try {
       const workspace = await discoverChatWorktree({
         workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
-        workspacesRoot: this.workspaceManager.getWorkspacesRoot(),
-        workspaceName: chat.workspaceName,
-        chatId: chat.id,
+        // The container is shared, so anything older than the chat, or already
+        // bound to another chat, belongs to someone else.
+        notBefore: chat.createdAt,
+        claimedPaths: this.chatManager.list(chat.workspaceName, { includeAutomation: true })
+          .flatMap(other => other.chatWorkspace ? [other.chatWorkspace.worktreePath] : []),
       });
       if (!workspace) return undefined;
+      // The agent created the checkout with plain Git, so the container may not
+      // be excluded from the workspace's own status yet.
+      ensureWorktreeContainer(this.resolveWorkspaceWorkingDir(chat.workspaceName));
       const updated = this.chatManager.setChatWorkspace(chat.id, workspace);
       this.logger.info(`[chat ${chat.id}] adopted agent-created worktree ${workspace.name ?? workspace.worktreePath}`);
       return updated;
@@ -814,6 +816,9 @@ export class Codey {
     if (chat.chatWorkspace) throw new Error(`This chat already owns the worktree "${chat.chatWorkspace.name ?? path.basename(chat.chatWorkspace.worktreePath)}"`);
     if (this.chatAborts.has(chatId)) throw new Error('Wait for the current agent turn to finish before creating a worktree');
     const previousMode = chat.executionMode ?? 'shared-checkout';
+    // Logged so a chat that turns out to be bound to a worktree can be traced
+    // back to this explicit UI action rather than to agent-side adoption.
+    this.logger.info(`[chat ${chatId}] Branch Selector requested worktree "${worktreeName}"`);
     this.chatManager.setExecutionMode(chatId, 'isolated-worktree');
     try {
       return await this.ensureChatWorkspace(chatId, worktreeName);
@@ -5920,14 +5925,15 @@ Example: /model gpt-4.1 write a Python script`;
     let prompt: string;
     let resumeSessionId: string | undefined;
     let newSessionId: string | undefined;
+    // Named, not created: `git worktree add` makes the leading directories, and
+    // pre-creating them would leave empty folders inside the user's project.
     const agentWorktreeParent = chat.executionMode !== 'isolated-worktree' && !chat.chatWorkspace
-      ? chatWorktreeParent(workspacesRoot, chat.workspaceName, chat.id)
+      ? chatWorktreeParent(this.resolveWorkspaceWorkingDir(chat.workspaceName))
       : undefined;
-    if (agentWorktreeParent) fs.mkdirSync(agentWorktreeParent, { recursive: true });
     const chatWorkspaceInstruction = chat.executionMode === 'isolated-worktree'
       ? '\n\n[Codey chat workspace]\nThis chat owns the current worktree and starts on its own same-named branch. You may rename or switch branches as the task evolves; do not operate in another chat’s worktree.'
       : agentWorktreeParent
-        ? `\n\n[Codey chat workspace]\nThis chat currently uses the shared checkout. If the task benefits from isolation, you may create one worktree for this chat without asking first. Choose a short semantic lower-kebab name with no slash, then run \`git worktree add -b <name> ${JSON.stringify(path.join(agentWorktreeParent, '<name>'))} HEAD\` and perform all subsequent work in that new directory. Create it only as a direct child of ${JSON.stringify(agentWorktreeParent)} so Codey can bind and display it. Do not create a worktree when the task does not need one.`
+        ? `\n\n[Codey chat workspace]\nThis chat uses the shared checkout. Work there; do not create a worktree on your own initiative. Only when the user explicitly asks for one, choose a short semantic lower-kebab name with no slash, then run \`git worktree add -b <name> ${JSON.stringify(path.join(agentWorktreeParent, '<name>'))} HEAD\` and perform all subsequent work in that new directory. Create it only as a direct child of ${JSON.stringify(agentWorktreeParent)} so Codey can bind and display it.`
         : '\n\n[Codey chat workspace]\nThis chat already has a user-managed worktree. Continue using the selected checkout; do not create another worktree.';
     if (warmAnchor) {
       // Resume the agent's own session. If other agents produced messages
