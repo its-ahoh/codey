@@ -45,8 +45,8 @@ describe('workspace identity labels', () => {
   });
 
   it('drops the opaque chat-<uuid> directory of a legacy worktree path', () => {
-    expect(compactWorktreePath('/Users/jack/.codey/chat-worktrees/codey/chat-4be57559-ae33-4863-aab3-c19527e869af/improve-agent-management'))
-      .toBe('…/chat-worktrees/codey/improve-agent-management');
+    expect(compactWorktreePath('/Users/jack/projects/demo/.worktrees/chat-00000000-0000-4000-8000-000000000000/feature-auth'))
+      .toBe('…/demo/.worktrees/feature-auth');
   });
 
   it('leaves short paths intact and handles an empty path', () => {
