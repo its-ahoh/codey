@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { compactWorktreePath, currentFirst, describePullResult, filterBranches } from './branchPickerModel';
+import { compactWorktreePath, currentFirst, describePullResult, filterBranches, worktreeNameForBranch } from './branchPickerModel';
+
+describe('worktreeNameForBranch', () => {
+  it('drops the remote prefix and makes the rest safe as a directory name', () => {
+    expect(worktreeNameForBranch('origin/feature/auth', ['origin'])).toBe('feature-auth');
+  });
+
+  it('keeps a slash-free local branch and does not strip a lookalike prefix', () => {
+    expect(worktreeNameForBranch('feature-auth', ['origin'])).toBe('feature-auth');
+    expect(worktreeNameForBranch('release/2.0', ['origin'])).toBe('release-2.0');
+  });
+});
 
 describe('describePullResult', () => {
   it('reports how many commits arrived', () => {

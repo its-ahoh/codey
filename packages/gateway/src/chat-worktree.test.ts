@@ -13,6 +13,21 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
+/** A one-commit repository on `main`, cleaned up after the test. */
+function makeRepository(prefix: string): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  roots.push(root);
+  const repositoryRoot = path.join(root, 'repo');
+  fs.mkdirSync(repositoryRoot, { recursive: true });
+  git(repositoryRoot, ['init', '-b', 'main']);
+  git(repositoryRoot, ['config', 'user.email', 'test@codey.local']);
+  git(repositoryRoot, ['config', 'user.name', 'Codey Test']);
+  fs.writeFileSync(path.join(repositoryRoot, 'README.md'), 'hello\n');
+  git(repositoryRoot, ['add', 'README.md']);
+  git(repositoryRoot, ['commit', '-m', 'initial']);
+  return repositoryRoot;
+}
+
 describe('provisionChatWorktree', () => {
   it('creates a same-named branch and preserves a workspace subdirectory', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chat-worktree-'));
@@ -40,6 +55,79 @@ describe('provisionChatWorktree', () => {
     expect(result.baseCommit).toBe(git(repositoryRoot, ['rev-parse', 'HEAD']));
     expect(git(result.worktreePath, ['branch', '--show-current'])).toBe('feature-auth');
     expect(fs.statSync(result.workingDir).isDirectory()).toBe(true);
+  });
+
+  it('checks out an existing local branch instead of creating one', async () => {
+    const repositoryRoot = makeRepository('codey-chat-worktree-existing-');
+    git(repositoryRoot, ['branch', 'feature-auth']);
+    fs.writeFileSync(path.join(repositoryRoot, 'later.md'), 'later\n');
+    git(repositoryRoot, ['add', 'later.md']);
+    git(repositoryRoot, ['commit', '-m', 'second']);
+
+    const result = await provisionChatWorktree({
+      workspaceWorkingDir: repositoryRoot,
+      existingBranch: 'feature-auth',
+    });
+
+    expect(result.name).toBe('feature-auth');
+    expect(git(result.worktreePath, ['branch', '--show-current'])).toBe('feature-auth');
+    // The base is the branch tip, not the source checkout's HEAD.
+    expect(result.baseCommit).toBe(git(repositoryRoot, ['rev-parse', 'feature-auth']));
+    expect(result.baseCommit).not.toBe(git(repositoryRoot, ['rev-parse', 'HEAD']));
+  });
+
+  it('names the worktree separately from the branch it checks out', async () => {
+    const repositoryRoot = makeRepository('codey-chat-worktree-rename-');
+    git(repositoryRoot, ['branch', 'feature/auth']);
+
+    const result = await provisionChatWorktree({
+      workspaceWorkingDir: repositoryRoot,
+      worktreeName: 'auth-review',
+      existingBranch: 'feature/auth',
+    });
+
+    expect(path.basename(result.worktreePath)).toBe('auth-review');
+    expect(git(result.worktreePath, ['branch', '--show-current'])).toBe('feature/auth');
+  });
+
+  it('reports where a branch is already checked out', async () => {
+    const repositoryRoot = makeRepository('codey-chat-worktree-busy-');
+    const taken = path.join(chatWorktreeParent(repositoryRoot), 'taken');
+    fs.mkdirSync(path.dirname(taken), { recursive: true });
+    git(repositoryRoot, ['worktree', 'add', '-b', 'feature-busy', taken, 'HEAD']);
+
+    await expect(provisionChatWorktree({
+      workspaceWorkingDir: repositoryRoot,
+      worktreeName: 'second-look',
+      existingBranch: 'feature-busy',
+    })).rejects.toThrow(/already checked out at/);
+  });
+
+  it('creates a tracking branch for a branch that only exists on a remote', async () => {
+    const origin = makeRepository('codey-chat-worktree-origin-');
+    git(origin, ['branch', 'feature-remote']);
+    const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chat-worktree-clone-'));
+    roots.push(repositoryRoot);
+    git(repositoryRoot, ['clone', origin, '.']);
+    git(repositoryRoot, ['config', 'user.email', 'test@codey.local']);
+    git(repositoryRoot, ['config', 'user.name', 'Codey Test']);
+
+    const result = await provisionChatWorktree({
+      workspaceWorkingDir: repositoryRoot,
+      existingBranch: 'origin/feature-remote',
+    });
+
+    expect(git(result.worktreePath, ['branch', '--show-current'])).toBe('feature-remote');
+    expect(git(result.worktreePath, ['rev-parse', '--abbrev-ref', 'feature-remote@{upstream}'])).toBe('origin/feature-remote');
+  });
+
+  it('rejects a branch that does not exist', async () => {
+    const repositoryRoot = makeRepository('codey-chat-worktree-missing-');
+
+    await expect(provisionChatWorktree({
+      workspaceWorkingDir: repositoryRoot,
+      existingBranch: 'nope',
+    })).rejects.toThrow(/was not found/);
   });
 
   it('rejects isolated mode for a non-Git workspace', async () => {

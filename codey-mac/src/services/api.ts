@@ -205,8 +205,8 @@ export const apiService = {
       unwrap(await window.codey.chats.setWorkingDir(id, dir)),
     setExecutionMode: async (id: string, mode: 'shared-checkout' | 'isolated-worktree'): Promise<Chat> =>
       unwrap(await window.codey.chats.setExecutionMode(id, mode)),
-    createWorktree: async (id: string, name: string): Promise<Chat> =>
-      unwrap(await window.codey.chats.createWorktree(id, name)),
+    createWorktree: async (id: string, name: string, existingBranch?: string): Promise<Chat> =>
+      unwrap(await window.codey.chats.createWorktree(id, name, existingBranch)),
     setPullRequest: async (id: string, pullRequest: NonNullable<Chat['pullRequest']>): Promise<Chat> =>
       unwrap(await window.codey.chats.setPullRequest(id, pullRequest)),
     upload: async (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer): Promise<{ id: string; name: string; path: string; mimeType: string; size: number }> =>

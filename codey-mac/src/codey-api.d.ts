@@ -302,7 +302,7 @@ declare global {
         setSoloAdvisor: (id: string, enabled: boolean) => Promise<IpcResult<Chat>>
         setWorkingDir: (id: string, dir: string | null) => Promise<IpcResult<Chat>>
         setExecutionMode: (id: string, mode: 'shared-checkout' | 'isolated-worktree') => Promise<IpcResult<Chat>>
-        createWorktree: (id: string, name: string) => Promise<IpcResult<Chat>>
+        createWorktree: (id: string, name: string, existingBranch?: string) => Promise<IpcResult<Chat>>
         setPullRequest: (id: string, pullRequest: NonNullable<Chat['pullRequest']>) => Promise<IpcResult<Chat>>
       }
       qq: {

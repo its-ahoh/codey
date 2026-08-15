@@ -141,10 +141,51 @@ export async function removeCleanChatWorktree(workspace: ChatWorkspace): Promise
   await git(workspace.repositoryRoot, ['worktree', 'remove', workspace.worktreePath]);
 }
 
-/** Create a chat-owned worktree and a same-named branch from the source HEAD. */
+async function refExists(repositoryRoot: string, ref: string): Promise<boolean> {
+  return git(repositoryRoot, ['show-ref', '--verify', '--quiet', ref]).then(() => true).catch(() => false);
+}
+
+interface BranchTarget {
+  /** Branch to check out in the new worktree. */
+  localBranch: string;
+  /** Remote-tracking ref to branch from when the local branch does not exist yet. */
+  startPoint?: string;
+}
+
+/** Map a branch as the user picked it — local name, `origin/name`, or a bare
+ *  name that only exists on a remote — onto the checkout Git needs. */
+async function resolveBranchTarget(repositoryRoot: string, requested: string): Promise<BranchTarget> {
+  const branch = requested.trim().replace(/^refs\/heads\//, '');
+  if (!branch) throw new Error('Select a branch to check out in the worktree');
+  if (await refExists(repositoryRoot, `refs/heads/${branch}`)) return { localBranch: branch };
+
+  // `origin/feature` — the remote name is part of what the picker showed.
+  if (await refExists(repositoryRoot, `refs/remotes/${branch}`)) {
+    const localBranch = branch.slice(branch.indexOf('/') + 1);
+    if (await refExists(repositoryRoot, `refs/heads/${localBranch}`)) return { localBranch };
+    return { localBranch, startPoint: branch };
+  }
+
+  // A bare name that only exists on remotes: adopt it when exactly one remote has it.
+  const remotes = (await git(repositoryRoot, ['remote'])).split(/\r?\n/).filter(Boolean);
+  const matches: string[] = [];
+  for (const remote of remotes) {
+    if (await refExists(repositoryRoot, `refs/remotes/${remote}/${branch}`)) matches.push(`${remote}/${branch}`);
+  }
+  if (matches.length === 1) return { localBranch: branch, startPoint: matches[0] };
+  if (matches.length > 1) throw new Error(`Branch "${branch}" exists on several remotes — pick one such as "${matches[0]}"`);
+  throw new Error(`Branch "${branch}" was not found in this repository`);
+}
+
+/** Create a chat-owned worktree. By default this also creates a same-named
+ *  branch from the source HEAD; with `existingBranch` the worktree is attached
+ *  to a branch that already exists (checking out a remote branch locally when
+ *  needed), which Git allows as long as no other worktree holds it. */
 export async function provisionChatWorktree(input: {
   workspaceWorkingDir: string;
-  worktreeName: string;
+  /** Defaults to the branch name when attaching to an existing branch. */
+  worktreeName?: string;
+  existingBranch?: string;
 }): Promise<ChatWorkspace> {
   const sourceDir = fs.realpathSync(path.resolve(input.workspaceWorkingDir));
   let repositoryRoot: string;
@@ -159,8 +200,8 @@ export async function provisionChatWorktree(input: {
     throw new Error(`Workspace directory is outside its Git repository: ${sourceDir}`);
   }
 
-  const baseCommit = await git(sourceDir, ['rev-parse', 'HEAD']);
-  const name = normalizeWorktreeName(input.worktreeName);
+  const sourceCommit = await git(sourceDir, ['rev-parse', 'HEAD']);
+  const name = normalizeWorktreeName(input.worktreeName?.trim() || input.existingBranch || '');
   // `name` is already normalized here; join it directly so creation does not
   // run the same normalization a second time through chatWorktreeDirectory().
   const requestedPath = path.join(chatWorktreeParent(sourceDir), name);
@@ -170,11 +211,24 @@ export async function provisionChatWorktree(input: {
 
   if (fs.existsSync(worktreePath)) {
     throw new Error(`A worktree named "${name}" already exists in this workspace`);
+  }
+  // Stale registrations make Git report a branch as checked out long after its
+  // directory is gone, so clear them before either branch check runs.
+  await git(repositoryRoot, ['worktree', 'prune']);
+
+  let baseCommit = sourceCommit;
+  if (input.existingBranch) {
+    const target = await resolveBranchTarget(repositoryRoot, input.existingBranch);
+    const holder = parseWorktreeList(await git(repositoryRoot, ['worktree', 'list', '--porcelain']))
+      .find(record => record.branch === target.localBranch);
+    if (holder) throw new Error(`Branch "${target.localBranch}" is already checked out at ${holder.worktreePath}`);
+    const args = target.startPoint
+      ? ['worktree', 'add', '--track', '-b', target.localBranch, worktreePath, target.startPoint]
+      : ['worktree', 'add', worktreePath, target.localBranch];
+    await git(repositoryRoot, args);
+    baseCommit = await git(worktreePath, ['rev-parse', 'HEAD']);
   } else {
-    await git(repositoryRoot, ['worktree', 'prune']);
-    const branchExists = await git(repositoryRoot, ['show-ref', '--verify', `refs/heads/${name}`])
-      .then(() => true)
-      .catch(() => false);
+    const branchExists = await refExists(repositoryRoot, `refs/heads/${name}`);
     if (branchExists) throw new Error(`A branch named "${name}" already exists`);
     await git(repositoryRoot, ['worktree', 'add', '-b', name, worktreePath, baseCommit]);
   }

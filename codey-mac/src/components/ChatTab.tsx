@@ -1811,7 +1811,7 @@ export const ChatTab: React.FC<Props> = ({
             path: chat.chatWorkspace.worktreePath,
           } : undefined}
           executionMode={chat?.executionMode ?? 'shared-checkout'}
-          onCreateWorktree={async name => { await createWorktree(chat.id, name) }}
+          onCreateWorktree={async (name, existingBranch) => { await createWorktree(chat.id, name, existingBranch) }}
           onExecutionModeChange={async mode => { await setExecutionMode(chat.id, mode) }}
         />
         <div style={{ ...styles.openInWrap, marginLeft: 'auto' }}>

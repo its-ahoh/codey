@@ -743,7 +743,7 @@ export class Codey {
   }
 
   /** Idempotently provision the explicitly named filesystem environment owned by a chat. */
-  public async ensureChatWorkspace(chatId: string, worktreeName?: string): Promise<Chat> {
+  public async ensureChatWorkspace(chatId: string, worktreeName?: string, existingBranch?: string): Promise<Chat> {
     const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
     if (chat.executionMode !== 'isolated-worktree') return chat;
@@ -751,12 +751,13 @@ export class Codey {
       if (fs.existsSync(chat.chatWorkspace.workingDir)) return chat;
       throw new Error(`Chat workspace is missing: ${chat.chatWorkspace.workingDir}`);
     }
-    if (!worktreeName) throw new Error('Create and name a worktree from the Branch Selector first');
+    if (!worktreeName && !existingBranch) throw new Error('Create and name a worktree from the Branch Selector first');
     const pending = this.pendingChatWorkspaces.get(chatId);
     if (pending) return pending;
     const provision = provisionChatWorktree({
       workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
       worktreeName,
+      existingBranch,
     }).then(workspace => {
       const updated = this.chatManager.setChatWorkspace(chat.id, workspace);
       return updated;
@@ -794,17 +795,17 @@ export class Codey {
   }
 
   /** Explicitly create and bind a user-named worktree to one chat. */
-  public async createChatWorktree(chatId: string, worktreeName: string): Promise<Chat> {
+  public async createChatWorktree(chatId: string, worktreeName: string, existingBranch?: string): Promise<Chat> {
     const chat = await this.getChat(chatId);
     if (chat.chatWorkspace) throw new Error(`This chat already owns the worktree "${chat.chatWorkspace.name ?? path.basename(chat.chatWorkspace.worktreePath)}"`);
     if (this.chatAborts.has(chatId)) throw new Error('Wait for the current agent turn to finish before creating a worktree');
     const previousMode = chat.executionMode ?? 'shared-checkout';
     // Logged so a chat that turns out to be bound to a worktree can be traced
     // back to this explicit UI action rather than to agent-side adoption.
-    this.logger.info(`[chat ${chatId}] Branch Selector requested worktree "${worktreeName}"`);
+    this.logger.info(`[chat ${chatId}] Branch Selector requested worktree "${worktreeName || existingBranch}"${existingBranch ? ` on existing branch "${existingBranch}"` : ''}`);
     this.chatManager.setExecutionMode(chatId, 'isolated-worktree');
     try {
-      return await this.ensureChatWorkspace(chatId, worktreeName);
+      return await this.ensureChatWorkspace(chatId, worktreeName, existingBranch);
     } catch (error) {
       this.chatManager.setExecutionMode(chatId, previousMode);
       throw error;

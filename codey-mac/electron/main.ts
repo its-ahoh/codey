@@ -3736,10 +3736,10 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('chats:createWorktree', async (_e, id: string, name: string) =>
+  ipcMain.handle('chats:createWorktree', async (_e, id: string, name: string, existingBranch?: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
-      return inProcessGateway.createChatWorktree(id, name)
+      return inProcessGateway.createChatWorktree(id, name, existingBranch)
     })
   )
 

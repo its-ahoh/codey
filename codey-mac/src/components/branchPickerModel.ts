@@ -46,6 +46,16 @@ export function describePullResult(result: PullResult): BranchNote {
   return { tone: 'error', text: result.error?.split('\n')[0] || 'Could not sync' };
 }
 
+/** Default directory name for a worktree attached to an existing branch. The
+ *  remote prefix is dropped because `origin/feature` and `feature` name the same
+ *  work, and the rest follows the gateway's own worktree-name normalization. */
+export function worktreeNameForBranch(branch: string, remotes: string[] = []): string {
+  const withoutRemote = remotes.some(remote => branch.startsWith(`${remote}/`))
+    ? branch.slice(branch.indexOf('/') + 1)
+    : branch;
+  return withoutRemote.trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+}
+
 /** Move the current item to the front while preserving every other item's order. */
 export function currentFirst<T>(list: T[], isCurrent: (item: T) => boolean): T[] {
   const currentIndex = list.findIndex(isCurrent);

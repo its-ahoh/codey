@@ -1,14 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { C } from '../theme'
 import { useGitBranches } from '../hooks/useGitBranches'
-import { BranchNote, compactWorktreePath, currentFirst, describePullResult, filterBranches } from './branchPickerModel'
+import { BranchNote, compactWorktreePath, currentFirst, describePullResult, filterBranches, worktreeNameForBranch } from './branchPickerModel'
 import { UIIcon } from './UIIcons'
 
 interface Props {
   workingDir: string | undefined
   chatWorktree?: { name?: string; path: string }
   executionMode?: 'shared-checkout' | 'isolated-worktree'
-  onCreateWorktree: (name: string) => Promise<void>
+  onCreateWorktree: (name: string, existingBranch?: string) => Promise<void>
   onExecutionModeChange: (mode: 'shared-checkout' | 'isolated-worktree') => Promise<void>
 }
 
@@ -23,6 +23,10 @@ export const BranchPicker: React.FC<Props> = ({
   const [mode, setMode] = useState<Mode>({ kind: 'list' })
   const [newBranchName, setNewBranchName] = useState('')
   const [newWorktreeName, setNewWorktreeName] = useState('')
+  // Empty means "create a new branch named after the worktree"; otherwise the
+  // worktree is attached to this already existing local or remote branch.
+  const [worktreeBranch, setWorktreeBranch] = useState('')
+  const [worktreeBranchQuery, setWorktreeBranchQuery] = useState('')
   const [note, setNote] = useState<BranchNote | null>(null)
   const [changingMode, setChangingMode] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -48,6 +52,16 @@ export const BranchPicker: React.FC<Props> = ({
     [state, query],
   )
   const remoteBranches = useMemo(() => filterBranches(state?.remote ?? [], query), [state, query])
+  const remoteNames = useMemo(
+    () => Array.from(new Set((state?.remote ?? []).map(branch => branch.split('/')[0]))),
+    [state],
+  )
+  // Branches offered as the base of a new worktree. A branch already checked
+  // out elsewhere is still listed: Git decides, and the gateway reports where.
+  const worktreeBranchOptions = useMemo(
+    () => filterBranches([...(state?.local ?? []), ...(state?.remote ?? [])], worktreeBranchQuery).slice(0, 60),
+    [state, worktreeBranchQuery],
+  )
   const path = workingDir || ''
   const isolated = executionMode === 'isolated-worktree'
   const worktreeLabel = chatWorktree?.name || chatWorktree?.path.split('/').filter(Boolean).pop() || 'Isolated worktree'
@@ -102,12 +116,25 @@ export const BranchPicker: React.FC<Props> = ({
     if (result.ok) setOpen(false)
   }
 
+  const openCreateWorktree = () => {
+    setNewWorktreeName(''); setWorktreeBranch(''); setWorktreeBranchQuery('')
+    setMode({ kind: 'createWorktree' })
+  }
+
+  /** Selecting a branch names the worktree after it; picking the same branch
+   *  again clears the selection and returns to creating a new branch. */
+  const selectWorktreeBranch = (branch: string) => {
+    const next = branch === worktreeBranch ? '' : branch
+    setWorktreeBranch(next)
+    if (next) setNewWorktreeName(worktreeNameForBranch(next, remoteNames))
+  }
+
   const createWorktree = async () => {
     const name = newWorktreeName.trim()
-    if (!name || changingMode) return
+    if ((!name && !worktreeBranch) || changingMode) return
     setChangingMode(true); setNote(null)
     try {
-      await onCreateWorktree(name)
+      await onCreateWorktree(name, worktreeBranch || undefined)
       // Creation succeeded — dismiss the picker instead of dropping back to the
       // branch list; the pill itself now shows the new worktree and branch.
       setMode({ kind: 'list' })
@@ -207,7 +234,7 @@ export const BranchPicker: React.FC<Props> = ({
               {isolated ? worktreeLabel : 'Current checkout'}
             </span>
             {!chatWorktree ? (
-              <button style={styles.createWorktreeButton} onClick={() => { setNewWorktreeName(''); setMode({ kind: 'createWorktree' }) }}>
+              <button style={styles.createWorktreeButton} onClick={openCreateWorktree}>
                 + Create worktree
               </button>
             ) : (
@@ -242,9 +269,40 @@ export const BranchPicker: React.FC<Props> = ({
                 onKeyDown={event => { if (event.key === 'Enter') void createWorktree() }}
                 style={styles.input}
               />
-              <div style={styles.hint}>Creates a worktree and same-named branch from HEAD. Uncommitted changes stay in the current checkout.</div>
+              <div style={styles.sectionLabel}>Branch</div>
+              <button
+                style={{ ...styles.item, ...(worktreeBranch ? {} : styles.itemSelected) }}
+                onClick={() => setWorktreeBranch('')}
+              >
+                <span style={styles.checkSlot}>{!worktreeBranch && <UIIcon name="check" size={13} />}</span>
+                <span style={styles.branchName}>New branch{newWorktreeName.trim() ? ` “${newWorktreeName.trim()}”` : ''} from HEAD</span>
+              </button>
+              <input
+                placeholder="Or check out an existing branch…"
+                value={worktreeBranchQuery}
+                onChange={event => setWorktreeBranchQuery(event.target.value)}
+                style={styles.input}
+              />
+              <div style={styles.branchChoices}>
+                {worktreeBranchOptions.map(branch => (
+                  <button
+                    key={branch}
+                    style={{ ...styles.item, ...(branch === worktreeBranch ? styles.itemSelected : {}) }}
+                    onClick={() => selectWorktreeBranch(branch)}
+                  >
+                    <span style={styles.checkSlot}>{branch === worktreeBranch && <UIIcon name="check" size={13} />}</span>
+                    <span style={styles.branchName}>{branch}</span>
+                  </button>
+                ))}
+                {worktreeBranchOptions.length === 0 && <div style={styles.empty}>No branches found</div>}
+              </div>
+              <div style={styles.hint}>
+                {worktreeBranch
+                  ? `Checks out ${worktreeBranch} in the new worktree. It must not be checked out anywhere else.`
+                  : 'Creates a worktree and same-named branch from HEAD. Uncommitted changes stay in the current checkout.'}
+              </div>
               <div style={styles.row}>
-                <button style={styles.primary} disabled={!newWorktreeName.trim() || changingMode} onClick={() => void createWorktree()}>{changingMode ? 'Creating…' : 'Create worktree'}</button>
+                <button style={styles.primary} disabled={(!newWorktreeName.trim() && !worktreeBranch) || changingMode} onClick={() => void createWorktree()}>{changingMode ? 'Creating…' : 'Create worktree'}</button>
                 <button style={styles.ghost} disabled={changingMode} onClick={() => setMode({ kind: 'list' })}>Cancel</button>
               </div>
             </div>
@@ -326,6 +384,8 @@ const styles: Record<string, React.CSSProperties> = {
   // flex gap between them a footer border floats below the clipped last row and
   // stops reading as the list's edge.
   scroll: { maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', borderBottom: `1px solid ${C.border}` },
+  itemSelected: { background: C.accentDim, color: C.accent },
+  branchChoices: { maxHeight: 150, overflowY: 'auto', display: 'flex', flexDirection: 'column' },
   item: { width: '100%', textAlign: 'left', background: 'transparent', border: 'none', color: C.fg, fontSize: 12, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 },
   branchName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   checkSlot: { width: 14, flexShrink: 0, display: 'inline-flex', alignItems: 'center' },
