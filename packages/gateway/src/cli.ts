@@ -254,7 +254,7 @@ export async function handleCommand(args: string[], config: ConfigManager, logge
         logger.info(`iMessage configured with ${senders.length} allowed sender(s): ${senders.join(', ')}`);
       } else {
         logger.error('Usage: set-imessage <phone-or-email>[,<phone-or-email>,...]');
-        logger.error('Example: set-imessage +8613800138000,someone@icloud.com');
+        logger.error('Example: set-imessage +15555550123,user@example.com');
       }
       break;
 

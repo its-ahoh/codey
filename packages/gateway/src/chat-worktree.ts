@@ -128,45 +128,6 @@ export async function workspaceHasUncommittedChanges(workingDir: string): Promis
   return (await git(workingDir, ['status', '--porcelain'])).length > 0;
 }
 
-/** Describe a worktree selected by the legacy workingDirOverride model. */
-export async function describeLegacyChatWorktree(input: {
-  workspaceWorkingDir: string;
-  workingDirOverride: string;
-  createdAt: number;
-}): Promise<ChatWorkspace | undefined> {
-  if (!fs.existsSync(input.workingDirOverride)) return undefined;
-  const [workspaceDir, overrideDir] = [input.workspaceWorkingDir, input.workingDirOverride]
-    .map(value => fs.realpathSync(path.resolve(value)));
-  const [workspaceRoot, worktreeRoot] = await Promise.all([
-    git(workspaceDir, ['rev-parse', '--show-toplevel']),
-    git(overrideDir, ['rev-parse', '--show-toplevel']),
-  ]).then(values => values.map(value => fs.realpathSync(path.resolve(value))));
-  if (workspaceRoot === worktreeRoot) return undefined;
-
-  const resolveCommonDir = async (cwd: string): Promise<string> => {
-    const raw = await git(cwd, ['rev-parse', '--git-common-dir']);
-    return fs.realpathSync(path.resolve(cwd, raw));
-  };
-  const [workspaceCommonDir, worktreeCommonDir] = await Promise.all([
-    resolveCommonDir(workspaceDir), resolveCommonDir(overrideDir),
-  ]);
-  if (workspaceCommonDir !== worktreeCommonDir) return undefined;
-
-  const relativeWorkingDir = path.relative(worktreeRoot, overrideDir);
-  const [baseCommit, branch] = await Promise.all([
-    git(overrideDir, ['rev-parse', 'HEAD']),
-    git(overrideDir, ['branch', '--show-current']),
-  ]);
-  return {
-    name: branch || path.basename(worktreeRoot),
-    repositoryRoot: workspaceRoot,
-    worktreePath: worktreeRoot,
-    workingDir: path.join(worktreeRoot, relativeWorkingDir),
-    baseCommit,
-    createdAt: input.createdAt,
-  };
-}
-
 /** Remove a chat's checkout only when Git confirms it has no local changes.
  *  The branch is intentionally retained so committed work remains recoverable. */
 export async function removeCleanChatWorktree(workspace: ChatWorkspace): Promise<void> {
@@ -200,9 +161,10 @@ export async function provisionChatWorktree(input: {
 
   const baseCommit = await git(sourceDir, ['rev-parse', 'HEAD']);
   const name = normalizeWorktreeName(input.worktreeName);
-  const requestedPath = chatWorktreeDirectory(sourceDir, name);
+  // `name` is already normalized here; join it directly so creation does not
+  // run the same normalization a second time through chatWorktreeDirectory().
+  const requestedPath = path.join(chatWorktreeParent(sourceDir), name);
   ensureWorktreeContainer(sourceDir);
-  fs.mkdirSync(path.dirname(requestedPath), { recursive: true });
   const worktreePath = path.join(fs.realpathSync(path.dirname(requestedPath)), path.basename(requestedPath));
   const workingDir = path.join(worktreePath, relativeWorkingDir);
 

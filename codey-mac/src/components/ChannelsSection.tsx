@@ -236,7 +236,7 @@ export const ChannelsSection: React.FC<ChannelsSectionProps> = ({ liveStatus, is
             } },
         ]}
         confirmMessage="Save iMessage configuration?"
-        note="Phone numbers or Apple IDs (comma-separated, e.g. +8613800138000)."
+        note="Phone numbers or Apple IDs (comma-separated, e.g. +15555550123)."
       />
     </div>
   )

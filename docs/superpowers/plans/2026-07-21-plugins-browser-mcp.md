@@ -14,7 +14,7 @@
 - Work on branch `plugins-browser-mcp` (already created; a repo hook blocks commits to main).
 - System node is v16 and cannot run vitest/tsc. Before ANY build/test command:
   `export PATH="$HOME/.nvm/versions/node/v22.17.1/bin:$PATH"` (verify with `node --version` → v22.x).
-- Run all commands from the repo root `/Users/jackou/Documents/projects/codey` unless a task says otherwise.
+- Run all commands from the repository root (`<repo-root>`) unless a task says otherwise.
 - Test commands: `npm test -w @codey/core`, `npm test -w @codey/gateway`, `npm test -w codey-mac` (or `npm test` for all).
 - `packages/gateway` imports `@codey/core` from `packages/core/dist` — after changing core source, run `npm run build -w @codey/core` before gateway tests.
 

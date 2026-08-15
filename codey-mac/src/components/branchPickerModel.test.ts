@@ -40,8 +40,13 @@ describe('filterBranches', () => {
 
 describe('workspace identity labels', () => {
   it('keeps the identifying tail of a long worktree path', () => {
-    expect(compactWorktreePath('/tmp/data/.codey/worktrees/chat-1842'))
-      .toBe('…/.codey/worktrees/chat-1842');
+    expect(compactWorktreePath('/home/example/.codey/worktrees/feature-search'))
+      .toBe('…/.codey/worktrees/feature-search');
+  });
+
+  it('compacts every long path with the same segment rule', () => {
+    expect(compactWorktreePath('/one/two/three/four'))
+      .toBe('…/two/three/four');
   });
 
   it('leaves short paths intact and handles an empty path', () => {

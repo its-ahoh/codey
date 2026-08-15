@@ -24,8 +24,8 @@ describe('browser WebAuthn', () => {
   })
 
   it('formats discoverable account labels without exposing credential ids', () => {
-    expect(passkeyAccountLabel({ credentialId: 'secret', displayName: 'Jack', name: 'jack@example.com' }, 0))
-      .toBe('Jack (jack@example.com)')
+    expect(passkeyAccountLabel({ credentialId: 'secret', displayName: 'Example User', name: 'user@example.com' }, 0))
+      .toBe('Example User (user@example.com)')
     expect(passkeyAccountLabel({ credentialId: 'secret' }, 1)).toBe('Passkey 2')
   })
 

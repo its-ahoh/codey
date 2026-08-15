@@ -382,18 +382,6 @@ export class ChatManager {
     return chat;
   }
 
-  /** One-time compatibility migration for chats bound through the legacy
-   *  workingDirOverride field. Preserve updatedAt so migration does not reorder chats. */
-  migrateChatWorkspace(chatId: string, workspace: NonNullable<Chat['chatWorkspace']>): Chat {
-    const chat = this.requireChat(chatId);
-    if (chat.chatWorkspace) return chat;
-    chat.executionMode = 'isolated-worktree';
-    chat.chatWorkspace = workspace;
-    chat.workingDirOverride = workspace.workingDir;
-    this.persist(chat);
-    return chat;
-  }
-
   setExecutionMode(chatId: string, mode: NonNullable<Chat['executionMode']>): Chat {
     const chat = this.requireChat(chatId);
     const previousWorkingDir = chat.workingDirOverride;
