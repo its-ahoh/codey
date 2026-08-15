@@ -24,7 +24,7 @@ import { BrowserControlPermissionGate } from './browser-control-permission'
 import { BrowserSitePermissionManager } from './browser-site-permissions'
 import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLabel, type BrowserPasskeyPickerRequest } from './browser-webauthn'
 import { BrowserExtensionManager } from './browser-extensions'
-import { deriveEntries, parseGitFileList, walkDirectory, type FileEntry } from './workspace-files'
+import { deriveEntries, parseGitFileList, walkDirectory, MAX_ENTRIES, type FileEntry } from './workspace-files'
 import * as pty from 'node-pty'
 
 protocol.registerSchemesAsPrivileged([
@@ -2008,11 +2008,12 @@ app.whenReady().then(async () => {
       const fsMod = await import('fs')
       let paths: string[]
       try {
-        // -z keeps paths with spaces/unicode intact (git quotes them otherwise);
-        // --exclude-standard applies .gitignore to the untracked half.
+        // -z keeps paths with spaces/unicode intact (git quotes them otherwise).
+        // No --exclude-standard: .gitignore'd files (.env, build output) should
+        // still be mentionable; parseGitFileList drops the heavy dirs instead.
         const stdout = await new Promise<string>((resolve, reject) => {
           execFile(
-            'git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+            'git', ['ls-files', '-z', '--cached', '--others'],
             { cwd: workingDir, timeout: 4000, maxBuffer: 32 * 1024 * 1024 },
             (err, out) => (err ? reject(err) : resolve(out)),
           )
@@ -2023,6 +2024,11 @@ app.whenReady().then(async () => {
         paths = walkDirectory(workingDir, fsMod as never)
       }
       const entries = deriveEntries(paths)
+      // Truncation is invisible in the menu — a missing file just looks like a
+      // typo — so say so at least once per index build.
+      if (entries.length >= MAX_ENTRIES) {
+        console.warn(`[workspace:files] ${workingDir}: index hit the ${MAX_ENTRIES}-entry cap; deepest paths were dropped`)
+      }
       fileIndexCache.set(workingDir, { at: Date.now(), entries })
       return entries
     })

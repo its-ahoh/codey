@@ -1401,7 +1401,12 @@ export const ChatTab: React.FC<Props> = ({
   // repo's paths must not linger in the menu.
   useEffect(() => { setFileIndex([]) }, [workingDir])
 
-  const mentionMatches = mention ? filterEntries(fileIndex, mention.query) : []
+  // Scoring touches every indexed entry, so keep it tied to the query rather
+  // than to render count — this component re-renders on every streamed token.
+  const mentionMatches = React.useMemo(
+    () => (mention ? filterEntries(fileIndex, mention.query) : []),
+    [mention?.query, fileIndex], // eslint-disable-line react-hooks/exhaustive-deps
+  )
   const showMentionMenu = mentionMatches.length > 0
   useEffect(() => { setMentionIdx(0) }, [mention?.query, mention?.start])
   useEffect(() => {
