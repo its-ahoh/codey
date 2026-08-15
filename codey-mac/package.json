@@ -87,7 +87,6 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
-      "identity": "ou zixian (N59NN58KB2)",
       "notarize": false,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Codey transcribes your speech into text at your cursor when you use voice input.",
