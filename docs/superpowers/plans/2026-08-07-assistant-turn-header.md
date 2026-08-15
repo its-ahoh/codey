@@ -14,7 +14,7 @@
 `export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 22.17.1 >/dev/null`.
 The system default v16 cannot run vitest or tsc here.
 
-**Worktree:** `/Users/jackou/Documents/projects/codey/.worktrees/turn-header`, branch `feat/assistant-turn-header`, cut from the post-revert main (`493b844`).
+**Worktree:** `<repo-root>/.worktrees/turn-header`, branch `feat/assistant-turn-header`, cut from the post-revert main (`493b844`).
 
 ---
 

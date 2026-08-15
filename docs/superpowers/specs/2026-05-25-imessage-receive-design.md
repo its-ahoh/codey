@@ -17,7 +17,7 @@ Extend `channels.imessage` in `gateway.json`:
   "channels": {
     "imessage": {
       "enabled": true,
-      "allowedSenders": ["+8613800138000", "someone@icloud.com"],
+      "allowedSenders": ["+15555550123", "user@example.com"],
       "pollIntervalMs": 3000
     }
   }

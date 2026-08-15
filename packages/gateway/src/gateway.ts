@@ -23,7 +23,7 @@ import { MemoryStore } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
-import { chatWorktreeParent, describeLegacyChatWorktree, discoverChatWorktree, ensureWorktreeContainer, provisionChatWorktree, removeCleanChatWorktree, workspaceHasUncommittedChanges } from './chat-worktree';
+import { chatWorktreeParent, discoverChatWorktree, ensureWorktreeContainer, provisionChatWorktree, removeCleanChatWorktree, workspaceHasUncommittedChanges } from './chat-worktree';
 import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
@@ -712,29 +712,14 @@ export class Codey {
     return this.chatManager.create({ ...input, executionMode: 'shared-checkout' });
   }
 
-  private async migrateLegacyChatWorkspace(chat: Chat): Promise<Chat> {
-    if (chat.chatWorkspace || !chat.workingDirOverride) return chat;
-    try {
-      const workspace = await describeLegacyChatWorktree({
-        workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
-        workingDirOverride: chat.workingDirOverride,
-        createdAt: chat.createdAt,
-      });
-      return workspace ? this.chatManager.migrateChatWorkspace(chat.id, workspace) : chat;
-    } catch (error) {
-      this.logger.warn(`Could not migrate legacy worktree for chat ${chat.id}: ${error}`);
-      return chat;
-    }
-  }
-
   public async listChats(workspaceName?: string): Promise<Chat[]> {
-    return Promise.all(this.chatManager.list(workspaceName).map(chat => this.migrateLegacyChatWorkspace(chat)));
+    return this.chatManager.list(workspaceName);
   }
 
   public async getChat(chatId: string): Promise<Chat> {
     const chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
-    return this.migrateLegacyChatWorkspace(chat);
+    return chat;
   }
 
   public async deleteChat(chatId: string): Promise<void> {
@@ -747,10 +732,7 @@ export class Codey {
   /** Preflight every chat worktree before deleting a Workspace, then remove
    *  only their clean checkouts. Branches remain available in the repository. */
   public async prepareWorkspaceDeletion(workspaceName: string): Promise<void> {
-    const chats = await Promise.all(
-      this.chatManager.list(workspaceName, { includeAutomation: true })
-        .map(chat => this.migrateLegacyChatWorkspace(chat)),
-    );
+    const chats = this.chatManager.list(workspaceName, { includeAutomation: true });
     const worktrees = chats.flatMap(chat => chat.chatWorkspace ? [chat.chatWorkspace] : []);
     for (const workspace of worktrees) {
       if (fs.existsSync(workspace.worktreePath) && await workspaceHasUncommittedChanges(workspace.worktreePath)) {

@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { chatWorktreeParent, describeLegacyChatWorktree, discoverChatWorktree, normalizeWorktreeName, provisionChatWorktree, removeCleanChatWorktree, workspaceHasUncommittedChanges } from './chat-worktree';
+import { chatWorktreeParent, discoverChatWorktree, normalizeWorktreeName, provisionChatWorktree, removeCleanChatWorktree, workspaceHasUncommittedChanges } from './chat-worktree';
 import { ChatManager } from './chats';
 
 const roots: string[] = [];
@@ -174,12 +174,12 @@ describe('workspaceHasUncommittedChanges', () => {
   });
 });
 
-describe('legacy worktree migration and cleanup', () => {
-  it('recognizes an existing legacy worktree and removes it only when clean', async () => {
+describe('worktree cleanup', () => {
+  it('removes a clean worktree while retaining its branch', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chat-legacy-'));
     roots.push(root);
     const repositoryRoot = path.join(root, 'repo');
-    const legacyPath = path.join(root, 'legacy-feature');
+    const worktreePath = path.join(root, 'feature-clean');
     fs.mkdirSync(repositoryRoot, { recursive: true });
     git(repositoryRoot, ['init', '-b', 'main']);
     git(repositoryRoot, ['config', 'user.email', 'test@codey.local']);
@@ -187,23 +187,16 @@ describe('legacy worktree migration and cleanup', () => {
     fs.writeFileSync(path.join(repositoryRoot, 'README.md'), 'clean\n');
     git(repositoryRoot, ['add', 'README.md']);
     git(repositoryRoot, ['commit', '-m', 'initial']);
-    git(repositoryRoot, ['worktree', 'add', '-b', 'legacy-feature', legacyPath, 'HEAD']);
+    git(repositoryRoot, ['worktree', 'add', '-b', 'feature-clean', worktreePath, 'HEAD']);
 
-    const workspace = await describeLegacyChatWorktree({
-      workspaceWorkingDir: repositoryRoot,
-      workingDirOverride: legacyPath,
-      createdAt: 123,
-    });
     const realRepositoryRoot = fs.realpathSync(repositoryRoot);
-    const realLegacyPath = fs.realpathSync(legacyPath);
-
-    expect(workspace).toMatchObject({
-      name: 'legacy-feature', repositoryRoot: realRepositoryRoot, worktreePath: realLegacyPath,
-      workingDir: realLegacyPath, createdAt: 123,
+    const realWorktreePath = fs.realpathSync(worktreePath);
+    await removeCleanChatWorktree({
+      name: 'feature-clean', repositoryRoot: realRepositoryRoot, worktreePath: realWorktreePath,
+      workingDir: realWorktreePath, baseCommit: git(realWorktreePath, ['rev-parse', 'HEAD']), createdAt: 123,
     });
-    await removeCleanChatWorktree(workspace!);
-    expect(fs.existsSync(legacyPath)).toBe(false);
-    expect(git(repositoryRoot, ['show-ref', '--verify', 'refs/heads/legacy-feature'])).toBeTruthy();
+    expect(fs.existsSync(worktreePath)).toBe(false);
+    expect(git(repositoryRoot, ['show-ref', '--verify', 'refs/heads/feature-clean'])).toBeTruthy();
   });
 
   it('refuses to remove a worktree with uncommitted changes', async () => {
@@ -273,26 +266,6 @@ describe('ChatManager isolated workspace binding', () => {
     const isolated = manager.setExecutionMode(chat.id, 'isolated-worktree');
     expect(isolated.workingDirOverride).toBe(workspace.workingDir);
     expect(isolated.sessionAnchors).toBeUndefined();
-  });
-
-  it('migrates a legacy binding without changing conversation order', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chat-migration-'));
-    roots.push(root);
-    fs.mkdirSync(path.join(root, 'demo'), { recursive: true });
-    const manager = new ChatManager(root);
-    const chat = manager.create({ workspaceName: 'demo' });
-    manager.setWorkingDirOverride(chat.id, '/worktrees/legacy');
-    const beforeMigration = manager.get(chat.id)!.updatedAt;
-    const workspace = {
-      name: 'legacy', repositoryRoot: '/repo', worktreePath: '/worktrees/legacy', workingDir: '/worktrees/legacy',
-      baseCommit: 'abc123', createdAt: 1,
-    };
-
-    const migrated = manager.migrateChatWorkspace(chat.id, workspace);
-
-    expect(migrated.chatWorkspace).toEqual(workspace);
-    expect(migrated.executionMode).toBe('isolated-worktree');
-    expect(migrated.updatedAt).toBe(beforeMigration);
   });
 
   it('persists pull request state without changing conversation activity time', () => {
