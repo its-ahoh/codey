@@ -53,6 +53,9 @@ export const BranchPicker: React.FC<Props> = ({
   const worktreeLabel = chatWorktree?.name || chatWorktree?.path.split('/').filter(Boolean).pop() || 'Isolated worktree'
   const branchLabel = state?.branch === 'HEAD' ? '—' : (state?.branch ?? '—')
   const pathLabel = compactWorktreePath(path)
+  const lastSlash = pathLabel.lastIndexOf('/')
+  const pathHead = lastSlash >= 0 ? pathLabel.slice(0, lastSlash + 1) : ''
+  const pathTail = lastSlash >= 0 ? pathLabel.slice(lastSlash + 1) : pathLabel
   const checkoutLabel = isolated ? worktreeLabel : 'Current checkout'
   // One status line for the whole picker: an explicit note wins, otherwise the
   // last git failure surfaces in the same place instead of at the bottom.
@@ -166,7 +169,12 @@ export const BranchPicker: React.FC<Props> = ({
             <div style={styles.currentRow}>
               <div style={styles.currentIdentity}>
                 <div style={styles.currentBranch}>{branchLabel}</div>
-                <div style={styles.currentPath} title={path}>{pathLabel}</div>
+                {/* The last segment names the worktree, so it must never be the
+                  * part that gets clipped: only the leading directories shrink. */}
+                <div style={styles.currentPath} title={path}>
+                  <span style={styles.currentPathHead}>{pathHead}</span>
+                  <span style={styles.currentPathTail}>{pathTail}</span>
+                </div>
               </div>
               <button style={styles.iconButton} onClick={() => void copyPath()} title="Copy path" aria-label="Copy worktree path">
                 <UIIcon name="copy" size={13} />
@@ -304,7 +312,9 @@ const styles: Record<string, React.CSSProperties> = {
   bannerText: { minWidth: 0, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' },
   currentIdentity: { minWidth: 0, flex: 1 },
   currentBranch: { color: C.fg, fontSize: 11, fontWeight: 600, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  currentPath: { color: C.fg3, fontSize: 9, fontFamily: 'SF Mono, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  currentPath: { color: C.fg3, fontSize: 9, fontFamily: 'SF Mono, Menlo, monospace', display: 'flex', minWidth: 0, whiteSpace: 'nowrap' },
+  currentPathHead: { overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 },
+  currentPathTail: { flexShrink: 0 },
   iconButton: { width: 27, height: 27, padding: 0, border: `1px solid ${C.border2}`, borderRadius: 6, background: C.surface3, color: C.fg2, cursor: 'pointer', display: 'grid', placeItems: 'center', flexShrink: 0 },
   checkoutMode: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '1px 3px 2px' },
   modeLabel: { display: 'inline-flex', alignItems: 'center', gap: 5, color: C.fg3, fontSize: 10, paddingLeft: 3 },

@@ -11,11 +11,17 @@ export function filterBranches(list: string[], query: string): string[] {
   return list.filter(b => b.toLowerCase().includes(q));
 }
 
+/** A chat worktree nests under `chat-<uuid>/<worktree name>`. The uuid segment
+ *  carries no meaning for a reader and, being long, it is what pushes the
+ *  worktree name out of the visible label — so drop it before compacting. */
+const OPAQUE_SEGMENT = /^chat-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Compact a filesystem path without hiding its identifying final segments. */
 export function compactWorktreePath(path: string, maxSegments = 3): string {
   const parts = path.split('/').filter(Boolean);
-  if (parts.length <= maxSegments) return path || '—';
-  return `…/${parts.slice(-maxSegments).join('/')}`;
+  const kept = parts.filter(part => !OPAQUE_SEGMENT.test(part));
+  if (kept.length === parts.length && parts.length <= maxSegments) return path || '—';
+  return `…/${kept.slice(-maxSegments).join('/')}`;
 }
 
 export interface PullResult {
