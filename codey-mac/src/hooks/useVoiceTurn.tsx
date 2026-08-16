@@ -140,6 +140,8 @@ export const VoiceTurnProvider: React.FC<{ children: React.ReactNode }> = ({ chi
    */
   const abandonTurn = useCallback(() => {
     voice.cancel()
+    // Clear the marker so the settle effect never reads back an abandoned reply.
+    spokenTurnRef.current = false
     setTurn({ chatId: null, phase: 'off' })
   }, [voice.cancel])
   const abandonRef = useRef(abandonTurn)

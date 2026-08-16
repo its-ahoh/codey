@@ -348,16 +348,6 @@ contextBridge.exposeInMainWorld('codey', {
     setHudState: (state: string) => ipcRenderer.invoke('voice:hudState', state),
     /** Live 0..1 audio level for the capsule's meter. Fire-and-forget. */
     setHudLevel: (level: number) => ipcRenderer.send('voice:hudLevel', level),
-    onHudLevel: (handler: (level: number) => void) => {
-      const listener = (_e: Electron.IpcRendererEvent, level: number) => handler(level)
-      ipcRenderer.on('voice:hudLevel', listener)
-      return () => ipcRenderer.removeListener('voice:hudLevel', listener)
-    },
-    onHudState: (handler: (state: string) => void) => {
-      const listener = (_e: Electron.IpcRendererEvent, state: string) => handler(state)
-      ipcRenderer.on('voice:hudState', listener)
-      return () => ipcRenderer.removeListener('voice:hudState', listener)
-    },
     onSpeakEvent: (handler: (event: any) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, event: any) => handler(event)
       ipcRenderer.on('voice:speakEvent', listener)

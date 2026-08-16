@@ -6,6 +6,8 @@
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
+import { atomicWrite } from './utils/fs';
+import { stripCodeFences } from './utils/json';
 import { AideRunner, runAide } from './aide';
 import { ArgShape, InducedTemplate, TraceStep, renderTemplate } from './playbook-induction';
 import { CodingAgent, CoreLogger, ModelConfig } from './types';
@@ -64,8 +66,8 @@ export interface RunTrace {
   /** First ~300 chars of the agent's output. A preview, not a structural analysis. */
   outputPreview: string;
   workerSequence?: string[];
-  /** Tool names in call order, consecutive repeats collapsed, capped at
-   *  TOOL_SEQUENCE_MAX. A skill IS a procedure, so what the run did is the
+  /** Tool names in call order, consecutive repeats collapsed, capped at a
+   *  fixed bound. A skill IS a procedure, so what the run did is the
    *  signal the distiller actually needs — the message text is context. */
   toolSequence?: string[];
   /** The same calls with their arguments abstracted to shapes — the input to
@@ -110,9 +112,6 @@ export interface SkillMatch {
 }
 
 export const RECENT_TRACES_MAX = 20;
-/** Kept as the cap on the derived `toolSequence`; step extraction enforces the
- *  same bound via MAX_STEPS. */
-export const TOOL_SEQUENCE_MAX = 12;
 export const HISTORY_MAX = 5;
 export const REJECTED_MAX = 20;
 export const EVOLUTION_MAX = 20;
@@ -478,17 +477,6 @@ export class SkillStore {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
-
-async function atomicWrite(target: string, contents: string): Promise<void> {
-  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  await fsp.writeFile(tmp, contents);
-  await fsp.rename(tmp, target);
-}
-
-function stripCodeFences(s: string): string {
-  const m = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  return m ? m[1].trim() : s.trim();
-}
 
 /** Single-pass template fill. A function replacement is immune to `$`-pattern
  *  expansion in user-derived text, and one pass means substituted content

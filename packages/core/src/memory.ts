@@ -17,6 +17,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { estimateTokens } from './utils/tokens';
+import { atomicWrite } from './utils/fs';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -323,13 +324,6 @@ export class MemoryStore {
   }
 
   /**
-   * Get memories by type.
-   */
-  getByType(type: MemoryType): MemoryEntry[] {
-    return this.index.entries.filter(e => e.type === type);
-  }
-
-  /**
    * Get the N most recently updated memories. Optionally restrict to
    * entries visible to the given worker (chat/null sees everything).
    */
@@ -561,12 +555,6 @@ export class MemoryStore {
 
     return lines.join('\n');
   }
-}
-
-async function atomicWrite(target: string, contents: string): Promise<void> {
-  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  await fsp.writeFile(tmp, contents);
-  await fsp.rename(tmp, target);
 }
 
 function truncate(text: string, max: number): string {

@@ -32,7 +32,13 @@ export interface GatewayResponse {
 }
 
 // Coding agent types
-export type CodingAgent = 'claude-code' | 'opencode' | 'codex' | 'pi';
+export const CODING_AGENTS = ['claude-code', 'opencode', 'codex', 'pi'] as const;
+export type CodingAgent = typeof CODING_AGENTS[number];
+
+/** Runtime guard for agent ids arriving from JSON config or chat commands. */
+export function isCodingAgent(v: unknown): v is CodingAgent {
+  return typeof v === 'string' && (CODING_AGENTS as readonly string[]).includes(v);
+}
 
 // Model configuration for agents
 export type ApiType = 'anthropic' | 'openai';

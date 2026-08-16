@@ -43,14 +43,6 @@ export interface WorkerDto {
   config: WorkerConfig
 }
 
-export interface GatewayStatus {
-  status: 'healthy' | 'degraded' | 'stopped' | 'starting'
-  uptime: number
-  messagesProcessed: number
-  errors: number
-  channels: { telegram: boolean; discord: boolean; imessage: boolean }
-}
-
 export const apiService = {
   qq: {
     ask: async (
@@ -69,9 +61,6 @@ export const apiService = {
   // Workers
   listWorkers: async (): Promise<WorkerDto[]> =>
     unwrap(await window.codey.workers.list()),
-
-  getWorker: async (name: string): Promise<WorkerDto> =>
-    unwrap(await window.codey.workers.get(name)),
 
   updateWorker: async (name: string, body: { personality: WorkerPersonality; config: WorkerConfig }): Promise<void> =>
     unwrap(await window.codey.workers.save(name, body.personality, body.config)),
@@ -127,56 +116,6 @@ export const apiService = {
   setGlobalTeams: async (teams: Record<string, TeamConfigRaw>): Promise<void> =>
     unwrap(await window.codey.globalTeams.set(teams)),
 
-  // Chat — gateway is in-process; streaming comes via chat:token IPC events
-  sendMessage: async (
-    text: string,
-    onStatus?: (update: { type: string; tool?: string; message: string; input?: Record<string, unknown>; output?: string }) => void,
-    onStream?: (token: string) => void,
-    conversationId?: string,
-  ): Promise<{ response: string; conversationId?: string; tokens?: number; durationSec?: number }> => {
-    const convId = conversationId ?? 'default'
-    const offToken = onStream
-      ? window.codey.chat.onToken(msg => {
-          if (msg.conversationId === convId) onStream(msg.token)
-        })
-      : () => {}
-    const offStatus = onStatus
-      ? window.codey.chat.onStatus(msg => {
-          if (msg.conversationId === convId) {
-            try { onStatus(JSON.parse(msg.update)) } catch { /* non-JSON status */ }
-          }
-        })
-      : () => {}
-    try {
-      const result = await unwrap(await window.codey.chat.send({ conversationId: convId, text }))
-      return {
-        response: result.response,
-        conversationId: result.conversationId,
-        tokens: result.tokens,
-        durationSec: result.durationSec,
-      }
-    } finally {
-      offToken()
-      offStatus()
-    }
-  },
-
-  // Config
-  getConfig: async (): Promise<any> =>
-    unwrap(await window.codey.config.get()),
-
-  setConfig: async (updates: any): Promise<void> =>
-    unwrap(await window.codey.config.set(updates)),
-
-  // Status — gateway is always in-process; return a mock healthy status
-  getStatus: async (): Promise<GatewayStatus> => ({
-    status: 'healthy',
-    uptime: 0,
-    messagesProcessed: 0,
-    errors: 0,
-    channels: { telegram: false, discord: false, imessage: false },
-  }),
-
   chats: {
     list: async (workspaceName?: string): Promise<Chat[]> =>
       unwrap(await window.codey.chats.list(workspaceName)),
@@ -219,10 +158,6 @@ export const apiService = {
       unwrap(await window.codey.chats.stop(chatId)),
     onEvent: (handler: (ev: ChatStreamEvent) => void): (() => void) =>
       window.codey.chats.onEvent(handler),
-    link: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<Chat> =>
-      unwrap(await window.codey.chats.link(chatId, channel, channelUserId)),
-    unlink: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<Chat> =>
-      unwrap(await window.codey.chats.unlink(chatId, channel, channelUserId)),
   },
 
   linkChat: async (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string): Promise<Chat> =>

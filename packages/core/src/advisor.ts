@@ -1,5 +1,6 @@
 import { AgentRequest, AgentResponse, CodingAgent, ModelConfig } from './types';
 import { ADVISOR_PERSONALITY } from './advisor-personality';
+import { runWithTimeout } from './utils/run';
 
 export interface AdvisorMember {
   name: string;
@@ -167,27 +168,18 @@ export async function runAdvisor(
   const prompt = buildAdvisorPrompt(input);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-  const ac = new AbortController();
-  const onUserAbort = () => ac.abort();
-  if (opts.signal) {
-    if (opts.signal.aborted) ac.abort();
-    else opts.signal.addEventListener('abort', onUserAbort, { once: true });
-  }
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-
   let response: AgentResponse;
   try {
-    response = await opts.runner({
-      prompt,
-      agent: opts.agent,
-      model: opts.model,
-      signal: ac.signal,
-    });
+    response = await runWithTimeout(timeoutMs, opts.signal, signal =>
+      opts.runner({
+        prompt,
+        agent: opts.agent,
+        model: opts.model,
+        signal,
+      }),
+    );
   } catch (err) {
     return fallback(`runner threw: ${(err as Error).message}`);
-  } finally {
-    clearTimeout(timer);
-    if (opts.signal) opts.signal.removeEventListener('abort', onUserAbort);
   }
 
   if (!response.success) {

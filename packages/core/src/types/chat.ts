@@ -1,6 +1,6 @@
 import { ChatRoute } from './route';
 import { PendingTeamState } from './pending-team';
-import type { ThinkingEffort } from './index';
+import type { CodingAgent, ThinkingEffort } from './index';
 
 /** The three CLIs report task lists in three shapes; the adapters normalize
  *  onto this one. codex has only a completed boolean, so it never produces
@@ -61,7 +61,7 @@ export interface ChatMessage {
   durationSec?: number;
   /** Agent/model that produced this assistant message. Stored per turn so
    * historical labels remain accurate after the chat configuration changes. */
-  agent?: 'claude-code' | 'opencode' | 'codex' | 'pi';
+  agent?: CodingAgent;
   model?: string;
   /**
    * Present when this turn was produced by a fallback agent after the primary
@@ -142,7 +142,7 @@ export interface Chat {
   createdAt: number;
   updatedAt: number;
   /** Per-chat coding agent override. Falls back to gateway default when unset. */
-  agent?: 'claude-code' | 'opencode' | 'codex' | 'pi';
+  agent?: CodingAgent;
   /** Per-chat model override (model id from the global catalog). Falls back to the agent's default model when unset. */
   model?: string;
   /** Per-chat reasoning-effort override. Falls back to the worker's effort, then the agent's defaultEffort. */
@@ -211,7 +211,7 @@ export interface Chat {
   };
   /** Warm CLI sessions retained independently for each agent/model identity. */
   sessionAnchors?: Array<{
-    agent: 'claude-code' | 'opencode' | 'codex' | 'pi';
+    agent: CodingAgent;
     model?: string;
     sessionId: string;
     /** Last Codey transcript message already visible inside this CLI session. */
@@ -219,7 +219,7 @@ export interface Chat {
   }>;
   /** Legacy single-anchor field. Read for migration, never written by new code. */
   sessionAnchor?: {
-    agent: 'claude-code' | 'opencode' | 'codex' | 'pi';
+    agent: CodingAgent;
     model?: string;
     sessionId: string;
     syncedThroughMessageId?: string;
