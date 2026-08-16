@@ -824,7 +824,7 @@ export const ChatTab: React.FC<Props> = ({
   rightPanelMode, onRightPanelModeChange, rightPanelWidth, onRightPanelResize,
   browserLoginWait, onConfirmBrowserLogin, onDismissBrowserLogin,
 }) => {
-  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, createChat, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -1613,6 +1613,30 @@ export const ChatTab: React.FC<Props> = ({
     await sendMessage(chat.id, text, atts, turnIdentity)
   }
 
+  // "Ask Agent" on a fallback warning: the error is already in hand, so the
+  // useful move is a fresh chat in the same workspace that starts from it,
+  // rather than making the user copy the text into a chat they open themselves.
+  // createChat selects the new chat, so this component unmounts mid-await; the
+  // send still lands because sendMessage lives in the provider, not here.
+  const askAgentAboutFallback = async (detail: string, fallback: { from: string; to: string }) => {
+    if (!chat) return
+    try {
+      const fresh = await createChat(chat.workspaceName)
+      const prompt = [
+        `The \`${fallback.from}\` agent failed to run, so Codey fell back to \`${fallback.to}\`.`,
+        'Diagnose why it failed and tell me how to fix it.',
+        '',
+        'Failure reported by the gateway:',
+        '```',
+        detail,
+        '```',
+      ].join('\n')
+      await sendMessage(fresh.id, prompt)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to open a chat for this error')
+    }
+  }
+
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // The mention menu claims the arrow/Enter keys first — it is only open when
     // the caret is inside an "@" token, so it never shadows history navigation.
@@ -2155,6 +2179,7 @@ export const ChatTab: React.FC<Props> = ({
                         turnComplete={!streaming}
                         expanded={expanded}
                         onToggle={() => setThinkingToggles(p => ({ ...p, [msg.id]: !expanded }))}
+                        onAskAgentAboutFallback={(detail, fb) => { void askAgentAboutFallback(detail, fb) }}
                       />
                       {!!thinking && expanded && (
                         <div style={styles.thinkingBody}>{thinking}</div>

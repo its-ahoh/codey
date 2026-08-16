@@ -1,6 +1,28 @@
 import { ModelConfig } from '../types';
 
 /**
+ * Prepend the bin directories CLIs are usually installed into. A GUI-launched
+ * Electron app inherits a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so a
+ * bare spawn('codex') fails with ENOENT even though the binary is installed.
+ * Mutates and returns the given env map.
+ */
+export function withCommonBinPaths(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const homedir = env.HOME || process.env.HOME || '';
+  const extraPaths = [
+    homedir ? `${homedir}/.local/bin` : '',
+    '/usr/local/bin',
+    '/opt/homebrew/bin',
+  ].filter(Boolean);
+  for (const p of extraPaths) {
+    const segments = (env.PATH || '').split(':');
+    if (!segments.includes(p)) {
+      env.PATH = env.PATH ? `${p}:${env.PATH}` : p;
+    }
+  }
+  return env;
+}
+
+/**
  * Apply model credentials to a child-process env map using the style
  * declared on ModelConfig.apiType. Does not mutate the caller's env.
  *

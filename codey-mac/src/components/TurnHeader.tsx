@@ -47,6 +47,10 @@ interface Props {
   expanded: boolean
   onToggle: () => void
   turnComplete: boolean
+  /** Hands the fallback failure text to a fresh chat. Omitted where no such
+   *  surface exists, which hides the "Ask Agent" action rather than offering a
+   *  button that does nothing. */
+  onAskAgentAboutFallback?: (detail: string, fallback: { from: string; to: string }) => void
 }
 
 /** Identifies an assistant turn and bounds it.
@@ -63,7 +67,7 @@ interface Props {
  *  gaining a line when the turn lands. The metadata row renders only when there
  *  is something to put in it, so a turn with no metadata is a bare hairline
  *  rather than a blank row. */
-export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete }) => {
+export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback }) => {
   const elapsedSec = useElapsedSeconds(!turnComplete, msg.timestamp)
   const meta = turnHeaderMeta(msg, { elapsedSec })
   const rule = <div style={styles.rule} />
@@ -92,7 +96,9 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
           ) : meta.identity ? (
             <span style={styles.identity} title={meta.identity}>{meta.identity}</span>
           ) : null}
-          {meta.fallback && <FallbackWarning fallback={meta.fallback} />}
+          {meta.fallback && (
+            <FallbackWarning fallback={meta.fallback} onAskAgent={onAskAgentAboutFallback} />
+          )}
         </div>
         <div style={styles.right}>
           {meta.stats.length > 0 && (
@@ -109,34 +115,87 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
  *
  *  The identity to its left already names the agent/model that actually
  *  replied, so the only thing worth surfacing here is *why* the first agent
- *  dropped out — the failure itself, verbatim. It rides in a hover tooltip: the
+ *  dropped out — the failure itself, verbatim. It rides in a hover popover: the
  *  reason is long and rare, and asking for a click to read an error the user
- *  never chose to trigger is a toll on the common case. */
-const FallbackWarning: React.FC<{ fallback: { from: string; to: string; reason?: string } }> = ({ fallback }) => {
+ *  never chose to trigger is a toll on the common case.
+ *
+ *  Reading the error is rarely the end of it, so the popover carries the two
+ *  things a user does next — take the text elsewhere, or hand it straight to an
+ *  agent. That makes the layer interactive, so it can no longer opt out of the
+ *  pointer: it stays open while the pointer is anywhere inside the wrapper
+ *  (popover included), and the 6px gap under the icon is padding *inside* the
+ *  layer rather than empty space that would close it mid-travel. */
+const FallbackWarning: React.FC<{
+  fallback: { from: string; to: string; reason?: string }
+  onAskAgent?: (detail: string, fallback: { from: string; to: string }) => void
+}> = ({ fallback, onAskAgent }) => {
   const [open, setOpen] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
   const detail = fallback.reason?.trim() || `${fallback.from} failed, so ${fallback.to} answered instead.`
+
+  // Reset so a re-open never shows a stale "Copied" from the last visit.
+  React.useEffect(() => {
+    if (open) return
+    setCopied(false)
+  }, [open])
+
+  React.useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 1400)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(detail)
+      setCopied(true)
+    } catch { /* clipboard denied — leave the label alone */ }
+  }
 
   return (
     <span
       style={styles.fallbackWrap}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
+      // Focus/blur mirror the hover pair so the popover and its actions are
+      // reachable without a pointer. Blur bubbles in React, so the containment
+      // check keeps it open while focus moves between the icon and the buttons.
+      onFocus={() => setOpen(true)}
+      onBlur={e => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false)
+      }}
+      onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
     >
       <span
-        // Focusable so the tooltip is reachable without a pointer; it opens on
-        // focus and closes on blur, mirroring the hover pair.
         tabIndex={0}
         role="button"
         style={styles.fallbackButton}
         aria-label={`Answered by a fallback after ${fallback.from} failed: ${detail}`}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-        onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
       >
         <UIIcon name="alert" size={13} strokeWidth={1.8} />
       </span>
       {open && (
-        <div role="tooltip" style={styles.fallbackPopover}>{detail}</div>
+        <div style={styles.fallbackLayer}>
+          <div role="tooltip" style={styles.fallbackPopover}>
+            <div style={styles.fallbackReason}>{detail}</div>
+            <div style={styles.fallbackActions}>
+              <button type="button" style={styles.fallbackAction} onClick={copy}>
+                <UIIcon name="copy" size={11} strokeWidth={1.8} />
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+              {onAskAgent && (
+                <button
+                  type="button"
+                  style={styles.fallbackAction}
+                  onClick={() => { setOpen(false); onAskAgent(detail, fallback) }}
+                >
+                  <UIIcon name="chat" size={11} strokeWidth={1.8} />
+                  Ask Agent
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </span>
   )
@@ -169,16 +228,33 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.warningFg, padding: '2px', margin: '-2px',
     display: 'inline-flex', alignItems: 'center', lineHeight: 0,
   },
+  // The layer starts flush against the icon and pays the 6px offset as its own
+  // padding, so travelling from the icon to the buttons never crosses a dead
+  // strip that would close the popover.
+  fallbackLayer: {
+    position: 'absolute', top: '100%', left: 0, zIndex: 40, paddingTop: 6,
+  },
   fallbackPopover: {
-    position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 40,
     width: 300, maxWidth: '70vw',
     background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 8,
     padding: '8px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+    textAlign: 'left',
+  },
+  fallbackReason: {
     fontFamily: 'SF Mono, Menlo, monospace', fontSize: 10.5, lineHeight: 1.45,
-    color: C.fg2, whiteSpace: 'normal', textAlign: 'left',
+    color: C.fg2, whiteSpace: 'pre-wrap',
     maxHeight: 200, overflowY: 'auto', overflowWrap: 'anywhere',
-    // Informational only — never intercept the pointer on its way back out.
-    pointerEvents: 'none',
+    userSelect: 'text', cursor: 'text',
+  },
+  fallbackActions: {
+    display: 'flex', gap: 6, marginTop: 8,
+    borderTop: `1px solid ${C.border2}`, paddingTop: 8,
+  },
+  fallbackAction: {
+    appearance: 'none', background: 'transparent', color: C.fg2,
+    border: `1px solid ${C.border2}`, borderRadius: 6,
+    padding: '3px 7px', fontSize: 10.5, lineHeight: 1.2,
+    display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer',
   },
   rule: { borderTop: `1px solid ${C.border2}`, marginBottom: 8 },
 }
