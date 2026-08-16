@@ -1,0 +1,168 @@
+import { describe, it, expect } from 'vitest'
+import { buildChatHoverCard, clampCardTop } from './chatHoverCardView'
+import type { Chat } from '../types'
+
+const NOW = 1_700_000_000_000
+
+function chat(over: Partial<Chat> = {}): Chat {
+  return {
+    id: 'c1',
+    title: 'Fix the parser',
+    workspaceName: 'codey',
+    selection: { type: 'none' },
+    messages: [],
+    createdAt: NOW - 3_600_000,
+    updatedAt: NOW - 300_000,
+    ...over,
+  } as Chat
+}
+
+const rowValue = (view: ReturnType<typeof buildChatHoverCard>, label: string) =>
+  view.rows.find(r => r.label === label)?.value
+
+describe('buildChatHoverCard', () => {
+  it('falls back to a placeholder title and the gateway agent', () => {
+    const view = buildChatHoverCard(chat({ title: '  ' }), { now: NOW })
+    expect(view.title).toBe('New Chat')
+    expect(rowValue(view, 'Agent')).toBe('gateway default')
+    expect(view.status).toEqual({ label: 'Idle', tone: 'accent' })
+  })
+
+  it('pairs the agent with its model override', () => {
+    const view = buildChatHoverCard(chat({ agent: 'codex', model: 'gpt-5' }), { now: NOW })
+    expect(rowValue(view, 'Agent')).toBe('codex · gpt-5')
+  })
+
+  it('ranks a permission prompt above a running turn', () => {
+    const view = buildChatHoverCard(chat(), {
+      now: NOW,
+      activity: 'editing',
+      pendingPermissions: ['Bash', 'Write'],
+    })
+    expect(view.status).toEqual({ label: 'Needs permission — Bash +1', tone: 'red' })
+  })
+
+  it('ranks a running turn above an unread reply', () => {
+    const view = buildChatHoverCard(chat(), { now: NOW, activity: 'searching', unread: true })
+    expect(view.status).toEqual({ label: 'Searching', tone: 'accent' })
+  })
+
+  it('reports a paused team run', () => {
+    const view = buildChatHoverCard(chat({ pendingTeam: {} as Chat['pendingTeam'] }), { now: NOW })
+    expect(view.status.label).toBe('Paused — waiting on your reply')
+  })
+
+  it('falls back to the task brief status when nothing is live', () => {
+    const view = buildChatHoverCard(
+      chat({
+        taskBrief: {
+          goal: 'Ship the hover card',
+          state: { progress: 60, status: 'blocked' },
+          timeline: [],
+          generatedAt: NOW - 60_000,
+        },
+      }),
+      { now: NOW },
+    )
+    expect(view.status).toEqual({ label: 'Blocked', tone: 'red' })
+    expect(view.goal).toBe('Ship the hover card')
+    expect(view.progress).toBe(60)
+  })
+
+  it('omits progress when the brief has no goal text', () => {
+    const view = buildChatHoverCard(
+      chat({ taskBrief: { goal: '', state: { progress: 30, status: 'working' }, timeline: [], generatedAt: NOW } }),
+      { now: NOW },
+    )
+    expect(view.goal).toBeUndefined()
+    expect(view.progress).toBeUndefined()
+  })
+
+  it('describes worker and team selections', () => {
+    const worker = buildChatHoverCard(chat({ selection: { type: 'worker', name: 'Aide' } }), { now: NOW })
+    const team = buildChatHoverCard(chat({ selection: { type: 'team', name: 'Squad' } }), { now: NOW })
+    expect(rowValue(worker, 'Worker')).toBe('Aide')
+    expect(worker.rows.find(row => row.label === 'Worker')?.icon).toBe('code')
+    expect(rowValue(team, 'Team')).toBe('Squad')
+    expect(team.rows.find(row => row.label === 'Team')?.icon).toBe('users')
+    expect(worker.rows.some(row => /\b(?:worker|team|agent)\b/i.test(row.value))).toBe(false)
+    expect(team.rows.some(row => /\b(?:worker|team|agent)\b/i.test(row.value))).toBe(false)
+    expect(buildChatHoverCard(chat(), { now: NOW }).rows.some(row => row.label === 'Worker' || row.label === 'Team')).toBe(false)
+  })
+
+  it('shows the live branch and worktree instead of a checkout-mode label', () => {
+    const view = buildChatHoverCard(chat(), {
+      now: NOW,
+      checkout: { branch: 'chat-hover-card', worktree: '/repo/.worktrees/chat-hover-card' },
+    })
+    expect(rowValue(view, 'Branch')).toBe('chat-hover-card')
+    expect(rowValue(view, 'Worktree')).toBe('/repo/.worktrees/chat-hover-card')
+    expect(rowValue(view, 'Checkout')).toBeUndefined()
+  })
+
+  it('uses persisted PR and worktree data while live Git state is loading', () => {
+    const view = buildChatHoverCard(chat({
+      pullRequest: { url: 'u', state: 'pr-open', headBranch: 'feature', lastCheckedAt: NOW },
+      chatWorkspace: { worktreePath: '/repo/wt' } as Chat['chatWorkspace'],
+    }), { now: NOW })
+    expect(rowValue(view, 'Branch')).toBe('feature')
+    expect(rowValue(view, 'Worktree')).toBe('/repo/wt')
+  })
+
+  it('does not describe a shared checkout when Git details are unavailable', () => {
+    const view = buildChatHoverCard(chat({ executionMode: 'shared-checkout' }), { now: NOW })
+    expect(view.rows.some(row => row.value.toLowerCase().includes('shared checkout'))).toBe(false)
+  })
+
+  it('summarizes the pull request state', () => {
+    const view = buildChatHoverCard(
+      chat({ pullRequest: { url: 'u', number: 242, state: 'merged-with-changes', lastCheckedAt: NOW } }),
+      { now: NOW },
+    )
+    expect(rowValue(view, 'Pull request')).toBe('#242 · merged · new changes')
+  })
+
+  it('counts messages and formats the last activity', () => {
+    const view = buildChatHoverCard(chat({ messages: [{}, {}] as Chat['messages'] }), { now: NOW })
+    expect(rowValue(view, 'Messages')).toBe('2')
+    expect(rowValue(view, 'Last activity')).toBe('5m ago')
+  })
+
+  it('summarizes the most recent measured agent run', () => {
+    const view = buildChatHoverCard(chat({ messages: [
+      { role: 'assistant', durationSec: 12, tokens: 3400 },
+    ] as Chat['messages'] }), { now: NOW })
+    expect(rowValue(view, 'Last run')).toBe('12s · 3.4k tok')
+  })
+
+  it('gives every metadata row an icon and keeps its text as an accessible label', () => {
+    const view = buildChatHoverCard(chat(), { now: NOW })
+    expect(view.rows.every(row => row.icon && row.label)).toBe(true)
+  })
+
+  it('labels linked channels', () => {
+    const view = buildChatHoverCard(
+      chat({ routes: [{ channel: 'telegram', channelUserId: '1' }, { channel: 'imessage', channelUserId: '2' }] as Chat['routes'] }),
+      { now: NOW },
+    )
+    expect(view.channels).toEqual(['Telegram', 'iMessage'])
+  })
+})
+
+describe('clampCardTop', () => {
+  it('keeps the card aligned with the row when it fits', () => {
+    expect(clampCardTop(200, 300, 900)).toBe(200)
+  })
+
+  it('slides the card up when it would spill past the bottom', () => {
+    expect(clampCardTop(800, 300, 900)).toBe(588)
+  })
+
+  it('pins to the top margin when the card is taller than the viewport', () => {
+    expect(clampCardTop(400, 900, 500)).toBe(12)
+  })
+
+  it('never rises above the top margin', () => {
+    expect(clampCardTop(-50, 200, 900)).toBe(12)
+  })
+})
