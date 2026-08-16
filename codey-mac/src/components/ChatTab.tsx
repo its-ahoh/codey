@@ -824,7 +824,7 @@ export const ChatTab: React.FC<Props> = ({
   rightPanelMode, onRightPanelModeChange, rightPanelWidth, onRightPanelResize,
   browserLoginWait, onConfirmBrowserLogin, onDismissBrowserLogin,
 }) => {
-  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
 
@@ -1806,6 +1806,7 @@ export const ChatTab: React.FC<Props> = ({
         </div>
         <BranchPicker
           workingDir={workingDir}
+          repositoryDir={workspaceDir}
           chatWorktree={chat.chatWorkspace ? {
             name: chat.chatWorkspace.name,
             path: chat.chatWorkspace.worktreePath,
@@ -1813,6 +1814,7 @@ export const ChatTab: React.FC<Props> = ({
           executionMode={chat?.executionMode ?? 'shared-checkout'}
           onCreateWorktree={async name => { await createWorktree(chat.id, name) }}
           onExecutionModeChange={async mode => { await setExecutionMode(chat.id, mode) }}
+          onSelectWorktree={async (path, expectedBranch) => { await bindWorktree(chat.id, path, expectedBranch) }}
         />
         <div style={{ ...styles.openInWrap, marginLeft: 'auto' }}>
           <div style={styles.openInSplit}>

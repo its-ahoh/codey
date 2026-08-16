@@ -1,23 +1,25 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { C } from '../theme'
 import { useGitBranches } from '../hooks/useGitBranches'
-import { BranchNote, compactWorktreePath, currentFirst, describePullResult, filterBranches } from './branchPickerModel'
+import { BranchNote, compactWorktreePath, currentFirst, describePullResult, filterBranches, worktreeForBranch } from './branchPickerModel'
 import { UIIcon } from './UIIcons'
 
 interface Props {
   workingDir: string | undefined
+  repositoryDir?: string
   chatWorktree?: { name?: string; path: string }
   executionMode?: 'shared-checkout' | 'isolated-worktree'
   onCreateWorktree: (name: string) => Promise<void>
   onExecutionModeChange: (mode: 'shared-checkout' | 'isolated-worktree') => Promise<void>
+  onSelectWorktree: (path: string, expectedBranch: string) => Promise<void>
 }
 
 type Mode = { kind: 'list' } | { kind: 'createBranch' } | { kind: 'createWorktree' } | { kind: 'dirty'; target: string }
 
 export const BranchPicker: React.FC<Props> = ({
-  workingDir, chatWorktree, executionMode = 'shared-checkout', onCreateWorktree, onExecutionModeChange,
+  workingDir, repositoryDir, chatWorktree, executionMode = 'shared-checkout', onCreateWorktree, onExecutionModeChange, onSelectWorktree,
 }) => {
-  const git = useGitBranches(workingDir)
+  const git = useGitBranches(workingDir, repositoryDir)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [mode, setMode] = useState<Mode>({ kind: 'list' })
@@ -52,11 +54,15 @@ export const BranchPicker: React.FC<Props> = ({
   const isolated = executionMode === 'isolated-worktree'
   const worktreeLabel = chatWorktree?.name || chatWorktree?.path.split('/').filter(Boolean).pop() || 'Isolated worktree'
   const branchLabel = state?.branch === 'HEAD' ? '—' : (state?.branch ?? '—')
+  const activeWorktree = state?.branch ? worktreeForBranch(state.worktrees, state.branch) : undefined
+  const externalWorktree = !isolated && activeWorktree && !activeWorktree.isMain ? activeWorktree : undefined
   const pathLabel = compactWorktreePath(path)
   const lastSlash = pathLabel.lastIndexOf('/')
   const pathHead = lastSlash >= 0 ? pathLabel.slice(0, lastSlash + 1) : ''
   const pathTail = lastSlash >= 0 ? pathLabel.slice(lastSlash + 1) : pathLabel
-  const checkoutLabel = isolated ? worktreeLabel : 'Current checkout'
+  const checkoutLabel = isolated
+    ? worktreeLabel
+    : externalWorktree?.path.split('/').filter(Boolean).pop() || 'Current checkout'
   // One status line for the whole picker: an explicit note wins, otherwise the
   // last git failure surfaces in the same place instead of at the bottom.
   const banner: BranchNote | null = note ?? (git.error ? { tone: 'error', text: git.error } : null)
@@ -72,15 +78,44 @@ export const BranchPicker: React.FC<Props> = ({
   }
 
   const switchBranch = async (name: string) => {
+    const holder = worktreeForBranch(state?.worktrees ?? [], name)
+    if (holder) {
+      await switchToWorktree(holder.path, holder.branch)
+      return
+    }
     const result = await git.checkout(name)
     if (result.ok) { setOpen(false); return }
     if (result.reason === 'dirty') setMode({ kind: 'dirty', target: name })
   }
 
   const switchRemoteBranch = async (name: string) => {
+    const holder = worktreeForBranch(state?.worktrees ?? [], name, true)
+    if (holder) {
+      await switchToWorktree(holder.path, holder.branch)
+      return
+    }
+    const localName = name.replace(/^[^/]+\//, '')
+    if (state?.local.includes(localName)) {
+      await switchBranch(localName)
+      return
+    }
     const result = await git.checkout(name, { track: true })
     if (result.ok) { setOpen(false); return }
     if (result.reason === 'dirty') setMode({ kind: 'dirty', target: name.replace(/^[^/]+\//, '') })
+  }
+
+  const switchToWorktree = async (worktreePath: string, expectedBranch: string) => {
+    if (changingMode) return
+    setChangingMode(true); setNote(null); git.setError(null)
+    try {
+      await onSelectWorktree(worktreePath, expectedBranch)
+      setMode({ kind: 'list' })
+      setOpen(false)
+    } catch (error) {
+      setNote({ tone: 'error', text: error instanceof Error ? error.message : 'Could not switch worktree' })
+    } finally {
+      setChangingMode(false)
+    }
   }
 
   const syncWithRemote = async () => {
@@ -203,8 +238,8 @@ export const BranchPicker: React.FC<Props> = ({
           </div>
 
           <div style={styles.checkoutMode}>
-            <span style={isolated ? styles.worktreeBadge : styles.modeLabel} title={chatWorktree?.path}>
-              {isolated ? worktreeLabel : 'Current checkout'}
+            <span style={isolated || externalWorktree ? styles.worktreeBadge : styles.modeLabel} title={externalWorktree?.path || chatWorktree?.path}>
+              {isolated ? worktreeLabel : externalWorktree?.path.split('/').filter(Boolean).pop() || 'Current checkout'}
             </span>
             {!chatWorktree ? (
               <button style={styles.createWorktreeButton} onClick={() => { setNewWorktreeName(''); setMode({ kind: 'createWorktree' }) }}>
@@ -270,16 +305,18 @@ export const BranchPicker: React.FC<Props> = ({
               <div style={styles.scroll}>
                 {localBranches.length > 0 && <div style={styles.divider}>Local</div>}
                 {localBranches.map(branch => (
-                  <button key={branch} style={styles.item} disabled={branch === state?.branch} onClick={() => void switchBranch(branch)}>
+                  <button key={branch} style={styles.item} disabled={branch === state?.branch || changingMode} onClick={() => void switchBranch(branch)}>
                     <span style={styles.checkSlot}>{branch === state?.branch && <UIIcon name="check" size={13} />}</span>
                     <span style={styles.branchName}>{branch}</span>
+                    {worktreeForBranch(state?.worktrees ?? [], branch) && branch !== state?.branch && <span style={styles.branchMeta}>worktree</span>}
                   </button>
                 ))}
                 {remoteBranches.length > 0 && <div style={styles.divider}>Remote</div>}
                 {remoteBranches.map(branch => (
-                  <button key={branch} style={styles.item} onClick={() => void switchRemoteBranch(branch)}>
+                  <button key={branch} style={styles.item} disabled={changingMode} onClick={() => void switchRemoteBranch(branch)}>
                     <span style={styles.checkSlot} />
                     <span style={styles.branchName}>{branch}</span>
+                    {worktreeForBranch(state?.worktrees ?? [], branch, true) && <span style={styles.branchMeta}>worktree</span>}
                   </button>
                 ))}
                 {localBranches.length === 0 && remoteBranches.length === 0 && <div style={styles.empty}>No branches found</div>}
@@ -328,6 +365,7 @@ const styles: Record<string, React.CSSProperties> = {
   scroll: { maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', borderBottom: `1px solid ${C.border}` },
   item: { width: '100%', textAlign: 'left', background: 'transparent', border: 'none', color: C.fg, fontSize: 12, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 },
   branchName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  branchMeta: { marginLeft: 'auto', color: C.green, fontSize: 9, flexShrink: 0 },
   checkSlot: { width: 14, flexShrink: 0, display: 'inline-flex', alignItems: 'center' },
   empty: { color: C.fg3, fontSize: 11, padding: '14px 8px', textAlign: 'center' },
   hint: { color: C.fg3, fontSize: 10, lineHeight: 1.4 },

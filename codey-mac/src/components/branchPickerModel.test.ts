@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compactWorktreePath, currentFirst, describePullResult, filterBranches } from './branchPickerModel';
+import { compactWorktreePath, currentFirst, describePullResult, filterBranches, worktreeForBranch } from './branchPickerModel';
 
 describe('describePullResult', () => {
   it('reports how many commits arrived', () => {
@@ -35,6 +35,21 @@ describe('filterBranches', () => {
   });
   it('is case-insensitive substring match', () => {
     expect(filterBranches(['Main', 'feature/x', 'dev'], 'fe')).toEqual(['feature/x']);
+  });
+});
+
+describe('worktreeForBranch', () => {
+  const worktrees = [
+    { branch: 'main', path: '/repo', isMain: true },
+    { branch: 'feature/auth', path: '/worktrees/auth', isMain: false },
+  ];
+
+  it('finds the checkout holding a local branch', () => {
+    expect(worktreeForBranch(worktrees, 'feature/auth')?.path).toBe('/worktrees/auth');
+  });
+
+  it('maps a remote label to its local tracking branch', () => {
+    expect(worktreeForBranch(worktrees, 'origin/feature/auth', true)?.path).toBe('/worktrees/auth');
   });
 });
 

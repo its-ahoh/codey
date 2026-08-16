@@ -2036,7 +2036,7 @@ app.whenReady().then(async () => {
 
   // ── Git status IPC ────────────────────────────────────────────────
   // Live git branch watching: one fs.watch per workingDir, ref-counted by renderer subscriptions.
-  const gitWatchers = new Map<string, { watcher: import('fs').FSWatcher; count: number; timer: NodeJS.Timeout | null }>()
+  const gitWatchers = new Map<string, { watchers: import('fs').FSWatcher[]; count: number; timer: NodeJS.Timeout | null }>()
 
   ipcMain.handle('git:status', async (_e, workingDir: string) =>
     wrap(async () => {
@@ -2365,6 +2365,7 @@ app.whenReady().then(async () => {
       if (!workingDir) return { ok: false }
       const fsMod = await import('fs')
       const pathMod = await import('path')
+      const { execFile } = await import('child_process')
       const gitDir = pathMod.join(workingDir, '.git')
       const existing = gitWatchers.get(workingDir)
       if (existing) { existing.count++; return { ok: true } }
@@ -2382,8 +2383,22 @@ app.whenReady().then(async () => {
               try { return fsMod.readFileSync(gitDir, 'utf8').match(/gitdir:\s*(.+)/)?.[1]?.trim() } catch { return undefined }
             })()
         if (!resolvedGitDir) return { ok: false }
-        const watcher = fsMod.watch(resolvedGitDir, { persistent: false }, () => emit())
-        gitWatchers.set(workingDir, { watcher, count: 1, timer: null })
+        // A linked worktree's private git dir sees its own HEAD/index changes,
+        // while branch refs and worktree add/remove operations live under the
+        // repository's common git dir. Watch both and keep polling in the
+        // renderer as a fallback for nested ref directories and dropped events.
+        const commonOut = await new Promise<string | undefined>(resolve => {
+          execFile('git', ['rev-parse', '--git-common-dir'], { cwd: workingDir, timeout: 1500 }, (err, stdout) => {
+            resolve(err ? undefined : stdout.trim())
+          })
+        })
+        const commonGitDir = commonOut ? pathMod.resolve(workingDir, commonOut) : undefined
+        const candidates = Array.from(new Set([
+          resolvedGitDir,
+          commonGitDir,
+        ].filter((candidate): candidate is string => Boolean(candidate && fsMod.existsSync(candidate)))))
+        const watchers = candidates.map(candidate => fsMod.watch(candidate, { persistent: false }, () => emit()))
+        gitWatchers.set(workingDir, { watchers, count: 1, timer: null })
         return { ok: true }
       } catch {
         return { ok: false }
@@ -2399,7 +2414,9 @@ app.whenReady().then(async () => {
       entry.count--
       if (entry.count <= 0) {
         if (entry.timer) clearTimeout(entry.timer)
-        try { entry.watcher.close() } catch { /* ignore */ }
+        for (const watcher of entry.watchers) {
+          try { watcher.close() } catch { /* ignore */ }
+        }
         gitWatchers.delete(workingDir)
       }
       return { ok: true }
@@ -3733,6 +3750,13 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       return inProcessGateway.setChatExecutionMode(id, mode)
+    })
+  )
+
+  ipcMain.handle('chats:bindWorktree', async (_e, id: string, worktreePath: string, expectedBranch?: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.bindChatToWorktree(id, worktreePath, expectedBranch)
     })
   )
 
