@@ -108,51 +108,35 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
 /** Marks a turn that a fallback agent answered.
  *
  *  The identity to its left already names the agent/model that actually
- *  replied — the header used to spell that same pair out again in a badge. All
- *  this has to add is that the turn took a detour, and a way to ask why; the
- *  reason itself is long and rare, so it belongs in a popup rather than in the
- *  metadata row. */
+ *  replied, so the only thing worth surfacing here is *why* the first agent
+ *  dropped out — the failure itself, verbatim. It rides in a hover tooltip: the
+ *  reason is long and rare, and asking for a click to read an error the user
+ *  never chose to trigger is a toll on the common case. */
 const FallbackWarning: React.FC<{ fallback: { from: string; to: string; reason?: string } }> = ({ fallback }) => {
   const [open, setOpen] = React.useState(false)
-  const wrapRef = React.useRef<HTMLSpanElement>(null)
-
-  // Dismiss like a menu: a click anywhere else, or Escape. Without this the
-  // popup would survive scrolling away and opening another turn's popup.
-  React.useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
+  const detail = fallback.reason?.trim() || `${fallback.from} failed, so ${fallback.to} answered instead.`
 
   return (
-    <span ref={wrapRef} style={styles.fallbackWrap}>
-      <button
-        type="button"
+    <span
+      style={styles.fallbackWrap}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <span
+        // Focusable so the tooltip is reachable without a pointer; it opens on
+        // focus and closes on blur, mirroring the hover pair.
+        tabIndex={0}
+        role="button"
         style={styles.fallbackButton}
-        onClick={() => setOpen(v => !v)}
-        aria-expanded={open}
-        aria-label={`Answered by a fallback after ${fallback.from} failed`}
-        title="Answered by a fallback — click for details"
+        aria-label={`Answered by a fallback after ${fallback.from} failed: ${detail}`}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}
       >
         <UIIcon name="alert" size={13} strokeWidth={1.8} />
-      </button>
+      </span>
       {open && (
-        <div role="dialog" style={styles.fallbackPopover}>
-          <div style={styles.fallbackTitle}>Fallback used</div>
-          <div style={styles.fallbackLine}>
-            <span style={styles.fallbackLabel}>{fallback.from}</span> failed, so{' '}
-            <span style={styles.fallbackLabel}>{fallback.to}</span> answered instead.
-          </div>
-          {fallback.reason && <div style={styles.fallbackReason}>{fallback.reason}</div>}
-        </div>
+        <div role="tooltip" style={styles.fallbackPopover}>{detail}</div>
       )}
     </span>
   )
@@ -182,24 +166,19 @@ const styles: Record<string, React.CSSProperties> = {
   stats: { fontVariantNumeric: 'tabular-nums', opacity: 0.55 },
   fallbackWrap: { position: 'relative', display: 'inline-flex', flexShrink: 0 },
   fallbackButton: {
-    appearance: 'none', border: 0, background: 'transparent', color: C.warningFg,
-    padding: '2px', margin: '-2px', display: 'inline-flex', alignItems: 'center',
-    cursor: 'pointer', lineHeight: 0,
+    color: C.warningFg, padding: '2px', margin: '-2px',
+    display: 'inline-flex', alignItems: 'center', lineHeight: 0,
   },
   fallbackPopover: {
     position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 40,
     width: 300, maxWidth: '70vw',
     background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 8,
     padding: '8px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-    fontSize: 11, color: C.fg2, whiteSpace: 'normal', textAlign: 'left', cursor: 'default',
-  },
-  fallbackTitle: { color: C.warningFg, fontSize: 10, letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 4 },
-  fallbackLine: { lineHeight: 1.45 },
-  fallbackLabel: { fontFamily: 'SF Mono, Menlo, monospace' },
-  fallbackReason: {
-    marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.border2}`,
-    fontFamily: 'SF Mono, Menlo, monospace', fontSize: 10, lineHeight: 1.45,
-    color: C.fg3, maxHeight: 160, overflowY: 'auto', overflowWrap: 'anywhere',
+    fontFamily: 'SF Mono, Menlo, monospace', fontSize: 10.5, lineHeight: 1.45,
+    color: C.fg2, whiteSpace: 'normal', textAlign: 'left',
+    maxHeight: 200, overflowY: 'auto', overflowWrap: 'anywhere',
+    // Informational only — never intercept the pointer on its way back out.
+    pointerEvents: 'none',
   },
   rule: { borderTop: `1px solid ${C.border2}`, marginBottom: 8 },
 }
