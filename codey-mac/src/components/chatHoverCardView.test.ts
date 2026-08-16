@@ -86,12 +86,28 @@ describe('buildChatHoverCard', () => {
     expect(rowValue(buildChatHoverCard(chat(), { now: NOW }), 'Runs as')).toBeUndefined()
   })
 
-  it('names the chat worktree, falling back to the checkout mode', () => {
-    expect(rowValue(buildChatHoverCard(chat({ chatWorkspace: { name: 'hover-card' } as Chat['chatWorkspace'] }), { now: NOW }), 'Checkout'))
-      .toBe('hover-card')
-    expect(rowValue(buildChatHoverCard(chat({ executionMode: 'isolated-worktree' }), { now: NOW }), 'Checkout'))
-      .toBe('Isolated worktree')
-    expect(rowValue(buildChatHoverCard(chat(), { now: NOW }), 'Checkout')).toBe('Shared checkout')
+  it('shows the live branch and worktree instead of a checkout-mode label', () => {
+    const view = buildChatHoverCard(chat(), {
+      now: NOW,
+      checkout: { branch: 'chat-hover-card', worktree: '/repo/.worktrees/chat-hover-card' },
+    })
+    expect(rowValue(view, 'Branch')).toBe('chat-hover-card')
+    expect(rowValue(view, 'Worktree')).toBe('/repo/.worktrees/chat-hover-card')
+    expect(rowValue(view, 'Checkout')).toBeUndefined()
+  })
+
+  it('uses persisted PR and worktree data while live Git state is loading', () => {
+    const view = buildChatHoverCard(chat({
+      pullRequest: { url: 'u', state: 'pr-open', headBranch: 'feature', lastCheckedAt: NOW },
+      chatWorkspace: { worktreePath: '/repo/wt' } as Chat['chatWorkspace'],
+    }), { now: NOW })
+    expect(rowValue(view, 'Branch')).toBe('feature')
+    expect(rowValue(view, 'Worktree')).toBe('/repo/wt')
+  })
+
+  it('does not describe a shared checkout when Git details are unavailable', () => {
+    const view = buildChatHoverCard(chat({ executionMode: 'shared-checkout' }), { now: NOW })
+    expect(view.rows.some(row => row.value.toLowerCase().includes('shared checkout'))).toBe(false)
   })
 
   it('summarizes the pull request state', () => {
@@ -106,6 +122,18 @@ describe('buildChatHoverCard', () => {
     const view = buildChatHoverCard(chat({ messages: [{}, {}] as Chat['messages'] }), { now: NOW })
     expect(rowValue(view, 'Messages')).toBe('2')
     expect(rowValue(view, 'Last activity')).toBe('5m ago')
+  })
+
+  it('summarizes the most recent measured agent run', () => {
+    const view = buildChatHoverCard(chat({ messages: [
+      { role: 'assistant', durationSec: 12, tokens: 3400 },
+    ] as Chat['messages'] }), { now: NOW })
+    expect(rowValue(view, 'Last run')).toBe('12s · 3.4k tok')
+  })
+
+  it('gives every metadata row an icon and keeps its text as an accessible label', () => {
+    const view = buildChatHoverCard(chat(), { now: NOW })
+    expect(view.rows.every(row => row.icon && row.label)).toBe(true)
   })
 
   it('labels linked channels', () => {

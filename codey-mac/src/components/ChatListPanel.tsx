@@ -65,7 +65,12 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   const [chatMenu, setChatMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [chatMenuView, setChatMenuView] = useState<'main' | 'connect'>('main')
   const [hoveredChatId, setHoveredChatId] = useState<string | null>(null)
-  const [hoverCard, setHoverCard] = useState<{ chatId: string; top: number; right: number } | null>(null)
+  const [hoverCard, setHoverCard] = useState<{
+    chatId: string
+    top: number
+    right: number
+    checkout?: { branch?: string; worktree?: string }
+  } | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [wsOrder, setWsOrder] = useState<string[]>(() => {
     try {
@@ -127,12 +132,45 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
 
   useEffect(() => closeHoverCard, [closeHoverCard])
 
+  const resolveCheckout = async (chat: Chat): Promise<{ branch?: string; worktree?: string }> => {
+    try {
+      const info = await apiService.getWorkspaceInfo(chat.workspaceName)
+      const workingDir = chat.executionMode === 'isolated-worktree'
+        ? chat.chatWorkspace?.workingDir
+        : chat.workingDirOverride || info.workingDir
+      if (!workingDir) return {}
+      const [status, worktrees] = await Promise.all([
+        window.codey.git.status(workingDir),
+        window.codey.git.worktrees(chat.chatWorkspace?.repositoryRoot || info.workingDir),
+      ])
+      const registered = worktrees.ok
+        ? worktrees.data.list
+            .filter(item => workingDir === item.path || workingDir.startsWith(`${item.path}/`))
+            .sort((a, b) => b.path.length - a.path.length)[0]
+        : undefined
+      return {
+        branch: status.ok && status.data ? status.data.branch : chat.pullRequest?.headBranch,
+        worktree: registered?.path || chat.chatWorkspace?.worktreePath || chat.workingDirOverride || info.workingDir,
+      }
+    } catch {
+      return {
+        branch: chat.pullRequest?.headBranch,
+        worktree: chat.chatWorkspace?.worktreePath || chat.workingDirOverride,
+      }
+    }
+  }
+
   const openHoverCardLater = (chatId: string, row: HTMLElement) => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
     const { top, right } = row.getBoundingClientRect()
     hoverTimer.current = setTimeout(() => {
       hoverTimer.current = null
       setHoverCard({ chatId, top, right })
+      const chat = state.chats[chatId]
+      if (!chat) return
+      void resolveCheckout(chat).then(checkout => {
+        setHoverCard(current => current?.chatId === chatId ? { ...current, checkout } : current)
+      })
     }, HOVER_CARD_DELAY_MS)
   }
 
@@ -575,6 +613,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
             activity: state.inFlight[hoverCard.chatId]?.agentStatus,
             pendingPermissions: state.pendingPermissions[hoverCard.chatId],
             unread: !!state.unreadChats[hoverCard.chatId],
+            checkout: hoverCard.checkout,
           })}
           anchor={{ top: hoverCard.top, right: hoverCard.right }}
         />

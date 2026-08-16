@@ -1,10 +1,14 @@
 import type { Chat } from '../types'
 import { ACTIVITY_LABEL, type AgentActivity } from './agentActivity'
 import { formatAgo, type StatusTone } from './taskHudView'
+import { formatTokens } from './turnHeaderModel'
+import type { IconName } from './UIIcons'
 
 export interface HoverCardRow {
+  icon: IconName
   label: string
   value: string
+  monospace?: boolean
 }
 
 export interface ChatHoverCardView {
@@ -25,6 +29,8 @@ export interface HoverCardInput {
   /** Tool names awaiting a permission decision. */
   pendingPermissions?: string[]
   unread?: boolean
+  /** Live Git state for the checkout, resolved when the card opens. */
+  checkout?: { branch?: string; worktree?: string }
   now?: number
 }
 
@@ -66,10 +72,16 @@ function resolveRunner(chat: Chat): string | undefined {
   return undefined
 }
 
-function resolveCheckout(chat: Chat): string | undefined {
-  if (chat.chatWorkspace) return chat.chatWorkspace.name?.trim() || 'Isolated worktree'
-  if (chat.executionMode === 'isolated-worktree') return 'Isolated worktree'
-  return 'Shared checkout'
+function lastRun(chat: Chat): string | undefined {
+  const message = [...(chat.messages ?? [])].reverse().find(item =>
+    item.role === 'assistant' && (item.durationSec != null || item.tokens != null),
+  )
+  if (!message) return undefined
+  const duration = message.durationSec != null && Number.isFinite(message.durationSec)
+    ? `${message.durationSec}s`
+    : undefined
+  const tokens = message.tokens != null ? formatTokens(message.tokens) : null
+  return [duration, tokens ? `${tokens} tok` : undefined].filter(Boolean).join(' · ') || undefined
 }
 
 /** Everything the hover card shows, derived from the chat plus the live store
@@ -79,24 +91,29 @@ export function buildChatHoverCard(chat: Chat, input: HoverCardInput = {}): Chat
   const rows: HoverCardRow[] = []
 
   const agent = chat.agent ?? 'gateway default'
-  rows.push({ label: 'Agent', value: chat.model ? `${agent} · ${chat.model}` : agent })
-  if (chat.effort) rows.push({ label: 'Effort', value: chat.effort })
+  rows.push({ icon: 'bot', label: 'Agent', value: chat.model ? `${agent} · ${chat.model}` : agent })
+  if (chat.effort) rows.push({ icon: 'sparkle', label: 'Effort', value: chat.effort })
 
   const runner = resolveRunner(chat)
-  if (runner) rows.push({ label: 'Runs as', value: runner })
+  if (runner) rows.push({ icon: 'users', label: 'Runs as', value: runner })
 
-  rows.push({ label: 'Workspace', value: chat.workspaceName })
-  const checkout = resolveCheckout(chat)
-  if (checkout) rows.push({ label: 'Checkout', value: checkout })
+  rows.push({ icon: 'workspace', label: 'Workspace', value: chat.workspaceName })
+
+  const branch = input.checkout?.branch || chat.pullRequest?.headBranch
+  if (branch && branch !== 'HEAD') rows.push({ icon: 'git-branch', label: 'Branch', value: branch, monospace: true })
+  const worktree = input.checkout?.worktree || chat.chatWorkspace?.worktreePath
+  if (worktree) rows.push({ icon: 'folder-open', label: 'Worktree', value: worktree, monospace: true })
 
   if (chat.pullRequest) {
     const number = chat.pullRequest.number ? `#${chat.pullRequest.number}` : 'PR'
-    rows.push({ label: 'Pull request', value: `${number} · ${PR_LABEL[chat.pullRequest.state]}` })
+    rows.push({ icon: 'pull-request', label: 'Pull request', value: `${number} · ${PR_LABEL[chat.pullRequest.state]}` })
   }
 
   const messages = chat.messages?.length ?? 0
-  rows.push({ label: 'Messages', value: `${messages}` })
-  rows.push({ label: 'Last activity', value: formatAgo(chat.updatedAt, now) })
+  rows.push({ icon: 'chat', label: 'Messages', value: `${messages}` })
+  const run = lastRun(chat)
+  if (run) rows.push({ icon: 'activity', label: 'Last run', value: run })
+  rows.push({ icon: 'clock', label: 'Last activity', value: formatAgo(chat.updatedAt, now) })
 
   const brief = chat.taskBrief
   return {

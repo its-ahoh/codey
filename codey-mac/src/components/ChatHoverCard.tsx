@@ -55,8 +55,10 @@ export const ChatHoverCard: React.FC<Props> = ({ view, anchor }) => {
       <div style={styles.rows}>
         {view.rows.map(row => (
           <div key={row.label} style={styles.row}>
-            <span style={styles.rowLabel}>{row.label}</span>
-            <span style={styles.rowValue}>{row.value}</span>
+            <span style={styles.rowIcon} title={row.label} aria-label={row.label}>
+              <UIIcon name={row.icon} size={13} />
+            </span>
+            <span style={{ ...styles.rowValue, ...(row.monospace ? styles.monospace : null) }}>{row.value}</span>
           </div>
         ))}
       </div>
@@ -73,7 +75,7 @@ export const ChatHoverCard: React.FC<Props> = ({ view, anchor }) => {
 
 const styles: Record<string, React.CSSProperties> = {
   card: {
-    position: 'fixed', zIndex: 1100, width: 258, padding: 10,
+    position: 'fixed', zIndex: 1100, width: 280, padding: 11,
     background: C.surface2 ?? C.surface,
     border: `1px solid ${C.border2}`,
     borderRadius: 10,
@@ -90,8 +92,9 @@ const styles: Record<string, React.CSSProperties> = {
   progressTrack: { height: 3, borderRadius: 2, background: C.surface3, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 2 },
   rows: { display: 'flex', flexDirection: 'column', gap: 3, borderTop: `1px solid ${C.border}`, paddingTop: 7 },
-  row: { display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 11 },
-  rowLabel: { color: C.fg3, width: 82, flexShrink: 0 },
-  rowValue: { color: C.fg2, minWidth: 0, flex: 1, wordBreak: 'break-word' },
+  row: { display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 11, minHeight: 16 },
+  rowIcon: { color: C.fg3, width: 15, height: 15, flexShrink: 0, display: 'grid', placeItems: 'center' },
+  rowValue: { color: C.fg2, minWidth: 0, flex: 1, lineHeight: 1.35, wordBreak: 'break-word' },
+  monospace: { fontFamily: 'SF Mono, Menlo, monospace', fontSize: 10.5 },
   channels: { display: 'flex', alignItems: 'center', gap: 5, color: C.fg3, fontSize: 10.5 },
 }
