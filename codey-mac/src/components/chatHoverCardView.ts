@@ -66,9 +66,13 @@ function resolveStatus(chat: Chat, input: HoverCardInput): { label: string; tone
   return { label: 'Idle', tone: 'accent' }
 }
 
-function resolveRunner(chat: Chat): string | undefined {
-  if (chat.selection?.type === 'team') return `Team${chat.selection.name ? ` · ${chat.selection.name}` : ''}`
-  if (chat.selection?.type === 'worker') return `Worker · ${chat.selection.name}`
+function resolveRunner(chat: Chat): HoverCardRow | undefined {
+  if (chat.selection?.type === 'team') {
+    return { icon: 'users', label: 'Team', value: chat.selection.name?.trim() || 'Default' }
+  }
+  if (chat.selection?.type === 'worker') {
+    return { icon: 'code', label: 'Worker', value: chat.selection.name }
+  }
   return undefined
 }
 
@@ -95,7 +99,7 @@ export function buildChatHoverCard(chat: Chat, input: HoverCardInput = {}): Chat
   if (chat.effort) rows.push({ icon: 'sparkle', label: 'Effort', value: chat.effort })
 
   const runner = resolveRunner(chat)
-  if (runner) rows.push({ icon: 'users', label: 'Runs as', value: runner })
+  if (runner) rows.push(runner)
 
   rows.push({ icon: 'workspace', label: 'Workspace', value: chat.workspaceName })
 

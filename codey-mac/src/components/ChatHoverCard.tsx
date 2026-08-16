@@ -55,7 +55,7 @@ export const ChatHoverCard: React.FC<Props> = ({ view, anchor }) => {
       <div style={styles.rows}>
         {view.rows.map(row => (
           <div key={row.label} style={styles.row}>
-            <span style={styles.rowIcon} title={row.label} aria-label={row.label}>
+            <span role="img" style={styles.rowIcon} aria-label={row.label}>
               <UIIcon name={row.icon} size={13} />
             </span>
             <span style={{ ...styles.rowValue, ...(row.monospace ? styles.monospace : null) }}>{row.value}</span>
