@@ -1,7 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { BLACKBOARD_MARKER_INSTRUCTIONS } from './team-blackboard';
-import type { ThinkingEffort } from './types';
+import { CODING_AGENTS } from './types';
+import type { CodingAgent, ThinkingEffort } from './types';
 
 export interface WorkerPersonality {
   role: string;
@@ -10,7 +11,7 @@ export interface WorkerPersonality {
 }
 
 export interface WorkerConfig {
-  codingAgent: 'claude-code' | 'opencode' | 'codex' | 'pi';
+  codingAgent: CodingAgent;
   model: string;
   tools: string[];
   /**
@@ -38,7 +39,7 @@ export interface ParallelPromptInputs {
   peerOpinions: Array<{ name: string; path: string }>;
 }
 
-const VALID_CODING_AGENTS: readonly WorkerConfig['codingAgent'][] = ['claude-code', 'opencode', 'codex', 'pi'];
+const VALID_CODING_AGENTS: readonly CodingAgent[] = CODING_AGENTS;
 
 export class WorkerManager {
   private workersDir: string;

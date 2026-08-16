@@ -5,6 +5,11 @@ import { coerceTaskBrief } from './task-brief';
 /** Hard cap on characters per message included in a summary prompt — guards against runaway prompts. */
 const MAX_MSG_CHARS = 4000;
 
+/** Truncate a message body to the summary cap, appending a marker when cut. */
+function truncateMsg(text: string): string {
+  return text.length > MAX_MSG_CHARS ? text.slice(0, MAX_MSG_CHARS) + '… [truncated]' : text;
+}
+
 /**
  * Fold older messages into a rolling chat summary. Pass any existing summary
  * as `priorSummary` to extend it incrementally; pass undefined to summarize
@@ -22,9 +27,7 @@ export async function summarizeChatMessages(
 
   const transcript = messages
     .map(m => {
-      const body = m.content.length > MAX_MSG_CHARS
-        ? m.content.slice(0, MAX_MSG_CHARS) + '… [truncated]'
-        : m.content;
+      const body = truncateMsg(m.content);
       return `[${m.role}]\n${body}`;
     })
     .join('\n\n');
@@ -74,7 +77,7 @@ export async function generateChatTitle(
   lines.push('Summarize the user message below into a short title.');
   lines.push('');
   lines.push('## User message');
-  lines.push(source.length > MAX_MSG_CHARS ? source.slice(0, MAX_MSG_CHARS) + '… [truncated]' : source);
+  lines.push(truncateMsg(source));
   lines.push('');
   lines.push('## Requirements');
   lines.push('- A noun phrase capturing the topic or intent, not a greeting.');
@@ -106,7 +109,7 @@ function sanitizeTitle(raw: string): string {
 function briefTranscript(chat: Chat): string {
   return chat.messages
     .map(m => {
-      const body = m.content.length > MAX_MSG_CHARS ? m.content.slice(0, MAX_MSG_CHARS) + '… [truncated]' : m.content;
+      const body = truncateMsg(m.content);
       const tools = (m.toolCalls ?? [])
         .filter(t => t.type === 'tool_start' || t.type === 'tool_end')
         .map(t => `  · ${t.tool ?? 'tool'}: ${t.message}`)
@@ -221,7 +224,7 @@ export async function generateAideTurnDigest(
   lines.push(fallbackGoal);
   lines.push('');
   lines.push('## Most recent user request (language reference)');
-  lines.push(latestUserRequest.length > MAX_MSG_CHARS ? latestUserRequest.slice(0, MAX_MSG_CHARS) + '… [truncated]' : latestUserRequest);
+  lines.push(truncateMsg(latestUserRequest));
   lines.push('');
   lines.push('## Transcript');
   lines.push(briefTranscript(chat));

@@ -1,5 +1,6 @@
 import { AgentRequest, AgentResponse, CodingAgent, ModelConfig } from './types';
 import { extractJsonObject } from './advisor';
+import { runWithTimeout } from './utils/run';
 
 /**
  * Aide — a lightweight global role for housekeeping LLM calls (summarization,
@@ -76,27 +77,16 @@ async function withRetries<T>(opts: AideOptions, attempt: () => Promise<T>): Pro
 
 /** One attempt: the timeout is per-attempt, so a retry gets a full budget. */
 async function runOnce(prompt: string, opts: AideOptions): Promise<string> {
-  const ac = new AbortController();
-  const onUserAbort = () => ac.abort();
-  if (opts.signal) {
-    if (opts.signal.aborted) ac.abort();
-    else opts.signal.addEventListener('abort', onUserAbort, { once: true });
-  }
-  const timer = setTimeout(() => ac.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-
-  try {
-    const res = await opts.runner({
+  const res = await runWithTimeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, opts.signal, signal =>
+    opts.runner({
       prompt,
       agent: opts.agent,
       model: opts.model,
-      signal: ac.signal,
-    });
-    if (!res.success) throw new Error(res.error ?? 'aide runner returned non-success');
-    return (res.output ?? '').trim();
-  } finally {
-    clearTimeout(timer);
-    if (opts.signal) opts.signal.removeEventListener('abort', onUserAbort);
-  }
+      signal,
+    }),
+  );
+  if (!res.success) throw new Error(res.error ?? 'aide runner returned non-success');
+  return (res.output ?? '').trim();
 }
 
 /** Run a one-shot prompt through the configured Aide. Returns trimmed output, or throws. */

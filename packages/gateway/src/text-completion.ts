@@ -32,6 +32,62 @@ export function canRunDirectly(model: ModelConfig | undefined): model is ModelCo
   return Boolean(model?.apiKey && model.model);
 }
 
+interface BuiltCompletion {
+  url: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+  isAnthropic: boolean;
+}
+
+/** Resolve provider, endpoint URL, auth headers, and request body. Shared by
+ *  the one-shot and streaming paths so auth/endpoint fixes happen once. */
+function buildCompletion(model: ModelConfig, prompt: string, maxTokens: number, stream: boolean): BuiltCompletion {
+  const isAnthropic = model.apiType !== 'openai';
+  const base = (model.baseUrl ?? (isAnthropic ? DEFAULT_ANTHROPIC_BASE : DEFAULT_OPENAI_BASE)).replace(/\/$/, '');
+  const url = isAnthropic ? `${base}/messages` : `${base}/chat/completions`;
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (isAnthropic) {
+    headers['x-api-key'] = model.apiKey!;
+    headers['anthropic-version'] = '2023-06-01';
+  } else {
+    headers.Authorization = `Bearer ${model.apiKey}`;
+  }
+
+  const body: Record<string, unknown> = isAnthropic
+    ? { model: model.model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }
+    : { model: model.model, max_completion_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] };
+  if (stream) body.stream = true;
+
+  return { url, headers, body, isAnthropic };
+}
+
+/** POST the completion. Resolves null on network error/abort or a non-2xx
+ *  status; the timeout is applied here and the timer always cleared. */
+async function postCompletion(
+  url: string,
+  headers: Record<string, string>,
+  body: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<Awaited<ReturnType<typeof request>> | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await request(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (res.statusCode < 200 || res.statusCode >= 300) return null;
+    return res;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Runs `prompt` against `model` and returns the completion text, or null if
  * the call fails or comes back empty. Never throws — every caller so far has
@@ -45,40 +101,16 @@ export async function runTextCompletion(
 ): Promise<string | null> {
   const maxTokens = opts.maxTokens ?? 512;
   const timeoutMs = opts.timeoutMs ?? 20000;
-  const isAnthropic = model.apiType !== 'openai';
+  const { url, headers, body, isAnthropic } = buildCompletion(model, prompt, maxTokens, false);
 
-  const base = (model.baseUrl ?? (isAnthropic ? DEFAULT_ANTHROPIC_BASE : DEFAULT_OPENAI_BASE)).replace(/\/$/, '');
-  const url = isAnthropic ? `${base}/messages` : `${base}/chat/completions`;
-
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (isAnthropic) {
-    headers['x-api-key'] = model.apiKey!;
-    headers['anthropic-version'] = '2023-06-01';
-  } else {
-    headers.Authorization = `Bearer ${model.apiKey}`;
-  }
-
-  const body = isAnthropic
-    ? { model: model.model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }
-    : { model: model.model, max_completion_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] };
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const res = await postCompletion(url, headers, body, timeoutMs);
+  if (!res) return null;
   try {
-    const res = await request(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (res.statusCode < 200 || res.statusCode >= 300) return null;
     const json = (await res.body.json()) as any;
     const text = isAnthropic ? extractAnthropicText(json) : extractOpenAiText(json);
     return text && text.trim().length > 0 ? text.trim() : null;
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -104,35 +136,13 @@ export async function streamTextCompletion(
 ): Promise<string | null> {
   const maxTokens = opts.maxTokens ?? 512;
   const timeoutMs = opts.timeoutMs ?? 30000;
-  const isAnthropic = model.apiType !== 'openai';
+  const { url, headers, body, isAnthropic } = buildCompletion(model, prompt, maxTokens, true);
 
-  const base = (model.baseUrl ?? (isAnthropic ? DEFAULT_ANTHROPIC_BASE : DEFAULT_OPENAI_BASE)).replace(/\/$/, '');
-  const url = isAnthropic ? `${base}/messages` : `${base}/chat/completions`;
+  const res = await postCompletion(url, headers, body, timeoutMs);
+  if (!res) return null;
 
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (isAnthropic) {
-    headers['x-api-key'] = model.apiKey!;
-    headers['anthropic-version'] = '2023-06-01';
-  } else {
-    headers.Authorization = `Bearer ${model.apiKey}`;
-  }
-
-  const body = isAnthropic
-    ? { model: model.model, max_tokens: maxTokens, stream: true, messages: [{ role: 'user', content: prompt }] }
-    : { model: model.model, max_completion_tokens: maxTokens, stream: true, messages: [{ role: 'user', content: prompt }] };
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let acc = '';
   try {
-    const res = await request(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (res.statusCode < 200 || res.statusCode >= 300) return null;
-
     let buffered = '';
     for await (const chunk of res.body) {
       buffered += chunk.toString();
@@ -149,8 +159,6 @@ export async function streamTextCompletion(
     }
   } catch {
     // Fall through — partial text is still worth returning.
-  } finally {
-    clearTimeout(timer);
   }
   return acc.trim().length > 0 ? acc : null;
 }

@@ -1,8 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { AgentFactory } from './agents';
-import { CodingAgent, ModelConfig } from './types';
+import { CODING_AGENTS } from './types';
+import type { CodingAgent, ModelConfig } from './types';
 import { WorkerManager } from './workers';
+import { stripCodeFences } from './utils/json';
 
 export interface GenerateDeps {
   agentFactory: AgentFactory;
@@ -18,7 +20,7 @@ interface GeneratedWorker {
   role: string;
   soul: string;
   instructions: string;
-  codingAgent: 'claude-code' | 'opencode' | 'codex' | 'pi';
+  codingAgent: CodingAgent;
   model: string;
   tools: string[];
 }
@@ -40,11 +42,6 @@ Rules:
 - Output ONLY the JSON object. No markdown fences, no prose before or after.
 - If the user's description is ambiguous, make reasonable defaults.`;
 
-function stripCodeFences(s: string): string {
-  const m = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  return m ? m[1].trim() : s.trim();
-}
-
 function tryParse(raw: string): GeneratedWorker | null {
   try { return JSON.parse(stripCodeFences(raw)); } catch { return null; }
 }
@@ -52,7 +49,7 @@ function tryParse(raw: string): GeneratedWorker | null {
 function validate(g: GeneratedWorker | null): string | null {
   if (!g) return 'Response was not valid JSON';
   if (!/^[a-z][a-z0-9-]*$/.test(g.name || '')) return `name "${g.name}" is not a valid lowercase-kebab-case identifier`;
-  if (!['claude-code', 'opencode', 'codex', 'pi'].includes(g.codingAgent)) return `codingAgent "${g.codingAgent}" is invalid`;
+  if (!CODING_AGENTS.includes(g.codingAgent)) return `codingAgent "${g.codingAgent}" is invalid`;
   if (!g.model || typeof g.model !== 'string') return 'model must be a non-empty string';
   if (!Array.isArray(g.tools)) return 'tools must be an array';
   if (!g.role || !g.soul || !g.instructions) return 'role, soul, and instructions are all required';

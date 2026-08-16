@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { C } from '../theme'
-import { pillButton, unwrap } from './settingsAtoms'
+import { pillButton, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
 import { SKILL_SORT_MODES, sortSkills, usageFor, usageLabel } from './skillsSort'
@@ -21,22 +21,6 @@ const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
   'opencode': '~/.config/opencode/skills/',
   'pi': '~/.pi/agent/skills/',
 }
-
-// Matches the toggle idiom already used by PluginsTab / AppearanceTab.
-const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void; label?: string }> = ({ on, onChange, label }) => (
-  <div onClick={() => onChange(!on)} role="switch" aria-checked={on} aria-label={label} style={{
-    width: 32, height: 18, borderRadius: 9, flexShrink: 0,
-    background: on ? C.accent : C.surface3,
-    border: `1px solid ${on ? C.accent : C.border2}`,
-    cursor: 'pointer', position: 'relative', transition: 'all 0.2s',
-  }}>
-    <div style={{
-      position: 'absolute', top: 1, left: on ? 15 : 1,
-      width: 14, height: 14, borderRadius: '50%', background: '#fff',
-      transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-    }}/>
-  </div>
-)
 
 export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> = ({ addRequest = 0, searchQuery = '' }) => {
   const [data, setData] = useState<SkillsListResult>({ skills: [], projectDir: null })

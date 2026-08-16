@@ -1,5 +1,6 @@
 import { AgentRequest, AgentResponse, CodingAgent, ModelConfig } from './types';
 import { extractJsonObject } from './advisor';
+import { runWithTimeout } from './utils/run';
 
 export interface JudgeEdge {
   id: string;
@@ -79,22 +80,14 @@ export async function runJudge(input: JudgeInput, opts: JudgeOptions): Promise<J
 
   const prompt = buildJudgePrompt(input);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const ac = new AbortController();
-  const onAbort = () => ac.abort();
-  if (opts.signal) {
-    if (opts.signal.aborted) ac.abort();
-    else opts.signal.addEventListener('abort', onAbort, { once: true });
-  }
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
 
   let response: AgentResponse;
   try {
-    response = await opts.runner({ prompt, agent: opts.agent, model: opts.model, signal: ac.signal });
+    response = await runWithTimeout(timeoutMs, opts.signal, signal =>
+      opts.runner({ prompt, agent: opts.agent, model: opts.model, signal }),
+    );
   } catch (err) {
     return fallback(`runner threw: ${(err as Error).message}`);
-  } finally {
-    clearTimeout(timer);
-    if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
   }
 
   if (!response.success) return fallback(response.error || 'runner returned non-success');

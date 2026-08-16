@@ -41,3 +41,18 @@ export function unwrap<T>(r: { ok: true; data: T } | { ok: false; error: string 
   if (r.ok) return r.data
   throw new Error(r.error)
 }
+
+export const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void; label?: string }> = ({ on, onChange, label }) => (
+  <div onClick={() => onChange(!on)} role="switch" aria-checked={on} aria-label={label} style={{
+    width: 36, height: 20, borderRadius: 10, flexShrink: 0,
+    background: on ? C.accent : C.surface3,
+    border: `1px solid ${on ? C.accent : C.border2}`,
+    cursor: 'pointer', position: 'relative', transition: 'all 0.2s',
+  }}>
+    <div style={{
+      position: 'absolute', top: 1, left: on ? 17 : 1,
+      width: 16, height: 16, borderRadius: '50%', background: '#fff',
+      transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+    }}/>
+  </div>
+)

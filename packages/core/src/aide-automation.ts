@@ -1,6 +1,7 @@
 // packages/core/src/aide-automation.ts
 import { AideOptions, runAideJson } from './aide';
 import type { AutomationNotifyMode, AutomationSchedule, AutomationTarget } from './types/automation';
+import { isCodingAgent } from './types/index';
 import type { CodingAgent } from './types/index';
 import { NOTIFY_MODES, normalizeSchedule } from './types/automation';
 
@@ -80,7 +81,7 @@ function isValidTargetPatch(v: unknown): v is AutomationTarget {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   const t = v as Record<string, unknown>;
   if (t.kind === 'prompt') {
-    const agentOk = t.agent === undefined || t.agent === 'claude-code' || t.agent === 'opencode' || t.agent === 'codex' || t.agent === 'pi';
+    const agentOk = t.agent === undefined || isCodingAgent(t.agent);
     const modelOk = t.model === undefined || (typeof t.model === 'string' && !!t.model.trim());
     return typeof t.workspaceName === 'string' && !!t.workspaceName && agentOk && modelOk;
   }
