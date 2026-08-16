@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useChats } from '../hooks/useChats'
 import { apiService } from '../services/api'
 import type { Chat } from '../types'
@@ -9,6 +9,12 @@ import { setPendingPairing } from './pendingPairing'
 import { onWorkspacesChanged } from './workspacesChanged'
 import { UIIcon } from './UIIcons'
 import { moveWorkspace, reconcileWorkspaceOrder } from './workspaceOrder'
+import { ChatHoverCard } from './ChatHoverCard'
+import { buildChatHoverCard } from './chatHoverCardView'
+
+/** How long the pointer has to rest on a row before its info card appears —
+ *  long enough that sweeping the list to reach the footer stays quiet. */
+const HOVER_CARD_DELAY_MS = 550
 
 interface Props {
   onOpenSettings: (tab?: string) => void
@@ -59,6 +65,8 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   const [chatMenu, setChatMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [chatMenuView, setChatMenuView] = useState<'main' | 'connect'>('main')
   const [hoveredChatId, setHoveredChatId] = useState<string | null>(null)
+  const [hoverCard, setHoverCard] = useState<{ chatId: string; top: number; right: number } | null>(null)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [wsOrder, setWsOrder] = useState<string[]>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('codey.workspaceOrder') || '[]')
@@ -103,6 +111,32 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   useEffect(() => {
     localStorage.setItem('codey.workspaceOrder', JSON.stringify(wsOrder))
   }, [wsOrder])
+
+  const closeHoverCard = useCallback(() => {
+    if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = null }
+    setHoverCard(null)
+  }, [])
+
+  // The card is anchored to viewport coordinates, so any movement of the row
+  // underneath it (scrolling, resizing) would leave it stranded — drop it.
+  useEffect(() => {
+    if (!hoverCard) return
+    window.addEventListener('resize', closeHoverCard)
+    return () => window.removeEventListener('resize', closeHoverCard)
+  }, [hoverCard, closeHoverCard])
+
+  useEffect(() => closeHoverCard, [closeHoverCard])
+
+  const openHoverCardLater = (chatId: string, row: HTMLElement) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    const { top, right } = row.getBoundingClientRect()
+    hoverTimer.current = setTimeout(() => {
+      hoverTimer.current = null
+      setHoverCard({ chatId, top, right })
+    }, HOVER_CARD_DELAY_MS)
+  }
+
+  const hoverCardChat = hoverCard ? state.chats[hoverCard.chatId] : undefined
 
   const selectedWorkspace = activeChatId ? state.chats[activeChatId]?.workspaceName : undefined
   const newChatWorkspace = selectedWorkspace || lastWorkspace
@@ -304,7 +338,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
       </div>
       <div style={styles.chatSection}>
         <div style={styles.chatSectionHeader}><span>Chats</span><span>{state.order.length}</span></div>
-        <div style={styles.scroll}>
+        <div style={styles.scroll} onScroll={closeHoverCard}>
         {groupNames.length === 0 && (
           <div style={styles.empty}>No chats yet. Click "New Chat".</div>
         )}
@@ -424,15 +458,26 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                     style={{ ...styles.item, background: active ? C.accentDim : 'transparent', borderColor: active ? C.accent : 'transparent', opacity: orphaned ? 0.5 : 1 }}
                     onClick={() => {
                       if (isRenaming) return
+                      closeHoverCard()
                       onSelectChat()
                       selectChat(chat.id)
                     }}
-                    onMouseEnter={() => setHoveredChatId(chat.id)}
-                    onMouseLeave={() => setHoveredChatId(current => current === chat.id ? null : current)}
-                    onFocus={() => setHoveredChatId(chat.id)}
+                    onMouseEnter={event => {
+                      setHoveredChatId(chat.id)
+                      if (!isRenaming) openHoverCardLater(chat.id, event.currentTarget)
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredChatId(current => current === chat.id ? null : current)
+                      closeHoverCard()
+                    }}
+                    onFocus={event => {
+                      setHoveredChatId(chat.id)
+                      if (!isRenaming) openHoverCardLater(chat.id, event.currentTarget)
+                    }}
                     onBlur={event => {
                       if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
                         setHoveredChatId(current => current === chat.id ? null : current)
+                        closeHoverCard()
                       }
                     }}
                     onKeyDown={event => {
@@ -443,12 +488,14 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                     }}
                     onDoubleClick={(e) => {
                       e.stopPropagation()
+                      closeHoverCard()
                       setRenamingId(chat.id)
                       setRenameValue(chat.title)
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
+                      closeHoverCard()
                       setChatMenuView('main')
                       setChatMenu({ chat, x: e.clientX, y: e.clientY })
                     }}
@@ -522,6 +569,16 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
         <button style={styles.footerButton} onClick={() => onOpenSettings()}><UIIcon name="settings" size={15} />Settings</button>
         </div>
       </div>
+      {hoverCard && hoverCardChat && !wsMenu && !chatMenu && renamingId !== hoverCard.chatId && (
+        <ChatHoverCard
+          view={buildChatHoverCard(hoverCardChat, {
+            activity: state.inFlight[hoverCard.chatId]?.agentStatus,
+            pendingPermissions: state.pendingPermissions[hoverCard.chatId],
+            unread: !!state.unreadChats[hoverCard.chatId],
+          })}
+          anchor={{ top: hoverCard.top, right: hoverCard.right }}
+        />
+      )}
       {wsMenu && (
         <div
           style={{ ...styles.menu, top: wsMenu.y, left: wsMenu.x }}
