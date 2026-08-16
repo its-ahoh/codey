@@ -17,7 +17,7 @@ export type ChatStreamEvent =
   | { type: 'worker_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number }
   | { type: 'team_end'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
   | { type: 'workspace_ready'; chatId: string }
-  | { type: 'done'; chatId: string; response: string; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string }; teamTurnId?: string }
+  | { type: 'done'; chatId: string; response: string; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string; reason?: string }; teamTurnId?: string }
   | { type: 'stopped'; chatId: string; userMessageId: string; text: string }
   | { type: 'error'; chatId: string; message: string }
   | { type: 'permission_denials'; chatId: string; denials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> };

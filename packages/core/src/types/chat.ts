@@ -65,10 +65,11 @@ export interface ChatMessage {
   model?: string;
   /**
    * Present when this turn was produced by a fallback agent after the primary
-   * failed. Rendered as a small badge in the message footer. `from`/`to` are
-   * display labels like "claude-code(opus)".
+   * failed. Rendered as a warning affordance next to the turn's identity.
+   * `from`/`to` are display labels like "claude-code(opus)"; `reason` is the
+   * primary's failure text, shown on demand.
    */
-  fallback?: { from: string; to: string };
+  fallback?: { from: string; to: string; reason?: string };
   /** Extended-thinking for a single-agent assistant message (collapsed in UI). */
   thinking?: string;
   /** Per-team-step extended-thinking, keyed by step number. */

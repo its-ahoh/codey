@@ -262,7 +262,13 @@ export interface AgentResponse {
    * a badge. Kept as structured metadata — never injected into `output` — so
    * machine-consumed Aide calls (titles, summaries, JSON) stay clean.
    */
-  fallback?: { from: string; to: string };
+  fallback?: {
+    from: string;
+    to: string;
+    /** Why the primary failed, taken from its error/output. Truncated for
+     *  display; the full text stays in the gateway log. */
+    reason?: string;
+  };
   /** Structured question extracted from an AskUserQuestion tool call. */
   userQuestion?: {
     question: string;
