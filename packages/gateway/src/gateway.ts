@@ -64,6 +64,18 @@ export function isRetryableNetworkFailure(response: AgentResponse): boolean {
   return /(?:\btimeout\b|timed out|deadline exceeded|etimedout|econnreset|econnrefused|enotfound|eai_again|socket hang up|fetch failed|network (?:error|unavailable)|connection (?:closed|lost|reset|refused|error)|temporarily unavailable|service unavailable|gateway timeout|\b(?:408|429|500|502|503|504)\b)/i.test(text);
 }
 
+/** Longest primary-failure text carried into fallback metadata. The full text
+ *  stays in the gateway log; this only has to explain the fallback in a popup. */
+const FALLBACK_REASON_MAX = 400;
+
+/** One-line-ish explanation of why a run failed, for the fallback badge.
+ *  Prefers `error` (the adapter's own diagnosis) over raw `output`. */
+export function summarizeFailure(response: AgentResponse): string | undefined {
+  const raw = (response.error ?? response.output ?? '').trim();
+  if (!raw) return undefined;
+  return raw.length > FALLBACK_REASON_MAX ? `${raw.slice(0, FALLBACK_REASON_MAX).trimEnd()}…` : raw;
+}
+
 /** Explicit `/skill <name> <task>` invocation. Threaded per-turn: handleMessage
  *  attaches it to the queued turn's payload, runOneTurn reads it from the
  *  payload, and (for channel-linked chats) it rides into sendToChat on the
@@ -5309,7 +5321,7 @@ Example: /model gpt-4.1 write a Python script`;
         // banner to the output text. The Aide reuses this same fallback-routed
         // runner for housekeeping (title/summary/JSON), and a text banner would
         // leak into those — e.g. a chat title becoming "[Fallback: …]".
-        fallbackResponse.fallback = { from: fromLabel, to: label };
+        fallbackResponse.fallback = { from: fromLabel, to: label, reason: summarizeFailure(response) };
         return fallbackResponse;
       }
       this.logger.error(`Fallback ${label} also failed: ${fallbackResponse.error || fallbackResponse.output}`);

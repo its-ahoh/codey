@@ -15,7 +15,7 @@ export interface TurnHeaderMeta {
   /** Right-side items, already ordered. Returned as items rather than a joined
    *  string so an absent field cannot leave an orphaned separator. */
   stats: string[]
-  fallback?: { from: string; to: string }
+  fallback?: { from: string; to: string; reason?: string }
   /** Nothing to show — the caller renders the rule without a metadata row. */
   isEmpty: boolean
 }
