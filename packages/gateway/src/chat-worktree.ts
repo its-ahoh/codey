@@ -51,6 +51,14 @@ interface WorktreeRecord {
   branch?: string;
 }
 
+export interface RegisteredWorktreeBinding {
+  repositoryRoot: string;
+  worktreePath: string;
+  workingDir: string;
+  branch?: string;
+  isMain: boolean;
+}
+
 function parseWorktreeList(output: string): WorktreeRecord[] {
   const records: WorktreeRecord[] = [];
   let current: WorktreeRecord | undefined;
@@ -66,6 +74,49 @@ function parseWorktreeList(output: string): WorktreeRecord[] {
   }
   if (current) records.push(current);
   return records;
+}
+
+/** Resolve a path selected from `git worktree list` back to the workspace's
+ * configured subdirectory. Git is the source of truth: arbitrary directories,
+ * stale registrations, and worktrees from another repository are rejected. */
+export async function resolveRegisteredWorktreeBinding(input: {
+  workspaceWorkingDir: string;
+  worktreePath: string;
+}): Promise<RegisteredWorktreeBinding> {
+  const sourceDir = fs.realpathSync(path.resolve(input.workspaceWorkingDir));
+  let repositoryRoot: string;
+  try {
+    repositoryRoot = fs.realpathSync(path.resolve(await git(sourceDir, ['rev-parse', '--show-toplevel'])));
+  } catch {
+    throw new Error('Worktree switching requires a Git workspace');
+  }
+
+  const relativeWorkingDir = path.relative(repositoryRoot, sourceDir);
+  if (relativeWorkingDir.startsWith('..') || path.isAbsolute(relativeWorkingDir)) {
+    throw new Error(`Workspace directory is outside its Git repository: ${sourceDir}`);
+  }
+  if (!fs.existsSync(input.worktreePath)) {
+    throw new Error(`Worktree is no longer available: ${input.worktreePath}`);
+  }
+
+  const requested = fs.realpathSync(path.resolve(input.worktreePath));
+  const records = parseWorktreeList(await git(repositoryRoot, ['worktree', 'list', '--porcelain']));
+  const record = records.find(candidate =>
+    fs.existsSync(candidate.worktreePath) && fs.realpathSync(candidate.worktreePath) === requested
+  );
+  if (!record) throw new Error(`Directory is not a registered worktree of this workspace: ${requested}`);
+
+  const workingDir = path.join(requested, relativeWorkingDir);
+  if (!fs.existsSync(workingDir) || !fs.statSync(workingDir).isDirectory()) {
+    throw new Error(`Workspace subdirectory is missing from the selected worktree: ${relativeWorkingDir || '.'}`);
+  }
+  return {
+    repositoryRoot,
+    worktreePath: requested,
+    workingDir,
+    branch: record.branch,
+    isMain: requested === repositoryRoot,
+  };
 }
 
 /** Discover a worktree an agent created for this chat. The container is shared

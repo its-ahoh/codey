@@ -174,6 +174,7 @@ contextBridge.exposeInMainWorld('codey', {
     setWorkingDir: (id: string, dir: string | null) =>
       ipcRenderer.invoke('chats:setWorkingDir', id, dir),
     setExecutionMode: (id: string, mode: 'shared-checkout' | 'isolated-worktree') => ipcRenderer.invoke('chats:setExecutionMode', id, mode),
+    bindWorktree: (id: string, worktreePath: string, expectedBranch?: string) => ipcRenderer.invoke('chats:bindWorktree', id, worktreePath, expectedBranch),
     createWorktree: (id: string, name: string) => ipcRenderer.invoke('chats:createWorktree', id, name),
     setPullRequest: (id: string, pullRequest: any) =>
       ipcRenderer.invoke('chats:setPullRequest', id, pullRequest),

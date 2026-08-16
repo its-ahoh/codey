@@ -23,7 +23,7 @@ import { MemoryStore } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
-import { chatWorktreeParent, discoverChatWorktree, ensureWorktreeContainer, provisionChatWorktree, removeCleanChatWorktree, workspaceHasUncommittedChanges } from './chat-worktree';
+import { chatWorktreeParent, discoverChatWorktree, ensureWorktreeContainer, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
 import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
@@ -834,6 +834,41 @@ export class Codey {
       return this.ensureChatWorkspace(chatId);
     }
     return this.chatManager.setExecutionMode(chatId, mode);
+  }
+
+  /** Bind a chat to a worktree already registered in the workspace repository.
+   * The checkout remains user-managed: binding never transfers ownership and
+   * deleting the chat must therefore never remove it. */
+  public async bindChatToWorktree(chatId: string, worktreePath: string, expectedBranch?: string): Promise<Chat> {
+    const chat = await this.getChat(chatId);
+    if (this.chatAborts.has(chatId)) throw new Error('Wait for the current agent turn to finish before switching worktrees');
+    const binding = await resolveRegisteredWorktreeBinding({
+      workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
+      worktreePath,
+    });
+    if (expectedBranch && binding.branch !== expectedBranch) {
+      throw new Error(`Git changed while switching: this worktree now has branch "${binding.branch ?? '(detached)'}" instead of "${expectedBranch}"`);
+    }
+
+    if (binding.isMain) return this.chatManager.setExecutionMode(chatId, 'shared-checkout');
+    if (chat.chatWorkspace
+      && fs.existsSync(chat.chatWorkspace.worktreePath)
+      && fs.realpathSync(chat.chatWorkspace.worktreePath) === binding.worktreePath) {
+      return this.setChatExecutionMode(chatId, 'isolated-worktree');
+    }
+
+    const occupied = this.chatManager.list(chat.workspaceName, { includeAutomation: true }).find(other => {
+      if (other.id === chat.id) return false;
+      if (other.executionMode === 'isolated-worktree' && other.chatWorkspace) {
+        return fs.existsSync(other.chatWorkspace.worktreePath)
+          && fs.realpathSync(other.chatWorkspace.worktreePath) === binding.worktreePath;
+      }
+      return Boolean(other.workingDirOverride)
+        && path.resolve(other.workingDirOverride!) === path.resolve(binding.workingDir);
+    });
+    if (occupied) throw new Error(`This worktree is already used by chat "${occupied.title}"`);
+
+    return this.chatManager.setExternalWorkingDir(chatId, binding.workingDir);
   }
 
   public setChatEventListener(fn: (ev: any) => void): void {
@@ -1822,7 +1857,7 @@ export class Codey {
     }
     if (chat.workingDirOverride) {
       if (fs.existsSync(chat.workingDirOverride)) return chat.workingDirOverride;
-      this.logger.warn(`Chat ${chat.id} workingDirOverride=${chat.workingDirOverride} is gone; falling back to workspace dir`);
+      throw new Error(`Selected checkout is no longer available: ${chat.workingDirOverride}. Choose another branch or worktree before continuing.`);
     }
     return this.resolveWorkspaceWorkingDir(chat.workspaceName);
   }

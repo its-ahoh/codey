@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { chatWorktreeParent, discoverChatWorktree, normalizeWorktreeName, provisionChatWorktree, removeCleanChatWorktree, workspaceHasUncommittedChanges } from './chat-worktree';
+import { chatWorktreeParent, discoverChatWorktree, normalizeWorktreeName, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
 import { ChatManager } from './chats';
 
 const roots: string[] = [];
@@ -147,6 +147,50 @@ describe('discoverChatWorktree', () => {
   });
 });
 
+describe('resolveRegisteredWorktreeBinding', () => {
+  it('maps a registered worktree root to the configured workspace subdirectory', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-bind-worktree-'));
+    roots.push(root);
+    const repositoryRoot = path.join(root, 'repo');
+    const workspaceWorkingDir = path.join(repositoryRoot, 'packages', 'app');
+    fs.mkdirSync(workspaceWorkingDir, { recursive: true });
+    git(repositoryRoot, ['init', '-b', 'main']);
+    git(repositoryRoot, ['config', 'user.email', 'test@codey.local']);
+    git(repositoryRoot, ['config', 'user.name', 'Codey Test']);
+    fs.writeFileSync(path.join(repositoryRoot, 'README.md'), 'hello\n');
+    fs.writeFileSync(path.join(workspaceWorkingDir, '.gitkeep'), '');
+    git(repositoryRoot, ['add', '.']);
+    git(repositoryRoot, ['commit', '-m', 'initial']);
+    const linked = path.join(root, 'linked');
+    git(repositoryRoot, ['worktree', 'add', '-b', 'feature-linked', linked, 'HEAD']);
+
+    const result = await resolveRegisteredWorktreeBinding({ workspaceWorkingDir, worktreePath: linked });
+
+    expect(result).toMatchObject({
+      repositoryRoot: fs.realpathSync(repositoryRoot),
+      worktreePath: fs.realpathSync(linked),
+      workingDir: path.join(fs.realpathSync(linked), 'packages', 'app'),
+      branch: 'feature-linked',
+      isMain: false,
+    });
+  });
+
+  it('rejects an arbitrary directory outside the registered worktree list', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-bind-invalid-'));
+    roots.push(root);
+    const repositoryRoot = path.join(root, 'repo');
+    const arbitrary = path.join(root, 'arbitrary');
+    fs.mkdirSync(repositoryRoot, { recursive: true });
+    fs.mkdirSync(arbitrary, { recursive: true });
+    git(repositoryRoot, ['init', '-b', 'main']);
+
+    await expect(resolveRegisteredWorktreeBinding({
+      workspaceWorkingDir: repositoryRoot,
+      worktreePath: arbitrary,
+    })).rejects.toThrow(/not a registered worktree/i);
+  });
+});
+
 describe('normalizeWorktreeName', () => {
   it('turns a user label into a safe semantic directory name', () => {
     expect(normalizeWorktreeName(' Feature / Auth ')).toBe('Feature-Auth');
@@ -266,6 +310,23 @@ describe('ChatManager isolated workspace binding', () => {
     const isolated = manager.setExecutionMode(chat.id, 'isolated-worktree');
     expect(isolated.workingDirOverride).toBe(workspace.workingDir);
     expect(isolated.sessionAnchors).toBeUndefined();
+  });
+
+  it('binds an external checkout without claiming it and clears the old session', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chat-external-'));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, 'demo'), { recursive: true });
+    const manager = new ChatManager(root);
+    const chat = manager.create({ workspaceName: 'demo', executionMode: 'shared-checkout' });
+    manager.setSessionAnchor(chat.id, { agent: 'codex', model: 'model-a', sessionId: 'old-session' });
+
+    const updated = manager.setExternalWorkingDir(chat.id, '/worktrees/user-managed');
+
+    expect(updated.executionMode).toBe('shared-checkout');
+    expect(updated.workingDirOverride).toBe('/worktrees/user-managed');
+    expect(updated.chatWorkspace).toBeUndefined();
+    expect(updated.sessionAnchor).toBeUndefined();
+    expect(updated.sessionAnchors).toBeUndefined();
   });
 
   it('persists pull request state without changing conversation activity time', () => {

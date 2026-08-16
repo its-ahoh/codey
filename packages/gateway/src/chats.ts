@@ -358,8 +358,29 @@ export class ChatManager {
    *  Pass null/undefined/'' to clear and fall back to the workspace dir. */
   setWorkingDirOverride(chatId: string, dir: string | null): Chat {
     const chat = this.requireChat(chatId);
+    const previousWorkingDir = chat.workingDirOverride;
     if (dir === null || dir === undefined || dir === '') delete chat.workingDirOverride;
     else chat.workingDirOverride = dir;
+    if (previousWorkingDir !== chat.workingDirOverride) {
+      delete chat.sessionAnchor;
+      delete chat.sessionAnchors;
+    }
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
+  /** Select a registered user-managed worktree without claiming ownership of
+   * it. A chat-owned worktree, if any, remains available to switch back to. */
+  setExternalWorkingDir(chatId: string, dir: string): Chat {
+    const chat = this.requireChat(chatId);
+    const previousWorkingDir = chat.workingDirOverride;
+    chat.executionMode = 'shared-checkout';
+    chat.workingDirOverride = dir;
+    if (previousWorkingDir !== dir) {
+      delete chat.sessionAnchor;
+      delete chat.sessionAnchors;
+    }
     chat.updatedAt = Date.now();
     this.persist(chat);
     return chat;

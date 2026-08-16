@@ -476,6 +476,7 @@ interface ChatsContextValue {
   setEffort: (chatId: string, effort: string | null) => Promise<void>
   setWorkingDir: (chatId: string, dir: string | null) => Promise<void>
   setExecutionMode: (chatId: string, mode: 'shared-checkout' | 'isolated-worktree') => Promise<Chat>
+  bindWorktree: (chatId: string, worktreePath: string, expectedBranch?: string) => Promise<Chat>
   createWorktree: (chatId: string, name: string) => Promise<Chat>
   setPullRequest: (chatId: string, pullRequest: NonNullable<Chat['pullRequest']>) => Promise<void>
   setContextPanelOpen: (chatId: string, open: boolean | null) => Promise<void>
@@ -781,6 +782,11 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     async setExecutionMode(chatId, mode) {
       const chat = await apiService.chats.setExecutionMode(chatId, mode)
+      dispatch({ type: 'upsert', chat })
+      return chat
+    },
+    async bindWorktree(chatId, worktreePath, expectedBranch) {
+      const chat = await apiService.chats.bindWorktree(chatId, worktreePath, expectedBranch)
       dispatch({ type: 'upsert', chat })
       return chat
     },

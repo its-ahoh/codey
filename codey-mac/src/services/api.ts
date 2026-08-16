@@ -205,6 +205,8 @@ export const apiService = {
       unwrap(await window.codey.chats.setWorkingDir(id, dir)),
     setExecutionMode: async (id: string, mode: 'shared-checkout' | 'isolated-worktree'): Promise<Chat> =>
       unwrap(await window.codey.chats.setExecutionMode(id, mode)),
+    bindWorktree: async (id: string, worktreePath: string, expectedBranch?: string): Promise<Chat> =>
+      unwrap(await window.codey.chats.bindWorktree(id, worktreePath, expectedBranch)),
     createWorktree: async (id: string, name: string): Promise<Chat> =>
       unwrap(await window.codey.chats.createWorktree(id, name)),
     setPullRequest: async (id: string, pullRequest: NonNullable<Chat['pullRequest']>): Promise<Chat> =>

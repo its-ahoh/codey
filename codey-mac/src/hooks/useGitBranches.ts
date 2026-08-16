@@ -5,6 +5,7 @@ export interface BranchState {
   dirty: number
   local: string[]
   remote: string[]
+  worktrees: { branch: string; path: string; isMain: boolean }[]
 }
 
 export interface PullOutcome {
@@ -15,30 +16,42 @@ export interface PullOutcome {
   reason?: 'dirty' | 'diverged' | 'no-upstream'
 }
 
-export function useGitBranches(workingDir: string | undefined) {
+export function useGitBranches(workingDir: string | undefined, repositoryDir?: string) {
   const [state, setState] = useState<BranchState | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
-    if (!workingDir) { setState(null); return }
+    const topologyDir = repositoryDir || workingDir
+    if (!topologyDir) { setState(null); return }
     try {
-      const [s, b] = await Promise.all([
-        window.codey.git.status(workingDir),
-        window.codey.git.branches(workingDir),
+      const [s, b, w] = await Promise.all([
+        workingDir ? window.codey.git.status(workingDir) : Promise.resolve({ ok: true as const, data: null }),
+        window.codey.git.branches(topologyDir),
+        window.codey.git.worktrees(topologyDir),
       ])
-      if (!s.ok || !s.data) { setState(null); return }
-      const br = b.ok ? b.data : { current: s.data.branch, local: [], remote: [] }
-      setState({ branch: s.data.branch, dirty: s.data.dirty, local: br.local, remote: br.remote })
+      const br = b.ok ? b.data : { current: '', local: [], remote: [] }
+      if (!s.ok && !b.ok && !w.ok) { setState(null); return }
+      setState({
+        // A missing selected checkout must not masquerade as the repository's
+        // main branch. Keep topology available so the user can recover by
+        // selecting another worktree, but render the active branch as unknown.
+        branch: s.ok && s.data ? s.data.branch : 'HEAD',
+        dirty: s.ok && s.data ? s.data.dirty : 0,
+        local: br.local,
+        remote: br.remote,
+        worktrees: w.ok ? w.data.list : [],
+      })
     } catch { setState(null) }
-  }, [workingDir])
+  }, [workingDir, repositoryDir])
 
   useEffect(() => { void refresh() }, [refresh])
 
   // Live updates: watch .git and re-pull on change. Polling fallback every 5s.
   useEffect(() => {
-    if (!workingDir) return
-    void window.codey.git.watch(workingDir)
-    const off = window.codey.git.onChanged(ev => { if (ev.workingDir === workingDir) void refresh() })
+    const watchedDirs = Array.from(new Set([workingDir, repositoryDir].filter((dir): dir is string => Boolean(dir))))
+    if (watchedDirs.length === 0) return
+    for (const dir of watchedDirs) void window.codey.git.watch(dir)
+    const off = window.codey.git.onChanged(ev => { if (watchedDirs.includes(ev.workingDir)) void refresh() })
     const onFocus = () => void refresh()
     window.addEventListener('focus', onFocus)
     const poll = setInterval(() => void refresh(), 5000)
@@ -46,9 +59,9 @@ export function useGitBranches(workingDir: string | undefined) {
       off()
       window.removeEventListener('focus', onFocus)
       clearInterval(poll)
-      void window.codey.git.unwatch(workingDir)
+      for (const dir of watchedDirs) void window.codey.git.unwatch(dir)
     }
-  }, [workingDir, refresh])
+  }, [workingDir, repositoryDir, refresh])
 
   const checkout = useCallback(async (name: string, opts?: { create?: boolean; track?: boolean }) => {
     if (!workingDir) return { ok: false, error: 'no dir' }

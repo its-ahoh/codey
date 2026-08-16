@@ -3,12 +3,24 @@
 // renderer bundle. The path building below is plain string work (macOS paths).
 
 export interface BranchData { current: string; local: string[]; remote: string[] }
+export interface WorktreeData { branch: string; path: string; isMain: boolean }
 
 /** Case-insensitive substring filter; empty query returns the list unchanged. */
 export function filterBranches(list: string[], query: string): string[] {
   const q = query.trim().toLowerCase();
   if (!q) return list;
   return list.filter(b => b.toLowerCase().includes(q));
+}
+
+/** Return the checkout that already owns a local branch. Remote picker labels
+ * are mapped to their conventional local tracking name before lookup. */
+export function worktreeForBranch(
+  worktrees: WorktreeData[],
+  branch: string,
+  remote = false,
+): WorktreeData | undefined {
+  const localBranch = remote ? branch.replace(/^[^/]+\//, '') : branch;
+  return worktrees.find(worktree => worktree.branch === localBranch);
 }
 
 /** Compact a filesystem path without hiding its identifying final segments. */
