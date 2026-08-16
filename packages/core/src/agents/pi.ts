@@ -200,10 +200,10 @@ export class PiAdapter extends BaseAgentAdapter {
       const args = piArgs(request);
       this.debug(`[pi] Spawning: pi ${args.slice(0, -1).join(' ')} "<prompt>"`);
 
-      const { applyModelEnv } = require('./env') as typeof import('./env');
+      const { applyModelEnv, withCommonBinPaths } = require('./env') as typeof import('./env');
       // pi is provider-agnostic and picks the provider from the model pattern;
       // anthropic is the closest thing to a house default.
-      const env = applyModelEnv({ ...process.env }, request.model, 'anthropic');
+      const env = withCommonBinPaths(applyModelEnv({ ...process.env }, request.model, 'anthropic'));
       if (request.extraEnv) Object.assign(env, request.extraEnv);
 
       const childProcess: ChildProcess = spawn('pi', args, {

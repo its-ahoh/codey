@@ -146,8 +146,8 @@ export class CodexAdapter extends BaseAgentAdapter {
       }
       args.push(request.prompt);
 
-      const { applyModelEnv } = require('./env') as typeof import('./env');
-      const env = applyModelEnv({ ...process.env }, request.model, 'openai');
+      const { applyModelEnv, withCommonBinPaths } = require('./env') as typeof import('./env');
+      const env = withCommonBinPaths(applyModelEnv({ ...process.env }, request.model, 'openai'));
       if (request.extraEnv) Object.assign(env, request.extraEnv);
 
       const childProcess: ChildProcess = spawn('codex', args, {
