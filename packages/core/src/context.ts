@@ -135,7 +135,9 @@ export class ContextManager {
       await prev;
       return fn();
     } finally {
-      this.locks.delete(windowId);
+      // Only delete our own entry: a later caller may have already queued a
+      // new lock, and deleting it would let a fresh caller bypass the queue.
+      if (this.locks.get(windowId) === lock) this.locks.delete(windowId);
       release!();
     }
   }
