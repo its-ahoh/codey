@@ -298,7 +298,7 @@ export const BranchPicker: React.FC<Props> = ({
               </div>
               <div style={styles.hint}>
                 {worktreeBranch
-                  ? `Checks out ${worktreeBranch} in the new worktree. It must not be checked out anywhere else.`
+                  ? `Checks out ${worktreeBranch} in a new worktree, or reuses the worktree that already holds it.`
                   : 'Creates a worktree and same-named branch from HEAD. Uncommitted changes stay in the current checkout.'}
               </div>
               <div style={styles.row}>

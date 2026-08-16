@@ -180,12 +180,15 @@ async function resolveBranchTarget(repositoryRoot: string, requested: string): P
 /** Create a chat-owned worktree. By default this also creates a same-named
  *  branch from the source HEAD; with `existingBranch` the worktree is attached
  *  to a branch that already exists (checking out a remote branch locally when
- *  needed), which Git allows as long as no other worktree holds it. */
+ *  needed). A branch Git already holds in another worktree is not duplicated:
+ *  that checkout is adopted instead, unless it belongs to someone else. */
 export async function provisionChatWorktree(input: {
   workspaceWorkingDir: string;
   /** Defaults to the branch name when attaching to an existing branch. */
   worktreeName?: string;
   existingBranch?: string;
+  /** Worktree paths already bound to a chat; never adopted for a second chat. */
+  claimedPaths?: string[];
 }): Promise<ChatWorkspace> {
   const sourceDir = fs.realpathSync(path.resolve(input.workspaceWorkingDir));
   let repositoryRoot: string;
@@ -207,37 +210,63 @@ export async function provisionChatWorktree(input: {
   const requestedPath = path.join(chatWorktreeParent(sourceDir), name);
   ensureWorktreeContainer(sourceDir);
   const worktreePath = path.join(fs.realpathSync(path.dirname(requestedPath)), path.basename(requestedPath));
-  const workingDir = path.join(worktreePath, relativeWorkingDir);
+
+  // Stale registrations make Git report a branch as checked out long after its
+  // directory is gone, so clear them before any branch check runs.
+  await git(repositoryRoot, ['worktree', 'prune']);
+
+  const finish = (checkout: string, base: string): ChatWorkspace => {
+    const dir = path.join(checkout, relativeWorkingDir);
+    // Git does not track empty directories. Recreate the configured workspace
+    // subdirectory when the source path exists but the checkout omitted it.
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    if (!fs.statSync(dir).isDirectory()) {
+      throw new Error(`Workspace subdirectory is not a directory in the isolated checkout: ${relativeWorkingDir}`);
+    }
+    return {
+      name: path.basename(checkout), repositoryRoot, worktreePath: checkout,
+      workingDir: dir, baseCommit: base, createdAt: Date.now(),
+    };
+  };
+
+  const target = input.existingBranch ? await resolveBranchTarget(repositoryRoot, input.existingBranch) : undefined;
+
+  if (target) {
+    // The main working tree is first in Git's listing. It is the shared
+    // checkout every chat starts in, so it is never a chat's own worktree.
+    const [mainWorktree, ...linked] = parseWorktreeList(await git(repositoryRoot, ['worktree', 'list', '--porcelain']));
+    if (mainWorktree?.branch === target.localBranch) {
+      throw new Error(`Branch "${target.localBranch}" is checked out in the workspace itself — switch this chat to the current checkout instead`);
+    }
+    const holder = linked.find(record => record.branch === target.localBranch && fs.existsSync(record.worktreePath));
+    if (holder) {
+      // Git allows one worktree per branch, so reuse the existing checkout
+      // rather than refusing the branch outright.
+      const existing = fs.realpathSync(holder.worktreePath);
+      const claimed = (input.claimedPaths ?? [])
+        .filter(claimedPath => fs.existsSync(claimedPath))
+        .map(claimedPath => fs.realpathSync(claimedPath));
+      if (claimed.includes(existing)) {
+        throw new Error(`Branch "${target.localBranch}" belongs to another chat's worktree at ${existing}`);
+      }
+      return finish(existing, await git(existing, ['rev-parse', 'HEAD']));
+    }
+  }
 
   if (fs.existsSync(worktreePath)) {
     throw new Error(`A worktree named "${name}" already exists in this workspace`);
   }
-  // Stale registrations make Git report a branch as checked out long after its
-  // directory is gone, so clear them before either branch check runs.
-  await git(repositoryRoot, ['worktree', 'prune']);
 
-  let baseCommit = sourceCommit;
-  if (input.existingBranch) {
-    const target = await resolveBranchTarget(repositoryRoot, input.existingBranch);
-    const holder = parseWorktreeList(await git(repositoryRoot, ['worktree', 'list', '--porcelain']))
-      .find(record => record.branch === target.localBranch);
-    if (holder) throw new Error(`Branch "${target.localBranch}" is already checked out at ${holder.worktreePath}`);
+  if (target) {
     const args = target.startPoint
       ? ['worktree', 'add', '--track', '-b', target.localBranch, worktreePath, target.startPoint]
       : ['worktree', 'add', worktreePath, target.localBranch];
     await git(repositoryRoot, args);
-    baseCommit = await git(worktreePath, ['rev-parse', 'HEAD']);
-  } else {
-    const branchExists = await refExists(repositoryRoot, `refs/heads/${name}`);
-    if (branchExists) throw new Error(`A branch named "${name}" already exists`);
-    await git(repositoryRoot, ['worktree', 'add', '-b', name, worktreePath, baseCommit]);
+    return finish(worktreePath, await git(worktreePath, ['rev-parse', 'HEAD']));
   }
 
-  // Git does not track empty directories. Recreate the configured workspace
-  // subdirectory when the source path exists but the checkout omitted it.
-  if (!fs.existsSync(workingDir)) fs.mkdirSync(workingDir, { recursive: true });
-  if (!fs.statSync(workingDir).isDirectory()) {
-    throw new Error(`Workspace subdirectory is not a directory in the isolated checkout: ${relativeWorkingDir}`);
-  }
-  return { name, repositoryRoot, worktreePath, workingDir, baseCommit, createdAt: Date.now() };
+  const branchExists = await refExists(repositoryRoot, `refs/heads/${name}`);
+  if (branchExists) throw new Error(`A branch named "${name}" already exists`);
+  await git(repositoryRoot, ['worktree', 'add', '-b', name, worktreePath, sourceCommit]);
+  return finish(worktreePath, sourceCommit);
 }

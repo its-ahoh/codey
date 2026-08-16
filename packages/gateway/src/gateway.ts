@@ -758,6 +758,10 @@ export class Codey {
       workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
       worktreeName,
       existingBranch,
+      // A worktree another chat is bound to is never reused for this one, even
+      // when the requested branch is the one checked out there.
+      claimedPaths: this.chatManager.list(chat.workspaceName, { includeAutomation: true })
+        .flatMap(other => other.id !== chat.id && other.chatWorkspace ? [other.chatWorkspace.worktreePath] : []),
     }).then(workspace => {
       const updated = this.chatManager.setChatWorkspace(chat.id, workspace);
       return updated;

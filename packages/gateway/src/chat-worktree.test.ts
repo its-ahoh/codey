@@ -90,17 +90,44 @@ describe('provisionChatWorktree', () => {
     expect(git(result.worktreePath, ['branch', '--show-current'])).toBe('feature/auth');
   });
 
-  it('reports where a branch is already checked out', async () => {
+  it('reuses the worktree that already holds the branch instead of making a second one', async () => {
     const repositoryRoot = makeRepository('codey-chat-worktree-busy-');
     const taken = path.join(chatWorktreeParent(repositoryRoot), 'taken');
     fs.mkdirSync(path.dirname(taken), { recursive: true });
     git(repositoryRoot, ['worktree', 'add', '-b', 'feature-busy', taken, 'HEAD']);
 
-    await expect(provisionChatWorktree({
+    const result = await provisionChatWorktree({
       workspaceWorkingDir: repositoryRoot,
       worktreeName: 'second-look',
       existingBranch: 'feature-busy',
-    })).rejects.toThrow(/already checked out at/);
+    });
+
+    expect(result.worktreePath).toBe(fs.realpathSync(taken));
+    // The adopted checkout keeps its own name; the requested one is not created.
+    expect(result.name).toBe('taken');
+    expect(fs.existsSync(path.join(chatWorktreeParent(repositoryRoot), 'second-look'))).toBe(false);
+  });
+
+  it('refuses a branch held by another chat’s worktree', async () => {
+    const repositoryRoot = makeRepository('codey-chat-worktree-claimed-');
+    const taken = path.join(chatWorktreeParent(repositoryRoot), 'other-chat');
+    fs.mkdirSync(path.dirname(taken), { recursive: true });
+    git(repositoryRoot, ['worktree', 'add', '-b', 'feature-owned', taken, 'HEAD']);
+
+    await expect(provisionChatWorktree({
+      workspaceWorkingDir: repositoryRoot,
+      existingBranch: 'feature-owned',
+      claimedPaths: [taken],
+    })).rejects.toThrow(/another chat/);
+  });
+
+  it('refuses the branch checked out in the workspace itself', async () => {
+    const repositoryRoot = makeRepository('codey-chat-worktree-shared-');
+
+    await expect(provisionChatWorktree({
+      workspaceWorkingDir: repositoryRoot,
+      existingBranch: 'main',
+    })).rejects.toThrow(/current checkout/);
   });
 
   it('creates a tracking branch for a branch that only exists on a remote', async () => {
