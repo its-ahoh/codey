@@ -3972,12 +3972,6 @@ app.on('before-quit', () => {
 
 ipcMain.handle('app:version', () => app.getVersion())
 
-// IPC handlers
-ipcMain.handle('show-window', () => {
-  mainWindow?.show()
-  mainWindow?.focus()
-})
-
 ipcMain.handle('open-external', (_event, url: string) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
     shell.openExternal(url)

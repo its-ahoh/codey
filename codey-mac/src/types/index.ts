@@ -12,12 +12,4 @@ export interface GatewayStatus {
   };
 }
 
-export interface GatewayConfig {
-  // Add specific fields as needed
-  [key: string]: any;
-}
 
-export interface Workspace {
-  name: string;
-  path?: string;
-}

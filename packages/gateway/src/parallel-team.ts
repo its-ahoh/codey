@@ -167,30 +167,12 @@ export class ParallelTeamRunner {
     if (!finalized) this.opts.onWorkerDone?.(worker, round > 0);
   }
   private async runAdvisorLoop(): Promise<void> {
-    const dir = this.discussionDir;
     const wsRoot = this.opts.workspacesRoot;
     const ws = this.opts.workspace;
     const chat = this.opts.chatId;
     const ctrlPath = controlPath(wsRoot, ws, chat);
     const sumPath = summaryPath(wsRoot, ws, chat);
     const topPath = topicPath(wsRoot, ws, chat);
-
-    let watcher: fs.FSWatcher | undefined;
-    let debounce: NodeJS.Timeout | null = null;
-    const tickSignal = (() => {
-      let resolveTick: (() => void) | null = null;
-      return {
-        wait: () => new Promise<void>(res => { resolveTick = res; }),
-        poke: () => { if (resolveTick) { const r = resolveTick!; resolveTick = null; r(); } },
-      };
-    })();
-
-    try {
-      watcher = fs.watch(dir, { recursive: false }, () => {
-        if (debounce) clearTimeout(debounce);
-        debounce = setTimeout(() => tickSignal.poke(), 2000);
-      });
-    } catch { /* watch may fail on some FS; poll covers it */ }
 
     let pendingUserAnswer: { question: string; answer: string } | undefined;
 
@@ -279,8 +261,6 @@ export class ParallelTeamRunner {
         break;
       }
     }
-    if (watcher) watcher.close();
-    if (debounce) clearTimeout(debounce);
   }
   private armSupervisors(): void {
     const start = Date.now();

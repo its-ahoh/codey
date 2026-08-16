@@ -394,8 +394,6 @@ declare global {
         setHotkeyCaptureActive: (active: boolean) => Promise<IpcResult<void>>
         setHudState: (state: string) => Promise<IpcResult<void>>
         setHudLevel: (level: number) => void
-        onHudLevel: (handler: (level: number) => void) => () => void
-        onHudState: (handler: (state: string) => void) => () => void
         onSpeakEvent: (handler: (event: any) => void) => () => void
         showError: (message: string) => Promise<IpcResult<void>>
         downloadModel: (model: string) => Promise<IpcResult<{ model: string }>>

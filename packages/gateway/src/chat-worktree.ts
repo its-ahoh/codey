@@ -28,11 +28,6 @@ export function chatWorktreeParent(workspaceWorkingDir: string): string {
   return path.join(path.resolve(workspaceWorkingDir), WORKTREE_CONTAINER);
 }
 
-export function chatWorktreeDirectory(workspaceWorkingDir: string, worktreeName: string): string {
-  const safeName = normalizeWorktreeName(worktreeName);
-  return path.join(chatWorktreeParent(workspaceWorkingDir), safeName);
-}
-
 /** The container sits inside a checkout, so it must exclude itself from Git:
  *  without this, every chat worktree would surface as untracked noise in the
  *  workspace's own `git status`. Repos that already ignore `.worktrees/` are
@@ -212,8 +207,6 @@ export async function provisionChatWorktree(input: {
 
   const baseCommit = await git(sourceDir, ['rev-parse', 'HEAD']);
   const name = normalizeWorktreeName(input.worktreeName);
-  // `name` is already normalized here; join it directly so creation does not
-  // run the same normalization a second time through chatWorktreeDirectory().
   const requestedPath = path.join(chatWorktreeParent(sourceDir), name);
   ensureWorktreeContainer(sourceDir);
   const worktreePath = path.join(fs.realpathSync(path.dirname(requestedPath)), path.basename(requestedPath));

@@ -105,7 +105,7 @@ export function sameShape(a: ArgShape, b: ArgShape): boolean {
 /** How many arguments of one tool call are abstracted. A tool with 30
  *  parameters contributes noise, not signal. */
 export const MAX_ARGS_PER_STEP = 8;
-/** Steps kept per trace. Matches TOOL_SEQUENCE_MAX in skill-crystallizer. */
+/** Steps kept per trace. */
 export const MAX_STEPS = 12;
 
 /** Build the persisted step list from a run's tool calls.

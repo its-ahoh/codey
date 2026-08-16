@@ -143,15 +143,8 @@ export class Codey {
   private static SKILL_GC_EVERY_N_RUNS = 20;
   private static SKILL_EVOLVE_EVERY_N_USES = 3;
 
-  // Pre-compiled regex patterns for parseCommand
-  private static readonly REGEX_COMMAND = /^\/(\w+)(?:\s+(.*))?$/;
-  private static readonly REGEX_WORKER = /\/worker\s+(\w+)\s+(.+)/i;
+  // Pre-compiled regex for /team command parsing
   private static readonly REGEX_TEAM = /\/team\s+(\w+)(?:\s+(--all))?\s+(?!--all\s*$)(.+)/i;
-  private static readonly REGEX_AGENT_PROMPT = /\/agent\s+(claude-code|opencode|codex|pi)\s+(.+)/i;
-  private static readonly REGEX_AGENT = /\/agent\s+(claude-code|opencode|codex|pi)/i;
-  private static readonly REGEX_MODEL_PROMPT = /\/model\s+(\S+)(?:\s+(.+))?/i;
-  private static readonly REGEX_MODEL = /\/model\s+(\S+)/i;
-  private static readonly REGEX_HELP_COMMAND = /^\/(help|status|clear|reset|model|agents|config)\s*/i;
 
   /**
    * Canonical default agent. Reads from the on-disk fallback.order[0] via the
@@ -904,11 +897,6 @@ export class Codey {
     return this.pairingStore.list();
   }
 
-  /** Get the pairing store directly (used by command handlers in later tasks). */
-  public getPairingStore(): PairingStore {
-    return this.pairingStore;
-  }
-
   /**
    * Mac calls this to attach a channel route to an existing chat.
    * Pushes a one-time summary to the channel after attaching.
@@ -953,17 +941,7 @@ export class Codey {
     return this.chatManager.removeRoute(chatId, channel, channelUserId);
   }
 
-  getAgentFactory(): AgentFactory { return this.agentFactory; }
-
   getWorkingDir(): string { return this.workingDir; }
-
-  getEffectiveModelConfig(): ModelConfig {
-    const agent = this.getDefaultAgent();
-    return this.getDefaultModelConfig(agent) || {
-      provider: 'anthropic',
-      model: this.getEffectiveModel(agent),
-    };
-  }
 
   async switchWorkspaceByName(name: string): Promise<boolean> {
     return this.switchWorkspace(name);

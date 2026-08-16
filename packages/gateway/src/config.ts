@@ -304,7 +304,6 @@ export class ConfigManager extends EventEmitter {
   // ── Gateway settings ───────────────────────────────────────────────
   getPort(): number { return this.config.gateway.port; }
   getSkipPermissions(): boolean { return this.config.gateway.skipPermissions ?? true; }
-  setSkipPermissions(v: boolean): void { this.config.gateway.skipPermissions = v; this.save(); }
 
   /** Canonical default = first entry in fallback.order. */
   getDefaultAgent(): CodingAgent {
@@ -590,9 +589,6 @@ export class ConfigManager extends EventEmitter {
   }
 
   // ── Channels ───────────────────────────────────────────────────────
-  getTelegramConfig() { return this.config.channels.telegram; }
-  getDiscordConfig() { return this.config.channels.discord; }
-
   setTelegramToken(token: string): void {
     if (!this.config.channels.telegram) this.config.channels.telegram = { enabled: false, botToken: '' };
     this.config.channels.telegram.botToken = token;
