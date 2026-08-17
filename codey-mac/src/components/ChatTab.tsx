@@ -2847,7 +2847,7 @@ const styles: Record<string, React.CSSProperties> = {
   // Horizontal padding is set per role at the render site — the timestamp has to
   // line up with the reply above it, which is inset differently (and from the
   // opposite edge) for user and assistant.
-  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   // modelBadge is still used by team worker messages; tsRight, tsMeta and
   // fallbackBadge moved into TurnHeader with the metadata they styled.
   modelBadge: {
