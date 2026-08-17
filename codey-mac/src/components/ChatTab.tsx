@@ -1338,7 +1338,10 @@ export const ChatTab: React.FC<Props> = ({
   // What each run setting resolves to with no per-chat override — the value the
   // dropdown's first entry stands for, and the entry the list below it omits so
   // the same name never shows up twice.
-  const inheritedAgent: string = workerAgent ?? defaultAgent ?? 'claude-code'
+  // Undefined until fallback.order loads, so the dropdown says "default agent"
+  // for that first render instead of naming a fallback that may not be the
+  // configured default.
+  const inheritedAgent: string | undefined = workerAgent ?? defaultAgent ?? undefined
   const inheritedModel: string | undefined = workerModel ?? agentDefaultModels[effectiveAgent]
   const inheritedEffort: string | undefined = workerEffort ?? agentDefaultEfforts[effectiveAgent]
   const effectiveAdvisorAgent = advisorConfig.agent ?? defaultAgent ?? 'claude-code'
@@ -1940,7 +1943,7 @@ export const ChatTab: React.FC<Props> = ({
                         style={styles.runSettingSelect}
                         title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : workerAgent ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
                       >
-                        <option value="">{inheritedAgent} (default)</option>
+                        <option value="">{inheritedAgent ? `${inheritedAgent} (default)` : 'default agent'}</option>
                         {AGENT_NAMES.filter(n => (enabledAgents.includes(n) || n === chat.agent) && (n !== inheritedAgent || n === chat.agent)).map(n => (
                           <option key={n} value={n}>{n}</option>
                         ))}
