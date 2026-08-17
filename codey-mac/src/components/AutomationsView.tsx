@@ -185,9 +185,12 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
     }
   }
 
-  const targetLabel = (t: AutomationTarget) => t.kind === 'team'
-    ? `Team · ${t.teamName} · ${t.workspaceName}`
-    : [t.workspaceName, t.agent && `${t.agent}${t.model ? ` · ${t.model}` : ''}`].filter(Boolean).join(' · ')
+  const targetLabel = (t: AutomationTarget) => [
+    t.kind === 'team'
+      ? `Team · ${t.teamName} · ${t.workspaceName}`
+      : [t.workspaceName, t.agent && `${t.agent}${t.model ? ` · ${t.model}` : ''}`].filter(Boolean).join(' · '),
+    t.sandbox && 'Sandbox',
+  ].filter(Boolean).join(' · ')
 
   const attentionCount = automations.filter(a => {
     const status = lastStatus[a.id]?.status

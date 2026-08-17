@@ -187,6 +187,36 @@ export async function removeCleanChatWorktree(workspace: ChatWorkspace): Promise
   await git(workspace.repositoryRoot, ['worktree', 'remove', workspace.worktreePath]);
 }
 
+/** What happened to a disposable checkout when its run ended. */
+export type DisposableWorktreeOutcome =
+  /** Checkout and branch both gone — the run left nothing behind. */
+  | 'removed'
+  /** Checkout gone, branch retained because commits were made on it. */
+  | 'branch-kept'
+  /** Nothing removed: uncommitted changes are never discarded. */
+  | 'kept';
+
+/** Tear down a throwaway checkout at the end of a run. Nothing is ever
+ *  discarded: a dirty worktree is left untouched for the user to inspect, and
+ *  the branch survives whenever the run committed to it. Only the boring case
+ *  — clean tree, still sitting on `baseCommit` — disappears completely, which
+ *  is what keeps a daily automation from accreting one dead branch per run. */
+export async function discardDisposableWorktree(workspace: ChatWorkspace): Promise<DisposableWorktreeOutcome> {
+  if (!fs.existsSync(workspace.worktreePath)) {
+    if (fs.existsSync(workspace.repositoryRoot)) await git(workspace.repositoryRoot, ['worktree', 'prune']);
+    return 'removed';
+  }
+  if (await workspaceHasUncommittedChanges(workspace.worktreePath)) return 'kept';
+  const head = await git(workspace.worktreePath, ['rev-parse', 'HEAD']);
+  const branch = await git(workspace.worktreePath, ['branch', '--show-current']);
+  await git(workspace.repositoryRoot, ['worktree', 'remove', workspace.worktreePath]);
+  if (!branch || head !== workspace.baseCommit) return branch ? 'branch-kept' : 'removed';
+  // -d would refuse an unmerged branch; -D is safe here precisely because the
+  // commit check above proved the branch never moved off its base.
+  await git(workspace.repositoryRoot, ['branch', '-D', branch]);
+  return 'removed';
+}
+
 /** Create a chat-owned worktree and a same-named branch from the source HEAD. */
 export async function provisionChatWorktree(input: {
   workspaceWorkingDir: string;

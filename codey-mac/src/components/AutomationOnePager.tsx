@@ -233,9 +233,12 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
   const latest = runs[0]
   const health = automationHealth(a, latest)
   const targetTitle = a.target.kind === 'team' ? a.target.teamName : a.target.workspaceName
-  const targetDetail = a.target.kind === 'team'
-    ? `Team · ${a.target.workspaceName}`
-    : [a.target.agent ?? 'Default agent', a.target.model].filter(Boolean).join(' · ')
+  const targetDetail = [
+    a.target.kind === 'team'
+      ? `Team · ${a.target.workspaceName}`
+      : [a.target.agent ?? 'Default agent', a.target.model].filter(Boolean).join(' · '),
+    a.target.sandbox && 'Sandbox',
+  ].filter(Boolean).join(' · ')
   const notifyTitle = NOTIFY_OPTIONS.find(option => option.value === a.report.notify)?.label ?? 'Never'
 
   return (
