@@ -1134,7 +1134,7 @@ export const ChatTab: React.FC<Props> = ({
             for (const n of AGENT_NAMES) efforts[n] = slots[n]?.defaultEffort
             setAgentDefaultEfforts(efforts)
           }
-        } catch { /* leave the effort dropdown on its "CLI default" placeholder */ }
+        } catch { /* leave the effort dropdown on its medium baseline */ }
       } catch { /* surface via dropdown placeholders */ }
     })()
   }, [isGatewayRunning])
@@ -1334,7 +1334,7 @@ export const ChatTab: React.FC<Props> = ({
   const effectiveAgent: string = chat.agent ?? workerAgent ?? defaultAgent ?? 'claude-code'
   const effectiveModel: string | undefined = chat.model ?? workerModel ?? agentDefaultModels[effectiveAgent]
   const workerEffort = selectedWorker?.config.effort
-  const effectiveEffort: string | undefined = chat.effort ?? workerEffort ?? agentDefaultEfforts[effectiveAgent]
+  const effectiveEffort: string = chat.effort ?? workerEffort ?? agentDefaultEfforts[effectiveAgent] ?? 'medium'
   // What each run setting resolves to with no per-chat override — the value the
   // dropdown's first entry stands for, and the entry the list below it omits so
   // the same name never shows up twice.
@@ -1343,7 +1343,7 @@ export const ChatTab: React.FC<Props> = ({
   // configured default.
   const inheritedAgent: string | undefined = workerAgent ?? defaultAgent ?? undefined
   const inheritedModel: string | undefined = workerModel ?? agentDefaultModels[effectiveAgent]
-  const inheritedEffort: string | undefined = workerEffort ?? agentDefaultEfforts[effectiveAgent]
+  const inheritedEffort: string = workerEffort ?? agentDefaultEfforts[effectiveAgent] ?? 'medium'
   const effectiveAdvisorAgent = advisorConfig.agent ?? defaultAgent ?? 'claude-code'
   const effectiveAdvisorModel = advisorConfig.model ?? agentDefaultModels[effectiveAdvisorAgent] ?? 'Default model'
   // Seeds the streaming turn's header. A team run has no single identity — its
@@ -1970,9 +1970,9 @@ export const ChatTab: React.FC<Props> = ({
                         value={chat.effort ?? ''}
                         onChange={e => void onEffortChange(e.target.value)}
                         style={styles.runSettingSelect}
-                        title={`Effort: ${effectiveEffort ?? 'CLI default'}${chat.effort ? ' (override)' : workerEffort ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
+                        title={`Effort: ${effectiveEffort}${chat.effort ? ' (override)' : workerEffort ? ` (worker: ${selectedWorker!.name})` : ''}`}
                       >
-                        <option value="">{inheritedEffort ? `${inheritedEffort} (default)` : 'CLI default'}</option>
+                        <option value="">{inheritedEffort}</option>
                         {['low', 'medium', 'high', 'xhigh', 'max']
                           .filter(e => e !== inheritedEffort || e === chat.effort)
                           .map(e => <option key={e} value={e}>{e}</option>)}

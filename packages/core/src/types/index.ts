@@ -95,6 +95,9 @@ export interface ApiKeyEntry {
  */
 export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+/** Balanced baseline used when no chat, worker, or agent effort is configured. */
+export const DEFAULT_THINKING_EFFORT: ThinkingEffort = 'medium';
+
 /** Runtime guard for values arriving from JSON config or chat commands. */
 export function isThinkingEffort(v: unknown): v is ThinkingEffort {
   return v === 'low' || v === 'medium' || v === 'high' || v === 'xhigh' || v === 'max';

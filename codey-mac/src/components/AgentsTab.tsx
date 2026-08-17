@@ -77,12 +77,11 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
               />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10 }}>
-              <span style={{ color: C.fg3, fontSize: 12 }}>Default effort</span>
+              <span style={{ color: C.fg3, fontSize: 12 }}>Effort</span>
               <select
-                value={agents[a]?.defaultEffort ?? ''}
+                value={agents[a]?.defaultEffort ?? 'medium'}
                 onChange={async e => {
-                  // Empty option clears the key rather than storing ''.
-                  const next = e.target.value || undefined
+                  const next = e.target.value
                   const updated: Record<string, AgentSlot> = {
                     ...agents,
                     [a]: { ...(agents[a] ?? {}), defaultEffort: next },
@@ -95,7 +94,6 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
                 style={{ ...selectStyle, width: 180 }}
                 title="Thinking effort used when neither the chat nor a worker overrides it"
               >
-                <option value="">Unset (CLI default)</option>
                 {EFFORT_OPTIONS.map(o => (
                   <option key={o} value={o}>{o}</option>
                 ))}

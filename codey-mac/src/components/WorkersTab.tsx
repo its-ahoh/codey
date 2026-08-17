@@ -98,9 +98,16 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [models, setModels] = useState<ModelEntry[]>([])
+  const [agentEfforts, setAgentEfforts] = useState<Record<string, string | undefined>>({})
 
   useEffect(() => {
     window.codey.models.list().then(r => { if (r.ok) setModels(r.data as ModelEntry[]) }).catch(() => {})
+    window.codey.agents.get().then(r => {
+      if (!r.ok) return
+      const efforts: Record<string, string | undefined> = {}
+      for (const [agent, slot] of Object.entries(r.data ?? {})) efforts[agent] = slot.defaultEffort
+      setAgentEfforts(efforts)
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -111,6 +118,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
   }, [worker.name])
 
   const filteredModels = models.filter(m => modelFitsApiType(m.apiType, AGENT_API_TYPE[codingAgent]))
+  const inheritedEffort = agentEfforts[codingAgent] ?? 'medium'
 
   const save = async () => {
     setSaving(true); setError(null)
@@ -185,12 +193,10 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
 
       <label style={labelStyle}>Effort</label>
       <select value={effort} onChange={e => setEffort(e.target.value)} style={fieldStyle}>
-        <option value="">Unset (inherit)</option>
-        <option value="low">low</option>
-        <option value="medium">medium</option>
-        <option value="high">high</option>
-        <option value="xhigh">xhigh</option>
-        <option value="max">max</option>
+        <option value="">{inheritedEffort}</option>
+        {['low', 'medium', 'high', 'xhigh', 'max']
+          .filter(value => value !== inheritedEffort || value === effort)
+          .map(value => <option key={value} value={value}>{value}</option>)}
       </select>
 
       <label style={labelStyle}>Tools (comma-separated)</label>
