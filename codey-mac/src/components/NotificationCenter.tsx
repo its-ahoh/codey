@@ -14,7 +14,7 @@ export const NotificationCenter: React.FC = () => {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
-  const { inProgress, completed, unreadCount } = deriveNotifications(
+  const { inProgress, completed, unreadCount, errorCount } = deriveNotifications(
     state.chats,
     state.inFlight as Record<string, InFlightLike>,
     state.unreadChats,
@@ -48,7 +48,14 @@ export const NotificationCenter: React.FC = () => {
         <span style={styles.bellGlyph}><UIIcon name="bell" size={16} /></span>
         {hasInProgress && <span style={styles.pulseDot} />}
         {unreadCount > 0 && (
-          <span style={styles.badge}>{unreadCount > 9 ? '9+' : unreadCount}</span>
+          // Red is reserved for failures; a plain finished turn gets the accent.
+          <span
+            style={errorCount > 0
+              ? { ...styles.badge, background: C.red, color: '#fff' }
+              : styles.badge}
+          >
+            {unreadCount > 9 ? '9+' : unreadCount}
+          </span>
         )}
       </button>
 
@@ -80,7 +87,9 @@ export const NotificationCenter: React.FC = () => {
               <div style={styles.sectionTitle}>Completed</div>
               {completed.map(item => (
                 <div key={item.chatId} style={styles.item} onClick={() => pick(item.chatId)}>
-                  <span style={styles.unreadDot} />
+                  {item.kind === 'error'
+                    ? <span style={styles.errorDot} title="Failed" aria-label="Failed" />
+                    : <span style={styles.unreadDot} title="Unread" aria-label="Unread" />}
                   <div style={styles.itemBody}>
                     <div style={styles.itemTitle}>{item.title}</div>
                     <div style={styles.itemMeta}>
@@ -142,8 +151,8 @@ const styles: Record<string, React.CSSProperties> = {
     height: 14,
     padding: '0 3px',
     borderRadius: 7,
-    background: '#E5484D',
-    color: '#fff',
+    background: C.accent,
+    color: C.onAccent,
     fontSize: 9,
     fontWeight: 700,
     lineHeight: '14px',
@@ -201,7 +210,15 @@ const styles: Record<string, React.CSSProperties> = {
     width: 6,
     height: 6,
     borderRadius: '50%',
-    background: '#E5484D',
+    background: C.accent,
+    flexShrink: 0,
+  },
+  errorDot: {
+    marginTop: 5,
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: C.red,
     flexShrink: 0,
   },
   itemBody: { minWidth: 0, flex: 1 },

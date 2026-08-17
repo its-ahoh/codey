@@ -3,6 +3,7 @@ import { apiService } from '../services/api'
 import type { Chat, ChatSelection, ChatMessage, ChecklistItem, ToolCallEntry, FileAttachment, TaskBrief, TeamRunSummary } from '../types'
 import type { ChatStreamEvent } from '../../../packages/gateway/src/chat-runner'
 import { activityForTool, type AgentActivity } from '../components/agentActivity'
+import type { UnreadKind } from '../components/notificationLogic'
 
 interface InFlight {
   assistantMessageId: string
@@ -23,7 +24,9 @@ export interface State {
   // When a turn is interrupted, the prompt text is stashed here so ChatTab
   // can repopulate the input box for the matching chat.
   pendingRestores: Record<string, string>
-  unreadChats: Record<string, true>
+  // Unread chats, tagged with how the turn ended so the UI can reserve red for
+  // failures and use a neutral marker for a plain completion.
+  unreadChats: Record<string, UnreadKind>
   pendingPermissions: Record<string, string[]>
 }
 
@@ -404,7 +407,7 @@ export function reducer(state: State, action: Action): State {
       const inFlight = { ...state.inFlight }
       delete inFlight[action.chatId]
       const unreadChats = state.selectedChatId !== action.chatId
-        ? { ...state.unreadChats, [action.chatId]: true as const }
+        ? { ...state.unreadChats, [action.chatId]: 'done' as const }
         : state.unreadChats
       return {
         ...state,
@@ -450,7 +453,7 @@ export function reducer(state: State, action: Action): State {
       const inFlight = { ...state.inFlight }
       delete inFlight[action.chatId]
       const unreadChats = { ...state.unreadChats }
-      if (state.selectedChatId !== action.chatId) unreadChats[action.chatId] = true
+      if (state.selectedChatId !== action.chatId) unreadChats[action.chatId] = 'error'
       return {
         ...state,
         chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } },
