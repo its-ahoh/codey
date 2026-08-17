@@ -78,6 +78,8 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
   // Last automation the knobs were seeded from — lets refresh() tell "user is
   // mid-edit" apart from "an external edit changed the automation".
   const aRef = useRef<Automation | null>(null)
+  // Run rows, so the "Last run" tile can scroll the row it opened into view.
+  const runCardRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   const refresh = useCallback(async () => {
     try {
@@ -137,16 +139,29 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
     }
   }
 
-  const toggleLog = async (runId: string) => {
-    const opening = !logOpen[runId]
-    setLogOpen(prev => ({ ...prev, [runId]: opening }))
-    if (!opening || logText[runId] !== undefined) return
+  const loadLog = async (runId: string) => {
+    if (logText[runId] !== undefined) return
     try {
       const text = unwrap(await window.codey.automations.runLog(id, runId))
       setLogText(prev => ({ ...prev, [runId]: text }))
     } catch {
       setLogText(prev => ({ ...prev, [runId]: null }))
     }
+  }
+
+  const toggleLog = async (runId: string) => {
+    const opening = !logOpen[runId]
+    setLogOpen(prev => ({ ...prev, [runId]: opening }))
+    if (opening) await loadLog(runId)
+  }
+
+  /** "Last run" tile → the Runs tab, with that run's activity log expanded. */
+  const openRunLog = async (runId: string) => {
+    setTab('runs')
+    setLogOpen(prev => ({ ...prev, [runId]: true }))
+    // The tab body mounts on the next paint; scroll once it exists.
+    requestAnimationFrame(() => runCardRefs.current[runId]?.scrollIntoView({ block: 'nearest' }))
+    await loadLog(runId)
   }
 
   const resume = async (runId: string, option: string) => {
@@ -309,7 +324,9 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
         <SummaryCard label="Last run" icon="archive"
           value={latest ? statusLabel(latest.status) : 'No runs yet'}
           detail={latest ? new Date(latest.startedAt).toLocaleString() : 'History will appear after the first run'}
-          tone={latest?.status === 'failed' ? C.red : latest?.status === 'parked' ? C.yellow : undefined} />
+          tone={latest?.status === 'failed' ? C.red : latest?.status === 'parked' ? C.yellow : undefined}
+          hint={latest ? 'Open this run in Runs and show its activity log' : undefined}
+          onClick={latest ? () => void openRunLog(latest.runId) : undefined} />
         <SummaryCard label="Runs in" icon={a.target.kind === 'team' ? 'users' : 'workspace'} value={targetTitle} detail={targetDetail} />
         <SummaryCard label="Notifications" icon="bot" value={notifyTitle}
           detail={a.report.channel ? `Also posts to ${a.report.channel.platform}` : 'Mac notifications'} />
@@ -333,8 +350,8 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
               {Object.keys(knobs.params).length === 0 ? (
                 <div style={emptyState}>No editable variables. Add them from Edit setup.</div>
               ) : Object.entries(knobs.params).map(([key, value]) => (
-                <label key={key} style={settingRow}>
-                  <span style={settingLabel}><code>{key}</code></span>
+                <label key={key} style={parameterRow}>
+                  <span style={parameterLabel} title={key}><code>{key}</code></span>
                   <input style={settingInput} value={value}
                     onChange={e => setKnobs({ ...knobs, params: { ...knobs.params, [key]: e.target.value } })} />
                 </label>
@@ -428,7 +445,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
         ) : (
           <div style={runsList}>
             {runs.map(r => (
-              <div key={r.runId} style={runCard}>
+              <div key={r.runId} ref={el => { runCardRefs.current[r.runId] = el }} style={runCard}>
                 <div style={runHeader}>
                   <span style={runStatusIcon(statusColor(r.status))}><UIIcon name={r.status === 'success' || r.status === 'resumed' ? 'check' : r.status === 'parked' ? 'chat' : 'close'} size={14} /></span>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -460,10 +477,10 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
                 {r.error && <pre style={{ ...preStyle, color: C.red }}>{r.error}</pre>}
                 {logOpen[r.runId] && (
                   logText[r.runId] === undefined
-                    ? <div style={{ color: C.fg3, fontSize: 11, marginTop: 6 }}>Loading…</div>
+                    ? <div style={logMessage}>Loading…</div>
                     : logText[r.runId]
                       ? <pre style={{ ...preStyle, maxHeight: 320, overflowY: 'auto' }}>{logText[r.runId]}</pre>
-                      : <div style={{ color: C.fg3, fontSize: 11, marginTop: 6 }}>No activity log for this run.</div>
+                      : <div style={logMessage}>No activity log for this run.</div>
                 )}
               </div>
             ))}
@@ -474,16 +491,22 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
   )
 }
 
-const SummaryCard: React.FC<{ label: string; value: string; detail: string; icon: IconName; tone?: string }> = ({ label, value, detail, icon, tone }) => (
-  <div style={summaryCard}>
-    <span style={summaryIcon}><UIIcon name={icon} size={15} /></span>
-    <div style={{ minWidth: 0 }}>
-      <div style={summaryLabel}>{label}</div>
-      <div style={{ ...summaryValue, color: tone ?? C.fg }}>{value}</div>
-      <div style={summaryDetail} title={detail}>{detail}</div>
-    </div>
-  </div>
-)
+const SummaryCard: React.FC<{ label: string; value: string; detail: string; icon: IconName; tone?: string; onClick?: () => void; hint?: string }> = ({ label, value, detail, icon, tone, onClick, hint }) => {
+  const body = (
+    <>
+      <span style={summaryIcon}><UIIcon name={icon} size={15} /></span>
+      <div style={{ minWidth: 0 }}>
+        <div style={summaryLabel}>{label}</div>
+        <div style={{ ...summaryValue, color: tone ?? C.fg }}>{value}</div>
+        <div style={summaryDetail} title={detail}>{detail}</div>
+      </div>
+    </>
+  )
+  if (!onClick) return <div style={summaryCard}>{body}</div>
+  return (
+    <button type="button" style={clickableSummaryCard} title={hint} onClick={onClick}>{body}</button>
+  )
+}
 
 const DetailCard: React.FC<{ title: string; description: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, description, action, children }) => (
   <section style={detailCard}>
@@ -564,6 +587,8 @@ const checkQuestionList: React.CSSProperties = {
 
 const summaryGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 9, marginTop: 15 }
 const summaryCard: React.CSSProperties = { display: 'flex', gap: 10, minWidth: 0, padding: '11px 12px', border: `1px solid ${C.border}`, borderRadius: 11, background: C.surface }
+/** Same tile, but activated: the button reset keeps it visually identical. */
+const clickableSummaryCard: React.CSSProperties = { ...summaryCard, font: 'inherit', textAlign: 'left', cursor: 'pointer' }
 const summaryIcon: React.CSSProperties = { width: 30, height: 30, flexShrink: 0, display: 'grid', placeItems: 'center', borderRadius: 9, background: C.accentDim, color: C.accent }
 const summaryLabel: React.CSSProperties = { color: C.fg3, fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }
 const summaryValue: React.CSSProperties = { fontSize: 12, fontWeight: 700, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
@@ -592,6 +617,8 @@ const briefBox: React.CSSProperties = {
 }
 const settingRow: React.CSSProperties = { display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between', minHeight: 32 }
 const settingLabel: React.CSSProperties = { color: C.fg2, fontSize: 11, minWidth: 90 }
+const parameterRow: React.CSSProperties = { display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr)', gap: 12, alignItems: 'center', minHeight: 32 }
+const parameterLabel: React.CSSProperties = { color: C.fg2, fontSize: 11, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const settingInput: React.CSSProperties = { ...inputStyle, boxSizing: 'border-box', flex: 1, width: 'auto', minWidth: 0 }
 const settingSelect: React.CSSProperties = { ...selectStyle, width: 155 }
 const compactInput: React.CSSProperties = { ...inputStyle, width: 88, padding: '5px 7px', fontSize: 11 }
@@ -608,7 +635,11 @@ const emptyState: React.CSSProperties = { color: C.fg3, fontSize: 11, padding: '
 const saveBar: React.CSSProperties = { gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, position: 'sticky', bottom: 8, zIndex: 2, padding: '11px 13px', border: `1px solid ${C.accent}`, borderRadius: 11, background: C.surface2, boxShadow: '0 8px 25px rgba(0,0,0,.22)', color: C.fg, fontSize: 11 }
 const dangerCard: React.CSSProperties = { gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 2, padding: '12px 14px', border: `1px solid ${C.dangerBorder}`, borderRadius: 11, background: C.dangerBg, color: C.dangerFg, fontSize: 11 }
 const noticeCopy: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 2 }
-const compactDeleteButton: React.CSSProperties = { ...pillButton('danger'), display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 8px', borderRadius: 7, fontSize: 10, fontWeight: 600 }
+const compactDeleteButton: React.CSSProperties = {
+  ...pillButton('danger'), display: 'inline-flex', alignItems: 'center', gap: 5,
+  flexShrink: 0, padding: '7px 11px', border: `1px solid ${C.red}`,
+  borderRadius: 8, background: C.red, color: '#fff', fontSize: 10.5, fontWeight: 700,
+}
 
 const runsList: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 9 }
 const runCard: React.CSSProperties = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, overflow: 'hidden' }
@@ -618,6 +649,10 @@ const triggerBadge: React.CSSProperties = { padding: '2px 6px', borderRadius: 99
 const runMeta: React.CSSProperties = { color: C.fg3, fontSize: 10, marginTop: 3 }
 const runBody: React.CSSProperties = { borderTop: `1px solid ${C.border}`, padding: '11px 13px', background: C.surface2 }
 const errorNotice: React.CSSProperties = { borderTop: `1px solid ${C.dangerBorder}`, padding: '8px 13px', background: C.dangerBg, color: C.dangerFg, fontSize: 10.5 }
+const logMessage: React.CSSProperties = {
+  borderTop: `1px solid ${C.border}`, padding: '10px 13px 11px',
+  background: C.codeBg ?? C.surface3, color: C.fg3, fontSize: 11, lineHeight: 1.5,
+}
 
 const outputStyle: React.CSSProperties = {
   borderTop: `1px solid ${C.border}`, padding: '10px 13px',
