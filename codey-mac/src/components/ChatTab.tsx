@@ -1761,7 +1761,9 @@ export const ChatTab: React.FC<Props> = ({
   }, [input]) // eslint-disable-line react-hooks/exhaustive-deps
 
 
-  const voiceBusy = voice.state === 'recording' || voice.state === 'transcribing'
+  const voiceActiveHere = voice.ownerChatId === chatId && voice.state !== 'idle'
+  const voiceActiveElsewhere = voice.state !== 'idle' && voice.ownerChatId !== chatId
+  const voiceBusy = voiceActiveHere && (voice.state === 'recording' || voice.state === 'transcribing')
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
   const canSend = isGatewayRunning && !coreFailed && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
@@ -2519,7 +2521,7 @@ export const ChatTab: React.FC<Props> = ({
               </button>
             </div>
             <div style={styles.voiceIndicatorSlot}>
-              {voice.state !== 'idle' && (
+              {voiceActiveHere && (
                 <div
                   style={styles.voiceIndicator}
                   role="status"
@@ -2541,16 +2543,17 @@ export const ChatTab: React.FC<Props> = ({
             <div style={styles.composerActions}>
               {/* Two ways to use your voice: dictate into the composer, or
                   hold a spoken conversation that reads the reply back. */}
-              {!(voice.state === 'recording' && voice.mode === 'converse') && <button
+              {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'converse') && <button
                 onClick={() => voice.toggle('dictate')}
-                disabled={!isGatewayRunning || !!coreFailed}
+                disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere}
                 style={{
                   ...styles.voiceButton,
                   background: voiceBusy && voice.mode === 'dictate' ? C.red : 'transparent',
-                  cursor: isGatewayRunning && !coreFailed ? 'pointer' : 'default',
+                  cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere ? 'pointer' : 'default',
                 }}
                 title={
-                  voiceBusy && voice.mode === 'dictate'
+                  voiceActiveElsewhere ? 'Voice is active in another chat'
+                  : voiceBusy && voice.mode === 'dictate'
                     ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop — text goes to the box')
                     : 'Dictate into the message box'
                 }
@@ -2563,18 +2566,19 @@ export const ChatTab: React.FC<Props> = ({
                       color={voiceBusy && voice.mode === 'dictate' ? '#fff' : C.fg2}
                     />}
               </button>}
-              {!(voice.state === 'recording' && voice.mode === 'dictate') && <button
+              {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'dictate') && <button
                 onClick={() => voice.toggle('converse')}
-                disabled={!isGatewayRunning || !!coreFailed}
+                disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere}
                 style={{
                   ...styles.voiceButton,
-                  background: voice.state === 'recording' && voice.mode === 'converse' ? C.red
-                    : voice.state === 'speaking' ? C.accent
+                  background: voiceActiveHere && voice.state === 'recording' && voice.mode === 'converse' ? C.red
+                    : voiceActiveHere && voice.state === 'speaking' ? C.accent
                     : 'transparent',
-                  cursor: isGatewayRunning && !coreFailed ? 'pointer' : 'default',
+                  cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere ? 'pointer' : 'default',
                 }}
                 title={
-                  voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
+                  voiceActiveElsewhere ? 'Voice is active in another chat'
+                  : voiceActiveHere && voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
                   : voiceBusy && voice.mode === 'converse'
                     ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop and send')
                     : 'Talk to this chat — the reply is read back'
@@ -2585,7 +2589,7 @@ export const ChatTab: React.FC<Props> = ({
                   : <UIIcon
                       name="waveform"
                       size={19}
-                      color={voice.state === 'speaking' ? C.onAccent : C.fg2}
+                      color={voiceActiveHere && voice.state === 'speaking' ? C.onAccent : C.fg2}
                     />}
               </button>}
               {isSending ? (
