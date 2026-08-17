@@ -6,8 +6,8 @@ import {
   AGENT_NAMES,
   AgentInstallChip,
   EnvEditor,
-  InstallStatus,
 } from './SettingsTab'
+import { refreshInstalledAgents, useInstalledAgents } from './installedAgents'
 
 interface Props {
   isGatewayRunning: boolean
@@ -19,18 +19,8 @@ const EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
 export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
   const [agents, setAgents] = useState<Record<string, AgentSlot>>({})
-  const [installStatus, setInstallStatus] = useState<Record<string, InstallStatus>>({})
-  const [checkingInstalls, setCheckingInstalls] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const refreshInstallStatus = useCallback(async () => {
-    setCheckingInstalls(true)
-    try {
-      const r = await window.codey.agents.checkInstalled()
-      if (r.ok) setInstallStatus(r.data)
-    } catch { /* leave previous status as-is */ }
-    finally { setCheckingInstalls(false) }
-  }, [])
+  const { status: installStatus, checking: checkingInstalls } = useInstalledAgents(isGatewayRunning)
 
   const reload = useCallback(async () => {
     setError(null)
@@ -43,8 +33,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
   useEffect(() => {
     if (!isGatewayRunning) return
     void reload()
-    void refreshInstallStatus()
-  }, [isGatewayRunning, reload, refreshInstallStatus])
+  }, [isGatewayRunning, reload])
 
   if (!isGatewayRunning) {
     return (
@@ -59,12 +48,12 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
       <Section first title="Installed agents" description="CLI availability and environment variables for each coding agent." right={
-        <button onClick={refreshInstallStatus} style={pillButton('ghost')} disabled={checkingInstalls} title="Re-check whether each agent's CLI is installed">
+        <button onClick={() => void refreshInstalledAgents(true)} style={pillButton('ghost')} disabled={checkingInstalls} title="Re-check whether each agent's CLI is installed">
           {checkingInstalls ? 'Checking…' : '↻ Recheck'}
         </button>
       } />
       {AGENT_NAMES.map(a => {
-        const status = installStatus[a]
+        const status = installStatus?.[a]
         const env = agents[a]?.env ?? {}
         return (
           <div key={a} style={{ ...fieldStyle, display: 'block' }}>

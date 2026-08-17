@@ -417,7 +417,9 @@ const FallbackList: React.FC<{
 
 // ── Main Settings tab ────────────────────────────────────────────────
 
-export type InstallStatus = { installed: boolean; path?: string }
+// Re-exported so existing importers keep working; the type (and the store
+// behind it) lives in installedAgents.ts.
+export type { InstallStatus } from './installedAgents'
 
 export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) => {
   const [models, setModels] = useState<ModelEntry[]>([])
@@ -508,9 +510,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       .sort((a, b) => a.model.localeCompare(b.model))
   })()
 
-  // Enablement is derived from priority-list membership now; the chat header
-  // and fallback "+ Add step" both use this to decide what an agent looks
-  // like in dropdown menus.
+  // Agents already in the fallback chain — used to seed "+ Add step" with a
+  // sensible default. It does not gate what the chat agent picker offers.
   const enabledAgents = AGENT_NAMES.filter(a =>
     fallback.order.some(e => e.agent === a)
   )
@@ -615,7 +616,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
         .map(m => <ModelRow key={m.model} entry={m} apis={apis} onSave={saveModel} onDelete={deleteModel}/>)}
 
-      <Section title="Agent priority" description="Default agent order and fallback behavior." right={
+      <Section title="Agent fallback" description="Default agent order and fallback behavior." right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ color: C.fg3, fontSize: 11 }}>{fallback.enabled ? 'Enabled' : 'Disabled'}</span>
           <Toggle on={fallback.enabled} onChange={enabled => updateFallback({ ...fallback, enabled })}/>
