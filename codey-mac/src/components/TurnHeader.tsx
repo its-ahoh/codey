@@ -1,6 +1,6 @@
 import React from 'react'
 import { C } from '../theme'
-import { turnHeaderMeta } from './turnHeaderModel'
+import { formatFallbackError, turnHeaderMeta } from './turnHeaderModel'
 import type { ChatMessage } from '../types'
 import { UIIcon } from './UIIcons'
 
@@ -131,7 +131,8 @@ const FallbackWarning: React.FC<{
 }> = ({ fallback, onAskAgent }) => {
   const [open, setOpen] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
-  const detail = fallback.reason?.trim() || `${fallback.from} failed, so ${fallback.to} answered instead.`
+  const detail = fallback.reason?.trim() || 'No error details were reported.'
+  const errorContext = formatFallbackError(fallback)
 
   // Reset so a re-open never shows a stale "Copied" from the last visit.
   React.useEffect(() => {
@@ -147,7 +148,7 @@ const FallbackWarning: React.FC<{
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(detail)
+      await navigator.clipboard.writeText(errorContext)
       setCopied(true)
     } catch { /* clipboard denied — leave the label alone */ }
   }
@@ -170,13 +171,20 @@ const FallbackWarning: React.FC<{
         tabIndex={0}
         role="button"
         style={styles.fallbackButton}
-        aria-label={`Answered by a fallback after ${fallback.from} failed: ${detail}`}
+        aria-label={`Fallback warning. Failed agent and model: ${fallback.from}. Fallback agent and model: ${fallback.to}. Error: ${detail}`}
       >
         <UIIcon name="alert" size={13} strokeWidth={1.8} />
       </span>
       {open && (
         <div style={styles.fallbackLayer}>
           <div role="tooltip" style={styles.fallbackPopover}>
+            <div style={styles.fallbackIdentityGrid}>
+              <span style={styles.fallbackLabel}>Failed agent/model</span>
+              <span style={styles.fallbackIdentity}>{fallback.from}</span>
+              <span style={styles.fallbackLabel}>Fallback agent/model</span>
+              <span style={styles.fallbackIdentity}>{fallback.to}</span>
+            </div>
+            <div style={styles.fallbackErrorLabel}>Error</div>
             <div style={styles.fallbackReason}>{detail}</div>
             <div style={styles.fallbackActions}>
               <button type="button" style={styles.fallbackAction} onClick={copy}>
@@ -239,6 +247,19 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 8,
     padding: '8px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
     textAlign: 'left',
+  },
+  fallbackIdentityGrid: {
+    display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)',
+    columnGap: 8, rowGap: 4, alignItems: 'baseline', marginBottom: 8,
+  },
+  fallbackLabel: { color: C.fg3, fontSize: 10.5 },
+  fallbackIdentity: {
+    color: C.fg, fontFamily: 'SF Mono, Menlo, monospace', fontSize: 10.5,
+    overflowWrap: 'anywhere', userSelect: 'text', cursor: 'text',
+  },
+  fallbackErrorLabel: {
+    color: C.fg3, fontSize: 10.5, marginBottom: 3,
+    borderTop: `1px solid ${C.border2}`, paddingTop: 8,
   },
   fallbackReason: {
     fontFamily: 'SF Mono, Menlo, monospace', fontSize: 10.5, lineHeight: 1.45,
