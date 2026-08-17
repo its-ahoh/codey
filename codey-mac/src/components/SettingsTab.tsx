@@ -244,7 +244,7 @@ const ModelRow: React.FC<{
           style={{ ...selectStyle, width: '100%' }}>
           <option value="anthropic">anthropic (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN)</option>
           <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
-          <option value="all">all (both — third-party providers &amp; proxies)</option>
+          <option value="all">all (third-party providers &amp; proxies)</option>
         </select>
         {draft.apiType === 'all' && <>
           <span />
