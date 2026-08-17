@@ -2322,10 +2322,9 @@ app.whenReady().then(async () => {
         JSON.parse(await run(gh, ['pr', 'view', ...(prUrl ? [prUrl] : []), '--json', PR_FIELDS], 15_000))
 
       let view = await view$(url)
-      const [localHead, currentBranch, porcelain] = await Promise.all([
+      const [localHead, currentBranch] = await Promise.all([
         run('git', ['rev-parse', 'HEAD'], 3_000),
         run('git', ['branch', '--show-current'], 3_000),
-        run('git', ['status', '--porcelain'], 3_000),
       ])
       // The caller's stored url can outlive the branch it belongs to: finish a
       // chat's PR, start the next branch in the same checkout, and the old
@@ -2349,7 +2348,6 @@ app.whenReady().then(async () => {
           providerState: view.state,
           sameBranch,
           commitsAfterMerge,
-          dirty: sameBranch && porcelain.length > 0,
         }),
         headBranch: view.headRefName,
         baseBranch: view.baseRefName,

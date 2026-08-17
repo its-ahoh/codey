@@ -14,15 +14,18 @@ export function shouldRediscoverPr(input: {
   return pinnedHeadBranch !== currentBranch
 }
 
+/** Post-merge work is commits, not a dirty tree. A dirty working tree belongs to
+ *  the checkout, not to one chat: chats sharing a checkout would all go yellow
+ *  because of each other's edits (or build output), and since the state is
+ *  persisted and the watcher skips terminal PRs, that flip never reverses. */
 export function deriveDeliveryState(input: {
   providerState: string
   sameBranch: boolean
   commitsAfterMerge: boolean
-  dirty: boolean
 }): DeliveryState {
   const state = input.providerState.toUpperCase()
   if (state === 'OPEN') return 'pr-open'
   if (state !== 'MERGED') return 'closed-unmerged'
   if (!input.sameBranch) return 'merged'
-  return input.dirty || input.commitsAfterMerge ? 'merged-with-changes' : 'merged'
+  return input.commitsAfterMerge ? 'merged-with-changes' : 'merged'
 }
