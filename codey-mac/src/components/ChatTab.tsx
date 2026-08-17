@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChatMessage, ChatSelection, FileAttachment, TeamRunSummary } from '../types'
 import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
@@ -927,9 +927,9 @@ export const ChatTab: React.FC<Props> = ({
   const dragDepthRef = useRef(0)
   const composerResizeRef = useRef<{ y: number; h: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const [showLatestMessage, setShowLatestMessage] = useState(false)
 
   useEffect(() => {
     if (composerHeight != null) localStorage.setItem('codey.composerHeight', String(composerHeight))
@@ -1147,13 +1147,35 @@ export const ChatTab: React.FC<Props> = ({
   const findRevision = `${chatId}:${chat?.messages?.length ?? 0}:${lastMsg?.id ?? ''}:${lastMsg?.content?.length ?? 0}`
   // A fresh prompt clears any pending multi-select picks from a prior question.
   useEffect(() => { setMultiChoice([]) }, [chatId, lastMsg?.id])
-  const prevChatIdRef = useRef<string | null>(null)
+
+  const updateLatestMessageVisibility = useCallback(() => {
+    const messages = messagesRef.current
+    if (!messages) return
+    const distanceFromBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight
+    setShowLatestMessage(distanceFromBottom > 2)
+  }, [])
+
+  // ChatTab is remounted for every chat selection. This is the one place where
+  // the transcript deliberately jumps: entering a chat always opens at its
+  // latest message. Updates inside that chat only refresh the button below;
+  // they never take control of the user's scroll position.
+  useLayoutEffect(() => {
+    const messages = messagesRef.current
+    if (!messages) return
+    messages.scrollTop = messages.scrollHeight
+    setShowLatestMessage(false)
+  }, [chatId])
+
   useEffect(() => {
-    if (!followLatest) return
-    const switched = prevChatIdRef.current !== chatId
-    prevChatIdRef.current = chatId
-    messagesEndRef.current?.scrollIntoView(switched ? { block: 'end' } : { behavior: 'smooth' })
-  }, [chatId, chat?.messages?.length, lastMsg?.content, lastMsg?.toolCalls?.length, chat?.contextPanelOpen, followLatest])
+    const frame = requestAnimationFrame(updateLatestMessageVisibility)
+    return () => cancelAnimationFrame(frame)
+  }, [chat?.messages?.length, lastMsg?.content, lastMsg?.toolCalls?.length, chat?.contextPanelOpen, updateLatestMessageVisibility])
+
+  const scrollToLatestMessage = useCallback(() => {
+    const messages = messagesRef.current
+    if (!messages) return
+    messages.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' })
+  }, [])
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && flight) stopChat(chatId)
@@ -2098,6 +2120,7 @@ export const ChatTab: React.FC<Props> = ({
       <div
         ref={messagesRef}
         style={{ ...styles.messages, position: 'relative' }}
+        onScroll={updateLatestMessageVisibility}
       >
         <ChatFindBar
           containerRef={messagesRef}
@@ -2386,7 +2409,6 @@ export const ChatTab: React.FC<Props> = ({
             <ShimmerStatus label={statusLabel} />
           </div>
         )}
-        <div ref={messagesEndRef} />
       </div>
 
       {orphaned && (
@@ -2395,6 +2417,16 @@ export const ChatTab: React.FC<Props> = ({
         </div>
       )}
       <div style={{ ...styles.inputContainer, position: 'relative' as const }}>
+        {showLatestMessage && (
+          <button
+            type="button"
+            style={styles.latestMessageButton}
+            onClick={scrollToLatestMessage}
+            aria-label="Jump to latest message"
+          >
+            Lastest Message ↓
+          </button>
+        )}
         {showSlashMenu && (
           <div ref={slashMenuRef} style={styles.slashMenu}>
             {filteredSlash.map((cmd, i) => (
@@ -2880,6 +2912,14 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
   inputContainer: { padding: '12px max(16px, 4%) 16px', borderTop: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, background: C.surface },
+  latestMessageButton: {
+    position: 'absolute' as const, top: 0, left: '50%', zIndex: 20,
+    transform: 'translate(-50%, -50%)',
+    padding: '6px 12px', borderRadius: 999,
+    border: `1px solid ${C.border2}`, background: C.surface2, color: C.fg,
+    boxShadow: '0 5px 16px rgba(0,0,0,0.24)',
+    fontSize: 11, fontWeight: 650, cursor: 'pointer', whiteSpace: 'nowrap' as const,
+  },
   composer: {
     background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 14,
     display: 'flex', flexDirection: 'column', overflow: 'hidden',

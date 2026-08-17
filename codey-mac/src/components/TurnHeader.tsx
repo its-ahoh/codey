@@ -1,6 +1,6 @@
 import React from 'react'
 import { C } from '../theme'
-import { formatFallbackError, turnHeaderMeta } from './turnHeaderModel'
+import { fallbackErrorText, turnHeaderMeta } from './turnHeaderModel'
 import type { ChatMessage } from '../types'
 import { UIIcon } from './UIIcons'
 
@@ -131,8 +131,7 @@ const FallbackWarning: React.FC<{
 }> = ({ fallback, onAskAgent }) => {
   const [open, setOpen] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
-  const detail = fallback.reason?.trim() || 'No error details were reported.'
-  const errorContext = formatFallbackError(fallback)
+  const detail = fallbackErrorText(fallback)
 
   // Reset so a re-open never shows a stale "Copied" from the last visit.
   React.useEffect(() => {
@@ -148,7 +147,7 @@ const FallbackWarning: React.FC<{
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(errorContext)
+      await navigator.clipboard.writeText(detail)
       setCopied(true)
     } catch { /* clipboard denied — leave the label alone */ }
   }

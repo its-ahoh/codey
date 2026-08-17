@@ -4,6 +4,7 @@ import { C } from '../theme'
 import { parseTeamMessage } from './teamMessageFormat'
 import { CombinedDiffView, normalizeTool } from './toolFormat'
 import { stepMatchIndex } from './diffSearch'
+import { foldFileChanges } from './foldChanges'
 import { ToolCallList } from './ToolCallList'
 import { QuickQuestionView } from './QuickQuestionView'
 import { TaskHud } from './TaskHud'
@@ -789,6 +790,13 @@ const FileChangesView: React.FC<{
 
       {order.map(path => {
         const group = byFile.get(path)!
+        // Edit/Write/Notebook edits to this file collapse into a single
+        // continuous diff showing the file's latest state: repeated edits to one
+        // region fold into one net hunk rather than stacking every intermediate
+        // version. Raw patches keep their own block.
+        const content = fileText[path]
+        const folded = foldFileChanges(group.filter(c => c.tool !== 'Patch'))
+        const patches = group.filter(c => c.tool === 'Patch')
         // An active search expands every file, so no hit stays hidden.
         const isCollapsed = collapsed.has(path) && !query
         const toggle = () => setCollapsed(prev => {
@@ -805,7 +813,12 @@ const FileChangesView: React.FC<{
                 </span>
               </span>
               <span style={fcStyles.filePath}>{displayPath(path, workingDir)}</span>
-              <span style={fcStyles.fileCount}>{group.length} edit{group.length === 1 ? '' : 's'}</span>
+              <span
+                style={fcStyles.fileCount}
+                title={folded.length < group.length
+                  ? `${group.length} edits folded into ${folded.length} net change${folded.length === 1 ? '' : 's'}`
+                  : undefined}
+              >{group.length} edit{group.length === 1 ? '' : 's'}</span>
               {path && path.startsWith('/') && (
                 <button
                   style={fcStyles.iconBtn}
@@ -815,17 +828,11 @@ const FileChangesView: React.FC<{
               )}
             </div>
             {!isCollapsed && (() => {
-              // All Edit/Write/Notebook edits to this file collapse into a
-              // single continuous diff; raw patches keep their own block.
-              const content = fileText[path]
-              const diffHunks = group
-                .filter(c => c.tool !== 'Patch')
-                .map(c => ({
-                  oldText: c.oldText,
-                  newText: c.newText,
-                  startLine: locateStartLine(content, c.oldText, c.newText),
-                }))
-              const patches = group.filter(c => c.tool === 'Patch')
+              const diffHunks = folded.map(c => ({
+                oldText: c.oldText,
+                newText: c.newText,
+                startLine: locateStartLine(content, c.oldText, c.newText),
+              }))
               return (
                 <div style={fcStyles.changeBody}>
                   {diffHunks.length > 0 && (
@@ -835,6 +842,11 @@ const FileChangesView: React.FC<{
                       filePath={path}
                       search={{ query, exact: exactMatch, idPrefix: path, activeId: activeMatchId, onMatches: handleMatches }}
                     />
+                  )}
+                  {diffHunks.length === 0 && patches.length === 0 && (
+                    <div style={fcStyles.noNetChange}>
+                      Edits cancelled out — the file matches its original text.
+                    </div>
                   )}
                   {patches.map(c => (
                     <pre key={`${c.msgId}::${c.callId}`} style={fcStyles.patchPre}>
@@ -954,6 +966,7 @@ const fcStyles: Record<string, React.CSSProperties> = {
   },
   readHeader: { color: C.fg2, fontSize: 10, fontWeight: 650, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 6 },
   changeBody: { padding: 9, background: C.bg, display: 'flex', flexDirection: 'column', gap: 7 },
+  noNetChange: { color: C.fg3, fontSize: 11, fontStyle: 'italic' },
   changeItem: {},
   patchPre: {
     margin: 0, fontSize: 11.5, color: C.fg,
