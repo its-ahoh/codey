@@ -22,6 +22,8 @@ type TranscriptHandler = (text: string, mode: ChatVoiceMode) => void
 type VoiceApi = ReturnType<typeof useChatVoice>
 
 export interface VoiceTurnValue extends VoiceApi {
+  /** Chat that owns the current capture / spoken reply. */
+  ownerChatId: string | null
   /**
    * Where finished transcripts go. The mounted chat registers its composer;
    * a transcript that arrives with nothing registered is dropped rather than
@@ -49,6 +51,8 @@ export const VoiceTurnProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Which chat the running turn belongs to, and how far along it is. Held
   // together because a phase without its chat can't find the reply to read.
   const [turn, setTurn] = useState<{ chatId: string | null; phase: SpokenTurnPhase }>({ chatId: null, phase: 'off' })
+  const [ownerChatId, setOwnerChatId] = useState<string | null>(null)
+  const ownerChatIdRef = useRef<string | null>(null)
   const spokenTurnRef = useRef(false)
   const prevFlightRef = useRef<unknown>(null)
   const ackGenerationRef = useRef(0)
@@ -61,6 +65,8 @@ export const VoiceTurnProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const beginSpokenTurn = useCallback((chatId: string, spoken: string) => {
     spokenTurnRef.current = true
+    ownerChatIdRef.current = chatId
+    setOwnerChatId(chatId)
     setTurn({ chatId, phase: 'working' })
     // Acknowledge immediately. An agent turn routinely runs for 30s to
     // several minutes, and unbroken silence in a voice interface reads as
@@ -93,6 +99,8 @@ export const VoiceTurnProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i]
       if (message.role === 'assistant' && message.content?.trim()) {
+        ownerChatIdRef.current = chatId
+        setOwnerChatId(chatId)
         setTurn({ chatId, phase: 'replying' })
         void voice.speak(message.content, chatId ?? undefined)
         return
@@ -108,7 +116,11 @@ export const VoiceTurnProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // same delay is the safety net for a speak that never starts at all.
   useEffect(() => {
     if (!spokenTurnSettled({ turn: turn.phase, voiceState: voice.state, agentInFlight: !!flight })) return
-    const timer = setTimeout(() => setTurn({ chatId: null, phase: 'off' }), 1500)
+    const timer = setTimeout(() => {
+      setTurn({ chatId: null, phase: 'off' })
+      ownerChatIdRef.current = null
+      setOwnerChatId(null)
+    }, 1500)
     return () => clearTimeout(timer)
   }, [turn.phase, voice.state, flight])
 
@@ -143,6 +155,8 @@ export const VoiceTurnProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Clear the marker so the settle effect never reads back an abandoned reply.
     spokenTurnRef.current = false
     setTurn({ chatId: null, phase: 'off' })
+    ownerChatIdRef.current = null
+    setOwnerChatId(null)
   }, [voice.cancel])
   const abandonRef = useRef(abandonTurn)
   abandonRef.current = abandonTurn
@@ -151,8 +165,36 @@ export const VoiceTurnProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // callbacks change as recording state updates; using a ref avoids a brief
   // unsubscribe/re-subscribe gap exactly when the second hotkey press is meant
   // to stop and send the recording.
-  const toggleRef = useRef(voice.toggle)
-  toggleRef.current = voice.toggle
+  const toggle = useCallback<VoiceApi['toggle']>((mode, opts) => {
+    // Latch the destination at the moment capture starts. The selected chat
+    // can change while recording, transcribing, or playing the reply, but the
+    // voice UI must continue to belong to the chat where the turn began.
+    if (voice.state === 'idle' || voice.state === 'speaking') {
+      ownerChatIdRef.current = state.selectedChatId
+      setOwnerChatId(state.selectedChatId)
+    }
+    voice.toggle(mode, opts)
+  }, [voice.state, voice.toggle, state.selectedChatId])
+
+  const toggleRef = useRef(toggle)
+  toggleRef.current = toggle
+
+  // Fn shortcuts can be handled entirely by the native helper, bypassing the
+  // toggle above. Detect that idle → active edge and claim the selected chat
+  // here too. A capture-only owner is cleared when capture settles; a spoken
+  // turn keeps its owner until reply playback settles.
+  const previousVoiceStateRef = useRef(voice.state)
+  useEffect(() => {
+    const previous = previousVoiceStateRef.current
+    previousVoiceStateRef.current = voice.state
+    if (previous === 'idle' && voice.state !== 'idle' && ownerChatIdRef.current === null) {
+      ownerChatIdRef.current = state.selectedChatId
+      setOwnerChatId(state.selectedChatId)
+    } else if (previous !== 'idle' && voice.state === 'idle' && turn.phase === 'off') {
+      ownerChatIdRef.current = null
+      setOwnerChatId(null)
+    }
+  }, [voice.state, state.selectedChatId, turn.phase])
   useEffect(() => window.codey.voice.onConverseHotkey(() => {
     toggleRef.current('converse', { fromHotkey: true })
   }), [])
@@ -178,7 +220,7 @@ export const VoiceTurnProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return () => window.removeEventListener('keydown', onKey, true)
   }, [voice.state, turn.phase, abandonTurn])
 
-  const value: VoiceTurnValue = { ...voice, setTranscriptHandler, beginSpokenTurn }
+  const value: VoiceTurnValue = { ...voice, toggle, ownerChatId, setTranscriptHandler, beginSpokenTurn }
   return <VoiceTurnContext.Provider value={value}>{children}</VoiceTurnContext.Provider>
 }
 

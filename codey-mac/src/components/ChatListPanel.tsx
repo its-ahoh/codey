@@ -11,6 +11,7 @@ import { UIIcon } from './UIIcons'
 import { moveWorkspace, reconcileWorkspaceOrder } from './workspaceOrder'
 import { ChatHoverCard } from './ChatHoverCard'
 import { buildChatHoverCard } from './chatHoverCardView'
+import { useVoiceTurn } from '../hooks/useVoiceTurn'
 
 /** How long the pointer has to rest on a row before its info card appears —
  *  long enough that sweeping the list to reach the footer stays quiet. */
@@ -53,6 +54,7 @@ const DeliveryBadge: React.FC<{ pullRequest?: Chat['pullRequest'] }> = ({ pullRe
 
 export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, onOpenBrowser, onOpenTools, onSelectChat, automationsUnseenCount, activeChatId }) => {
   const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces, refreshChats, linkChannel, unlinkChannel } = useChats()
+  const voice = useVoiceTurn()
   const [addingWorkspace, setAddingWorkspace] = useState(false)
   const [workspaces, setWorkspaces] = useState<string[]>([])
   const [lastWorkspace, setLastWorkspace] = useState<string>('')
@@ -568,7 +570,14 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                         style={styles.renameInput}
                       />
                     ) : (
-                      <span style={styles.title}>{chat.title?.trim() || 'New Chat'}</span>
+                      <span style={styles.titleGroup}>
+                        <span style={styles.title}>{chat.title?.trim() || 'New Chat'}</span>
+                        {voice.state === 'speaking' && voice.ownerChatId === chat.id && (
+                          <span style={styles.speakingIcon} title="Speaking" aria-label="Speaking">
+                            <UIIcon name="waveform" size={14} strokeWidth={2} />
+                          </span>
+                        )}
+                      </span>
                     )}
                     <RouteIcons routes={chat.routes} />
                     {!isRenaming && (
@@ -810,7 +819,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12, color: C.fg2, margin: '2px 2px 2px 20px', border: '1px solid transparent',
   },
   activitySlot: { width: 8, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
-  title: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  titleGroup: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 5 },
+  title: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  speakingIcon: {
+    color: C.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0, animation: 'codey-pulse-dot 1.2s infinite',
+  },
   renameInput: {
     flex: 1, background: C.surface3, border: `1px solid ${C.border2}`,
     borderRadius: 4, padding: '2px 6px', color: C.fg, fontSize: 12, outline: 'none',
