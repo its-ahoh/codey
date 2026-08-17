@@ -229,7 +229,7 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
 
   return (
     <div
-      className={layout === 'roomy' ? 'md-roomy' : undefined}
+      className={onUser ? 'md-user' : layout === 'roomy' ? 'md-roomy' : undefined}
       style={{ minWidth: 0, maxWidth: '100%', fontSize: M.fontSize, lineHeight: M.lineHeight, overflowWrap: 'anywhere', wordBreak: 'break-word' }}
     >
       <ReactMarkdown
