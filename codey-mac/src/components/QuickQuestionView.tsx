@@ -174,7 +174,7 @@ export const QuickQuestionView: React.FC<Props> = ({ chatId, inputRef }) => {
               ? <span style={qqStyles.userText}>{m.content}</span>
               : m.error
                 ? <span style={qqStyles.errText}>{m.content}</span>
-                : <Markdown>{m.content || (m.streaming ? '…' : '')}</Markdown>}
+                : <Markdown>{m.content}</Markdown>}
             {m.attachments && m.attachments.length > 0 && (
               <div style={qqStyles.msgAttRow}>
                 {m.attachments.map(a => a.mimeType.startsWith('image/') ? (
