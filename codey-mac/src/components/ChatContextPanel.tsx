@@ -720,16 +720,7 @@ const FileChangesView: React.FC<{
     <div>
       {searchOpen && (
         <div style={fcStyles.searchBar}>
-          <div style={fcStyles.searchFilters}>
-            <button
-              style={{ ...fcStyles.searchFilterBtn, ...(exactMatch ? fcStyles.searchFilterBtnActive : null) }}
-              onClick={() => { setExactMatch(v => !v); setActiveIndex(0) }}
-              aria-pressed={exactMatch}
-              aria-label="Exact match"
-              title={exactMatch ? 'Exact match on — case-sensitive' : 'Exact match off — case-insensitive'}
-            ><UIIcon name="match-case" size={13} /></button>
-          </div>
-          <div style={fcStyles.searchRow}>
+          <div style={fcStyles.searchField}>
             <input
               ref={searchInputRef}
               style={fcStyles.searchInput}
@@ -739,30 +730,37 @@ const FileChangesView: React.FC<{
               onChange={e => { setQuery(e.target.value); setActiveIndex(0) }}
               onKeyDown={onSearchKeyDown}
             />
-            <span style={fcStyles.searchCount}>
-              {!query ? '' : allMatches.length === 0 ? 'No results' : `${activeMatchIndex + 1}/${allMatches.length}`}
-            </span>
             <button
-              style={fcStyles.searchNavBtn}
-              onClick={() => goToMatch(-1)}
-              disabled={allMatches.length === 0}
-              title="Previous match (Shift+Enter)"
-              aria-label="Previous match"
-            >↑</button>
-            <button
-              style={fcStyles.searchNavBtn}
-              onClick={() => goToMatch(1)}
-              disabled={allMatches.length === 0}
-              title="Next match (Enter)"
-              aria-label="Next match"
-            >↓</button>
-            <button
-              style={fcStyles.searchNavBtn}
-              onClick={closeSearch}
-              title="Close search (Esc)"
-              aria-label="Close search"
-            >×</button>
+              style={{ ...fcStyles.searchFilterBtn, ...(exactMatch ? fcStyles.searchFilterBtnActive : null) }}
+              onClick={() => { setExactMatch(v => !v); setActiveIndex(0) }}
+              aria-pressed={exactMatch}
+              aria-label="Exact match"
+              title={exactMatch ? 'Exact match on — case-sensitive' : 'Exact match off — case-insensitive'}
+            ><UIIcon name="match-case" size={13} /></button>
           </div>
+          <span style={fcStyles.searchCount}>
+            {!query ? '' : allMatches.length === 0 ? 'No results' : `${activeMatchIndex + 1}/${allMatches.length}`}
+          </span>
+          <button
+            style={fcStyles.searchNavBtn}
+            onClick={() => goToMatch(-1)}
+            disabled={allMatches.length === 0}
+            title="Previous match (Shift+Enter)"
+            aria-label="Previous match"
+          >↑</button>
+          <button
+            style={fcStyles.searchNavBtn}
+            onClick={() => goToMatch(1)}
+            disabled={allMatches.length === 0}
+            title="Next match (Enter)"
+            aria-label="Next match"
+          >↓</button>
+          <button
+            style={fcStyles.searchNavBtn}
+            onClick={closeSearch}
+            title="Close search (Esc)"
+            aria-label="Close search"
+          >×</button>
         </div>
       )}
       <div style={fcStyles.toolbar}>
@@ -877,24 +875,29 @@ const fcStyles: Record<string, React.CSSProperties> = {
   // scrolls to the current hit. -14 cancels the panel body's top padding.
   searchBar: {
     position: 'sticky', top: -14, zIndex: 6,
-    display: 'flex', flexDirection: 'column', gap: 6,
+    display: 'flex', alignItems: 'center', gap: 4,
     margin: '-14px -14px 10px', padding: '10px 14px',
     background: C.surface2, borderBottom: `1px solid ${C.border}`,
   },
-  // Match filters sit above the field, so the field keeps its full width.
-  searchFilters: { display: 'flex', alignItems: 'center', gap: 4 },
-  searchFilterBtn: {
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    width: 22, height: 20, padding: 0, borderRadius: 5,
-    background: C.surface, border: `1px solid ${C.border2}`, color: C.fg3, cursor: 'pointer',
+  // The field owns the border so the match-case toggle can sit inside it,
+  // flush against the right edge.
+  searchField: {
+    flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 2,
+    background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 6,
+    padding: '0 3px 0 0',
   },
-  searchFilterBtnActive: { background: C.accentDim, borderColor: C.accent, color: C.fg },
-  searchRow: { display: 'flex', alignItems: 'center', gap: 4 },
   searchInput: {
     flex: 1, minWidth: 0,
-    background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 6,
+    background: 'transparent', border: 'none',
     color: C.fg, fontSize: 11.5, padding: '4px 7px', outline: 'none',
   },
+  searchFilterBtn: {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: 20, height: 18, padding: 0, flexShrink: 0, borderRadius: 4,
+    background: 'transparent', border: '1px solid transparent',
+    color: C.fg3, cursor: 'pointer',
+  },
+  searchFilterBtnActive: { background: C.accentDim, borderColor: C.accent, color: C.fg },
   searchCount: {
     color: C.fg3, fontSize: 10.5, fontVariantNumeric: 'tabular-nums',
     whiteSpace: 'nowrap', flexShrink: 0,
