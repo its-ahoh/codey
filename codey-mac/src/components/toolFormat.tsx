@@ -1,5 +1,6 @@
 import React from 'react'
 import { C } from '../theme'
+import { findMatchRanges, splitByMatches, type MatchRange } from './diffSearch'
 import hljs from 'highlight.js/lib/core'
 import bash from 'highlight.js/lib/languages/bash'
 import cpp from 'highlight.js/lib/languages/cpp'
@@ -155,9 +156,11 @@ const diffStyles: Record<string, React.CSSProperties> = {
     fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 11.5, lineHeight: 1.55,
     borderRadius: 6, overflowX: 'auto', border: `1px solid ${C.border2}`, background: C.surface,
   },
-  // width:max-content sizes each row to its longest content (so the wrap can
-  // scroll); minWidth:100% keeps the tint spanning the full visible width.
-  row: { display: 'flex', whiteSpace: 'pre', width: 'max-content', minWidth: '100%' },
+  // The inner column is as wide as the longest line (min: the visible width),
+  // so every row can stretch to that same width — add/delete tints then span
+  // the full block instead of stopping at the end of their own code.
+  inner: { display: 'flex', flexDirection: 'column', width: 'max-content', minWidth: '100%' },
+  row: { display: 'flex', whiteSpace: 'pre', width: '100%', minWidth: 'max-content' },
   // Code text stays in the readable foreground color in both light and dark
   // mode; the row tint + colored marker carry the add/delete meaning.
   add: { background: `color-mix(in srgb, ${C.green} 16%, transparent)` },
@@ -173,16 +176,41 @@ const diffStyles: Record<string, React.CSSProperties> = {
   code: { flexShrink: 0, paddingRight: 14 },
   contextRow: { background: C.surface },
   contextButton: {
-    position: 'sticky', top: 0, left: 0, zIndex: 2,
     display: 'block', width: '100%', minWidth: '100%', padding: '5px 10px', boxSizing: 'border-box',
     border: 'none', borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`,
     background: C.surface2, color: C.accent, cursor: 'pointer',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     fontSize: 10.5, fontWeight: 600, textAlign: 'center', whiteSpace: 'nowrap',
   },
+  // The bar spans the whole (possibly scrolled) width; its label stays centered
+  // until horizontal scrolling would push it off, then pins to the left edge.
+  contextButtonLabel: { position: 'sticky', left: 0, zIndex: 2, display: 'inline-block' },
   // Divider between separate edits to the same file in a combined view.
   hunkSep: { minWidth: '100%', height: 0, borderTop: `1px dashed ${C.border2}`, margin: '2px 0' },
+  match: {
+    background: `color-mix(in srgb, ${C.yellow} 45%, transparent)`,
+    borderRadius: 2,
+  },
+  matchActive: {
+    background: C.yellow, color: '#000',
+    borderRadius: 2, boxShadow: `0 0 0 1px ${C.yellow}`,
+  },
 }
+
+/** Search wiring for a diff view: what to look for, and which hit is current. */
+export type DiffSearch = {
+  query: string
+  /** Namespace for this view's match ids (the file path, in the Files tab). */
+  idPrefix: string
+  /** Id of the match to render as the current hit, if it lives in this view. */
+  activeId: string | null
+  /** Called with this view's match ids, in top-to-bottom render order. */
+  onMatches: (idPrefix: string, ids: string[]) => void
+}
+
+/** Stable id for one search hit: which view, which line, which occurrence. */
+export const matchId = (idPrefix: string, lineKey: string, occurrence: number): string =>
+  `${idPrefix} ${lineKey} ${occurrence}`
 
 export type DiffHunk = {
   oldText: string
@@ -245,7 +273,12 @@ const highlightedLine = (text: string, language?: string): string | undefined =>
  * startLine is known the gutter shows true file line numbers; otherwise
  * numbering continues across hunks. A dashed divider marks each edit boundary.
  */
-export const CombinedDiffView: React.FC<{ hunks: DiffHunk[]; fileContent?: string | null; filePath?: string }> = ({ hunks, fileContent, filePath }) => {
+export const CombinedDiffView: React.FC<{
+  hunks: DiffHunk[]
+  fileContent?: string | null
+  filePath?: string
+  search?: DiffSearch
+}> = ({ hunks, fileContent, filePath, search }) => {
   const [context, setContext] = React.useState<Record<number, HunkContext>>({})
   const language = languageForFilePath(filePath)
   const fileLines = fileContent?.split('\n')
@@ -294,85 +327,169 @@ export const CombinedDiffView: React.FC<{ hunks: DiffHunk[]; fileContent?: strin
     })
   }
 
-  const codeLine = (text: string, style: React.CSSProperties) => {
+  // Everything the view renders, flattened in display order. Building the list
+  // before rendering lets search matches be numbered exactly top-to-bottom.
+  type Item =
+    | { kind: 'sep'; key: string }
+    | { kind: 'button'; key: string; label: string; onClick: () => void }
+    | {
+        kind: 'line'; key: string; text: string
+        oldLabel: string; newLabel: string; marker: string
+        markerColor: string; codeColor: string; rowStyle: React.CSSProperties
+      }
+
+  const items: Item[] = []
+  let oldNo = 0
+  let newNo = 0
+  entries.forEach((entry, hi) => {
+    const { hunk: h, key: hunkKey, startIndex, afterIndex } = entry
+    const lines = lineDiff(h.oldText, h.newText)
+    const previousGap = hi > 0 ? gapsAfter[hi - 1] : undefined
+    const nextGap = gapsAfter[hi]
+    const availableBefore = fileLines && startIndex != null
+      ? hi === 0 ? Math.max(0, startIndex) : previousGap ?? 0
+      : 0
+    const availableAfter = fileLines && afterIndex != null
+      ? hi === entries.length - 1 ? Math.max(0, fileLines.length - afterIndex) : nextGap ?? 0
+      : 0
+    const shown = context[hunkKey] ?? { before: 0, after: 0 }
+    const mergedWithPrevious = hi > 0 && mergedAfter[hi - 1]
+    const mergedWithNext = mergedAfter[hi]
+    const shownBefore = mergedWithPrevious ? 0 : Math.min(shown.before, availableBefore)
+    const shownAfter = mergedWithNext ? availableAfter : Math.min(shown.after, availableAfter)
+    // Anchor this hunk's gutter to the real file line when we resolved one.
+    if (h.startLine != null && Number.isFinite(h.startLine)) {
+      oldNo = h.startLine - 1
+      newNo = h.startLine - 1
+    }
+
+    const contextItem = (text: string, lineNo: number, key: string): Item => ({
+      kind: 'line', key, text,
+      oldLabel: String(lineNo), newLabel: String(lineNo), marker: ' ',
+      markerColor: C.fg3, codeColor: C.fg2, rowStyle: diffStyles.contextRow,
+    })
+
+    if (hi > 0 && !mergedWithPrevious) items.push({ kind: 'sep', key: `${hunkKey}:sep` })
+    if (!mergedWithPrevious && availableBefore > shownBefore) {
+      const step = Math.min(CONTEXT_STEP, availableBefore - shownBefore)
+      items.push({
+        kind: 'button', key: `${hunkKey}:more-before`,
+        label: `↑ Show ${step} more line${step === 1 ? '' : 's'} above`,
+        onClick: () => reveal(hunkKey, 'before', availableBefore),
+      })
+    }
+    if (fileLines && startIndex != null) {
+      fileLines.slice(startIndex - shownBefore, startIndex).forEach((text, idx) => {
+        items.push(contextItem(text, startIndex - shownBefore + idx + 1, `${hi}:before:${idx}`))
+      })
+    }
+    lines.forEach((l, idx) => {
+      items.push({
+        kind: 'line', key: `${hunkKey}:${idx}`, text: l.text,
+        oldLabel: l.kind === 'add' ? '' : String(++oldNo),
+        newLabel: l.kind === 'del' ? '' : String(++newNo),
+        marker: l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' ',
+        markerColor: l.kind === 'add' ? C.green : l.kind === 'del' ? C.red : C.fg3,
+        codeColor: l.kind === 'eq' ? C.fg2 : C.fg,
+        rowStyle: l.kind === 'add' ? diffStyles.add : l.kind === 'del' ? diffStyles.del : diffStyles.eq,
+      })
+    })
+    if (fileLines && afterIndex != null) {
+      fileLines.slice(afterIndex, afterIndex + shownAfter).forEach((text, idx) => {
+        items.push(contextItem(text, afterIndex + idx + 1, `${hi}:after:${idx}`))
+      })
+    }
+    if (!mergedWithNext && availableAfter > shownAfter) {
+      const step = Math.min(CONTEXT_STEP, availableAfter - shownAfter)
+      items.push({
+        kind: 'button', key: `${hunkKey}:more-after`,
+        label: `↓ Show ${step} more line${step === 1 ? '' : 's'} below`,
+        onClick: () => reveal(hunkKey, 'after', availableAfter),
+      })
+    }
+  })
+
+  // This view's match ids, in display order. Recomputed each render; the effect
+  // below only notifies the owner when the list actually changed.
+  const query = search?.query ?? ''
+  const idPrefix = search?.idPrefix
+  const rangesByKey = new Map<string, MatchRange[]>()
+  const matchIds: string[] = []
+  if (query && idPrefix != null) {
+    for (const item of items) {
+      if (item.kind !== 'line') continue
+      const ranges = findMatchRanges(item.text, query)
+      if (ranges.length === 0) continue
+      rangesByKey.set(item.key, ranges)
+      ranges.forEach((_, i) => matchIds.push(matchId(idPrefix, item.key, i)))
+    }
+  }
+  const onMatches = search?.onMatches
+  const matchSignature = matchIds.join('\n')
+  React.useEffect(() => {
+    if (onMatches && idPrefix != null) {
+      onMatches(idPrefix, matchSignature ? matchSignature.split('\n') : [])
+    }
+  }, [onMatches, idPrefix, matchSignature])
+
+  // Bring the current hit into view once it has rendered. Views that don't own
+  // the active hit must stay put — their ref still points at an older one.
+  const activeId = search?.activeId ?? null
+  const ownsActive = activeId != null && matchIds.includes(activeId)
+  const activeElRef = React.useRef<HTMLElement | null>(null)
+  React.useEffect(() => {
+    if (ownsActive) activeElRef.current?.scrollIntoView({ block: 'center', inline: 'nearest' })
+  }, [activeId, ownsActive])
+
+  const codeLine = (text: string, style: React.CSSProperties, itemKey: string) => {
+    const ranges = rangesByKey.get(itemKey)
+    if (ranges && idPrefix != null) {
+      // Matched lines drop syntax highlighting: hit markers have to wrap plain
+      // text spans, which can't be interleaved with pre-highlighted HTML.
+      return (
+        <span style={style}>
+          {splitByMatches(text, ranges).map((seg, i) => {
+            if (seg.matchIndex == null) return <React.Fragment key={i}>{seg.text}</React.Fragment>
+            const isActive = matchId(idPrefix, itemKey, seg.matchIndex) === activeId
+            return (
+              <span
+                key={i}
+                ref={isActive ? (el => { activeElRef.current = el }) : undefined}
+                style={isActive ? diffStyles.matchActive : diffStyles.match}
+              >{seg.text}</span>
+            )
+          })}
+        </span>
+      )
+    }
     const html = highlightedLine(text, language)
     return html
       ? <span style={style} dangerouslySetInnerHTML={{ __html: html }} />
       : <span style={style}>{text || ' '}</span>
   }
 
-  const contextRow = (text: string, lineNo: number, key: string) => (
-    <div key={key} style={{ ...diffStyles.row, ...diffStyles.contextRow }}>
-      <span style={diffStyles.gutter}>{lineNo}</span>
-      <span style={diffStyles.gutter}>{lineNo}</span>
-      <span style={{ ...diffStyles.marker, color: C.fg3 }}> </span>
-      {codeLine(text, { ...diffStyles.code, color: C.fg2 })}
-    </div>
-  )
-
-  let oldNo = 0
-  let newNo = 0
   return (
     <div style={diffStyles.wrap}>
-      {entries.map((entry, hi) => {
-        const { hunk: h, key: hunkKey, startIndex, afterIndex } = entry
-        const lines = lineDiff(h.oldText, h.newText)
-        const previousGap = hi > 0 ? gapsAfter[hi - 1] : undefined
-        const nextGap = gapsAfter[hi]
-        const availableBefore = fileLines && startIndex != null
-          ? hi === 0 ? Math.max(0, startIndex) : previousGap ?? 0
-          : 0
-        const availableAfter = fileLines && afterIndex != null
-          ? hi === entries.length - 1 ? Math.max(0, fileLines.length - afterIndex) : nextGap ?? 0
-          : 0
-        const shown = context[hunkKey] ?? { before: 0, after: 0 }
-        const mergedWithPrevious = hi > 0 && mergedAfter[hi - 1]
-        const mergedWithNext = mergedAfter[hi]
-        const shownBefore = mergedWithPrevious ? 0 : Math.min(shown.before, availableBefore)
-        const shownAfter = mergedWithNext ? availableAfter : Math.min(shown.after, availableAfter)
-        // Anchor this hunk's gutter to the real file line when we resolved one.
-        if (h.startLine != null && Number.isFinite(h.startLine)) {
-          oldNo = h.startLine - 1
-          newNo = h.startLine - 1
-        }
-        return (
-          <React.Fragment key={hunkKey}>
-            {hi > 0 && !mergedWithPrevious && <div style={diffStyles.hunkSep} />}
-            {!mergedWithPrevious && availableBefore > shownBefore && (
-              <button style={diffStyles.contextButton} onClick={() => reveal(hunkKey, 'before', availableBefore)}>
-                ↑ Show {Math.min(CONTEXT_STEP, availableBefore - shownBefore)} more line{Math.min(CONTEXT_STEP, availableBefore - shownBefore) === 1 ? '' : 's'} above
+      <div style={diffStyles.inner}>
+        {items.map(item => {
+          if (item.kind === 'sep') return <div key={item.key} style={diffStyles.hunkSep} />
+          if (item.kind === 'button') {
+            return (
+              <button key={item.key} style={diffStyles.contextButton} onClick={item.onClick}>
+                <span style={diffStyles.contextButtonLabel}>{item.label}</span>
               </button>
-            )}
-            {fileLines && startIndex != null && fileLines
-              .slice(startIndex - shownBefore, startIndex)
-              .map((text, idx) => contextRow(text, startIndex - shownBefore + idx + 1, `${hi}:before:${idx}`))}
-            {lines.map((l, idx) => {
-              const bg = l.kind === 'add' ? diffStyles.add : l.kind === 'del' ? diffStyles.del : diffStyles.eq
-              const markerColor = l.kind === 'add' ? C.green : l.kind === 'del' ? C.red : C.fg3
-              const codeColor = l.kind === 'eq' ? C.fg2 : C.fg
-              const marker = l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '
-              const oldLabel = l.kind === 'add' ? '' : String(++oldNo)
-              const newLabel = l.kind === 'del' ? '' : String(++newNo)
-              return (
-                <div key={`${hunkKey}:${idx}`} style={{ ...diffStyles.row, ...bg }}>
-                  <span style={diffStyles.gutter}>{oldLabel}</span>
-                  <span style={diffStyles.gutter}>{newLabel}</span>
-                  <span style={{ ...diffStyles.marker, color: markerColor }}>{marker}</span>
-                  {codeLine(l.text, { ...diffStyles.code, color: codeColor })}
-                </div>
-              )
-            })}
-            {fileLines && afterIndex != null && fileLines
-              .slice(afterIndex, afterIndex + shownAfter)
-              .map((text, idx) => contextRow(text, afterIndex + idx + 1, `${hi}:after:${idx}`))}
-            {!mergedWithNext && availableAfter > shownAfter && (
-              <button style={diffStyles.contextButton} onClick={() => reveal(hunkKey, 'after', availableAfter)}>
-                ↓ Show {Math.min(CONTEXT_STEP, availableAfter - shownAfter)} more line{Math.min(CONTEXT_STEP, availableAfter - shownAfter) === 1 ? '' : 's'} below
-              </button>
-            )}
-          </React.Fragment>
-        )
-      })}
+            )
+          }
+          return (
+            <div key={item.key} style={{ ...diffStyles.row, ...item.rowStyle }}>
+              <span style={diffStyles.gutter}>{item.oldLabel}</span>
+              <span style={diffStyles.gutter}>{item.newLabel}</span>
+              <span style={{ ...diffStyles.marker, color: item.markerColor }}>{item.marker}</span>
+              {codeLine(item.text, { ...diffStyles.code, color: item.codeColor }, item.key)}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -383,22 +500,24 @@ export const DiffView: React.FC<{ oldText: string; newText: string }> = ({ oldTe
   let newNo = 0
   return (
     <div style={diffStyles.wrap}>
-      {lines.map((l, idx) => {
-        const bg = l.kind === 'add' ? diffStyles.add : l.kind === 'del' ? diffStyles.del : diffStyles.eq
-        const markerColor = l.kind === 'add' ? C.green : l.kind === 'del' ? C.red : C.fg3
-        const codeColor = l.kind === 'eq' ? C.fg2 : C.fg
-        const marker = l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '
-        const oldLabel = l.kind === 'add' ? '' : String(++oldNo)
-        const newLabel = l.kind === 'del' ? '' : String(++newNo)
-        return (
-          <div key={idx} style={{ ...diffStyles.row, ...bg }}>
-            <span style={diffStyles.gutter}>{oldLabel}</span>
-            <span style={diffStyles.gutter}>{newLabel}</span>
-            <span style={{ ...diffStyles.marker, color: markerColor }}>{marker}</span>
-            <span style={{ ...diffStyles.code, color: codeColor }}>{l.text ||' '}</span>
-          </div>
-        )
-      })}
+      <div style={diffStyles.inner}>
+        {lines.map((l, idx) => {
+          const bg = l.kind === 'add' ? diffStyles.add : l.kind === 'del' ? diffStyles.del : diffStyles.eq
+          const markerColor = l.kind === 'add' ? C.green : l.kind === 'del' ? C.red : C.fg3
+          const codeColor = l.kind === 'eq' ? C.fg2 : C.fg
+          const marker = l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '
+          const oldLabel = l.kind === 'add' ? '' : String(++oldNo)
+          const newLabel = l.kind === 'del' ? '' : String(++newNo)
+          return (
+            <div key={idx} style={{ ...diffStyles.row, ...bg }}>
+              <span style={diffStyles.gutter}>{oldLabel}</span>
+              <span style={diffStyles.gutter}>{newLabel}</span>
+              <span style={{ ...diffStyles.marker, color: markerColor }}>{marker}</span>
+              <span style={{ ...diffStyles.code, color: codeColor }}>{l.text ||' '}</span>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

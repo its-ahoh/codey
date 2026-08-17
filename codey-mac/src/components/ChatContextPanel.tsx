@@ -3,6 +3,7 @@ import type { Chat, ChatMessage } from '../types'
 import { C } from '../theme'
 import { parseTeamMessage } from './teamMessageFormat'
 import { CombinedDiffView, normalizeTool } from './toolFormat'
+import { stepMatchIndex } from './diffSearch'
 import { ToolCallList } from './ToolCallList'
 import { QuickQuestionView } from './QuickQuestionView'
 import { TaskHud } from './TaskHud'
@@ -612,6 +613,50 @@ const FileChangesView: React.FC<{
   // Files default to expanded; this set tracks the ones the user collapsed.
   const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set())
 
+  // ── Search (⌘F) ───────────────────────────────────────────────────────────
+  const [searchOpen, setSearchOpen] = React.useState(false)
+  const [query, setQuery] = React.useState('')
+  // Match ids reported by each file's diff view, in that view's display order.
+  const [matchesByPath, setMatchesByPath] = React.useState<Record<string, string[]>>({})
+  const [activeIndex, setActiveIndex] = React.useState(0)
+  const searchInputRef = React.useRef<HTMLInputElement>(null)
+
+  const handleMatches = React.useCallback((idPrefix: string, ids: string[]) => {
+    setMatchesByPath(prev => {
+      const current = prev[idPrefix]
+      if (current && current.length === ids.length && current.every((v, i) => v === ids[i])) return prev
+      return { ...prev, [idPrefix]: ids }
+    })
+  }, [])
+
+  const closeSearch = React.useCallback(() => {
+    setSearchOpen(false)
+    setQuery('')
+    setMatchesByPath({})
+    setActiveIndex(0)
+  }, [])
+
+  // Bumped by ⌘F so a second press re-focuses an already-open search bar.
+  const [focusTick, setFocusTick] = React.useState(0)
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setSearchOpen(true)
+        setFocusTick(t => t + 1)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+  React.useEffect(() => {
+    if (!searchOpen) return
+    const input = searchInputRef.current
+    input?.focus()
+    // Reopening on an existing query selects it, so typing replaces it.
+    input?.select()
+  }, [searchOpen, focusTick])
+
   // Current on-disk text per file, used to resolve real line numbers for each
   // edit. Loaded lazily and cached; a path we've already fetched is skipped.
   const [fileText, setFileText] = React.useState<Record<string, string | null>>({})
@@ -656,8 +701,57 @@ const FileChangesView: React.FC<{
     byFile.get(c.path)!.push(c)
   }
 
+  // Every hit, in on-screen order: files top-to-bottom, lines within each file.
+  const allMatches = order.flatMap(path => matchesByPath[path] ?? [])
+  const activeMatchIndex = allMatches.length === 0 ? 0 : Math.min(activeIndex, allMatches.length - 1)
+  const activeMatchId = allMatches[activeMatchIndex] ?? null
+  const goToMatch = (direction: 1 | -1) => {
+    if (allMatches.length === 0) return
+    setActiveIndex(stepMatchIndex(activeMatchIndex, allMatches.length, direction))
+  }
+  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') { e.preventDefault(); goToMatch(e.shiftKey ? -1 : 1) }
+    else if (e.key === 'Escape') { e.preventDefault(); closeSearch() }
+  }
+
   return (
     <div>
+      {searchOpen && (
+        <div style={fcStyles.searchBar}>
+          <input
+            ref={searchInputRef}
+            style={fcStyles.searchInput}
+            value={query}
+            placeholder="Search in file changes"
+            aria-label="Search in file changes"
+            onChange={e => { setQuery(e.target.value); setActiveIndex(0) }}
+            onKeyDown={onSearchKeyDown}
+          />
+          <span style={fcStyles.searchCount}>
+            {!query ? '' : allMatches.length === 0 ? 'No results' : `${activeMatchIndex + 1}/${allMatches.length}`}
+          </span>
+          <button
+            style={fcStyles.searchNavBtn}
+            onClick={() => goToMatch(-1)}
+            disabled={allMatches.length === 0}
+            title="Previous match (Shift+Enter)"
+            aria-label="Previous match"
+          >↑</button>
+          <button
+            style={fcStyles.searchNavBtn}
+            onClick={() => goToMatch(1)}
+            disabled={allMatches.length === 0}
+            title="Next match (Enter)"
+            aria-label="Next match"
+          >↓</button>
+          <button
+            style={fcStyles.searchNavBtn}
+            onClick={closeSearch}
+            title="Close search (Esc)"
+            aria-label="Close search"
+          >×</button>
+        </div>
+      )}
       <div style={fcStyles.toolbar}>
         <div style={fcStyles.scopeGroup} role="tablist">
           <button
@@ -684,7 +778,8 @@ const FileChangesView: React.FC<{
 
       {order.map(path => {
         const group = byFile.get(path)!
-        const isCollapsed = collapsed.has(path)
+        // An active search expands every file, so no hit stays hidden.
+        const isCollapsed = collapsed.has(path) && !query
         const toggle = () => setCollapsed(prev => {
           const next = new Set(prev)
           next.has(path) ? next.delete(path) : next.add(path)
@@ -722,7 +817,14 @@ const FileChangesView: React.FC<{
               const patches = group.filter(c => c.tool === 'Patch')
               return (
                 <div style={fcStyles.changeBody}>
-                  {diffHunks.length > 0 && <CombinedDiffView hunks={diffHunks} fileContent={content} filePath={path} />}
+                  {diffHunks.length > 0 && (
+                    <CombinedDiffView
+                      hunks={diffHunks}
+                      fileContent={content}
+                      filePath={path}
+                      search={{ query, idPrefix: path, activeId: activeMatchId, onMatches: handleMatches }}
+                    />
+                  )}
                   {patches.map(c => (
                     <pre key={`${c.msgId}::${c.callId}`} style={fcStyles.patchPre}>
                       {c.patchText || '(empty patch)'}
@@ -757,6 +859,27 @@ const fcStyles: Record<string, React.CSSProperties> = {
   toolbar: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     gap: 10, marginBottom: 12,
+  },
+  // Sticky so the bar and its match counter stay reachable while the list
+  // scrolls to the current hit. -14 cancels the panel body's top padding.
+  searchBar: {
+    position: 'sticky', top: -14, zIndex: 6,
+    display: 'flex', alignItems: 'center', gap: 4,
+    margin: '-14px -14px 10px', padding: '10px 14px',
+    background: C.surface2, borderBottom: `1px solid ${C.border}`,
+  },
+  searchInput: {
+    flex: 1, minWidth: 0,
+    background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 6,
+    color: C.fg, fontSize: 11.5, padding: '4px 7px', outline: 'none',
+  },
+  searchCount: {
+    color: C.fg3, fontSize: 10.5, fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap', flexShrink: 0,
+  },
+  searchNavBtn: {
+    background: 'transparent', border: 'none', color: C.fg2,
+    cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: '3px 5px', flexShrink: 0,
   },
   scopeGroup: { display: 'flex', gap: 4 },
   scopeBtn: {
