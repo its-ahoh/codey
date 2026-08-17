@@ -33,6 +33,21 @@
     </script>
     <style>
       body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+      /* Chromium pins the native select arrow to the border edge and ignores
+         padding-right, so it always looks cramped. Draw our own chevron with a
+         real inset instead. The !important is load-bearing: select styles are
+         inline `background: <color>` shorthands, which would otherwise reset
+         background-image to none. Only the image is forced — the inline
+         background color still wins. */
+      select {
+        -webkit-appearance: none !important;
+        appearance: none !important;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7' fill='none' stroke='%238a8a8a' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5 5 5.5 9 1.5'/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important;
+        background-position: right 10px center !important;
+        background-size: 10px 7px !important;
+        padding-right: 26px !important;
+      }
       .hljs-comment, .hljs-quote { color: var(--fg3); font-style: italic; }
       .hljs-keyword, .hljs-selector-tag, .hljs-section, .hljs-link { color: var(--accent); }
       .hljs-string, .hljs-title, .hljs-name, .hljs-type, .hljs-attribute,
