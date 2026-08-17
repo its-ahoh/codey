@@ -69,8 +69,11 @@ const CodeBlock: React.FC<{
   children: React.ReactNode
   background: string
   borderColor: string
+  headerBackground: string
+  metaColor: string
+  codeColor: string
   blockMargin: number
-}> = ({ children, background, borderColor, blockMargin }) => {
+}> = ({ children, background, borderColor, headerBackground, metaColor, codeColor, blockMargin }) => {
   const [copied, setCopied] = React.useState(false)
   const resetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const child: any = React.Children.toArray(children)[0]
@@ -113,11 +116,11 @@ const CodeBlock: React.FC<{
           justifyContent: 'space-between',
           alignItems: 'center',
           padding: '4px 10px',
-          fontSize: 10,
-          color: C.fg3,
+          fontSize: 11,
+          color: metaColor,
           fontFamily: MONO,
           borderBottom: `1px solid ${borderColor}`,
-          background: 'rgba(0,0,0,0.08)',
+          background: headerBackground,
         }}
       >
         <span style={{ textTransform: 'lowercase' }}>{lang ?? 'text'}</span>
@@ -127,10 +130,10 @@ const CodeBlock: React.FC<{
           style={{
             background: copied ? `${C.green}1f` : 'transparent',
             border: `1px solid ${copied ? C.green : borderColor}`,
-            color: copied ? C.green : C.fg3,
+            color: copied ? C.green : metaColor,
             borderRadius: 4,
             padding: '1px 6px',
-            fontSize: 10,
+            fontSize: 11,
             fontWeight: copied ? 700 : 400,
             cursor: 'pointer',
             fontFamily: 'inherit',
@@ -150,7 +153,7 @@ const CodeBlock: React.FC<{
           fontSize: 12,
           lineHeight: 1.5,
           fontFamily: MONO,
-          color: C.codeFg,
+          color: codeColor,
           background: 'transparent',
           whiteSpace: 'pre',
           tabSize: 2,
@@ -216,10 +219,19 @@ function preserveLineBreaks(src: string): string {
 const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant', layout = 'compact' }) => {
   const onUser = variant === 'user'
   const M = METRICS[layout]
-  const inlineCodeBg = onUser ? 'rgba(0,0,0,0.22)' : C.inlineCodeBg
+  // Inside a user bubble the fill is the accent, which is dark in some
+  // palette/mode combinations and bright in others — a fixed black or white
+  // overlay leaves the code text washed out in one of them. Tint towards
+  // `onAccent` instead: the panel always moves away from the bubble fill and
+  // towards the bubble's own text color, so contrast holds either way.
+  const onUserFill = (pct: number) => `color-mix(in srgb, ${C.onAccent} ${pct}%, ${C.userBg})`
+  const inlineCodeBg = onUser ? onUserFill(16) : C.inlineCodeBg
   const inlineCodeFg = onUser ? C.onAccent : C.inlineCodeFg
-  const codeBlockBg = onUser ? 'rgba(0,0,0,0.25)' : C.codeBg
-  const codeBlockBorder = onUser ? 'rgba(255,255,255,0.12)' : C.border2
+  const codeBlockBg = onUser ? onUserFill(12) : C.codeBg
+  const codeBlockBorder = onUser ? onUserFill(30) : C.border2
+  const codeBlockHeaderBg = onUser ? onUserFill(20) : 'rgba(0,0,0,0.08)'
+  const codeBlockMeta = onUser ? onUserFill(72) : C.fg2
+  const codeBlockFg = onUser ? C.onAccent : C.codeFg
   const linkColor = onUser ? C.onAccent : C.accent
   const quoteBorder = onUser ? 'rgba(255,255,255,0.35)' : C.border2
   const quoteFg = onUser ? 'rgba(255,255,255,0.85)' : C.fg2
@@ -316,7 +328,14 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
           ),
           pre: ({ children }: any) => {
             return (
-              <CodeBlock background={codeBlockBg} borderColor={codeBlockBorder} blockMargin={M.blockGap}>
+              <CodeBlock
+                background={codeBlockBg}
+                borderColor={codeBlockBorder}
+                headerBackground={codeBlockHeaderBg}
+                metaColor={codeBlockMeta}
+                codeColor={codeBlockFg}
+                blockMargin={M.blockGap}
+              >
                 {children}
               </CodeBlock>
             )
