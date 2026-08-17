@@ -1623,7 +1623,10 @@ export const ChatTab: React.FC<Props> = ({
     try {
       const fresh = await createChat(chat.workspaceName)
       const prompt = [
-        `The \`${fallback.from}\` agent failed to run, so Codey fell back to \`${fallback.to}\`.`,
+        'A Codey fallback occurred.',
+        `Failed agent/model: \`${fallback.from}\``,
+        `Fallback agent/model: \`${fallback.to}\``,
+        '',
         'Diagnose why it failed and tell me how to fix it.',
         '',
         'Failure reported by the gateway:',
