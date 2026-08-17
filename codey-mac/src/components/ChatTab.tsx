@@ -1335,6 +1335,12 @@ export const ChatTab: React.FC<Props> = ({
   const effectiveModel: string | undefined = chat.model ?? workerModel ?? agentDefaultModels[effectiveAgent]
   const workerEffort = selectedWorker?.config.effort
   const effectiveEffort: string | undefined = chat.effort ?? workerEffort ?? agentDefaultEfforts[effectiveAgent]
+  // What each run setting resolves to with no per-chat override — the value the
+  // dropdown's first entry stands for, and the entry the list below it omits so
+  // the same name never shows up twice.
+  const inheritedAgent: string = workerAgent ?? defaultAgent ?? 'claude-code'
+  const inheritedModel: string | undefined = workerModel ?? agentDefaultModels[effectiveAgent]
+  const inheritedEffort: string | undefined = workerEffort ?? agentDefaultEfforts[effectiveAgent]
   const effectiveAdvisorAgent = advisorConfig.agent ?? defaultAgent ?? 'claude-code'
   const effectiveAdvisorModel = advisorConfig.model ?? agentDefaultModels[effectiveAdvisorAgent] ?? 'Default model'
   // Seeds the streaming turn's header. A team run has no single identity — its
@@ -1934,8 +1940,8 @@ export const ChatTab: React.FC<Props> = ({
                         style={styles.runSettingSelect}
                         title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : workerAgent ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
                       >
-                        <option value="">{effectiveAgent} (default)</option>
-                        {AGENT_NAMES.filter(n => enabledAgents.includes(n) || n === chat.agent).map(n => (
+                        <option value="">{inheritedAgent} (default)</option>
+                        {AGENT_NAMES.filter(n => (enabledAgents.includes(n) || n === chat.agent) && (n !== inheritedAgent || n === chat.agent)).map(n => (
                           <option key={n} value={n}>{n}</option>
                         ))}
                       </select>
@@ -1949,8 +1955,8 @@ export const ChatTab: React.FC<Props> = ({
                         title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : workerModel ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
                         disabled={modelsForAgent.length === 0}
                       >
-                        <option value="">{effectiveModel ? `${effectiveModel} (default)` : 'agent default'}</option>
-                        {modelsForAgent.map(m => (
+                        <option value="">{inheritedModel ? `${inheritedModel} (default)` : 'agent default'}</option>
+                        {modelsForAgent.filter(m => m.model !== inheritedModel || m.model === chat.model).map(m => (
                           <option key={m.model} value={m.model}>{m.model}</option>
                         ))}
                       </select>
@@ -1963,12 +1969,10 @@ export const ChatTab: React.FC<Props> = ({
                         style={styles.runSettingSelect}
                         title={`Effort: ${effectiveEffort ?? 'CLI default'}${chat.effort ? ' (override)' : workerEffort ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
                       >
-                        <option value="">{effectiveEffort ? `${effectiveEffort} (default)` : 'CLI default'}</option>
-                        <option value="low">low</option>
-                        <option value="medium">medium</option>
-                        <option value="high">high</option>
-                        <option value="xhigh">xhigh</option>
-                        <option value="max">max</option>
+                        <option value="">{inheritedEffort ? `${inheritedEffort} (default)` : 'CLI default'}</option>
+                        {['low', 'medium', 'high', 'xhigh', 'max']
+                          .filter(e => e !== inheritedEffort || e === chat.effort)
+                          .map(e => <option key={e} value={e}>{e}</option>)}
                       </select>
                     </label>
                     <button
