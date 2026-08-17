@@ -181,8 +181,6 @@ const FallbackWarning: React.FC<{
             <div style={styles.fallbackIdentityGrid}>
               <span style={styles.fallbackLabel}>Failed agent/model</span>
               <span style={styles.fallbackIdentity}>{fallback.from}</span>
-              <span style={styles.fallbackLabel}>Fallback agent/model</span>
-              <span style={styles.fallbackIdentity}>{fallback.to}</span>
             </div>
             <div style={styles.fallbackErrorLabel}>Error</div>
             <div style={styles.fallbackReason}>{detail}</div>
