@@ -371,6 +371,9 @@ const Shell: React.FC = () => {
   /* Same argument at the other end: the last block's bottom margin separates it
      from nothing, and it was the largest part of the gap before the timestamp. */
   .md-roomy > :last-child { margin-bottom: 0 !important; }
+  /* User bubbles do not need a trailing Markdown block gap: it otherwise
+     reads as extra bottom padding below short messages. */
+  .md-user > :last-child { margin-bottom: 0 !important; }
   body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; color: ${C.fg}; }
   * { box-sizing: border-box; }
   ::-webkit-scrollbar { width: 5px; height: 5px; }
