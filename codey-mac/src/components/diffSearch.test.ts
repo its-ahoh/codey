@@ -17,6 +17,12 @@ describe('findMatchRanges', () => {
     ])
   })
 
+  it('keeps only the exactly-cased occurrences in exact mode', () => {
+    expect(findMatchRanges('Foo foo FOO', 'foo', true)).toEqual([{ start: 4, end: 7 }])
+    expect(findMatchRanges('Foo foo FOO', 'Foo', true)).toEqual([{ start: 0, end: 3 }])
+    expect(findMatchRanges('foo', 'FOO', true)).toEqual([])
+  })
+
   it('returns nothing for an empty query or empty text', () => {
     expect(findMatchRanges('hello', '')).toEqual([])
     expect(findMatchRanges('', 'hello')).toEqual([])

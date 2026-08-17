@@ -616,6 +616,8 @@ const FileChangesView: React.FC<{
   // ── Search (⌘F) ───────────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = React.useState(false)
   const [query, setQuery] = React.useState('')
+  // Off: case-insensitive. On: only exactly-cased hits count.
+  const [exactMatch, setExactMatch] = React.useState(false)
   // Match ids reported by each file's diff view, in that view's display order.
   const [matchesByPath, setMatchesByPath] = React.useState<Record<string, string[]>>({})
   const [activeIndex, setActiveIndex] = React.useState(0)
@@ -718,38 +720,49 @@ const FileChangesView: React.FC<{
     <div>
       {searchOpen && (
         <div style={fcStyles.searchBar}>
-          <input
-            ref={searchInputRef}
-            style={fcStyles.searchInput}
-            value={query}
-            placeholder="Search in file changes"
-            aria-label="Search in file changes"
-            onChange={e => { setQuery(e.target.value); setActiveIndex(0) }}
-            onKeyDown={onSearchKeyDown}
-          />
-          <span style={fcStyles.searchCount}>
-            {!query ? '' : allMatches.length === 0 ? 'No results' : `${activeMatchIndex + 1}/${allMatches.length}`}
-          </span>
-          <button
-            style={fcStyles.searchNavBtn}
-            onClick={() => goToMatch(-1)}
-            disabled={allMatches.length === 0}
-            title="Previous match (Shift+Enter)"
-            aria-label="Previous match"
-          >↑</button>
-          <button
-            style={fcStyles.searchNavBtn}
-            onClick={() => goToMatch(1)}
-            disabled={allMatches.length === 0}
-            title="Next match (Enter)"
-            aria-label="Next match"
-          >↓</button>
-          <button
-            style={fcStyles.searchNavBtn}
-            onClick={closeSearch}
-            title="Close search (Esc)"
-            aria-label="Close search"
-          >×</button>
+          <div style={fcStyles.searchFilters}>
+            <button
+              style={{ ...fcStyles.searchFilterBtn, ...(exactMatch ? fcStyles.searchFilterBtnActive : null) }}
+              onClick={() => { setExactMatch(v => !v); setActiveIndex(0) }}
+              aria-pressed={exactMatch}
+              aria-label="Exact match"
+              title={exactMatch ? 'Exact match on — case-sensitive' : 'Exact match off — case-insensitive'}
+            ><UIIcon name="match-case" size={13} /></button>
+          </div>
+          <div style={fcStyles.searchRow}>
+            <input
+              ref={searchInputRef}
+              style={fcStyles.searchInput}
+              value={query}
+              placeholder="Search in file changes"
+              aria-label="Search in file changes"
+              onChange={e => { setQuery(e.target.value); setActiveIndex(0) }}
+              onKeyDown={onSearchKeyDown}
+            />
+            <span style={fcStyles.searchCount}>
+              {!query ? '' : allMatches.length === 0 ? 'No results' : `${activeMatchIndex + 1}/${allMatches.length}`}
+            </span>
+            <button
+              style={fcStyles.searchNavBtn}
+              onClick={() => goToMatch(-1)}
+              disabled={allMatches.length === 0}
+              title="Previous match (Shift+Enter)"
+              aria-label="Previous match"
+            >↑</button>
+            <button
+              style={fcStyles.searchNavBtn}
+              onClick={() => goToMatch(1)}
+              disabled={allMatches.length === 0}
+              title="Next match (Enter)"
+              aria-label="Next match"
+            >↓</button>
+            <button
+              style={fcStyles.searchNavBtn}
+              onClick={closeSearch}
+              title="Close search (Esc)"
+              aria-label="Close search"
+            >×</button>
+          </div>
         </div>
       )}
       <div style={fcStyles.toolbar}>
@@ -822,7 +835,7 @@ const FileChangesView: React.FC<{
                       hunks={diffHunks}
                       fileContent={content}
                       filePath={path}
-                      search={{ query, idPrefix: path, activeId: activeMatchId, onMatches: handleMatches }}
+                      search={{ query, exact: exactMatch, idPrefix: path, activeId: activeMatchId, onMatches: handleMatches }}
                     />
                   )}
                   {patches.map(c => (
@@ -864,10 +877,19 @@ const fcStyles: Record<string, React.CSSProperties> = {
   // scrolls to the current hit. -14 cancels the panel body's top padding.
   searchBar: {
     position: 'sticky', top: -14, zIndex: 6,
-    display: 'flex', alignItems: 'center', gap: 4,
+    display: 'flex', flexDirection: 'column', gap: 6,
     margin: '-14px -14px 10px', padding: '10px 14px',
     background: C.surface2, borderBottom: `1px solid ${C.border}`,
   },
+  // Match filters sit above the field, so the field keeps its full width.
+  searchFilters: { display: 'flex', alignItems: 'center', gap: 4 },
+  searchFilterBtn: {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: 22, height: 20, padding: 0, borderRadius: 5,
+    background: C.surface, border: `1px solid ${C.border2}`, color: C.fg3, cursor: 'pointer',
+  },
+  searchFilterBtnActive: { background: C.accentDim, borderColor: C.accent, color: C.fg },
+  searchRow: { display: 'flex', alignItems: 'center', gap: 4 },
   searchInput: {
     flex: 1, minWidth: 0,
     background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 6,

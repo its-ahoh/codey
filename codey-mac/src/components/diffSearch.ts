@@ -3,13 +3,14 @@
 export type MatchRange = { start: number; end: number }
 
 /**
- * All case-insensitive, non-overlapping occurrences of `query` in `text`.
- * An empty query matches nothing.
+ * All non-overlapping occurrences of `query` in `text`. Case-insensitive by
+ * default; `exact` narrows it to a case-sensitive match. An empty query
+ * matches nothing.
  */
-export const findMatchRanges = (text: string, query: string): MatchRange[] => {
+export const findMatchRanges = (text: string, query: string, exact = false): MatchRange[] => {
   if (!query || !text) return []
-  const haystack = text.toLowerCase()
-  const needle = query.toLowerCase()
+  const haystack = exact ? text : text.toLowerCase()
+  const needle = exact ? query : query.toLowerCase()
   const out: MatchRange[] = []
   let from = 0
   for (;;) {
