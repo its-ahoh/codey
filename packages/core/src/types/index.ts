@@ -40,8 +40,29 @@ export function isCodingAgent(v: unknown): v is CodingAgent {
   return typeof v === 'string' && (CODING_AGENTS as readonly string[]).includes(v);
 }
 
-// Model configuration for agents
-export type ApiType = 'anthropic' | 'openai';
+// Model configuration for agents.
+//
+// This names a *wire protocol*, not a vendor: 'anthropic' and 'openai' select
+// which environment-variable style the spawned CLI is given. 'all' is for
+// third-party providers and proxies that expose both protocol variants behind
+// one token — such a model is usable by every agent, so it doesn't have to be
+// duplicated once per protocol.
+export type ApiType = 'anthropic' | 'openai' | 'all';
+
+/** Runtime guard for values arriving from JSON config or IPC. */
+export function isApiType(v: unknown): v is ApiType {
+  return v === 'anthropic' || v === 'openai' || v === 'all';
+}
+
+/**
+ * True when a model of `modelApiType` can drive an agent that speaks
+ * `agentApiType`. 'all' fits everything; an undefined want (agent with no
+ * declared protocol) accepts anything.
+ */
+export function modelFitsApiType(modelApiType: ApiType, agentApiType?: ApiType): boolean {
+  if (!agentApiType) return true;
+  return modelApiType === 'all' || modelApiType === agentApiType;
+}
 
 /**
  * A reusable API key entry — credentials + endpoints stored once and
@@ -83,11 +104,21 @@ export interface ModelConfig {
   provider: string;
   model: string;
   apiKey?: string;
+  /** Endpoint for the model's primary protocol (see apiType). */
   baseUrl?: string;
+  /**
+   * Both endpoints, populated only when apiType is 'all' — a dual-protocol
+   * provider needs each protocol's URL kept apart, since an Anthropic-style
+   * CLI and an OpenAI-style CLI may be pointed at different paths on the
+   * same host.
+   */
+  anthropicBaseUrl?: string;
+  openaiBaseUrl?: string;
   /**
    * Which environment-variable style the spawned CLI expects.
    * anthropic → ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN
    * openai   → OPENAI_BASE_URL   + OPENAI_API_KEY
+   * all      → both pairs, each with its own base URL
    * Inferred from the referenced ModelEntry in gateway.json.
    */
   apiType?: ApiType;

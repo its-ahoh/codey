@@ -39,11 +39,30 @@ interface BuiltCompletion {
   isAnthropic: boolean;
 }
 
+/**
+ * Which protocol to speak to a model over this direct HTTP path.
+ *
+ * A dual-protocol ('all') model could be called either way, so we need one
+ * deterministic pick: anthropic first, falling back to openai only when the
+ * provider exposes an openai endpoint and no anthropic one.
+ */
+function prefersAnthropic(model: ModelConfig): boolean {
+  if (model.apiType === 'all') {
+    if (model.anthropicBaseUrl) return true;
+    if (model.openaiBaseUrl) return false;
+    return true;
+  }
+  return model.apiType !== 'openai';
+}
+
 /** Resolve provider, endpoint URL, auth headers, and request body. Shared by
  *  the one-shot and streaming paths so auth/endpoint fixes happen once. */
 function buildCompletion(model: ModelConfig, prompt: string, maxTokens: number, stream: boolean): BuiltCompletion {
-  const isAnthropic = model.apiType !== 'openai';
-  const base = (model.baseUrl ?? (isAnthropic ? DEFAULT_ANTHROPIC_BASE : DEFAULT_OPENAI_BASE)).replace(/\/$/, '');
+  const isAnthropic = prefersAnthropic(model);
+  const protocolBase = model.apiType === 'all'
+    ? (isAnthropic ? model.anthropicBaseUrl : model.openaiBaseUrl)
+    : model.baseUrl;
+  const base = (protocolBase ?? (isAnthropic ? DEFAULT_ANTHROPIC_BASE : DEFAULT_OPENAI_BASE)).replace(/\/$/, '');
   const url = isAnthropic ? `${base}/messages` : `${base}/chat/completions`;
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

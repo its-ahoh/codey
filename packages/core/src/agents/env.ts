@@ -28,8 +28,14 @@ export function withCommonBinPaths(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
  *
  * apiType === 'anthropic' → ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN
  * apiType === 'openai'    → OPENAI_BASE_URL   + OPENAI_API_KEY
+ * apiType === 'all'       → both pairs, each with its own base URL
  *
  * If apiType is absent, the caller's adapter-specific default is used.
+ *
+ * For 'all', a protocol is only wired up when its base URL is known. Injecting
+ * a third-party token with no matching base URL would aim it at the real
+ * api.anthropic.com / api.openai.com and fail auth in a way that reads like a
+ * broken key, so we leave that protocol on the ambient environment instead.
  */
 export function applyModelEnv(
   env: NodeJS.ProcessEnv,
@@ -44,6 +50,15 @@ export function applyModelEnv(
   } else if (apiType === 'openai') {
     if (model.apiKey) env.OPENAI_API_KEY = model.apiKey;
     if (model.baseUrl) env.OPENAI_BASE_URL = model.baseUrl;
+  } else if (apiType === 'all') {
+    if (model.anthropicBaseUrl) {
+      env.ANTHROPIC_BASE_URL = model.anthropicBaseUrl;
+      if (model.apiKey) env.ANTHROPIC_AUTH_TOKEN = model.apiKey;
+    }
+    if (model.openaiBaseUrl) {
+      env.OPENAI_BASE_URL = model.openaiBaseUrl;
+      if (model.apiKey) env.OPENAI_API_KEY = model.apiKey;
+    }
   }
   return env;
 }

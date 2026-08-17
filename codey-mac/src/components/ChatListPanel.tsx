@@ -357,7 +357,6 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
         </button>
       </div>
       <div style={styles.functionSection}>
-        <div style={styles.sectionLabel}>Quick access</div>
         <div style={styles.topNav}>
         <button style={styles.navButton} onClick={onOpenAutomations}>
           <span style={styles.navIcon}><UIIcon name="activity" size={16} /></span>
@@ -766,7 +765,6 @@ const styles: Record<string, React.CSSProperties> = {
   functionSection: { padding: 8, borderRadius: 12, background: C.surface2, border: `1px solid ${C.sidebarBorder}` },
   chatSection: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 12, background: C.surface2, border: `1px solid ${C.sidebarBorder}` },
   chatSectionHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 11px 7px', color: C.fg3, fontSize: 10, fontWeight: 750, letterSpacing: 0.75, textTransform: 'uppercase', borderBottom: `1px solid ${C.border}` },
-  sectionLabel: { color: C.fg3, fontSize: 10, fontWeight: 750, letterSpacing: 0.75, textTransform: 'uppercase', margin: '1px 4px 6px' },
   scroll: { flex: 1, overflowY: 'auto', padding: 6 },
   empty: { color: C.fg3, fontSize: 12, padding: 12, textAlign: 'center' },
   groupHeader: {

@@ -5372,14 +5372,22 @@ Example: /model gpt-4.1 write a Python script`;
           `Model "${catalogEntry.model}" references API key "${catalogEntry.apiKeyRef}" which no longer exists. Open Settings → API Keys to add it, or rebind the model.`
         );
       }
+      // 'all' models carry both endpoints so the adapter can wire up whichever
+      // protocol its CLI speaks; `baseUrl` stays the anthropic-first pick for
+      // callers (like text-completion) that only speak one at a time.
+      const isAll = catalogEntry.apiType === 'all';
       const baseUrl = apiKey
-        ? (catalogEntry.apiType === 'anthropic' ? apiKey.anthropicBaseUrl : apiKey.openaiBaseUrl)
+        ? (catalogEntry.apiType === 'anthropic' ? apiKey.anthropicBaseUrl
+          : catalogEntry.apiType === 'openai' ? apiKey.openaiBaseUrl
+          : apiKey.anthropicBaseUrl ?? apiKey.openaiBaseUrl)
         : undefined;
       return {
-        provider: catalogEntry.provider ?? (catalogEntry.apiType === 'anthropic' ? 'anthropic' : 'openai'),
+        provider: catalogEntry.provider ?? (catalogEntry.apiType === 'openai' ? 'openai' : 'anthropic'),
         model: catalogEntry.model,
         apiKey: apiKey?.apiKey,
         baseUrl,
+        anthropicBaseUrl: isAll ? apiKey?.anthropicBaseUrl : undefined,
+        openaiBaseUrl: isAll ? apiKey?.openaiBaseUrl : undefined,
         apiType: catalogEntry.apiType,
       };
     }

@@ -3,12 +3,12 @@ import { apiService } from '../services/api'
 import { C } from '../theme'
 import { fieldStyle, inputStyle, pageStyle, selectStyle, pillButton, Section, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
+import { AGENT_API_TYPE, AGENT_NAMES, ApiType, modelFitsApiType } from './modelApiType'
 
 interface SettingsTabProps {
   isGatewayRunning: boolean
 }
 
-type ApiType = 'anthropic' | 'openai'
 interface ApiKeyEntry { name: string; apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string; purpose?: 'general' | 'voice' }
 interface ModelEntry {
   apiType: ApiType
@@ -21,13 +21,8 @@ interface FallbackEntry { agent: string; model?: string }
 interface FallbackCfg { enabled: boolean; order: FallbackEntry[] }
 // Each agent expects a specific apiType — surfacing this in the UI keeps users
 // from picking a model the agent's CLI cannot actually authenticate against.
-export const AGENT_API_TYPE: Record<string, ApiType> = {
-  'claude-code': 'anthropic',
-  'opencode': 'openai',
-  'codex': 'openai',
-  'pi': 'anthropic',
-}
-export const AGENT_NAMES = ['claude-code', 'opencode', 'codex', 'pi'] as const
+// Re-exported for the settings sub-tabs that already import from here.
+export { AGENT_API_TYPE, AGENT_NAMES }
 
 // Where the user goes to install each agent's CLI when it isn't on PATH.
 // Picked to land on the official quickstart / install page rather than a
@@ -249,7 +244,15 @@ const ModelRow: React.FC<{
           style={{ ...selectStyle, width: '100%' }}>
           <option value="anthropic">anthropic (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN)</option>
           <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
+          <option value="all">all (both — third-party providers &amp; proxies)</option>
         </select>
+        {draft.apiType === 'all' && <>
+          <span />
+          <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.45 }}>
+            Usable by every agent. Each protocol is wired up only if the selected
+            API key defines its base URL — set both on the key to cover all agents.
+          </div>
+        </>}
         <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
         <select
           value={draft.apiKeyRef ?? ''}
@@ -299,7 +302,7 @@ const FallbackList: React.FC<{
     // apiType no longer matches so we don't ship an unusable combo.
     if (patch.agent && next[i].model) {
       const m = models.find(mm => mm.model === next[i].model)
-      if (m && AGENT_API_TYPE[next[i].agent] && m.apiType !== AGENT_API_TYPE[next[i].agent]) {
+      if (m && !modelFitsApiType(m.apiType, AGENT_API_TYPE[next[i].agent])) {
         next[i] = { agent: next[i].agent }
       }
     }
@@ -313,7 +316,7 @@ const FallbackList: React.FC<{
   const modelsForAgent = (agent: string) => {
     const want = AGENT_API_TYPE[agent]
     return [...models]
-      .filter(m => !want || m.apiType === want)
+      .filter(m => modelFitsApiType(m.apiType, want))
       .sort((a, b) => a.model.localeCompare(b.model))
   }
 
@@ -494,14 +497,14 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const advisorModels = (() => {
     const want = advisor.agent ? AGENT_API_TYPE[advisor.agent] : undefined
     return [...models]
-      .filter(m => !want || m.apiType === want)
+      .filter(m => modelFitsApiType(m.apiType, want))
       .sort((a, b) => a.model.localeCompare(b.model))
   })()
 
   const aideModels = (() => {
     const want = aide.agent ? AGENT_API_TYPE[aide.agent] : undefined
     return [...models]
-      .filter(m => !want || m.apiType === want)
+      .filter(m => modelFitsApiType(m.apiType, want))
       .sort((a, b) => a.model.localeCompare(b.model))
   })()
 
@@ -533,7 +536,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
             // Drop the pinned model if it's not compatible with the new agent.
             const want = nextAgent ? AGENT_API_TYPE[nextAgent] : undefined
             const m = models.find(mm => mm.model === advisor.model)
-            const keepModel = !advisor.model || !want || (m && m.apiType === want)
+            const keepModel = !advisor.model || !m || modelFitsApiType(m.apiType, want)
             updateAdvisor({ agent: nextAgent, model: keepModel ? advisor.model : '' })
           }}
           style={{ ...selectStyle, width: 130 }}
@@ -571,7 +574,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
             const nextAgent = e.target.value
             const want = nextAgent ? AGENT_API_TYPE[nextAgent] : undefined
             const m = models.find(mm => mm.model === aide.model)
-            const keepModel = !aide.model || !want || (m && m.apiType === want)
+            const keepModel = !aide.model || !m || modelFitsApiType(m.apiType, want)
             updateAide({ agent: nextAgent, model: keepModel ? aide.model : '' })
           }}
           style={{ ...selectStyle, width: 130 }}

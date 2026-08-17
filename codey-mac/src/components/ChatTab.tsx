@@ -28,6 +28,7 @@ import { ShimmerStatus } from './ShimmerStatus'
 import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
+import { AGENT_API_TYPE, AGENT_NAMES, ApiType, modelFitsApiType } from './modelApiType'
 import { applyMention, filterEntries, findActiveMention, splitMentionSegments } from './mentions'
 import type { ActiveMention, MentionFile } from './mentions'
 import { useGitStatus } from '../hooks/useGitStatus'
@@ -204,16 +205,7 @@ const userFoldStyles: Record<string, React.CSSProperties> = {
   },
 }
 
-// Agents that the gateway supports. Mirror of AGENT_NAMES in SettingsTab — kept
-// local so the chat header doesn't depend on the settings module.
-const AGENT_NAMES = ['claude-code', 'opencode', 'codex', 'pi'] as const
-const AGENT_API_TYPE: Record<string, 'anthropic' | 'openai'> = {
-  'claude-code': 'anthropic',
-  'opencode': 'openai',
-  'codex': 'openai',
-  'pi': 'anthropic',
-}
-type ModelEntry = { apiType: 'anthropic' | 'openai'; model: string }
+type ModelEntry = { apiType: ApiType; model: string }
 
 const LiveActivity: React.FC<{ toolCalls?: import('../types').ToolCallEntry[] }> = ({ toolCalls }) => {
   const [expanded, setExpanded] = useState(false)
@@ -1351,7 +1343,7 @@ export const ChatTab: React.FC<Props> = ({
     ? undefined
     : { agent: effectiveAgent as ChatMessage['agent'], model: effectiveModel }
   const apiTypeForAgent = AGENT_API_TYPE[effectiveAgent]
-  const modelsForAgent = models.filter(m => m.apiType === apiTypeForAgent)
+  const modelsForAgent = models.filter(m => modelFitsApiType(m.apiType, apiTypeForAgent))
 
   useEffect(() => {
     let stale = false

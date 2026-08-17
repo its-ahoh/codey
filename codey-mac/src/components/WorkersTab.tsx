@@ -2,13 +2,9 @@ import { useEffect, useState, useCallback } from 'react'
 import { apiService, WorkerDto } from '../services/api'
 import { C } from '../theme'
 
-interface ModelEntry { apiType: 'anthropic' | 'openai'; model: string }
-const AGENT_API_TYPE: Record<string, 'anthropic' | 'openai'> = {
-  'claude-code': 'anthropic',
-  'opencode': 'openai',
-  'codex': 'openai',
-  'pi': 'anthropic',
-}
+import { AGENT_API_TYPE, ApiType, modelFitsApiType } from './modelApiType'
+
+interface ModelEntry { apiType: ApiType; model: string }
 
 type Mode = { kind: 'idle' } | { kind: 'select'; name: string } | { kind: 'create' }
 
@@ -114,10 +110,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
     setSaved(false); setError(null)
   }, [worker.name])
 
-  const filteredModels = models.filter(m => {
-    const want = AGENT_API_TYPE[codingAgent]
-    return !want || m.apiType === want
-  })
+  const filteredModels = models.filter(m => modelFitsApiType(m.apiType, AGENT_API_TYPE[codingAgent]))
 
   const save = async () => {
     setSaving(true); setError(null)
@@ -170,9 +163,9 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
         setCodingAgent(next)
         // Reset model if incompatible with the new agent
         const want = AGENT_API_TYPE[next]
-        const compatible = models.some(m => m.model === model && (!want || m.apiType === want))
+        const compatible = models.some(m => m.model === model && modelFitsApiType(m.apiType, want))
         if (!compatible) {
-          const first = models.find(m => !want || m.apiType === want)
+          const first = models.find(m => modelFitsApiType(m.apiType, want))
           setModel(first?.model ?? '')
         }
       }} style={fieldStyle}>
