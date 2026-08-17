@@ -22,34 +22,37 @@
  * What survives is the part that is true of every turn — that the thing is
  * now being worked on.
  *
- * A full sentence rather than two words: this is the only thing said during a
- * turn that can run for minutes, and a clipped "On it." leaves the silence
- * after it sounding like a dropped call.
+ * One complete sentence, and no more than one. A bare fragment ("Checking.")
+ * is over before the ear settles on it and leaves the wait sounding like a
+ * dropped call; a sentence with a second, reassuring clause tacked on
+ * ("...and I'll get back to you", "...hang tight for a moment") spends words
+ * on nothing the first clause had not already said. What is left is a short
+ * sentence that stands on its own.
  */
 export const VOICE_ACKS_EN = [
-  'Working on it now, give me a moment.',
-  'Let me take a look and get back to you.',
-  'I\'ll dig into that and report back.',
-  'Starting on it now, this may take a minute.',
-  'Let me check, and I\'ll tell you what I find.',
-  'I\'m on it, hang tight for a moment.',
-  'Taking a look at that right now.',
-  'Let me work through it and come back to you.',
-  'I\'ll get to that now, one moment.',
-  'Looking into it, back with you shortly.',
+  'Let me take a look.',
+  'I\'m on it now.',
+  'Working on that now.',
+  'Let me check on that.',
+  'I\'ll dig into that.',
+  'Starting on it now.',
+  'Let me go find out.',
+  'I\'ll get that sorted.',
+  'Taking a look right now.',
+  'Give me a moment on that.',
 ];
 
 export const VOICE_ACKS_ZH = [
-  '我这就去处理，稍等一下', // lint-allow-non-english
-  '我看一下，马上给你结果', // lint-allow-non-english
-  '让我查一查，很快就好', // lint-allow-non-english
-  '这就开始弄，需要点时间', // lint-allow-non-english
-  '我先去看看情况，稍等', // lint-allow-non-english
-  '我来处理这件事，请稍候', // lint-allow-non-english
-  '这个我来看，马上就来', // lint-allow-non-english
-  '我去确认一下，等我消息', // lint-allow-non-english
-  '现在就动手，稍微等一会', // lint-allow-non-english
-  '我来跟进这件事，稍等片刻', // lint-allow-non-english
+  '我这就去看看', // lint-allow-non-english
+  '让我来查一下', // lint-allow-non-english
+  '这就开始处理', // lint-allow-non-english
+  '我去确认一下', // lint-allow-non-english
+  '这个我来看看', // lint-allow-non-english
+  '我现在就动手', // lint-allow-non-english
+  '让我先了解一下', // lint-allow-non-english
+  '我这就去弄', // lint-allow-non-english
+  '稍等，我看一下', // lint-allow-non-english
+  '我来跟进一下', // lint-allow-non-english
 ];
 
 /**
