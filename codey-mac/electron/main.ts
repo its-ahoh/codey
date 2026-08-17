@@ -689,6 +689,24 @@ function resolveDataRoot(): string {
   return root
 }
 
+// Probing spawns an interactive login shell per agent, so it's too slow to run
+// on every dropdown render. Cache the result for the app's lifetime; the
+// Agents tab's "Recheck" button forces a fresh probe.
+let installedAgentsCache: Record<string, { installed: boolean; path?: string }> | null = null
+let installedAgentsInFlight: Promise<Record<string, { installed: boolean; path?: string }>> | null = null
+
+function getInstalledAgents(force = false): Promise<Record<string, { installed: boolean; path?: string }>> {
+  if (force) { installedAgentsCache = null; installedAgentsInFlight = null }
+  if (installedAgentsCache) return Promise.resolve(installedAgentsCache)
+  // Coalesce concurrent callers (chat picker + Agents tab on startup) onto one probe.
+  if (!installedAgentsInFlight) {
+    installedAgentsInFlight = detectInstalledAgents()
+      .then(r => { installedAgentsCache = r; return r })
+      .finally(() => { installedAgentsInFlight = null })
+  }
+  return installedAgentsInFlight
+}
+
 /**
  * One-shot probe for whether each agent's CLI binary is on PATH. Used by the
  * Settings tab to render an "Installed" chip vs. an "Install" link. We shell
@@ -3340,8 +3358,8 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('agents:checkInstalled', async () =>
-    wrap(async () => detectInstalledAgents())
+  ipcMain.handle('agents:checkInstalled', async (_e, force?: boolean) =>
+    wrap(async () => getInstalledAgents(force === true))
   )
 
   // ── Skills IPC ────────────────────────────────────────────────────

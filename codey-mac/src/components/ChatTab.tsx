@@ -29,6 +29,7 @@ import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
 import { AGENT_API_TYPE, AGENT_NAMES, ApiType, modelFitsApiType } from './modelApiType'
+import { useInstalledAgents } from './installedAgents'
 import { applyMention, filterEntries, findActiveMention, splitMentionSegments } from './mentions'
 import { ChatFindBar } from './ChatFindBar'
 import type { ActiveMention, MentionFile } from './mentions'
@@ -851,8 +852,11 @@ export const ChatTab: React.FC<Props> = ({
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   const [teamNames, setTeamNames] = useState<string[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
-  const [enabledAgents, setEnabledAgents] = useState<string[]>([...AGENT_NAMES])
   const [defaultAgent, setDefaultAgent] = useState<string | null>(null)
+  // Shared install-probe store — an agent whose CLI isn't on PATH is greyed
+  // out (and unselectable) in the agent picker. `status` is null until the
+  // probe answers, so nothing is disabled until then.
+  const { status: installStatus } = useInstalledAgents(isGatewayRunning)
   const [agentDefaultModels, setAgentDefaultModels] = useState<Record<string, string | undefined>>({})
   // Per-agent default effort lives in the agents config, not in fallback.order
   // (which carries no effort), so it needs its own lookup.
@@ -1112,13 +1116,12 @@ export const ChatTab: React.FC<Props> = ({
           window.codey.fallback.get(),
         ])
         if (m.ok) setModels(m.data as ModelEntry[])
-        // Everything we need (which agents are usable, which is the default,
-        // and per-agent default model) is encoded in fallback.order. Membership
-        // == enabled; order[0] is the gateway default; first entry per agent
-        // that pins a model is that agent's default model.
+        // fallback.order carries the defaults: order[0] is the gateway default
+        // agent; the first entry per agent that pins a model is that agent's
+        // default model. Membership does not gate the agent picker — every
+        // agent is selectable as a per-chat override.
         if (fb.ok) {
           const order = fb.data.order ?? []
-          setEnabledAgents(AGENT_NAMES.filter(n => order.some(e => e.agent === n)))
           setDefaultAgent(order[0]?.agent ?? null)
           const defaults: Record<string, string | undefined> = {}
           for (const n of AGENT_NAMES) {
@@ -1972,8 +1975,8 @@ export const ChatTab: React.FC<Props> = ({
                         title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : workerAgent ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
                       >
                         <option value="">{inheritedAgent ? `${inheritedAgent} (default)` : 'default agent'}</option>
-                        {AGENT_NAMES.filter(n => (enabledAgents.includes(n) || n === chat.agent) && (n !== inheritedAgent || n === chat.agent)).map(n => (
-                          <option key={n} value={n}>{n}</option>
+                        {AGENT_NAMES.filter(n => n !== inheritedAgent || n === chat.agent).map(n => (
+                          <option key={n} value={n} disabled={installStatus?.[n]?.installed === false && n !== chat.agent}>{n}</option>
                         ))}
                       </select>
                     </label>

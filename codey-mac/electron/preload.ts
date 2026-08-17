@@ -144,7 +144,7 @@ contextBridge.exposeInMainWorld('codey', {
   agents: {
     get: () => ipcRenderer.invoke('agents:get'),
     set: (updates: any) => ipcRenderer.invoke('agents:set', updates),
-    checkInstalled: () => ipcRenderer.invoke('agents:checkInstalled'),
+    checkInstalled: (force?: boolean) => ipcRenderer.invoke('agents:checkInstalled', force),
     slashCommands: (agent: string) => ipcRenderer.invoke('agents:slashCommands', agent),
   },
   chats: {
