@@ -200,6 +200,8 @@ const diffStyles: Record<string, React.CSSProperties> = {
 /** Search wiring for a diff view: what to look for, and which hit is current. */
 export type DiffSearch = {
   query: string
+  /** Exact (case-sensitive) matching. Off means case-insensitive. */
+  exact: boolean
   /** Namespace for this view's match ids (the file path, in the Files tab). */
   idPrefix: string
   /** Id of the match to render as the current hit, if it lives in this view. */
@@ -412,13 +414,14 @@ export const CombinedDiffView: React.FC<{
   // This view's match ids, in display order. Recomputed each render; the effect
   // below only notifies the owner when the list actually changed.
   const query = search?.query ?? ''
+  const exact = search?.exact ?? false
   const idPrefix = search?.idPrefix
   const rangesByKey = new Map<string, MatchRange[]>()
   const matchIds: string[] = []
   if (query && idPrefix != null) {
     for (const item of items) {
       if (item.kind !== 'line') continue
-      const ranges = findMatchRanges(item.text, query)
+      const ranges = findMatchRanges(item.text, query, exact)
       if (ranges.length === 0) continue
       rangesByKey.set(item.key, ranges)
       ranges.forEach((_, i) => matchIds.push(matchId(idPrefix, item.key, i)))
