@@ -28,10 +28,6 @@ export default function WorkersTab() {
   return (
     <div style={{ display: 'flex', height: '100%', background: C.bg, color: C.fg }}>
       <div style={{ width: 240, borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '16px 12px 10px' }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.fg }}>Worker library</div>
-          <div style={{ fontSize: 11, color: C.fg3, marginTop: 2 }}>Reusable specialist profiles</div>
-        </div>
         <div style={{ overflowY: 'auto', flex: 1 }}>
           {workers.map(w => (
             <button key={w.name} onClick={() => setMode({ kind: 'select', name: w.name })}
