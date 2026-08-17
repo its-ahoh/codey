@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, normalizeWorktreeName, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
+import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, isGitWorkspace, normalizeWorktreeName, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
 import { ChatManager } from './chats';
 
 const roots: string[] = [];
@@ -263,6 +263,22 @@ describe('worktree cleanup', () => {
       baseCommit: git(worktreePath, ['rev-parse', 'HEAD']), createdAt: 1,
     })).rejects.toThrow(/uncommitted changes/i);
     expect(fs.existsSync(worktreePath)).toBe(true);
+  });
+});
+
+describe('isGitWorkspace', () => {
+  it('separates a repository from a plain directory without throwing', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-is-git-'));
+    roots.push(root);
+    const repositoryRoot = path.join(root, 'repo');
+    const plain = path.join(root, 'notes');
+    fs.mkdirSync(repositoryRoot, { recursive: true });
+    fs.mkdirSync(plain, { recursive: true });
+    git(repositoryRoot, ['init', '-b', 'main']);
+
+    await expect(isGitWorkspace(repositoryRoot)).resolves.toBe(true);
+    await expect(isGitWorkspace(plain)).resolves.toBe(false);
+    await expect(isGitWorkspace(path.join(root, 'gone'))).resolves.toBe(false);
   });
 });
 

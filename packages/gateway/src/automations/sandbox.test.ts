@@ -19,6 +19,7 @@ function makeOps(over: Partial<SandboxOps> = {}) {
   const logs: string[] = [];
   let bound: ChatWorkspace | undefined;
   const ops: SandboxOps = {
+    isGitWorkspace: async () => true,
     provision: async () => workspace(),
     bind: (w) => { bound = w; },
     current: () => bound,
@@ -67,11 +68,27 @@ describe('openSandbox', () => {
     expect(logs[0]).toContain('created /repo/.worktrees/auto-triage-20260817-093005-2f6c1b at abcdef12');
   });
 
-  it('fails the run when the checkout cannot be created', async () => {
-    // Falling back to the shared checkout would silently run unisolated.
-    const { ops, logs } = makeOps({ provision: async () => { throw new Error('Isolated worktrees require a Git workspace'); } });
-    await expect(openSandbox(ops, 'Issue Triage', RUN)).rejects.toThrow(/Git workspace/);
+  it('fails the run when a sandbox was possible but could not be created', async () => {
+    // Falling back here would silently run unisolated after the user asked
+    // for isolation in a repository that can provide it.
+    const { ops, logs } = makeOps({ provision: async () => { throw new Error('A branch named "auto-x" already exists'); } });
+    await expect(openSandbox(ops, 'Issue Triage', RUN)).rejects.toThrow(/already exists/);
     expect(logs).toEqual([]);
+  });
+
+  it('degrades to the shared checkout when the workspace is not a repository', async () => {
+    const provisioned: string[] = [];
+    const { ops, logs, bound } = makeOps({
+      isGitWorkspace: async () => false,
+      provision: async (name) => { provisioned.push(name); return workspace(); },
+    });
+
+    // Nothing the user could fix from the editor, so the run proceeds.
+    await expect(openSandbox(ops, 'Issue Triage', RUN)).resolves.toBeUndefined();
+
+    expect(provisioned).toEqual([]);
+    expect(bound()).toBeUndefined();
+    expect(logs[0]).toContain('not a Git repository');
   });
 });
 

@@ -168,6 +168,18 @@ export async function discoverChatWorktree(input: {
   };
 }
 
+/** Whether a directory sits inside a Git repository, and can therefore have
+ *  worktrees. A missing directory answers false rather than throwing: the
+ *  callers use this to choose a mode, not to validate the workspace. */
+export async function isGitWorkspace(workingDir: string): Promise<boolean> {
+  try {
+    await git(fs.realpathSync(path.resolve(workingDir)), ['rev-parse', '--show-toplevel']);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** A shared checkout cannot be promoted safely while it contains changes that
  *  are not represented by HEAD: a new worktree starts from a commit. */
 export async function workspaceHasUncommittedChanges(workingDir: string): Promise<boolean> {

@@ -48,6 +48,8 @@ export function sandboxLogLine(at: number, detail: string): string {
 /** Everything a sandbox needs from the gateway, so the lifecycle can be
  *  exercised without a repository or a live chat. */
 export interface SandboxOps {
+  /** Whether the workspace can have worktrees at all. */
+  isGitWorkspace: () => Promise<boolean>;
   /** Create the checkout, branched from the workspace's current HEAD. */
   provision: (worktreeName: string) => Promise<ChatWorkspace>;
   /** Point the automation's hidden chat at the checkout. */
@@ -61,12 +63,25 @@ export interface SandboxOps {
   now?: () => number;
 }
 
-/** Give one run its own checkout. Every run therefore starts from the latest
- *  committed state instead of accumulating on whatever branch the previous run
- *  happened to leave behind. A failure here fails the run: silently falling
- *  back to the shared checkout would be the opposite of what was asked for. */
-export async function openSandbox(ops: SandboxOps, automationName: string, runId: string): Promise<ChatWorkspace> {
+/**
+ * Give one run its own checkout. Every run therefore starts from the latest
+ * committed state instead of accumulating on whatever branch the previous run
+ * happened to leave behind.
+ *
+ * A workspace that is not a Git repository has no worktrees to give, and
+ * there is nothing the user could do about it from the automation editor:
+ * that case degrades to the shared checkout and says so in the run log.
+ * Anything else — a name collision, a broken repository — fails the run,
+ * because there sandboxing was possible and did not happen.
+ */
+export async function openSandbox(
+  ops: SandboxOps, automationName: string, runId: string,
+): Promise<ChatWorkspace | undefined> {
   const at = ops.now ? ops.now() : Date.now();
+  if (!await ops.isGitWorkspace()) {
+    ops.log('skipped — the workspace is not a Git repository; running in the shared checkout');
+    return undefined;
+  }
   const workspace = await ops.provision(sandboxWorktreeName(automationName, runId, at));
   ops.bind(workspace);
   ops.log(`created ${workspace.worktreePath} at ${workspace.baseCommit.slice(0, 8)}`);

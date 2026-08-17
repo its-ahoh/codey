@@ -24,7 +24,7 @@ import { MemoryStore } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
-import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, ensureWorktreeContainer, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
+import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, ensureWorktreeContainer, isGitWorkspace, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
 import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
@@ -1613,6 +1613,7 @@ export class Codey {
 
   private automationSandboxOps(a: Automation, chatId: string, log: (detail: string) => void): SandboxOps {
     return {
+      isGitWorkspace: () => isGitWorkspace(this.resolveWorkspaceWorkingDir(a.target.workspaceName)),
       provision: (worktreeName) => provisionChatWorktree({
         workspaceWorkingDir: this.resolveWorkspaceWorkingDir(a.target.workspaceName),
         worktreeName,
