@@ -1934,7 +1934,7 @@ export const ChatTab: React.FC<Props> = ({
                         style={styles.runSettingSelect}
                         title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : workerAgent ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
                       >
-                        <option value="">{effectiveAgent}</option>
+                        <option value="">{effectiveAgent} (default)</option>
                         {AGENT_NAMES.filter(n => enabledAgents.includes(n) || n === chat.agent).map(n => (
                           <option key={n} value={n}>{n}</option>
                         ))}
@@ -1949,7 +1949,7 @@ export const ChatTab: React.FC<Props> = ({
                         title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : workerModel ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
                         disabled={modelsForAgent.length === 0}
                       >
-                        <option value="">{effectiveModel ?? 'agent default'}</option>
+                        <option value="">{effectiveModel ? `${effectiveModel} (default)` : 'agent default'}</option>
                         {modelsForAgent.map(m => (
                           <option key={m.model} value={m.model}>{m.model}</option>
                         ))}
@@ -1963,7 +1963,7 @@ export const ChatTab: React.FC<Props> = ({
                         style={styles.runSettingSelect}
                         title={`Effort: ${effectiveEffort ?? 'CLI default'}${chat.effort ? ' (override)' : workerEffort ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
                       >
-                        <option value="">{effectiveEffort ?? 'CLI default'}</option>
+                        <option value="">{effectiveEffort ? `${effectiveEffort} (default)` : 'CLI default'}</option>
                         <option value="low">low</option>
                         <option value="medium">medium</option>
                         <option value="high">high</option>
