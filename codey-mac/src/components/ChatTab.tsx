@@ -30,6 +30,7 @@ import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
 import { AGENT_API_TYPE, AGENT_NAMES, ApiType, modelFitsApiType } from './modelApiType'
 import { applyMention, filterEntries, findActiveMention, splitMentionSegments } from './mentions'
+import { ChatFindBar } from './ChatFindBar'
 import type { ActiveMention, MentionFile } from './mentions'
 import { useGitStatus } from '../hooks/useGitStatus'
 import { BranchPicker } from './BranchPicker'
@@ -927,6 +928,7 @@ export const ChatTab: React.FC<Props> = ({
   const composerResizeRef = useRef<{ y: number; h: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -1139,6 +1141,10 @@ export const ChatTab: React.FC<Props> = ({
     })()
   }, [isGatewayRunning])
   const lastMsg = chat?.messages?.[chat.messages.length - 1]
+  // Cheap stand-in for "the rendered conversation changed": switching chats,
+  // a new message, or a streaming reply growing. Find-in-chat re-scans on it,
+  // because its highlight ranges point at text nodes React may have replaced.
+  const findRevision = `${chatId}:${chat?.messages?.length ?? 0}:${lastMsg?.id ?? ''}:${lastMsg?.content?.length ?? 0}`
   // A fresh prompt clears any pending multi-select picks from a prior question.
   useEffect(() => { setMultiChoice([]) }, [chatId, lastMsg?.id])
   const prevChatIdRef = useRef<string | null>(null)
@@ -2090,8 +2096,14 @@ export const ChatTab: React.FC<Props> = ({
       </div>
 
       <div
+        ref={messagesRef}
         style={{ ...styles.messages, position: 'relative' }}
       >
+        <ChatFindBar
+          containerRef={messagesRef}
+          revision={findRevision}
+          onNavigate={() => setFollowLatest(false)}
+        />
         {groupMessages(chat.messages).map((item, idx) => {
           if (item.kind === 'team') {
             return (

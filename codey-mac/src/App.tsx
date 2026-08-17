@@ -374,6 +374,11 @@ const Shell: React.FC = () => {
   /* User bubbles do not need a trailing Markdown block gap: it otherwise
      reads as extra bottom padding below short messages. */
   .md-user > :last-child { margin-bottom: 0 !important; }
+  /* Find-in-chat (⌘F). The ranges are registered from ChatFindBar via the CSS
+     Custom Highlight API, which paints without touching the rendered Markdown.
+     The current hit inverts to the accent so it reads apart from the rest. */
+  ::highlight(codey-find) { background-color: ${C.yellow}; color: #1a1206; }
+  ::highlight(codey-find-active) { background-color: ${C.accent}; color: ${C.onAccent}; }
   body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; color: ${C.fg}; }
   * { box-sizing: border-box; }
   ::-webkit-scrollbar { width: 5px; height: 5px; }
