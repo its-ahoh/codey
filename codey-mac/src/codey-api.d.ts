@@ -39,7 +39,8 @@ export interface ExternalMcpServer {
 }
 
 export interface ModelEntry {
-  apiType: 'anthropic' | 'openai'
+  /** 'all' = dual-protocol provider, usable by every agent. */
+  apiType: 'anthropic' | 'openai' | 'all'
   model: string
   apiKeyRef?: string
   provider?: string

@@ -3224,8 +3224,8 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       if (!entry?.model) throw new Error('Model id is required')
-      if (entry.apiType !== 'anthropic' && entry.apiType !== 'openai') {
-        throw new Error('Model apiType must be "anthropic" or "openai"')
+      if (entry.apiType !== 'anthropic' && entry.apiType !== 'openai' && entry.apiType !== 'all') {
+        throw new Error('Model apiType must be "anthropic", "openai", or "all"')
       }
       coreConfigManager.saveModel(entry)
     })

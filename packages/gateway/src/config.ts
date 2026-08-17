@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
-import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, McpServerSpec, ModelEntry, TeamConfigRaw, ThinkingEffort } from '@codey/core';
+import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, isApiType, McpServerSpec, ModelEntry, TeamConfigRaw, ThinkingEffort } from '@codey/core';
 
 // ── Configuration types ─────────────────────────────────────────────
 
@@ -735,7 +735,9 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
   // Clean break: drop inline apiKey/baseUrl from any pre-existing model entries.
   // Users re-bind via the API Keys tab. apiKeyRef is left unset until they do.
   const models: ModelEntry[] = rawModels.map(m => ({
-    apiType: m.apiType,
+    // Hand-edited or older configs can carry an unknown apiType; fall back to
+    // anthropic rather than letting the value reach the adapters unchecked.
+    apiType: isApiType(m.apiType) ? m.apiType : 'anthropic',
     model: m.model,
     apiKeyRef: (m as any).apiKeyRef,
     provider: m.provider,

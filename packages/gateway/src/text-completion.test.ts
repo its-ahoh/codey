@@ -154,3 +154,55 @@ describe('runTextCompletion — failure modes degrade to null', () => {
     expect(await runTextCompletion('hi', ANTHROPIC_MODEL)).toBeNull();
   });
 });
+
+/**
+ * A dual-protocol model could be called either way over this direct HTTP
+ * path, so the pick has to be deterministic: anthropic first, openai only
+ * when that's the sole endpoint the provider exposes.
+ */
+describe('runTextCompletion — apiType "all"', () => {
+  const dual = (urls: { anthropicBaseUrl?: string; openaiBaseUrl?: string }) => ({
+    provider: 'acme', model: 'acme-max', apiKey: 'sk-both', apiType: 'all' as const,
+    baseUrl: urls.anthropicBaseUrl ?? urls.openaiBaseUrl,
+    ...urls,
+  });
+
+  it('prefers the anthropic protocol when both endpoints exist', async () => {
+    state.impl = anthropicOk('ok');
+    const out = await runTextCompletion('hi', dual({
+      anthropicBaseUrl: 'https://acme.test/anthropic',
+      openaiBaseUrl: 'https://acme.test/v1',
+    }));
+
+    expect(out).toBe('ok');
+    const [url, opts] = calls[0];
+    expect(url).toBe('https://acme.test/anthropic/messages');
+    expect(opts.headers['x-api-key']).toBe('sk-both');
+  });
+
+  it('falls back to openai when only an openai endpoint exists', async () => {
+    state.impl = openAiOk('ok');
+    const out = await runTextCompletion('hi', dual({ openaiBaseUrl: 'https://acme.test/v1' }));
+
+    expect(out).toBe('ok');
+    const [url, opts] = calls[0];
+    expect(url).toBe('https://acme.test/v1/chat/completions');
+    expect(opts.headers.Authorization).toBe('Bearer sk-both');
+  });
+
+  it('defaults to the anthropic endpoint when neither URL is set', async () => {
+    state.impl = anthropicOk('ok');
+    await runTextCompletion('hi', dual({}));
+    expect(calls[0][0]).toBe('https://api.anthropic.com/v1/messages');
+  });
+
+  it('streams over the same protocol it would have used one-shot', async () => {
+    state.impl = streamRespond(200, [openAiDelta('a'), openAiDelta('b')]);
+    const seen: string[] = [];
+    const out = await streamTextCompletion('hi', dual({ openaiBaseUrl: 'https://acme.test/v1' }), d => seen.push(d));
+
+    expect(out).toBe('ab');
+    expect(seen).toEqual(['a', 'b']);
+    expect(calls[0][0]).toBe('https://acme.test/v1/chat/completions');
+  });
+});
