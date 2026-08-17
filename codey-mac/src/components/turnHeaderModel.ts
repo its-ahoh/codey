@@ -28,17 +28,11 @@ export interface TurnHeaderInput {
 
 export type FallbackInfo = NonNullable<ChatMessage['fallback']>
 
-/** Plain-text fallback context used by Copy and Ask Agent. Including both
- *  identities here keeps the error attributable after it leaves the popover. */
-export function formatFallbackError(fallback: FallbackInfo): string {
-  const reason = fallback.reason?.trim() || 'No error details were reported.'
-  return [
-    `Failed agent/model: ${fallback.from}`,
-    `Fallback agent/model: ${fallback.to}`,
-    '',
-    'Error:',
-    reason,
-  ].join('\n')
+/** The error text shown in the popover, and all that Copy puts on the
+ *  clipboard — the agent identities stay in the UI so a pasted error is just
+ *  the error, ready to hand to a search box or an issue tracker. */
+export function fallbackErrorText(fallback: FallbackInfo): string {
+  return fallback.reason?.trim() || 'No error details were reported.'
 }
 
 /** The metadata identifying one assistant turn, ready to render.

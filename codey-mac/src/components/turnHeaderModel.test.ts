@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatFallbackError, turnHeaderMeta } from './turnHeaderModel'
+import { fallbackErrorText, turnHeaderMeta } from './turnHeaderModel'
 import type { ChatMessage } from '../types'
 
 const msg = (over: Partial<ChatMessage> = {}): ChatMessage => ({
@@ -86,23 +86,17 @@ describe('turnHeaderMeta', () => {
   })
 })
 
-describe('formatFallbackError', () => {
-  it('identifies the failed and fallback agent/model before the error', () => {
-    expect(formatFallbackError({
+describe('fallbackErrorText', () => {
+  it('is the error alone, without the agent identities', () => {
+    expect(fallbackErrorText({
       from: 'codex(gpt-5.4)',
       to: 'claude-code(claude-opus-4-1)',
-      reason: 'spawn codex ENOENT',
-    })).toBe([
-      'Failed agent/model: codex(gpt-5.4)',
-      'Fallback agent/model: claude-code(claude-opus-4-1)',
-      '',
-      'Error:',
-      'spawn codex ENOENT',
-    ].join('\n'))
+      reason: '  spawn codex ENOENT  ',
+    })).toBe('spawn codex ENOENT')
   })
 
   it('states when the gateway did not report an error detail', () => {
-    expect(formatFallbackError({ from: 'codex(gpt-5.4)', to: 'pi(gemini-2.5-pro)' }))
-      .toContain('Error:\nNo error details were reported.')
+    expect(fallbackErrorText({ from: 'codex(gpt-5.4)', to: 'pi(gemini-2.5-pro)' }))
+      .toBe('No error details were reported.')
   })
 })
