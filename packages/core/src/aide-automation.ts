@@ -23,7 +23,9 @@ export function renderBrief(brief: string, params: Record<string, string>): stri
 /** What actually executes, canonicalized. Renaming, rescheduling or changing
  *  the notify mode leaves this unchanged, so those edits never cost the user a
  *  fresh dry run. Key order and surrounding whitespace are normalized because
- *  a spurious difference here spawns a real agent process. */
+ *  a spurious difference here spawns a real agent process. `sandbox` is
+ *  deliberately excluded: the dry run is a no-act read of the same workspace
+ *  either way, so isolating real runs cannot change its verdict. */
 export function executionFingerprint(a: {
   target?: AutomationTarget;
   brief?: string;
@@ -80,6 +82,10 @@ const DRAFT_KEYS = new Set(['name', 'target', 'schedule', 'notify', 'brief', 'pa
 function isValidTargetPatch(v: unknown): v is AutomationTarget {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   const t = v as Record<string, unknown>;
+  // A non-boolean sandbox would be persisted as-is and then decide, by
+  // truthiness, whether every run gets its own checkout.
+  const sandboxOk = t.sandbox === undefined || typeof t.sandbox === 'boolean';
+  if (!sandboxOk) return false;
   if (t.kind === 'prompt') {
     const agentOk = t.agent === undefined || isCodingAgent(t.agent);
     const modelOk = t.model === undefined || (typeof t.model === 'string' && !!t.model.trim());
@@ -122,7 +128,7 @@ Conversation so far:
 ${formatTranscript(messages)}
 
 Your job this turn:
-1. Update the draft with anything the user's latest message settles. draftPatch contains ONLY fields that changed; set a top-level field to null to clear it. Nested target updates may contain only the properties being changed; they are merged with the current target. Params updates are also merged with the current params; set one param value to null to remove only that variable. Draft fields: name (short title), target ({"kind":"prompt","workspaceName":"...","agent":"optional","model":"optional"} or {"kind":"team","teamName":"...","workspaceName":"..."}), schedule ({"slots":[{"hour":0-23,"minute":0-59,"daysOfWeek":[0-6] optional},...],"tz":"${ctx.tz}"} or null for manual-only). Each slot owns its weekdays; absent daysOfWeek means every day. Example: Mon-Wed at 9pm plus Thu-Fri at noon is {"slots":[{"hour":21,"minute":0,"daysOfWeek":[1,2,3]},{"hour":12,"minute":0,"daysOfWeek":[4,5]}],"tz":"${ctx.tz}"}. notify ("all" | "failure" | "success" | "none" - which run outcomes fire an OS notification; default "none"), brief (string), params (object of string values or null for a removed variable).
+1. Update the draft with anything the user's latest message settles. draftPatch contains ONLY fields that changed; set a top-level field to null to clear it. Nested target updates may contain only the properties being changed; they are merged with the current target. Params updates are also merged with the current params; set one param value to null to remove only that variable. Draft fields: name (short title), target ({"kind":"prompt","workspaceName":"...","agent":"optional","model":"optional"} or {"kind":"team","teamName":"...","workspaceName":"..."}; either kind also accepts "sandbox":true, which runs every attempt in a throwaway Git worktree branched from the workspace's latest commit. Default it to true as soon as the task is one that MODIFIES the workspace (edits files, commits, opens a PR) - unattended edits should never land in the checkout the user is working in. Leave it out for a task that only reads, analyses or reports, and for one that depends on local files Git does not track, such as installed dependencies, build output or a local .env: a fresh worktree does not have those. Mention the choice once, in one clause, when you first set it), schedule ({"slots":[{"hour":0-23,"minute":0-59,"daysOfWeek":[0-6] optional},...],"tz":"${ctx.tz}"} or null for manual-only). Each slot owns its weekdays; absent daysOfWeek means every day. Example: Mon-Wed at 9pm plus Thu-Fri at noon is {"slots":[{"hour":21,"minute":0,"daysOfWeek":[1,2,3]},{"hour":12,"minute":0,"daysOfWeek":[4,5]}],"tz":"${ctx.tz}"}. notify ("all" | "failure" | "success" | "none" - which run outcomes fire an OS notification; default "none"), brief (string), params (object of string values or null for a removed variable).
 2. Reply conversationally. During creation, ask about at most ONE thing at a time when a required or execution-blocking detail is genuinely missing: specifics, choices, accounts/handles, formats, limits, or edge cases (e.g. "what if there is nothing to report?"). During editing, if the latest message requests a specific field or clearly scoped change, apply it immediately, briefly confirm it, preserve every unrelated field, and DO NOT restart the setup interview or ask the next generic setup question. Ask a follow-up only when the requested edit itself is ambiguous, invalid, or cannot be applied safely. Never ask about something the user already answered, even in passing. Patch schedule whenever the user's message settles timing, but do not steer the conversation toward scheduling.
 3. When the answer space is enumerable (workspace names, team names, times, yes/no), offer 2-5 short suggestions the user can tap. Only ever suggest workspace/team names that appear in the environment above.
 4. Maintain the brief as you learn: a frozen, fully self-contained instruction block for an unattended agent - no "the user said", concrete values, edge-case handling, expected output. Surface tweakable knobs as {{placeholder}} in the brief with current values in params.

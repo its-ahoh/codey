@@ -9,7 +9,8 @@ import { SchedulerLease } from './automations/lease';
 import { AutomationChatManager, ChatStep } from './automations/chat';
 import { DryRunManager } from './automations/dry-run';
 import { needsRecheck, verdictToCheck } from './automations/check';
-import { detectParked } from './automations/parked';
+import { detectParked, ParkedInfo } from './automations/parked';
+import { closeSandbox, openSandbox, sandboxLogLine, SandboxOps } from './automations/sandbox';
 import { formatRunSummary } from './automations/report';
 import { formatRunLogEvent } from './automations/run-log';
 import { ConfigManager, ResolvedVoiceTtsSettings } from './config';
@@ -23,7 +24,7 @@ import { MemoryStore } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
-import { chatWorktreeParent, discoverChatWorktree, ensureWorktreeContainer, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
+import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, ensureWorktreeContainer, isGitWorkspace, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
 import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
@@ -1583,13 +1584,46 @@ export class Codey {
           try { this.automationStore?.appendRunLog(a.id, runId, line); } catch { /* logging must never fail the run */ }
         }
       : () => { /* dry-run and other unlogged turns */ };
+    const logSandbox = (detail: string) => {
+      this.logger.info(`[automations] ${a.name}: sandbox ${detail}`);
+      if (runId) {
+        try { this.automationStore?.appendRunLog(a.id, runId, sandboxLogLine(Date.now(), detail)); }
+        catch { /* logging must never fail the run */ }
+      }
+    };
+    let parked: ParkedInfo | null = null;
     try {
+      // A resume continues the parked run's turn, so it must land in the same
+      // checkout that asked the question — provisioning is a fresh-run step.
+      if (a.target.sandbox && !opts?.resume) {
+        await openSandbox(this.automationSandboxOps(a, chatId, logSandbox), a.name, runId ?? randomUUID());
+      }
       const { response } = await this.sendToChat(chatId, text, sink);
-      const parked = detectParked(this.chatManager.get(chatId), a.target, response);
+      parked = detectParked(this.chatManager.get(chatId), a.target, response);
       return parked ? { output: response, parked } : { output: response };
     } catch (err) {
       return { output: '', error: (err as Error).message };
+    } finally {
+      // A parked run is still live: its sandbox has to survive until the
+      // question is answered (or the parked run expires and the next fresh
+      // run replaces the binding).
+      if (a.target.sandbox && !parked) await closeSandbox(this.automationSandboxOps(a, chatId, logSandbox));
     }
+  }
+
+  private automationSandboxOps(a: Automation, chatId: string, log: (detail: string) => void): SandboxOps {
+    return {
+      isGitWorkspace: () => isGitWorkspace(this.resolveWorkspaceWorkingDir(a.target.workspaceName)),
+      provision: (worktreeName) => provisionChatWorktree({
+        workspaceWorkingDir: this.resolveWorkspaceWorkingDir(a.target.workspaceName),
+        worktreeName,
+      }),
+      bind: (workspace) => { this.chatManager.setChatWorkspace(chatId, workspace); },
+      current: () => this.chatManager.get(chatId)?.chatWorkspace,
+      discard: (workspace) => discardDisposableWorktree(workspace),
+      unbind: () => { this.chatManager.clearChatWorkspace(chatId); },
+      log,
+    };
   }
 
   /** Post the run summary to report.channel if configured. Returns failure text. */

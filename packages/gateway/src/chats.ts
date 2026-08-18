@@ -403,6 +403,24 @@ export class ChatManager {
     return chat;
   }
 
+  /** Drop a chat's worktree binding and fall back to the shared checkout. The
+   *  caller owns the checkout itself — this only forgets it, which is what a
+   *  disposable (per-run) worktree needs once it has been removed. */
+  clearChatWorkspace(chatId: string): Chat {
+    const chat = this.requireChat(chatId);
+    const previousWorkingDir = chat.workingDirOverride;
+    chat.executionMode = 'shared-checkout';
+    delete chat.chatWorkspace;
+    delete chat.workingDirOverride;
+    if (previousWorkingDir !== undefined) {
+      delete chat.sessionAnchor;
+      delete chat.sessionAnchors;
+    }
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    return chat;
+  }
+
   setExecutionMode(chatId: string, mode: NonNullable<Chat['executionMode']>): Chat {
     const chat = this.requireChat(chatId);
     const previousWorkingDir = chat.workingDirOverride;

@@ -168,6 +168,18 @@ export async function discoverChatWorktree(input: {
   };
 }
 
+/** Whether a directory sits inside a Git repository, and can therefore have
+ *  worktrees. A missing directory answers false rather than throwing: the
+ *  callers use this to choose a mode, not to validate the workspace. */
+export async function isGitWorkspace(workingDir: string): Promise<boolean> {
+  try {
+    await git(fs.realpathSync(path.resolve(workingDir)), ['rev-parse', '--show-toplevel']);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** A shared checkout cannot be promoted safely while it contains changes that
  *  are not represented by HEAD: a new worktree starts from a commit. */
 export async function workspaceHasUncommittedChanges(workingDir: string): Promise<boolean> {
@@ -185,6 +197,36 @@ export async function removeCleanChatWorktree(workspace: ChatWorkspace): Promise
     throw new Error(`Worktree "${workspace.name ?? path.basename(workspace.worktreePath)}" has uncommitted changes. Commit or stash them before deleting this chat.`);
   }
   await git(workspace.repositoryRoot, ['worktree', 'remove', workspace.worktreePath]);
+}
+
+/** What happened to a disposable checkout when its run ended. */
+export type DisposableWorktreeOutcome =
+  /** Checkout and branch both gone — the run left nothing behind. */
+  | 'removed'
+  /** Checkout gone, branch retained because commits were made on it. */
+  | 'branch-kept'
+  /** Nothing removed: uncommitted changes are never discarded. */
+  | 'kept';
+
+/** Tear down a throwaway checkout at the end of a run. Nothing is ever
+ *  discarded: a dirty worktree is left untouched for the user to inspect, and
+ *  the branch survives whenever the run committed to it. Only the boring case
+ *  — clean tree, still sitting on `baseCommit` — disappears completely, which
+ *  is what keeps a daily automation from accreting one dead branch per run. */
+export async function discardDisposableWorktree(workspace: ChatWorkspace): Promise<DisposableWorktreeOutcome> {
+  if (!fs.existsSync(workspace.worktreePath)) {
+    if (fs.existsSync(workspace.repositoryRoot)) await git(workspace.repositoryRoot, ['worktree', 'prune']);
+    return 'removed';
+  }
+  if (await workspaceHasUncommittedChanges(workspace.worktreePath)) return 'kept';
+  const head = await git(workspace.worktreePath, ['rev-parse', 'HEAD']);
+  const branch = await git(workspace.worktreePath, ['branch', '--show-current']);
+  await git(workspace.repositoryRoot, ['worktree', 'remove', workspace.worktreePath]);
+  if (!branch || head !== workspace.baseCommit) return branch ? 'branch-kept' : 'removed';
+  // -d would refuse an unmerged branch; -D is safe here precisely because the
+  // commit check above proved the branch never moved off its base.
+  await git(workspace.repositoryRoot, ['branch', '-D', branch]);
+  return 'removed';
 }
 
 /** Create a chat-owned worktree and a same-named branch from the source HEAD. */

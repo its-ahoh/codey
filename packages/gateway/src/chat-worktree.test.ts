@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { chatWorktreeParent, discoverChatWorktree, normalizeWorktreeName, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
+import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, isGitWorkspace, normalizeWorktreeName, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
 import { ChatManager } from './chats';
 
 const roots: string[] = [];
@@ -266,6 +266,94 @@ describe('worktree cleanup', () => {
   });
 });
 
+describe('isGitWorkspace', () => {
+  it('separates a repository from a plain directory without throwing', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-is-git-'));
+    roots.push(root);
+    const repositoryRoot = path.join(root, 'repo');
+    const plain = path.join(root, 'notes');
+    fs.mkdirSync(repositoryRoot, { recursive: true });
+    fs.mkdirSync(plain, { recursive: true });
+    git(repositoryRoot, ['init', '-b', 'main']);
+
+    await expect(isGitWorkspace(repositoryRoot)).resolves.toBe(true);
+    await expect(isGitWorkspace(plain)).resolves.toBe(false);
+    await expect(isGitWorkspace(path.join(root, 'gone'))).resolves.toBe(false);
+  });
+});
+
+describe('discardDisposableWorktree', () => {
+  /** A repo with one commit and a disposable worktree branched from it. */
+  const makeDisposable = (label: string) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `codey-sandbox-${label}-`));
+    roots.push(root);
+    const repositoryRoot = path.join(root, 'repo');
+    fs.mkdirSync(repositoryRoot, { recursive: true });
+    git(repositoryRoot, ['init', '-b', 'main']);
+    git(repositoryRoot, ['config', 'user.email', 'test@codey.local']);
+    git(repositoryRoot, ['config', 'user.name', 'Codey Test']);
+    fs.writeFileSync(path.join(repositoryRoot, 'README.md'), 'clean\n');
+    git(repositoryRoot, ['add', 'README.md']);
+    git(repositoryRoot, ['commit', '-m', 'initial']);
+    const parent = chatWorktreeParent(repositoryRoot);
+    fs.mkdirSync(parent, { recursive: true });
+    const worktreePath = path.join(fs.realpathSync(parent), `auto-${label}`);
+    git(repositoryRoot, ['worktree', 'add', '-b', `auto-${label}`, worktreePath, 'HEAD']);
+    return {
+      repositoryRoot: fs.realpathSync(repositoryRoot),
+      worktreePath,
+      workspace: {
+        name: `auto-${label}`,
+        repositoryRoot: fs.realpathSync(repositoryRoot),
+        worktreePath,
+        workingDir: worktreePath,
+        baseCommit: git(worktreePath, ['rev-parse', 'HEAD']),
+        createdAt: 1,
+      },
+    };
+  };
+
+  it('removes the checkout and its branch when the run changed nothing', async () => {
+    const { repositoryRoot, worktreePath, workspace } = makeDisposable('empty');
+
+    await expect(discardDisposableWorktree(workspace)).resolves.toBe('removed');
+
+    expect(fs.existsSync(worktreePath)).toBe(false);
+    // Otherwise a daily automation leaves one dead branch behind per run.
+    expect(() => git(repositoryRoot, ['show-ref', '--verify', 'refs/heads/auto-empty'])).toThrow();
+  });
+
+  it('removes the checkout but keeps a branch that has commits', async () => {
+    const { repositoryRoot, worktreePath, workspace } = makeDisposable('committed');
+    fs.writeFileSync(path.join(worktreePath, 'work.txt'), 'done\n');
+    git(worktreePath, ['add', 'work.txt']);
+    git(worktreePath, ['commit', '-m', 'automation work']);
+
+    await expect(discardDisposableWorktree(workspace)).resolves.toBe('branch-kept');
+
+    expect(fs.existsSync(worktreePath)).toBe(false);
+    expect(git(repositoryRoot, ['show-ref', '--verify', 'refs/heads/auto-committed'])).toBeTruthy();
+  });
+
+  it('keeps everything when the run left uncommitted changes', async () => {
+    const { worktreePath, workspace } = makeDisposable('dirty');
+    fs.writeFileSync(path.join(worktreePath, 'scratch.txt'), 'in progress\n');
+
+    await expect(discardDisposableWorktree(workspace)).resolves.toBe('kept');
+
+    expect(fs.existsSync(path.join(worktreePath, 'scratch.txt'))).toBe(true);
+  });
+
+  it('prunes the registration when the directory is already gone', async () => {
+    const { repositoryRoot, worktreePath, workspace } = makeDisposable('vanished');
+    fs.rmSync(worktreePath, { recursive: true, force: true });
+
+    await expect(discardDisposableWorktree(workspace)).resolves.toBe('removed');
+
+    expect(git(repositoryRoot, ['worktree', 'list', '--porcelain'])).not.toContain(worktreePath);
+  });
+});
+
 describe('ChatManager isolated workspace binding', () => {
   it('persists the execution mode and effective working directory', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chat-workspace-'));
@@ -310,6 +398,28 @@ describe('ChatManager isolated workspace binding', () => {
     const isolated = manager.setExecutionMode(chat.id, 'isolated-worktree');
     expect(isolated.workingDirOverride).toBe(workspace.workingDir);
     expect(isolated.sessionAnchors).toBeUndefined();
+  });
+
+  it('forgets a disposed worktree so the next run starts from the shared checkout', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chat-clear-'));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, 'demo'), { recursive: true });
+    const manager = new ChatManager(root);
+    const chat = manager.create({ workspaceName: 'demo', kind: 'automation' });
+    manager.setChatWorkspace(chat.id, {
+      repositoryRoot: '/repo', worktreePath: '/worktrees/auto-1', workingDir: '/worktrees/auto-1',
+      baseCommit: 'abc123', createdAt: 1,
+    });
+    manager.setSessionAnchor(chat.id, { agent: 'codex', model: 'model-a', sessionId: 'sandbox-session' });
+
+    const cleared = manager.clearChatWorkspace(chat.id);
+
+    expect(cleared.executionMode).toBe('shared-checkout');
+    expect(cleared.chatWorkspace).toBeUndefined();
+    expect(cleared.workingDirOverride).toBeUndefined();
+    expect(cleared.sessionAnchors).toBeUndefined();
+    // Persisted, not just in memory: the next run may be a different process.
+    expect(new ChatManager(root).get(chat.id)?.chatWorkspace).toBeUndefined();
   });
 
   it('binds an external checkout without claiming it and clears the old session', () => {

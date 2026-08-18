@@ -62,9 +62,16 @@ export function normalizeSchedule(v: unknown, fallbackTz?: string): AutomationSc
   return { slots, tz };
 }
 
+/** Run each attempt in a throwaway worktree branched from the workspace HEAD
+ *  instead of the shared checkout. Absent = shared checkout (the default): an
+ *  automation that only reads or reports has nothing to isolate. */
+export interface AutomationSandbox {
+  sandbox?: boolean;
+}
+
 export type AutomationTarget =
-  | { kind: 'prompt'; workspaceName: string; agent?: CodingAgent; model?: string }
-  | { kind: 'team'; teamName: string; workspaceName: string };
+  | ({ kind: 'prompt'; workspaceName: string; agent?: CodingAgent; model?: string } & AutomationSandbox)
+  | ({ kind: 'team'; teamName: string; workspaceName: string } & AutomationSandbox);
 
 /** When to fire an OS notification for a run. 'failure' includes parked
  *  runs — they block until answered, so they count as needing attention. */
