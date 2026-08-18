@@ -136,8 +136,9 @@ contextBridge.exposeInMainWorld('codey', {
   playbooks: {
     list: () => ipcRenderer.invoke('playbooks:list'),
     history: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:history', workspace, name),
-    forget: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:forget', workspace, name),
+    archive: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:archive', workspace, name),
     restore: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:restore', workspace, name),
+    delete: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:delete', workspace, name),
     rollback: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:rollback', workspace, name),
     promote: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:promote', workspace, name),
   },

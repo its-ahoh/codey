@@ -50,12 +50,16 @@ export function playbookHistory(store: SkillStore, name: string): SkillEvolution
   return [...skill.evolution];
 }
 
-export function forgetPlaybook(store: SkillStore, name: string): void {
+export function archivePlaybook(store: SkillStore, name: string): void {
   if (!store.archive(name)) throw new Error(`Playbook not found: ${name}`);
 }
 
 export function restorePlaybook(store: SkillStore, name: string): void {
   if (!store.restore(name)) throw new Error(`Playbook not found: ${name}`);
+}
+
+export function deletePlaybook(store: SkillStore, name: string): void {
+  if (!store.remove(name)) throw new Error(`Playbook not found: ${name}`);
 }
 
 export function rollbackPlaybook(store: SkillStore, name: string): number {

@@ -273,8 +273,9 @@ declare global {
           trigger?: { runId: string; promptSummary: string };
           steps: string;
         }>>>
-        forget: (workspace: string, name: string) => Promise<IpcResult<void>>
+        archive: (workspace: string, name: string) => Promise<IpcResult<void>>
         restore: (workspace: string, name: string) => Promise<IpcResult<void>>
+        delete: (workspace: string, name: string) => Promise<IpcResult<void>>
         rollback: (workspace: string, name: string) => Promise<IpcResult<number>>
         promote: (workspace: string, name: string) => Promise<IpcResult<{ name: string; dir: string }>>
       }

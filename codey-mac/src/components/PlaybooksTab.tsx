@@ -65,15 +65,16 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
     }
   }, [expanded])
 
-  const act = useCallback(async (kind: 'forget' | 'restore' | 'rollback', s: Summary) => {
+  const act = useCallback(async (kind: 'archive' | 'restore' | 'delete' | 'rollback', s: Summary) => {
     const messages = {
-      forget: `Archive playbook "${s.name}"? It stops being applied but can be restored.`,
+      archive: `Archive playbook "${s.name}"? It will stop being applied but can be restored later.`,
       restore: `Restore playbook "${s.name}"?`,
+      delete: `Permanently delete playbook "${s.name}"? This removes its full history and cannot be undone.`,
       rollback: `Roll back "${s.name}" to its previous version?`,
     } as const
     if (!confirm(messages[kind])) return
     try {
-      // Widen: rollback returns data: number, forget/restore data: void — the
+      // Widen: rollback returns data: number, other mutations return void — the
       // raw union collapses unwrap's generic to void and rejects number.
       const res: { ok: true; data: unknown } | { ok: false; error: string } =
         await window.codey.playbooks[kind](s.workspace, s.name)
@@ -137,20 +138,20 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
     const actions = playbookActions(s)
     const isExpanded = expanded === rowKey(s)
     return (
-      <div key={rowKey(s)} style={{ ...cardStyle, opacity: s.archived ? 0.65 : 1 }}>
+      <div key={rowKey(s)} style={{ ...cardStyle, opacity: s.archived ? 0.72 : 1 }}>
         <div
           onClick={() => void toggleExpand(s)}
           style={{ cursor: 'pointer' }}
           title={isExpanded ? 'Hide evolution timeline' : 'Show evolution timeline'}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <span style={{ color: C.fg, fontSize: 13, fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: C.fg, fontSize: 15, fontWeight: 650, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {s.name}
             </span>
-            <span style={{ color: C.fg3, fontSize: 11, flexShrink: 0 }}>v{s.version}</span>
+            <span style={{ color: C.fg3, fontSize: 12, flexShrink: 0 }}>v{s.version}</span>
             {s.archived && (
               <span style={{
-                fontSize: 9, fontWeight: 600, letterSpacing: 0.3,
+                fontSize: 10, fontWeight: 650, letterSpacing: 0.3,
                 padding: '2px 6px', borderRadius: 4, flexShrink: 0,
                 background: C.surface3, color: C.fg3,
               }}>
@@ -159,7 +160,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
             )}
             {s.promotedToSkill && (
               <span style={{
-                fontSize: 9, fontWeight: 600, letterSpacing: 0.3,
+                fontSize: 10, fontWeight: 650, letterSpacing: 0.3,
                 padding: '2px 6px', borderRadius: 4, flexShrink: 0,
                 background: C.accentDim, color: C.accent,
               }}>
@@ -167,14 +168,22 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
               </span>
             )}
             <span style={{ flex: 1 }} />
-            <span style={{ color: C.fg3, fontSize: 11, flexShrink: 0 }}>{isExpanded ? '▾' : '▸'}</span>
+            <button
+              type="button"
+              aria-label={isExpanded ? 'Collapse playbook details' : 'Expand playbook details'}
+              aria-expanded={isExpanded}
+              onClick={event => { event.stopPropagation(); void toggleExpand(s) }}
+              style={{ ...expandButtonStyle, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+            >
+              <UIIcon name="chevron" size={16} />
+            </button>
           </div>
           {s.description && (
-            <div style={{ color: C.fg3, fontSize: 12, lineHeight: '1.5', marginBottom: 6 }}>
+            <div style={{ color: C.fg2, fontSize: 13, lineHeight: '1.55', marginBottom: 8 }}>
               {s.description}
             </div>
           )}
-          <div style={{ color: C.fg3, fontSize: 11, display: 'flex', gap: 12 }}>
+          <div style={{ color: C.fg3, fontSize: 12, display: 'flex', gap: 14 }}>
             {showWorkspace && (
               <span title="Workspace this playbook belongs to" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 <UIIcon name="folder" size={11} />{s.workspace}
@@ -185,19 +194,26 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
             <span title="Clean runs / corrections" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><UIIcon name="check" size={12} />{s.successSignals.cleanRuns}<UIIcon name="close" size={11} />{s.successSignals.corrections}</span>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-          {actions.promote && (
-            <button onClick={() => void promote(s)} style={pillButton('primary')}>Turn into skill</button>
-          )}
-          {actions.forget && (
-            <button onClick={() => void act('forget', s)} style={{ ...pillButton('ghost'), color: C.red }}>Forget</button>
-          )}
-          {actions.restore && (
-            <button onClick={() => void act('restore', s)} style={pillButton('primary')}>Restore</button>
-          )}
-          {actions.rollback && (
-            <button onClick={() => void act('rollback', s)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="refresh" size={14} />Roll back</button>
-          )}
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, marginTop: 14 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {actions.promote && (
+              <button onClick={() => void promote(s)} style={pillButton('primary')}>Turn into skill</button>
+            )}
+            {actions.rollback && (
+              <button onClick={() => void act('rollback', s)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="refresh" size={14} />Roll back</button>
+            )}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8, marginLeft: 'auto' }}>
+            {actions.archive && (
+              <button onClick={() => void act('archive', s)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="archive" size={14} />Archive</button>
+            )}
+            {actions.restore && (
+              <button onClick={() => void act('restore', s)} style={pillButton('primary')}>Restore</button>
+            )}
+            {actions.delete && (
+              <button onClick={() => void act('delete', s)} style={{ ...pillButton('danger'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="trash" size={14} />Delete</button>
+            )}
+          </div>
         </div>
         {isExpanded && renderTimeline()}
       </div>
@@ -237,5 +253,20 @@ const cardStyle: React.CSSProperties = {
   background: C.surface,
   border: `1px solid ${C.border}`,
   borderRadius: 10,
-  padding: '14px 16px',
+  padding: '16px 18px',
+}
+
+const expandButtonStyle: React.CSSProperties = {
+  width: 30,
+  height: 30,
+  padding: 0,
+  borderRadius: 8,
+  border: `1px solid ${C.border2}`,
+  background: C.surface3,
+  color: C.fg2,
+  display: 'grid',
+  placeItems: 'center',
+  cursor: 'pointer',
+  flexShrink: 0,
+  transition: 'transform 160ms ease, border-color 160ms ease, background 160ms ease',
 }

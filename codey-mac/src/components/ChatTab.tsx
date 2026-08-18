@@ -84,6 +84,12 @@ const StopIcon: React.FC<{ color: string }> = ({ color }) => (
   </svg>
 )
 
+const ArrowDownIcon: React.FC<{ color: string }> = ({ color }) => (
+  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 5v14M6 13l6 6 6-6" />
+  </svg>
+)
+
 const fmtTime = (ts: number) =>
   new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 
@@ -2426,8 +2432,9 @@ export const ChatTab: React.FC<Props> = ({
             style={styles.latestMessageButton}
             onClick={scrollToLatestMessage}
             aria-label="Jump to latest message"
+            title="Jump to latest message"
           >
-            Lastest Message ↓
+            <ArrowDownIcon color={C.fg} />
           </button>
         )}
         {showSlashMenu && (
@@ -2916,12 +2923,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   inputContainer: { padding: '12px max(16px, 4%) 16px', borderTop: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, background: C.surface },
   latestMessageButton: {
-    position: 'absolute' as const, top: 0, left: '50%', zIndex: 20,
-    transform: 'translate(-50%, -50%)',
-    padding: '6px 12px', borderRadius: 999,
+    position: 'absolute' as const, bottom: 'calc(100% + 8px)', left: '50%', zIndex: 20,
+    transform: 'translateX(-50%)',
+    width: 32, height: 32, padding: 0, borderRadius: '50%',
     border: `1px solid ${C.border2}`, background: C.surface2, color: C.fg,
     boxShadow: '0 5px 16px rgba(0,0,0,0.24)',
-    fontSize: 11, fontWeight: 650, cursor: 'pointer', whiteSpace: 'nowrap' as const,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'pointer',
   },
   composer: {
     background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 14,

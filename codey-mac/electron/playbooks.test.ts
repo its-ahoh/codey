@@ -5,7 +5,7 @@ import * as os from 'os';
 import { SkillStore } from '@codey/core';
 import {
   listPlaybooks, playbookHistory,
-  forgetPlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook,
+  archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook,
 } from './playbooks';
 
 describe('playbooks IPC module', () => {
@@ -71,16 +71,22 @@ describe('playbooks IPC module', () => {
     expect(() => playbookHistory(store, 'nope')).toThrow(/not found/i);
   });
 
-  it('forget archives, restore unarchives', () => {
-    forgetPlaybook(store, 'rel');
+  it('archive archives, restore unarchives', () => {
+    archivePlaybook(store, 'rel');
     expect(listed()[0].archived).toBe(true);
     restorePlaybook(store, 'rel');
     expect(listed()[0].archived).toBe(false);
   });
 
-  it('forget/restore throw for unknown skill', () => {
-    expect(() => forgetPlaybook(store, 'nope')).toThrow(/not found/i);
+  it('archive/restore throw for unknown skill', () => {
+    expect(() => archivePlaybook(store, 'nope')).toThrow(/not found/i);
     expect(() => restorePlaybook(store, 'nope')).toThrow(/not found/i);
+  });
+
+  it('delete permanently removes a playbook', () => {
+    deletePlaybook(store, 'rel');
+    expect(listed()).toEqual([]);
+    expect(() => deletePlaybook(store, 'rel')).toThrow(/not found/i);
   });
 
   it('rollback restores the prior version and returns it', () => {

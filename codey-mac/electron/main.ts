@@ -31,7 +31,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
 import { WorkerManager, WorkspaceManager } from '@codey/core'
-import { listPlaybooks, playbookHistory, forgetPlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
+import { listPlaybooks, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
@@ -3625,10 +3625,12 @@ app.whenReady().then(async () => {
     wrap(async () => listPlaybooks(await playbookWorkspaces().getAllSkillStores())));
   ipcMain.handle('playbooks:history', async (_e, workspace: string, name: string) =>
     wrap(async () => playbookHistory(await playbookStore(workspace), name)));
-  ipcMain.handle('playbooks:forget', async (_e, workspace: string, name: string) =>
-    wrap(async () => forgetPlaybook(await playbookStore(workspace), name)));
+  ipcMain.handle('playbooks:archive', async (_e, workspace: string, name: string) =>
+    wrap(async () => archivePlaybook(await playbookStore(workspace), name)));
   ipcMain.handle('playbooks:restore', async (_e, workspace: string, name: string) =>
     wrap(async () => restorePlaybook(await playbookStore(workspace), name)));
+  ipcMain.handle('playbooks:delete', async (_e, workspace: string, name: string) =>
+    wrap(async () => deletePlaybook(await playbookStore(workspace), name)));
   ipcMain.handle('playbooks:rollback', async (_e, workspace: string, name: string) =>
     wrap(async () => rollbackPlaybook(await playbookStore(workspace), name)));
   ipcMain.handle('playbooks:promote', async (_e, workspace: string, name: string) =>
