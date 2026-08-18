@@ -194,6 +194,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
         // its times. A never-scheduled automation remains schedule-free.
         schedule: knobs.scheduleOn ? schedule! : a.schedule,
         report: { ...a.report, notify: knobs.notify },
+        target: { ...a.target, sandbox: knobs.isolated },
       }))
       const shouldEnable = knobs.scheduleOn || !updated.schedule
       const fresh: Automation = updated.enabled === shouldEnable
@@ -252,7 +253,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
     a.target.kind === 'team'
       ? `Team · ${a.target.workspaceName}`
       : [a.target.agent ?? 'Default agent', a.target.model].filter(Boolean).join(' · '),
-    a.target.sandbox && 'Sandbox',
+    a.target.sandbox && 'Fresh copy',
   ].filter(Boolean).join(' · ')
   const notifyTitle = NOTIFY_OPTIONS.find(option => option.value === a.report.notify)?.label ?? 'Never'
 
@@ -418,7 +419,21 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
               {a.report.channel && <div style={infoRow}><span>Channel delivery</span><strong>{a.report.channel.platform}</strong></div>}
             </DetailCard>
 
-            <DetailCard title="Details" description="Execution target and record metadata.">
+            <DetailCard title="Details" description="Where runs happen, plus record metadata.">
+              <div style={settingRow}>
+                <span style={settingLabel}>Where it runs</span>
+                <button
+                  type="button" role="switch" aria-label="Automation run location"
+                  aria-checked={knobs.isolated} style={modeControl}
+                  onClick={() => setKnobs({ ...knobs, isolated: !knobs.isolated })}
+                >
+                  <span style={modeOption(!knobs.isolated)}>Your checkout</span>
+                  <span style={modeOption(knobs.isolated)}>Fresh copy</span>
+                </button>
+              </div>
+              <div style={settingHint}>{knobs.isolated
+                ? 'Every run gets its own worktree, branched from the workspace\u2019s latest commit'
+                : 'Runs in the workspace checkout, alongside your own work'}</div>
               <div style={infoRow}><span>Target</span><strong>{targetTitle}</strong></div>
               <div style={infoRow}><span>Created</span><strong>{new Date(a.createdAt).toLocaleDateString()}</strong></div>
               <div style={infoRow}><span>Updated</span><strong>{new Date(a.updatedAt).toLocaleDateString()}</strong></div>
@@ -427,7 +442,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
 
           {knobsDirty && (
             <div style={saveBar}>
-              <div style={noticeCopy}><strong>Unsaved settings</strong><span>Your schedule, variables, or notifications changed.</span></div>
+              <div style={noticeCopy}><strong>Unsaved settings</strong><span>Your schedule, variables, notifications, or run location changed.</span></div>
               <div style={{ display: 'flex', gap: 7 }}>
                 <button style={pillButton('ghost')} disabled={savingKnobs} onClick={() => setKnobs(knobsFrom(a))}>Discard</button>
                 <button style={pillButton('primary')} disabled={savingKnobs} onClick={() => void saveKnobs()}>{savingKnobs ? 'Saving…' : 'Save settings'}</button>
@@ -633,6 +648,7 @@ const slotHeader: React.CSSProperties = { display: 'flex', alignItems: 'center',
 const slotSummary: React.CSSProperties = { color: C.fg3, fontSize: 10, flex: 1 }
 const dayEditor: React.CSSProperties = { display: 'flex', gap: 4 }
 const dayButton = (active: boolean): React.CSSProperties => ({ width: 25, height: 25, borderRadius: 7, border: `1px solid ${active ? C.accent : C.border2}`, background: active ? C.accentDim : C.surface3, color: active ? C.accent : C.fg3, cursor: 'pointer', fontSize: 9, fontWeight: 750 })
+const settingHint: React.CSSProperties = { color: C.fg3, fontSize: 10.5, margin: '-2px 0 6px' }
 const infoRow: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 12, color: C.fg3, fontSize: 10.5, padding: '2px 0' }
 const emptyState: React.CSSProperties = { color: C.fg3, fontSize: 11, padding: '8px 0', fontStyle: 'italic' }
 const saveBar: React.CSSProperties = { gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, position: 'sticky', bottom: 8, zIndex: 2, padding: '11px 13px', border: `1px solid ${C.accent}`, borderRadius: 11, background: C.surface2, boxShadow: '0 8px 25px rgba(0,0,0,.22)', color: C.fg, fontSize: 11 }

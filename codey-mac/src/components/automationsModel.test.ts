@@ -132,6 +132,7 @@ describe('knobsFrom', () => {
       scheduleOn: true,
       slots: [{ time: '09:05', days: [1, 3, 5] }, { time: '18:00', days: [1, 3, 5] }],
       notify: 'all',
+      isolated: false,
     })
   })
 
@@ -141,7 +142,12 @@ describe('knobsFrom', () => {
       scheduleOn: false,
       slots: [{ time: '09:00', days: [] }],
       notify: 'none',
+      isolated: false,
     })
+  })
+
+  it('reads the run location off the target', () => {
+    expect(knobsFrom({ ...base, target: { sandbox: true } }).isolated).toBe(true)
   })
 
   it('treats a disabled saved schedule as manual while preserving its slots', () => {
@@ -150,6 +156,7 @@ describe('knobsFrom', () => {
       scheduleOn: false,
       slots: [{ time: '09:05', days: [1, 3, 5] }, { time: '18:00', days: [1, 3, 5] }],
       notify: 'all',
+      isolated: false,
     })
   })
 
@@ -194,6 +201,13 @@ describe('knobsEqual', () => {
 
   it('is false when scheduleOn differs', () => {
     expect(knobsEqual({ ...knobsFrom(auto), scheduleOn: false }, auto)).toBe(false)
+  })
+
+  it('is false when the run location differs', () => {
+    expect(knobsEqual({ ...knobsFrom(auto), isolated: true }, auto)).toBe(false)
+    const isolatedAuto = { ...auto, target: { sandbox: true } }
+    expect(knobsEqual(knobsFrom(isolatedAuto), isolatedAuto)).toBe(true)
+    expect(knobsEqual({ ...knobsFrom(isolatedAuto), isolated: false }, isolatedAuto)).toBe(false)
   })
 
   it('matches manual mode for a disabled saved schedule', () => {
