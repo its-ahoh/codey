@@ -15,6 +15,10 @@ const AGENTS: { key: AgentFilter; label: string }[] = [
   { key: 'pi',          label: 'Pi' },
 ]
 
+/** Codey's own skills are global; a workspace can still hold repo-local ones. */
+const CODEY_GLOBAL_SKILLS_HINT = '~/.codey/skills'
+const CODEY_PROJECT_SKILLS_HINT = '.codey/skills'
+
 const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
   'claude-code': '~/.claude/skills/',
   'codex': '~/.codex/skills/',
@@ -22,12 +26,17 @@ const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
   'pi': '~/.pi/agent/skills/',
 }
 
-export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; codey?: boolean }> = ({ addRequest = 0, searchQuery = '', codey = false }) => {
+export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> = ({ addRequest = 0, searchQuery = '' }) => {
+  // Codey's own skills are the leftmost segment of the same switcher that
+  // selects a coding agent: one list, one source picker.
+  const [codey, setCodey] = useState(true)
   const [data, setData] = useState<SkillsListResult>({ skills: [], projectDir: null })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [addScope, setAddScope] = useState<'user' | 'project'>('user')
+  // Codey installs default to the global root; the project root is offered
+  // only when a workspace is open.
   const [addSource, setAddSource] = useState<'localDir' | 'gitUrl'>('localDir')
   const [addInput, setAddInput] = useState('')
   const [installing, setInstalling] = useState(false)
@@ -52,7 +61,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; co
   )
   const now = Date.now()
   const listKey = codey ? 'codey' : agentFilter
-  const canInstall = !codey || data.projectDir !== null
+  const canInstall = addScope === 'user' || data.projectDir !== null
 
   // The primary action lives in the parent Tools tab bar; this counter gives
   // that button a clean way to open the existing install form without a second
@@ -122,7 +131,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; co
     try {
       const payload: Parameters<typeof window.codey.skills.install>[0] = {
         agent: codey ? 'codey' : agentFilter,
-        scope: codey ? 'project' : addScope,
+        scope: addScope,
       }
       if (addSource === 'localDir') payload.localDir = addInput.trim()
       else payload.gitUrl = addInput.trim()
@@ -232,7 +241,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; co
           background: skill.scope === 'user' ? C.accentDim : C.surface3,
           color: skill.scope === 'user' ? C.accent : C.fg3,
         }}>
-          {codey ? 'Codey' : skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
+          {codey ? (skill.scope === 'user' ? 'Global' : 'Project') : skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
         </span>
       </div>
       {skill.description && (
@@ -289,7 +298,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; co
             background: skill.scope === 'user' ? C.accentDim : C.surface3,
             color: skill.scope === 'user' ? C.accent : C.fg3,
           }}>
-            {codey ? 'Codey' : skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
+            {codey ? (skill.scope === 'user' ? 'Global' : 'Project') : skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
           </span>
           <button onClick={() => setSelected(null)} style={{ ...iconBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Close" aria-label="Close"><UIIcon name="close" size={14} /></button>
         </div>
@@ -381,35 +390,40 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; co
       {selected && renderDetail(selected)}
       <div style={styles.agentHeader}>
         <div style={{ minWidth: 0 }}>
-          <div style={styles.eyebrow}>{codey ? 'Shared across coding agents' : 'Coding agent'}</div>
-          {codey ? (
-            <div style={styles.codeyHeading}>
-              <span style={styles.codeyHeadingIcon}><UIIcon name="workspace" size={15} /></span>
-              <div>
-                <div style={styles.codeyHeadingTitle}>Workspace skills</div>
-                <div style={styles.codeyHeadingSubtitle}>Stored in .codey/skills and discovered by every coding agent</div>
-              </div>
-            </div>
-          ) : (
-            <div style={styles.agentSwitcher} role="tablist" aria-label="Coding agent">
-              {AGENTS.map(a => {
-                const isSelected = agentFilter === a.key
-                const isActive = activeAgent === a.key
-                return (
-                  <button
-                    key={a.key}
-                    role="tab"
-                    aria-selected={isSelected}
-                    onClick={() => setAgentFilter(a.key)}
-                    style={{ ...styles.agentButton, ...(isSelected ? styles.agentButtonSelected : undefined) }}
-                  >
-                    {isActive && <span style={styles.activeDot} title="Default agent" />}
-                    {a.label}
-                  </button>
-                )
-              })}
-            </div>
-          )}
+          <div style={styles.agentSwitcher} role="tablist" aria-label="Skill source">
+            <button
+              role="tab"
+              aria-selected={codey}
+              onClick={() => setCodey(true)}
+              title={`Shared with every coding agent — stored in ${CODEY_GLOBAL_SKILLS_HINT}`}
+              style={{ ...styles.agentButton, ...(codey ? styles.agentButtonSelected : undefined) }}
+            >
+              <UIIcon name="sparkle" size={13} />
+              Codey
+            </button>
+            <span style={styles.switcherDivider} />
+            {AGENTS.map(a => {
+              const isSelected = !codey && agentFilter === a.key
+              const isActive = activeAgent === a.key
+              return (
+                <button
+                  key={a.key}
+                  role="tab"
+                  aria-selected={isSelected}
+                  onClick={() => { setCodey(false); setAgentFilter(a.key) }}
+                  style={{ ...styles.agentButton, ...(isSelected ? styles.agentButtonSelected : undefined) }}
+                >
+                  {isActive && <span style={styles.activeDot} title="Default agent" />}
+                  {a.label}
+                </button>
+              )
+            })}
+          </div>
+          <div style={styles.sourceHint}>
+            {codey
+              ? `Stored in ${CODEY_GLOBAL_SKILLS_HINT} and discovered by every coding agent`
+              : `Installed for ${AGENTS.find(a => a.key === agentFilter)?.label} only`}
+          </div>
         </div>
         <div style={styles.agentMeta}>
           <div style={styles.smallSwitcher} role="tablist" aria-label="Sort skills">
@@ -450,7 +464,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; co
           <div style={styles.installHeader}>
             <div>
               <div style={styles.installTitle}>Install a skill</div>
-              <div style={styles.installSubtitle}>{codey ? 'Share it with every coding agent in this workspace' : `Add it to ${AGENTS.find(a => a.key === agentFilter)?.label}`}</div>
+              <div style={styles.installSubtitle}>{codey ? 'Share it with every coding agent' : `Add it to ${AGENTS.find(a => a.key === agentFilter)?.label}`}</div>
             </div>
             <button
               onClick={() => { setAdding(false); setAddInput(''); setError(null) }}
@@ -461,7 +475,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; co
           </div>
 
           <div style={styles.optionRow}>
-            {!codey && <div style={styles.optionGroup}>
+            <div style={styles.optionGroup}>
               <span style={styles.optionLabel}>Install to</span>
               <div style={styles.smallSwitcher}>
                 {(['user', 'project'] as const).map(s => {
@@ -478,12 +492,12 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; co
                       disabled={unavailable}
                       title={unavailable ? 'No active workspace' : s === 'user' ? 'Available across projects' : 'Only this project'}
                     >
-                      {s === 'user' ? 'User' : 'Project'}
+                      {s === 'user' ? (codey ? 'Global' : 'User') : 'Project'}
                     </button>
                   )
                 })}
               </div>
-            </div>}
+            </div>
 
             <div style={styles.optionGroup}>
               <span style={styles.optionLabel}>Source</span>
@@ -530,8 +544,10 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; co
             </button>
           </div>
           <div style={styles.destinationHint}>
-            Destination: <code style={styles.inlineCode}>{codey ? (data.projectDir ?? '.codey/skills') : addScope === 'project' && data.projectDir ? data.projectDir : AGENT_SKILL_HINTS[agentFilter]}</code>
-            {codey && !canInstall && <span style={{ color: C.red, marginLeft: 8 }}>Select a workspace first.</span>}
+            Destination: <code style={styles.inlineCode}>{addScope === 'project'
+              ? (data.projectDir ?? (codey ? CODEY_PROJECT_SKILLS_HINT : 'the current workspace'))
+              : codey ? CODEY_GLOBAL_SKILLS_HINT : AGENT_SKILL_HINTS[agentFilter]}</code>
+            {!canInstall && <span style={{ color: C.red, marginLeft: 8 }}>Select a workspace first.</span>}
           </div>
         </section>
       ) : null}
@@ -543,7 +559,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; co
           <div style={{ width: 52, height: 52, margin: '0 auto 12px', borderRadius: 16, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="sparkle" size={24} /></div>
           <div style={{ fontWeight: 650, color: C.fg, marginBottom: 5 }}>{codey ? 'No Codey skills found' : `No skills found for ${AGENTS.find(a => a.key === agentFilter)?.label}`}</div>
           <div style={{ fontSize: 12, lineHeight: 1.55 }}>
-            Add a skill or place one in <code style={styles.inlineCode}>{codey ? (data.projectDir ?? '.codey/skills') : AGENT_SKILL_HINTS[agentFilter]}</code>
+            Add a skill or place one in <code style={styles.inlineCode}>{codey ? CODEY_GLOBAL_SKILLS_HINT : AGENT_SKILL_HINTS[agentFilter]}</code>
           </div>
         </div>
       ) : filteredSkills.length === 0 ? (
@@ -593,12 +609,8 @@ const iconBtn: React.CSSProperties = {
 const styles: Record<string, React.CSSProperties> = {
   root: { height: '100%', overflowY: 'auto', position: 'relative' },
   agentHeader: {
-    display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+    display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
     gap: 16, marginBottom: 18, flexWrap: 'wrap',
-  },
-  eyebrow: {
-    color: C.fg3, fontSize: 10, fontWeight: 750, letterSpacing: 0.75,
-    textTransform: 'uppercase', marginBottom: 7,
   },
   agentSwitcher: {
     display: 'inline-flex', alignItems: 'center', padding: 3, gap: 2,
@@ -617,15 +629,10 @@ const styles: Record<string, React.CSSProperties> = {
     width: 6, height: 6, borderRadius: '50%', background: C.accent,
     boxShadow: `0 0 0 3px ${C.accentDim}`, flexShrink: 0,
   },
-  codeyHeading: {
-    display: 'flex', alignItems: 'center', gap: 10,
+  switcherDivider: {
+    width: 1, alignSelf: 'stretch', margin: '4px 4px', background: C.border2, flexShrink: 0,
   },
-  codeyHeadingIcon: {
-    width: 34, height: 34, borderRadius: 9, display: 'grid', placeItems: 'center',
-    color: C.accent, background: C.accentDim, flexShrink: 0,
-  },
-  codeyHeadingTitle: { color: C.fg, fontSize: 13, fontWeight: 700 },
-  codeyHeadingSubtitle: { color: C.fg3, fontSize: 11, marginTop: 2 },
+  sourceHint: { color: C.fg3, fontSize: 11, marginTop: 7 },
   agentMeta: {
     display: 'flex', alignItems: 'center', gap: 8, color: C.fg3,
     fontSize: 11, paddingBottom: 1,

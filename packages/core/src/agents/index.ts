@@ -4,7 +4,7 @@ import { ClaudeCodeAdapter } from './claude-code';
 import { OpenCodeAdapter } from './opencode';
 import { CodexAdapter } from './codex';
 import { PiAdapter } from './pi';
-import { syncCodeyProjectSkills } from './codey-skills';
+import { syncCodeyGlobalSkills, syncCodeyProjectSkills } from './codey-skills';
 
 export type { CodingAgentAdapter } from './base';
 export { ClaudeCodeAdapter } from './claude-code';
@@ -155,9 +155,15 @@ export class AgentFactory {
     request = addCodeyBrowserMcp(request, this.pluginEnabledProvider?.('browser') === true);
     request = addExternalMcpServers(request, this.externalMcpProvider?.());
 
-    // `.codey/skills` is Codey's project-level source of truth. Refresh the
-    // lightweight compatibility links immediately before every CLI launch so
-    // skills added by hand are available without restarting Codey.
+    // `~/.codey/skills` and `<project>/.codey/skills` are Codey's global and
+    // project sources of truth. Refresh the lightweight compatibility links
+    // immediately before every CLI launch so skills added by hand are
+    // available without restarting Codey.
+    try {
+      await syncCodeyGlobalSkills();
+    } catch {
+      // See below: linking is best-effort.
+    }
     if (request.context?.workingDir) {
       try {
         await syncCodeyProjectSkills(request.context.workingDir);
