@@ -41,6 +41,7 @@ type Action =
   | { type: 'remove'; chatId: string }
   | { type: 'select'; chatId: string | null }
   | { type: 'toggleWorkspace'; workspaceName: string }
+  | { type: 'expandWorkspace'; workspaceName: string }
   | { type: 'startSend'; chatId: string; userMessage: ChatMessage; assistantMessageId: string; agent?: ChatMessage['agent']; model?: string }
   | { type: 'streamToken'; chatId: string; token: string; messageId?: string }
   | { type: 'thinkingToken'; chatId: string; token: string; step?: number; messageId?: string }
@@ -214,6 +215,14 @@ export function reducer(state: State, action: Action): State {
       const collapsed = { ...state.collapsedWorkspaces }
       if (collapsed[action.workspaceName]) delete collapsed[action.workspaceName]
       else collapsed[action.workspaceName] = true
+      return { ...state, collapsedWorkspaces: collapsed }
+    }
+    case 'expandWorkspace': {
+      // A newly created chat should be visible right away, so uncollapse the
+      // workspace it landed in.
+      if (!state.collapsedWorkspaces[action.workspaceName]) return state
+      const collapsed = { ...state.collapsedWorkspaces }
+      delete collapsed[action.workspaceName]
       return { ...state, collapsedWorkspaces: collapsed }
     }
     case 'startSend': {
@@ -745,6 +754,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     async createChat(workspaceName) {
       const chat = await apiService.chats.create({ workspaceName })
       dispatch({ type: 'upsert', chat })
+      dispatch({ type: 'expandWorkspace', workspaceName: chat.workspaceName })
       dispatch({ type: 'select', chatId: chat.id })
       return chat
     },
