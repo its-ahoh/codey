@@ -3,7 +3,7 @@ import { apiService } from '../services/api'
 import { C } from '../theme'
 import { fieldStyle, inputStyle, pageStyle, selectStyle, pillButton, Section, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
-import { AGENT_API_TYPE, AGENT_NAMES, ApiType, modelFitsApiType } from './modelApiType'
+import { AGENT_API_TYPE, AGENT_NAMES, ApiType, agentsPinnedTo, missingAllEndpoints, modelFitsApiType } from './modelApiType'
 
 interface SettingsTabProps {
   isGatewayRunning: boolean
@@ -172,6 +172,29 @@ export const EnvEditor: React.FC<{
 
 // ── Model row (view + edit) ─────────────────────────────────────────
 
+// What an 'all' model's bound key actually covers. An 'all' model claims both
+// protocols, but each one is only wired up when the key defines its base URL —
+// the other half stays on the ambient environment, which surfaces at run time
+// as an authentication failure rather than a configuration one. This is the
+// only place that gap is visible before a run, so it's stated plainly.
+const AllEndpointsHint: React.FC<{ keyEntry?: ApiKeyEntry }> = ({ keyEntry }) => {
+  const missing = missingAllEndpoints('all', keyEntry)
+  const generic = 'Usable by every agent. Each protocol is wired up only if the selected API key defines its base URL — set both on the key to cover all agents.'
+  if (!keyEntry || missing.length === 0) {
+    return <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.45 }}>{generic}</div>
+  }
+  const stranded = missing.flatMap(agentsPinnedTo)
+  return (
+    <div style={{ color: C.warningFg, fontSize: 11, lineHeight: 1.45 }}>
+      Key "{keyEntry.name}" defines no {missing.join(' or ')} base URL
+      {missing.length === 2
+        ? ' at all, so nothing is wired up and every agent falls back to the ambient environment.'
+        : `, so that protocol falls back to the ambient environment${stranded.length ? ` and ${stranded.join(', ')} cannot use this model` : ''}.`}
+      {' '}Add it under API Keys, or give this model a single-protocol API Type.
+    </div>
+  )
+}
+
 const ModelRow: React.FC<{
   entry: ModelEntry
   apis: ApiKeyEntry[]
@@ -246,13 +269,6 @@ const ModelRow: React.FC<{
           <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
           <option value="all">all (third-party providers &amp; proxies)</option>
         </select>
-        {draft.apiType === 'all' && <>
-          <span />
-          <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.45 }}>
-            Usable by every agent. Each protocol is wired up only if the selected
-            API key defines its base URL — set both on the key to cover all agents.
-          </div>
-        </>}
         <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
         <select
           value={draft.apiKeyRef ?? ''}
@@ -264,6 +280,10 @@ const ModelRow: React.FC<{
             <option key={a.name} value={a.name}>{a.name}</option>
           ))}
         </select>
+        {draft.apiType === 'all' && <>
+          <span />
+          <AllEndpointsHint keyEntry={apis.find(a => a.name === draft.apiKeyRef)} />
+        </>}
       </div>
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>

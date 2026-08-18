@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { AGENT_API_TYPE, modelFitsAgent, modelFitsApiType } from './modelApiType'
+import { AGENT_API_TYPE, agentsPinnedTo, missingAllEndpoints, modelFitsAgent, modelFitsApiType } from './modelApiType'
 
 describe('modelFitsApiType', () => {
   it('matches like-for-like protocols', () => {
@@ -52,5 +52,44 @@ describe('modelFitsAgent', () => {
 
   it('accepts an unknown agent name', () => {
     expect(modelFitsAgent('openai', 'some-future-agent')).toBe(true)
+  })
+})
+
+describe('missingAllEndpoints', () => {
+  const both = { anthropicBaseUrl: 'https://a', openaiBaseUrl: 'https://o' }
+
+  it('is satisfied when the key covers both protocols', () => {
+    expect(missingAllEndpoints('all', both)).toEqual([])
+  })
+
+  it('names the protocol whose endpoint the key lacks', () => {
+    expect(missingAllEndpoints('all', { openaiBaseUrl: 'https://o' })).toEqual(['anthropic'])
+    expect(missingAllEndpoints('all', { anthropicBaseUrl: 'https://a' })).toEqual(['openai'])
+  })
+
+  it('names both when the key defines no endpoint at all', () => {
+    expect(missingAllEndpoints('all', {})).toEqual(['anthropic', 'openai'])
+    expect(missingAllEndpoints('all', { anthropicBaseUrl: '  ' })).toEqual(['anthropic', 'openai'])
+  })
+
+  it('says nothing about single-protocol models — a bare base URL is normal there', () => {
+    expect(missingAllEndpoints('anthropic', {})).toEqual([])
+    expect(missingAllEndpoints('openai', {})).toEqual([])
+  })
+
+  it('says nothing when no key is bound — that is opting into the ambient env', () => {
+    expect(missingAllEndpoints('all', undefined)).toEqual([])
+  })
+})
+
+describe('agentsPinnedTo', () => {
+  it('lists only the agents with no other protocol to fall back on', () => {
+    expect(agentsPinnedTo('anthropic')).toEqual(['claude-code'])
+    expect(agentsPinnedTo('openai')).toEqual(['codex'])
+  })
+
+  it('excludes the provider-agnostic agents, which run on either protocol', () => {
+    expect(agentsPinnedTo('anthropic')).not.toContain('pi')
+    expect(agentsPinnedTo('openai')).not.toContain('opencode')
   })
 })

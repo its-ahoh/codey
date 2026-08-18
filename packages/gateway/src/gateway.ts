@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -75,6 +75,40 @@ export function summarizeFailure(response: AgentResponse): string | undefined {
   const raw = (response.error ?? response.output ?? '').trim();
   if (!raw) return undefined;
   return raw.length > FALLBACK_REASON_MAX ? `${raw.slice(0, FALLBACK_REASON_MAX).trimEnd()}…` : raw;
+}
+
+/**
+ * Expand a catalog model row plus its bound API key into the ModelConfig an
+ * adapter receives. Split out of `getModelConfig` because this is the single
+ * place a dual-protocol ('all') model gets its two endpoints — if it stopped
+ * populating them, `applyModelEnv` would wire up nothing and every 'all' model
+ * would silently degrade to the ambient environment, with both of its own
+ * tests still green.
+ *
+ * `anthropicBaseUrl` / `openaiBaseUrl` are deliberately confined to 'all'
+ * models: a single-protocol model's endpoint belongs on `baseUrl`, which stays
+ * the anthropic-first pick for callers (like text-completion) that can only
+ * speak one protocol at a time.
+ */
+export function bindModelToApiKey(
+  entry: { model: string; apiType: ApiType; provider?: string },
+  apiKey?: { apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string },
+): ModelConfig {
+  const isAll = entry.apiType === 'all';
+  const baseUrl = apiKey
+    ? (entry.apiType === 'anthropic' ? apiKey.anthropicBaseUrl
+      : entry.apiType === 'openai' ? apiKey.openaiBaseUrl
+      : apiKey.anthropicBaseUrl ?? apiKey.openaiBaseUrl)
+    : undefined;
+  return {
+    provider: entry.provider ?? (entry.apiType === 'openai' ? 'openai' : 'anthropic'),
+    model: entry.model,
+    apiKey: apiKey?.apiKey,
+    baseUrl,
+    anthropicBaseUrl: isAll ? apiKey?.anthropicBaseUrl : undefined,
+    openaiBaseUrl: isAll ? apiKey?.openaiBaseUrl : undefined,
+    apiType: entry.apiType,
+  };
 }
 
 /** Explicit `/skill <name> <task>` invocation. Threaded per-turn: handleMessage
@@ -5406,24 +5440,7 @@ Example: /model gpt-4.1 write a Python script`;
           `Model "${catalogEntry.model}" references API key "${catalogEntry.apiKeyRef}" which no longer exists. Open Settings → API Keys to add it, or rebind the model.`
         );
       }
-      // 'all' models carry both endpoints so the adapter can wire up whichever
-      // protocol its CLI speaks; `baseUrl` stays the anthropic-first pick for
-      // callers (like text-completion) that only speak one at a time.
-      const isAll = catalogEntry.apiType === 'all';
-      const baseUrl = apiKey
-        ? (catalogEntry.apiType === 'anthropic' ? apiKey.anthropicBaseUrl
-          : catalogEntry.apiType === 'openai' ? apiKey.openaiBaseUrl
-          : apiKey.anthropicBaseUrl ?? apiKey.openaiBaseUrl)
-        : undefined;
-      return {
-        provider: catalogEntry.provider ?? (catalogEntry.apiType === 'openai' ? 'openai' : 'anthropic'),
-        model: catalogEntry.model,
-        apiKey: apiKey?.apiKey,
-        baseUrl,
-        anthropicBaseUrl: isAll ? apiKey?.anthropicBaseUrl : undefined,
-        openaiBaseUrl: isAll ? apiKey?.openaiBaseUrl : undefined,
-        apiType: catalogEntry.apiType,
-      };
+      return bindModelToApiKey(catalogEntry, apiKey);
     }
 
     // 2. Check if model is in the agent's model list
