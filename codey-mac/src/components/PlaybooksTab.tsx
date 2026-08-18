@@ -20,11 +20,20 @@ interface Summary {
   canRollback: boolean
 }
 
+interface Detail {
+  name: string
+  description: string
+  whenToUse: string
+  steps: string
+  version: number
+}
+
 const rowKey = (s: { workspace: string; name: string }) => `${s.workspace}/${s.name}`
 
 export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
   const [playbooks, setPlaybooks] = useState<Summary[]>([])
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [detail, setDetail] = useState<Detail | null>(null)
   const [trail, setTrail] = useState<TimelineRow[]>([])
   const [openSteps, setOpenSteps] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
@@ -54,9 +63,13 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   useEffect(() => { void reload() }, [reload])
 
   const toggleExpand = useCallback(async (s: Summary) => {
-    if (expanded === rowKey(s)) { setExpanded(null); return }
+    if (expanded === rowKey(s)) { setExpanded(null); setDetail(null); return }
     try {
-      const events = unwrap(await window.codey.playbooks.history(s.workspace, s.name))
+      const [current, events] = await Promise.all([
+        window.codey.playbooks.detail(s.workspace, s.name).then(unwrap),
+        window.codey.playbooks.history(s.workspace, s.name).then(unwrap),
+      ])
+      setDetail(current)
       setTrail(timelineRows(events, Date.now()))
       setOpenSteps(null)
       setExpanded(rowKey(s))
@@ -64,6 +77,22 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
       setError(e?.message ?? String(e))
     }
   }, [expanded])
+
+  const renderCurrentVersion = () => detail && (
+    <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 12, paddingTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <span style={{ color: C.fg, fontSize: 13, fontWeight: 650 }}>Current version</span>
+        <span style={{ color: C.accent, background: C.accentDim, borderRadius: 5, padding: '2px 6px', fontSize: 11, fontWeight: 650 }}>
+          v{detail.version}
+        </span>
+      </div>
+      <div style={{ display: 'grid', gap: 12 }}>
+        <DetailSection label="Description" content={detail.description} />
+        <DetailSection label="When to use" content={detail.whenToUse} />
+        <DetailSection label="Procedure" content={detail.steps} code />
+      </div>
+    </div>
+  )
 
   const act = useCallback(async (kind: 'archive' | 'restore' | 'delete' | 'rollback', s: Summary) => {
     const messages = {
@@ -87,7 +116,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   }, [reload, expanded])
 
   const promote = useCallback(async (s: Summary) => {
-    if (!confirm(`Turn "${s.name}" into a project skill? The playbook will no longer be archived automatically.`)) return
+    if (!confirm(`Turn "${s.name}" into a project skill? It becomes a coding skill every agent can discover, and the playbook will no longer be archived automatically.`)) return
     try {
       unwrap(await window.codey.playbooks.promote(s.workspace, s.name))
       await reload()
@@ -97,7 +126,8 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   }, [reload])
 
   const renderTimeline = () => (
-    <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 12, paddingTop: 10 }}>
+    <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 14, paddingTop: 12 }}>
+      <div style={{ color: C.fg, fontSize: 13, fontWeight: 650, marginBottom: 10 }}>Version history</div>
       {trail.length === 0 ? (
         <div style={{ color: C.fg3, fontSize: 12 }}>No recorded evolution events yet.</div>
       ) : trail.map((row, i) => (
@@ -142,7 +172,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
         <div
           onClick={() => void toggleExpand(s)}
           style={{ cursor: 'pointer' }}
-          title={isExpanded ? 'Hide evolution timeline' : 'Show evolution timeline'}
+          title={isExpanded ? 'Hide playbook details' : 'Show playbook details'}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             <span style={{ color: C.fg, fontSize: 15, fontWeight: 650, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -215,7 +245,12 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
             )}
           </div>
         </div>
-        {isExpanded && renderTimeline()}
+        {isExpanded && (
+          <>
+            {renderCurrentVersion()}
+            {renderTimeline()}
+          </>
+        )}
       </div>
     )
   }
@@ -248,6 +283,26 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
     </div>
   )
 }
+
+const DetailSection: React.FC<{ label: string; content: string; code?: boolean }> = ({ label, content, code = false }) => (
+  <div>
+    <div style={{ color: C.fg3, fontSize: 11, fontWeight: 650, letterSpacing: 0.2, marginBottom: 5 }}>{label}</div>
+    <div style={{
+      margin: 0,
+      padding: code ? '10px 12px' : 0,
+      borderRadius: code ? 7 : 0,
+      background: code ? C.surface3 : 'transparent',
+      color: C.fg2,
+      fontSize: 12,
+      lineHeight: '1.55',
+      fontFamily: code ? 'monospace' : 'inherit',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+    }}>
+      {content || '—'}
+    </div>
+  </div>
+)
 
 const cardStyle: React.CSSProperties = {
   background: C.surface,
