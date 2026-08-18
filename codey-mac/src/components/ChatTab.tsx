@@ -2298,7 +2298,7 @@ export const ChatTab: React.FC<Props> = ({
                       }
                       return (
                         <div key={att.id} style={styles.attachmentFileChip} onClick={open} title={`${att.name} · ${formatBytes(att.size)}`}>
-                          <div style={styles.attachmentFileIcon}><FileIcon color={C.fg2} /></div>
+                          <div style={styles.attachmentFileIcon}><FileIcon color={C.onAccent} /></div>
                           <div style={styles.attachmentFileMeta}>
                             <span style={styles.attachmentFileName}>{att.name}</span>
                             <span style={styles.attachmentFileSize}>{formatBytes(att.size)}</span>
@@ -3036,24 +3036,26 @@ const styles: Record<string, React.CSSProperties> = {
   },
   attachmentImage: {
     width: 96, height: 96, borderRadius: 8, objectFit: 'cover' as const, cursor: 'pointer',
-    border: `1px solid ${C.border2}`,
+    border: `1px solid ${C.onAccent}3d`,
   },
+  // The chip sits inside the user bubble, so every color is derived from
+  // onAccent rather than the surface palette - surface greys vanish on userBg.
   attachmentFileChip: {
     display: 'flex', alignItems: 'center', gap: 8,
-    background: 'rgba(255,255,255,0.06)',
-    border: `1px solid ${C.border2}`, borderRadius: 8,
+    background: `${C.onAccent}1f`,
+    border: `1px solid ${C.onAccent}3d`, borderRadius: 8,
     padding: '6px 10px', cursor: 'pointer', maxWidth: 220,
   },
   attachmentFileIcon: {
-    width: 28, height: 28, borderRadius: 6, background: C.surface3,
+    width: 28, height: 28, borderRadius: 6, background: `${C.onAccent}2e`,
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
   attachmentFileMeta: { display: 'flex', flexDirection: 'column' as const, minWidth: 0, gap: 1 },
   attachmentFileName: {
-    color: C.fg, fontSize: 12, fontWeight: 500,
+    color: C.onAccent, fontSize: 12, fontWeight: 500,
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 160,
   },
-  attachmentFileSize: { color: C.fg3, fontSize: 10, fontVariantNumeric: 'tabular-nums' as const },
+  attachmentFileSize: { color: `${C.onAccent}b8`, fontSize: 10, fontVariantNumeric: 'tabular-nums' as const },
   pendingRow: {
     display: 'flex', flexWrap: 'wrap' as const, gap: 8,
     padding: '8px 8px 4px',
