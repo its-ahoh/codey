@@ -187,6 +187,7 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(9,12,20,0.65)', backdropFilter: 'blur(10px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onClick={e => e.stopPropagation()} style={{ width: '92vw', height: '88vh', background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 18, boxShadow: '0 30px 90px rgba(0,0,0,0.48)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, minHeight: 62, padding: '10px 14px 10px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface }}>
+          <button onClick={onClose} aria-label="Close workflow editor" title="Close" style={{ width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 9, background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer' }}><UIIcon name="close" size={17} /></button>
           <span style={{ width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="activity" size={17} /></span>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 760, color: C.fg, fontSize: 13 }}>{teamName}</div>
@@ -214,7 +215,6 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
               </div>
             )}
           </div>
-          <button onClick={onClose} aria-label="Close workflow editor" title="Close" style={{ width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 9, background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer' }}><UIIcon name="close" size={17} /></button>
         </div>
         {problems.length > 0 && (
           <div style={{ background: C.dangerBg, color: C.dangerFg, borderBottom: `1px solid ${C.dangerBorder}`, fontSize: 10, lineHeight: 1.4, padding: '6px 16px' }}>{problems.join(' · ')}</div>
