@@ -224,27 +224,41 @@ export function draftComplete(d: DraftLike): boolean {
   )
 }
 
-export type CheckTone = 'neutral' | 'warn' | 'muted'
+export type CheckTone = 'pending' | 'ok' | 'warn' | 'muted'
 
-export interface CheckBanner {
+export interface CheckChip {
   tone: CheckTone
+  /** Short label shown beside the automation title. */
+  label: string
+  /** Tooltip, and the heading of the detail panel. */
   title: string
   /** Present for 'gaps'. */
   questions?: string[]
-  /** Re-run / Dismiss only make sense once a run has finished. */
-  actions: boolean
+  /** Present for 'error'. */
+  detail?: string
+  /** Only a finished check with something to show opens the detail panel. */
+  expandable: boolean
 }
 
-/** One-pager banner for the advisory dry run. A clean or absent check renders
- *  nothing — the banner exists to raise problems, not to congratulate. */
-export function checkBanner(check: AutomationCheck | undefined): CheckBanner | null {
+/** Compact dry-run status shown next to the automation title. Every state is
+ *  representable: the chip is a glance, the detail panel carries the words. */
+export function checkChip(check: AutomationCheck | undefined): CheckChip | null {
   switch (check?.status) {
     case 'pending':
-      return { tone: 'neutral', title: 'Dry run in progress…', actions: false }
-    case 'gaps':
-      return { tone: 'warn', title: 'Dry run found things to pin down', questions: check.questions ?? [], actions: true }
+      return { tone: 'pending', label: 'Dry run…', title: 'Dry run in progress', expandable: false }
+    case 'clean':
+      return { tone: 'ok', label: 'Dry run OK', title: 'Dry run passed', expandable: false }
+    case 'gaps': {
+      const questions = check.questions ?? []
+      return {
+        tone: 'warn',
+        label: `${questions.length} ${questions.length === 1 ? 'issue' : 'issues'}`,
+        title: 'Dry run found things to pin down',
+        questions, expandable: true,
+      }
+    }
     case 'error':
-      return { tone: 'muted', title: 'Last dry run didn’t complete', actions: true }
+      return { tone: 'muted', label: 'Dry run failed', title: 'Last dry run didn’t complete', detail: check.detail, expandable: true }
     default:
       return null
   }

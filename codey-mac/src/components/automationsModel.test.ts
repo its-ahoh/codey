@@ -1,6 +1,6 @@
 // codey-mac/src/components/automationsModel.test.ts
 import { describe, it, expect } from 'vitest'
-import { scheduleSummary, scheduleChipLabel, slotsToSchedule, nextRunAt, humanizeDelta, draftComplete, formatHHMM, knobsFrom, knobsEqual, checkBanner } from './automationsModel'
+import { scheduleSummary, scheduleChipLabel, slotsToSchedule, nextRunAt, humanizeDelta, draftComplete, formatHHMM, knobsFrom, knobsEqual, checkChip } from './automationsModel'
 
 const t = (hour: number, minute: number, daysOfWeek?: number[]) => ({ hour, minute, ...(daysOfWeek ? { daysOfWeek } : {}) })
 
@@ -234,27 +234,31 @@ describe('draftComplete', () => {
   })
 })
 
-describe('checkBanner', () => {
-  it('shows nothing for a clean or absent check', () => {
-    expect(checkBanner(undefined)).toBeNull()
-    expect(checkBanner({ status: 'clean', at: 1 })).toBeNull()
+describe('checkChip', () => {
+  it('shows nothing when no dry run has been attempted', () => {
+    expect(checkChip(undefined)).toBeNull()
   })
 
-  it('announces a run in progress without offering actions', () => {
-    expect(checkBanner({ status: 'pending', at: 1 }))
-      .toEqual({ tone: 'neutral', title: 'Dry run in progress…', actions: false })
+  it('reports progress and success without offering a detail panel', () => {
+    expect(checkChip({ status: 'pending', at: 1 }))
+      .toEqual({ tone: 'pending', label: 'Dry run…', title: 'Dry run in progress', expandable: false })
+    expect(checkChip({ status: 'clean', at: 1 }))
+      .toEqual({ tone: 'ok', label: 'Dry run OK', title: 'Dry run passed', expandable: false })
   })
 
-  it('lists the questions for gaps', () => {
-    expect(checkBanner({ status: 'gaps', questions: ['Which account?'], at: 1 })).toEqual({
-      tone: 'warn', title: 'Dry run found things to pin down',
-      questions: ['Which account?'], actions: true,
+  it('counts the gaps and keeps the questions for the detail panel', () => {
+    expect(checkChip({ status: 'gaps', questions: ['Which account?'], at: 1 })).toEqual({
+      tone: 'warn', label: '1 issue', title: 'Dry run found things to pin down',
+      questions: ['Which account?'], expandable: true,
     })
+    expect(checkChip({ status: 'gaps', questions: ['a', 'b'], at: 1 })?.label).toBe('2 issues')
+    expect(checkChip({ status: 'gaps', at: 1 })?.label).toBe('0 issues')
   })
 
   it('keeps an errored run low-key — it is usually the environment, not the setup', () => {
-    expect(checkBanner({ status: 'error', detail: 'agent died', at: 1 })).toEqual({
-      tone: 'muted', title: 'Last dry run didn’t complete', actions: true,
+    expect(checkChip({ status: 'error', detail: 'agent died', at: 1 })).toEqual({
+      tone: 'muted', label: 'Dry run failed', title: 'Last dry run didn’t complete',
+      detail: 'agent died', expandable: true,
     })
   })
 })

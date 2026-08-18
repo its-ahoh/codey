@@ -6,7 +6,7 @@ import { C } from '../theme'
 import { pillButton, unwrap, inputStyle, selectStyle } from './settingsAtoms'
 import {
   scheduleSummary, slotsToSchedule, nextRunAt, humanizeDelta,
-  knobsFrom, knobsEqual, NOTIFY_OPTIONS, checkBanner, type Knobs, type NotifyMode,
+  knobsFrom, knobsEqual, NOTIFY_OPTIONS, checkChip, type CheckChip, type CheckTone, type Knobs, type NotifyMode,
 } from './automationsModel'
 import { isScheduled } from '../../../packages/core/src/types/automation'
 import type { Automation, AutomationRun } from '../../../packages/core/src/types/automation'
@@ -16,6 +16,31 @@ import { AutomationIconPicker } from './AutomationIconPicker'
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/** Dry-run status, compressed to a chip beside the title: a spinner while it
+ *  runs, a tick when it passes, an issue count that opens the detail panel
+ *  when it does not. The words live in the panel, not in the header. */
+const DryRunChip: React.FC<{ chip: CheckChip; onOpen: () => void }> = ({ chip, onOpen }) => {
+  const body = (
+    <>
+      <style>{'@keyframes codey-dryrun-spin { to { transform: rotate(360deg) } }'}</style>
+      <span style={chip.tone === 'pending' ? dryRunSpinner : undefined}>
+        <UIIcon name={DRY_RUN_ICON[chip.tone]} size={12} strokeWidth={2} />
+      </span>
+      {chip.expandable && <span>{chip.label}</span>}
+    </>
+  )
+  if (!chip.expandable) {
+    return <span style={dryRunChip(chip.tone)} title={chip.title} aria-label={`${chip.title}`} role="status">{body}</span>
+  }
+  return (
+    <button
+      type="button" style={{ ...dryRunChip(chip.tone), ...dryRunChipButton }}
+      title={`${chip.title} — click for details`} aria-label={`${chip.title}. Open dry run details`}
+      onClick={onOpen}
+    >{body}</button>
+  )
+}
 
 interface Props {
   id: string
@@ -75,6 +100,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
   const [logOpen, setLogOpen] = useState<Record<string, boolean>>({})
   const [logText, setLogText] = useState<Record<string, string | null>>({})
   const [outputOpen, setOutputOpen] = useState<Record<string, boolean>>({})
+  const [checkOpen, setCheckOpen] = useState(false)
   // Last automation the knobs were seeded from — lets refresh() tell "user is
   // mid-edit" apart from "an external edit changed the automation".
   const aRef = useRef<Automation | null>(null)
@@ -225,6 +251,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
   }
 
   const recheck = async () => {
+    setCheckOpen(false)
     try {
       unwrap(await window.codey.automations.recheck(id))
       void refresh()
@@ -234,6 +261,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
   }
 
   const dismissCheck = async () => {
+    setCheckOpen(false)
     try {
       unwrap(await window.codey.automations.dismissCheck(id))
       void refresh()
@@ -248,6 +276,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
   const next = scheduled ? nextRunAt(a.schedule, Date.now()) : null
   const latest = runs[0]
   const health = automationHealth(a, latest)
+  const chip = checkChip(a.check)
   const targetTitle = a.target.kind === 'team' ? a.target.teamName : a.target.workspaceName
   const targetDetail = [
     a.target.kind === 'team'
@@ -266,6 +295,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
           <div style={titleRow}>
             <h2 style={titleStyle}>{a.name}</h2>
             <span style={healthBadge(health.color)}><span style={healthDot(health.color)} />{health.label}</span>
+            {chip && <DryRunChip chip={chip} onOpen={() => setCheckOpen(true)} />}
           </div>
           <div style={subtitleStyle}>
             {scheduled ? `${scheduleSummary(a.schedule)} · ${a.schedule!.tz}` : 'Runs manually'}
@@ -278,29 +308,6 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
           </button>
         </div>
       </header>
-
-      {(() => {
-        const banner = checkBanner(a.check)
-        if (!banner) return null
-        return (
-          <div style={checkBannerStyle(banner.tone)}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: C.fg, fontSize: 12, fontWeight: 700 }}>{banner.title}</div>
-              {banner.questions && banner.questions.length > 0 && (
-                <ul style={checkQuestionList}>
-                  {banner.questions.map((q, i) => <li key={i}>{q}</li>)}
-                </ul>
-              )}
-            </div>
-            {banner.actions && (
-              <div style={{ display: 'flex', gap: 7, flexShrink: 0 }}>
-                <button style={pillButton('ghost')} onClick={() => void recheck()}>Re-run</button>
-                <button style={pillButton('ghost')} onClick={() => void dismissCheck()}>Dismiss</button>
-              </div>
-            )}
-          </div>
-        )
-      })()}
 
       {latest?.status === 'parked' && latest.question && (
         <div style={parkedBanner}>
@@ -505,6 +512,35 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
           </div>
         )
       )}
+
+      {chip?.expandable && checkOpen && (
+        <div style={checkBackdrop} onClick={() => setCheckOpen(false)}>
+          <div style={checkPanel} role="dialog" aria-label="Dry run details" onClick={e => e.stopPropagation()}>
+            <div style={checkPanelHead}>
+              <div style={{ color: C.fg, fontSize: 13, fontWeight: 750 }}>{chip.title}</div>
+              <button style={iconButton} onClick={() => setCheckOpen(false)} aria-label="Close dry run details">
+                <UIIcon name="close" size={13} />
+              </button>
+            </div>
+            <div style={checkPanelBody}>
+              {chip.questions && chip.questions.length > 0 && (
+                <ul style={checkQuestionList}>
+                  {chip.questions.map((q, i) => <li key={i}>{q}</li>)}
+                </ul>
+              )}
+              {chip.detail && <pre style={{ ...preStyle, borderTop: 'none', borderRadius: 9 }}>{chip.detail}</pre>}
+              {!chip.questions?.length && !chip.detail && (
+                <div style={{ color: C.fg3, fontSize: 11.5 }}>The dry run left no details behind.</div>
+              )}
+              <div style={{ color: C.fg3, fontSize: 10.5 }}>Checked {new Date(a.check!.at).toLocaleString()}</div>
+            </div>
+            <div style={{ display: 'flex', gap: 7, justifyContent: 'flex-end' }}>
+              <button style={pillButton('ghost')} onClick={() => void dismissCheck()}>Dismiss</button>
+              <button style={pillButton('primary')} onClick={() => void recheck()}>Re-run</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -592,15 +628,32 @@ const attentionIcon: React.CSSProperties = { width: 24, height: 24, flexShrink: 
 
 /** The error tone is deliberately quiet: a failed dry run almost always means
  *  an environment problem, not a misconfigured automation. */
-const checkBannerStyle = (tone: 'neutral' | 'warn' | 'muted'): React.CSSProperties => ({
-  display: 'flex', alignItems: 'center', gap: 12, margin: '0 0 12px',
-  padding: '10px 12px', borderRadius: 10,
-  border: `1px solid ${tone === 'warn' ? C.yellow : C.border}`,
-  background: tone === 'warn' ? C.surface2 : C.surface,
-  opacity: tone === 'muted' ? 0.8 : 1,
+const DRY_RUN_ICON: Record<CheckTone, IconName> = { pending: 'refresh', ok: 'check', warn: 'alert', muted: 'alert' }
+const dryRunToneColor: Record<CheckTone, string> = { pending: C.fg3, ok: C.green, warn: C.yellow, muted: C.fg3 }
+const dryRunChip = (tone: CheckTone): React.CSSProperties => ({
+  display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
+  padding: '3px 7px', borderRadius: 999,
+  background: C.surface3, color: dryRunToneColor[tone],
+  fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap',
 })
+const dryRunChipButton: React.CSSProperties = { border: 'none', font: 'inherit', fontSize: 10, fontWeight: 700, cursor: 'pointer' }
+const dryRunSpinner: React.CSSProperties = { display: 'inline-flex', animation: 'codey-dryrun-spin 1.1s linear infinite' }
+
+const checkBackdrop: React.CSSProperties = {
+  position: 'fixed', inset: 0, zIndex: 60, display: 'grid', placeItems: 'center',
+  background: 'rgba(0,0,0,.45)', padding: 24,
+}
+const checkPanel: React.CSSProperties = {
+  width: 'min(460px, 100%)', maxHeight: '70vh', overflowY: 'auto',
+  display: 'flex', flexDirection: 'column', gap: 12,
+  padding: '15px 16px', borderRadius: 13,
+  border: `1px solid ${C.border}`, background: C.surface2,
+  boxShadow: '0 18px 45px rgba(0,0,0,.32)',
+}
+const checkPanelHead: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }
+const checkPanelBody: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 9 }
 const checkQuestionList: React.CSSProperties = {
-  margin: '4px 0 0', paddingLeft: 18, color: C.fg2, fontSize: 12, lineHeight: 1.5,
+  margin: 0, paddingLeft: 18, color: C.fg2, fontSize: 12, lineHeight: 1.5,
 }
 
 const summaryGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 9, marginTop: 15 }
