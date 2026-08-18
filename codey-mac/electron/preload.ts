@@ -120,6 +120,7 @@ contextBridge.exposeInMainWorld('codey', {
   },
   mcp: {
     list: () => ipcRenderer.invoke('mcp:list'),
+    listAgent: () => ipcRenderer.invoke('mcp:listAgent'),
     save: (draft: any) => ipcRenderer.invoke('mcp:save', draft),
     remove: (name: string) => ipcRenderer.invoke('mcp:remove', name),
     setEnabled: (name: string, enabled: boolean) => ipcRenderer.invoke('mcp:setEnabled', name, enabled),

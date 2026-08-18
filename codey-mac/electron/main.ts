@@ -14,6 +14,7 @@ import { applyEvent, clearAttention, summarize } from './tray-state'
 import { SKILL_FILE, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
+import { scanAgentMcpServers, type AgentMcpServer, type McpAgentKey } from './agent-mcp-scan'
 import { deriveDeliveryState, shouldRediscoverPr } from './delivery-status'
 import type { ScannedSkill } from './skills'
 import { scanSkillUsage } from './skill-usage'
@@ -3216,6 +3217,29 @@ app.whenReady().then(async () => {
         // A hand-edited codey-browser entry can never reach agents; hide it here too.
         .filter(([name]) => name !== 'codey-browser')
         .map(([name, cfg]) => ({ name, ...(cfg as object) }))
+    })
+  )
+
+  // Servers the user already configured inside the coding agents themselves.
+  // Read-only: Codey does not own these files, it only reports what is there.
+  ipcMain.handle('mcp:listAgent', async () =>
+    wrap(async () => {
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const osMod = await import('os')
+      const agents = coreConfigManager?.get().agents as Record<string, { env?: Record<string, string> }> | undefined
+      const agentEnv: Partial<Record<McpAgentKey, Record<string, string> | undefined>> = {
+        'claude-code': agents?.['claude-code']?.env,
+        codex: agents?.codex?.env,
+        opencode: agents?.opencode?.env,
+      }
+      return scanAgentMcpServers({
+        fs: fsMod,
+        path: pathMod,
+        home: osMod.homedir(),
+        workingDir: getWorkingDir(fsMod, pathMod),
+        agentEnv,
+      }) satisfies AgentMcpServer[]
     })
   )
 

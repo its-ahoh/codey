@@ -4,7 +4,7 @@ import { inputStyle, pillButton, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { parseArgsLine, parseEnvLines } from './mcp-form'
 import { matchesToolSearch } from './tools-search'
-import type { ExternalMcpServer } from '../codey-api'
+import type { AgentMcpServer, ExternalMcpServer } from '../codey-api'
 
 interface FormState {
   name: string
@@ -17,6 +17,18 @@ interface FormState {
 
 const EMPTY_FORM: FormState = { name: '', transport: 'stdio', command: '', args: '', env: '', url: '' }
 
+const AGENT_LABELS: Record<AgentMcpServer['agent'], string> = {
+  'claude-code': 'Claude Code',
+  'codex': 'Codex',
+  'opencode': 'OpenCode',
+}
+
+/** One line of "what does this server actually run", for the card subtitle. */
+const serverTarget = (server: { transport: string; url?: string; command?: string; args?: string[] }): string =>
+  server.transport === 'remote'
+    ? server.url ?? ''
+    : [server.command, ...(server.args ?? [])].filter(Boolean).join(' ')
+
 const toForm = (server: ExternalMcpServer): FormState => ({
   name: server.name,
   transport: server.transport,
@@ -28,6 +40,7 @@ const toForm = (server: ExternalMcpServer): FormState => ({
 
 export const McpTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
   const [servers, setServers] = useState<ExternalMcpServer[]>([])
+  const [agentServers, setAgentServers] = useState<AgentMcpServer[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -35,19 +48,26 @@ export const McpTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' })
   const [editing, setEditing] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const filteredServers = useMemo(
-    () => servers.filter(server => matchesToolSearch(
-      searchQuery,
-      server.name,
-      server.transport === 'remote' ? server.url : [server.command, ...(server.args ?? [])].join(' '),
-    )),
+    () => servers.filter(server => matchesToolSearch(searchQuery, server.name, serverTarget(server))),
     [servers, searchQuery],
+  )
+  const filteredAgentServers = useMemo(
+    () => agentServers.filter(server => matchesToolSearch(
+      searchQuery, server.name, serverTarget(server), AGENT_LABELS[server.agent],
+    )),
+    [agentServers, searchQuery],
   )
 
   const reload = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      setServers(unwrap(await window.codey.mcp.list()))
+      const [own, discovered] = await Promise.all([
+        window.codey.mcp.list(),
+        window.codey.mcp.listAgent(),
+      ])
+      setServers(unwrap(own))
+      setAgentServers(unwrap(discovered))
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {
@@ -134,11 +154,7 @@ export const McpTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' })
               {server.name}
               <span style={styles.badge}>{server.transport}</span>
             </div>
-            <div style={styles.cardDesc}>
-              {server.transport === 'remote'
-                ? server.url
-                : [server.command, ...(server.args ?? [])].join(' ')}
-            </div>
+            <div style={styles.cardDesc}>{serverTarget(server)}</div>
           </div>
           <button
             style={pillButton('ghost')}
@@ -154,7 +170,7 @@ export const McpTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' })
           </div>
         </div>
       ))}
-      {servers.length > 0 && filteredServers.length === 0 && !form && (
+      {servers.length > 0 && filteredServers.length === 0 && filteredAgentServers.length === 0 && !form && (
         <div style={styles.emptySearch}>No MCP servers match that name or configuration.</div>
       )}
 
@@ -236,6 +252,34 @@ export const McpTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' })
           <UIIcon name="add" size={15} /> Add MCP server
         </button>
       )}
+
+      {agentServers.length > 0 && (
+        <div style={styles.section}>
+          <div style={styles.sectionTitle}>Already in your coding agents</div>
+          <div style={styles.sectionNote}>
+            Servers each agent loads from its own config. Codey reads these but does not manage
+            them — edit them where the agent keeps them.
+          </div>
+          {filteredAgentServers.map(server => (
+            <div key={`${server.agent}:${server.scope}:${server.name}`} style={styles.agentCard}>
+              <div style={styles.cardIcon}><UIIcon name="server" size={18} /></div>
+              <div style={styles.cardBody}>
+                <div style={styles.cardName}>
+                  {server.name}
+                  <span style={styles.agentBadge}>{AGENT_LABELS[server.agent]}</span>
+                  <span style={styles.badge}>{server.transport}</span>
+                  {server.scope === 'project' && <span style={styles.badge}>project</span>}
+                  {!server.enabled && <span style={styles.badge}>off</span>}
+                </div>
+                <div style={styles.cardDesc} title={server.source}>{serverTarget(server)}</div>
+              </div>
+            </div>
+          ))}
+          {filteredAgentServers.length === 0 && (
+            <div style={styles.emptySearch}>No agent MCP servers match that name or configuration.</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -251,6 +295,11 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px',
     border: `1px solid ${C.border}`, borderRadius: 12, background: C.surface2, marginBottom: 10,
   },
+  // Read-only twin of `card`: flat background, so it does not read as actionable.
+  agentCard: {
+    display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
+    border: `1px solid ${C.border}`, borderRadius: 12, background: 'transparent', marginBottom: 8,
+  },
   cardIcon: { color: C.accent, flexShrink: 0 },
   cardBody: { flex: 1, minWidth: 0 },
   cardName: { color: C.fg, fontSize: 13, fontWeight: 700, marginBottom: 3, display: 'flex', alignItems: 'center', gap: 8 },
@@ -262,6 +311,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 9.5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5,
     color: C.fg3, border: `1px solid ${C.border2}`, borderRadius: 5, padding: '1px 6px',
   },
+  agentBadge: {
+    fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5,
+    color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 5, padding: '1px 6px',
+  },
+  section: { marginTop: 26 },
+  sectionTitle: { color: C.fg, fontSize: 12.5, fontWeight: 700, marginBottom: 5 },
+  sectionNote: { color: C.fg3, fontSize: 11.5, lineHeight: 1.5, marginBottom: 12 },
   toggleBusy: { opacity: 0.5, cursor: 'wait', pointerEvents: 'none' },
   emptySearch: { color: C.fg3, fontSize: 12, textAlign: 'center', padding: '30px 16px' },
   form: {

@@ -38,6 +38,20 @@ export interface ExternalMcpServer {
   enabled: boolean
 }
 
+/** An MCP server discovered inside a coding agent's own config (read-only). */
+export interface AgentMcpServer {
+  agent: 'claude-code' | 'codex' | 'opencode'
+  name: string
+  transport: 'stdio' | 'remote'
+  command?: string
+  args?: string[]
+  url?: string
+  scope: 'user' | 'project'
+  enabled: boolean
+  /** Config file it was read from. */
+  source: string
+}
+
 export interface ModelEntry {
   /** 'all' = dual-protocol provider, usable by every agent. */
   apiType: 'anthropic' | 'openai' | 'all'
@@ -244,6 +258,8 @@ declare global {
       }
       mcp: {
         list: () => Promise<IpcResult<ExternalMcpServer[]>>
+        /** Servers already configured in the coding agents; not managed by Codey. */
+        listAgent: () => Promise<IpcResult<AgentMcpServer[]>>
         save: (draft: Omit<ExternalMcpServer, 'enabled'> & { enabled?: boolean }) => Promise<IpcResult<void>>
         remove: (name: string) => Promise<IpcResult<void>>
         setEnabled: (name: string, enabled: boolean) => Promise<IpcResult<void>>
