@@ -1,5 +1,31 @@
 import { describe, it, expect } from 'vitest';
-import { applyModelEnv, withCommonBinPaths } from './env';
+import { applyModelEnv, nvmBinDirs, withCommonBinPaths } from './env';
+
+describe('nvmBinDirs', () => {
+  it('orders installed versions newest-first', () => {
+    expect(nvmBinDirs('/Users/tester', ['v18.20.8', 'v24.18.1', 'v22.17.0', 'v22.17.1'])).toEqual([
+      '/Users/tester/.nvm/versions/node/v24.18.1/bin',
+      '/Users/tester/.nvm/versions/node/v22.17.1/bin',
+      '/Users/tester/.nvm/versions/node/v22.17.0/bin',
+      '/Users/tester/.nvm/versions/node/v18.20.8/bin',
+    ]);
+  });
+
+  it('sorts numerically, not lexically', () => {
+    const dirs = nvmBinDirs('/h', ['v9.0.0', 'v10.0.0']);
+    expect(dirs[0]).toContain('v10.0.0');
+  });
+
+  it('drops alias entries that are not versions', () => {
+    expect(nvmBinDirs('/h', ['node', 'lts/*', 'v20.19.4'])).toEqual([
+      '/h/.nvm/versions/node/v20.19.4/bin',
+    ]);
+  });
+
+  it('is empty when nvm has nothing installed', () => {
+    expect(nvmBinDirs('/h', [])).toEqual([]);
+  });
+});
 
 describe('withCommonBinPaths', () => {
   it('prepends the usual CLI bin dirs to a minimal GUI PATH', () => {
@@ -8,7 +34,20 @@ describe('withCommonBinPaths', () => {
     expect(segments).toContain('/Users/tester/.local/bin');
     expect(segments).toContain('/opt/homebrew/bin');
     expect(segments).toContain('/usr/local/bin');
-    expect(segments.slice(-4)).toEqual(['/usr/bin', '/bin', '/usr/sbin', '/sbin']);
+    // The inherited system dirs stay intact and in order after the prepends.
+    // (nvm bin dirs, if this machine has any, are appended after them.)
+    const first = segments.indexOf('/usr/bin');
+    expect(segments.slice(first, first + 4)).toEqual(['/usr/bin', '/bin', '/usr/sbin', '/sbin']);
+  });
+
+  it('appends nvm bin dirs rather than prepending them', () => {
+    // Appending keeps a terminal-launched gateway on the node the user picked.
+    const env = { HOME: '/Users/tester', PATH: '/usr/bin:/bin' };
+    const segments = (withCommonBinPaths(env).PATH || '').split(':');
+    const nvm = segments.filter(p => p.includes('/.nvm/versions/node/'));
+    for (const p of nvm) {
+      expect(segments.indexOf(p)).toBeGreaterThan(segments.indexOf('/usr/bin'));
+    }
   });
 
   it('does not duplicate a path that is already present', () => {
