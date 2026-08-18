@@ -292,7 +292,7 @@ declare global {
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; defaultEffort?: string; env?: Record<string, string> }>>>
         set: (updates: Record<string, { enabled?: boolean; defaultModel?: string; defaultEffort?: string; env?: Record<string, string> }>) => Promise<IpcResult<void>>
-        checkInstalled: (force?: boolean) => Promise<IpcResult<Record<string, { installed: boolean; path?: string }>>>
+        checkInstalled: (force?: boolean) => Promise<IpcResult<{ status: Record<string, { installed: boolean; path?: string }>; conclusive: boolean }>>
         slashCommands: (agent: string) => Promise<IpcResult<Array<{ name: string; description: string; source: 'agent' | 'gateway' | 'skill' }>>>
       }
       chats: {

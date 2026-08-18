@@ -11,6 +11,7 @@ import { decideNotification, createTurnTracker } from './chat-notifications'
 import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from './automation-notifications'
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
+import { AGENT_BINARIES, createInstalledAgentsCache, detectInstalledAgents } from './agent-detect'
 import { SKILL_FILE, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
@@ -689,61 +690,15 @@ function resolveDataRoot(): string {
   return root
 }
 
-// Probing spawns an interactive login shell per agent, so it's too slow to run
-// on every dropdown render. Cache the result for the app's lifetime; the
-// Agents tab's "Recheck" button forces a fresh probe.
-let installedAgentsCache: Record<string, { installed: boolean; path?: string }> | null = null
-let installedAgentsInFlight: Promise<Record<string, { installed: boolean; path?: string }>> | null = null
-
-function getInstalledAgents(force = false): Promise<Record<string, { installed: boolean; path?: string }>> {
-  if (force) { installedAgentsCache = null; installedAgentsInFlight = null }
-  if (installedAgentsCache) return Promise.resolve(installedAgentsCache)
-  // Coalesce concurrent callers (chat picker + Agents tab on startup) onto one probe.
-  if (!installedAgentsInFlight) {
-    installedAgentsInFlight = detectInstalledAgents()
-      .then(r => { installedAgentsCache = r; return r })
-      .finally(() => { installedAgentsInFlight = null })
-  }
-  return installedAgentsInFlight
-}
-
-/**
- * One-shot probe for whether each agent's CLI binary is on PATH. Used by the
- * Settings tab to render an "Installed" chip vs. an "Install" link. We shell
- * out via the user's login shell so PATH includes whatever they've set up
- * interactively (homebrew, nvm, asdf, …); a bare child_process.spawn from
- * Electron sees a much narrower PATH.
- */
-async function detectInstalledAgents(): Promise<Record<string, { installed: boolean; path?: string }>> {
-  const { spawn } = await import('child_process')
-  const binaries: Record<string, string> = {
-    'claude-code': 'claude',
-    'opencode': 'opencode',
-    'codex': 'codex',
-    'pi': 'pi',
-  }
-  const shell = process.env.SHELL || '/bin/zsh'
-  const probe = (bin: string) => new Promise<string | null>(resolve => {
-    // -i -c so login dotfiles (.zshrc, .bash_profile) populate PATH the way
-    // the user expects when they run `claude` in Terminal.
-    const p = spawn(shell, ['-i', '-c', `command -v ${bin}`], { stdio: ['ignore', 'pipe', 'pipe'] })
-    let out = ''
-    p.stdout.on('data', d => { out += d.toString() })
-    const timer = setTimeout(() => { try { p.kill() } catch { /* already gone */ } resolve(null) }, 4000)
-    p.on('close', code => {
-      clearTimeout(timer)
-      const path = out.trim().split('\n').filter(Boolean).pop()
-      resolve(code === 0 && path ? path : null)
-    })
-    p.on('error', () => { clearTimeout(timer); resolve(null) })
+// Probing sources the user's dotfiles, which costs seconds, so the result is
+// cached for the app's lifetime; the Agents tab's "Recheck" button forces a
+// fresh probe. Only conclusive probes are cached — see agent-detect.ts.
+const getInstalledAgents = createInstalledAgentsCache(async () =>
+  detectInstalledAgents({
+    spawn: (await import('child_process')).spawn,
+    shell: process.env.SHELL || '/bin/zsh',
   })
-  const result: Record<string, { installed: boolean; path?: string }> = {}
-  await Promise.all(Object.entries(binaries).map(async ([agent, bin]) => {
-    const p = await probe(bin)
-    result[agent] = p ? { installed: true, path: p } : { installed: false }
-  }))
-  return result
-}
+)
 
 interface SlashCommand {
   name: string
@@ -852,13 +807,7 @@ function writeSlashCache(agent: string, commands: SlashCommand[]): void {
 async function fetchSlashCommands(agent: string): Promise<SlashCommand[]> {
   const { spawn } = await import('child_process')
   const shell = process.env.SHELL || '/bin/zsh'
-  const binaries: Record<string, string> = {
-    'claude-code': 'claude',
-    'opencode': 'opencode',
-    'codex': 'codex',
-    'pi': 'pi',
-  }
-  const bin = binaries[agent]
+  const bin = AGENT_BINARIES[agent]
   if (!bin) return []
 
   const commands: SlashCommand[] = []
