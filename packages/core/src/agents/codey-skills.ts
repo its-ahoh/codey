@@ -1,13 +1,22 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 /** The project-owned source of truth for skills managed by Codey. */
 export const CODEY_SKILLS_SUBDIR = path.join('.codey', 'skills');
 
 /**
- * The smallest set of project skill roots covering every agent Codey runs.
+ * The user-owned source of truth for skills managed by Codey (`~/.codey/skills`).
+ * Global skills follow the user across every workspace; project skills stay
+ * with the repository that needs them.
+ */
+export const CODEY_GLOBAL_SKILLS_SUBDIR = CODEY_SKILLS_SUBDIR;
+
+/**
+ * The smallest set of skill roots covering every agent Codey runs.
  * Claude Code uses its own directory; Codex, OpenCode, and pi all understand
- * the cross-agent `.agents/skills` convention.
+ * the cross-agent `.agents/skills` convention. The same two conventions apply
+ * at project level and under the home directory.
  */
 export const CODEY_SKILL_DISCOVERY_SUBDIRS = [
   path.join('.claude', 'skills'),
@@ -37,17 +46,15 @@ function pointsTo(linkPath: string, sourcePath: string): boolean {
 }
 
 /**
- * Make every top-level Codey skill/collection visible through the native
- * project directories watched by the supported coding agents.
+ * Make every top-level Codey skill/collection under `sourceRoot` visible
+ * through the native discovery directories below `discoveryBase`.
  *
  * Links are created per top-level entry instead of replacing an agent's whole
  * skills directory, so hand-written/native skills remain untouched. Existing
  * names are never overwritten. Relative links keep working when a project is
  * moved as a unit (Windows junctions require an absolute target).
  */
-export async function syncCodeyProjectSkills(workingDir: string): Promise<CodeySkillSyncResult> {
-  const projectRoot = path.resolve(workingDir);
-  const sourceRoot = path.join(projectRoot, CODEY_SKILLS_SUBDIR);
+async function linkCodeySkills(sourceRoot: string, discoveryBase: string): Promise<CodeySkillSyncResult> {
   const result: CodeySkillSyncResult = { sourceRoot, linked: [], existing: [], conflicts: [], removed: [] };
 
   let entries: fs.Dirent[];
@@ -63,7 +70,7 @@ export async function syncCodeyProjectSkills(workingDir: string): Promise<CodeyS
     .map(entry => ({ name: entry.name, dir: path.join(sourceRoot, entry.name) }));
 
   for (const discoverySubdir of CODEY_SKILL_DISCOVERY_SUBDIRS) {
-    const discoveryRoot = path.join(projectRoot, discoverySubdir);
+    const discoveryRoot = path.join(discoveryBase, discoverySubdir);
     await fs.promises.mkdir(discoveryRoot, { recursive: true });
 
     // Remove only broken links whose declared target is inside Codey's own
@@ -108,4 +115,23 @@ export async function syncCodeyProjectSkills(workingDir: string): Promise<CodeyS
   }
 
   return result;
+}
+
+/**
+ * Expose `<project>/.codey/skills` through the project-level directories
+ * watched by the supported coding agents.
+ */
+export async function syncCodeyProjectSkills(workingDir: string): Promise<CodeySkillSyncResult> {
+  const projectRoot = path.resolve(workingDir);
+  return linkCodeySkills(path.join(projectRoot, CODEY_SKILLS_SUBDIR), projectRoot);
+}
+
+/**
+ * Expose `~/.codey/skills` through the user-level directories watched by the
+ * supported coding agents, so a global Codey skill is available in every
+ * project without being copied into any of them.
+ */
+export async function syncCodeyGlobalSkills(home: string = os.homedir()): Promise<CodeySkillSyncResult> {
+  const homeRoot = path.resolve(home);
+  return linkCodeySkills(path.join(homeRoot, CODEY_GLOBAL_SKILLS_SUBDIR), homeRoot);
 }

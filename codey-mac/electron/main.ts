@@ -30,7 +30,7 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { CODEY_SKILLS_SUBDIR, syncCodeyProjectSkills, WorkerManager, WorkspaceManager } from '@codey/core'
+import { CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILLS_SUBDIR, syncCodeyGlobalSkills, syncCodeyProjectSkills, WorkerManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
@@ -1611,6 +1611,17 @@ app.whenReady().then(async () => {
     app.quit()
     return
   }
+
+  // Global Codey skills live in ~/.codey/skills regardless of where the rest
+  // of the data root sits, so the folder exists (and is linked into every
+  // agent's discovery path) before the first agent run.
+  try {
+    const fsMod = await import('fs')
+    const osMod = await import('os')
+    const pathMod = await import('path')
+    await fsMod.promises.mkdir(pathMod.join(osMod.homedir(), CODEY_GLOBAL_SKILLS_SUBDIR), { recursive: true })
+    await syncCodeyGlobalSkills()
+  } catch { /* best-effort: skills stay listed even if linking fails */ }
 
   const browserSession = session.fromPartition(BROWSER_PARTITION, { cache: true })
   browserSitePermissions = new BrowserSitePermissionManager(
@@ -3364,7 +3375,9 @@ app.whenReady().then(async () => {
 
   // ── Skills IPC ────────────────────────────────────────────────────
   const skillPaths: Record<string, { userDirs: string[]; projectSubdirs: string[] }> = {
-    'codey':       { userDirs: [], projectSubdirs: [CODEY_SKILLS_SUBDIR] },
+    // Codey's own skills live globally in ~/.codey/skills and, for skills that
+    // belong to one repository, in <project>/.codey/skills.
+    'codey':       { userDirs: [CODEY_GLOBAL_SKILLS_SUBDIR], projectSubdirs: [CODEY_SKILLS_SUBDIR] },
     'claude-code': { userDirs: ['.claude/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.claude/skills'] },
     // Codex and OpenCode also discover the cross-agent .agents convention.
     'codex':       { userDirs: ['.codex/skills', '.agents/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.codex/skills', '.agents/skills'] },
@@ -3513,8 +3526,13 @@ app.whenReady().then(async () => {
 
       const home = osMod.homedir()
       let projectWorkingDir: string | undefined
+      // Codey skills are exposed to the agents through compatibility links, so
+      // every install refreshes the links for whichever root it wrote into.
+      const relink = async () => {
+        if (projectWorkingDir) await syncCodeyProjectSkills(projectWorkingDir)
+        else if (agentKey === 'codey') await syncCodeyGlobalSkills(home)
+      }
       const getTargetRoot = async (): Promise<string> => {
-        if (agentKey === 'codey' && payload.scope !== 'project') throw new Error('Codey skills are workspace-scoped')
         if (payload.scope === 'user') return configuredUserSkillDirs(agentKey, home, pathMod)[0]
         if (!workspaceManager) throw new Error('No workspace manager')
         const wsName = workspaceManager.getCurrentWorkspace()
@@ -3534,7 +3552,7 @@ app.whenReady().then(async () => {
         const src = resolveUserPath(pathMod, payload.localDir, home)
         if (!fsMod.existsSync(src) || !fsMod.statSync(src).isDirectory()) throw new Error(`Not a directory: ${src}`)
         if (samePath(fsMod, pathMod, src, targetRoot)) {
-          if (projectWorkingDir) await syncCodeyProjectSkills(projectWorkingDir)
+          await relink()
           return { name: pathMod.basename(targetRoot), dir: targetRoot }
         }
         const rootSkillFile = pathMod.join(src, SKILL_FILE)
@@ -3572,7 +3590,7 @@ app.whenReady().then(async () => {
           await fsMod.promises.cp(source.dir, dest, { recursive: true })
           installed.push({ name: source.name, dir: dest })
         }
-        if (projectWorkingDir) await syncCodeyProjectSkills(projectWorkingDir)
+        await relink()
         return installed.length === 1 ? installed[0] : { name: `${installed.length} skills`, dir: targetRoot }
       }
 
@@ -3585,7 +3603,7 @@ app.whenReady().then(async () => {
         const dest = pathMod.join(targetRoot, name)
         if (fsMod.existsSync(dest)) throw new Error(`Skill already exists: ${name}`)
         await execFileAsync('git', ['clone', '--depth', '1', url, dest])
-        if (projectWorkingDir) await syncCodeyProjectSkills(projectWorkingDir)
+        await relink()
         return { name, dir: dest }
       }
 
@@ -3611,6 +3629,7 @@ app.whenReady().then(async () => {
       await fsMod.promises.rm(dir, { recursive: true, force: true })
       const workingDir = getWorkingDir(fsMod, pathMod)
       if (workingDir) await syncCodeyProjectSkills(workingDir)
+      await syncCodeyGlobalSkills()
     })
   )
 

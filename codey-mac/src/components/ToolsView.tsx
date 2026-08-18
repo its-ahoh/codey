@@ -9,11 +9,10 @@ import { UIIcon, type IconName } from './UIIcons'
 
 interface Props { onClose: () => void }
 
-type Tab = 'skills' | 'codeySkills' | 'playbooks' | 'plugins' | 'mcp'
+type Tab = 'skills' | 'playbooks' | 'plugins' | 'mcp'
 
 const TABS: { key: Tab; label: string; icon: IconName }[] = [
   { key: 'skills',  label: 'Skills',  icon: 'sparkle' },
-  { key: 'codeySkills', label: 'Codey Skills', icon: 'workspace' },
   { key: 'playbooks', label: 'Playbooks', icon: 'archive' },
   { key: 'plugins', label: 'Plugins', icon: 'tools' },
   { key: 'mcp', label: 'MCPs', icon: 'server' },
@@ -22,7 +21,6 @@ const TABS: { key: Tab; label: string; icon: IconName }[] = [
 export const ToolsView: React.FC<Props> = ({ onClose }) => {
   const [tab, setTab] = useState<Tab>('skills')
   const [addSkillRequest, setAddSkillRequest] = useState(0)
-  const [addCodeySkillRequest, setAddCodeySkillRequest] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
 
   return (
@@ -63,20 +61,17 @@ export const ToolsView: React.FC<Props> = ({ onClose }) => {
             ><UIIcon name="close" size={12} /></button>
           )}
         </div>
-        {(tab === 'skills' || tab === 'codeySkills') && (
+        {tab === 'skills' && (
           <button
             style={styles.addSkillBtn}
-            onClick={() => tab === 'codeySkills'
-              ? setAddCodeySkillRequest(v => v + 1)
-              : setAddSkillRequest(v => v + 1)}
+            onClick={() => setAddSkillRequest(v => v + 1)}
           >
             <UIIcon name="add" size={15} />Add skill
           </button>
         )}
       </div>
       <div style={styles.body}>
-        {tab === 'skills'  && <SkillsTab addRequest={addSkillRequest} searchQuery={searchQuery} />}
-        {tab === 'codeySkills' && <SkillsTab codey addRequest={addCodeySkillRequest} searchQuery={searchQuery} />}
+        {tab === 'skills' && <SkillsTab addRequest={addSkillRequest} searchQuery={searchQuery} />}
         {tab === 'playbooks' && <PlaybooksTab searchQuery={searchQuery} />}
         {tab === 'plugins' && <PluginsTab searchQuery={searchQuery} />}
         {tab === 'mcp' && <McpTab searchQuery={searchQuery} />}
