@@ -42,11 +42,6 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
     () => playbooks.filter(playbook => matchesToolSearch(searchQuery, playbook.name, playbook.description, playbook.workspace)),
     [playbooks, searchQuery],
   )
-  // Only worth labelling rows by workspace when more than one contributes.
-  const showWorkspace = useMemo(
-    () => new Set(playbooks.map(p => p.workspace)).size > 1,
-    [playbooks],
-  )
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -214,11 +209,9 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
             </div>
           )}
           <div style={{ color: C.fg3, fontSize: 12, display: 'flex', gap: 14 }}>
-            {showWorkspace && (
-              <span title="Workspace this playbook belongs to" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                <UIIcon name="folder" size={11} />{s.workspace}
-              </span>
-            )}
+            <span title="Workspace this playbook belongs to" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <UIIcon name="folder" size={11} />{s.workspace}
+            </span>
             <span>used {s.useCount}×</span>
             <span>last {relativeTime(s.lastUsedAt, Date.now())}</span>
             <span title="Clean runs / corrections" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><UIIcon name="check" size={12} />{s.successSignals.cleanRuns}<UIIcon name="close" size={11} />{s.successSignals.corrections}</span>
