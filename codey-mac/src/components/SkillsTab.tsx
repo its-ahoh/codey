@@ -3,6 +3,7 @@ import { C } from '../theme'
 import { pillButton, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
+import { WorkspaceSelect } from './WorkspaceSelect'
 import { SKILL_SORT_MODES, sortSkills, usageFor, usageLabel } from './skillsSort'
 import type { SkillSortMode } from './skillsSort'
 import type { SkillEntry, SkillUsageMap, SkillsListResult } from '../codey-api'
@@ -37,6 +38,11 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   const [addScope, setAddScope] = useState<'user' | 'project'>('user')
   // Codey installs default to the global root; the project root is offered
   // only when a workspace is open.
+  // Which workspace the "Project" scope means. Empty until the workspace list
+  // loads, at which point it settles on the active one; the user can point it
+  // at any other workspace without switching the whole app over to it.
+  const [workspaces, setWorkspaces] = useState<string[]>([])
+  const [projectWorkspace, setProjectWorkspace] = useState('')
   const [addSource, setAddSource] = useState<'localDir' | 'gitUrl'>('localDir')
   const [addInput, setAddInput] = useState('')
   const [installing, setInstalling] = useState(false)
@@ -61,7 +67,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   )
   const now = Date.now()
   const listKey = codey ? 'codey' : agentFilter
-  const canInstall = addScope === 'user' || data.projectDir !== null
+  const canInstall = addScope === 'user' || (projectWorkspace !== '' && data.projectDir !== null)
 
   // The primary action lives in the parent Tools tab bar; this counter gives
   // that button a clean way to open the existing install form without a second
@@ -73,11 +79,11 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     }
   }, [addRequest])
 
-  const reload = useCallback(async (agent: AgentFilter | 'codey') => {
+  const reload = useCallback(async (agent: AgentFilter | 'codey', workspace: string) => {
     setLoading(true)
     setError(null)
     try {
-      setData(unwrap(await window.codey.skills.list(agent)))
+      setData(unwrap(await window.codey.skills.list(agent, workspace || undefined)))
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {
@@ -105,10 +111,18 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           setAgentFilter(agent)
         }
       }).catch(() => {})
+      Promise.all([window.codey.workspaces.list(), window.codey.workspaces.current()])
+        .then(([all, current]) => {
+          const names = all.ok ? all.data : []
+          setWorkspaces(names)
+          const active = current.ok ? current.data : ''
+          setProjectWorkspace(active && names.includes(active) ? active : names[0] ?? '')
+        })
+        .catch(() => {})
     }
   }, [])
 
-  useEffect(() => { void reload(listKey) }, [listKey, reload])
+  useEffect(() => { void reload(listKey, projectWorkspace) }, [listKey, projectWorkspace, reload])
 
   useEffect(() => {
     if (!copyMenuOpen) return
@@ -133,12 +147,13 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         agent: codey ? 'codey' : agentFilter,
         scope: addScope,
       }
+      if (addScope === 'project') payload.workspace = projectWorkspace
       if (addSource === 'localDir') payload.localDir = addInput.trim()
       else payload.gitUrl = addInput.trim()
       unwrap(await window.codey.skills.install(payload))
       setAddInput('')
       setAdding(false)
-      await reload(listKey)
+      await reload(listKey, projectWorkspace)
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {
@@ -151,7 +166,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     setError(null)
     try {
       unwrap(await window.codey.skills.remove(skill.dir))
-      await reload(listKey)
+      await reload(listKey, projectWorkspace)
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
@@ -199,7 +214,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         failures.push(`${tgt}: ${e?.message ?? String(e)}`)
       }
     }
-    if (targets.includes(agentFilter)) await reload(agentFilter)
+    if (targets.includes(agentFilter)) await reload(agentFilter, projectWorkspace)
     if (failures.length) setCopyState({ label, status: 'error', msg: failures.join('  •  ') })
     else setCopyState({ label, status: 'done' })
   }
@@ -423,6 +438,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
             {codey
               ? `Stored in ${CODEY_GLOBAL_SKILLS_HINT} and discovered by every coding agent`
               : `Installed for ${AGENTS.find(a => a.key === agentFilter)?.label} only`}
+            {projectWorkspace && ` · project skills from ${projectWorkspace}`}
           </div>
         </div>
         <div style={styles.agentMeta}>
@@ -444,7 +460,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
             ? `${filteredSkills.length} of ${data.skills.length} skills`
             : `${data.skills.length} skill${data.skills.length === 1 ? '' : 's'}`}</span>
           <button
-            onClick={() => void reload(listKey)}
+            onClick={() => void reload(listKey, projectWorkspace)}
             disabled={loading || busyDirs.size > 0}
             style={{ ...styles.iconButton, opacity: loading || busyDirs.size > 0 ? 0.5 : 1 }}
             title="Rescan skills"
@@ -479,7 +495,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
               <span style={styles.optionLabel}>Install to</span>
               <div style={styles.smallSwitcher}>
                 {(['user', 'project'] as const).map(s => {
-                  const unavailable = s === 'project' && !data.projectDir
+                  const unavailable = s === 'project' && workspaces.length === 0
                   return (
                     <button
                       key={s}
@@ -490,7 +506,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
                         opacity: unavailable ? 0.38 : 1,
                       }}
                       disabled={unavailable}
-                      title={unavailable ? 'No active workspace' : s === 'user' ? 'Available across projects' : 'Only this project'}
+                      title={unavailable ? 'No workspaces yet' : s === 'user' ? 'Available across projects' : 'Only the selected workspace'}
                     >
                       {s === 'user' ? (codey ? 'Global' : 'User') : 'Project'}
                     </button>
@@ -498,6 +514,18 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
                 })}
               </div>
             </div>
+
+            {addScope === 'project' && (
+              <div style={styles.optionGroup}>
+                <span style={styles.optionLabel}>Workspace</span>
+                <WorkspaceSelect
+                  id="skill-workspace-select"
+                  value={projectWorkspace}
+                  options={workspaces}
+                  onChange={setProjectWorkspace}
+                />
+              </div>
+            )}
 
             <div style={styles.optionGroup}>
               <span style={styles.optionLabel}>Source</span>
@@ -545,9 +573,15 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           </div>
           <div style={styles.destinationHint}>
             Destination: <code style={styles.inlineCode}>{addScope === 'project'
-              ? (data.projectDir ?? (codey ? CODEY_PROJECT_SKILLS_HINT : 'the current workspace'))
+              ? (data.projectDir ?? (codey ? CODEY_PROJECT_SKILLS_HINT : 'the selected workspace'))
               : codey ? CODEY_GLOBAL_SKILLS_HINT : AGENT_SKILL_HINTS[agentFilter]}</code>
-            {!canInstall && <span style={{ color: C.red, marginLeft: 8 }}>Select a workspace first.</span>}
+            {!canInstall && (
+              <span style={{ color: C.red, marginLeft: 8 }}>
+                {projectWorkspace
+                  ? `"${projectWorkspace}" has no working directory.`
+                  : 'Select a workspace first.'}
+              </span>
+            )}
           </div>
         </section>
       ) : null}

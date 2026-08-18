@@ -3401,9 +3401,19 @@ app.whenReady().then(async () => {
     return [...configured, ...paths.userDirs.map(rel => pathMod.join(home, rel))]
   }
 
-  function getWorkingDir(fsMod: typeof import('fs'), pathMod: typeof import('path')): string | null {
+  /**
+   * Working directory of a NAMED workspace, or of the active one when no name
+   * is given. Unlike WorkspaceManager.getWorkingDirFor this does not fall back
+   * to the active workspace for an unknown name: an install must never write
+   * into a repository the user did not pick.
+   */
+  function getWorkingDir(
+    fsMod: typeof import('fs'),
+    pathMod: typeof import('path'),
+    workspace?: string,
+  ): string | null {
     if (!workspaceManager) return null
-    const wsName = workspaceManager.getCurrentWorkspace()
+    const wsName = workspace || workspaceManager.getCurrentWorkspace()
     if (!wsName) return null
     const configPath = pathMod.join(workspaceManager.getWorkspacesRoot(), wsName, 'workspace.json')
     if (!fsMod.existsSync(configPath)) return null
@@ -3413,7 +3423,7 @@ app.whenReady().then(async () => {
     } catch { return null }
   }
 
-  async function listAgentSkills(agentKey: string): Promise<{ skills: ScannedSkill[]; projectDir: string | null }> {
+  async function listAgentSkills(agentKey: string, workspace?: string): Promise<{ skills: ScannedSkill[]; projectDir: string | null }> {
     const fsMod = await import('fs')
     const pathMod = await import('path')
     const osMod = await import('os')
@@ -3437,7 +3447,7 @@ app.whenReady().then(async () => {
     }
 
     let projectDir: string | null = null
-    const workingDir = getWorkingDir(fsMod, pathMod)
+    const workingDir = getWorkingDir(fsMod, pathMod, workspace)
     if (workingDir) {
       for (const rel of paths.projectSubdirs) {
         const dir = pathMod.join(workingDir, rel)
@@ -3488,10 +3498,10 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('skills:list', async (_e, agent?: string) =>
+  ipcMain.handle('skills:list', async (_e, agent?: string, workspace?: string) =>
     wrap(async () => {
       const agentKey = agent ?? 'claude-code'
-      return listAgentSkills(agentKey)
+      return listAgentSkills(agentKey, workspace)
     })
   )
 
@@ -3516,7 +3526,7 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('skills:install', async (_e, payload: { agent?: string; scope: 'user' | 'project'; localDir?: string; gitUrl?: string }) =>
+  ipcMain.handle('skills:install', async (_e, payload: { agent?: string; scope: 'user' | 'project'; workspace?: string; localDir?: string; gitUrl?: string }) =>
     wrap(async () => {
       const fsMod = await import('fs')
       const pathMod = await import('path')
@@ -3535,14 +3545,17 @@ app.whenReady().then(async () => {
       const getTargetRoot = async (): Promise<string> => {
         if (payload.scope === 'user') return configuredUserSkillDirs(agentKey, home, pathMod)[0]
         if (!workspaceManager) throw new Error('No workspace manager')
-        const wsName = workspaceManager.getCurrentWorkspace()
+        // A project install targets whichever workspace the user picked, not
+        // whichever one happens to be active.
+        const wsName = payload.workspace || workspaceManager.getCurrentWorkspace()
         if (!wsName) throw new Error('No active workspace')
-        const root = workspaceManager.getWorkspacesRoot()
-        const configPath = pathMod.join(root, wsName, 'workspace.json')
-        const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
-        if (!data.workingDir) throw new Error('Workspace has no working directory')
-        projectWorkingDir = data.workingDir
-        return pathMod.join(data.workingDir, paths.projectSubdirs[0])
+        if (!workspaceManager.listWorkspaces().includes(wsName)) {
+          throw new Error(`Unknown workspace: ${wsName}`)
+        }
+        const workingDir = getWorkingDir(fsMod, pathMod, wsName)
+        if (!workingDir) throw new Error(`Workspace "${wsName}" has no working directory`)
+        projectWorkingDir = workingDir
+        return pathMod.join(workingDir, paths.projectSubdirs[0])
       }
 
       const targetRoot = await getTargetRoot()
@@ -3627,7 +3640,14 @@ app.whenReady().then(async () => {
       const fsMod = await import('fs')
       const pathMod = await import('path')
       await fsMod.promises.rm(dir, { recursive: true, force: true })
-      const workingDir = getWorkingDir(fsMod, pathMod)
+      // Relink the project the skill actually lived in, which is not
+      // necessarily the active workspace once installs can target any of them.
+      const removed = pathMod.resolve(dir)
+      const owning = (workspaceManager?.listWorkspaces() ?? [])
+        .map(name => getWorkingDir(fsMod, pathMod, name))
+        .filter((wd): wd is string => wd !== null)
+        .find(wd => removed.startsWith(`${pathMod.resolve(wd)}${pathMod.sep}`))
+      const workingDir = owning ?? getWorkingDir(fsMod, pathMod)
       if (workingDir) await syncCodeyProjectSkills(workingDir)
       await syncCodeyGlobalSkills()
     })
