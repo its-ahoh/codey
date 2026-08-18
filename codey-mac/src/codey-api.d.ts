@@ -284,8 +284,8 @@ declare global {
         restore: (workspace: string, name: string) => Promise<IpcResult<void>>
         delete: (workspace: string, name: string) => Promise<IpcResult<void>>
         rollback: (workspace: string, name: string) => Promise<IpcResult<number>>
-        /** Writes SKILL.md into every skill dir the agents discover — `dirs`
-         *  is one entry per agent convention covered. */
+        /** Writes one durable SKILL.md under the project's `.codey/skills`.
+         *  Codey exposes it to agents through compatibility links. */
         promote: (workspace: string, name: string) => Promise<IpcResult<{ name: string; dirs: string[] }>>
       }
       agents: {

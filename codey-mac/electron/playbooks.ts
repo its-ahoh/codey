@@ -91,27 +91,6 @@ export function rollbackPlaybook(store: SkillStore, name: string): number {
   return store.get(name)!.version;
 }
 
-/** The cross-agent skill convention: an agent that lists it discovers skills
- *  any other such agent wrote. */
-const SHARED_SKILL_DIR = '.agents/skills';
-
-/** Smallest set of project-relative skill directories that EVERY agent
- *  discovers. Agents honouring `.agents/skills` collapse onto that one entry;
- *  the rest (claude-code) need their own. Takes the path table as an argument
- *  so adding an agent there keeps promotion correct without touching this. */
-export function crossAgentSkillDirs(
-  skillPaths: Record<string, { projectSubdirs: string[] }>,
-): string[] {
-  const dirs = new Set<string>();
-  for (const paths of Object.values(skillPaths)) {
-    if (paths.projectSubdirs.length === 0) continue;
-    dirs.add(paths.projectSubdirs.includes(SHARED_SKILL_DIR)
-      ? SHARED_SKILL_DIR
-      : paths.projectSubdirs[0]);
-  }
-  return [...dirs];
-}
-
 function renderSkill(name: string, description: string, whenToUse: string, steps: string): string {
   return `---
 name: ${JSON.stringify(name)}
@@ -161,8 +140,7 @@ export async function promotePlaybook(
     }
     if (!store.promoteToSkill(name)) throw new Error(`Playbook not found: ${name}`);
   } catch (error) {
-    // All-or-nothing: a skill half-written across agent conventions is worse
-    // than none, since only some agents would ever see it.
+    // Track and clean up only paths created during this attempt.
     for (const dir of created) {
       await fs.promises.rm(dir, { recursive: true, force: true });
     }

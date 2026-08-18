@@ -30,8 +30,8 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { WorkerManager, WorkspaceManager } from '@codey/core'
-import { listPlaybooks, playbookDetail, playbookHistory, crossAgentSkillDirs, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
+import { CODEY_SKILLS_SUBDIR, syncCodeyProjectSkills, WorkerManager, WorkspaceManager } from '@codey/core'
+import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
@@ -3364,11 +3364,11 @@ app.whenReady().then(async () => {
 
   // ── Skills IPC ────────────────────────────────────────────────────
   const skillPaths: Record<string, { userDirs: string[]; projectSubdirs: string[] }> = {
-    'claude-code': { userDirs: ['.claude/skills'], projectSubdirs: ['.claude/skills'] },
+    'claude-code': { userDirs: ['.claude/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.claude/skills'] },
     // Codex and OpenCode also discover the cross-agent .agents convention.
-    'codex':       { userDirs: ['.codex/skills', '.agents/skills'], projectSubdirs: ['.codex/skills', '.agents/skills'] },
-    'opencode':    { userDirs: ['.config/opencode/skills', '.opencode/skills', '.agents/skills'], projectSubdirs: ['.opencode/skills', '.agents/skills'] },
-    'pi':          { userDirs: ['.pi/agent/skills', '.agents/skills'], projectSubdirs: ['.pi/skills', '.agents/skills'] },
+    'codex':       { userDirs: ['.codex/skills', '.agents/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.codex/skills', '.agents/skills'] },
+    'opencode':    { userDirs: ['.config/opencode/skills', '.opencode/skills', '.agents/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.opencode/skills', '.agents/skills'] },
+    'pi':          { userDirs: ['.pi/agent/skills', '.agents/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.pi/skills', '.agents/skills'] },
   }
 
   function configuredUserSkillDirs(agentKey: string, home: string, pathMod: typeof import('path')): string[] {
@@ -3511,6 +3511,7 @@ app.whenReady().then(async () => {
       const paths = skillPaths[agentKey] ?? skillPaths['claude-code']
 
       const home = osMod.homedir()
+      let projectWorkingDir: string | undefined
       const getTargetRoot = async (): Promise<string> => {
         if (payload.scope === 'user') return configuredUserSkillDirs(agentKey, home, pathMod)[0]
         if (!workspaceManager) throw new Error('No workspace manager')
@@ -3520,6 +3521,7 @@ app.whenReady().then(async () => {
         const configPath = pathMod.join(root, wsName, 'workspace.json')
         const data = JSON.parse(fsMod.readFileSync(configPath, 'utf-8'))
         if (!data.workingDir) throw new Error('Workspace has no working directory')
+        projectWorkingDir = data.workingDir
         return pathMod.join(data.workingDir, paths.projectSubdirs[0])
       }
 
@@ -3530,6 +3532,7 @@ app.whenReady().then(async () => {
         const src = resolveUserPath(pathMod, payload.localDir, home)
         if (!fsMod.existsSync(src) || !fsMod.statSync(src).isDirectory()) throw new Error(`Not a directory: ${src}`)
         if (samePath(fsMod, pathMod, src, targetRoot)) {
+          if (projectWorkingDir) await syncCodeyProjectSkills(projectWorkingDir)
           return { name: pathMod.basename(targetRoot), dir: targetRoot }
         }
         const rootSkillFile = pathMod.join(src, SKILL_FILE)
@@ -3567,6 +3570,7 @@ app.whenReady().then(async () => {
           await fsMod.promises.cp(source.dir, dest, { recursive: true })
           installed.push({ name: source.name, dir: dest })
         }
+        if (projectWorkingDir) await syncCodeyProjectSkills(projectWorkingDir)
         return installed.length === 1 ? installed[0] : { name: `${installed.length} skills`, dir: targetRoot }
       }
 
@@ -3579,6 +3583,7 @@ app.whenReady().then(async () => {
         const dest = pathMod.join(targetRoot, name)
         if (fsMod.existsSync(dest)) throw new Error(`Skill already exists: ${name}`)
         await execFileAsync('git', ['clone', '--depth', '1', url, dest])
+        if (projectWorkingDir) await syncCodeyProjectSkills(projectWorkingDir)
         return { name, dir: dest }
       }
 
@@ -3600,7 +3605,10 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (typeof dir !== 'string' || !dir) throw new Error('Invalid path')
       const fsMod = await import('fs')
+      const pathMod = await import('path')
       await fsMod.promises.rm(dir, { recursive: true, force: true })
+      const workingDir = getWorkingDir(fsMod, pathMod)
+      if (workingDir) await syncCodeyProjectSkills(workingDir)
     })
   )
 
@@ -3642,12 +3650,15 @@ app.whenReady().then(async () => {
       // the playbook's OWN workspace, not whichever one is currently active.
       const workingDir = playbookWorkspaces().getWorkingDirFor(workspace)
       if (!workingDir) throw new Error(`Workspace "${workspace}" has no working directory.`)
-      // A promoted playbook is a coding skill for the PROJECT, not for whichever
-      // agent happens to be the default today — so write the smallest set of
-      // directories that every agent discovers.
-      const targetRoots = crossAgentSkillDirs(skillPaths)
-        .map(rel => pathMod.join(workingDir, rel))
-      return promotePlaybook(await playbookStore(workspace), name, targetRoots)
+      // The durable copy lives once under `.codey/skills`; compatibility links
+      // expose it through every agent's native discovery convention.
+      const result = await promotePlaybook(
+        await playbookStore(workspace),
+        name,
+        [pathMod.join(workingDir, CODEY_SKILLS_SUBDIR)],
+      )
+      await syncCodeyProjectSkills(workingDir)
+      return result
     }));
 
   // ── Conversations IPC ─────────────────────────────────────────────
