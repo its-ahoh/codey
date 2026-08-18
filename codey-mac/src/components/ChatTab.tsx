@@ -84,6 +84,12 @@ const StopIcon: React.FC<{ color: string }> = ({ color }) => (
   </svg>
 )
 
+const ArrowDownIcon: React.FC<{ color: string }> = ({ color }) => (
+  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 5v14M6 13l6 6 6-6" />
+  </svg>
+)
+
 const fmtTime = (ts: number) =>
   new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 
@@ -813,6 +819,11 @@ const TeamRunGroup: React.FC<{
   )
 }
 
+// Slack-style scroll following: anything within this many pixels of the bottom
+// counts as "pinned to the latest message", so tiny sub-pixel gaps and the odd
+// rounding error don't break the follow.
+const BOTTOM_STICK_PX = 24
+
 export const ChatTab: React.FC<Props> = ({
   chatId, isGatewayRunning, coreFailed,
   rightPanelMode, onRightPanelModeChange, rightPanelWidth, onRightPanelResize,
@@ -1151,32 +1162,46 @@ export const ChatTab: React.FC<Props> = ({
   // A fresh prompt clears any pending multi-select picks from a prior question.
   useEffect(() => { setMultiChoice([]) }, [chatId, lastMsg?.id])
 
+  // Whether the transcript is currently following new content. Kept in a ref so
+  // the growth effect below reads it without re-subscribing on every scroll.
+  const stickToBottomRef = useRef(true)
+
   const updateLatestMessageVisibility = useCallback(() => {
     const messages = messagesRef.current
     if (!messages) return
     const distanceFromBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight
-    setShowLatestMessage(distanceFromBottom > 2)
+    const pinned = distanceFromBottom <= BOTTOM_STICK_PX
+    stickToBottomRef.current = pinned
+    setShowLatestMessage(!pinned)
   }, [])
 
-  // ChatTab is remounted for every chat selection. This is the one place where
-  // the transcript deliberately jumps: entering a chat always opens at its
-  // latest message. Updates inside that chat only refresh the button below;
-  // they never take control of the user's scroll position.
+  // ChatTab is remounted for every chat selection: entering a chat always opens
+  // at its latest message, following from there.
   useLayoutEffect(() => {
     const messages = messagesRef.current
     if (!messages) return
     messages.scrollTop = messages.scrollHeight
+    stickToBottomRef.current = true
     setShowLatestMessage(false)
   }, [chatId])
 
+  // New messages and streaming growth: keep the view glued to the bottom while
+  // the user is already there, and otherwise leave their scroll position alone
+  // and offer the jump button instead.
   useEffect(() => {
-    const frame = requestAnimationFrame(updateLatestMessageVisibility)
+    const frame = requestAnimationFrame(() => {
+      const messages = messagesRef.current
+      if (messages && stickToBottomRef.current) messages.scrollTop = messages.scrollHeight
+      updateLatestMessageVisibility()
+    })
     return () => cancelAnimationFrame(frame)
   }, [chat?.messages?.length, lastMsg?.content, lastMsg?.toolCalls?.length, chat?.contextPanelOpen, updateLatestMessageVisibility])
 
   const scrollToLatestMessage = useCallback(() => {
     const messages = messagesRef.current
     if (!messages) return
+    stickToBottomRef.current = true
+    setShowLatestMessage(false)
     messages.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' })
   }, [])
   useEffect(() => {
@@ -2426,8 +2451,9 @@ export const ChatTab: React.FC<Props> = ({
             style={styles.latestMessageButton}
             onClick={scrollToLatestMessage}
             aria-label="Jump to latest message"
+            title="Jump to latest message"
           >
-            Lastest Message ↓
+            <ArrowDownIcon color={C.fg} />
           </button>
         )}
         {showSlashMenu && (
@@ -2916,12 +2942,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   inputContainer: { padding: '12px max(16px, 4%) 16px', borderTop: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, background: C.surface },
   latestMessageButton: {
-    position: 'absolute' as const, top: 0, left: '50%', zIndex: 20,
-    transform: 'translate(-50%, -50%)',
-    padding: '6px 12px', borderRadius: 999,
+    position: 'absolute' as const, bottom: 'calc(100% + 8px)', left: '50%', zIndex: 20,
+    transform: 'translateX(-50%)',
+    width: 32, height: 32, padding: 0, borderRadius: '50%',
     border: `1px solid ${C.border2}`, background: C.surface2, color: C.fg,
     boxShadow: '0 5px 16px rgba(0,0,0,0.24)',
-    fontSize: 11, fontWeight: 650, cursor: 'pointer', whiteSpace: 'nowrap' as const,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'pointer',
   },
   composer: {
     background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 14,

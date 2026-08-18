@@ -292,6 +292,15 @@ export class SkillStore {
     return true;
   }
 
+  /** Permanently remove a playbook and all of its stored version/evolution data. */
+  remove(name: string): boolean {
+    const index = this.index.entries.findIndex(e => e.name === name);
+    if (index === -1) return false;
+    this.index.entries.splice(index, 1);
+    this.markIndexDirty();
+    return true;
+  }
+
   /** Mark a playbook as a durable agent skill. Promotion also restores a
    *  previously archived playbook so it can continue to be matched/evolved. */
   promoteToSkill(name: string): boolean {

@@ -265,6 +265,13 @@ declare global {
           successSignals: { cleanRuns: number; corrections: number };
           canRollback: boolean;
         }>>>
+        detail: (workspace: string, name: string) => Promise<IpcResult<{
+          name: string;
+          description: string;
+          whenToUse: string;
+          steps: string;
+          version: number;
+        }>>
         history: (workspace: string, name: string) => Promise<IpcResult<Array<{
           at: number;
           kind: 'created' | 'evolved' | 'rolled-back';
@@ -273,10 +280,13 @@ declare global {
           trigger?: { runId: string; promptSummary: string };
           steps: string;
         }>>>
-        forget: (workspace: string, name: string) => Promise<IpcResult<void>>
+        archive: (workspace: string, name: string) => Promise<IpcResult<void>>
         restore: (workspace: string, name: string) => Promise<IpcResult<void>>
+        delete: (workspace: string, name: string) => Promise<IpcResult<void>>
         rollback: (workspace: string, name: string) => Promise<IpcResult<number>>
-        promote: (workspace: string, name: string) => Promise<IpcResult<{ name: string; dir: string }>>
+        /** Writes SKILL.md into every skill dir the agents discover — `dirs`
+         *  is one entry per agent convention covered. */
+        promote: (workspace: string, name: string) => Promise<IpcResult<{ name: string; dirs: string[] }>>
       }
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; defaultEffort?: string; env?: Record<string, string> }>>>

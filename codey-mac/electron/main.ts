@@ -31,7 +31,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
 import { WorkerManager, WorkspaceManager } from '@codey/core'
-import { listPlaybooks, playbookHistory, forgetPlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
+import { listPlaybooks, playbookDetail, playbookHistory, crossAgentSkillDirs, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
@@ -3623,12 +3623,16 @@ app.whenReady().then(async () => {
   }
   ipcMain.handle('playbooks:list', async () =>
     wrap(async () => listPlaybooks(await playbookWorkspaces().getAllSkillStores())));
+  ipcMain.handle('playbooks:detail', async (_e, workspace: string, name: string) =>
+    wrap(async () => playbookDetail(await playbookStore(workspace), name)));
   ipcMain.handle('playbooks:history', async (_e, workspace: string, name: string) =>
     wrap(async () => playbookHistory(await playbookStore(workspace), name)));
-  ipcMain.handle('playbooks:forget', async (_e, workspace: string, name: string) =>
-    wrap(async () => forgetPlaybook(await playbookStore(workspace), name)));
+  ipcMain.handle('playbooks:archive', async (_e, workspace: string, name: string) =>
+    wrap(async () => archivePlaybook(await playbookStore(workspace), name)));
   ipcMain.handle('playbooks:restore', async (_e, workspace: string, name: string) =>
     wrap(async () => restorePlaybook(await playbookStore(workspace), name)));
+  ipcMain.handle('playbooks:delete', async (_e, workspace: string, name: string) =>
+    wrap(async () => deletePlaybook(await playbookStore(workspace), name)));
   ipcMain.handle('playbooks:rollback', async (_e, workspace: string, name: string) =>
     wrap(async () => rollbackPlaybook(await playbookStore(workspace), name)));
   ipcMain.handle('playbooks:promote', async (_e, workspace: string, name: string) =>
@@ -3638,10 +3642,12 @@ app.whenReady().then(async () => {
       // the playbook's OWN workspace, not whichever one is currently active.
       const workingDir = playbookWorkspaces().getWorkingDirFor(workspace)
       if (!workingDir) throw new Error(`Workspace "${workspace}" has no working directory.`)
-      const agent = coreConfigManager?.getDefaultAgent() ?? 'claude-code'
-      const paths = skillPaths[agent] ?? skillPaths['claude-code']
-      const targetRoot = pathMod.join(workingDir, paths.projectSubdirs[0])
-      return promotePlaybook(await playbookStore(workspace), name, targetRoot)
+      // A promoted playbook is a coding skill for the PROJECT, not for whichever
+      // agent happens to be the default today — so write the smallest set of
+      // directories that every agent discovers.
+      const targetRoots = crossAgentSkillDirs(skillPaths)
+        .map(rel => pathMod.join(workingDir, rel))
+      return promotePlaybook(await playbookStore(workspace), name, targetRoots)
     }));
 
   // ── Conversations IPC ─────────────────────────────────────────────

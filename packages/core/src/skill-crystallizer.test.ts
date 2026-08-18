@@ -90,6 +90,18 @@ describe('SkillStore', () => {
     expect(store.getActive().length).toBe(1);
   });
 
+  it('remove() permanently deletes a skill entry', async () => {
+    store.add({ name: 's', description: 'd', whenToUse: 'w', steps: 'st' });
+    expect(store.remove('s')).toBe(true);
+    expect(store.remove('s')).toBe(false);
+    expect(store.get('s')).toBeUndefined();
+
+    await store.flush();
+    const reloaded = new SkillStore(tmp);
+    await reloaded.load();
+    expect(reloaded.get('s')).toBeUndefined();
+  });
+
   it('recordUse bumps useCount and lastUsedAt', () => {
     store.add({ name: 'test', description: 'd', whenToUse: 'w', steps: 's' });
     const before = Date.now();
