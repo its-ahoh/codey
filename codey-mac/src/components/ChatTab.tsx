@@ -258,7 +258,7 @@ const LiveActivity: React.FC<{ toolCalls?: import('../types').ToolCallEntry[] }>
         <span style={styles.liveActivityText}>{headline}</span>
       </div>
       {expanded && canExpand && detailTarget && (
-        <div style={styles.liveActivityDetail}>
+        <div className="tool-detail" style={styles.liveActivityDetail}>
           <ToolDetail rawTool={detailTarget.tool} input={detailTarget.input} output={detailTarget.output} />
         </div>
       )}

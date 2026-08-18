@@ -99,7 +99,7 @@ export const ToolCallList: React.FC<{ toolCalls: ToolCallEntry[]; emptyHint?: st
               )}
             </div>
             {hasDetail && isOpen && (
-              <div style={timelineStyles.detail}>
+              <div className="tool-detail" style={timelineStyles.detail}>
                 <ToolDetail rawTool={r.tool} input={r.input ?? {}} output={r.output} />
                 {!r.done && !r.output && (
                   <div style={timelineStyles.detailLabel}>(no result yet)</div>

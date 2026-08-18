@@ -374,6 +374,10 @@ const Shell: React.FC = () => {
   /* User bubbles do not need a trailing Markdown block gap: it otherwise
      reads as extra bottom padding below short messages. */
   .md-user > :last-child { margin-bottom: 0 !important; }
+  /* Tool-detail labels carry a top margin to separate consecutive blocks. On the
+     first label that margin stacks with the card's padding and reads as a
+     lopsided top gap. */
+  .tool-detail > :first-child { margin-top: 0 !important; }
   /* Find-in-chat (⌘F). The ranges are registered from ChatFindBar via the CSS
      Custom Highlight API, which paints without touching the rendered Markdown.
      The current hit inverts to the accent so it reads apart from the rest. */
