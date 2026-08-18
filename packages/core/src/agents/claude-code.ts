@@ -7,7 +7,7 @@ import { writeClaudeMcpConfig } from './mcp-config';
 import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checklist';
 import { claudeEffortArgs } from './effort';
 
-interface StreamEvent {
+export interface StreamEvent {
   type: string;
   subtype?: string;
   session_id?: string;
@@ -33,6 +33,9 @@ interface StreamEvent {
       name?: string;       // tool_use block: tool name
       id?: string;         // tool_use block: call id
       input?: Record<string, unknown>; // tool_use block: input
+      tool_use_id?: string; // tool_result block in a user message
+      content?: unknown;   // tool_result payload (string or content blocks)
+      is_error?: boolean;
     }>;
   };
   // tool_result event
@@ -50,6 +53,93 @@ interface StreamEvent {
   };
   // permission_denials in result event
   permission_denials?: Array<{ tool_name: string; tool_input?: Record<string, unknown> }>;
+}
+
+export interface ClaudeToolResult {
+  toolUseId?: string;
+  text?: string;
+  isError?: boolean;
+  backgroundTask?: ClaudeBackgroundTask;
+}
+
+export interface ClaudeBackgroundTask {
+  id: string;
+  outputPath?: string;
+}
+
+const FOREGROUND_ONLY_SYSTEM_PROMPT = [
+  'Codey owns the lifecycle of this non-interactive turn and cannot receive deferred wakeups.',
+  'Run every command and subagent in the foreground and wait for it to finish before ending the turn.',
+  'Do not use run_in_background, ScheduleWakeup, detached processes, shell &, nohup, or similar mechanisms.',
+  'If a command cannot finish within this turn, stop it and clearly tell the user what remains.',
+].join(' ');
+
+function toolResultText(content: unknown): string | undefined {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .map(block => {
+      if (typeof block === 'string') return block;
+      if (!block || typeof block !== 'object') return '';
+      const item = block as { text?: unknown; content?: unknown };
+      if (typeof item.text === 'string') return item.text;
+      return typeof item.content === 'string' ? item.content : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+  return text || undefined;
+}
+
+/**
+ * Normalize tool results across Claude CLI stream-json versions.
+ *
+ * Current CLIs emit results as `user.message.content[]` blocks. Older SDK
+ * streams and a few MCP integrations have emitted a top-level `tool_result`
+ * event instead, so retain support for both shapes.
+ */
+export function extractClaudeToolResults(event: StreamEvent): ClaudeToolResult[] {
+  const normalize = (toolUseId: string | undefined, content: unknown, isError: boolean | undefined): ClaudeToolResult => {
+    const text = toolResultText(content);
+    return { toolUseId, text, isError, backgroundTask: extractClaudeBackgroundTask(text) };
+  };
+  if (event.type === 'tool_result') {
+    return [normalize(event.tool_use_id, event.content, event.is_error)];
+  }
+  if (event.type === 'user' && event.tool_use_id) {
+    return [normalize(event.tool_use_id, event.content, event.is_error)];
+  }
+  if (event.type !== 'user' || !Array.isArray(event.message?.content)) return [];
+  return event.message.content
+    .filter(block => block.type === 'tool_result')
+    .map(block => normalize(block.tool_use_id, block.content, block.is_error));
+}
+
+/** Parse both timeout-driven and explicitly requested Bash background results. */
+export function extractClaudeBackgroundTask(text?: string): ClaudeBackgroundTask | undefined {
+  if (!text) return undefined;
+  const id = text.match(/moved to the background \(ID:\s*([^)\s]+)\)/i)?.[1]
+    ?? text.match(/running in background with ID:\s*([^\s.]+)/i)?.[1];
+  if (!id) return undefined;
+  const outputPath = text.match(/Output is being written to:\s*([^\n]+?)(?:\.\s|\n|$)/i)?.[1]?.trim();
+  return { id, ...(outputPath ? { outputPath } : {}) };
+}
+
+/** Keep Claude's shell work inside the lifecycle of the print-mode process. */
+export function applyClaudeForegroundGuard(env: NodeJS.ProcessEnv, turnTimeoutMs = 900_000): void {
+  // This is a correctness requirement: detached tasks are killed when the
+  // non-interactive Claude process exits, so an extraEnv override is unsafe.
+  env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '1';
+
+  // Claude otherwise auto-backgrounds eligible Bash commands after its
+  // 120-second default. Give the command almost the whole Codey turn while
+  // reserving enough time for Claude to consume the result and reply.
+  const boundedTurnTimeout = Number.isFinite(turnTimeoutMs) && turnTimeoutMs > 0
+    ? turnTimeoutMs
+    : 900_000;
+  const graceMs = Math.min(30_000, Math.max(1_000, Math.floor(boundedTurnTimeout / 10)));
+  const bashTimeoutMs = Math.max(1_000, Math.floor(boundedTurnTimeout - graceMs));
+  if (!env.BASH_DEFAULT_TIMEOUT_MS) env.BASH_DEFAULT_TIMEOUT_MS = String(bashTimeoutMs);
+  if (!env.BASH_MAX_TIMEOUT_MS) env.BASH_MAX_TIMEOUT_MS = String(bashTimeoutMs);
 }
 
 export interface ClaudeRunClassification {
@@ -99,10 +189,12 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
 
   async run(request: AgentRequest): Promise<AgentResponse> {
     return new Promise((resolve) => {
+      const timeout = request.timeout || 900000;
       const args = [
         '--verbose',
         '--output-format', 'stream-json',
         '--include-partial-messages',
+        '--append-system-prompt', FOREGROUND_ONLY_SYSTEM_PROMPT,
       ];
       args.push(...claudeEffortArgs(request.effort));
 
@@ -148,6 +240,14 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // User-configured per-agent env wins over credentials — lets power users
       // pin CLAUDE_CONFIG_DIR / ANTHROPIC_AUTH_TOKEN explicitly when needed.
       if (request.extraEnv) Object.assign(env, request.extraEnv);
+
+      // Claude Code background tasks detach from the foreground tool call but
+      // do not survive print-mode teardown. Codey cannot receive a later
+      // completion notification, so the UI would otherwise mark the turn done
+      // even though the requested work never completed. The native CLI switch
+      // removes run_in_background support and the Bash timeout is kept just
+      // inside this turn's own timeout.
+      applyClaudeForegroundGuard(env, timeout);
 
       // MCP tool calls can legitimately block for minutes (e.g. the browser
       // permission gate waits for the user). Default to generous timeouts,
@@ -196,6 +296,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       const states: AgentStateEntry[] = [];
       // Track pending tool_use calls by id so we can pair them with tool_result
       const pendingTools = new Map<string, { name: string; input?: Record<string, unknown> }>();
+      const detachedBackgroundTasks = new Map<string, ClaudeBackgroundTask>();
       const checklist = new ChecklistTracker(request.onStatus);
       let permissionDenials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> = [];
       let userQuestion: AgentResponse['userQuestion'];
@@ -219,6 +320,32 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       let streamedFromDeltas = false;
       const processEvent = (event: StreamEvent) => {
         this.debug(`[claude-code] Event: ${event.type} ${event.subtype || ''}`);
+
+        const toolResults = extractClaudeToolResults(event);
+        for (const toolResult of toolResults) {
+          const pending = toolResult.toolUseId ? pendingTools.get(toolResult.toolUseId) : undefined;
+          const toolName = pending?.name || 'tool';
+          if (toolResult.backgroundTask) {
+            detachedBackgroundTasks.set(toolResult.backgroundTask.id, toolResult.backgroundTask);
+          }
+          const outcome = toolResult.isError || toolResult.backgroundTask ? 'failed' : 'done';
+
+          statusUpdates.push(`${toolName}: ${outcome}`);
+          states.push({
+            source: toolName,
+            status: outcome,
+            input: pending?.input,
+            output: toolResult.text ? toolResult.text.substring(0, 1000) : undefined,
+          });
+          request.onStatus?.({
+            type: 'tool_end',
+            tool: toolName,
+            message: `${toolName}: ${outcome}`,
+            output: toolResult.text,
+          });
+
+          if (toolResult.toolUseId) pendingTools.delete(toolResult.toolUseId);
+        }
 
         if (event.type === 'system' && event.session_id) {
           this.sessionId = event.session_id;
@@ -323,31 +450,6 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
               });
             }
           }
-        } else if (event.type === 'tool_result' || (event.type === 'user' && event.tool_use_id)) {
-          // Tool result — match to pending call
-          const toolId = event.tool_use_id;
-          const pending = toolId ? pendingTools.get(toolId) : undefined;
-          const toolName = pending?.name || 'tool';
-          const resultText = event.content
-            ?.map(c => c.text || c.content || '')
-            .filter(Boolean)
-            .join('\n');
-
-          statusUpdates.push(`${toolName}: done`);
-          states.push({
-            source: toolName,
-            status: 'done',
-            input: pending?.input,
-            output: resultText ? resultText.substring(0, 1000) : undefined,
-          });
-          request.onStatus?.({
-            type: 'tool_end',
-            tool: toolName,
-            message: `${toolName}: done`,
-            output: resultText,
-          });
-
-          if (toolId) pendingTools.delete(toolId);
         } else if (event.type === 'result') {
           if (event.session_id) {
             this.sessionId = event.session_id;
@@ -438,6 +540,20 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           hasUserQuestion: !!userQuestion,
         });
 
+        // Older Claude versions can ignore the foreground switch and return a
+        // background task handle. Such a task is killed during print-mode
+        // teardown, so never turn a friendly assistant sentence into a false
+        // successful completion.
+        if (detachedBackgroundTasks.size > 0) {
+          this.sessionId = undefined;
+          const tasks = [...detachedBackgroundTasks.values()]
+            .map(task => task.outputPath ? `${task.id} (${task.outputPath})` : task.id)
+            .join(', ');
+          const message = `Claude Code detached background task ${tasks}; it did not complete and was stopped when the CLI turn exited. Please retry the command in the foreground.`;
+          safeResolve(this.createResponse(message, false, tokens, finalDuration, statusUpdates, states));
+          return;
+        }
+
         if (userQuestion) {
           const resp = this.createResponse(cls.output || userQuestion.question, true, tokens, finalDuration, statusUpdates, states);
           resp.userQuestion = userQuestion;
@@ -465,7 +581,6 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
 
       // Safety timeout so we don't hang forever if the CLI never responds.
       // Timeout (default 15 minutes)
-      const timeout = request.timeout || 900000;
       setTimeout(() => {
         if (!resolved) {
           childProcess.kill();
