@@ -198,9 +198,11 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
               aria-label={isExpanded ? 'Collapse playbook details' : 'Expand playbook details'}
               aria-expanded={isExpanded}
               onClick={event => { event.stopPropagation(); void toggleExpand(s) }}
-              style={{ ...expandButtonStyle, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+              style={expandButtonStyle}
             >
-              <UIIcon name="chevron" size={16} />
+              <span style={{ ...expandChevronStyle, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                <UIIcon name="chevron" size={16} />
+              </span>
             </button>
           </div>
           {s.description && (
@@ -316,5 +318,13 @@ const expandButtonStyle: React.CSSProperties = {
   placeItems: 'center',
   cursor: 'pointer',
   flexShrink: 0,
-  transition: 'transform 160ms ease, border-color 160ms ease, background 160ms ease',
+  transition: 'border-color 0.15s ease, background 0.15s ease',
+}
+
+// Only the chevron turns; spinning the whole button spun its border and
+// background too, which read as a different animation from every other
+// disclosure in the app.
+const expandChevronStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  transition: 'transform 0.15s ease',
 }

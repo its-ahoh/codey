@@ -35,6 +35,11 @@ export interface VoiceTurnValue extends VoiceApi {
    * back when it arrives.
    */
   beginSpokenTurn: (chatId: string, spoken: string) => void
+  /**
+   * What Esc does: drop the capture (or stop the reply) and close the turn.
+   * `cancel` alone leaves the turn state armed, so UI affordances use this.
+   */
+  abandon: () => void
 }
 
 const VoiceTurnContext = createContext<VoiceTurnValue | null>(null)
@@ -220,7 +225,7 @@ export const VoiceTurnProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return () => window.removeEventListener('keydown', onKey, true)
   }, [voice.state, turn.phase, abandonTurn])
 
-  const value: VoiceTurnValue = { ...voice, toggle, ownerChatId, setTranscriptHandler, beginSpokenTurn }
+  const value: VoiceTurnValue = { ...voice, toggle, ownerChatId, setTranscriptHandler, beginSpokenTurn, abandon: abandonTurn }
   return <VoiceTurnContext.Provider value={value}>{children}</VoiceTurnContext.Provider>
 }
 
