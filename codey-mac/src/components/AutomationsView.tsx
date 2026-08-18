@@ -189,7 +189,7 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
     t.kind === 'team'
       ? `Team · ${t.teamName} · ${t.workspaceName}`
       : [t.workspaceName, t.agent && `${t.agent}${t.model ? ` · ${t.model}` : ''}`].filter(Boolean).join(' · '),
-    t.sandbox && 'Fresh copy',
+    t.sandbox && 'Sandbox',
   ].filter(Boolean).join(' · ')
 
   const attentionCount = automations.filter(a => {

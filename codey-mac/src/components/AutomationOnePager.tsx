@@ -253,7 +253,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
     a.target.kind === 'team'
       ? `Team · ${a.target.workspaceName}`
       : [a.target.agent ?? 'Default agent', a.target.model].filter(Boolean).join(' · '),
-    a.target.sandbox && 'Fresh copy',
+    a.target.sandbox && 'Sandbox',
   ].filter(Boolean).join(' · ')
   const notifyTitle = NOTIFY_OPTIONS.find(option => option.value === a.report.notify)?.label ?? 'Never'
 
@@ -419,16 +419,16 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
               {a.report.channel && <div style={infoRow}><span>Channel delivery</span><strong>{a.report.channel.platform}</strong></div>}
             </DetailCard>
 
-            <DetailCard title="Details" description="Where runs happen, plus record metadata.">
+            <DetailCard title="Details" description="Execution target and record metadata.">
               <div style={settingRow}>
-                <span style={settingLabel}>Where it runs</span>
+                <span style={settingLabel}>Checkout</span>
                 <button
-                  type="button" role="switch" aria-label="Automation run location"
+                  type="button" role="switch" aria-label="Automation checkout"
                   aria-checked={knobs.isolated} style={modeControl}
                   onClick={() => setKnobs({ ...knobs, isolated: !knobs.isolated })}
                 >
-                  <span style={modeOption(!knobs.isolated)}>Your checkout</span>
-                  <span style={modeOption(knobs.isolated)}>Fresh copy</span>
+                  <span style={modeOption(!knobs.isolated)}>Shared</span>
+                  <span style={modeOption(knobs.isolated)}>Sandbox</span>
                 </button>
               </div>
               <div style={settingHint}>{knobs.isolated
@@ -442,7 +442,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
 
           {knobsDirty && (
             <div style={saveBar}>
-              <div style={noticeCopy}><strong>Unsaved settings</strong><span>Your schedule, variables, notifications, or run location changed.</span></div>
+              <div style={noticeCopy}><strong>Unsaved settings</strong><span>Your schedule, variables, notifications, or checkout changed.</span></div>
               <div style={{ display: 'flex', gap: 7 }}>
                 <button style={pillButton('ghost')} disabled={savingKnobs} onClick={() => setKnobs(knobsFrom(a))}>Discard</button>
                 <button style={pillButton('primary')} disabled={savingKnobs} onClick={() => void saveKnobs()}>{savingKnobs ? 'Saving…' : 'Save settings'}</button>

@@ -146,7 +146,7 @@ describe('knobsFrom', () => {
     })
   })
 
-  it('reads the run location off the target', () => {
+  it('reads the checkout mode off the target', () => {
     expect(knobsFrom({ ...base, target: { sandbox: true } }).isolated).toBe(true)
   })
 
@@ -203,7 +203,7 @@ describe('knobsEqual', () => {
     expect(knobsEqual({ ...knobsFrom(auto), scheduleOn: false }, auto)).toBe(false)
   })
 
-  it('is false when the run location differs', () => {
+  it('is false when the checkout mode differs', () => {
     expect(knobsEqual({ ...knobsFrom(auto), isolated: true }, auto)).toBe(false)
     const isolatedAuto = { ...auto, target: { sandbox: true } }
     expect(knobsEqual(knobsFrom(isolatedAuto), isolatedAuto)).toBe(true)
