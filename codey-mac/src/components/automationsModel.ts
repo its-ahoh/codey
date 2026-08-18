@@ -169,6 +169,8 @@ export interface Knobs {
   scheduleOn: boolean
   slots: ScheduleSlotInput[]
   notify: NotifyMode
+  /** true = each run gets a throwaway worktree; false = the workspace checkout. */
+  isolated: boolean
 }
 
 interface KnobSource {
@@ -176,6 +178,7 @@ interface KnobSource {
   params: Record<string, string>
   schedule?: ScheduleLike
   report: { notify: NotifyMode }
+  target?: { sandbox?: boolean }
 }
 
 /** Seed knobs from an automation. Days are sorted so an unsorted persisted
@@ -188,6 +191,7 @@ export function knobsFrom(a: KnobSource): Knobs {
       ? a.schedule.slots.map(slot => ({ time: formatHHMM(slot.hour, slot.minute), days: [...(slot.daysOfWeek ?? [])].sort((x, y) => x - y) }))
       : [{ time: '09:00', days: [] }],
     notify: a.report.notify,
+    isolated: !!a.target?.sandbox,
   }
 }
 
@@ -202,6 +206,7 @@ export function knobsEqual(k: Knobs, a: KnobSource): boolean {
     const actual = (a.schedule?.slots ?? []).map(slot => ({ time: formatHHMM(slot.hour, slot.minute), days: [...(slot.daysOfWeek ?? [])] }))
     if (JSON.stringify(canonical(k.slots)) !== JSON.stringify(canonical(actual))) return false
   }
+  if (k.isolated !== !!a.target?.sandbox) return false
   return k.notify === a.report.notify
 }
 
