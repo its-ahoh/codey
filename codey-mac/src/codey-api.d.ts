@@ -249,9 +249,10 @@ declare global {
         setEnabled: (name: string, enabled: boolean) => Promise<IpcResult<void>>
       }
       skills: {
-        list: (agent?: string) => Promise<IpcResult<SkillsListResult>>
+        /** `workspace` selects which project's skills are included; defaults to the active one. */
+        list: (agent?: string, workspace?: string) => Promise<IpcResult<SkillsListResult>>
         usage: (agent?: string) => Promise<IpcResult<SkillUsageMap>>
-        install: (payload: { agent?: string; scope: 'user' | 'project'; localDir?: string; gitUrl?: string }) => Promise<IpcResult<{ name: string; dir: string }>>
+        install: (payload: { agent?: string; scope: 'user' | 'project'; workspace?: string; localDir?: string; gitUrl?: string }) => Promise<IpcResult<{ name: string; dir: string }>>
         remove: (dir: string) => Promise<IpcResult<void>>
         setEnabled: (dir: string, enabled: boolean) => Promise<IpcResult<void>>
         reveal: (dir: string) => Promise<IpcResult<void>>
