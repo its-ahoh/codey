@@ -905,6 +905,15 @@ export const ChatTab: React.FC<Props> = ({
     return () => { stale = true }
   }, [isGatewayRunning, runSettingsOpen])
   const [followLatest, setFollowLatest] = useState(true)
+  // A user bubble keeps its footer (timestamp + actions) hidden until the
+  // pointer is on that message, so a quiet transcript stays quiet.
+  const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
+  // The message being edited in place, plus its working text. Saving sends the
+  // edited text as a fresh turn; the original stays in the transcript.
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState('')
+  // Id of the message whose copy button just fired, so the icon can confirm.
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null)
   // Selected option labels for the active multi-select AskUserQuestion. Reset
   // whenever a new message arrives (the prompt is always the last message).
   const [multiChoice, setMultiChoice] = useState<string[]>([])
@@ -1823,6 +1832,34 @@ export const ChatTab: React.FC<Props> = ({
   const voiceBusy = voiceActiveHere && (voice.state === 'recording' || voice.state === 'transcribing')
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
+  // Retry and edit-and-resend both re-run a past user message. They append a
+  // new turn rather than rewriting history: the agent keeps the whole
+  // conversation as context, and the transcript stays an honest record.
+  const canResend = isGatewayRunning && !coreFailed && !isSending && !orphaned
+  const resendMessage = async (text: string, attachments?: FileAttachment[]) => {
+    if (!canResend) return
+    if (!text.trim() && !attachments?.length) return
+    setFollowLatest(true)
+    await sendMessage(chat.id, text, attachments, turnIdentity)
+  }
+  const copyMessage = async (msg: ChatMessage) => {
+    try {
+      await navigator.clipboard.writeText(msg.content)
+      setCopiedMsgId(msg.id)
+      setTimeout(() => setCopiedMsgId(id => (id === msg.id ? null : id)), 1200)
+    } catch {
+      /* Clipboard denied — nothing useful to say, and an alert would be worse. */
+    }
+  }
+  const startEdit = (msg: ChatMessage) => {
+    setEditingMsgId(msg.id)
+    setEditDraft(msg.content)
+  }
+  const saveEdit = async (msg: ChatMessage) => {
+    const text = editDraft
+    setEditingMsgId(null)
+    await resendMessage(text, msg.attachments)
+  }
   const canSend = isGatewayRunning && !coreFailed && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
   // Three layers when the agent gave us its task list: what it is on, the tool
   // it is running right now, and how far through it is — a bare "Editing…"
@@ -2168,8 +2205,11 @@ export const ChatTab: React.FC<Props> = ({
           const msg = item.message
           const isUser = msg.role === 'user'
           const isSelected = !isUser && msg.id === selectedTurnId && overviewOpen
+          const isEditing = isUser && editingMsgId === msg.id
           return (
             <div key={msg.id}
+              onMouseEnter={isUser ? () => setHoveredMsgId(msg.id) : undefined}
+              onMouseLeave={isUser ? () => setHoveredMsgId(id => (id === msg.id ? null : id)) : undefined}
               onDoubleClick={isUser ? undefined : () => {
                 setSelectedTurnIdState(msg.id)
                 setFollowLatest(false)
@@ -2258,7 +2298,33 @@ export const ChatTab: React.FC<Props> = ({
                   <LiveActivity toolCalls={msg.toolCalls} />
                 )}
                 {(msg.content || (!isUser && msg.userQuestion?.question)) && (() => {
-                  if (isUser) return <UserMessageContent content={msg.content} />
+                  if (isUser) {
+                    if (isEditing) return (
+                      <div style={styles.msgEditBox}>
+                        <textarea
+                          autoFocus
+                          value={editDraft}
+                          onChange={e => setEditDraft(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Escape') { e.preventDefault(); setEditingMsgId(null) }
+                            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void saveEdit(msg) }
+                          }}
+                          rows={Math.min(12, Math.max(2, editDraft.split('\n').length))}
+                          style={styles.msgEditArea}
+                        />
+                        <div style={styles.msgEditActions}>
+                          <button style={styles.msgEditCancel} onClick={() => setEditingMsgId(null)}>Cancel</button>
+                          <button
+                            style={{ ...styles.msgEditSave, opacity: canResend && editDraft.trim() ? 1 : 0.5 }}
+                            disabled={!canResend || !editDraft.trim()}
+                            onClick={() => { void saveEdit(msg) }}
+                            title="Send the edited message (⌘↵)"
+                          >Save & send</button>
+                        </div>
+                      </div>
+                    )
+                    return <UserMessageContent content={msg.content} />
+                  }
                   const text = msg.content || msg.userQuestion?.question || ''
                   const parsed = parseTeamMessage(text)
                   const isStreaming = !!flight && msg === lastMsg
@@ -2424,8 +2490,48 @@ export const ChatTab: React.FC<Props> = ({
                   // MESSAGE_ROW_INSET, so only the remainder is needed there.
                   paddingLeft: isUser ? 0 : TURN_TEXT_INSET - MESSAGE_ROW_INSET,
                   paddingRight: isUser ? USER_BUBBLE_PADDING_X : 0,
+                  // A user footer is revealed on hover. It stays in the layout
+                  // at zero opacity so hovering never nudges the transcript.
+                  ...(isUser ? {
+                    // Pinned to the bubble's right text edge: actions first,
+                    // timestamp last, so the row ends where the bubble ends.
+                    justifyContent: 'flex-end' as const,
+                    opacity: hoveredMsgId === msg.id || isEditing ? 1 : 0,
+                    pointerEvents: (hoveredMsgId === msg.id || isEditing ? 'auto' : 'none') as React.CSSProperties['pointerEvents'],
+                    transition: 'opacity 0.12s ease',
+                  } : null),
                 }}
               >
+                {isUser && !isEditing && (
+                  <div style={styles.msgActions}>
+                    <button
+                      style={styles.msgActionBtn}
+                      onClick={() => { void copyMessage(msg) }}
+                      title="Copy message"
+                      aria-label="Copy message"
+                    >
+                      <UIIcon name={copiedMsgId === msg.id ? 'check' : 'copy'} size={13} color={C.fg3} />
+                    </button>
+                    <button
+                      style={{ ...styles.msgActionBtn, opacity: canResend ? 1 : 0.4, cursor: canResend ? 'pointer' : 'default' }}
+                      disabled={!canResend}
+                      onClick={() => { void resendMessage(msg.content, msg.attachments) }}
+                      title={canResend ? 'Send this message again' : 'Wait for the current turn to finish'}
+                      aria-label="Retry message"
+                    >
+                      <UIIcon name="refresh" size={13} color={C.fg3} />
+                    </button>
+                    <button
+                      style={{ ...styles.msgActionBtn, opacity: canResend ? 1 : 0.4, cursor: canResend ? 'pointer' : 'default' }}
+                      disabled={!canResend}
+                      onClick={() => startEdit(msg)}
+                      title={canResend ? 'Edit and send again' : 'Wait for the current turn to finish'}
+                      aria-label="Edit message"
+                    >
+                      <UIIcon name="edit" size={13} color={C.fg3} />
+                    </button>
+                  </div>
+                )}
                 <span>{fmtTime(msg.timestamp)}</span>
               </div>
               )}
@@ -2932,6 +3038,28 @@ const styles: Record<string, React.CSSProperties> = {
   // line up with the reply above it, which is inset differently (and from the
   // opposite edge) for user and assistant.
   tsLabel: { color: C.fg3, fontSize: 10, marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  // Hover actions on a user bubble. They share the timestamp's footer row so
+  // revealing them costs no vertical space.
+  msgActions: { display: 'flex', alignItems: 'center', gap: 2 },
+  msgActionBtn: {
+    display: 'grid', placeItems: 'center', width: 20, height: 20, padding: 0,
+    border: 'none', borderRadius: 5, background: 'transparent', cursor: 'pointer',
+  },
+  msgEditBox: { display: 'flex', flexDirection: 'column', gap: 6, minWidth: 260 },
+  msgEditArea: {
+    width: '100%', boxSizing: 'border-box', resize: 'vertical',
+    background: C.bg, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 8,
+    padding: '6px 8px', fontSize: 13, lineHeight: 1.5, fontFamily: 'inherit', outline: 'none',
+  },
+  msgEditActions: { display: 'flex', justifyContent: 'flex-end', gap: 6 },
+  msgEditCancel: {
+    background: 'transparent', color: C.onAccent, border: `1px solid ${C.onAccent}55`,
+    borderRadius: 6, padding: '3px 9px', fontSize: 11, cursor: 'pointer',
+  },
+  msgEditSave: {
+    background: C.bg, color: C.fg, border: 'none',
+    borderRadius: 6, padding: '3px 9px', fontSize: 11, cursor: 'pointer', fontWeight: 600,
+  },
   // modelBadge is still used by team worker messages; tsRight, tsMeta and
   // fallbackBadge moved into TurnHeader with the metadata they styled.
   modelBadge: {
