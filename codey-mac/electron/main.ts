@@ -3610,31 +3610,38 @@ app.whenReady().then(async () => {
 
   // ── Playbooks (crystallizer SkillStore) — distinct from skills:* above,
   //    which manages agent-skill directories on disk. ──────────────────────────
-  function playbookStore() {
+  // The gateway's OWN workspace manager — not main.ts's workspaceManager singleton.
+  function playbookWorkspaces() {
     if (!inProcessGateway) throw new Error('Gateway not initialized');
-    // The gateway's OWN workspace manager — not main.ts's workspaceManager singleton.
-    return inProcessGateway.getWorkspaceManager().getSkillStore();
+    return inProcessGateway.getWorkspaceManager();
+  }
+  // Playbooks are per-workspace state shown in a global tab, so every action
+  // resolves the store of the workspace the renderer named. An empty name
+  // falls back to the active workspace (getSkillStoreFor's own behaviour).
+  function playbookStore(workspace: string) {
+    return playbookWorkspaces().getSkillStoreFor(workspace)
   }
   ipcMain.handle('playbooks:list', async () =>
-    wrap(async () => listPlaybooks(playbookStore())));
-  ipcMain.handle('playbooks:history', async (_e, name: string) =>
-    wrap(async () => playbookHistory(playbookStore(), name)));
-  ipcMain.handle('playbooks:forget', async (_e, name: string) =>
-    wrap(async () => forgetPlaybook(playbookStore(), name)));
-  ipcMain.handle('playbooks:restore', async (_e, name: string) =>
-    wrap(async () => restorePlaybook(playbookStore(), name)));
-  ipcMain.handle('playbooks:rollback', async (_e, name: string) =>
-    wrap(async () => rollbackPlaybook(playbookStore(), name)));
-  ipcMain.handle('playbooks:promote', async (_e, name: string) =>
+    wrap(async () => listPlaybooks(await playbookWorkspaces().getAllSkillStores())));
+  ipcMain.handle('playbooks:history', async (_e, workspace: string, name: string) =>
+    wrap(async () => playbookHistory(await playbookStore(workspace), name)));
+  ipcMain.handle('playbooks:forget', async (_e, workspace: string, name: string) =>
+    wrap(async () => forgetPlaybook(await playbookStore(workspace), name)));
+  ipcMain.handle('playbooks:restore', async (_e, workspace: string, name: string) =>
+    wrap(async () => restorePlaybook(await playbookStore(workspace), name)));
+  ipcMain.handle('playbooks:rollback', async (_e, workspace: string, name: string) =>
+    wrap(async () => rollbackPlaybook(await playbookStore(workspace), name)));
+  ipcMain.handle('playbooks:promote', async (_e, workspace: string, name: string) =>
     wrap(async () => {
       const pathMod = await import('path')
-      if (!inProcessGateway) throw new Error('Gateway not initialized')
-      const workingDir = inProcessGateway.getWorkspaceManager().getWorkingDir()
-      if (!workingDir) throw new Error('The active workspace has no working directory.')
+      // The skill belongs beside the code it describes: use the working dir of
+      // the playbook's OWN workspace, not whichever one is currently active.
+      const workingDir = playbookWorkspaces().getWorkingDirFor(workspace)
+      if (!workingDir) throw new Error(`Workspace "${workspace}" has no working directory.`)
       const agent = coreConfigManager?.getDefaultAgent() ?? 'claude-code'
       const paths = skillPaths[agent] ?? skillPaths['claude-code']
       const targetRoot = pathMod.join(workingDir, paths.projectSubdirs[0])
-      return promotePlaybook(playbookStore(), name, targetRoot)
+      return promotePlaybook(await playbookStore(workspace), name, targetRoot)
     }));
 
   // ── Conversations IPC ─────────────────────────────────────────────

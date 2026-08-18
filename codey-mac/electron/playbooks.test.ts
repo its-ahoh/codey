@@ -25,14 +25,39 @@ describe('playbooks IPC module', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
+  /** The single-workspace view most assertions here care about. */
+  const listed = () => listPlaybooks([{ workspace: 'alpha', store }]);
+
   it('lists summaries with canRollback derived from the rollback stack', () => {
-    const list = listPlaybooks(store);
+    const list = listed();
     expect(list.length).toBe(1);
     expect(list[0]).toMatchObject({
-      name: 'rel', version: 2, archived: false, canRollback: true,
+      workspace: 'alpha', name: 'rel', version: 2, archived: false, canRollback: true,
     });
     store.rollback('rel');
-    expect(listPlaybooks(store)[0]).toMatchObject({ version: 1, canRollback: false });
+    expect(listed()[0]).toMatchObject({ version: 1, canRollback: false });
+  });
+
+  it('aggregates across workspaces, tagging each entry with its own', async () => {
+    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-playbooks-test-b-'));
+    const other = new SkillStore(otherDir);
+    await other.load();
+    // Same NAME as the alpha playbook: names are unique only within a workspace,
+    // so both must survive aggregation as distinct entries.
+    other.add({ name: 'rel', description: 'Other release notes', whenToUse: 'w', steps: 's1' });
+    other.add({ name: 'deploy', description: 'Deploy', whenToUse: 'w', steps: 's1' });
+
+    const list = listPlaybooks([{ workspace: 'alpha', store }, { workspace: 'beta', store: other }]);
+    expect(list.map(p => `${p.workspace}/${p.name}`)).toEqual(['alpha/rel', 'beta/rel', 'beta/deploy']);
+    expect(list[0].description).toBe('Release notes');
+    expect(list[1].description).toBe('Other release notes');
+
+    await other.flush();
+    fs.rmSync(otherDir, { recursive: true, force: true });
+  });
+
+  it('lists nothing when no workspace has playbooks', () => {
+    expect(listPlaybooks([])).toEqual([]);
   });
 
   it('returns the evolution trail for a skill', () => {
@@ -48,9 +73,9 @@ describe('playbooks IPC module', () => {
 
   it('forget archives, restore unarchives', () => {
     forgetPlaybook(store, 'rel');
-    expect(listPlaybooks(store)[0].archived).toBe(true);
+    expect(listed()[0].archived).toBe(true);
     restorePlaybook(store, 'rel');
-    expect(listPlaybooks(store)[0].archived).toBe(false);
+    expect(listed()[0].archived).toBe(false);
   });
 
   it('forget/restore throw for unknown skill', () => {
@@ -60,7 +85,7 @@ describe('playbooks IPC module', () => {
 
   it('rollback restores the prior version and returns it', () => {
     expect(rollbackPlaybook(store, 'rel')).toBe(1);
-    expect(listPlaybooks(store)[0].version).toBe(1);
+    expect(listed()[0].version).toBe(1);
   });
 
   it('rollback throws when there is no prior version', () => {
@@ -76,7 +101,7 @@ describe('playbooks IPC module', () => {
     expect(md).toContain('description: "Release notes"');
     expect(md).toContain('## When to use\n\nw');
     expect(md).toContain('## Procedure\n\ns2');
-    expect(listPlaybooks(store)[0].promotedToSkill).toBe(true);
+    expect(listed()[0].promotedToSkill).toBe(true);
     expect(store.archive('rel')).toBe(false);
   });
 
@@ -86,6 +111,6 @@ describe('playbooks IPC module', () => {
     fs.writeFileSync(path.join(root, 'rel', 'SKILL.md'), 'existing');
     await expect(promotePlaybook(store, 'rel', root)).rejects.toThrow(/already exists/i);
     expect(fs.readFileSync(path.join(root, 'rel', 'SKILL.md'), 'utf-8')).toBe('existing');
-    expect(listPlaybooks(store)[0].promotedToSkill).toBe(false);
+    expect(listed()[0].promotedToSkill).toBe(false);
   });
 });

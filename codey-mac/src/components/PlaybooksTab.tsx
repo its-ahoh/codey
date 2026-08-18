@@ -6,6 +6,9 @@ import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
 
 interface Summary {
+  /** Owning workspace — the list spans all of them, and names collide across
+   *  workspaces, so every row and every action is keyed by (workspace, name). */
+  workspace: string
   name: string
   description: string
   version: number
@@ -17,6 +20,8 @@ interface Summary {
   canRollback: boolean
 }
 
+const rowKey = (s: { workspace: string; name: string }) => `${s.workspace}/${s.name}`
+
 export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
   const [playbooks, setPlaybooks] = useState<Summary[]>([])
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -25,8 +30,13 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const filteredPlaybooks = useMemo(
-    () => playbooks.filter(playbook => matchesToolSearch(searchQuery, playbook.name, playbook.description)),
+    () => playbooks.filter(playbook => matchesToolSearch(searchQuery, playbook.name, playbook.description, playbook.workspace)),
     [playbooks, searchQuery],
+  )
+  // Only worth labelling rows by workspace when more than one contributes.
+  const showWorkspace = useMemo(
+    () => new Set(playbooks.map(p => p.workspace)).size > 1,
+    [playbooks],
   )
 
   const reload = useCallback(async () => {
@@ -43,42 +53,42 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
 
   useEffect(() => { void reload() }, [reload])
 
-  const toggleExpand = useCallback(async (name: string) => {
-    if (expanded === name) { setExpanded(null); return }
+  const toggleExpand = useCallback(async (s: Summary) => {
+    if (expanded === rowKey(s)) { setExpanded(null); return }
     try {
-      const events = unwrap(await window.codey.playbooks.history(name))
+      const events = unwrap(await window.codey.playbooks.history(s.workspace, s.name))
       setTrail(timelineRows(events, Date.now()))
       setOpenSteps(null)
-      setExpanded(name)
+      setExpanded(rowKey(s))
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
   }, [expanded])
 
-  const act = useCallback(async (kind: 'forget' | 'restore' | 'rollback', name: string) => {
+  const act = useCallback(async (kind: 'forget' | 'restore' | 'rollback', s: Summary) => {
     const messages = {
-      forget: `Archive playbook "${name}"? It stops being applied but can be restored.`,
-      restore: `Restore playbook "${name}"?`,
-      rollback: `Roll back "${name}" to its previous version?`,
+      forget: `Archive playbook "${s.name}"? It stops being applied but can be restored.`,
+      restore: `Restore playbook "${s.name}"?`,
+      rollback: `Roll back "${s.name}" to its previous version?`,
     } as const
     if (!confirm(messages[kind])) return
     try {
       // Widen: rollback returns data: number, forget/restore data: void — the
       // raw union collapses unwrap's generic to void and rejects number.
       const res: { ok: true; data: unknown } | { ok: false; error: string } =
-        await window.codey.playbooks[kind](name)
+        await window.codey.playbooks[kind](s.workspace, s.name)
       unwrap(res)
       await reload()
-      if (expanded === name) setExpanded(null) // trail is stale after a mutation
+      if (expanded === rowKey(s)) setExpanded(null) // trail is stale after a mutation
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
   }, [reload, expanded])
 
-  const promote = useCallback(async (name: string) => {
-    if (!confirm(`Turn "${name}" into a project skill? The playbook will no longer be archived automatically.`)) return
+  const promote = useCallback(async (s: Summary) => {
+    if (!confirm(`Turn "${s.name}" into a project skill? The playbook will no longer be archived automatically.`)) return
     try {
-      unwrap(await window.codey.playbooks.promote(name))
+      unwrap(await window.codey.playbooks.promote(s.workspace, s.name))
       await reload()
     } catch (e: any) {
       setError(e?.message ?? String(e))
@@ -125,11 +135,11 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
 
   const renderCard = (s: Summary) => {
     const actions = playbookActions(s)
-    const isExpanded = expanded === s.name
+    const isExpanded = expanded === rowKey(s)
     return (
-      <div key={s.name} style={{ ...cardStyle, opacity: s.archived ? 0.65 : 1 }}>
+      <div key={rowKey(s)} style={{ ...cardStyle, opacity: s.archived ? 0.65 : 1 }}>
         <div
-          onClick={() => void toggleExpand(s.name)}
+          onClick={() => void toggleExpand(s)}
           style={{ cursor: 'pointer' }}
           title={isExpanded ? 'Hide evolution timeline' : 'Show evolution timeline'}
         >
@@ -165,6 +175,11 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
             </div>
           )}
           <div style={{ color: C.fg3, fontSize: 11, display: 'flex', gap: 12 }}>
+            {showWorkspace && (
+              <span title="Workspace this playbook belongs to" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <UIIcon name="folder" size={11} />{s.workspace}
+              </span>
+            )}
             <span>used {s.useCount}×</span>
             <span>last {relativeTime(s.lastUsedAt, Date.now())}</span>
             <span title="Clean runs / corrections" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><UIIcon name="check" size={12} />{s.successSignals.cleanRuns}<UIIcon name="close" size={11} />{s.successSignals.corrections}</span>
@@ -172,16 +187,16 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
           {actions.promote && (
-            <button onClick={() => void promote(s.name)} style={pillButton('primary')}>Turn into skill</button>
+            <button onClick={() => void promote(s)} style={pillButton('primary')}>Turn into skill</button>
           )}
           {actions.forget && (
-            <button onClick={() => void act('forget', s.name)} style={{ ...pillButton('ghost'), color: C.red }}>Forget</button>
+            <button onClick={() => void act('forget', s)} style={{ ...pillButton('ghost'), color: C.red }}>Forget</button>
           )}
           {actions.restore && (
-            <button onClick={() => void act('restore', s.name)} style={pillButton('primary')}>Restore</button>
+            <button onClick={() => void act('restore', s)} style={pillButton('primary')}>Restore</button>
           )}
           {actions.rollback && (
-            <button onClick={() => void act('rollback', s.name)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="refresh" size={14} />Roll back</button>
+            <button onClick={() => void act('rollback', s)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="refresh" size={14} />Roll back</button>
           )}
         </div>
         {isExpanded && renderTimeline()}

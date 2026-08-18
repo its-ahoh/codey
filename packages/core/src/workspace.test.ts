@@ -250,6 +250,28 @@ describe('WorkspaceManager SkillStore', () => {
     const proj = await manager.getSkillStoreFor('proj');
     expect(proj.getActive()[0].name).toBe('weekly-digest');
   });
+
+  it('getAllSkillStores covers every workspace, sharing the live active store', async () => {
+    const all = await manager.getAllSkillStores();
+    expect(all.map(e => e.workspace).sort()).toEqual(['other', 'proj']);
+    const proj = all.find(e => e.workspace === 'proj')!;
+    expect(proj.store).toBe(manager.getSkillStore());
+    expect(proj.store.getActive()[0].name).toBe('weekly-digest');
+    expect(all.find(e => e.workspace === 'other')!.store.getActive()).toEqual([]);
+  });
+
+  it('getWorkingDirFor reads the named workspace, falling back for unknown ones', () => {
+    const otherDir = path.join(root, 'elsewhere');
+    fs.writeFileSync(
+      path.join(wsDir, 'other', 'workspace.json'),
+      JSON.stringify({ workingDir: otherDir }),
+    );
+    expect(manager.getWorkingDirFor('other')).toBe(otherDir);
+    expect(manager.getWorkingDirFor('proj')).toBe(root);
+    // Unknown / empty names fall back to the active workspace rather than throw.
+    expect(manager.getWorkingDirFor('nope')).toBe(manager.getWorkingDir());
+    expect(manager.getWorkingDirFor('')).toBe(manager.getWorkingDir());
+  });
 });
 
 describe('normalizeTeam graph', () => {

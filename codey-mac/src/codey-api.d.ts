@@ -257,13 +257,15 @@ declare global {
         reveal: (dir: string) => Promise<IpcResult<void>>
       }
       playbooks: {
+        /** Aggregated across ALL workspaces — entries are keyed by (workspace, name). */
         list: () => Promise<IpcResult<Array<{
+          workspace: string;
           name: string; description: string; version: number; useCount: number;
           lastUsedAt: number; archived: boolean; promotedToSkill: boolean;
           successSignals: { cleanRuns: number; corrections: number };
           canRollback: boolean;
         }>>>
-        history: (name: string) => Promise<IpcResult<Array<{
+        history: (workspace: string, name: string) => Promise<IpcResult<Array<{
           at: number;
           kind: 'created' | 'evolved' | 'rolled-back';
           fromVersion?: number;
@@ -271,10 +273,10 @@ declare global {
           trigger?: { runId: string; promptSummary: string };
           steps: string;
         }>>>
-        forget: (name: string) => Promise<IpcResult<void>>
-        restore: (name: string) => Promise<IpcResult<void>>
-        rollback: (name: string) => Promise<IpcResult<number>>
-        promote: (name: string) => Promise<IpcResult<{ name: string; dir: string }>>
+        forget: (workspace: string, name: string) => Promise<IpcResult<void>>
+        restore: (workspace: string, name: string) => Promise<IpcResult<void>>
+        rollback: (workspace: string, name: string) => Promise<IpcResult<number>>
+        promote: (workspace: string, name: string) => Promise<IpcResult<{ name: string; dir: string }>>
       }
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; defaultEffort?: string; env?: Record<string, string> }>>>

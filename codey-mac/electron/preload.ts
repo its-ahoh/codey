@@ -135,11 +135,11 @@ contextBridge.exposeInMainWorld('codey', {
   },
   playbooks: {
     list: () => ipcRenderer.invoke('playbooks:list'),
-    history: (name: string) => ipcRenderer.invoke('playbooks:history', name),
-    forget: (name: string) => ipcRenderer.invoke('playbooks:forget', name),
-    restore: (name: string) => ipcRenderer.invoke('playbooks:restore', name),
-    rollback: (name: string) => ipcRenderer.invoke('playbooks:rollback', name),
-    promote: (name: string) => ipcRenderer.invoke('playbooks:promote', name),
+    history: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:history', workspace, name),
+    forget: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:forget', workspace, name),
+    restore: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:restore', workspace, name),
+    rollback: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:rollback', workspace, name),
+    promote: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:promote', workspace, name),
   },
   agents: {
     get: () => ipcRenderer.invoke('agents:get'),
