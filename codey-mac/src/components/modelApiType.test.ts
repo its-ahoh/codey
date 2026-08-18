@@ -21,14 +21,27 @@ describe('modelFitsApiType', () => {
     expect(modelFitsApiType('openai', undefined)).toBe(true)
     expect(modelFitsApiType('all', undefined)).toBe(true)
   })
+
+  it('lets a provider-agnostic agent take either protocol', () => {
+    expect(modelFitsApiType('anthropic', 'all')).toBe(true)
+    expect(modelFitsApiType('openai', 'all')).toBe(true)
+    expect(modelFitsApiType('all', 'all')).toBe(true)
+  })
 })
 
 describe('modelFitsAgent', () => {
   it('routes each known agent to its protocol', () => {
     expect(modelFitsAgent('anthropic', 'claude-code')).toBe(true)
+    expect(modelFitsAgent('openai', 'claude-code')).toBe(false)
+    expect(modelFitsAgent('openai', 'codex')).toBe(true)
     expect(modelFitsAgent('anthropic', 'codex')).toBe(false)
-    expect(modelFitsAgent('openai', 'opencode')).toBe(true)
-    expect(modelFitsAgent('openai', 'pi')).toBe(false)
+  })
+
+  it('lets the provider-agnostic agents take either protocol', () => {
+    for (const agent of ['opencode', 'pi']) {
+      expect(modelFitsAgent('anthropic', agent)).toBe(true)
+      expect(modelFitsAgent('openai', agent)).toBe(true)
+    }
   })
 
   it('makes an "all" model available to every known agent', () => {
