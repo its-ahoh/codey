@@ -339,11 +339,15 @@ export class WorkspaceManager {
    *  per-workspace but the Mac app's Playbooks tab is a global view, so it has
    *  to aggregate rather than read whichever store happens to be active. Loads
    *  each store lazily through `getSkillStoreFor`, so repeat calls are cheap. */
-  async getAllSkillStores(): Promise<Array<{ workspace: string; store: SkillStore }>> {
-    const out: Array<{ workspace: string; store: SkillStore }> = [];
+  async getAllSkillStores(): Promise<Array<{ workspace: string; workingDir: string; store: SkillStore }>> {
+    const out: Array<{ workspace: string; workingDir: string; store: SkillStore }> = [];
     for (const name of this.listWorkspaces()) {
       try {
-        out.push({ workspace: name, store: await this.getSkillStoreFor(name) });
+        out.push({
+          workspace: name,
+          workingDir: this.getWorkingDirFor(name),
+          store: await this.getSkillStoreFor(name),
+        });
       } catch (error) {
         // A single unreadable workspace must not blank the whole global view.
         this.logger.warn(`[Workspace] Skipping skills for "${name}": ${(error as Error).message}`);
