@@ -6,6 +6,7 @@ import { writeOpenCodeMcpConfig } from './mcp-config';
 import { ObservedToolEvent, ToolCallCollector } from './tool-events';
 import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checklist';
 import { opencodeEffortArgs } from './effort';
+import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 
 export interface OpenCodeEvent {
   type: string;
@@ -53,6 +54,14 @@ export function opencodeToolEvent(part: NonNullable<OpenCodeEvent['part']>): Obs
   };
 }
 
+export function isBackgroundOpenCodeTool(part: NonNullable<OpenCodeEvent['part']>): boolean {
+  const input = part.state?.input;
+  if (!input) return false;
+  return input.run_in_background === true
+    || input.background === true
+    || input.detach === true;
+}
+
 export class OpenCodeAdapter extends BaseAgentAdapter {
   name = 'opencode';
   private debug: (msg: string) => void;
@@ -65,7 +74,10 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
 
   async run(request: AgentRequest): Promise<AgentResponse> {
     return new Promise((resolve) => {
-      const args = ['run', '--format', 'json'];
+      // --pure is an official OpenCode boundary: Codey cannot supervise task
+      // IDs owned by external plugins, so external plugins are not loaded in
+      // a foreground-only gateway turn.
+      const args = ['run', '--format', 'json', '--pure'];
       if (request.skipPermissions) {
         args.push('--dangerously-skip-permissions');
       }
@@ -90,7 +102,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
         mcpEnv = mcp.env;
         mcpCleanup = mcp.cleanup;
       }
-      args.push(request.prompt);
+      args.push(withForegroundPolicy(request.prompt));
 
       this.debug(`[opencode] Spawning: opencode ${args.slice(0, -1).join(' ')} "<prompt>"`);
 
@@ -98,6 +110,9 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       // OpenCode is provider-agnostic; default to openai if apiType unset.
       const env = withCommonBinPaths(applyModelEnv({ ...process.env }, request.model, 'openai'));
       if (request.extraEnv) Object.assign(env, request.extraEnv);
+      // User/plugin config must not re-enable OpenCode's own experimental
+      // background-subagent facility for a Codey-owned foreground turn.
+      env.OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS = 'false';
       // Deliberately after extraEnv: plugin MCP config must win even over a
       // user-supplied OPENCODE_CONFIG, or enabled plugins would silently vanish.
       Object.assign(env, mcpEnv);
@@ -105,11 +120,13 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: request.context?.workingDir || undefined,
         env,
+        ...agentSpawnOptions(),
       });
       this.activeProcess = childProcess;
 
       childProcess.on('close', () => {
         mcpCleanup?.();
+        cleanupProcessTreeAfterClose(childProcess);
         this.activeProcess = undefined;
       });
 
@@ -128,10 +145,26 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       // (e.g. `step_start`, `text`, `step_finish`). The first event we see
       // tells us which session OpenCode opened so the gateway can resume it.
       let capturedSessionId: string | undefined;
+      let backgroundViolation: string | undefined;
+      let timeoutTimer: NodeJS.Timeout | undefined;
+      let abortHandler: (() => void) | undefined;
+
+      const activityTimer = setInterval(() => {
+        if (!resolved) {
+          request.onStatus?.({
+            type: 'info',
+            message: 'OpenCode is still working; this CLI reports tool details when each tool finishes.',
+          });
+        }
+      }, 15_000);
+      activityTimer.unref?.();
 
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
           resolved = true;
+          clearInterval(activityTimer);
+          if (timeoutTimer) clearTimeout(timeoutTimer);
+          if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
           resolve(response);
         }
       };
@@ -161,6 +194,10 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
             }
 
             if (event.type === 'tool_use' && event.part) {
+              if (isBackgroundOpenCodeTool(event.part)) {
+                backgroundViolation = `Blocked background tool request: ${event.part.tool ?? 'tool_use'}`;
+                terminateProcessTree(childProcess);
+              }
               const observed = opencodeToolEvent(event.part);
               if (observed) tools.record(observed);
               if (isChecklistTool(event.part.tool)) {
@@ -237,7 +274,11 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
         const duration = Math.round((Date.now() - startTime) / 1000);
 
         const output = textParts.join('');
-        if (output) {
+        if (backgroundViolation) {
+          const resp = this.createResponse(backgroundViolation, false, undefined, duration, statusUpdates, states);
+          resp.sessionId = capturedSessionId;
+          safeResolve(resp);
+        } else if (output) {
           const resp = this.createResponse(output, true, tokens, duration, statusUpdates, states);
           resp.sessionId = capturedSessionId;
           safeResolve(resp);
@@ -260,30 +301,30 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
 
       // Timeout (default 15 minutes)
       const timeout = request.timeout || 900000;
-      setTimeout(() => {
+      timeoutTimer = setTimeout(() => {
         if (!resolved) {
-          childProcess.kill();
+          terminateProcessTree(childProcess);
           const duration = Math.round((Date.now() - startTime) / 1000);
           safeResolve(this.createResponse(`Timeout after ${Math.round(timeout / 60000)} minutes`, false, undefined, duration));
         }
       }, timeout);
 
       if (request.signal) {
-        const onAbort = () => {
+        abortHandler = () => {
           if (resolved) return;
-          try { childProcess.kill('SIGTERM'); } catch { /* already dead */ }
+          terminateProcessTree(childProcess);
           const duration = Math.round((Date.now() - startTime) / 1000);
           safeResolve(this.createResponse('Stopped', false, undefined, duration, statusUpdates, states));
         };
-        if (request.signal.aborted) onAbort();
-        else request.signal.addEventListener('abort', onAbort, { once: true });
+        if (request.signal.aborted) abortHandler();
+        else request.signal.addEventListener('abort', abortHandler, { once: true });
       }
     });
   }
 
   dispose(): void {
     if (this.activeProcess) {
-      this.activeProcess.kill('SIGTERM');
+      terminateProcessTree(this.activeProcess);
       this.activeProcess = undefined;
     }
   }

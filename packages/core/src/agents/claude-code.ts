@@ -6,6 +6,7 @@ import { thinkingDeltaFrom } from './thinking-stream';
 import { writeClaudeMcpConfig } from './mcp-config';
 import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checklist';
 import { claudeEffortArgs } from './effort';
+import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 
 export interface StreamEvent {
   type: string;
@@ -229,7 +230,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       }
 
       // -p with prompt must be last (matches tested CLI format)
-      args.push('-p', request.prompt);
+      args.push('-p', withForegroundPolicy(request.prompt));
 
       // Clean env: remove CLAUDECODE to avoid nested session detection
       const env = { ...process.env };
@@ -267,11 +268,13 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         stdio: [request.interactive ? 'inherit' : 'pipe', 'pipe', request.interactive ? 'inherit' : 'pipe'],
         cwd: request.context?.workingDir || undefined,
         env,
+        ...agentSpawnOptions(),
       });
       this.activeProcess = childProcess;
 
       childProcess.on('close', () => {
         mcpCleanup?.();
+        cleanupProcessTreeAfterClose(childProcess);
         this.activeProcess = undefined;
       });
 
@@ -302,10 +305,14 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       let userQuestion: AgentResponse['userQuestion'];
       let askUserInputJson = '';
       let collectingAskUser = false;
+      let timeoutTimer: NodeJS.Timeout | undefined;
+      let abortHandler: (() => void) | undefined;
 
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
           resolved = true;
+          if (timeoutTimer) clearTimeout(timeoutTimer);
+          if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
           resolve(response);
         }
       };
@@ -386,7 +393,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
                     .map((o: any) => ({ label: o.label, description: o.description })),
                   multiSelect: q.multiSelect === true,
                 };
-                childProcess.kill('SIGTERM');
+                terminateProcessTree(childProcess);
               }
             } catch { /* ignore parse failure */ }
           }
@@ -422,7 +429,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
                   };
                   // Kill the process — it's waiting for interactive input we can't provide.
                   // The gateway will resume the session with the user's answer on the next turn.
-                  childProcess.kill('SIGTERM');
+                  terminateProcessTree(childProcess);
                 }
               }
 
@@ -581,9 +588,9 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
 
       // Safety timeout so we don't hang forever if the CLI never responds.
       // Timeout (default 15 minutes)
-      setTimeout(() => {
+      timeoutTimer = setTimeout(() => {
         if (!resolved) {
-          childProcess.kill();
+          terminateProcessTree(childProcess);
           const duration = Math.round((Date.now() - startTime) / 1000);
           safeResolve(this.createResponse(`Timeout after ${Math.round(timeout / 60000)} minutes`, false, undefined, duration));
         }
@@ -591,15 +598,15 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
 
       // Caller-driven cancellation
       if (request.signal) {
-        const onAbort = () => {
+        abortHandler = () => {
           if (resolved) return;
           this.sessionId = undefined;
-          try { childProcess.kill('SIGTERM'); } catch { /* already dead */ }
+          terminateProcessTree(childProcess);
           const duration = Math.round((Date.now() - startTime) / 1000);
           safeResolve(this.createResponse('Stopped', false, undefined, duration, statusUpdates, states));
         };
-        if (request.signal.aborted) onAbort();
-        else request.signal.addEventListener('abort', onAbort, { once: true });
+        if (request.signal.aborted) abortHandler();
+        else request.signal.addEventListener('abort', abortHandler, { once: true });
       }
     });
   }
@@ -610,7 +617,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
 
   dispose(): void {
     if (this.activeProcess) {
-      this.activeProcess.kill('SIGTERM');
+      terminateProcessTree(this.activeProcess);
       this.activeProcess = undefined;
     }
   }

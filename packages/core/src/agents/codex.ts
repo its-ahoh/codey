@@ -10,6 +10,7 @@ import { ToolCallCollector } from './tool-events';
 import { ChecklistTracker, checklistFromCodexItem } from './checklist';
 import { codexMcpArgs } from './mcp-config';
 import { codexEffortArgs, shouldDegradeEffort, withDegradeNotice, type EffortRetryable } from './effort';
+import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 
 /**
  * Codex emits JSONL events to stdout when invoked with `--json`.
@@ -144,7 +145,7 @@ export class CodexAdapter extends BaseAgentAdapter {
       if (request.mcpServers && Object.keys(request.mcpServers).length > 0) {
         args.push(...codexMcpArgs(request.mcpServers));
       }
-      args.push(request.prompt);
+      args.push(withForegroundPolicy(request.prompt));
 
       const { applyModelEnv, withCommonBinPaths } = require('./env') as typeof import('./env');
       const env = withCommonBinPaths(applyModelEnv({ ...process.env }, request.model, 'openai'));
@@ -154,10 +155,12 @@ export class CodexAdapter extends BaseAgentAdapter {
         stdio: ['ignore', 'pipe', 'pipe'],
         env,
         cwd: request.context?.workingDir || undefined,
+        ...agentSpawnOptions(),
       });
       this.activeProcess = childProcess;
 
       childProcess.on('close', () => {
+        cleanupProcessTreeAfterClose(childProcess);
         this.activeProcess = undefined;
       });
 
@@ -169,6 +172,8 @@ export class CodexAdapter extends BaseAgentAdapter {
       let streamedText = '';
       let errorMessage: string | undefined;
       let tokens: AgentResponse['tokens'];
+      let timeoutTimer: NodeJS.Timeout | undefined;
+      let abortHandler: (() => void) | undefined;
       // codex reports finished work, so the collector synthesizes the
       // tool_start the chat surface needs to see a procedure.
       const tools = new ToolCallCollector(request.onStatus);
@@ -179,6 +184,8 @@ export class CodexAdapter extends BaseAgentAdapter {
       const safeResolve = (response: AgentResponse) => {
         if (resolved) return;
         resolved = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
         try { fs.unlinkSync(outFile); } catch { /* best-effort cleanup */ }
         resolve(response);
       };
@@ -335,9 +342,9 @@ export class CodexAdapter extends BaseAgentAdapter {
       });
 
       const timeout = request.timeout || 900000;
-      setTimeout(() => {
+      timeoutTimer = setTimeout(() => {
         if (resolved) return;
-        childProcess.kill();
+        terminateProcessTree(childProcess);
         const duration = Math.round((Date.now() - startTime) / 1000);
         safeResolve({
           success: false,
@@ -348,9 +355,9 @@ export class CodexAdapter extends BaseAgentAdapter {
       }, timeout);
 
       if (request.signal) {
-        const onAbort = () => {
+        abortHandler = () => {
           if (resolved) return;
-          try { childProcess.kill('SIGTERM'); } catch { /* already dead */ }
+          terminateProcessTree(childProcess);
           const duration = Math.round((Date.now() - startTime) / 1000);
           safeResolve({
             success: false,
@@ -361,15 +368,15 @@ export class CodexAdapter extends BaseAgentAdapter {
             states,
           });
         };
-        if (request.signal.aborted) onAbort();
-        else request.signal.addEventListener('abort', onAbort, { once: true });
+        if (request.signal.aborted) abortHandler();
+        else request.signal.addEventListener('abort', abortHandler, { once: true });
       }
     });
   }
 
   dispose(): void {
     if (this.activeProcess) {
-      this.activeProcess.kill('SIGTERM');
+      terminateProcessTree(this.activeProcess);
       this.activeProcess = undefined;
     }
   }

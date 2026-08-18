@@ -21,7 +21,7 @@ describe('piArgs', () => {
   it('always asks for the JSON event stream and puts the prompt last', () => {
     const args = piArgs(base);
     expect(args.slice(0, 2)).toEqual(['--mode', 'json']);
-    expect(args[args.length - 1]).toBe('hello');
+    expect(args[args.length - 1]).toMatch(/^hello\n\n<codey-runtime-policy>/);
   });
 
   it('resumes a session by id', () => {
