@@ -335,6 +335,35 @@ export class WorkspaceManager {
     return store;
   }
 
+  /** Every workspace's SkillStore, keyed by workspace name. Skills are stored
+   *  per-workspace but the Mac app's Playbooks tab is a global view, so it has
+   *  to aggregate rather than read whichever store happens to be active. Loads
+   *  each store lazily through `getSkillStoreFor`, so repeat calls are cheap. */
+  async getAllSkillStores(): Promise<Array<{ workspace: string; store: SkillStore }>> {
+    const out: Array<{ workspace: string; store: SkillStore }> = [];
+    for (const name of this.listWorkspaces()) {
+      try {
+        out.push({ workspace: name, store: await this.getSkillStoreFor(name) });
+      } catch (error) {
+        // A single unreadable workspace must not blank the whole global view.
+        this.logger.warn(`[Workspace] Skipping skills for "${name}": ${(error as Error).message}`);
+      }
+    }
+    return out;
+  }
+
+  /** Working directory of a NAMED workspace. Falls back to the active one's
+   *  when the name is empty or its `workspace.json` is missing/unreadable. */
+  getWorkingDirFor(workspaceName: string): string {
+    if (!workspaceName || workspaceName === this.currentWorkspace) return this.getWorkingDir();
+    try {
+      const configPath = path.join(this.workspacesDir, workspaceName, 'workspace.json');
+      const data = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as WorkspaceJson;
+      if (data.workingDir) return data.workingDir;
+    } catch { /* fall through to the active workspace */ }
+    return this.getWorkingDir();
+  }
+
   /**
    * User-global memory store, rooted at `~/.codey/` (override via
    * `CODEY_GLOBAL_MEMORY_DIR`). Lazily instantiated and survives workspace

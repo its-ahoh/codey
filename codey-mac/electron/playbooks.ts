@@ -5,7 +5,16 @@ import type { SkillStore, SkillEvolutionEvent } from '@codey/core';
 import * as fs from 'fs';
 import * as path from 'path';
 
+/** A store paired with the workspace it belongs to. The Playbooks tab is a
+ *  global view, so every summary and every action carries its workspace. */
+export interface WorkspaceStore {
+  workspace: string;
+  store: SkillStore;
+}
+
 export interface PlaybookSummary {
+  /** Owning workspace — names are only unique within one. */
+  workspace: string;
   name: string;
   description: string;
   version: number;
@@ -17,8 +26,12 @@ export interface PlaybookSummary {
   canRollback: boolean;
 }
 
-export function listPlaybooks(store: SkillStore): PlaybookSummary[] {
-  return store.getAll().map(s => ({
+/** Aggregate every workspace's playbooks into one list, grouped by workspace
+ *  in the order given. Two workspaces may hold same-named playbooks — they are
+ *  distinct entries, so consumers must key on (workspace, name). */
+export function listPlaybooks(stores: WorkspaceStore[]): PlaybookSummary[] {
+  return stores.flatMap(({ workspace, store }) => store.getAll().map(s => ({
+    workspace,
     name: s.name,
     description: s.description,
     version: s.version,
@@ -28,7 +41,7 @@ export function listPlaybooks(store: SkillStore): PlaybookSummary[] {
     promotedToSkill: s.promotedToSkill === true,
     successSignals: s.successSignals,
     canRollback: s.history.length > 0,
-  }));
+  })));
 }
 
 export function playbookHistory(store: SkillStore, name: string): SkillEvolutionEvent[] {
