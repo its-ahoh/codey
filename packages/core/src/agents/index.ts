@@ -4,6 +4,7 @@ import { ClaudeCodeAdapter } from './claude-code';
 import { OpenCodeAdapter } from './opencode';
 import { CodexAdapter } from './codex';
 import { PiAdapter } from './pi';
+import { syncCodeyProjectSkills } from './codey-skills';
 
 export type { CodingAgentAdapter } from './base';
 export { ClaudeCodeAdapter } from './claude-code';
@@ -11,6 +12,7 @@ export { OpenCodeAdapter } from './opencode';
 export { CodexAdapter } from './codex';
 export { PiAdapter } from './pi';
 export { applyModelEnv } from './env';
+export * from './codey-skills';
 
 /**
  * Attach the in-app browser MCP server to a task-performing agent turn.
@@ -152,6 +154,18 @@ export class AgentFactory {
 
     request = addCodeyBrowserMcp(request, this.pluginEnabledProvider?.('browser') === true);
     request = addExternalMcpServers(request, this.externalMcpProvider?.());
+
+    // `.codey/skills` is Codey's project-level source of truth. Refresh the
+    // lightweight compatibility links immediately before every CLI launch so
+    // skills added by hand are available without restarting Codey.
+    if (request.context?.workingDir) {
+      try {
+        await syncCodeyProjectSkills(request.context.workingDir);
+      } catch {
+        // Skill-link setup must never prevent the user's actual task from
+        // running (read-only projects and restricted filesystems are valid).
+      }
+    }
 
     return adapter.run(request);
   }
