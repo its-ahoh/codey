@@ -56,11 +56,12 @@ export function isApiType(v: unknown): v is ApiType {
 
 /**
  * True when a model of `modelApiType` can drive an agent that speaks
- * `agentApiType`. 'all' fits everything; an undefined want (agent with no
- * declared protocol) accepts anything.
+ * `agentApiType`. 'all' fits everything on either side — an 'all' model
+ * serves any agent, and an 'all' agent (provider-agnostic CLI) accepts any
+ * model; an undefined want (agent with no declared protocol) accepts anything.
  */
 export function modelFitsApiType(modelApiType: ApiType, agentApiType?: ApiType): boolean {
-  if (!agentApiType) return true;
+  if (!agentApiType || agentApiType === 'all') return true;
   return modelApiType === 'all' || modelApiType === agentApiType;
 }
 
