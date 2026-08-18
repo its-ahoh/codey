@@ -252,20 +252,12 @@ describe('WorkspaceManager SkillStore', () => {
   });
 
   it('getAllSkillStores covers every workspace, sharing the live active store', async () => {
-    const otherDir = path.join(root, 'elsewhere');
-    fs.writeFileSync(
-      path.join(wsDir, 'other', 'workspace.json'),
-      JSON.stringify({ workingDir: otherDir }),
-    );
     const all = await manager.getAllSkillStores();
     expect(all.map(e => e.workspace).sort()).toEqual(['other', 'proj']);
     const proj = all.find(e => e.workspace === 'proj')!;
-    expect(proj.workingDir).toBe(root);
     expect(proj.store).toBe(manager.getSkillStore());
     expect(proj.store.getActive()[0].name).toBe('weekly-digest');
-    const other = all.find(e => e.workspace === 'other')!;
-    expect(other.workingDir).toBe(otherDir);
-    expect(other.store.getActive()).toEqual([]);
+    expect(all.find(e => e.workspace === 'other')!.store.getActive()).toEqual([]);
   });
 
   it('getWorkingDirFor reads the named workspace, falling back for unknown ones', () => {

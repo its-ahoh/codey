@@ -261,7 +261,6 @@ declare global {
         /** Aggregated across ALL workspaces — entries are keyed by (workspace, name). */
         list: () => Promise<IpcResult<Array<{
           workspace: string;
-          workingDir: string;
           name: string; description: string; version: number; useCount: number;
           lastUsedAt: number; archived: boolean; promotedToSkill: boolean;
           successSignals: { cleanRuns: number; corrections: number };

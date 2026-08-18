@@ -26,14 +26,13 @@ describe('playbooks IPC module', () => {
   });
 
   /** The single-workspace view most assertions here care about. */
-  const listed = () => listPlaybooks([{ workspace: 'alpha', workingDir: '/projects/alpha', store }]);
+  const listed = () => listPlaybooks([{ workspace: 'alpha', store }]);
 
   it('lists summaries with canRollback derived from the rollback stack', () => {
     const list = listed();
     expect(list.length).toBe(1);
     expect(list[0]).toMatchObject({
-      workspace: 'alpha', workingDir: '/projects/alpha', name: 'rel',
-      version: 2, archived: false, canRollback: true,
+      workspace: 'alpha', name: 'rel', version: 2, archived: false, canRollback: true,
     });
     store.rollback('rel');
     expect(listed()[0]).toMatchObject({ version: 1, canRollback: false });
@@ -48,15 +47,10 @@ describe('playbooks IPC module', () => {
     other.add({ name: 'rel', description: 'Other release notes', whenToUse: 'w', steps: 's1' });
     other.add({ name: 'deploy', description: 'Deploy', whenToUse: 'w', steps: 's1' });
 
-    const list = listPlaybooks([
-      { workspace: 'alpha', workingDir: '/projects/alpha', store },
-      { workspace: 'beta', workingDir: '/projects/beta', store: other },
-    ]);
+    const list = listPlaybooks([{ workspace: 'alpha', store }, { workspace: 'beta', store: other }]);
     expect(list.map(p => `${p.workspace}/${p.name}`)).toEqual(['alpha/rel', 'beta/rel', 'beta/deploy']);
     expect(list[0].description).toBe('Release notes');
-    expect(list[0].workingDir).toBe('/projects/alpha');
     expect(list[1].description).toBe('Other release notes');
-    expect(list[1].workingDir).toBe('/projects/beta');
 
     await other.flush();
     fs.rmSync(otherDir, { recursive: true, force: true });

@@ -9,7 +9,6 @@ interface Summary {
   /** Owning workspace — the list spans all of them, and names collide across
    *  workspaces, so every row and every action is keyed by (workspace, name). */
   workspace: string
-  workingDir: string
   name: string
   description: string
   version: number
@@ -40,13 +39,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const filteredPlaybooks = useMemo(
-    () => playbooks.filter(playbook => matchesToolSearch(
-      searchQuery,
-      playbook.name,
-      playbook.description,
-      playbook.workspace,
-      playbook.workingDir,
-    )),
+    () => playbooks.filter(playbook => matchesToolSearch(searchQuery, playbook.name, playbook.description, playbook.workspace)),
     [playbooks, searchQuery],
   )
 
@@ -215,18 +208,10 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
               {s.description}
             </div>
           )}
-          <div
-            title={`Workspace: ${s.workspace}\nProject folder: ${s.workingDir}`}
-            style={{ color: C.fg3, fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, marginBottom: 8 }}
-          >
-            <UIIcon name="folder" size={11} />
-            <span style={{ flexShrink: 0 }}>{s.workspace}</span>
-            <span>·</span>
-            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
-              {s.workingDir}
-            </span>
-          </div>
           <div style={{ color: C.fg3, fontSize: 12, display: 'flex', gap: 14 }}>
+            <span title="Workspace this playbook belongs to" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <UIIcon name="folder" size={11} />{s.workspace}
+            </span>
             <span>used {s.useCount}×</span>
             <span>last {relativeTime(s.lastUsedAt, Date.now())}</span>
             <span title="Clean runs / corrections" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><UIIcon name="check" size={12} />{s.successSignals.cleanRuns}<UIIcon name="close" size={11} />{s.successSignals.corrections}</span>

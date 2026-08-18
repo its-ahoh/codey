@@ -9,15 +9,12 @@ import * as path from 'path';
  *  global view, so every summary and every action carries its workspace. */
 export interface WorkspaceStore {
   workspace: string;
-  workingDir: string;
   store: SkillStore;
 }
 
 export interface PlaybookSummary {
   /** Owning workspace — names are only unique within one. */
   workspace: string;
-  /** Project directory configured for the owning workspace. */
-  workingDir: string;
   name: string;
   description: string;
   version: number;
@@ -41,9 +38,8 @@ export interface PlaybookDetail {
  *  in the order given. Two workspaces may hold same-named playbooks — they are
  *  distinct entries, so consumers must key on (workspace, name). */
 export function listPlaybooks(stores: WorkspaceStore[]): PlaybookSummary[] {
-  return stores.flatMap(({ workspace, workingDir, store }) => store.getAll().map(s => ({
+  return stores.flatMap(({ workspace, store }) => store.getAll().map(s => ({
     workspace,
-    workingDir,
     name: s.name,
     description: s.description,
     version: s.version,
