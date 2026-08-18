@@ -309,19 +309,19 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
             )}
             <div style={switchRow}>
               <div>
-                <div style={switchTitle}>Where it runs</div>
+                <div style={switchTitle}>Checkout</div>
                 <div style={switchDescription}>{draft.target?.sandbox
                   ? 'Every run gets its own worktree, branched from the workspace’s latest commit'
                   : 'Runs in the workspace checkout, alongside your own work'}</div>
               </div>
               <button
-                type="button" role="switch" aria-label="Automation run location"
+                type="button" role="switch" aria-label="Automation checkout"
                 aria-checked={!!draft.target?.sandbox} disabled={locked || !draft.target}
                 style={modeControl(locked || !draft.target)}
                 onClick={() => setSandbox(!draft.target?.sandbox)}
               >
-                <span style={modeOption(!draft.target?.sandbox)}>Your checkout</span>
-                <span style={modeOption(!!draft.target?.sandbox)}>Fresh copy</span>
+                <span style={modeOption(!draft.target?.sandbox)}>Shared</span>
+                <span style={modeOption(!!draft.target?.sandbox)}>Sandbox</span>
               </button>
             </div>
           </SetupSection>
