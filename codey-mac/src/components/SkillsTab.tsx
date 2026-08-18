@@ -3,6 +3,7 @@ import { C } from '../theme'
 import { pillButton, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
+import { WorkspaceSelect } from './WorkspaceSelect'
 import { SKILL_SORT_MODES, sortSkills, usageFor, usageLabel } from './skillsSort'
 import type { SkillSortMode } from './skillsSort'
 import type { SkillEntry, SkillUsageMap, SkillsListResult } from '../codey-api'
@@ -516,18 +517,13 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
 
             {addScope === 'project' && (
               <div style={styles.optionGroup}>
-                <label style={styles.optionLabel} htmlFor="skill-workspace-select">Workspace</label>
-                <select
+                <span style={styles.optionLabel}>Workspace</span>
+                <WorkspaceSelect
                   id="skill-workspace-select"
                   value={projectWorkspace}
-                  onChange={e => setProjectWorkspace(e.target.value)}
-                  style={styles.workspaceSelect}
-                  title="Install into this workspace's project directory"
-                >
-                  {workspaces.map(name => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
+                  options={workspaces}
+                  onChange={setProjectWorkspace}
+                />
               </div>
             )}
 
@@ -697,11 +693,6 @@ const styles: Record<string, React.CSSProperties> = {
   optionRow: { display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap', marginBottom: 14 },
   optionGroup: { display: 'flex', alignItems: 'center', gap: 9 },
   optionLabel: { color: C.fg3, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' },
-  workspaceSelect: {
-    minHeight: 31, border: `1px solid ${C.border}`, borderRadius: 8, padding: '4px 8px',
-    background: C.bg, color: C.fg, cursor: 'pointer', fontSize: 11, fontWeight: 650,
-    fontFamily: 'inherit', maxWidth: 220,
-  },
   smallSwitcher: {
     display: 'inline-flex', alignItems: 'center', padding: 2, gap: 2,
     borderRadius: 8, background: C.bg, border: `1px solid ${C.border}`,
