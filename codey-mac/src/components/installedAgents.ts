@@ -14,6 +14,11 @@ export type InstalledAgentsState = {
 let snapshot: InstalledAgentsState = { status: null, checking: false }
 const listeners = new Set<() => void>()
 let inFlight: Promise<void> | null = null
+// A probe that failed (timed out, shell broke) left `status` null, so every
+// subsequent mount would retry it. Space those retries out rather than letting
+// N mounting components each pay for a dotfile-sourcing shell.
+let lastFailedAt = 0
+const FAILED_PROBE_COOLDOWN_MS = 30_000
 
 const publish = (next: InstalledAgentsState) => {
   snapshot = next
@@ -34,12 +39,17 @@ export function refreshInstalledAgents(force = false): Promise<void> {
   // along on a call that may have been served from the cache.
   if (inFlight) return force ? inFlight.then(() => refreshInstalledAgents(true)) : inFlight
   if (!force && snapshot.status) return Promise.resolve()
+  if (!force && Date.now() - lastFailedAt < FAILED_PROBE_COOLDOWN_MS) return Promise.resolve()
   publish({ ...snapshot, checking: true })
   inFlight = (async () => {
     try {
       const r = await window.codey.agents.checkInstalled(force)
-      if (r.ok) { publish({ status: r.data, checking: false }); return }
+      // An inconclusive probe is not evidence that nothing is installed, so it
+      // is discarded: `status` stays null and the UI keeps saying "unknown"
+      // instead of greying out every agent until the user hits Recheck.
+      if (r.ok && r.data.conclusive) { publish({ status: r.data.status, checking: false }); return }
     } catch { /* keep whatever snapshot we already had */ }
+    lastFailedAt = Date.now()
     publish({ ...snapshot, checking: false })
   })().finally(() => { inFlight = null })
   return inFlight
