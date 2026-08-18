@@ -3364,6 +3364,7 @@ app.whenReady().then(async () => {
 
   // ── Skills IPC ────────────────────────────────────────────────────
   const skillPaths: Record<string, { userDirs: string[]; projectSubdirs: string[] }> = {
+    'codey':       { userDirs: [], projectSubdirs: [CODEY_SKILLS_SUBDIR] },
     'claude-code': { userDirs: ['.claude/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.claude/skills'] },
     // Codex and OpenCode also discover the cross-agent .agents convention.
     'codex':       { userDirs: ['.codex/skills', '.agents/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.codex/skills', '.agents/skills'] },
@@ -3513,6 +3514,7 @@ app.whenReady().then(async () => {
       const home = osMod.homedir()
       let projectWorkingDir: string | undefined
       const getTargetRoot = async (): Promise<string> => {
+        if (agentKey === 'codey' && payload.scope !== 'project') throw new Error('Codey skills are workspace-scoped')
         if (payload.scope === 'user') return configuredUserSkillDirs(agentKey, home, pathMod)[0]
         if (!workspaceManager) throw new Error('No workspace manager')
         const wsName = workspaceManager.getCurrentWorkspace()

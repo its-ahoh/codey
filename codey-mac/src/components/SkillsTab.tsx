@@ -22,7 +22,7 @@ const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
   'pi': '~/.pi/agent/skills/',
 }
 
-export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> = ({ addRequest = 0, searchQuery = '' }) => {
+export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string; codey?: boolean }> = ({ addRequest = 0, searchQuery = '', codey = false }) => {
   const [data, setData] = useState<SkillsListResult>({ skills: [], projectDir: null })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -51,6 +51,8 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     [data.skills, searchQuery, sortMode, usage],
   )
   const now = Date.now()
+  const listKey = codey ? 'codey' : agentFilter
+  const canInstall = !codey || data.projectDir !== null
 
   // The primary action lives in the parent Tools tab bar; this counter gives
   // that button a clean way to open the existing install form without a second
@@ -62,7 +64,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     }
   }, [addRequest])
 
-  const reload = useCallback(async (agent: AgentFilter) => {
+  const reload = useCallback(async (agent: AgentFilter | 'codey') => {
     setLoading(true)
     setError(null)
     try {
@@ -77,7 +79,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     // The token drops a slow scan whose agent is no longer the selected one.
     const token = ++usageToken.current
     try {
-      const next = unwrap(await window.codey.skills.usage(agent))
+      const next = agent === 'codey' ? {} : unwrap(await window.codey.skills.usage(agent))
       if (token === usageToken.current) setUsage(next)
     } catch {
       if (token === usageToken.current) setUsage({})
@@ -97,7 +99,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     }
   }, [])
 
-  useEffect(() => { void reload(agentFilter) }, [agentFilter, reload])
+  useEffect(() => { void reload(listKey) }, [listKey, reload])
 
   useEffect(() => {
     if (!copyMenuOpen) return
@@ -118,13 +120,16 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     setInstalling(true)
     setError(null)
     try {
-      const payload: Parameters<typeof window.codey.skills.install>[0] = { agent: agentFilter, scope: addScope }
+      const payload: Parameters<typeof window.codey.skills.install>[0] = {
+        agent: codey ? 'codey' : agentFilter,
+        scope: codey ? 'project' : addScope,
+      }
       if (addSource === 'localDir') payload.localDir = addInput.trim()
       else payload.gitUrl = addInput.trim()
       unwrap(await window.codey.skills.install(payload))
       setAddInput('')
       setAdding(false)
-      await reload(agentFilter)
+      await reload(listKey)
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {
@@ -137,7 +142,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     setError(null)
     try {
       unwrap(await window.codey.skills.remove(skill.dir))
-      await reload(agentFilter)
+      await reload(listKey)
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
@@ -227,7 +232,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           background: skill.scope === 'user' ? C.accentDim : C.surface3,
           color: skill.scope === 'user' ? C.accent : C.fg3,
         }}>
-          {skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
+          {codey ? 'Codey' : skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
         </span>
       </div>
       {skill.description && (
@@ -284,7 +289,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
             background: skill.scope === 'user' ? C.accentDim : C.surface3,
             color: skill.scope === 'user' ? C.accent : C.fg3,
           }}>
-            {skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
+            {codey ? 'Codey' : skill.managedBy ? 'Plugin' : skill.scope === 'user' ? 'User' : 'Project'}
           </span>
           <button onClick={() => setSelected(null)} style={{ ...iconBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} title="Close" aria-label="Close"><UIIcon name="close" size={14} /></button>
         </div>
@@ -308,7 +313,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
 
         {error && <div style={{ ...styles.errorBanner, marginBottom: 12 }}>{error}</div>}
 
-        {copyState && (
+        {!codey && copyState && (
           <div style={{
             fontSize: 11, marginBottom: 12,
             color: copyState.status === 'error' ? C.red : copyState.status === 'done' ? C.accent : C.fg3,
@@ -320,7 +325,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         )}
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <div ref={copyRef} style={{ position: 'relative', display: 'flex' }}>
+          {!codey && <div ref={copyRef} style={{ position: 'relative', display: 'flex' }}>
             <button
               onClick={() => handleCopyTo(skill, AGENTS.filter(a => a.key !== agentFilter).map(a => a.key), 'all agents')}
               disabled={copyState?.status === 'copying'}
@@ -357,7 +362,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
                 ))}
               </div>
             )}
-          </div>
+          </div>}
           <span style={{ flex: 1 }} />
           <button onClick={() => handleReveal(skill.dir)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="folder" size={14} />Reveal in Finder</button>
           {!skill.managedBy && (
@@ -376,25 +381,35 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
       {selected && renderDetail(selected)}
       <div style={styles.agentHeader}>
         <div style={{ minWidth: 0 }}>
-          <div style={styles.eyebrow}>Coding agent</div>
-          <div style={styles.agentSwitcher} role="tablist" aria-label="Coding agent">
-            {AGENTS.map(a => {
-              const isSelected = agentFilter === a.key
-              const isActive = activeAgent === a.key
-              return (
-                <button
-                  key={a.key}
-                  role="tab"
-                  aria-selected={isSelected}
-                  onClick={() => setAgentFilter(a.key)}
-                  style={{ ...styles.agentButton, ...(isSelected ? styles.agentButtonSelected : undefined) }}
-                >
-                  {isActive && <span style={styles.activeDot} title="Default agent" />}
-                  {a.label}
-                </button>
-              )
-            })}
-          </div>
+          <div style={styles.eyebrow}>{codey ? 'Shared across coding agents' : 'Coding agent'}</div>
+          {codey ? (
+            <div style={styles.codeyHeading}>
+              <span style={styles.codeyHeadingIcon}><UIIcon name="workspace" size={15} /></span>
+              <div>
+                <div style={styles.codeyHeadingTitle}>Workspace skills</div>
+                <div style={styles.codeyHeadingSubtitle}>Stored in .codey/skills and discovered by every coding agent</div>
+              </div>
+            </div>
+          ) : (
+            <div style={styles.agentSwitcher} role="tablist" aria-label="Coding agent">
+              {AGENTS.map(a => {
+                const isSelected = agentFilter === a.key
+                const isActive = activeAgent === a.key
+                return (
+                  <button
+                    key={a.key}
+                    role="tab"
+                    aria-selected={isSelected}
+                    onClick={() => setAgentFilter(a.key)}
+                    style={{ ...styles.agentButton, ...(isSelected ? styles.agentButtonSelected : undefined) }}
+                  >
+                    {isActive && <span style={styles.activeDot} title="Default agent" />}
+                    {a.label}
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
         <div style={styles.agentMeta}>
           <div style={styles.smallSwitcher} role="tablist" aria-label="Sort skills">
@@ -415,7 +430,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
             ? `${filteredSkills.length} of ${data.skills.length} skills`
             : `${data.skills.length} skill${data.skills.length === 1 ? '' : 's'}`}</span>
           <button
-            onClick={() => void reload(agentFilter)}
+            onClick={() => void reload(listKey)}
             disabled={loading || busyDirs.size > 0}
             style={{ ...styles.iconButton, opacity: loading || busyDirs.size > 0 ? 0.5 : 1 }}
             title="Rescan skills"
@@ -435,7 +450,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           <div style={styles.installHeader}>
             <div>
               <div style={styles.installTitle}>Install a skill</div>
-              <div style={styles.installSubtitle}>Add it to {AGENTS.find(a => a.key === agentFilter)?.label}</div>
+              <div style={styles.installSubtitle}>{codey ? 'Share it with every coding agent in this workspace' : `Add it to ${AGENTS.find(a => a.key === agentFilter)?.label}`}</div>
             </div>
             <button
               onClick={() => { setAdding(false); setAddInput(''); setError(null) }}
@@ -446,7 +461,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           </div>
 
           <div style={styles.optionRow}>
-            <div style={styles.optionGroup}>
+            {!codey && <div style={styles.optionGroup}>
               <span style={styles.optionLabel}>Install to</span>
               <div style={styles.smallSwitcher}>
                 {(['user', 'project'] as const).map(s => {
@@ -468,7 +483,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
                   )
                 })}
               </div>
-            </div>
+            </div>}
 
             <div style={styles.optionGroup}>
               <span style={styles.optionLabel}>Source</span>
@@ -508,14 +523,15 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
             </div>
             <button
               onClick={handleInstall}
-              style={{ ...styles.installButton, opacity: installing || !addInput.trim() ? 0.45 : 1 }}
-              disabled={installing || !addInput.trim()}
+              style={{ ...styles.installButton, opacity: installing || !addInput.trim() || !canInstall ? 0.45 : 1 }}
+              disabled={installing || !addInput.trim() || !canInstall}
             >
               {installing ? 'Installing…' : <><UIIcon name="add" size={14} />Install skill</>}
             </button>
           </div>
           <div style={styles.destinationHint}>
-            Destination: <code style={styles.inlineCode}>{addScope === 'project' && data.projectDir ? data.projectDir : AGENT_SKILL_HINTS[agentFilter]}</code>
+            Destination: <code style={styles.inlineCode}>{codey ? (data.projectDir ?? '.codey/skills') : addScope === 'project' && data.projectDir ? data.projectDir : AGENT_SKILL_HINTS[agentFilter]}</code>
+            {codey && !canInstall && <span style={{ color: C.red, marginLeft: 8 }}>Select a workspace first.</span>}
           </div>
         </section>
       ) : null}
@@ -525,9 +541,9 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
       ) : data.skills.length === 0 ? (
         <div style={styles.emptyState}>
           <div style={{ width: 52, height: 52, margin: '0 auto 12px', borderRadius: 16, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="sparkle" size={24} /></div>
-          <div style={{ fontWeight: 650, color: C.fg, marginBottom: 5 }}>No skills found for {AGENTS.find(a => a.key === agentFilter)?.label}</div>
+          <div style={{ fontWeight: 650, color: C.fg, marginBottom: 5 }}>{codey ? 'No Codey skills found' : `No skills found for ${AGENTS.find(a => a.key === agentFilter)?.label}`}</div>
           <div style={{ fontSize: 12, lineHeight: 1.55 }}>
-            Add a skill or place one in <code style={styles.inlineCode}>{AGENT_SKILL_HINTS[agentFilter]}</code>
+            Add a skill or place one in <code style={styles.inlineCode}>{codey ? (data.projectDir ?? '.codey/skills') : AGENT_SKILL_HINTS[agentFilter]}</code>
           </div>
         </div>
       ) : filteredSkills.length === 0 ? (
@@ -601,6 +617,15 @@ const styles: Record<string, React.CSSProperties> = {
     width: 6, height: 6, borderRadius: '50%', background: C.accent,
     boxShadow: `0 0 0 3px ${C.accentDim}`, flexShrink: 0,
   },
+  codeyHeading: {
+    display: 'flex', alignItems: 'center', gap: 10,
+  },
+  codeyHeadingIcon: {
+    width: 34, height: 34, borderRadius: 9, display: 'grid', placeItems: 'center',
+    color: C.accent, background: C.accentDim, flexShrink: 0,
+  },
+  codeyHeadingTitle: { color: C.fg, fontSize: 13, fontWeight: 700 },
+  codeyHeadingSubtitle: { color: C.fg3, fontSize: 11, marginTop: 2 },
   agentMeta: {
     display: 'flex', alignItems: 'center', gap: 8, color: C.fg3,
     fontSize: 11, paddingBottom: 1,
