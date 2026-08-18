@@ -1,10 +1,40 @@
+import * as fs from 'fs';
 import { ModelConfig } from '../types';
+
+/**
+ * Order nvm's installed node versions newest-first and turn them into bin
+ * directories. Split out from the fs read so the ordering is testable.
+ *
+ * Names that do not parse as `vMAJOR.MINOR.PATCH` are dropped rather than
+ * sorted to one end: `~/.nvm/versions/node` also holds alias symlinks, and a
+ * non-version entry is not a directory we want on PATH.
+ */
+export function nvmBinDirs(homedir: string, versions: string[]): string[] {
+  const parsed = versions
+    .map(name => ({ name, parts: /^v(\d+)\.(\d+)\.(\d+)$/.exec(name) }))
+    .filter((v): v is { name: string; parts: RegExpExecArray } => v.parts !== null)
+    .map(v => ({ name: v.name, key: [+v.parts[1], +v.parts[2], +v.parts[3]] }));
+  parsed.sort((a, b) => b.key[0] - a.key[0] || b.key[1] - a.key[1] || b.key[2] - a.key[2]);
+  return parsed.map(v => `${homedir}/.nvm/versions/node/${v.name}/bin`);
+}
 
 /**
  * Prepend the bin directories CLIs are usually installed into. A GUI-launched
  * Electron app inherits a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so a
  * bare spawn('codex') fails with ENOENT even though the binary is installed.
  * Mutates and returns the given env map.
+ *
+ * nvm's version bins are APPENDED, not prepended, and every installed version
+ * is added rather than just the default one. Both choices are deliberate:
+ *
+ *   - Appending keeps a terminal-launched gateway behaving exactly as before.
+ *     The user's active nvm bin is already first on PATH there, so these
+ *     entries only ever come into play as a fallback; prepending could hand a
+ *     spawned CLI a different node than the one the user selected.
+ *   - Every version, because agent CLIs get npm-installed under whichever node
+ *     was active at the time and end up scattered — on this machine pi lives
+ *     under v24.18.1 while codex and agent-browser live under v22.17.1. Adding
+ *     only nvm's default version would still leave half of them unfindable.
  */
 export function withCommonBinPaths(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const homedir = env.HOME || process.env.HOME || '';
@@ -19,6 +49,22 @@ export function withCommonBinPaths(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
       env.PATH = env.PATH ? `${p}:${env.PATH}` : p;
     }
   }
+
+  if (homedir) {
+    let versions: string[] = [];
+    try {
+      versions = fs.readdirSync(`${homedir}/.nvm/versions/node`);
+    } catch {
+      // No nvm installed, or unreadable — nothing to add.
+    }
+    for (const p of nvmBinDirs(homedir, versions)) {
+      const segments = (env.PATH || '').split(':');
+      if (!segments.includes(p)) {
+        env.PATH = env.PATH ? `${env.PATH}:${p}` : p;
+      }
+    }
+  }
+
   return env;
 }
 
