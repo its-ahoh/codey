@@ -2744,6 +2744,17 @@ export const ChatTab: React.FC<Props> = ({
                       color={voiceBusy && voice.mode === 'dictate' ? '#fff' : C.fg2}
                     />}
               </button>}
+              {/* While dictating, the mic slot is the stop button, so the way
+                  out of the recording needs a control of its own — same thing
+                  Esc does: drop the audio instead of transcribing it. */}
+              {voiceActiveHere && voice.state === 'recording' && voice.mode === 'dictate' && <button
+                onClick={() => voice.abandon()}
+                style={{ ...styles.voiceButton, background: 'transparent', cursor: 'pointer' }}
+                title="Cancel dictation (Esc)"
+                aria-label="Cancel dictation"
+              >
+                <UIIcon name="close" size={15} color={C.fg3} />
+              </button>}
               {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'dictate') && <button
                 onClick={() => voice.toggle('converse')}
                 disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere}
