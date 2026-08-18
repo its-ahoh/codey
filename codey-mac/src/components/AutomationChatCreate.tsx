@@ -238,7 +238,10 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
             autoFocus value={input} disabled={!sessionId || locked}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
-            placeholder="Describe a workflow, or ask the assistant to refine the current setup…"
+            /* Short enough to sit on one line: a wrapping placeholder pushed the
+             * box out of line with the send button. */
+            placeholder={mode === 'edit' ? 'Ask for a change…' : 'Describe a workflow…'}
+            rows={1}
             style={composerInput}
           />
           <button style={{ ...sendButton, background: input.trim() && !locked ? C.accent : C.surface3 }} disabled={!input.trim() || locked} onClick={submit}>
