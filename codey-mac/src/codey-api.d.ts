@@ -438,6 +438,7 @@ declare global {
       }
       app: {
         version: () => Promise<string>
+        onZoom: (handler: (factor: number) => void) => () => void
       }
       terminal: {
         list: (chatId: string) => Promise<IpcResult<Array<{ sessionId: string; chatId: string; cwd: string; pid: number; alive: boolean }>>>

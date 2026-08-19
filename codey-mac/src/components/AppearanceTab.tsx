@@ -3,6 +3,7 @@ import React from 'react'
 import { C, ThemeMode, PaletteName, PaletteDefinition, PALETTES, useThemeMode, useEffectiveTheme, usePaletteName } from '../theme'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { Section, pageStyle, Toggle } from './settingsAtoms'
+import { ZOOM_STEPS, DEFAULT_ZOOM, clampZoom, formatZoom, zoomIn, zoomOut } from '../../electron/zoom'
 import { getStatusPanelEnabled, setStatusPanelEnabled } from './statusPanelPref'
 
 const OPTIONS: { value: ThemeMode; label: string }[] = [
@@ -26,6 +27,7 @@ export const AppearanceTab: React.FC = () => {
   const [launchAtLogin, setLaunchAtLogin] = React.useState<boolean>(false)
   const [dockless, setDockless] = React.useState<boolean>(false)
   const [statusPanel, setStatusPanel] = React.useState<boolean>(getStatusPanelEnabled)
+  const [zoom, setZoomState] = React.useState<number>(DEFAULT_ZOOM)
   const [loaded, setLoaded] = React.useState(false)
 
   React.useEffect(() => {
@@ -38,9 +40,20 @@ export const AppearanceTab: React.FC = () => {
       setScreenshotHotkey(cfg?.capture?.screenshotHotkey ?? 'Control+Alt+Space')
       setLaunchAtLogin(cfg?.ui?.launchAtLogin ?? false)
       setDockless(cfg?.ui?.dockless ?? false)
+      setZoomState(clampZoom(cfg?.ui?.zoom))
       setLoaded(true)
     }).catch(() => { setLoaded(true) })
   }, [])
+
+  // ⌘+ / ⌘− / ⌘0 from the View menu change the same setting, so mirror it back
+  // into the stepper instead of letting this row drift out of date.
+  React.useEffect(() => window.codey?.app?.onZoom?.(f => setZoomState(clampZoom(f))), [])
+
+  const changeZoom = (v: number) => {
+    const next = clampZoom(v)
+    setZoomState(next)
+    window.codey?.config?.set?.({ ui: { zoom: next } }).catch(() => { /* ignore */ })
+  }
 
   const toggleSkipPerms = (v: boolean) => {
     if (v && !skipPerms && !window.confirm(
@@ -144,6 +157,41 @@ export const AppearanceTab: React.FC = () => {
               </button>
             )
           })}
+        </div>
+      </div>
+
+      <div style={styles.settingRow}>
+        <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
+          <div>Text size</div>
+          <div style={styles.settingDesc}>
+            Scale the whole interface, chat text included. ⌘+ and ⌘− adjust it from anywhere in the app; ⌘0 goes back to 100%.
+          </div>
+        </div>
+        <div style={styles.stepper}>
+          <button
+            aria-label="Smaller text"
+            disabled={zoom <= ZOOM_STEPS[0]}
+            onClick={() => changeZoom(zoomOut(zoom))}
+            style={{ ...styles.stepBtn, opacity: zoom <= ZOOM_STEPS[0] ? 0.35 : 1 }}
+          >
+            −
+          </button>
+          <button
+            aria-label={`Text size ${formatZoom(zoom)}, click to reset`}
+            title="Reset to 100%"
+            onClick={() => changeZoom(DEFAULT_ZOOM)}
+            style={styles.stepValue}
+          >
+            {formatZoom(zoom)}
+          </button>
+          <button
+            aria-label="Bigger text"
+            disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+            onClick={() => changeZoom(zoomIn(zoom))}
+            style={{ ...styles.stepBtn, opacity: zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1] ? 0.35 : 1 }}
+          >
+            +
+          </button>
         </div>
       </div>
 
@@ -275,6 +323,19 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
   },
   themeRow: { flexDirection: 'column', alignItems: 'stretch', gap: 12 },
+  stepper: {
+    display: 'inline-flex', alignItems: 'center', flexShrink: 0,
+    background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, padding: 2, gap: 2,
+  },
+  stepBtn: {
+    border: 'none', borderRadius: 6, background: 'transparent', color: C.fg,
+    width: 28, height: 24, fontSize: 14, fontWeight: 600, cursor: 'pointer', lineHeight: 1,
+  },
+  stepValue: {
+    border: 'none', borderRadius: 6, background: 'transparent', color: C.fg2,
+    minWidth: 46, height: 24, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+    fontVariantNumeric: 'tabular-nums',
+  },
   paletteGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 },
   paletteCard: {
     minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, position: 'relative',

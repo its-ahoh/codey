@@ -5,6 +5,7 @@ import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normal
 import { hudStateCommand, hudLevelCommand, conversationToggleCommand } from './voice-hud'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
+import { clampZoom, formatZoom, zoomIn, zoomOut, DEFAULT_ZOOM } from './zoom'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { createCoreStateStore } from './core-state'
 import { decideNotification, createTurnTracker } from './chat-notifications'
@@ -281,6 +282,9 @@ function createWindow() {
   })
 
   mainWindow.webContents.on('did-finish-load', () => {
+    // Chromium resets the zoom factor on every navigation/reload, so re-apply
+    // the saved text size here rather than only when the config changes.
+    mainWindow?.webContents.setZoomFactor(currentZoom)
     flushPendingRendererMessages()
   })
 }
@@ -458,6 +462,34 @@ function applyUiPreferences(rawCfg: any) {
   }
   if (rawCfg?.ui?.dockless) app.dock?.hide()
   else app.dock?.show()
+  applyZoom(clampZoom(rawCfg?.ui?.zoom))
+}
+
+// Text size. Scales the main window only: Quick Capture is a fixed-width
+// floater that reports its own content height in CSS px, so zooming it would
+// desync that bottom-anchored resize.
+let currentZoom = DEFAULT_ZOOM
+function applyZoom(factor: number) {
+  const changed = factor !== currentZoom
+  currentZoom = factor
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.setZoomFactor(factor)
+  }
+  if (!changed) return
+  // Refresh the View menu's "Text Size: N%" readout, and keep the Settings
+  // stepper in sync when the change came from the menu.
+  createAppMenu()
+  sendToRenderer('ui:zoom', factor)
+}
+
+/** Persist a new text size; applyUiPreferences pushes it to the window. */
+function setZoom(factor: number) {
+  const next = clampZoom(factor)
+  if (!coreConfigManager) {
+    applyZoom(next)
+    return
+  }
+  coreConfigManager.update({ ui: { zoom: next } } as any)
 }
 
 let currentCaptureAccelerator: string | null = null
@@ -1522,6 +1554,14 @@ function createAppMenu() {
     {
       label: 'View',
       submenu: [
+        { label: `Text Size: ${formatZoom(currentZoom)}`, enabled: false },
+        { label: 'Bigger Text', accelerator: 'CommandOrControl+Plus', click: () => setZoom(zoomIn(currentZoom)) },
+        // Same action on the unshifted key, so ⌘= works like it does elsewhere
+        // on macOS. Hidden because one accelerator per menu item is displayable.
+        { label: 'Bigger Text', accelerator: 'CommandOrControl+=', visible: false, click: () => setZoom(zoomIn(currentZoom)) },
+        { label: 'Smaller Text', accelerator: 'CommandOrControl+-', click: () => setZoom(zoomOut(currentZoom)) },
+        { label: 'Actual Size', accelerator: 'CommandOrControl+0', click: () => setZoom(DEFAULT_ZOOM) },
+        { type: 'separator' },
         { role: 'reload' },
         { role: 'forceReload' },
         { role: 'toggleDevTools' },
