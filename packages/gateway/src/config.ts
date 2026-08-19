@@ -137,7 +137,7 @@ export interface GatewayConfigJson {
   mcpServers?: Record<string, ExternalMcpServerConfig>;
   notifications?: { enabled?: boolean };
   capture?: { hotkey?: string };
-  ui?: { launchAtLogin?: boolean; dockless?: boolean };
+  ui?: { launchAtLogin?: boolean; dockless?: boolean; zoom?: number };
 }
 
 /**
@@ -835,7 +835,7 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
     out.capture = { hotkey: raw.capture.hotkey };
   }
   if (raw.ui && typeof raw.ui === 'object') {
-    out.ui = { launchAtLogin: raw.ui.launchAtLogin, dockless: raw.ui.dockless };
+    out.ui = { launchAtLogin: raw.ui.launchAtLogin, dockless: raw.ui.dockless, zoom: raw.ui.zoom };
   }
   return out;
 }
