@@ -7,6 +7,21 @@ import { CODEY_GLOBAL_SKILLS_SUBDIR } from './codey-skills';
 export const BROWSER_SKILL_NAME = 'browser';
 
 /**
+ * Where Codey's skills are published. Installing pulls from here, so the text
+ * can be corrected and read by anyone without shipping a new app build.
+ */
+export const CODEY_SKILLS_REPO_URL = 'https://github.com/its-ahoh/codey-skills';
+/** The ref installs pull from. A branch keeps fixes flowing; pin a tag here if
+ *  a skill ever needs to be held back from the published tip. */
+export const CODEY_SKILLS_REPO_REF = 'main';
+
+/** Raw URL of one published skill's markdown. */
+export function codeySkillDownloadUrl(name: string, ref: string = CODEY_SKILLS_REPO_REF): string {
+  const repo = CODEY_SKILLS_REPO_URL.replace('https://github.com/', '');
+  return `https://raw.githubusercontent.com/${repo}/${ref}/skills/${name}/SKILL.md`;
+}
+
+/**
  * The Browser plugin's discovery layer. Every agent Codey runs finds skills
  * through `.claude/skills` or `.agents/skills`, so one markdown file reaches
  * claude-code, codex, opencode and pi alike — including agents with no MCP
@@ -22,10 +37,10 @@ export const BROWSER_SKILL_NAME = 'browser';
  * `addCodeyBrowserTools` passes `CODEY_BROWSER_*` to task-performing turns
  * only, and the CLI refuses to do anything without them.
  *
- * The text lives in `src/skills/<name>/SKILL.md` rather than a template
- * literal: it is prose an agent reads, and prose is easier to get right when
- * it is written as markdown. `npm run build` copies the directory next to the
- * compiled JS, so this path resolves the same from `src` and from `dist`.
+ * A copy also ships with the build, at `src/skills/<name>/SKILL.md` (the build
+ * copies it next to the compiled JS, so the path resolves the same from `src`
+ * and `dist`). It is the fallback when the repository cannot be reached, which
+ * keeps Install working offline and on a locked-down network.
  */
 export const BROWSER_SKILL_SOURCE = path.join(
   __dirname, '..', 'skills', BROWSER_SKILL_NAME, 'SKILL.md',
@@ -50,16 +65,29 @@ export type BrowserSkillState = 'absent' | 'disabled' | 'installed';
 
 export interface BrowserSkillStatus {
   state: BrowserSkillState;
-  /** The installed copy differs from the one this build ships. The CLI it
-   *  documents ships with the app, so a stale copy can describe commands that
-   *  no longer exist. */
-  updateAvailable: boolean;
+  /** Where an installed copy lives, so the UI can point at it whether or not
+   *  it is installed yet. */
+  dir: string;
+  /** The installed copy is not the one this build ships. Expected after a pull
+   *  from the repository, and true as well when the user has edited it — which
+   *  is their right, so this is stated, not corrected. */
+  differsFromBundled: boolean;
+  /** Where Install pulls from. */
+  sourceUrl: string;
+}
+
+/** Which copy an install actually wrote. `bundled` means the repository could
+ *  not be used, and `reason` says why. */
+export interface BrowserSkillInstallResult {
+  file: string;
+  source: 'repository' | 'bundled';
+  reason?: string;
 }
 
 let cached: string | undefined;
 
-/** The skill's markdown, read once per process — it ships with the build and
- *  cannot change under a running Codey. */
+/** The skill's markdown as it ships with this build — the fallback copy, read
+ *  once per process, since it cannot change under a running Codey. */
 export function browserSkillMarkdown(): string {
   if (cached === undefined) cached = fs.readFileSync(BROWSER_SKILL_SOURCE, 'utf8');
   return cached;
@@ -72,6 +100,7 @@ export function browserSkillDir(home: string = os.homedir()): string {
 
 export function browserSkillStatus(home: string = os.homedir()): BrowserSkillStatus {
   const dir = browserSkillDir(home);
+  const base = { dir, sourceUrl: CODEY_SKILLS_REPO_URL };
   for (const [file, state] of [[SKILL_FILE, 'installed'], [DISABLED_SKILL_FILE, 'disabled']] as const) {
     let installed: string;
     try {
@@ -79,9 +108,9 @@ export function browserSkillStatus(home: string = os.homedir()): BrowserSkillSta
     } catch {
       continue;
     }
-    return { state, updateAvailable: installed !== browserSkillMarkdown() };
+    return { ...base, state, differsFromBundled: installed !== browserSkillMarkdown() };
   }
-  return { state: 'absent', updateAvailable: false };
+  return { ...base, state: 'absent', differsFromBundled: false };
 }
 
 /** True when agents can both find the skill and be handed the bridge. */
@@ -90,19 +119,56 @@ export function isBrowserSkillActive(home: string = os.homedir()): boolean {
 }
 
 /**
- * Install (or update) the user's copy. Only ever called for an explicit user
- * action, so it overwrites: pressing Install on an installed-but-stale copy is
- * how the user asks for the current text. A leftover `SKILL.md.disabled` is
- * removed with it — installing means the user wants the skill on, and leaving
- * both files behind would break the Skills tab's toggle.
+ * Reject a download that is not the skill we asked for. A raw URL can answer
+ * with a redirect page, a proxy's login form or someone else's file, and
+ * writing that into the user's skill root would hand every agent whatever it
+ * said. Frontmatter naming this skill is the cheap check that it is ours.
  */
-export async function installBrowserSkill(home: string = os.homedir()): Promise<string> {
+function isPublishedSkill(text: string, name: string): boolean {
+  return new RegExp(`^---\\nname: ${name}\\ndescription: \\S`).test(text) && text.length > 400;
+}
+
+async function downloadBrowserSkill(timeoutMs: number): Promise<string> {
+  const url = codeySkillDownloadUrl(BROWSER_SKILL_NAME);
+  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!response.ok) throw new Error(`${url} returned ${response.status}`);
+  const text = await response.text();
+  if (!isPublishedSkill(text, BROWSER_SKILL_NAME)) {
+    throw new Error(`${url} did not return the ${BROWSER_SKILL_NAME} skill`);
+  }
+  return text;
+}
+
+/**
+ * Install (or update) the user's copy, pulled from the skills repository and
+ * falling back to the copy bundled with this build.
+ *
+ * Only ever called for an explicit user action, so it overwrites: pressing
+ * Install or Update is how the user asks for the published text. A leftover
+ * `SKILL.md.disabled` is removed with it — installing means the user wants the
+ * skill on, and leaving both files behind would break the Skills tab's toggle.
+ */
+export async function installBrowserSkill(
+  home: string = os.homedir(),
+  timeoutMs = 10000,
+): Promise<BrowserSkillInstallResult> {
+  let markdown: string;
+  let source: BrowserSkillInstallResult['source'] = 'repository';
+  let reason: string | undefined;
+  try {
+    markdown = await downloadBrowserSkill(timeoutMs);
+  } catch (error) {
+    markdown = browserSkillMarkdown();
+    source = 'bundled';
+    reason = error instanceof Error ? error.message : String(error);
+  }
+
   const dir = browserSkillDir(home);
   const file = path.join(dir, SKILL_FILE);
   await fs.promises.mkdir(dir, { recursive: true });
-  await fs.promises.writeFile(file, browserSkillMarkdown(), 'utf8');
+  await fs.promises.writeFile(file, markdown, 'utf8');
   await fs.promises.rm(path.join(dir, DISABLED_SKILL_FILE), { force: true });
-  return file;
+  return { file, source, reason };
 }
 
 /** Remove the user's copy. Uninstalling takes the capability out of every

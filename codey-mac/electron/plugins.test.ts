@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
+import type { BrowserSkillStatus } from '@codey/core'
 import { PLUGINS, isKnownPlugin, listPlugins } from './plugins'
+
+const status = (over: Partial<BrowserSkillStatus> = {}): BrowserSkillStatus => ({
+  state: 'absent',
+  dir: '/Users/test/.codey/skills/browser',
+  differsFromBundled: false,
+  sourceUrl: 'https://github.com/its-ahoh/codey-skills',
+  ...over,
+})
 
 describe('plugin registry', () => {
   it('registers exactly the browser plugin', () => {
@@ -9,18 +18,21 @@ describe('plugin registry', () => {
   })
 
   it('reports the state the skill is actually in on disk', () => {
-    expect(listPlugins(() => ({ state: 'installed', updateAvailable: false }))[0].state).toBe('installed')
-    expect(listPlugins(() => ({ state: 'disabled', updateAvailable: false }))[0].state).toBe('disabled')
-    expect(listPlugins(() => ({ state: 'absent', updateAvailable: false }))[0].state).toBe('absent')
+    for (const state of ['installed', 'disabled', 'absent'] as const) {
+      expect(listPlugins(() => status({ state }))[0].state).toBe(state)
+    }
   })
 
-  it('passes an available update through, so the card can offer it', () => {
-    expect(listPlugins(() => ({ state: 'installed', updateAvailable: true }))[0].updateAvailable).toBe(true)
+  it('carries where the copy lives and where it came from, so the card can say', () => {
+    const plugin = listPlugins(() => status({ state: 'installed', differsFromBundled: true }))[0]
+    expect(plugin.dir).toBe('/Users/test/.codey/skills/browser')
+    expect(plugin.sourceUrl).toBe('https://github.com/its-ahoh/codey-skills')
+    expect(plugin.differsFromBundled).toBe(true)
   })
 
   it('asks about each registered plugin by id', () => {
     const asked: string[] = []
-    listPlugins(id => { asked.push(id); return { state: 'absent', updateAvailable: false } })
+    listPlugins(id => { asked.push(id); return status() })
     expect(asked).toEqual(['browser'])
   })
 

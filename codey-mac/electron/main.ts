@@ -3207,8 +3207,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('plugins:install', async (_e, id: string) =>
     wrap(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
-      await installBrowserSkill()
+      const result = await installBrowserSkill()
       await syncCodeyGlobalSkills()
+      return result
     })
   )
 

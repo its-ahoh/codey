@@ -1,10 +1,11 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
   browserSkillMarkdown,
   browserSkillStatus,
+  codeySkillDownloadUrl,
   installBrowserSkill,
   isBrowserSkillActive,
   uninstallBrowserSkill,
@@ -16,19 +17,33 @@ let home: string;
 const skillDir = () => path.join(home, '.codey', 'skills', 'browser');
 const skillFile = () => path.join(skillDir(), 'SKILL.md');
 
+/** What the repository serves in these tests: a valid but distinguishable
+ *  skill, so "which copy landed" is visible in the file itself. */
+const PUBLISHED = `---
+name: browser
+description: ${'Published copy, long enough to pass the description check on its own.'}
+---
+
+${'Published body.\n'.repeat(40)}`;
+
+const serve = (body: string, status = 200) => vi.fn(async () => new Response(body, { status }));
+
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-browser-skill-'));
+  vi.stubGlobal('fetch', serve(PUBLISHED));
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   fs.rmSync(home, { recursive: true, force: true });
 });
 
 describe('installing the browser skill', () => {
-  it('writes SKILL.md into the user\'s own skill root', async () => {
-    const file = await installBrowserSkill(home);
-    expect(file).toBe(skillFile());
-    expect(fs.readFileSync(file, 'utf8')).toBe(browserSkillMarkdown());
+  it('writes the published skill into the user\'s own skill root', async () => {
+    const result = await installBrowserSkill(home);
+    expect(result).toEqual({ file: skillFile(), source: 'repository', reason: undefined });
+    expect(fs.readFileSync(result.file, 'utf8')).toBe(PUBLISHED);
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe(codeySkillDownloadUrl('browser'));
   });
 
   it('names itself "browser" in frontmatter so agents can address it', () => {
@@ -44,17 +59,15 @@ describe('installing the browser skill', () => {
     await syncCodeyGlobalSkills(home);
     for (const dir of ['.claude', '.agents']) {
       const link = path.join(home, dir, 'skills', 'browser');
-      expect(fs.readFileSync(path.join(link, 'SKILL.md'), 'utf8')).toBe(browserSkillMarkdown());
+      expect(fs.readFileSync(path.join(link, 'SKILL.md'), 'utf8')).toBe(PUBLISHED);
     }
   });
 
   it('refreshes a stale copy, which is what pressing Update asks for', async () => {
     await installBrowserSkill(home);
     fs.writeFileSync(skillFile(), '---\nname: browser\ndescription: stale\n---\n', 'utf8');
-    expect(browserSkillStatus(home).updateAvailable).toBe(true);
     await installBrowserSkill(home);
-    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(browserSkillMarkdown());
-    expect(browserSkillStatus(home).updateAvailable).toBe(false);
+    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(PUBLISHED);
   });
 
   it('installing an off skill turns it back on, leaving no disabled leftover', async () => {
@@ -93,15 +106,24 @@ describe('uninstalling the browser skill', () => {
 });
 
 describe('the state the capability gate reads', () => {
-  it('is absent before an install', () => {
-    expect(browserSkillStatus(home)).toEqual({ state: 'absent', updateAvailable: false });
+  it('is absent before an install, and still names where it would go', () => {
+    expect(browserSkillStatus(home)).toMatchObject({ state: 'absent', dir: skillDir(), differsFromBundled: false });
     expect(isBrowserSkillActive(home)).toBe(false);
   });
 
   it('is installed after one', async () => {
     await installBrowserSkill(home);
-    expect(browserSkillStatus(home)).toEqual({ state: 'installed', updateAvailable: false });
+    expect(browserSkillStatus(home)).toMatchObject({ state: 'installed', dir: skillDir() });
     expect(isBrowserSkillActive(home)).toBe(true);
+  });
+
+  // The published copy is expected to move ahead of the one in the app; saying
+  // so is useful, correcting it is not — the file is the user's.
+  it('reports a copy that is not the bundled one, without acting on it', async () => {
+    await installBrowserSkill(home);
+    expect(browserSkillStatus(home).differsFromBundled).toBe(true);
+    fs.writeFileSync(skillFile(), browserSkillMarkdown(), 'utf8');
+    expect(browserSkillStatus(home).differsFromBundled).toBe(false);
   });
 
   // Turning the skill off in the Skills tab renames SKILL.md; the browser env
@@ -118,5 +140,43 @@ describe('the state the capability gate reads', () => {
     await installBrowserSkill(home);
     fs.rmSync(skillDir(), { recursive: true, force: true });
     expect(isBrowserSkillActive(home)).toBe(false);
+  });
+});
+
+describe('pulling the skill from the repository', () => {
+  it('falls back to the bundled copy when the repository cannot be reached', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('getaddrinfo ENOTFOUND') }));
+    const result = await installBrowserSkill(home);
+    expect(result.source).toBe('bundled');
+    expect(result.reason).toContain('ENOTFOUND');
+    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(browserSkillMarkdown());
+  });
+
+  it('falls back on an HTTP error rather than writing the error page', async () => {
+    vi.stubGlobal('fetch', serve('<html>404</html>', 404));
+    const result = await installBrowserSkill(home);
+    expect(result.source).toBe('bundled');
+    expect(result.reason).toContain('404');
+    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(browserSkillMarkdown());
+  });
+
+  // A raw URL can answer with a proxy login page or someone else's file, and
+  // whatever lands here is read by every agent as instructions.
+  it('refuses a 200 that is not this skill', async () => {
+    vi.stubGlobal('fetch', serve('<html>Sign in to continue</html>'));
+    const result = await installBrowserSkill(home);
+    expect(result.source).toBe('bundled');
+    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(browserSkillMarkdown());
+  });
+
+  it('refuses a well-formed skill under another name', async () => {
+    vi.stubGlobal('fetch', serve(PUBLISHED.replace('name: browser', 'name: something-else')));
+    expect((await installBrowserSkill(home)).source).toBe('bundled');
+  });
+
+  it('downloads from the published repository path', () => {
+    expect(codeySkillDownloadUrl('browser')).toBe(
+      'https://raw.githubusercontent.com/its-ahoh/codey-skills/main/skills/browser/SKILL.md',
+    );
   });
 });

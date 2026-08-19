@@ -67,10 +67,20 @@ over an MCP server.
 - `packages/core/src/skills/browser/SKILL.md` holds the text — plain markdown,
   copied into `dist/skills` at build time so `__dirname/../skills` resolves
   identically from source and from a packaged app.
-- `installBrowserSkill()` copies it into `~/.codey/skills/browser/`, the user's
-  own global skill root, which the existing `syncCodeyGlobalSkills()` already
-  links into `.claude/skills` and `.agents/skills`.
-  `uninstallBrowserSkill()` deletes the directory.
+- `installBrowserSkill()` downloads the published copy from
+  `github.com/its-ahoh/codey-skills` (`skills/<name>/SKILL.md` on `main`) and
+  writes it into `~/.codey/skills/browser/`, the user's own global skill root,
+  which the existing `syncCodeyGlobalSkills()` already links into
+  `.claude/skills` and `.agents/skills`. `uninstallBrowserSkill()` deletes the
+  directory.
+- The build still carries a copy, and it is the fallback when the repository
+  cannot be reached, so Install works offline and on a locked-down network. The
+  result says which copy landed, and the card says so too when it was the
+  fallback — an install that quietly gives you older text is the failure this
+  avoids.
+- A download is only accepted if its frontmatter names this skill. A raw URL can
+  answer with a proxy's login page or someone else's file, and whatever lands in
+  the skill root is read by every agent as instructions.
 - Both run **only for an explicit user action**. Codey never rewrites the
   directory behind the user's back, which is what makes the Skills tab's own
   on/off and delete hold.
@@ -100,8 +110,12 @@ source of the copy stops being the app bundle.
 ### State, read from disk
 
 `browserSkillStatus()` reports `absent` (not installed), `disabled` (installed,
-switched off in Skills) or `installed`, plus `updateAvailable` when the copy on
-disk differs from the one this build ships. There is no enabled flag in config:
+switched off in Skills) or `installed`, along with the directory the copy lives
+in, the repository it comes from, and `differsFromBundled`. That last one is
+stated, not acted on: the published copy is *expected* to move ahead of the
+app's, and the user may have edited theirs, which is their right. Update is
+always available while installed — it re-pulls — rather than appearing only when
+Codey thinks it knows better. There is no enabled flag in config:
 the Plugins tab, the Skills tab and a hand-run `rm` all write the same
 directory, and a second source of truth could only ever contradict it.
 
@@ -155,16 +169,24 @@ the filter would silently swallow a user's server of the same name.
   it fire.
 - **An agent with shell disabled** loses the browser. Nothing in Codey does
   that today.
+- **The published text and the app's CLI version independently.** The skill
+  documents a CLI that ships inside the app, so a repository ahead of an old
+  app can describe commands that app does not have. Accepted deliberately: the
+  gain is that wording can be fixed without an app release, and the skill tells
+  the agent to run `help` rather than trust remembered flags. Holding a skill
+  back means pinning `CODEY_SKILLS_REPO_REF` to a tag.
 - **Upgrades no longer update the text by themselves.** The copy is the user's,
-  so Codey must not overwrite it; instead the Plugins card compares it with the
-  bundled one and offers Update when they differ. The failure this guards
-  against is a stale copy documenting commands the shipped CLI no longer has.
+  so Codey must not overwrite it; Update is an explicit button.
 
 ## Verification
 
-- pi, unmodified, discovered the installed skill, ran the CLI, and reported a
-  page back through the bridge — the browser reached an agent that cannot use
-  MCP at all.
+- Installing pulled the live repository copy — byte-identical to the
+  repository's `main` — and pi, unmodified, discovered it, ran the CLI, and
+  reported a page back through the bridge: the browser reached an agent that
+  cannot use MCP at all.
+- The fallback path: an unreachable host, an HTTP error, a 200 that is not
+  markdown, and a well-formed skill under another name all install the bundled
+  copy instead, and say why.
 - The four state transitions, driven through the same functions the IPC calls:
   install → `installed`; disable in Skills → `disabled` and the capability gate
   reads inactive; install again → active with no `SKILL.md.disabled` left
@@ -181,11 +203,14 @@ drove the IPC handlers' functions rather than the rendered UI.
 
 ## Follow-ups
 
-- The installed copy comes from the app bundle, not a remote repo. Serving it
-  from a registry would let it update out of band, which is exactly the problem:
-  the skill documents an in-app CLI, so an independently-versioned copy can
-  describe commands the installed app does not have. Worth revisiting once
-  there are plugins that do not wrap an in-app binary.
+- Skills are published in one repository, not one per skill: nothing about a
+  skill needs its own version axis, while a shared repository can enforce one
+  shape (`scripts/check-skills.mjs` in CI) and distribute by name anyway. Split
+  a skill out only when it grows its own build, its own maintainer, or a release
+  cadence tied to something else.
+- Nothing verifies the download's provenance beyond "the frontmatter names this
+  skill". A signature, or pinning to a commit, is the next step if the skill
+  ever carries anything more dangerous than instructions.
 - The one-time startup migration (install for a user who had the old config
   flag on, and delete the `~/.codey/managed-skills` root a development build
   left behind) can be dropped a release or two after it ships.

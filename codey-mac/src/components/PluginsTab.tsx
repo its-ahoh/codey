@@ -3,13 +3,15 @@ import { C } from '../theme'
 import { pillButton, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
-import type { PluginInfo } from '../codey-api'
+import type { PluginInfo, PluginInstallResult } from '../codey-api'
 
 export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  // What the last install did, kept per plugin: which copy landed, and where.
+  const [outcome, setOutcome] = useState<Record<string, PluginInstallResult>>({})
   const filteredPlugins = useMemo(
     () => plugins.filter(plugin => matchesToolSearch(searchQuery, plugin.name, plugin.description)),
     [plugins, searchQuery],
@@ -33,7 +35,13 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
     setBusy(plugin.id)
     setError(null)
     try {
-      unwrap(await window.codey.plugins[action](plugin.id))
+      if (action === 'install') {
+        const result = unwrap(await window.codey.plugins.install(plugin.id))
+        setOutcome(prev => ({ ...prev, [plugin.id]: result }))
+      } else {
+        unwrap(await window.codey.plugins.uninstall(plugin.id))
+        setOutcome(prev => { const next = { ...prev }; delete next[plugin.id]; return next })
+      }
       await reload()
     } catch (e: any) {
       setError(e?.message ?? String(e))
@@ -47,35 +55,54 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
   return (
     <div>
       <div style={styles.intro}>
-        Plugins give agents extra capabilities. Installing one adds a skill to Skills,
-        where you can turn it off or remove it; changes apply to the next agent run.
+        Plugins give agents extra capabilities. Installing one downloads a skill into
+        your own skill folder, where the Skills tab can turn it off or remove it;
+        changes apply to the next agent run.
       </div>
       {error && <div style={styles.errorBanner}>{error}</div>}
       {filteredPlugins.map(plugin => {
         const installed = plugin.state !== 'absent'
         const working = busy === plugin.id
+        const last = outcome[plugin.id]
         return (
           <div key={plugin.id} style={styles.card}>
             <div style={styles.cardIcon}><UIIcon name="tools" size={18} /></div>
             <div style={styles.cardBody}>
-              <div style={styles.cardName}>{plugin.name}</div>
+              <div style={styles.cardName}>
+                {plugin.name}
+                {installed && (
+                  <span style={plugin.state === 'disabled' ? styles.badgeMuted : styles.badge}>
+                    {plugin.state === 'disabled' ? 'Off in Skills' : 'Installed'}
+                  </span>
+                )}
+              </div>
               <div style={styles.cardDesc}>{plugin.description}</div>
-              {plugin.state === 'disabled' && (
-                <div style={styles.cardHint}>Installed, but switched off in Skills.</div>
-              )}
-              {plugin.updateAvailable && (
+              {installed ? (
                 <div style={styles.cardHint}>
-                  Your copy is older than this version of Codey. Update it so it matches the
-                  commands the app ships.
+                  {plugin.state === 'disabled'
+                    ? 'Switched off in Skills, so no agent loads it. Turn it back on there.'
+                    : 'Listed in Skills as "browser".'}
+                  {' '}<span style={styles.path}>{plugin.dir}</span>
+                </div>
+              ) : (
+                <div style={styles.cardHint}>
+                  Downloads from <span style={styles.path}>{plugin.sourceUrl}</span>
+                </div>
+              )}
+              {last?.source === 'bundled' && (
+                <div style={styles.cardWarn}>
+                  Could not reach the skills repository, so Codey installed the copy it
+                  ships with. {last.reason}
                 </div>
               )}
             </div>
             <div style={styles.cardActions}>
-              {plugin.updateAvailable && (
+              {installed && (
                 <button
                   onClick={() => { if (!working) void act(plugin, 'install') }}
                   disabled={working}
-                  style={pillButton('primary')}
+                  style={pillButton('ghost')}
+                  title="Download the published skill again, replacing your copy"
                 >
                   Update
                 </button>
@@ -85,7 +112,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                 disabled={working}
                 style={pillButton(installed ? 'danger' : 'primary')}
               >
-                {installed ? 'Uninstall' : 'Install'}
+                {working ? (installed ? 'Working…' : 'Installing…') : installed ? 'Uninstall' : 'Install'}
               </button>
             </div>
           </div>
@@ -114,6 +141,16 @@ const styles: Record<string, React.CSSProperties> = {
   cardName: { color: C.fg, fontSize: 13, fontWeight: 700, marginBottom: 3 },
   cardDesc: { color: C.fg3, fontSize: 11.5, lineHeight: 1.45 },
   cardHint: { color: C.fg2, fontSize: 11, lineHeight: 1.45, marginTop: 5 },
+  cardWarn: { color: C.fg2, fontSize: 11, lineHeight: 1.45, marginTop: 5, opacity: 0.9 },
+  path: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 10.5, color: C.fg3 },
+  badge: {
+    marginLeft: 8, padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 650,
+    background: C.accent + '22', color: C.accent, verticalAlign: 'middle',
+  },
+  badgeMuted: {
+    marginLeft: 8, padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 650,
+    background: C.surface3, color: C.fg3, verticalAlign: 'middle',
+  },
   cardActions: { display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 },
   emptySearch: { color: C.fg3, fontSize: 12, textAlign: 'center', padding: '30px 16px' },
 }

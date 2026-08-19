@@ -28,7 +28,21 @@ export interface PluginInfo {
   /** Read from disk: a plugin is installed as an ordinary skill, and the
    *  Skills tab can disable ('disabled') or delete ('absent') it from there. */
   state: 'absent' | 'disabled' | 'installed'
-  updateAvailable: boolean
+  /** Where an installed copy lives. */
+  dir: string
+  /** The installed copy is not the one bundled with this build — expected
+   *  after a pull from the repository, and true when the user edits it too. */
+  differsFromBundled: boolean
+  /** The repository Install pulls from. */
+  sourceUrl: string
+}
+
+/** Which copy an install wrote: 'bundled' means the repository was unreachable
+ *  and `reason` says why. */
+export interface PluginInstallResult {
+  file: string
+  source: 'repository' | 'bundled'
+  reason?: string
 }
 
 export interface ExternalMcpServer {
@@ -257,7 +271,7 @@ declare global {
       }
       plugins: {
         list: () => Promise<IpcResult<PluginInfo[]>>
-        install: (id: string) => Promise<IpcResult<void>>
+        install: (id: string) => Promise<IpcResult<PluginInstallResult>>
         uninstall: (id: string) => Promise<IpcResult<void>>
       }
       mcp: {
