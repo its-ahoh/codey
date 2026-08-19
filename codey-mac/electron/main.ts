@@ -13,7 +13,7 @@ import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { AGENT_BINARIES, createInstalledAgentsCache, detectInstalledAgents } from './agent-detect'
-import { SKILL_FILE, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
+import { SKILL_FILE, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import { scanAgentMcpServers, type AgentMcpServer, type McpAgentKey } from './agent-mcp-scan'
@@ -33,7 +33,7 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILLS_SUBDIR, syncCodeyGlobalSkills, syncCodeyProjectSkills, WorkerManager, WorkspaceManager } from '@codey/core'
+import { browserSkillStatus, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, WorkerManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
@@ -946,6 +946,18 @@ async function bootInProcessCore() {
   const root = resolveDataRoot()
   try {
     coreConfigManager = new ConfigManager(join(root, 'gateway.json'))
+    // Carry over an opt-in made before plugins were installed as skills: the
+    // user had the Browser plugin on, so install it once rather than let the
+    // capability disappear under them. From then on the skill on disk answers
+    // the question and this flag is never read again.
+    try {
+      const [fsMod, osMod, pathMod] = await Promise.all([import('fs'), import('os'), import('path')])
+      removeLegacyManagedSkills(fsMod, pathMod, osMod.homedir(), CODEY_SKILL_DISCOVERY_SUBDIRS)
+      if (coreConfigManager.isPluginEnabled('browser') && browserSkillStatus().state === 'absent') {
+        await installBrowserSkill()
+        await syncCodeyGlobalSkills()
+      }
+    } catch { /* best-effort: the Plugins tab can install it by hand */ }
     workerManager = new WorkerManager(join(root, 'workers'))
     await workerManager.loadWorkers()
     // Teams are defined globally in gateway.json; the workspace just stores
@@ -3185,14 +3197,26 @@ app.whenReady().then(async () => {
 
   // ── Plugins IPC ───────────────────────────────────────────────────
   ipcMain.handle('plugins:list', async () =>
-    wrap(async () => listPlugins(coreConfigManager?.get() as any))
+    wrap(async () => listPlugins(() => browserSkillStatus()))
   )
 
-  ipcMain.handle('plugins:setEnabled', async (_e, id: string, enabled: boolean) =>
+  // Installing writes the skill into the user's own ~/.codey/skills and links
+  // it for every agent, so from here on the Skills tab owns it. Uninstalling
+  // removes it; both are explicit user actions, and nothing rewrites the
+  // directory in between.
+  ipcMain.handle('plugins:install', async (_e, id: string) =>
     wrap(async () => {
-      if (!coreConfigManager) throw new Error('Config manager not initialized')
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
-      coreConfigManager.update({ plugins: { [id]: { enabled: enabled === true } } } as any)
+      await installBrowserSkill()
+      await syncCodeyGlobalSkills()
+    })
+  )
+
+  ipcMain.handle('plugins:uninstall', async (_e, id: string) =>
+    wrap(async () => {
+      if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
+      await uninstallBrowserSkill()
+      await syncCodeyGlobalSkills()
     })
   )
 

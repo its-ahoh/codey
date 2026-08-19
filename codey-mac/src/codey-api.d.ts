@@ -25,7 +25,10 @@ export interface PluginInfo {
   id: string
   name: string
   description: string
-  enabled: boolean
+  /** Read from disk: a plugin is installed as an ordinary skill, and the
+   *  Skills tab can disable ('disabled') or delete ('absent') it from there. */
+  state: 'absent' | 'disabled' | 'installed'
+  updateAvailable: boolean
 }
 
 export interface ExternalMcpServer {
@@ -254,7 +257,8 @@ declare global {
       }
       plugins: {
         list: () => Promise<IpcResult<PluginInfo[]>>
-        setEnabled: (id: string, enabled: boolean) => Promise<IpcResult<void>>
+        install: (id: string) => Promise<IpcResult<void>>
+        uninstall: (id: string) => Promise<IpcResult<void>>
       }
       mcp: {
         list: () => Promise<IpcResult<ExternalMcpServer[]>>

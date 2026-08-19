@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { C } from '../theme'
-import { Toggle, unwrap } from './settingsAtoms'
+import { pillButton, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
 import type { PluginInfo } from '../codey-api'
@@ -29,11 +29,11 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
 
   useEffect(() => { void reload() }, [reload])
 
-  const toggle = async (plugin: PluginInfo) => {
+  const act = async (plugin: PluginInfo, action: 'install' | 'uninstall') => {
     setBusy(plugin.id)
     setError(null)
     try {
-      unwrap(await window.codey.plugins.setEnabled(plugin.id, !plugin.enabled))
+      unwrap(await window.codey.plugins[action](plugin.id))
       await reload()
     } catch (e: any) {
       setError(e?.message ?? String(e))
@@ -47,22 +47,50 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
   return (
     <div>
       <div style={styles.intro}>
-        Plugins give agents extra capabilities. Everything is off until you enable it;
-        changes apply to the next agent run.
+        Plugins give agents extra capabilities. Installing one adds a skill to Skills,
+        where you can turn it off or remove it; changes apply to the next agent run.
       </div>
       {error && <div style={styles.errorBanner}>{error}</div>}
-      {filteredPlugins.map(plugin => (
-        <div key={plugin.id} style={styles.card}>
-          <div style={styles.cardIcon}><UIIcon name="tools" size={18} /></div>
-          <div style={styles.cardBody}>
-            <div style={styles.cardName}>{plugin.name}</div>
-            <div style={styles.cardDesc}>{plugin.description}</div>
+      {filteredPlugins.map(plugin => {
+        const installed = plugin.state !== 'absent'
+        const working = busy === plugin.id
+        return (
+          <div key={plugin.id} style={styles.card}>
+            <div style={styles.cardIcon}><UIIcon name="tools" size={18} /></div>
+            <div style={styles.cardBody}>
+              <div style={styles.cardName}>{plugin.name}</div>
+              <div style={styles.cardDesc}>{plugin.description}</div>
+              {plugin.state === 'disabled' && (
+                <div style={styles.cardHint}>Installed, but switched off in Skills.</div>
+              )}
+              {plugin.updateAvailable && (
+                <div style={styles.cardHint}>
+                  Your copy is older than this version of Codey. Update it so it matches the
+                  commands the app ships.
+                </div>
+              )}
+            </div>
+            <div style={styles.cardActions}>
+              {plugin.updateAvailable && (
+                <button
+                  onClick={() => { if (!working) void act(plugin, 'install') }}
+                  disabled={working}
+                  style={pillButton('primary')}
+                >
+                  Update
+                </button>
+              )}
+              <button
+                onClick={() => { if (!working) void act(plugin, installed ? 'uninstall' : 'install') }}
+                disabled={working}
+                style={pillButton(installed ? 'danger' : 'primary')}
+              >
+                {installed ? 'Uninstall' : 'Install'}
+              </button>
+            </div>
           </div>
-          <div style={busy === plugin.id ? styles.toggleBusy : undefined}>
-            <Toggle on={plugin.enabled} onChange={() => { if (busy !== plugin.id) void toggle(plugin) }} />
-          </div>
-        </div>
-      ))}
+        )
+      })}
       {plugins.length > 0 && filteredPlugins.length === 0 && (
         <div style={styles.emptySearch}>No plugins match that name or description.</div>
       )}
@@ -85,6 +113,7 @@ const styles: Record<string, React.CSSProperties> = {
   cardBody: { flex: 1, minWidth: 0 },
   cardName: { color: C.fg, fontSize: 13, fontWeight: 700, marginBottom: 3 },
   cardDesc: { color: C.fg3, fontSize: 11.5, lineHeight: 1.45 },
-  toggleBusy: { opacity: 0.5, cursor: 'wait', pointerEvents: 'none' },
+  cardHint: { color: C.fg2, fontSize: 11, lineHeight: 1.45, marginTop: 5 },
+  cardActions: { display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 },
   emptySearch: { color: C.fg3, fontSize: 12, textAlign: 'center', padding: '30px 16px' },
 }

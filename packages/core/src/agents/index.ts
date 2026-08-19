@@ -4,8 +4,8 @@ import { ClaudeCodeAdapter } from './claude-code';
 import { OpenCodeAdapter } from './opencode';
 import { CodexAdapter } from './codex';
 import { PiAdapter } from './pi';
-import { syncCodeyGlobalSkills, syncCodeyManagedSkills, syncCodeyProjectSkills } from './codey-skills';
-import { installBrowserSkill, removeBrowserSkill } from './browser-skill';
+import { syncCodeyGlobalSkills, syncCodeyProjectSkills } from './codey-skills';
+import { isBrowserSkillActive } from './browser-skill';
 
 export type { CodingAgentAdapter } from './base';
 export { ClaudeCodeAdapter } from './claude-code';
@@ -18,26 +18,26 @@ export * from './browser-skill';
 
 /**
  * Hand the in-app browser's bridge credentials to a task-performing agent
- * turn. Requires the user-enabled Browser plugin AND a live bridge (the Mac
- * app exports CODEY_BROWSER_* on the gateway process). Advisor, housekeeping,
- * and tool-restricted turns are excluded via the same browserTools /
- * allowedTools gating the earlier MCP server used.
+ * turn. Requires the installed and enabled `browser` skill AND a live bridge
+ * (the Mac app exports CODEY_BROWSER_* on the gateway process). Advisor,
+ * housekeeping, and tool-restricted turns are excluded via the same
+ * browserTools / allowedTools gating the earlier MCP server used.
  *
- * The agent learns the commands from the managed `browser` skill, and reaches
- * them through its own shell tool — the one capability every coding agent has,
- * MCP or not. That makes this env the real gate: a turn without it gets a CLI
- * that refuses to run, whatever the skill list says.
+ * The agent learns the commands from the `browser` skill, and reaches them
+ * through its own shell tool — the one capability every coding agent has, MCP
+ * or not. That makes this env the real gate: a turn without it gets a CLI that
+ * refuses to run, whatever the skill list says.
  */
 export function addCodeyBrowserTools(
   request: AgentRequest,
-  pluginEnabled: boolean,
+  skillActive: boolean,
   env: NodeJS.ProcessEnv = process.env,
 ): AgentRequest {
   const socket = env.CODEY_BROWSER_SOCKET;
   const token = env.CODEY_BROWSER_TOKEN;
   const runtime = env.CODEY_BROWSER_RUNTIME;
   const cli = env.CODEY_BROWSER_CLI;
-  if (!pluginEnabled || !socket || !token || !runtime || !cli) return request;
+  if (!skillActive || !socket || !token || !runtime || !cli) return request;
   if (request.browserTools !== true || !request.context?.workingDir || request.allowedTools) {
     return request;
   }
@@ -80,7 +80,6 @@ export function addExternalMcpServers(
 export class AgentFactory {
   private agents: Map<CodingAgent, CodingAgentAdapter> = new Map();
   private envProvider?: (agent: CodingAgent) => Record<string, string> | undefined;
-  private pluginEnabledProvider?: (plugin: string) => boolean;
   private externalMcpProvider?: () => Record<string, McpServerSpec> | undefined;
 
   constructor() {
@@ -105,14 +104,6 @@ export class AgentFactory {
    */
   setAgentEnvProvider(provider: (agent: CodingAgent) => Record<string, string> | undefined): void {
     this.envProvider = provider;
-  }
-
-  /**
-   * Inject a callback that answers "is this plugin enabled?" from the live
-   * config, so toggles in the renderer take effect on the next request.
-   */
-  setPluginEnabledProvider(provider: (plugin: string) => boolean): void {
-    this.pluginEnabledProvider = provider;
   }
 
   /**
@@ -154,19 +145,18 @@ export class AgentFactory {
       }
     }
 
-    const browserEnabled = this.pluginEnabledProvider?.('browser') === true;
-    request = addCodeyBrowserTools(request, browserEnabled);
-    request = addExternalMcpServers(request, this.externalMcpProvider?.());
-
-    // The Browser plugin's skill follows its switch: written on the way into a
-    // run so an upgrade ships current instructions, removed once the plugin is
-    // off so it stops appearing in every agent's skill list.
+    // Read the skill's state from disk on every run: installing from the
+    // Plugins tab, disabling from the Skills tab and deleting the directory by
+    // hand are the same fact, and the agent must see whichever the user did
+    // last without a restart.
+    let browserActive = false;
     try {
-      if (browserEnabled) await installBrowserSkill();
-      else await removeBrowserSkill();
+      browserActive = isBrowserSkillActive();
     } catch {
-      // Best-effort, like the linking below.
+      // Unreadable home: no skill, so no capability.
     }
+    request = addCodeyBrowserTools(request, browserActive);
+    request = addExternalMcpServers(request, this.externalMcpProvider?.());
 
     // `~/.codey/skills` and `<project>/.codey/skills` are Codey's global and
     // project sources of truth. Refresh the lightweight compatibility links
@@ -174,7 +164,6 @@ export class AgentFactory {
     // available without restarting Codey.
     try {
       await syncCodeyGlobalSkills();
-      await syncCodeyManagedSkills();
     } catch {
       // See below: linking is best-effort.
     }

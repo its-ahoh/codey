@@ -8,11 +8,20 @@ describe('plugin registry', () => {
     expect(PLUGINS[0].description.length).toBeGreaterThan(10)
   })
 
-  it('merges enabled state from config', () => {
-    expect(listPlugins({ plugins: { browser: { enabled: true } } })[0].enabled).toBe(true)
-    expect(listPlugins({ plugins: { browser: { enabled: false } } })[0].enabled).toBe(false)
-    expect(listPlugins({})[0].enabled).toBe(false)
-    expect(listPlugins(undefined)[0].enabled).toBe(false)
+  it('reports the state the skill is actually in on disk', () => {
+    expect(listPlugins(() => ({ state: 'installed', updateAvailable: false }))[0].state).toBe('installed')
+    expect(listPlugins(() => ({ state: 'disabled', updateAvailable: false }))[0].state).toBe('disabled')
+    expect(listPlugins(() => ({ state: 'absent', updateAvailable: false }))[0].state).toBe('absent')
+  })
+
+  it('passes an available update through, so the card can offer it', () => {
+    expect(listPlugins(() => ({ state: 'installed', updateAvailable: true }))[0].updateAvailable).toBe(true)
+  })
+
+  it('asks about each registered plugin by id', () => {
+    const asked: string[] = []
+    listPlugins(id => { asked.push(id); return { state: 'absent', updateAvailable: false } })
+    expect(asked).toEqual(['browser'])
   })
 
   it('isKnownPlugin accepts registry ids and rejects others', () => {
