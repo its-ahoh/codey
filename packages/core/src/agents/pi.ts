@@ -5,6 +5,7 @@ import { AgentSpawnError } from '../errors';
 import { ObservedToolEvent, ToolCallCollector } from './tool-events';
 import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checklist';
 import { piEffortArgs } from './effort';
+import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 
 /**
  * pi (https://pi.dev) adapter.
@@ -97,7 +98,7 @@ export function piArgs(
   if (request.skipPermissions) {
     args.push('-a');
   }
-  args.push(request.prompt);
+  args.push(withForegroundPolicy(request.prompt));
   return args;
 }
 
@@ -210,9 +211,13 @@ export class PiAdapter extends BaseAgentAdapter {
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: request.context?.workingDir || undefined,
         env,
+        ...agentSpawnOptions(),
       });
       this.activeProcess = childProcess;
-      childProcess.on('close', () => { this.activeProcess = undefined; });
+      childProcess.on('close', () => {
+        cleanupProcessTreeAfterClose(childProcess);
+        this.activeProcess = undefined;
+      });
 
       const startTime = Date.now();
       let resolved = false;
@@ -224,6 +229,8 @@ export class PiAdapter extends BaseAgentAdapter {
       let errorMessage: string | undefined;
       let capturedSessionId: string | undefined;
       let tokens: AgentResponse['tokens'];
+      let timeoutTimer: NodeJS.Timeout | undefined;
+      let abortHandler: (() => void) | undefined;
       const tools = new ToolCallCollector(request.onStatus);
       const statusUpdates = tools.statusUpdates;
       const states = tools.states;
@@ -232,6 +239,8 @@ export class PiAdapter extends BaseAgentAdapter {
       const safeResolve = (response: AgentResponse) => {
         if (resolved) return;
         resolved = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
         resolve(response);
       };
 
@@ -333,9 +342,9 @@ export class PiAdapter extends BaseAgentAdapter {
       });
 
       const timeout = request.timeout || 900000;
-      setTimeout(() => {
+      timeoutTimer = setTimeout(() => {
         if (resolved) return;
-        childProcess.kill();
+        terminateProcessTree(childProcess);
         const duration = Math.round((Date.now() - startTime) / 1000);
         safeResolve({
           success: false,
@@ -346,9 +355,9 @@ export class PiAdapter extends BaseAgentAdapter {
       }, timeout);
 
       if (request.signal) {
-        const onAbort = () => {
+        abortHandler = () => {
           if (resolved) return;
-          try { childProcess.kill('SIGTERM'); } catch { /* already dead */ }
+          terminateProcessTree(childProcess);
           const duration = Math.round((Date.now() - startTime) / 1000);
           safeResolve({
             success: false,
@@ -359,15 +368,15 @@ export class PiAdapter extends BaseAgentAdapter {
             states,
           });
         };
-        if (request.signal.aborted) onAbort();
-        else request.signal.addEventListener('abort', onAbort, { once: true });
+        if (request.signal.aborted) abortHandler();
+        else request.signal.addEventListener('abort', abortHandler, { once: true });
       }
     });
   }
 
   dispose(): void {
     if (this.activeProcess) {
-      this.activeProcess.kill('SIGTERM');
+      terminateProcessTree(this.activeProcess);
       this.activeProcess = undefined;
     }
   }
