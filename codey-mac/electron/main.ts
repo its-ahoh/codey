@@ -196,12 +196,6 @@ function browserAgentCliPath(): string {
     : join(app.getAppPath(), 'electron', 'browser-agent-cli.cjs')
 }
 
-function browserMcpServerPath(): string {
-  return app.isPackaged
-    ? join(process.resourcesPath, 'browser-mcp-server.cjs')
-    : join(app.getAppPath(), 'electron', 'browser-mcp-server.cjs')
-}
-
 // Single-instance guard: a second launch (vite restart leaving a stale main
 // process alive, double `npm run dev`, app.relaunch races) must not boot a
 // second in-process core — the stale one already holds the API port and the
@@ -1833,9 +1827,10 @@ app.whenReady().then(async () => {
     const bridge = await browserAgentBridge.start()
     process.env.CODEY_BROWSER_SOCKET = bridge.socketPath
     process.env.CODEY_BROWSER_TOKEN = bridge.token
-    // Retained for the still-shipped standalone browser-agent-cli.cjs; agents now use CODEY_BROWSER_MCP.
+    // How agents reach the browser: the managed `browser` skill tells them to
+    // run this CLI through their own shell tool, so every agent Codey supports
+    // gets the plugin, MCP surface or not.
     process.env.CODEY_BROWSER_CLI = browserAgentCliPath()
-    process.env.CODEY_BROWSER_MCP = browserMcpServerPath()
     process.env.CODEY_BROWSER_RUNTIME = process.execPath
   } catch (error: any) {
     sendToRenderer('gateway-log', `[browser] agent bridge failed to start: ${error?.message ?? error}`)

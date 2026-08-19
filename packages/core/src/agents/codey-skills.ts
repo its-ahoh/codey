@@ -13,6 +13,13 @@ export const CODEY_SKILLS_SUBDIR = path.join('.codey', 'skills');
 export const CODEY_GLOBAL_SKILLS_SUBDIR = CODEY_SKILLS_SUBDIR;
 
 /**
+ * Skills Codey itself ships and owns (`~/.codey/managed-skills`), kept apart
+ * from the user's own `~/.codey/skills` so a plugin can rewrite or delete its
+ * skill without ever touching a hand-written one.
+ */
+export const CODEY_MANAGED_SKILLS_SUBDIR = path.join('.codey', 'managed-skills');
+
+/**
  * The smallest set of skill roots covering every agent Codey runs.
  * Claude Code uses its own directory; Codex, OpenCode, and pi all understand
  * the cross-agent `.agents/skills` convention. The same two conventions apply
@@ -134,4 +141,14 @@ export async function syncCodeyProjectSkills(workingDir: string): Promise<CodeyS
 export async function syncCodeyGlobalSkills(home: string = os.homedir()): Promise<CodeySkillSyncResult> {
   const homeRoot = path.resolve(home);
   return linkCodeySkills(path.join(homeRoot, CODEY_GLOBAL_SKILLS_SUBDIR), homeRoot);
+}
+
+/**
+ * Expose `~/.codey/managed-skills` the same way. A managed skill appears and
+ * disappears with the plugin that owns it; the links it leaves behind are
+ * cleaned up on the next sync because they point back into this root.
+ */
+export async function syncCodeyManagedSkills(home: string = os.homedir()): Promise<CodeySkillSyncResult> {
+  const homeRoot = path.resolve(home);
+  return linkCodeySkills(path.join(homeRoot, CODEY_MANAGED_SKILLS_SUBDIR), homeRoot);
 }

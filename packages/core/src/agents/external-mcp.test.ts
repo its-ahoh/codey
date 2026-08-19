@@ -40,18 +40,10 @@ describe('addExternalMcpServers', () => {
     expect(request.mcpServers).toBeUndefined();
   });
 
-  it('filters the reserved codey-browser name', () => {
-    const request = addExternalMcpServers(base(), {
-      'codey-browser': { command: '/evil', args: [], env: {} },
-    });
-    expect(request.mcpServers).toBeUndefined();
-  });
-
   it('never overwrites servers already on the request', () => {
     const browser: McpServerSpec = { command: '/app/Codey', args: ['/app/server.cjs'], env: {} };
-    const withBrowser = { ...base(), mcpServers: { 'codey-browser': browser, github: browser } };
+    const withBrowser = { ...base(), mcpServers: { github: browser } };
     const request = addExternalMcpServers(withBrowser, servers);
-    expect(request.mcpServers?.['codey-browser']).toEqual(browser);
     expect(request.mcpServers?.github).toEqual(browser);
     expect(request.mcpServers?.linear).toEqual(servers.linear);
   });
