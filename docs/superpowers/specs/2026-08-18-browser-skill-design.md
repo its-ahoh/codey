@@ -81,6 +81,10 @@ over an MCP server.
 - A download is only accepted if its frontmatter names this skill. A raw URL can
   answer with a proxy's login page or someone else's file, and whatever lands in
   the skill root is read by every agent as instructions.
+- Every install stamps the file, after the frontmatter, with where the text came
+  from and when: `<!-- Installed by Codey from its-ahoh/codey-skills@<hash> on
+  <date>. ... -->`. The hash is the raw host's ETag for those bytes, so no second
+  request is needed to name the version.
 - Both run **only for an explicit user action**. Codey never rewrites the
   directory behind the user's back, which is what makes the Skills tab's own
   on/off and delete hold.
@@ -111,17 +115,29 @@ source of the copy stops being the app bundle.
 
 `browserSkillStatus()` reports `absent` (not installed), `disabled` (installed,
 switched off in Skills) or `installed`, along with the directory the copy lives
-in, the repository it comes from, and `differsFromBundled`. That last one is
-stated, not acted on: the published copy is *expected* to move ahead of the
-app's, and the user may have edited theirs, which is their right. Update is
-always available while installed — it re-pulls — rather than appearing only when
-Codey thinks it knows better. There is no enabled flag in config:
+in, the repository it comes from, and `origin`. Update is always available while
+installed — it re-pulls — rather than appearing only when Codey thinks the copy
+is stale: the published text is *expected* to move ahead of the app's bundled
+one, so a staleness heuristic based on that comparison only cries wolf. There is
+no enabled flag in config:
 the Plugins tab, the Skills tab and a hand-run `rm` all write the same
 directory, and a second source of truth could only ever contradict it.
 
 `gateway.json`'s `plugins.browser.enabled` survives as a legacy marker, read
 once at startup: a user who had the plugin on before this change gets the skill
 installed for them rather than losing the capability silently.
+
+### Codey writes only what Codey wrote
+
+`origin` comes from the stamp: `codey` for a file an install left, `user` for
+anything else — a hand-written skill of the same name, or one predating the
+stamp. Install and uninstall refuse to touch a `user` copy and return
+`conflict: 'user-copy'`; the card then names the path, says what would happen,
+and offers **Replace it** / **Delete it** against **Keep mine**. The `force`
+flag exists for exactly that confirmation.
+
+The guard reads `SKILL.md.disabled` too. Turning a hand-written skill off in the
+Skills tab must not be what makes it overwritable.
 
 ### Capability: the environment
 
@@ -169,6 +185,10 @@ the filter would silently swallow a user's server of the same name.
   it fire.
 - **An agent with shell disabled** loses the browser. Nothing in Codey does
   that today.
+- **Publishing is not instant.** `raw.githubusercontent.com` sets
+  `max-age=300` and caches per content-encoding, so a push takes up to ~5
+  minutes to reach installs — and the gzip and identity variants can expire at
+  different moments. Observed while verifying this change.
 - **The published text and the app's CLI version independently.** The skill
   documents a CLI that ships inside the app, so a repository ahead of an old
   app can describe commands that app does not have. Accepted deliberately: the
@@ -209,8 +229,19 @@ drove the IPC handlers' functions rather than the rendered UI.
   a skill out only when it grows its own build, its own maintainer, or a release
   cadence tied to something else.
 - Nothing verifies the download's provenance beyond "the frontmatter names this
-  skill". A signature, or pinning to a commit, is the next step if the skill
-  ever carries anything more dangerous than instructions.
+  skill". Whoever can push to the repository can change the instructions every
+  agent reads; the repository allows no direct pushes but the owner's, and the
+  default branch cannot be force-pushed or deleted. Pinning
+  `CODEY_SKILLS_REPO_REF` to a tag, or signing, is the next step if a skill ever
+  carries more than instructions — at the cost of the reason for pulling at all.
+- Three clocks now exist: the repository, the app (its CLI and bundled copy),
+  and the user's installed copy, which is frozen until they press Update while
+  the app updates itself. The dangerous drift is not the command list — an
+  unknown command returns the CLI's full usage and the agent recovers — but the
+  structural conventions: the invocation prefix, the `CODEY_BROWSER_*` names,
+  the approval semantics, and `wait-login`'s "end your turn, Codey resumes the
+  chat" contract, where a stale skill makes an agent poll instead of stopping.
+  Those change with the CLI, in a release, not by publishing text.
 - The one-time startup migration (install for a user who had the old config
   flag on, and delete the `~/.codey/managed-skills` root a development build
   left behind) can be dropped a release or two after it ships.

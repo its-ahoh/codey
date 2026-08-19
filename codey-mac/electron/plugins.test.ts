@@ -5,7 +5,6 @@ import { PLUGINS, isKnownPlugin, listPlugins } from './plugins'
 const status = (over: Partial<BrowserSkillStatus> = {}): BrowserSkillStatus => ({
   state: 'absent',
   dir: '/Users/test/.codey/skills/browser',
-  differsFromBundled: false,
   sourceUrl: 'https://github.com/its-ahoh/codey-skills',
   ...over,
 })
@@ -23,11 +22,11 @@ describe('plugin registry', () => {
     }
   })
 
-  it('carries where the copy lives and where it came from, so the card can say', () => {
-    const plugin = listPlugins(() => status({ state: 'installed', differsFromBundled: true }))[0]
+  it('carries where the copy lives, where it came from, and who wrote it', () => {
+    const plugin = listPlugins(() => status({ state: 'installed', origin: 'user' }))[0]
     expect(plugin.dir).toBe('/Users/test/.codey/skills/browser')
     expect(plugin.sourceUrl).toBe('https://github.com/its-ahoh/codey-skills')
-    expect(plugin.differsFromBundled).toBe(true)
+    expect(plugin.origin).toBe('user')
   })
 
   it('asks about each registered plugin by id', () => {

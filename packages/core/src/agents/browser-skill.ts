@@ -52,6 +52,33 @@ const SKILL_FILE = 'SKILL.md';
 const DISABLED_SKILL_FILE = 'SKILL.md.disabled';
 
 /**
+ * An install stamps the file with where the text came from. Two jobs: it
+ * answers "which version of this text does the user actually have" when an
+ * agent runs a command the CLI does not have, and it is how Codey recognises
+ * its own copy. Anything without the stamp is treated as the user's, and is
+ * not overwritten or deleted without confirmation.
+ *
+ * It sits after the frontmatter (agents parse that from the first byte) and is
+ * an HTML comment, so it renders as nothing and reads as nothing.
+ */
+export const CODEY_INSTALL_MARKER = '<!-- Installed by Codey from';
+
+function stamp(markdown: string, from: string, today: string): string {
+  const line = `${CODEY_INSTALL_MARKER} ${from} on ${today}. `
+    + 'Manage it in Tools -> Plugins; edits here are replaced by the next update. -->';
+  const frontmatter = /^---\n[\s\S]*?\n---\n/.exec(markdown);
+  if (!frontmatter) return `${line}\n\n${markdown}`;
+  const head = markdown.slice(0, frontmatter[0].length);
+  const body = markdown.slice(frontmatter[0].length).replace(/^\n+/, '');
+  return `${head}\n${line}\n\n${body}`;
+}
+
+/** True for a file an install wrote. */
+export function isCodeyInstalledSkill(markdown: string): boolean {
+  return markdown.includes(CODEY_INSTALL_MARKER);
+}
+
+/**
  * What the user's copy of the skill is doing right now, read from disk rather
  * than from config: the Plugins tab, the Skills tab and a hand-run `rm` all
  * change the same thing, so the disk is the only state that cannot disagree
@@ -68,21 +95,22 @@ export interface BrowserSkillStatus {
   /** Where an installed copy lives, so the UI can point at it whether or not
    *  it is installed yet. */
   dir: string;
-  /** The installed copy is not the one this build ships. Expected after a pull
-   *  from the repository, and true as well when the user has edited it — which
-   *  is their right, so this is stated, not corrected. */
-  differsFromBundled: boolean;
+  /** Who wrote the copy that is there: `codey` if it carries the stamp an
+   *  install leaves, `user` for anything else — a hand-written skill of the
+   *  same name, or one from before stamping. Codey overwrites its own copy
+   *  freely and asks before touching the user's. */
+  origin?: 'codey' | 'user';
   /** Where Install pulls from. */
   sourceUrl: string;
 }
 
 /** Which copy an install actually wrote. `bundled` means the repository could
  *  not be used, and `reason` says why. */
-export interface BrowserSkillInstallResult {
-  file: string;
-  source: 'repository' | 'bundled';
-  reason?: string;
-}
+export type BrowserSkillInstallResult =
+  | { installed: true; file: string; source: 'repository' | 'bundled'; reason?: string }
+  /** Refused: a skill of this name is already there and Codey did not write
+   *  it. The caller confirms with `force` — never silently. */
+  | { installed: false; conflict: 'user-copy'; dir: string };
 
 let cached: string | undefined;
 
@@ -108,9 +136,9 @@ export function browserSkillStatus(home: string = os.homedir()): BrowserSkillSta
     } catch {
       continue;
     }
-    return { ...base, state, differsFromBundled: installed !== browserSkillMarkdown() };
+    return { ...base, state, origin: isCodeyInstalledSkill(installed) ? 'codey' : 'user' };
   }
-  return { ...base, state: 'absent', differsFromBundled: false };
+  return { ...base, state: 'absent' };
 }
 
 /** True when agents can both find the skill and be handed the bridge. */
@@ -128,7 +156,7 @@ function isPublishedSkill(text: string, name: string): boolean {
   return new RegExp(`^---\\nname: ${name}\\ndescription: \\S`).test(text) && text.length > 400;
 }
 
-async function downloadBrowserSkill(timeoutMs: number): Promise<string> {
+async function downloadBrowserSkill(timeoutMs: number): Promise<{ text: string; from: string }> {
   const url = codeySkillDownloadUrl(BROWSER_SKILL_NAME);
   const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) throw new Error(`${url} returned ${response.status}`);
@@ -136,48 +164,78 @@ async function downloadBrowserSkill(timeoutMs: number): Promise<string> {
   if (!isPublishedSkill(text, BROWSER_SKILL_NAME)) {
     throw new Error(`${url} did not return the ${BROWSER_SKILL_NAME} skill`);
   }
-  return text;
+  // The raw host answers with the blob's hash as its ETag, so the stamp can
+  // name the exact bytes without a second request for the commit. It may be
+  // weak (`W/"..."`, when the body was compressed); the hash is the same.
+  const version = response.headers.get('etag')?.replace(/^W\//, '').replace(/[^\w]/g, '')
+    || CODEY_SKILLS_REPO_REF;
+  const repo = CODEY_SKILLS_REPO_URL.replace('https://github.com/', '');
+  return { text, from: `${repo}@${version.slice(0, 12)}` };
 }
 
 /**
  * Install (or update) the user's copy, pulled from the skills repository and
  * falling back to the copy bundled with this build.
  *
- * Only ever called for an explicit user action, so it overwrites: pressing
- * Install or Update is how the user asks for the published text. A leftover
- * `SKILL.md.disabled` is removed with it — installing means the user wants the
- * skill on, and leaving both files behind would break the Skills tab's toggle.
+ * Overwrites Codey's own copy without ceremony — pressing Install or Update is
+ * how the user asks for the published text. Refuses when the file there is not
+ * one Codey wrote: a hand-written skill of the same name is the user's work,
+ * and replacing it silently is not a thing an install may do. `force` is the
+ * caller's confirmation.
+ *
+ * A leftover `SKILL.md.disabled` is removed on success — installing means the
+ * user wants the skill on, and leaving both files behind would break the
+ * Skills tab's toggle.
  */
 export async function installBrowserSkill(
   home: string = os.homedir(),
-  timeoutMs = 10000,
+  { force = false, timeoutMs = 10000, today = new Date().toISOString().slice(0, 10) }: {
+    force?: boolean; timeoutMs?: number; today?: string;
+  } = {},
 ): Promise<BrowserSkillInstallResult> {
+  const dir = browserSkillDir(home);
+  const existing = browserSkillStatus(home);
+  if (!force && existing.origin === 'user') return { installed: false, conflict: 'user-copy', dir };
+
   let markdown: string;
-  let source: BrowserSkillInstallResult['source'] = 'repository';
+  let source: 'repository' | 'bundled' = 'repository';
+  let from = 'the copy bundled with the app';
   let reason: string | undefined;
   try {
-    markdown = await downloadBrowserSkill(timeoutMs);
+    const downloaded = await downloadBrowserSkill(timeoutMs);
+    markdown = downloaded.text;
+    from = downloaded.from;
   } catch (error) {
     markdown = browserSkillMarkdown();
     source = 'bundled';
     reason = error instanceof Error ? error.message : String(error);
   }
 
-  const dir = browserSkillDir(home);
   const file = path.join(dir, SKILL_FILE);
   await fs.promises.mkdir(dir, { recursive: true });
-  await fs.promises.writeFile(file, markdown, 'utf8');
+  await fs.promises.writeFile(file, stamp(markdown, from, today), 'utf8');
   await fs.promises.rm(path.join(dir, DISABLED_SKILL_FILE), { force: true });
-  return { file, source, reason };
+  return { installed: true, file, source, reason };
 }
 
-/** Remove the user's copy. Uninstalling takes the capability out of every
- *  agent's skill list, not just out of its env. */
-export async function uninstallBrowserSkill(home: string = os.homedir()): Promise<boolean> {
+/**
+ * Remove the user's copy. Uninstalling takes the capability out of every
+ * agent's skill list, not just out of its env.
+ *
+ * Like install, this deletes what Codey wrote and asks first about anything
+ * else: the directory may hold a skill the user wrote, and there is no undo.
+ */
+export async function uninstallBrowserSkill(
+  home: string = os.homedir(),
+  { force = false }: { force?: boolean } = {},
+): Promise<{ removed: boolean; conflict?: 'user-copy' }> {
+  const dir = browserSkillDir(home);
+  const existing = browserSkillStatus(home);
+  if (!force && existing.origin === 'user') return { removed: false, conflict: 'user-copy' };
   try {
-    await fs.promises.rm(browserSkillDir(home), { recursive: true, force: true });
-    return true;
+    await fs.promises.rm(dir, { recursive: true, force: true });
+    return { removed: true };
   } catch {
-    return false;
+    return { removed: false };
   }
 }

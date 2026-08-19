@@ -116,8 +116,8 @@ contextBridge.exposeInMainWorld('codey', {
   },
   plugins: {
     list: () => ipcRenderer.invoke('plugins:list'),
-    install: (id: string) => ipcRenderer.invoke('plugins:install', id),
-    uninstall: (id: string) => ipcRenderer.invoke('plugins:uninstall', id),
+    install: (id: string, force?: boolean) => ipcRenderer.invoke('plugins:install', id, force),
+    uninstall: (id: string, force?: boolean) => ipcRenderer.invoke('plugins:uninstall', id, force),
   },
   mcp: {
     list: () => ipcRenderer.invoke('mcp:list'),

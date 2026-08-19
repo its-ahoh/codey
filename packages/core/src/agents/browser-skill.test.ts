@@ -5,9 +5,11 @@ import * as path from 'path';
 import {
   browserSkillMarkdown,
   browserSkillStatus,
+  CODEY_INSTALL_MARKER,
   codeySkillDownloadUrl,
   installBrowserSkill,
   isBrowserSkillActive,
+  isCodeyInstalledSkill,
   uninstallBrowserSkill,
 } from './browser-skill';
 import { syncCodeyGlobalSkills } from './codey-skills';
@@ -26,7 +28,19 @@ description: ${'Published copy, long enough to pass the description check on its
 
 ${'Published body.\n'.repeat(40)}`;
 
-const serve = (body: string, status = 200) => vi.fn(async () => new Response(body, { status }));
+const serve = (body: string, status = 200, etag = '"0123456789abcdef"') =>
+  vi.fn(async () => new Response(body, { status, headers: status === 200 ? { etag } : {} }));
+
+/** Every install stamps the file, so assertions compare the text around it. */
+const written = () => fs.readFileSync(skillFile(), 'utf8');
+const unstamped = () => written()
+  .split('\n').filter(line => !line.startsWith(CODEY_INSTALL_MARKER)).join('\n')
+  .replace(/\n{3,}/g, '\n\n');
+const install = async (opts = {}) => {
+  const result = await installBrowserSkill(home, { today: '2026-08-19', ...opts });
+  if (!result.installed) throw new Error(`install refused: ${result.conflict}`);
+  return result;
+};
 
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-browser-skill-'));
@@ -40,10 +54,23 @@ afterEach(() => {
 
 describe('installing the browser skill', () => {
   it('writes the published skill into the user\'s own skill root', async () => {
-    const result = await installBrowserSkill(home);
-    expect(result).toEqual({ file: skillFile(), source: 'repository', reason: undefined });
-    expect(fs.readFileSync(result.file, 'utf8')).toBe(PUBLISHED);
+    const result = await install();
+    expect(result).toEqual({ installed: true, file: skillFile(), source: 'repository', reason: undefined });
+    expect(unstamped().trim()).toBe(PUBLISHED.trim());
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe(codeySkillDownloadUrl('browser'));
+  });
+
+  // Which bytes the user actually has is the first question when an agent runs
+  // a command the installed CLI does not have.
+  it('stamps the file with where the text came from, after the frontmatter', async () => {
+    await install();
+    const lines = written().split('\n');
+    expect(lines[0]).toBe('---');
+    const marker = lines.find(line => line.startsWith(CODEY_INSTALL_MARKER))!;
+    expect(marker).toContain('its-ahoh/codey-skills@0123456789ab');
+    expect(marker).toContain('on 2026-08-19');
+    expect(lines.indexOf(marker)).toBeGreaterThan(lines.indexOf('---', 1));
+    expect(isCodeyInstalledSkill(written())).toBe(true);
   });
 
   it('names itself "browser" in frontmatter so agents can address it', () => {
@@ -59,19 +86,19 @@ describe('installing the browser skill', () => {
     await syncCodeyGlobalSkills(home);
     for (const dir of ['.claude', '.agents']) {
       const link = path.join(home, dir, 'skills', 'browser');
-      expect(fs.readFileSync(path.join(link, 'SKILL.md'), 'utf8')).toBe(PUBLISHED);
+      expect(fs.readFileSync(path.join(link, 'SKILL.md'), 'utf8')).toBe(written());
     }
   });
 
-  it('refreshes a stale copy, which is what pressing Update asks for', async () => {
-    await installBrowserSkill(home);
-    fs.writeFileSync(skillFile(), '---\nname: browser\ndescription: stale\n---\n', 'utf8');
-    await installBrowserSkill(home);
-    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(PUBLISHED);
+  it('refreshes its own stale copy, which is what pressing Update asks for', async () => {
+    await install();
+    fs.writeFileSync(skillFile(), `---\nname: browser\ndescription: stale\n---\n${CODEY_INSTALL_MARKER} old -->\n`, 'utf8');
+    await install();
+    expect(unstamped().trim()).toBe(PUBLISHED.trim());
   });
 
   it('installing an off skill turns it back on, leaving no disabled leftover', async () => {
-    await installBrowserSkill(home);
+    await install();
     fs.renameSync(skillFile(), path.join(skillDir(), 'SKILL.md.disabled'));
     await installBrowserSkill(home);
     expect(fs.existsSync(skillFile())).toBe(true);
@@ -81,9 +108,9 @@ describe('installing the browser skill', () => {
 
 describe('uninstalling the browser skill', () => {
   it('removes the skill and, on the next sync, its discovery links', async () => {
-    await installBrowserSkill(home);
+    await install();
     await syncCodeyGlobalSkills(home);
-    await uninstallBrowserSkill(home);
+    expect(await uninstallBrowserSkill(home)).toEqual({ removed: true });
     await syncCodeyGlobalSkills(home);
     expect(fs.existsSync(skillDir())).toBe(false);
     for (const dir of ['.claude', '.agents']) {
@@ -92,14 +119,14 @@ describe('uninstalling the browser skill', () => {
   });
 
   it('uninstalling an absent skill is not an error', async () => {
-    await expect(uninstallBrowserSkill(home)).resolves.toBe(true);
+    await expect(uninstallBrowserSkill(home)).resolves.toEqual({ removed: true });
   });
 
   it('leaves the user\'s other skills alone', async () => {
     const mine = path.join(home, '.codey', 'skills', 'mine');
     fs.mkdirSync(mine, { recursive: true });
     fs.writeFileSync(path.join(mine, 'SKILL.md'), 'mine', 'utf8');
-    await installBrowserSkill(home);
+    await install();
     await uninstallBrowserSkill(home);
     expect(fs.readFileSync(path.join(mine, 'SKILL.md'), 'utf8')).toBe('mine');
   });
@@ -107,23 +134,21 @@ describe('uninstalling the browser skill', () => {
 
 describe('the state the capability gate reads', () => {
   it('is absent before an install, and still names where it would go', () => {
-    expect(browserSkillStatus(home)).toMatchObject({ state: 'absent', dir: skillDir(), differsFromBundled: false });
+    expect(browserSkillStatus(home)).toMatchObject({ state: 'absent', dir: skillDir() });
+    expect(browserSkillStatus(home).origin).toBeUndefined();
     expect(isBrowserSkillActive(home)).toBe(false);
   });
 
-  it('is installed after one', async () => {
-    await installBrowserSkill(home);
-    expect(browserSkillStatus(home)).toMatchObject({ state: 'installed', dir: skillDir() });
+  it('is installed, and Codey\'s, after one', async () => {
+    await install();
+    expect(browserSkillStatus(home)).toMatchObject({ state: 'installed', dir: skillDir(), origin: 'codey' });
     expect(isBrowserSkillActive(home)).toBe(true);
   });
 
-  // The published copy is expected to move ahead of the one in the app; saying
-  // so is useful, correcting it is not — the file is the user's.
-  it('reports a copy that is not the bundled one, without acting on it', async () => {
-    await installBrowserSkill(home);
-    expect(browserSkillStatus(home).differsFromBundled).toBe(true);
-    fs.writeFileSync(skillFile(), browserSkillMarkdown(), 'utf8');
-    expect(browserSkillStatus(home).differsFromBundled).toBe(false);
+  it('calls an unstamped copy the user\'s', () => {
+    fs.mkdirSync(skillDir(), { recursive: true });
+    fs.writeFileSync(skillFile(), '---\nname: browser\ndescription: mine\n---\nMy own notes.\n', 'utf8');
+    expect(browserSkillStatus(home).origin).toBe('user');
   });
 
   // Turning the skill off in the Skills tab renames SKILL.md; the browser env
@@ -146,37 +171,73 @@ describe('the state the capability gate reads', () => {
 describe('pulling the skill from the repository', () => {
   it('falls back to the bundled copy when the repository cannot be reached', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('getaddrinfo ENOTFOUND') }));
-    const result = await installBrowserSkill(home);
+    const result = await install();
     expect(result.source).toBe('bundled');
     expect(result.reason).toContain('ENOTFOUND');
-    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(browserSkillMarkdown());
+    expect(unstamped().trim()).toBe(browserSkillMarkdown().trim());
   });
 
   it('falls back on an HTTP error rather than writing the error page', async () => {
     vi.stubGlobal('fetch', serve('<html>404</html>', 404));
-    const result = await installBrowserSkill(home);
+    const result = await install();
     expect(result.source).toBe('bundled');
     expect(result.reason).toContain('404');
-    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(browserSkillMarkdown());
+    expect(unstamped().trim()).toBe(browserSkillMarkdown().trim());
   });
 
   // A raw URL can answer with a proxy login page or someone else's file, and
   // whatever lands here is read by every agent as instructions.
   it('refuses a 200 that is not this skill', async () => {
     vi.stubGlobal('fetch', serve('<html>Sign in to continue</html>'));
-    const result = await installBrowserSkill(home);
-    expect(result.source).toBe('bundled');
-    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(browserSkillMarkdown());
+    expect((await install()).source).toBe('bundled');
+    expect(unstamped().trim()).toBe(browserSkillMarkdown().trim());
   });
 
   it('refuses a well-formed skill under another name', async () => {
     vi.stubGlobal('fetch', serve(PUBLISHED.replace('name: browser', 'name: something-else')));
-    expect((await installBrowserSkill(home)).source).toBe('bundled');
+    expect((await install()).source).toBe('bundled');
   });
 
   it('downloads from the published repository path', () => {
     expect(codeySkillDownloadUrl('browser')).toBe(
       'https://raw.githubusercontent.com/its-ahoh/codey-skills/main/skills/browser/SKILL.md',
     );
+  });
+});
+
+describe('a skill of the same name that Codey did not write', () => {
+  const MINE = '---\nname: browser\ndescription: my own\n---\nMy own notes.\n';
+
+  beforeEach(() => {
+    fs.mkdirSync(skillDir(), { recursive: true });
+    fs.writeFileSync(skillFile(), MINE, 'utf8');
+  });
+
+  it('is not replaced by an install', async () => {
+    const result = await installBrowserSkill(home, { today: '2026-08-19' });
+    expect(result).toEqual({ installed: false, conflict: 'user-copy', dir: skillDir() });
+    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(MINE);
+  });
+
+  it('is not deleted by an uninstall', async () => {
+    expect(await uninstallBrowserSkill(home)).toEqual({ removed: false, conflict: 'user-copy' });
+    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(MINE);
+  });
+
+  it('is replaced once the user confirms', async () => {
+    expect((await installBrowserSkill(home, { force: true, today: '2026-08-19' })).installed).toBe(true);
+    expect(browserSkillStatus(home).origin).toBe('codey');
+  });
+
+  it('is deleted once the user confirms', async () => {
+    expect(await uninstallBrowserSkill(home, { force: true })).toEqual({ removed: true });
+    expect(browserSkillStatus(home).state).toBe('absent');
+  });
+
+  // Disabling in the Skills tab renames the file; the guard has to see it there
+  // too, or turning a hand-written skill off would make it overwritable.
+  it('is protected while switched off as well', async () => {
+    fs.renameSync(skillFile(), path.join(skillDir(), 'SKILL.md.disabled'));
+    expect((await installBrowserSkill(home, { today: '2026-08-19' })).installed).toBe(false);
   });
 });

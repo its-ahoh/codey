@@ -30,19 +30,23 @@ export interface PluginInfo {
   state: 'absent' | 'disabled' | 'installed'
   /** Where an installed copy lives. */
   dir: string
-  /** The installed copy is not the one bundled with this build — expected
-   *  after a pull from the repository, and true when the user edits it too. */
-  differsFromBundled: boolean
+  /** Who wrote what is there: 'codey' carries an install's stamp, 'user' is a
+   *  hand-written skill of the same name. Undefined when nothing is installed. */
+  origin?: 'codey' | 'user'
   /** The repository Install pulls from. */
   sourceUrl: string
 }
 
 /** Which copy an install wrote: 'bundled' means the repository was unreachable
- *  and `reason` says why. */
-export interface PluginInstallResult {
-  file: string
-  source: 'repository' | 'bundled'
-  reason?: string
+ *  and `reason` says why. `installed: false` means Codey refused to replace a
+ *  skill it did not write; retry with force once the user confirms. */
+export type PluginInstallResult =
+  | { installed: true; file: string; source: 'repository' | 'bundled'; reason?: string }
+  | { installed: false; conflict: 'user-copy'; dir: string }
+
+export interface PluginUninstallResult {
+  removed: boolean
+  conflict?: 'user-copy'
 }
 
 export interface ExternalMcpServer {
@@ -271,8 +275,8 @@ declare global {
       }
       plugins: {
         list: () => Promise<IpcResult<PluginInfo[]>>
-        install: (id: string) => Promise<IpcResult<PluginInstallResult>>
-        uninstall: (id: string) => Promise<IpcResult<void>>
+        install: (id: string, force?: boolean) => Promise<IpcResult<PluginInstallResult>>
+        uninstall: (id: string, force?: boolean) => Promise<IpcResult<PluginUninstallResult>>
       }
       mcp: {
         list: () => Promise<IpcResult<ExternalMcpServer[]>>

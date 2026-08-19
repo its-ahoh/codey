@@ -957,6 +957,7 @@ async function bootInProcessCore() {
         await installBrowserSkill()
         await syncCodeyGlobalSkills()
       }
+
     } catch { /* best-effort: the Plugins tab can install it by hand */ }
     workerManager = new WorkerManager(join(root, 'workers'))
     await workerManager.loadWorkers()
@@ -3204,20 +3205,24 @@ app.whenReady().then(async () => {
   // it for every agent, so from here on the Skills tab owns it. Uninstalling
   // removes it; both are explicit user actions, and nothing rewrites the
   // directory in between.
-  ipcMain.handle('plugins:install', async (_e, id: string) =>
+  // `force` is the user having confirmed replacing or deleting a skill of the
+  // same name that Codey did not write. Without it the core refuses, and the
+  // card asks.
+  ipcMain.handle('plugins:install', async (_e, id: string, force?: boolean) =>
     wrap(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
-      const result = await installBrowserSkill()
-      await syncCodeyGlobalSkills()
+      const result = await installBrowserSkill(undefined, { force: force === true })
+      if (result.installed) await syncCodeyGlobalSkills()
       return result
     })
   )
 
-  ipcMain.handle('plugins:uninstall', async (_e, id: string) =>
+  ipcMain.handle('plugins:uninstall', async (_e, id: string, force?: boolean) =>
     wrap(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
-      await uninstallBrowserSkill()
-      await syncCodeyGlobalSkills()
+      const result = await uninstallBrowserSkill(undefined, { force: force === true })
+      if (result.removed) await syncCodeyGlobalSkills()
+      return result
     })
   )
 

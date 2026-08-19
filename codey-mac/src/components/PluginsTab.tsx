@@ -5,6 +5,10 @@ import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
 import type { PluginInfo, PluginInstallResult } from '../codey-api'
 
+/** Codey refused to touch a skill of this name it did not write. The user
+ *  decides; nothing is replaced or deleted until they say so. */
+type Pending = { action: 'install' | 'uninstall'; dir: string }
+
 export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -12,6 +16,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
   const [busy, setBusy] = useState<string | null>(null)
   // What the last install did, kept per plugin: which copy landed, and where.
   const [outcome, setOutcome] = useState<Record<string, PluginInstallResult>>({})
+  const [pending, setPending] = useState<Record<string, Pending>>({})
   const filteredPlugins = useMemo(
     () => plugins.filter(plugin => matchesToolSearch(searchQuery, plugin.name, plugin.description)),
     [plugins, searchQuery],
@@ -31,17 +36,32 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
 
   useEffect(() => { void reload() }, [reload])
 
-  const act = async (plugin: PluginInfo, action: 'install' | 'uninstall') => {
+  const forget = (id: string, from: Record<string, any>) => {
+    const next = { ...from }
+    delete next[id]
+    return next
+  }
+
+  const act = async (plugin: PluginInfo, action: 'install' | 'uninstall', force = false) => {
     setBusy(plugin.id)
     setError(null)
     try {
       if (action === 'install') {
-        const result = unwrap(await window.codey.plugins.install(plugin.id))
+        const result = unwrap(await window.codey.plugins.install(plugin.id, force))
+        if (!result.installed) {
+          setPending(prev => ({ ...prev, [plugin.id]: { action, dir: result.dir } }))
+          return
+        }
         setOutcome(prev => ({ ...prev, [plugin.id]: result }))
       } else {
-        unwrap(await window.codey.plugins.uninstall(plugin.id))
-        setOutcome(prev => { const next = { ...prev }; delete next[plugin.id]; return next })
+        const result = unwrap(await window.codey.plugins.uninstall(plugin.id, force))
+        if (!result.removed && result.conflict) {
+          setPending(prev => ({ ...prev, [plugin.id]: { action, dir: plugin.dir } }))
+          return
+        }
+        setOutcome(prev => forget(plugin.id, prev))
       }
+      setPending(prev => forget(plugin.id, prev))
       await reload()
     } catch (e: any) {
       setError(e?.message ?? String(e))
@@ -64,6 +84,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
         const installed = plugin.state !== 'absent'
         const working = busy === plugin.id
         const last = outcome[plugin.id]
+        const ask = pending[plugin.id]
         return (
           <div key={plugin.id} style={styles.card}>
             <div style={styles.cardIcon}><UIIcon name="tools" size={18} /></div>
@@ -89,31 +110,61 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                   Downloads from <span style={styles.path}>{plugin.sourceUrl}</span>
                 </div>
               )}
-              {last?.source === 'bundled' && (
+              {last?.installed && last.source === 'bundled' && (
                 <div style={styles.cardWarn}>
                   Could not reach the skills repository, so Codey installed the copy it
                   ships with. {last.reason}
                 </div>
               )}
+              {ask && (
+                <div style={styles.cardWarn}>
+                  A skill named "browser" is already at <span style={styles.path}>{ask.dir}</span>,
+                  and Codey did not write it.{' '}
+                  {ask.action === 'install'
+                    ? 'Installing replaces it.'
+                    : 'Uninstalling deletes it.'} There is no undo.
+                </div>
+              )}
             </div>
             <div style={styles.cardActions}>
-              {installed && (
-                <button
-                  onClick={() => { if (!working) void act(plugin, 'install') }}
-                  disabled={working}
-                  style={pillButton('ghost')}
-                  title="Download the published skill again, replacing your copy"
-                >
-                  Update
-                </button>
+              {ask ? (
+                <>
+                  <button
+                    onClick={() => setPending(prev => forget(plugin.id, prev))}
+                    disabled={working}
+                    style={pillButton('ghost')}
+                  >
+                    Keep mine
+                  </button>
+                  <button
+                    onClick={() => { if (!working) void act(plugin, ask.action, true) }}
+                    disabled={working}
+                    style={pillButton('danger')}
+                  >
+                    {ask.action === 'install' ? 'Replace it' : 'Delete it'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {installed && (
+                    <button
+                      onClick={() => { if (!working) void act(plugin, 'install') }}
+                      disabled={working}
+                      style={pillButton('ghost')}
+                      title="Download the published skill again, replacing your copy"
+                    >
+                      Update
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { if (!working) void act(plugin, installed ? 'uninstall' : 'install') }}
+                    disabled={working}
+                    style={pillButton(installed ? 'danger' : 'primary')}
+                  >
+                    {working ? (installed ? 'Working…' : 'Installing…') : installed ? 'Uninstall' : 'Install'}
+                  </button>
+                </>
               )}
-              <button
-                onClick={() => { if (!working) void act(plugin, installed ? 'uninstall' : 'install') }}
-                disabled={working}
-                style={pillButton(installed ? 'danger' : 'primary')}
-              >
-                {working ? (installed ? 'Working…' : 'Installing…') : installed ? 'Uninstall' : 'Install'}
-              </button>
             </div>
           </div>
         )

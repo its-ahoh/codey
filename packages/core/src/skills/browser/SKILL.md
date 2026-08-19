@@ -3,9 +3,6 @@ name: browser
 description: Use when a task needs the live web or a real UI - open, read, screenshot, or click through pages in the user-visible Codey Browser, including pages behind the user's existing logins. Triggers - "open this page", "check the site", "log in and", "what does the page say", "click the button", "fill the form", "test the UI".
 ---
 
-<!-- Managed by Codey. Edits are overwritten; this file is removed when the
-     Browser plugin is turned off. -->
-
 # Codey Browser
 
 Drive the browser window the user can see. Every command is one shell call:
