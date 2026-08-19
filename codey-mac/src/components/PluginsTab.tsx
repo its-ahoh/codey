@@ -94,6 +94,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                 {installed && (
                   <span style={plugin.state === 'disabled' ? styles.badgeMuted : styles.badge}>
                     {plugin.state === 'disabled' ? 'Off in Skills' : 'Installed'}
+                    {plugin.version ? ` ${plugin.version}` : ''}
                   </span>
                 )}
               </div>

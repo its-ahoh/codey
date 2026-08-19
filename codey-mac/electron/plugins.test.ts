@@ -22,8 +22,9 @@ describe('plugin registry', () => {
     }
   })
 
-  it('carries where the copy lives, where it came from, and who wrote it', () => {
-    const plugin = listPlugins(() => status({ state: 'installed', origin: 'user' }))[0]
+  it('carries where the copy lives, where it came from, who wrote it, and which version', () => {
+    const plugin = listPlugins(() => status({ state: 'installed', origin: 'user', version: '1.2.3' }))[0]
+    expect(plugin.version).toBe('1.2.3')
     expect(plugin.dir).toBe('/Users/test/.codey/skills/browser')
     expect(plugin.sourceUrl).toBe('https://github.com/its-ahoh/codey-skills')
     expect(plugin.origin).toBe('user')

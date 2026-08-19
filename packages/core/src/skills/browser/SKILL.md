@@ -1,5 +1,6 @@
 ---
 name: browser
+version: 1.0.0
 description: Use when a task needs the live web or a real UI - open, read, screenshot, or click through pages in the user-visible Codey Browser, including pages behind the user's existing logins. Triggers - "open this page", "check the site", "log in and", "what does the page say", "click the button", "fill the form", "test the UI".
 ---
 

@@ -10,6 +10,7 @@ import {
   installBrowserSkill,
   isBrowserSkillActive,
   isCodeyInstalledSkill,
+  skillVersion,
   uninstallBrowserSkill,
 } from './browser-skill';
 import { syncCodeyGlobalSkills } from './codey-skills';
@@ -23,13 +24,21 @@ const skillFile = () => path.join(skillDir(), 'SKILL.md');
  *  skill, so "which copy landed" is visible in the file itself. */
 const PUBLISHED = `---
 name: browser
+version: 9.9.9
 description: ${'Published copy, long enough to pass the description check on its own.'}
 ---
 
 ${'Published body.\n'.repeat(40)}`;
 
-const serve = (body: string, status = 200, etag = '"0123456789abcdef"') =>
-  vi.fn(async () => new Response(body, { status, headers: status === 200 ? { etag } : {} }));
+const SHA = 'a'.repeat(40);
+
+/** Install makes two calls: the raw file, then the commit that last touched it. */
+const serve = (body: string, status = 200, sha: string | null = SHA) =>
+  vi.fn(async (url: string) => (
+    url.startsWith('https://api.github.com/')
+      ? new Response(sha === null ? 'nope' : JSON.stringify([{ sha }]), { status: sha === null ? 500 : 200 })
+      : new Response(body, { status })
+  ));
 
 /** Every install stamps the file, so assertions compare the text around it. */
 const written = () => fs.readFileSync(skillFile(), 'utf8');
@@ -67,14 +76,16 @@ describe('installing the browser skill', () => {
     const lines = written().split('\n');
     expect(lines[0]).toBe('---');
     const marker = lines.find(line => line.startsWith(CODEY_INSTALL_MARKER))!;
-    expect(marker).toContain('its-ahoh/codey-skills@0123456789ab');
+    expect(marker).toContain('browser 9.9.9');
+    expect(marker).toContain(`its-ahoh/codey-skills@${SHA.slice(0, 12)}`);
     expect(marker).toContain('on 2026-08-19');
     expect(lines.indexOf(marker)).toBeGreaterThan(lines.indexOf('---', 1));
     expect(isCodeyInstalledSkill(written())).toBe(true);
   });
 
-  it('names itself "browser" in frontmatter so agents can address it', () => {
-    expect(browserSkillMarkdown()).toMatch(/^---\nname: browser\ndescription: .+/);
+  it('names itself "browser" in frontmatter, with a version, so agents can address it', () => {
+    expect(browserSkillMarkdown()).toMatch(/^---\nname: browser\n/);
+    expect(skillVersion(browserSkillMarkdown())).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
   it('ships the command prefix, without which the body teaches nothing', () => {
@@ -141,7 +152,9 @@ describe('the state the capability gate reads', () => {
 
   it('is installed, and Codey\'s, after one', async () => {
     await install();
-    expect(browserSkillStatus(home)).toMatchObject({ state: 'installed', dir: skillDir(), origin: 'codey' });
+    expect(browserSkillStatus(home)).toMatchObject({
+      state: 'installed', dir: skillDir(), origin: 'codey', version: '9.9.9',
+    });
     expect(isBrowserSkillActive(home)).toBe(true);
   });
 
@@ -202,6 +215,23 @@ describe('pulling the skill from the repository', () => {
     expect(codeySkillDownloadUrl('browser')).toBe(
       'https://raw.githubusercontent.com/its-ahoh/codey-skills/main/skills/browser/SKILL.md',
     );
+  });
+
+  // A stamp that cannot name the commit still names the version, which is the
+  // part a human reads.
+  it('falls back to the branch name when the commit cannot be read', async () => {
+    vi.stubGlobal('fetch', serve(PUBLISHED, 200, null));
+    await install();
+    const marker = written().split('\n').find(line => line.startsWith(CODEY_INSTALL_MARKER))!;
+    expect(marker).toContain('browser 9.9.9');
+    expect(marker).toContain('its-ahoh/codey-skills@main');
+  });
+
+  it('ignores a commit response that is not a commit', async () => {
+    vi.stubGlobal('fetch', serve(PUBLISHED, 200, 'not-a-sha'));
+    await install();
+    const marker = written().split('\n').find(line => line.startsWith(CODEY_INSTALL_MARKER))!;
+    expect(marker).toContain('its-ahoh/codey-skills@main');
   });
 });
 

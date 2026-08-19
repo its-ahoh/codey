@@ -35,6 +35,8 @@ export interface PluginInfo {
   origin?: 'codey' | 'user'
   /** The repository Install pulls from. */
   sourceUrl: string
+  /** The version the installed copy declares. */
+  version?: string
 }
 
 /** Which copy an install wrote: 'bundled' means the repository was unreachable

@@ -81,10 +81,20 @@ over an MCP server.
 - A download is only accepted if its frontmatter names this skill. A raw URL can
   answer with a proxy's login page or someone else's file, and whatever lands in
   the skill root is read by every agent as instructions.
-- Every install stamps the file, after the frontmatter, with where the text came
-  from and when: `<!-- Installed by Codey from its-ahoh/codey-skills@<hash> on
-  <date>. ... -->`. The hash is the raw host's ETag for those bytes, so no second
-  request is needed to name the version.
+- Every published skill declares a `version:` in its frontmatter, and the
+  repository's CI fails a change to a `SKILL.md` that leaves that version alone.
+- Every install stamps the file, after the frontmatter, with that version, the
+  commit it came from, and the date: `<!-- Installed by Codey: browser 1.0.0
+  from its-ahoh/codey-skills@dd6509680769 on 2026-08-19. ... -->`. The version
+  answers "which text is this" on sight; the commit answers it exactly, and
+  opens at `github.com/its-ahoh/codey-skills/commit/<sha>`.
+- The commit costs a second request (`/repos/:repo/commits?path=…&per_page=1`)
+  because the raw host's ETag cannot do the job: it is an opaque per-encoding
+  fingerprint, different for the gzip and identity copies of identical bytes,
+  and equal to no hash anyone can look up. Best-effort — if it fails the stamp
+  names the branch, which is worse than a commit and better than a failed
+  install. Unauthenticated GitHub API calls are limited to 60/hour per IP, far
+  above how often anyone installs a skill.
 - Both run **only for an explicit user action**. Codey never rewrites the
   directory behind the user's back, which is what makes the Skills tab's own
   on/off and delete hold.

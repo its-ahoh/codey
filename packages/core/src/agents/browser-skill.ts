@@ -15,10 +15,29 @@ export const CODEY_SKILLS_REPO_URL = 'https://github.com/its-ahoh/codey-skills';
  *  a skill ever needs to be held back from the published tip. */
 export const CODEY_SKILLS_REPO_REF = 'main';
 
+/** `owner/name`, the form both GitHub URLs and the install stamp use. */
+export const CODEY_SKILLS_REPO = CODEY_SKILLS_REPO_URL.replace('https://github.com/', '');
+
+/** Path of one published skill inside the repository. */
+export function codeySkillPath(name: string): string {
+  return `skills/${name}/SKILL.md`;
+}
+
 /** Raw URL of one published skill's markdown. */
 export function codeySkillDownloadUrl(name: string, ref: string = CODEY_SKILLS_REPO_REF): string {
-  const repo = CODEY_SKILLS_REPO_URL.replace('https://github.com/', '');
-  return `https://raw.githubusercontent.com/${repo}/${ref}/skills/${name}/SKILL.md`;
+  return `https://raw.githubusercontent.com/${CODEY_SKILLS_REPO}/${ref}/${codeySkillPath(name)}`;
+}
+
+/** API URL for the commit that last touched one published skill. */
+export function codeySkillCommitUrl(name: string, ref: string = CODEY_SKILLS_REPO_REF): string {
+  return `https://api.github.com/repos/${CODEY_SKILLS_REPO}/commits`
+    + `?path=${encodeURIComponent(codeySkillPath(name))}&sha=${ref}&per_page=1`;
+}
+
+/** The `version:` a published skill declares, or undefined if it has none. */
+export function skillVersion(markdown: string): string | undefined {
+  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(markdown);
+  return frontmatter ? /^version:[ \t]*(\S+)[ \t]*$/m.exec(frontmatter[1])?.[1] : undefined;
 }
 
 /**
@@ -52,19 +71,22 @@ const SKILL_FILE = 'SKILL.md';
 const DISABLED_SKILL_FILE = 'SKILL.md.disabled';
 
 /**
- * An install stamps the file with where the text came from. Two jobs: it
- * answers "which version of this text does the user actually have" when an
- * agent runs a command the CLI does not have, and it is how Codey recognises
- * its own copy. Anything without the stamp is treated as the user's, and is
- * not overwritten or deleted without confirmation.
+ * An install stamps the file with the skill's version and the commit it came
+ * from. Two jobs: it answers "which text does this user actually have" when an
+ * agent runs a command the installed CLI does not have — on sight from the
+ * version, and exactly from the commit — and it is how Codey recognises its own
+ * copy. Anything without the stamp is treated as the user's, and is not
+ * overwritten or deleted without confirmation.
  *
  * It sits after the frontmatter (agents parse that from the first byte) and is
  * an HTML comment, so it renders as nothing and reads as nothing.
  */
-export const CODEY_INSTALL_MARKER = '<!-- Installed by Codey from';
+export const CODEY_INSTALL_MARKER = '<!-- Installed by Codey:';
 
 function stamp(markdown: string, from: string, today: string): string {
-  const line = `${CODEY_INSTALL_MARKER} ${from} on ${today}. `
+  const version = skillVersion(markdown);
+  const line = `${CODEY_INSTALL_MARKER} ${BROWSER_SKILL_NAME}${version ? ` ${version}` : ''} `
+    + `from ${from} on ${today}. `
     + 'Manage it in Tools -> Plugins; edits here are replaced by the next update. -->';
   const frontmatter = /^---\n[\s\S]*?\n---\n/.exec(markdown);
   if (!frontmatter) return `${line}\n\n${markdown}`;
@@ -102,6 +124,8 @@ export interface BrowserSkillStatus {
   origin?: 'codey' | 'user';
   /** Where Install pulls from. */
   sourceUrl: string;
+  /** The `version:` the installed copy declares, when it has one. */
+  version?: string;
 }
 
 /** Which copy an install actually wrote. `bundled` means the repository could
@@ -136,7 +160,12 @@ export function browserSkillStatus(home: string = os.homedir()): BrowserSkillSta
     } catch {
       continue;
     }
-    return { ...base, state, origin: isCodeyInstalledSkill(installed) ? 'codey' : 'user' };
+    return {
+      ...base,
+      state,
+      origin: isCodeyInstalledSkill(installed) ? 'codey' : 'user',
+      version: skillVersion(installed),
+    };
   }
   return { ...base, state: 'absent' };
 }
@@ -153,7 +182,32 @@ export function isBrowserSkillActive(home: string = os.homedir()): boolean {
  * said. Frontmatter naming this skill is the cheap check that it is ours.
  */
 function isPublishedSkill(text: string, name: string): boolean {
-  return new RegExp(`^---\\nname: ${name}\\ndescription: \\S`).test(text) && text.length > 400;
+  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1];
+  if (!frontmatter) return false;
+  return new RegExp(`^name:[ \t]*${name}[ \t]*$`, 'm').test(frontmatter)
+    && /^description:[ \t]*\S/m.test(frontmatter)
+    && text.length > 400;
+}
+
+/**
+ * The commit that last touched this skill, for the stamp. A separate request,
+ * because the raw host's ETag is an opaque per-encoding fingerprint: it differs
+ * between the gzip and identity copies of identical bytes and matches no hash
+ * anyone can look up. Best-effort — a stamp naming the branch is better than a
+ * failed install, and the rate limit on unauthenticated calls (60/hour) is far
+ * above how often anyone installs a skill.
+ */
+async function downloadSkillCommit(timeoutMs: number): Promise<string> {
+  const url = codeySkillCommitUrl(BROWSER_SKILL_NAME);
+  const response = await fetch(url, {
+    headers: { accept: 'application/vnd.github+json', 'user-agent': 'codey' },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) throw new Error(`${url} returned ${response.status}`);
+  const commits = await response.json() as Array<{ sha?: unknown }>;
+  const sha = Array.isArray(commits) ? commits[0]?.sha : undefined;
+  if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('no commit for this path');
+  return sha;
 }
 
 async function downloadBrowserSkill(timeoutMs: number): Promise<{ text: string; from: string }> {
@@ -164,13 +218,13 @@ async function downloadBrowserSkill(timeoutMs: number): Promise<{ text: string; 
   if (!isPublishedSkill(text, BROWSER_SKILL_NAME)) {
     throw new Error(`${url} did not return the ${BROWSER_SKILL_NAME} skill`);
   }
-  // The raw host answers with the blob's hash as its ETag, so the stamp can
-  // name the exact bytes without a second request for the commit. It may be
-  // weak (`W/"..."`, when the body was compressed); the hash is the same.
-  const version = response.headers.get('etag')?.replace(/^W\//, '').replace(/[^\w]/g, '')
-    || CODEY_SKILLS_REPO_REF;
-  const repo = CODEY_SKILLS_REPO_URL.replace('https://github.com/', '');
-  return { text, from: `${repo}@${version.slice(0, 12)}` };
+  let at = CODEY_SKILLS_REPO_REF;
+  try {
+    at = (await downloadSkillCommit(timeoutMs)).slice(0, 12);
+  } catch {
+    // Keep the branch name: the version in the stamp still says which text.
+  }
+  return { text, from: `${CODEY_SKILLS_REPO}@${at}` };
 }
 
 /**
