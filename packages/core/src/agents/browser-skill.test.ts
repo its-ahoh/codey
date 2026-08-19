@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { BROWSER_SKILL_MARKDOWN, installBrowserSkill, removeBrowserSkill } from './browser-skill';
+import { browserSkillMarkdown, installBrowserSkill, removeBrowserSkill } from './browser-skill';
 import { syncCodeyManagedSkills } from './codey-skills';
 
 let home: string;
@@ -21,18 +21,22 @@ describe('the managed browser skill', () => {
   it('writes SKILL.md under the managed root', async () => {
     const file = await installBrowserSkill(home);
     expect(file).toBe(skillFile());
-    expect(fs.readFileSync(file, 'utf8')).toBe(BROWSER_SKILL_MARKDOWN);
+    expect(fs.readFileSync(file, 'utf8')).toBe(browserSkillMarkdown());
   });
 
   it('names itself "browser" in frontmatter so agents can address it', () => {
-    expect(BROWSER_SKILL_MARKDOWN).toMatch(/^---\nname: browser\ndescription: .+/);
+    expect(browserSkillMarkdown()).toMatch(/^---\nname: browser\ndescription: .+/);
+  });
+
+  it('ships the command prefix, without which the body teaches nothing', () => {
+    expect(browserSkillMarkdown()).toContain('$CODEY_BROWSER_CLI');
   });
 
   it('overwrites an outdated copy, so an upgrade ships current instructions', async () => {
     await installBrowserSkill(home);
     fs.writeFileSync(skillFile(), '---\nname: browser\ndescription: stale\n---\n', 'utf8');
     await installBrowserSkill(home);
-    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(BROWSER_SKILL_MARKDOWN);
+    expect(fs.readFileSync(skillFile(), 'utf8')).toBe(browserSkillMarkdown());
   });
 
   it('is idempotent', async () => {
@@ -58,7 +62,7 @@ describe('the managed browser skill', () => {
     await syncCodeyManagedSkills(home);
     for (const dir of ['.claude', '.agents']) {
       const link = path.join(home, dir, 'skills', 'browser');
-      expect(fs.readFileSync(path.join(link, 'SKILL.md'), 'utf8')).toBe(BROWSER_SKILL_MARKDOWN);
+      expect(fs.readFileSync(path.join(link, 'SKILL.md'), 'utf8')).toBe(browserSkillMarkdown());
     }
   });
 
