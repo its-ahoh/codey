@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyModelEnv, nvmBinDirs, withCommonBinPaths } from './env';
+import { applyModelEnv, nvmBinDirs, unwiredAllProtocols, withCommonBinPaths } from './env';
 
 describe('nvmBinDirs', () => {
   it('orders installed versions newest-first', () => {
@@ -118,5 +118,38 @@ describe('applyModelEnv', () => {
 
   it('does not mutate anything for an absent model', () => {
     expect(applyModelEnv({ PATH: '/usr/bin' }, undefined, 'anthropic')).toEqual({ PATH: '/usr/bin' });
+  });
+});
+
+describe('unwiredAllProtocols', () => {
+  const all = { provider: 'acme', model: 'acme-max', apiKey: 'sk-both', apiType: 'all' as const };
+
+  it('is satisfied when both endpoints are present', () => {
+    expect(unwiredAllProtocols({
+      ...all, anthropicBaseUrl: 'https://a', openaiBaseUrl: 'https://o',
+    })).toEqual([]);
+  });
+
+  it('names the half that applyModelEnv will leave on the ambient environment', () => {
+    expect(unwiredAllProtocols({ ...all, openaiBaseUrl: 'https://o' })).toEqual(['anthropic']);
+    expect(unwiredAllProtocols({ ...all, anthropicBaseUrl: 'https://a' })).toEqual(['openai']);
+    expect(unwiredAllProtocols(all)).toEqual(['anthropic', 'openai']);
+  });
+
+  it('agrees with what applyModelEnv actually wires up', () => {
+    const model = { ...all, openaiBaseUrl: 'https://o' };
+    const env = applyModelEnv({}, model, 'anthropic');
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(unwiredAllProtocols(model)).toContain('anthropic');
+  });
+
+  it('says nothing about single-protocol models — a bare baseUrl is the official API', () => {
+    expect(unwiredAllProtocols({ provider: 'anthropic', model: 'm', apiKey: 'k', apiType: 'anthropic' })).toEqual([]);
+    expect(unwiredAllProtocols({ provider: 'openai', model: 'm', apiKey: 'k', apiType: 'openai' })).toEqual([]);
+  });
+
+  it('says nothing when there is no key to wire up', () => {
+    expect(unwiredAllProtocols({ provider: 'acme', model: 'm', apiType: 'all' })).toEqual([]);
+    expect(unwiredAllProtocols(undefined)).toEqual([]);
   });
 });

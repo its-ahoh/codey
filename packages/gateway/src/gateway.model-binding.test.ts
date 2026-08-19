@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bindModelToApiKey } from './gateway';
+import { bindModelToApiKey, unwiredAllModelWarning } from './gateway';
 
 const key = {
   apiKey: 'sk-shared',
@@ -58,5 +58,33 @@ describe('bindModelToApiKey', () => {
     expect(bindModelToApiKey({ model: 'm', apiType: 'all', provider: 'acme' }).provider).toBe('acme');
     expect(bindModelToApiKey({ model: 'm', apiType: 'openai' }).provider).toBe('openai');
     expect(bindModelToApiKey({ model: 'm', apiType: 'anthropic' }).provider).toBe('anthropic');
+  });
+});
+
+describe('unwiredAllModelWarning', () => {
+  it('says nothing when the key covers both protocols', () => {
+    expect(unwiredAllModelWarning(bindModelToApiKey({ model: 'acme-max', apiType: 'all' }, key))).toBeUndefined();
+  });
+
+  it('names the missing protocol and the key it is missing from', () => {
+    const cfg = bindModelToApiKey(
+      { model: 'acme-max', apiType: 'all' },
+      { apiKey: 'sk-shared', openaiBaseUrl: 'https://proxy.test/openai' },
+    );
+    const warning = unwiredAllModelWarning(cfg, 'acme-proxy');
+    expect(warning).toContain('acme-max');
+    expect(warning).toContain('"acme-proxy"');
+    expect(warning).toContain('no anthropic base URL');
+    expect(warning).not.toContain('openai base URL');
+  });
+
+  it('reports both halves when the key defines no endpoint at all', () => {
+    const cfg = bindModelToApiKey({ model: 'acme-max', apiType: 'all' }, { apiKey: 'sk-shared' });
+    expect(unwiredAllModelWarning(cfg)).toContain('neither protocol is wired up');
+  });
+
+  it('says nothing about single-protocol models or unbound ones', () => {
+    expect(unwiredAllModelWarning(bindModelToApiKey({ model: 'm', apiType: 'anthropic' }, key))).toBeUndefined();
+    expect(unwiredAllModelWarning(bindModelToApiKey({ model: 'm', apiType: 'all' }))).toBeUndefined();
   });
 });
