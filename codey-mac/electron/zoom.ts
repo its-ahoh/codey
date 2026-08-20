@@ -1,6 +1,6 @@
 // codey-mac/electron/zoom.ts
 //
-// UI scale ("Text size") shared by the main window and the View menu. The
+// UI scale ("Zoom") shared by the main window and the View menu. The
 // window is scaled with Chromium's zoom factor rather than a
 // CSS font-size cascade: the app's type sizes are hard-coded px inside inline
 // styles, so only a real zoom moves all of them together without reflowing

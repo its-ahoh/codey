@@ -385,7 +385,7 @@ contextBridge.exposeInMainWorld('codey', {
   },
   app: {
     version: () => ipcRenderer.invoke('app:version'),
-    // Text size changed from the View menu (⌘+ / ⌘− / ⌘0).
+    // Zoom changed from the View menu (⌘+ / ⌘− / ⌘0).
     onZoom: (handler: (factor: number) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, factor: number) => handler(factor)
       ipcRenderer.on('ui:zoom', listener)
