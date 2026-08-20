@@ -1,7 +1,11 @@
 # Plugins & Browser MCP Server — Design
 
 Date: 2026-07-21
-Status: Approved
+Status: Implemented, then partly superseded on 2026-08-18 by
+`2026-08-18-browser-skill-design.md`. The plugin system, its config shape and
+the Plugins UI below are current. The browser's MCP transport (§2, §3) is not:
+it reached only the adapters with an MCP surface, and the browser now travels
+as a shell CLI plus a skill. `mcpServers` survives for external MCP servers.
 
 ## Problem
 

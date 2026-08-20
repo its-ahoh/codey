@@ -25,7 +25,43 @@ export interface PluginInfo {
   id: string
   name: string
   description: string
-  enabled: boolean
+  /** Read from disk: a plugin is installed as an ordinary skill, and the
+   *  Skills tab can disable ('disabled') or delete ('absent') it from there. */
+  state: 'absent' | 'disabled' | 'installed'
+  /** Where an installed copy lives. */
+  dir: string
+  /** Who wrote what is there: 'codey' carries an install's stamp, 'user' is a
+   *  hand-written skill of the same name. Undefined when nothing is installed. */
+  origin?: 'codey' | 'user'
+  /** The repository Install pulls from. */
+  sourceUrl: string
+  /** The version an install recorded — the skill folder's tree hash, the
+   *  version the ecosystem uses for a skill, or 'bundled' for the copy shipped
+   *  with the app. Present only on a copy Codey wrote. */
+  hash?: string
+}
+
+/** Which copy an install wrote: 'bundled' means the repository was unreachable
+ *  and `reason` says why. `installed: false` means Codey refused to replace a
+ *  skill it did not write; retry with force once the user confirms. */
+export type PluginInstallResult =
+  | { installed: true; file: string; source: 'repository' | 'bundled'; reason?: string }
+  | { installed: false; conflict: 'user-copy'; dir: string }
+
+export interface PluginUninstallResult {
+  removed: boolean
+  conflict?: 'user-copy'
+}
+
+/** Whether the published skill moved after the installed copy was written.
+ *  `needsUpdate: null` when the published folder could not be reached. */
+export interface PluginUpdateCheck {
+  needsUpdate: boolean | null
+  /** What the install stamped: a folder hash, or 'bundled' for the copy that
+   *  shipped with the app, which has no published version to compare. */
+  recorded?: string
+  /** The hash the published folder has right now. */
+  current?: string
 }
 
 export interface ExternalMcpServer {
@@ -254,7 +290,9 @@ declare global {
       }
       plugins: {
         list: () => Promise<IpcResult<PluginInfo[]>>
-        setEnabled: (id: string, enabled: boolean) => Promise<IpcResult<void>>
+        install: (id: string, force?: boolean) => Promise<IpcResult<PluginInstallResult>>
+        uninstall: (id: string, force?: boolean) => Promise<IpcResult<PluginUninstallResult>>
+        check: (id: string) => Promise<IpcResult<PluginUpdateCheck>>
       }
       mcp: {
         list: () => Promise<IpcResult<ExternalMcpServer[]>>

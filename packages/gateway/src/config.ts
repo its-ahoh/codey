@@ -122,9 +122,10 @@ export interface GatewayConfigJson {
   };
 
   /**
-   * Optional capability packs ("plugins") exposed to agents as MCP servers.
-   * Everything is off by default; the user enables plugins explicitly in the
-   * Mac app's Tools → Plugins tab.
+   * Legacy opt-in marker for the Browser plugin, from when enablement lived in
+   * config. A plugin is now installed as an ordinary skill and its presence on
+   * disk is the source of truth; this field is read once at startup to carry a
+   * pre-existing opt-in over, and is written no more.
    */
   plugins?: {
     browser?: { enabled: boolean };
@@ -548,7 +549,8 @@ export class ConfigManager extends EventEmitter {
     this.save();
   }
 
-  /** True only when the user has explicitly enabled the named plugin. */
+  /** Legacy: the pre-install-model opt-in flag. Only the one-time migration
+   *  that installs the skill for an existing user reads this. */
   isPluginEnabled(name: 'browser'): boolean {
     return this.config.plugins?.[name]?.enabled === true;
   }

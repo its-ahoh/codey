@@ -135,3 +135,4 @@ export async function syncCodeyGlobalSkills(home: string = os.homedir()): Promis
   const homeRoot = path.resolve(home);
   return linkCodeySkills(path.join(homeRoot, CODEY_GLOBAL_SKILLS_SUBDIR), homeRoot);
 }
+

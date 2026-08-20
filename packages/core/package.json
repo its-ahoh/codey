@@ -5,8 +5,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
-    "watch": "tsc --watch",
+    "build": "tsc && node scripts/copy-skills.mjs",
+    "watch": "node scripts/copy-skills.mjs && tsc --watch",
     "test": "vitest run"
   },
   "dependencies": {

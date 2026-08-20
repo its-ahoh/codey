@@ -672,12 +672,8 @@ export class Codey {
       const slot = this.configManager?.getAgentConfig(a);
       return slot?.env;
     });
-    // Plugins are opt-in: the factory only attaches plugin MCP servers when
-    // the user has enabled them in config. Read live so toggling in the
-    // renderer applies on the next agent spawn without a restart.
-    this.agentFactory.setPluginEnabledProvider((plugin) =>
-      plugin === 'browser' && this.configManager?.isPluginEnabled('browser') === true
-    );
+    // The Browser plugin needs no provider: the factory reads the installed
+    // skill from disk, which is what the Plugins and Skills tabs both write.
     // User-configured external MCP servers ride the same live-read pattern.
     this.agentFactory.setExternalMcpProvider(() =>
       this.configManager?.getEnabledExternalMcpServers()

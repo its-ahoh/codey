@@ -5,6 +5,7 @@ import { OpenCodeAdapter } from './opencode';
 import { CodexAdapter } from './codex';
 import { PiAdapter } from './pi';
 import { syncCodeyGlobalSkills, syncCodeyProjectSkills } from './codey-skills';
+import { isBrowserSkillActive } from './browser-skill';
 
 export type { CodingAgentAdapter } from './base';
 export { ClaudeCodeAdapter } from './claude-code';
@@ -13,41 +14,44 @@ export { CodexAdapter } from './codex';
 export { PiAdapter } from './pi';
 export { applyModelEnv, unwiredAllProtocols } from './env';
 export * from './codey-skills';
+export * from './browser-skill';
 
 /**
- * Attach the in-app browser MCP server to a task-performing agent turn.
- * Requires the user-enabled Browser plugin AND a live bridge (the Mac app
- * exports CODEY_BROWSER_* on the gateway process). Advisor, housekeeping,
- * and tool-restricted turns are excluded via the same browserTools /
- * allowedTools gating the old prompt injection used.
+ * Hand the in-app browser's bridge credentials to a task-performing agent
+ * turn. Requires the installed and enabled `browser` skill AND a live bridge
+ * (the Mac app exports CODEY_BROWSER_* on the gateway process). Advisor,
+ * housekeeping, and tool-restricted turns are excluded via the same
+ * browserTools / allowedTools gating the earlier MCP server used.
+ *
+ * The agent learns the commands from the `browser` skill, and reaches them
+ * through its own shell tool — the one capability every coding agent has, MCP
+ * or not. That makes this env the real gate: a turn without it gets a CLI that
+ * refuses to run, whatever the skill list says.
  */
-export function addCodeyBrowserMcp(
+export function addCodeyBrowserTools(
   request: AgentRequest,
-  pluginEnabled: boolean,
+  skillActive: boolean,
   env: NodeJS.ProcessEnv = process.env,
 ): AgentRequest {
   const socket = env.CODEY_BROWSER_SOCKET;
   const token = env.CODEY_BROWSER_TOKEN;
   const runtime = env.CODEY_BROWSER_RUNTIME;
-  const server = env.CODEY_BROWSER_MCP;
-  if (!pluginEnabled || !socket || !token || !runtime || !server) return request;
+  const cli = env.CODEY_BROWSER_CLI;
+  if (!skillActive || !socket || !token || !runtime || !cli) return request;
   if (request.browserTools !== true || !request.context?.workingDir || request.allowedTools) {
     return request;
   }
 
-  const spec: McpServerSpec = {
-    command: runtime,
-    args: [server],
-    env: {
-      ELECTRON_RUN_AS_NODE: '1',
-      CODEY_BROWSER_SOCKET: socket,
-      CODEY_BROWSER_TOKEN: token,
-      ...(request.browserChatId ? { CODEY_BROWSER_CHAT_ID: request.browserChatId } : {}),
-    },
-  };
   return {
     ...request,
-    mcpServers: { ...(request.mcpServers ?? {}), 'codey-browser': spec },
+    extraEnv: {
+      ...(request.extraEnv ?? {}),
+      CODEY_BROWSER_SOCKET: socket,
+      CODEY_BROWSER_TOKEN: token,
+      CODEY_BROWSER_CLI: cli,
+      CODEY_BROWSER_RUNTIME: runtime,
+      ...(request.browserChatId ? { CODEY_BROWSER_CHAT_ID: request.browserChatId } : {}),
+    },
   };
 }
 
@@ -55,8 +59,7 @@ export function addCodeyBrowserMcp(
  * Merge user-configured external MCP servers into a task-performing agent
  * turn. Uses the same turn gate as the browser plugin — `browserTools` doubles
  * as the "tools-capable turn" marker, so advisor/housekeeping/tool-restricted
- * turns get nothing. The reserved `codey-browser` name is filtered, and
- * servers already on the request always win name conflicts.
+ * turns get nothing. Servers already on the request win name conflicts.
  */
 export function addExternalMcpServers(
   request: AgentRequest,
@@ -66,11 +69,10 @@ export function addExternalMcpServers(
   if (request.browserTools !== true || !request.context?.workingDir || request.allowedTools) {
     return request;
   }
-  const entries = Object.entries(servers).filter(([name]) => name !== 'codey-browser');
-  if (entries.length === 0) return request;
+  if (Object.keys(servers).length === 0) return request;
   return {
     ...request,
-    mcpServers: { ...Object.fromEntries(entries), ...(request.mcpServers ?? {}) },
+    mcpServers: { ...servers, ...(request.mcpServers ?? {}) },
   };
 }
 
@@ -78,7 +80,6 @@ export function addExternalMcpServers(
 export class AgentFactory {
   private agents: Map<CodingAgent, CodingAgentAdapter> = new Map();
   private envProvider?: (agent: CodingAgent) => Record<string, string> | undefined;
-  private pluginEnabledProvider?: (plugin: string) => boolean;
   private externalMcpProvider?: () => Record<string, McpServerSpec> | undefined;
 
   constructor() {
@@ -103,14 +104,6 @@ export class AgentFactory {
    */
   setAgentEnvProvider(provider: (agent: CodingAgent) => Record<string, string> | undefined): void {
     this.envProvider = provider;
-  }
-
-  /**
-   * Inject a callback that answers "is this plugin enabled?" from the live
-   * config, so toggles in the renderer take effect on the next request.
-   */
-  setPluginEnabledProvider(provider: (plugin: string) => boolean): void {
-    this.pluginEnabledProvider = provider;
   }
 
   /**
@@ -152,7 +145,17 @@ export class AgentFactory {
       }
     }
 
-    request = addCodeyBrowserMcp(request, this.pluginEnabledProvider?.('browser') === true);
+    // Read the skill's state from disk on every run: installing from the
+    // Plugins tab, disabling from the Skills tab and deleting the directory by
+    // hand are the same fact, and the agent must see whichever the user did
+    // last without a restart.
+    let browserActive = false;
+    try {
+      browserActive = isBrowserSkillActive();
+    } catch {
+      // Unreadable home: no skill, so no capability.
+    }
+    request = addCodeyBrowserTools(request, browserActive);
     request = addExternalMcpServers(request, this.externalMcpProvider?.());
 
     // `~/.codey/skills` and `<project>/.codey/skills` are Codey's global and

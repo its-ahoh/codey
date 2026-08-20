@@ -2,7 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { qualifySkillName, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
+import { qualifySkillName, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 
 const roots: string[] = []
 const temp = () => {
@@ -193,5 +193,53 @@ describe('setSkillEnabled', () => {
 
     expect(fs.readFileSync(active, 'utf-8')).toBe('---\nname: one\ndescription: A skill\n---\n')
     expect(fs.readFileSync(disabled, 'utf-8')).toBe('---\nname: one\ndescription: A backup\n---\n')
+  })
+})
+
+describe('removeLegacyManagedSkills', () => {
+  const DISCOVERY = ['.claude/skills', '.agents/skills']
+
+  const legacyHome = () => {
+    const home = temp()
+    const skill = path.join(home, '.codey', 'managed-skills', 'browser')
+    fs.mkdirSync(skill, { recursive: true })
+    fs.writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: browser\n---\n')
+    for (const subdir of DISCOVERY) {
+      const root = path.join(home, subdir)
+      fs.mkdirSync(root, { recursive: true })
+      fs.symlinkSync(path.relative(root, skill), path.join(root, 'browser'), 'dir')
+    }
+    return home
+  }
+
+  it('removes the legacy root and every link into it', () => {
+    const home = legacyHome()
+    removeLegacyManagedSkills(fs, path, home, DISCOVERY)
+    expect(fs.existsSync(path.join(home, '.codey', 'managed-skills'))).toBe(false)
+    for (const subdir of DISCOVERY) {
+      expect(fs.existsSync(path.join(home, subdir, 'browser'))).toBe(false)
+      // The link must be gone, not merely broken: a leftover reads as a
+      // conflict and blocks linking the installed skill of the same name.
+      expect(fs.readdirSync(path.join(home, subdir))).toEqual([])
+    }
+  })
+
+  it('leaves links to the user\'s own skills alone', () => {
+    const home = legacyHome()
+    const mine = path.join(home, '.codey', 'skills', 'mine')
+    fs.mkdirSync(mine, { recursive: true })
+    const root = path.join(home, '.claude', 'skills')
+    fs.symlinkSync(path.relative(root, mine), path.join(root, 'mine'), 'dir')
+    removeLegacyManagedSkills(fs, path, home, DISCOVERY)
+    expect(fs.existsSync(path.join(root, 'mine'))).toBe(true)
+  })
+
+  it('does nothing when there is no legacy root', () => {
+    const home = temp()
+    const root = path.join(home, '.claude', 'skills')
+    fs.mkdirSync(root, { recursive: true })
+    fs.writeFileSync(path.join(root, 'keep'), 'x')
+    removeLegacyManagedSkills(fs, path, home, DISCOVERY)
+    expect(fs.existsSync(path.join(root, 'keep'))).toBe(true)
   })
 })

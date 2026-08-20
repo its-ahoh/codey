@@ -10,6 +10,11 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-21-plugins-browser-mcp-design.md`
 
+> **Status (2026-08-18):** completed, and the browser-MCP half has since been
+> replaced — see `docs/superpowers/specs/2026-08-18-browser-skill-design.md`.
+> The plugin system this plan built is still in use; `browser-mcp-server.cjs`
+> and the MCP tool surface described below no longer exist.
+
 **Environment notes (critical):**
 - Work on branch `plugins-browser-mcp` (already created; a repo hook blocks commits to main).
 - System node is v16 and cannot run vitest/tsc. Before ANY build/test command:

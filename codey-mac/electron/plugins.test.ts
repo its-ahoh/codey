@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import type { BrowserSkillStatus } from '@codey/core'
 import { PLUGINS, isKnownPlugin, listPlugins } from './plugins'
+
+const SHA = 'a'.repeat(40)
+
+const status = (over: Partial<BrowserSkillStatus> = {}): BrowserSkillStatus => ({
+  state: 'absent',
+  dir: '/Users/test/.codey/skills/browser',
+  sourceUrl: 'https://github.com/its-ahoh/codey-skills',
+  ...over,
+})
 
 describe('plugin registry', () => {
   it('registers exactly the browser plugin', () => {
@@ -8,11 +18,24 @@ describe('plugin registry', () => {
     expect(PLUGINS[0].description.length).toBeGreaterThan(10)
   })
 
-  it('merges enabled state from config', () => {
-    expect(listPlugins({ plugins: { browser: { enabled: true } } })[0].enabled).toBe(true)
-    expect(listPlugins({ plugins: { browser: { enabled: false } } })[0].enabled).toBe(false)
-    expect(listPlugins({})[0].enabled).toBe(false)
-    expect(listPlugins(undefined)[0].enabled).toBe(false)
+  it('reports the state the skill is actually in on disk', () => {
+    for (const state of ['installed', 'disabled', 'absent'] as const) {
+      expect(listPlugins(() => status({ state }))[0].state).toBe(state)
+    }
+  })
+
+  it('carries where the copy lives, where it came from, who wrote it, and which hash', () => {
+    const plugin = listPlugins(() => status({ state: 'installed', origin: 'user', hash: SHA }))[0]
+    expect(plugin.hash).toBe(SHA)
+    expect(plugin.dir).toBe('/Users/test/.codey/skills/browser')
+    expect(plugin.sourceUrl).toBe('https://github.com/its-ahoh/codey-skills')
+    expect(plugin.origin).toBe('user')
+  })
+
+  it('asks about each registered plugin by id', () => {
+    const asked: string[] = []
+    listPlugins(id => { asked.push(id); return status() })
+    expect(asked).toEqual(['browser'])
   })
 
   it('isKnownPlugin accepts registry ids and rejects others', () => {

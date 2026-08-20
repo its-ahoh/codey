@@ -196,3 +196,36 @@ export function uniqueSkills(fsMod: typeof Fs, pathMod: typeof Path, skills: Sca
     return true
   })
 }
+
+/**
+ * Delete the short-lived `~/.codey/managed-skills` root and the discovery links
+ * pointing into it. Skills Codey owned on the user's behalf lived there for one
+ * development build, before installing them into the user's own
+ * `~/.codey/skills` replaced the idea. A leftover link matters: it targets a
+ * directory outside the sync's source root, so `syncCodeyGlobalSkills` reads it
+ * as a conflict and declines to link the real skill — an install that reports
+ * success and reaches no agent.
+ */
+export function removeLegacyManagedSkills(
+  fsMod: typeof Fs,
+  pathMod: typeof Path,
+  home: string,
+  discoverySubdirs: readonly string[],
+): void {
+  const legacyRoot = pathMod.join(home, '.codey', 'managed-skills')
+  if (!fsMod.existsSync(legacyRoot)) return
+  for (const subdir of discoverySubdirs) {
+    const discoveryRoot = pathMod.join(home, subdir)
+    let entries: Fs.Dirent[]
+    try { entries = fsMod.readdirSync(discoveryRoot, { withFileTypes: true }) } catch { continue }
+    for (const entry of entries) {
+      if (!entry.isSymbolicLink()) continue
+      const linkPath = pathMod.join(discoveryRoot, entry.name)
+      try {
+        const target = pathMod.resolve(discoveryRoot, fsMod.readlinkSync(linkPath))
+        if (target.startsWith(`${legacyRoot}${pathMod.sep}`)) fsMod.unlinkSync(linkPath)
+      } catch { /* leave anything unreadable alone */ }
+    }
+  }
+  fsMod.rmSync(legacyRoot, { recursive: true, force: true })
+}

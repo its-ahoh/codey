@@ -13,7 +13,7 @@ import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { AGENT_BINARIES, createInstalledAgentsCache, detectInstalledAgents } from './agent-detect'
-import { SKILL_FILE, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
+import { SKILL_FILE, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import { scanAgentMcpServers, type AgentMcpServer, type McpAgentKey } from './agent-mcp-scan'
@@ -33,7 +33,7 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILLS_SUBDIR, syncCodeyGlobalSkills, syncCodeyProjectSkills, WorkerManager, WorkspaceManager } from '@codey/core'
+import { browserSkillStatus, checkBrowserSkillUpdate, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, WorkerManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
@@ -194,12 +194,6 @@ function browserAgentCliPath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'browser-agent-cli.cjs')
     : join(app.getAppPath(), 'electron', 'browser-agent-cli.cjs')
-}
-
-function browserMcpServerPath(): string {
-  return app.isPackaged
-    ? join(process.resourcesPath, 'browser-mcp-server.cjs')
-    : join(app.getAppPath(), 'electron', 'browser-mcp-server.cjs')
 }
 
 // Single-instance guard: a second launch (vite restart leaving a stale main
@@ -952,6 +946,19 @@ async function bootInProcessCore() {
   const root = resolveDataRoot()
   try {
     coreConfigManager = new ConfigManager(join(root, 'gateway.json'))
+    // Carry over an opt-in made before plugins were installed as skills: the
+    // user had the Browser plugin on, so install it once rather than let the
+    // capability disappear under them. From then on the skill on disk answers
+    // the question and this flag is never read again.
+    try {
+      const [fsMod, osMod, pathMod] = await Promise.all([import('fs'), import('os'), import('path')])
+      removeLegacyManagedSkills(fsMod, pathMod, osMod.homedir(), CODEY_SKILL_DISCOVERY_SUBDIRS)
+      if (coreConfigManager.isPluginEnabled('browser') && browserSkillStatus().state === 'absent') {
+        await installBrowserSkill()
+        await syncCodeyGlobalSkills()
+      }
+
+    } catch { /* best-effort: the Plugins tab can install it by hand */ }
     workerManager = new WorkerManager(join(root, 'workers'))
     await workerManager.loadWorkers()
     // Teams are defined globally in gateway.json; the workspace just stores
@@ -1833,9 +1840,10 @@ app.whenReady().then(async () => {
     const bridge = await browserAgentBridge.start()
     process.env.CODEY_BROWSER_SOCKET = bridge.socketPath
     process.env.CODEY_BROWSER_TOKEN = bridge.token
-    // Retained for the still-shipped standalone browser-agent-cli.cjs; agents now use CODEY_BROWSER_MCP.
+    // How agents reach the browser: the managed `browser` skill tells them to
+    // run this CLI through their own shell tool, so every agent Codey supports
+    // gets the plugin, MCP surface or not.
     process.env.CODEY_BROWSER_CLI = browserAgentCliPath()
-    process.env.CODEY_BROWSER_MCP = browserMcpServerPath()
     process.env.CODEY_BROWSER_RUNTIME = process.execPath
   } catch (error: any) {
     sendToRenderer('gateway-log', `[browser] agent bridge failed to start: ${error?.message ?? error}`)
@@ -3190,14 +3198,45 @@ app.whenReady().then(async () => {
 
   // ── Plugins IPC ───────────────────────────────────────────────────
   ipcMain.handle('plugins:list', async () =>
-    wrap(async () => listPlugins(coreConfigManager?.get() as any))
+    wrap(async () => listPlugins(() => browserSkillStatus()))
   )
 
-  ipcMain.handle('plugins:setEnabled', async (_e, id: string, enabled: boolean) =>
+  // Installing writes the skill into the user's own ~/.codey/skills and links
+  // it for every agent, so from here on the Skills tab owns it. Uninstalling
+  // removes it; both are explicit user actions, and nothing rewrites the
+  // directory in between.
+  // `force` is the user having confirmed replacing or deleting a skill of the
+  // same name that Codey did not write. Without it the core refuses, and the
+  // card asks.
+  ipcMain.handle('plugins:install', async (_e, id: string, force?: boolean) =>
     wrap(async () => {
-      if (!coreConfigManager) throw new Error('Config manager not initialized')
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
-      coreConfigManager.update({ plugins: { [id]: { enabled: enabled === true } } } as any)
+      const result = await installBrowserSkill(undefined, { force: force === true })
+      if (result.installed) await syncCodeyGlobalSkills()
+      return result
+    })
+  )
+
+  ipcMain.handle('plugins:uninstall', async (_e, id: string, force?: boolean) =>
+    wrap(async () => {
+      if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
+      const result = await uninstallBrowserSkill(undefined, { force: force === true })
+      if (result.removed) await syncCodeyGlobalSkills()
+      return result
+    })
+  )
+
+  // "Is there an update?" never throws at the renderer: when the published
+  // folder cannot be reached the card quietly says nothing is known, rather
+  // than breaking the whole Plugins tab over a network blip.
+  ipcMain.handle('plugins:check', async (_e, id: string) =>
+    wrap(async () => {
+      if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
+      try {
+        return await checkBrowserSkillUpdate()
+      } catch {
+        return { needsUpdate: null }
+      }
     })
   )
 
