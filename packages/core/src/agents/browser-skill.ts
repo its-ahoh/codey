@@ -84,8 +84,20 @@ const DISABLED_SKILL_FILE = 'SKILL.md.disabled';
  */
 export const CODEY_INSTALL_MARKER = '<!-- Installed by Codey:';
 
-/** The folder tree hash an install recorded, or undefined when there is none. */
-const INSTALLED_HASH_RE = /<!-- Installed by Codey: browser ([0-9a-f]{40}) /;
+/**
+ * What a bundled install records where a hash would go. The copy shipped with
+ * the app has no published version to name — it is as old as the build — so
+ * the stamp says so rather than staying silent. A silent stamp reads as "no
+ * version recorded" and the update check cannot tell it from a copy it simply
+ * could not fingerprint, which is how an offline install used to look current
+ * forever.
+ */
+export const BUNDLED_SKILL_MARK = 'bundled';
+
+/** The version an install recorded: a folder tree hash, or `bundled`. */
+const INSTALLED_HASH_RE = new RegExp(
+  `<!-- Installed by Codey: ${BROWSER_SKILL_NAME} ([0-9a-f]{40}|${BUNDLED_SKILL_MARK}) `,
+);
 
 /** The hash a stamp recorded, when the file carries one. */
 function installedSkillHash(markdown: string): string | undefined {
@@ -132,7 +144,9 @@ export interface BrowserSkillStatus {
   origin?: 'codey' | 'user';
   /** Where Install pulls from. */
   sourceUrl: string;
-  /** The skill folder's tree hash an install recorded, when there is one. */
+  /** The version an install recorded: the skill folder's tree hash, or
+   *  `bundled` for the copy shipped with the app, whose published version is
+   *  unknowable. Absent on a copy Codey did not write. */
   hash?: string;
 }
 
@@ -267,7 +281,7 @@ export async function installBrowserSkill(
 
   let markdown: string;
   let source: 'repository' | 'bundled' = 'repository';
-  let from = 'the copy bundled with the app';
+  let from = 'the copy shipped with the app';
   let hash: string | undefined;
   let reason: string | undefined;
   try {
@@ -278,6 +292,7 @@ export async function installBrowserSkill(
   } catch (error) {
     markdown = browserSkillMarkdown();
     source = 'bundled';
+    hash = BUNDLED_SKILL_MARK;
     reason = error instanceof Error ? error.message : String(error);
   }
 
@@ -301,8 +316,10 @@ export interface BrowserSkillUpdateCheck {
  * Compare the installed copy against the published folder, without touching the
  * disk. The Mac app shows "Update available" from this; Update itself is just
  * Install again. A copy with no stamp is the user's — nothing compares or
- * replaces it, and nothing installed updates nothing. Throws when the folder
- * cannot be reached, so a caller that wants to stay quiet can.
+ * replaces it, and nothing installed updates nothing. A bundled copy records
+ * `bundled` rather than a hash, which never equals the published one, so it
+ * always offers the update it cannot rule out. Throws when the folder cannot
+ * be reached, so a caller that wants to stay quiet can.
  */
 export async function checkBrowserSkillUpdate(
   home: string = os.homedir(),

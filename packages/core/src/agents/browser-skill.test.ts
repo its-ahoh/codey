@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  BROWSER_SKILL_NAME,
   browserSkillMarkdown,
   browserSkillStatus,
   checkBrowserSkillUpdate,
@@ -243,6 +244,16 @@ describe('pulling the skill from the repository', () => {
     await install();
     expect(marker()).toMatch(/Installed by Codey: browser from its-ahoh\/codey-skills on 2026-08-19/);
   });
+
+  // The bundled copy is however old the app is. Recording that in the stamp is
+  // what lets the update check tell a known-current copy from an unknown one;
+  // without it an offline install looks up to date forever.
+  it('records a bundled install as bundled, its version being unknowable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('getaddrinfo ENOTFOUND') }));
+    await install();
+    expect(marker()).toContain(`${BROWSER_SKILL_NAME} bundled `);
+    expect(browserSkillStatus(home).hash).toBe('bundled');
+  });
 });
 
 describe('a skill of the same name that Codey did not write', () => {
@@ -305,6 +316,18 @@ describe('checking whether the published skill moved', () => {
     fs.writeFileSync(skillFile(), '---\nname: browser\ndescription: mine\n---\nMy own notes.\n', 'utf8');
     await expect(checkBrowserSkillUpdate(home)).resolves.toEqual({
       recorded: undefined, current: SHA, needsUpdate: false,
+    });
+  });
+
+  // An offline install left the app's own copy on disk. It is not the published
+  // text and cannot be compared to it, so the honest answer is "update", not
+  // the silent "you are current" that a missing hash used to produce.
+  it('offers an update for a bundled copy once the repository answers', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('getaddrinfo ENOTFOUND') }));
+    await install();
+    vi.stubGlobal('fetch', serve(PUBLISHED));
+    await expect(checkBrowserSkillUpdate(home)).resolves.toEqual({
+      recorded: 'bundled', current: SHA, needsUpdate: true,
     });
   });
 

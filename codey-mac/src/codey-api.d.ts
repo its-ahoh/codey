@@ -35,8 +35,9 @@ export interface PluginInfo {
   origin?: 'codey' | 'user'
   /** The repository Install pulls from. */
   sourceUrl: string
-  /** The skill folder's tree hash an install recorded — the version the
-   *  ecosystem uses for a skill. Present only on a copy Codey wrote. */
+  /** The version an install recorded — the skill folder's tree hash, the
+   *  version the ecosystem uses for a skill, or 'bundled' for the copy shipped
+   *  with the app. Present only on a copy Codey wrote. */
   hash?: string
 }
 
@@ -56,7 +57,8 @@ export interface PluginUninstallResult {
  *  `needsUpdate: null` when the published folder could not be reached. */
 export interface PluginUpdateCheck {
   needsUpdate: boolean | null
-  /** The hash an install stamped, when this copy is Codey's. */
+  /** What the install stamped: a folder hash, or 'bundled' for the copy that
+   *  shipped with the app, which has no published version to compare. */
   recorded?: string
   /** The hash the published folder has right now. */
   current?: string

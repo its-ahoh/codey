@@ -123,7 +123,11 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                   {' '}<span style={styles.path}>{plugin.dir}</span>
                   {update[plugin.id]?.needsUpdate === true && (
                     <div style={styles.updateHint}>
-                      The published skill has moved since this copy was installed — Update to get it.
+                      {update[plugin.id]?.recorded === 'bundled'
+                        ? 'This copy came with the app, installed while the repository was '
+                          + 'unreachable — Update to pull the published one.'
+                        : 'The published skill has moved since this copy was installed — '
+                          + 'Update to get it.'}
                     </div>
                   )}
                 </div>
