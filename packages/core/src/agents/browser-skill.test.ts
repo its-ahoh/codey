@@ -5,12 +5,13 @@ import * as path from 'path';
 import {
   browserSkillMarkdown,
   browserSkillStatus,
+  checkBrowserSkillUpdate,
   CODEY_INSTALL_MARKER,
   codeySkillDownloadUrl,
+  codeySkillTreeUrl,
   installBrowserSkill,
   isBrowserSkillActive,
   isCodeyInstalledSkill,
-  skillVersion,
   uninstallBrowserSkill,
 } from './browser-skill';
 import { syncCodeyGlobalSkills } from './codey-skills';
@@ -24,19 +25,23 @@ const skillFile = () => path.join(skillDir(), 'SKILL.md');
  *  skill, so "which copy landed" is visible in the file itself. */
 const PUBLISHED = `---
 name: browser
-version: 9.9.9
-description: ${'Published copy, long enough to pass the description check on its own.'}
+description: Published copy, long enough to pass the description check on its own.
 ---
 
 ${'Published body.\n'.repeat(40)}`;
 
 const SHA = 'a'.repeat(40);
+const OTHER_SHA = 'b'.repeat(40);
 
-/** Install makes two calls: the raw file, then the commit that last touched it. */
+/** Install makes two calls: the raw file, then the skill folder's tree hash.
+ *  `sha: null` serves a broken tree so the stamp has to fall back. */
 const serve = (body: string, status = 200, sha: string | null = SHA) =>
   vi.fn(async (url: string) => (
     url.startsWith('https://api.github.com/')
-      ? new Response(sha === null ? 'nope' : JSON.stringify([{ sha }]), { status: sha === null ? 500 : 200 })
+      ? new Response(
+          sha === null ? 'nope' : JSON.stringify({ tree: [{ path: 'skills/browser', type: 'tree', sha }] }),
+          { status: sha === null ? 500 : 200 },
+        )
       : new Response(body, { status })
   ));
 
@@ -45,6 +50,7 @@ const written = () => fs.readFileSync(skillFile(), 'utf8');
 const unstamped = () => written()
   .split('\n').filter(line => !line.startsWith(CODEY_INSTALL_MARKER)).join('\n')
   .replace(/\n{3,}/g, '\n\n');
+const marker = () => written().split('\n').find(line => line.startsWith(CODEY_INSTALL_MARKER))!;
 const install = async (opts = {}) => {
   const result = await installBrowserSkill(home, { today: '2026-08-19', ...opts });
   if (!result.installed) throw new Error(`install refused: ${result.conflict}`);
@@ -70,22 +76,22 @@ describe('installing the browser skill', () => {
   });
 
   // Which bytes the user actually has is the first question when an agent runs
-  // a command the installed CLI does not have.
-  it('stamps the file with where the text came from, after the frontmatter', async () => {
+  // a command the installed CLI does not have. The folder tree hash answers it
+  // exactly, and it is what an update compares against.
+  it('stamps the file with the skill folder\'s tree hash, after the frontmatter', async () => {
     await install();
     const lines = written().split('\n');
     expect(lines[0]).toBe('---');
-    const marker = lines.find(line => line.startsWith(CODEY_INSTALL_MARKER))!;
-    expect(marker).toContain('browser 9.9.9');
-    expect(marker).toContain(`its-ahoh/codey-skills@${SHA.slice(0, 12)}`);
-    expect(marker).toContain('on 2026-08-19');
-    expect(lines.indexOf(marker)).toBeGreaterThan(lines.indexOf('---', 1));
+    expect(marker()).toContain(`browser ${SHA}`);
+    expect(marker()).toContain('its-ahoh/codey-skills');
+    expect(marker()).toContain('on 2026-08-19');
+    expect(lines.indexOf(marker())).toBeGreaterThan(lines.indexOf('---', 1));
     expect(isCodeyInstalledSkill(written())).toBe(true);
   });
 
-  it('names itself "browser" in frontmatter, with a version, so agents can address it', () => {
+  it('ships a skill with the standard frontmatter — a name and a description, no version', () => {
     expect(browserSkillMarkdown()).toMatch(/^---\nname: browser\n/);
-    expect(skillVersion(browserSkillMarkdown())).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(browserSkillMarkdown()).not.toContain('version:');
   });
 
   it('ships the command prefix, without which the body teaches nothing', () => {
@@ -150,10 +156,10 @@ describe('the state the capability gate reads', () => {
     expect(isBrowserSkillActive(home)).toBe(false);
   });
 
-  it('is installed, and Codey\'s, after one', async () => {
+  it('is installed, and Codey\'s, after one, with the hash it was stamped with', async () => {
     await install();
     expect(browserSkillStatus(home)).toMatchObject({
-      state: 'installed', dir: skillDir(), origin: 'codey', version: '9.9.9',
+      state: 'installed', dir: skillDir(), origin: 'codey', hash: SHA,
     });
     expect(isBrowserSkillActive(home)).toBe(true);
   });
@@ -217,21 +223,25 @@ describe('pulling the skill from the repository', () => {
     );
   });
 
-  // A stamp that cannot name the commit still names the version, which is the
-  // part a human reads.
-  it('falls back to the branch name when the commit cannot be read', async () => {
-    vi.stubGlobal('fetch', serve(PUBLISHED, 200, null));
-    await install();
-    const marker = written().split('\n').find(line => line.startsWith(CODEY_INSTALL_MARKER))!;
-    expect(marker).toContain('browser 9.9.9');
-    expect(marker).toContain('its-ahoh/codey-skills@main');
+  it('reads the version from the skill folder\'s tree on main', () => {
+    expect(codeySkillTreeUrl('browser')).toBe(
+      'https://api.github.com/repos/its-ahoh/codey-skills/git/trees/main?recursive=1',
+    );
   });
 
-  it('ignores a commit response that is not a commit', async () => {
+  // A stamp that cannot name the hash still names the skill and the date, which
+  // is the part a human reads; Update still re-pulls whatever is published.
+  it('stamps without a hash when the tree cannot be read', async () => {
+    vi.stubGlobal('fetch', serve(PUBLISHED, 200, null));
+    await install();
+    expect(marker()).toMatch(/Installed by Codey: browser from its-ahoh\/codey-skills on 2026-08-19/);
+    expect(marker()).not.toContain(`browser ${SHA}`);
+  });
+
+  it('ignores a tree response that is not a tree', async () => {
     vi.stubGlobal('fetch', serve(PUBLISHED, 200, 'not-a-sha'));
     await install();
-    const marker = written().split('\n').find(line => line.startsWith(CODEY_INSTALL_MARKER))!;
-    expect(marker).toContain('its-ahoh/codey-skills@main');
+    expect(marker()).toMatch(/Installed by Codey: browser from its-ahoh\/codey-skills on 2026-08-19/);
   });
 });
 
@@ -269,5 +279,38 @@ describe('a skill of the same name that Codey did not write', () => {
   it('is protected while switched off as well', async () => {
     fs.renameSync(skillFile(), path.join(skillDir(), 'SKILL.md.disabled'));
     expect((await installBrowserSkill(home, { today: '2026-08-19' })).installed).toBe(false);
+  });
+});
+
+describe('checking whether the published skill moved', () => {
+  it('reports no update while the installed hash matches the tree', async () => {
+    await install();
+    await expect(checkBrowserSkillUpdate(home)).resolves.toEqual({
+      recorded: SHA, current: SHA, needsUpdate: false,
+    });
+  });
+
+  it('reports an update when the folder hash moved on main', async () => {
+    await install();
+    vi.stubGlobal('fetch', serve(PUBLISHED, 200, OTHER_SHA));
+    await expect(checkBrowserSkillUpdate(home)).resolves.toEqual({
+      recorded: SHA, current: OTHER_SHA, needsUpdate: true,
+    });
+  });
+
+  // A copy without a stamp is the user's; nothing Codey does compares or
+  // replaces it.
+  it('treats an unstamped copy as nothing to update', async () => {
+    fs.mkdirSync(skillDir(), { recursive: true });
+    fs.writeFileSync(skillFile(), '---\nname: browser\ndescription: mine\n---\nMy own notes.\n', 'utf8');
+    await expect(checkBrowserSkillUpdate(home)).resolves.toEqual({
+      recorded: undefined, current: SHA, needsUpdate: false,
+    });
+  });
+
+  it('throws when the tree cannot be reached, so the caller can stay quiet', async () => {
+    await install();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('getaddrinfo ENOTFOUND') }));
+    await expect(checkBrowserSkillUpdate(home)).rejects.toThrow('ENOTFOUND');
   });
 });

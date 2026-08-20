@@ -18,9 +18,14 @@ export const CODEY_SKILLS_REPO_REF = 'main';
 /** `owner/name`, the form both GitHub URLs and the install stamp use. */
 export const CODEY_SKILLS_REPO = CODEY_SKILLS_REPO_URL.replace('https://github.com/', '');
 
-/** Path of one published skill inside the repository. */
+/** Path of one published skill's directory inside the repository. */
+export function codeySkillDir(name: string): string {
+  return `skills/${name}`;
+}
+
+/** Path of one published skill's markdown inside the repository. */
 export function codeySkillPath(name: string): string {
-  return `skills/${name}/SKILL.md`;
+  return `${codeySkillDir(name)}/SKILL.md`;
 }
 
 /** Raw URL of one published skill's markdown. */
@@ -28,16 +33,11 @@ export function codeySkillDownloadUrl(name: string, ref: string = CODEY_SKILLS_R
   return `https://raw.githubusercontent.com/${CODEY_SKILLS_REPO}/${ref}/${codeySkillPath(name)}`;
 }
 
-/** API URL for the commit that last touched one published skill. */
-export function codeySkillCommitUrl(name: string, ref: string = CODEY_SKILLS_REPO_REF): string {
-  return `https://api.github.com/repos/${CODEY_SKILLS_REPO}/commits`
-    + `?path=${encodeURIComponent(codeySkillPath(name))}&sha=${ref}&per_page=1`;
-}
-
-/** The `version:` a published skill declares, or undefined if it has none. */
-export function skillVersion(markdown: string): string | undefined {
-  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(markdown);
-  return frontmatter ? /^version:[ \t]*(\S+)[ \t]*$/m.exec(frontmatter[1])?.[1] : undefined;
+/** API URL for the recursive tree at `ref`, from which the skill folder's own
+ *  tree hash is read. That hash is the skill's version: it changes exactly when
+ *  the folder's files change, never for edits elsewhere in the repository. */
+export function codeySkillTreeUrl(name: string, ref: string = CODEY_SKILLS_REPO_REF): string {
+  return `https://api.github.com/repos/${CODEY_SKILLS_REPO}/git/trees/${ref}?recursive=1`;
 }
 
 /**
@@ -71,11 +71,12 @@ const SKILL_FILE = 'SKILL.md';
 const DISABLED_SKILL_FILE = 'SKILL.md.disabled';
 
 /**
- * An install stamps the file with the skill's version and the commit it came
- * from. Two jobs: it answers "which text does this user actually have" when an
- * agent runs a command the installed CLI does not have — on sight from the
- * version, and exactly from the commit — and it is how Codey recognises its own
- * copy. Anything without the stamp is treated as the user's, and is not
+ * An install stamps the file with the skill folder's tree hash — the same
+ * version the ecosystem uses for a skill: it changes exactly when the skill's
+ * text changes, never for edits elsewhere in the repository. Two jobs: it
+ * answers "which text does this user actually have" when an agent runs a
+ * command the installed CLI does not have, and it is how Codey recognises its
+ * own copy. Anything without the stamp is treated as the user's, and is not
  * overwritten or deleted without confirmation.
  *
  * It sits after the frontmatter (agents parse that from the first byte) and is
@@ -83,9 +84,16 @@ const DISABLED_SKILL_FILE = 'SKILL.md.disabled';
  */
 export const CODEY_INSTALL_MARKER = '<!-- Installed by Codey:';
 
-function stamp(markdown: string, from: string, today: string): string {
-  const version = skillVersion(markdown);
-  const line = `${CODEY_INSTALL_MARKER} ${BROWSER_SKILL_NAME}${version ? ` ${version}` : ''} `
+/** The folder tree hash an install recorded, or undefined when there is none. */
+const INSTALLED_HASH_RE = /<!-- Installed by Codey: browser ([0-9a-f]{40}) /;
+
+/** The hash a stamp recorded, when the file carries one. */
+function installedSkillHash(markdown: string): string | undefined {
+  return INSTALLED_HASH_RE.exec(markdown)?.[1];
+}
+
+function stamp(markdown: string, from: string, hash: string | undefined, today: string): string {
+  const line = `${CODEY_INSTALL_MARKER} ${BROWSER_SKILL_NAME}${hash ? ` ${hash}` : ''} `
     + `from ${from} on ${today}. `
     + 'Manage it in Tools -> Plugins; edits here are replaced by the next update. -->';
   const frontmatter = /^---\n[\s\S]*?\n---\n/.exec(markdown);
@@ -124,8 +132,8 @@ export interface BrowserSkillStatus {
   origin?: 'codey' | 'user';
   /** Where Install pulls from. */
   sourceUrl: string;
-  /** The `version:` the installed copy declares, when it has one. */
-  version?: string;
+  /** The skill folder's tree hash an install recorded, when there is one. */
+  hash?: string;
 }
 
 /** Which copy an install actually wrote. `bundled` means the repository could
@@ -164,7 +172,7 @@ export function browserSkillStatus(home: string = os.homedir()): BrowserSkillSta
       ...base,
       state,
       origin: isCodeyInstalledSkill(installed) ? 'codey' : 'user',
-      version: skillVersion(installed),
+      hash: installedSkillHash(installed),
     };
   }
   return { ...base, state: 'absent' };
@@ -190,27 +198,33 @@ function isPublishedSkill(text: string, name: string): boolean {
 }
 
 /**
- * The commit that last touched this skill, for the stamp. A separate request,
- * because the raw host's ETag is an opaque per-encoding fingerprint: it differs
- * between the gzip and identity copies of identical bytes and matches no hash
- * anyone can look up. Best-effort — a stamp naming the branch is better than a
- * failed install, and the rate limit on unauthenticated calls (60/hour) is far
- * above how often anyone installs a skill.
+ * The skill folder's tree hash on `main` — the skill's version. Read from the
+ * recursive tree, where the `sha` of the `skills/browser` entry changes exactly
+ * when the skill's own files change, never for edits elsewhere in the
+ * repository. Best-effort, like the commit call it replaced: a stamp without a
+ * hash still names the skill and the date, and Update re-pulls whatever is
+ * published. The unauthenticated rate limit (60/hour) is far above how often
+ * anyone installs or checks a skill.
  */
-async function downloadSkillCommit(timeoutMs: number): Promise<string> {
-  const url = codeySkillCommitUrl(BROWSER_SKILL_NAME);
+async function downloadSkillFolderHash(timeoutMs: number): Promise<string> {
+  const url = codeySkillTreeUrl(BROWSER_SKILL_NAME);
   const response = await fetch(url, {
     headers: { accept: 'application/vnd.github+json', 'user-agent': 'codey' },
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) throw new Error(`${url} returned ${response.status}`);
-  const commits = await response.json() as Array<{ sha?: unknown }>;
-  const sha = Array.isArray(commits) ? commits[0]?.sha : undefined;
-  if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('no commit for this path');
+  const tree = await response.json() as { tree?: Array<{ path?: unknown; type?: unknown; sha?: unknown }> };
+  const entry = Array.isArray(tree.tree)
+    ? tree.tree.find(e => e.path === codeySkillDir(BROWSER_SKILL_NAME) && e.type === 'tree')
+    : undefined;
+  const sha = typeof entry?.sha === 'string' ? entry.sha : undefined;
+  if (!sha || !/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error(`no ${BROWSER_SKILL_NAME} folder in the tree`);
+  }
   return sha;
 }
 
-async function downloadBrowserSkill(timeoutMs: number): Promise<{ text: string; from: string }> {
+async function downloadBrowserSkill(timeoutMs: number): Promise<{ text: string; from: string; hash?: string }> {
   const url = codeySkillDownloadUrl(BROWSER_SKILL_NAME);
   const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) throw new Error(`${url} returned ${response.status}`);
@@ -218,13 +232,13 @@ async function downloadBrowserSkill(timeoutMs: number): Promise<{ text: string; 
   if (!isPublishedSkill(text, BROWSER_SKILL_NAME)) {
     throw new Error(`${url} did not return the ${BROWSER_SKILL_NAME} skill`);
   }
-  let at = CODEY_SKILLS_REPO_REF;
+  let hash: string | undefined;
   try {
-    at = (await downloadSkillCommit(timeoutMs)).slice(0, 12);
+    hash = await downloadSkillFolderHash(timeoutMs);
   } catch {
-    // Keep the branch name: the version in the stamp still says which text.
+    // Keep the stamp readable: the skill name and date still say which text.
   }
-  return { text, from: `${CODEY_SKILLS_REPO}@${at}` };
+  return { text, from: CODEY_SKILLS_REPO, hash };
 }
 
 /**
@@ -254,11 +268,13 @@ export async function installBrowserSkill(
   let markdown: string;
   let source: 'repository' | 'bundled' = 'repository';
   let from = 'the copy bundled with the app';
+  let hash: string | undefined;
   let reason: string | undefined;
   try {
     const downloaded = await downloadBrowserSkill(timeoutMs);
     markdown = downloaded.text;
     from = downloaded.from;
+    hash = downloaded.hash;
   } catch (error) {
     markdown = browserSkillMarkdown();
     source = 'bundled';
@@ -267,9 +283,40 @@ export async function installBrowserSkill(
 
   const file = path.join(dir, SKILL_FILE);
   await fs.promises.mkdir(dir, { recursive: true });
-  await fs.promises.writeFile(file, stamp(markdown, from, today), 'utf8');
+  await fs.promises.writeFile(file, stamp(markdown, from, hash, today), 'utf8');
   await fs.promises.rm(path.join(dir, DISABLED_SKILL_FILE), { force: true });
   return { installed: true, file, source, reason };
+}
+
+export interface BrowserSkillUpdateCheck {
+  /** The hash an install stamped, when this copy is Codey's. */
+  recorded?: string;
+  /** The hash the published folder has right now. */
+  current: string;
+  /** True when the published skill moved after this copy was installed. */
+  needsUpdate: boolean;
+}
+
+/**
+ * Compare the installed copy against the published folder, without touching the
+ * disk. The Mac app shows "Update available" from this; Update itself is just
+ * Install again. A copy with no stamp is the user's — nothing compares or
+ * replaces it, and nothing installed updates nothing. Throws when the folder
+ * cannot be reached, so a caller that wants to stay quiet can.
+ */
+export async function checkBrowserSkillUpdate(
+  home: string = os.homedir(),
+  { timeoutMs = 5000 }: { timeoutMs?: number } = {},
+): Promise<BrowserSkillUpdateCheck> {
+  const current = await downloadSkillFolderHash(timeoutMs);
+  const file = path.join(browserSkillDir(home), SKILL_FILE);
+  let recorded: string | undefined;
+  try {
+    recorded = installedSkillHash(fs.readFileSync(file, 'utf8'));
+  } catch {
+    // Nothing installed: nothing to update.
+  }
+  return { recorded, current, needsUpdate: recorded !== undefined && recorded !== current };
 }
 
 /**
