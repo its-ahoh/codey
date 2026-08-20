@@ -3,7 +3,7 @@ import { C } from '../theme'
 import { pillButton, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
-import type { PluginInfo, PluginInstallResult } from '../codey-api'
+import type { PluginInfo, PluginInstallResult, PluginUpdateCheck } from '../codey-api'
 
 /** Codey refused to touch a skill of this name it did not write. The user
  *  decides; nothing is replaced or deleted until they say so. */
@@ -17,22 +17,38 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
   // What the last install did, kept per plugin: which copy landed, and where.
   const [outcome, setOutcome] = useState<Record<string, PluginInstallResult>>({})
   const [pending, setPending] = useState<Record<string, Pending>>({})
+  // Whether the published skill moved since this copy was installed. `null`
+  // means nothing could be checked — the repo was unreachable, so no claim.
+  const [update, setUpdate] = useState<Record<string, PluginUpdateCheck>>({})
   const filteredPlugins = useMemo(
     () => plugins.filter(plugin => matchesToolSearch(searchQuery, plugin.name, plugin.description)),
     [plugins, searchQuery],
   )
 
+  const checkForUpdate = useCallback(async (plugin: PluginInfo) => {
+    try {
+      const result = unwrap(await window.codey.plugins.check(plugin.id))
+      setUpdate(prev => ({ ...prev, [plugin.id]: result }))
+    } catch {
+      // Offline or refused: say nothing rather than claim there is no update.
+    }
+  }, [])
+
   const reload = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      setPlugins(unwrap(await window.codey.plugins.list()))
+      const listed = unwrap(await window.codey.plugins.list())
+      setPlugins(listed)
+      for (const plugin of listed) {
+        if (plugin.state !== 'absent') void checkForUpdate(plugin)
+      }
     } catch (e: any) {
       setError(e?.message ?? String(e))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [checkForUpdate])
 
   useEffect(() => { void reload() }, [reload])
 
@@ -94,7 +110,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                 {installed && (
                   <span style={plugin.state === 'disabled' ? styles.badgeMuted : styles.badge}>
                     {plugin.state === 'disabled' ? 'Off in Skills' : 'Installed'}
-                    {plugin.version ? ` ${plugin.version}` : ''}
+                    {plugin.hash ? ` ${plugin.hash.slice(0, 7)}` : ''}
                   </span>
                 )}
               </div>
@@ -105,6 +121,11 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                     ? 'Switched off in Skills, so no agent loads it. Turn it back on there.'
                     : 'Listed in Skills as "browser".'}
                   {' '}<span style={styles.path}>{plugin.dir}</span>
+                  {update[plugin.id]?.needsUpdate === true && (
+                    <div style={styles.updateHint}>
+                      The published skill has moved since this copy was installed — Update to get it.
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={styles.cardHint}>
@@ -151,8 +172,10 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                     <button
                       onClick={() => { if (!working) void act(plugin, 'install') }}
                       disabled={working}
-                      style={pillButton('ghost')}
-                      title="Download the published skill again, replacing your copy"
+                      style={pillButton(update[plugin.id]?.needsUpdate === true ? 'primary' : 'ghost')}
+                      title={update[plugin.id]?.needsUpdate === true
+                        ? 'A newer published version is available — update now'
+                        : 'Download the published skill again, replacing your copy'}
                     >
                       Update
                     </button>
@@ -193,6 +216,7 @@ const styles: Record<string, React.CSSProperties> = {
   cardName: { color: C.fg, fontSize: 13, fontWeight: 700, marginBottom: 3 },
   cardDesc: { color: C.fg3, fontSize: 11.5, lineHeight: 1.45 },
   cardHint: { color: C.fg2, fontSize: 11, lineHeight: 1.45, marginTop: 5 },
+  updateHint: { color: C.accent, fontSize: 11, lineHeight: 1.45, marginTop: 4 },
   cardWarn: { color: C.fg2, fontSize: 11, lineHeight: 1.45, marginTop: 5, opacity: 0.9 },
   path: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 10.5, color: C.fg3 },
   badge: {

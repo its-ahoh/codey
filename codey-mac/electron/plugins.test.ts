@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { BrowserSkillStatus } from '@codey/core'
 import { PLUGINS, isKnownPlugin, listPlugins } from './plugins'
 
+const SHA = 'a'.repeat(40)
+
 const status = (over: Partial<BrowserSkillStatus> = {}): BrowserSkillStatus => ({
   state: 'absent',
   dir: '/Users/test/.codey/skills/browser',
@@ -22,9 +24,9 @@ describe('plugin registry', () => {
     }
   })
 
-  it('carries where the copy lives, where it came from, who wrote it, and which version', () => {
-    const plugin = listPlugins(() => status({ state: 'installed', origin: 'user', version: '1.2.3' }))[0]
-    expect(plugin.version).toBe('1.2.3')
+  it('carries where the copy lives, where it came from, who wrote it, and which hash', () => {
+    const plugin = listPlugins(() => status({ state: 'installed', origin: 'user', hash: SHA }))[0]
+    expect(plugin.hash).toBe(SHA)
     expect(plugin.dir).toBe('/Users/test/.codey/skills/browser')
     expect(plugin.sourceUrl).toBe('https://github.com/its-ahoh/codey-skills')
     expect(plugin.origin).toBe('user')

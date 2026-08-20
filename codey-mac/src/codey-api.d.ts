@@ -35,8 +35,9 @@ export interface PluginInfo {
   origin?: 'codey' | 'user'
   /** The repository Install pulls from. */
   sourceUrl: string
-  /** The version the installed copy declares. */
-  version?: string
+  /** The skill folder's tree hash an install recorded — the version the
+   *  ecosystem uses for a skill. Present only on a copy Codey wrote. */
+  hash?: string
 }
 
 /** Which copy an install wrote: 'bundled' means the repository was unreachable
@@ -49,6 +50,16 @@ export type PluginInstallResult =
 export interface PluginUninstallResult {
   removed: boolean
   conflict?: 'user-copy'
+}
+
+/** Whether the published skill moved after the installed copy was written.
+ *  `needsUpdate: null` when the published folder could not be reached. */
+export interface PluginUpdateCheck {
+  needsUpdate: boolean | null
+  /** The hash an install stamped, when this copy is Codey's. */
+  recorded?: string
+  /** The hash the published folder has right now. */
+  current?: string
 }
 
 export interface ExternalMcpServer {
@@ -279,6 +290,7 @@ declare global {
         list: () => Promise<IpcResult<PluginInfo[]>>
         install: (id: string, force?: boolean) => Promise<IpcResult<PluginInstallResult>>
         uninstall: (id: string, force?: boolean) => Promise<IpcResult<PluginUninstallResult>>
+        check: (id: string) => Promise<IpcResult<PluginUpdateCheck>>
       }
       mcp: {
         list: () => Promise<IpcResult<ExternalMcpServer[]>>

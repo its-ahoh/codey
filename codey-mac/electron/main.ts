@@ -33,7 +33,7 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { browserSkillStatus, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, WorkerManager, WorkspaceManager } from '@codey/core'
+import { browserSkillStatus, checkBrowserSkillUpdate, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, WorkerManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
@@ -3223,6 +3223,20 @@ app.whenReady().then(async () => {
       const result = await uninstallBrowserSkill(undefined, { force: force === true })
       if (result.removed) await syncCodeyGlobalSkills()
       return result
+    })
+  )
+
+  // "Is there an update?" never throws at the renderer: when the published
+  // folder cannot be reached the card quietly says nothing is known, rather
+  // than breaking the whole Plugins tab over a network blip.
+  ipcMain.handle('plugins:check', async (_e, id: string) =>
+    wrap(async () => {
+      if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
+      try {
+        return await checkBrowserSkillUpdate()
+      } catch {
+        return { needsUpdate: null }
+      }
     })
   )
 
