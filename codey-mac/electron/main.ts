@@ -283,7 +283,7 @@ function createWindow() {
 
   mainWindow.webContents.on('did-finish-load', () => {
     // Chromium resets the zoom factor on every navigation/reload, so re-apply
-    // the saved text size here rather than only when the config changes.
+    // the saved zoom here rather than only when the config changes.
     mainWindow?.webContents.setZoomFactor(currentZoom)
     flushPendingRendererMessages()
   })
@@ -465,7 +465,7 @@ function applyUiPreferences(rawCfg: any) {
   applyZoom(clampZoom(rawCfg?.ui?.zoom))
 }
 
-// Text size. Scales the main window only: Quick Capture is a fixed-width
+// Zoom. Scales the main window only: Quick Capture is a fixed-width
 // floater that reports its own content height in CSS px, so zooming it would
 // desync that bottom-anchored resize.
 let currentZoom = DEFAULT_ZOOM
@@ -475,14 +475,17 @@ function applyZoom(factor: number) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.setZoomFactor(factor)
   }
+  // The browser is a native view positioned from renderer CSS px, so it needs
+  // the new scale to stay inside its slot.
+  browserController.setZoomFactor(factor)
   if (!changed) return
-  // Refresh the View menu's "Text Size: N%" readout, and keep the Settings
+  // Refresh the View menu's "Zoom: N%" readout, and keep the Settings
   // stepper in sync when the change came from the menu.
   createAppMenu()
   sendToRenderer('ui:zoom', factor)
 }
 
-/** Persist a new text size; applyUiPreferences pushes it to the window. */
+/** Persist a new zoom level; applyUiPreferences pushes it to the window. */
 function setZoom(factor: number) {
   const next = clampZoom(factor)
   if (!coreConfigManager) {
@@ -1554,12 +1557,12 @@ function createAppMenu() {
     {
       label: 'View',
       submenu: [
-        { label: `Text Size: ${formatZoom(currentZoom)}`, enabled: false },
-        { label: 'Bigger Text', accelerator: 'CommandOrControl+Plus', click: () => setZoom(zoomIn(currentZoom)) },
+        { label: `Zoom: ${formatZoom(currentZoom)}`, enabled: false },
+        { label: 'Zoom In', accelerator: 'CommandOrControl+Plus', click: () => setZoom(zoomIn(currentZoom)) },
         // Same action on the unshifted key, so ⌘= works like it does elsewhere
         // on macOS. Hidden because one accelerator per menu item is displayable.
-        { label: 'Bigger Text', accelerator: 'CommandOrControl+=', visible: false, click: () => setZoom(zoomIn(currentZoom)) },
-        { label: 'Smaller Text', accelerator: 'CommandOrControl+-', click: () => setZoom(zoomOut(currentZoom)) },
+        { label: 'Zoom In', accelerator: 'CommandOrControl+=', visible: false, click: () => setZoom(zoomIn(currentZoom)) },
+        { label: 'Zoom Out', accelerator: 'CommandOrControl+-', click: () => setZoom(zoomOut(currentZoom)) },
         { label: 'Actual Size', accelerator: 'CommandOrControl+0', click: () => setZoom(DEFAULT_ZOOM) },
         { type: 'separator' },
         { role: 'reload' },

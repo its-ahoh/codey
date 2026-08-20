@@ -162,14 +162,14 @@ export const AppearanceTab: React.FC = () => {
 
       <div style={styles.settingRow}>
         <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
-          <div>Text size</div>
+          <div>Zoom</div>
           <div style={styles.settingDesc}>
-            Scale the whole interface, chat text included. ⌘+ and ⌘− adjust it from anywhere in the app; ⌘0 goes back to 100%.
+            Scale the whole interface — text, spacing and icons together. ⌘+ and ⌘− adjust it from anywhere in the app; ⌘0 goes back to 100%.
           </div>
         </div>
         <div style={styles.stepper}>
           <button
-            aria-label="Smaller text"
+            aria-label="Zoom out"
             disabled={zoom <= ZOOM_STEPS[0]}
             onClick={() => changeZoom(zoomOut(zoom))}
             style={{ ...styles.stepBtn, opacity: zoom <= ZOOM_STEPS[0] ? 0.35 : 1 }}
@@ -177,7 +177,7 @@ export const AppearanceTab: React.FC = () => {
             −
           </button>
           <button
-            aria-label={`Text size ${formatZoom(zoom)}, click to reset`}
+            aria-label={`Zoom ${formatZoom(zoom)}, click to reset`}
             title="Reset to 100%"
             onClick={() => changeZoom(DEFAULT_ZOOM)}
             style={styles.stepValue}
@@ -185,7 +185,7 @@ export const AppearanceTab: React.FC = () => {
             {formatZoom(zoom)}
           </button>
           <button
-            aria-label="Bigger text"
+            aria-label="Zoom in"
             disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
             onClick={() => changeZoom(zoomIn(zoom))}
             style={{ ...styles.stepBtn, opacity: zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1] ? 0.35 : 1 }}

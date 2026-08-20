@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { describe, expect, it, vi } from 'vitest'
-import { BROWSER_PARTITION, BrowserController, isSafeBrowserNavigationUrl, normalizeBrowserUrl } from './browser-controller'
+import { BROWSER_PARTITION, BrowserController, isSafeBrowserNavigationUrl, normalizeBrowserUrl, sanitizeBounds } from './browser-controller'
 
 describe('normalizeBrowserUrl', () => {
   it('adds HTTPS to ordinary hosts', () => {
@@ -422,5 +422,29 @@ describe('BrowserController agent controls', () => {
       'https://maps.example.com/request',
       { requestingUrl: 'https://maps.example.com/request' },
     )
+  })
+})
+
+describe('sanitizeBounds', () => {
+  const win = { getContentBounds: () => ({ x: 0, y: 0, width: 1600, height: 1000 }) } as any
+
+  it('passes CSS px through unchanged at 100%', () => {
+    expect(sanitizeBounds({ x: 400, y: 60, width: 800, height: 600 }, win))
+      .toEqual({ x: 400, y: 60, width: 800, height: 600 })
+  })
+
+  it('scales renderer CSS px by the window zoom factor', () => {
+    expect(sanitizeBounds({ x: 400, y: 60, width: 800, height: 600 }, win, 1.25))
+      .toEqual({ x: 500, y: 75, width: 1000, height: 750 })
+  })
+
+  it('keeps the scaled view inside the window', () => {
+    expect(sanitizeBounds({ x: 400, y: 60, width: 1200, height: 900 }, win, 1.6))
+      .toEqual({ x: 640, y: 96, width: 960, height: 904 })
+  })
+
+  it('ignores a nonsense zoom factor', () => {
+    expect(sanitizeBounds({ x: 10, y: 10, width: 100, height: 100 }, win, 0))
+      .toEqual({ x: 10, y: 10, width: 100, height: 100 })
   })
 })

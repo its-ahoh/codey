@@ -177,15 +177,22 @@ export function isSafeBrowserNavigationUrl(input: string): boolean {
   }
 }
 
-function sanitizeBounds(bounds: BrowserBounds, win: BrowserWindow): BrowserBounds {
+/**
+ * The renderer measures the browser slot with getBoundingClientRect, which is
+ * CSS px inside a window that may be zoomed. The native view is
+ * laid out in the window's own units, so every incoming rect has to be scaled
+ * by the same zoom factor or the browser drifts out of its slot.
+ */
+export function sanitizeBounds(bounds: BrowserBounds, win: BrowserWindow, zoom = 1): BrowserBounds {
   const content = win.getContentBounds()
-  const x = Math.max(0, Math.round(Number(bounds.x) || 0))
-  const y = Math.max(0, Math.round(Number(bounds.y) || 0))
+  const scale = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+  const x = Math.max(0, Math.round((Number(bounds.x) || 0) * scale))
+  const y = Math.max(0, Math.round((Number(bounds.y) || 0) * scale))
   return {
     x,
     y,
-    width: Math.max(0, Math.min(Math.round(Number(bounds.width) || 0), content.width - x)),
-    height: Math.max(0, Math.min(Math.round(Number(bounds.height) || 0), content.height - y)),
+    width: Math.max(0, Math.min(Math.round((Number(bounds.width) || 0) * scale), content.width - x)),
+    height: Math.max(0, Math.min(Math.round((Number(bounds.height) || 0) * scale), content.height - y)),
   }
 }
 
@@ -200,6 +207,8 @@ export class BrowserController {
   private tabSequence = 0
   private attachedTo: BrowserWindow | null = null
   private lastBounds: BrowserBounds | null = null
+  /** Main-window zoom factor; lastBounds arrives in the renderer's CSS px. */
+  private zoom = 1
   private state: BrowserState = { ...EMPTY_STATE }
   private downloads: BrowserDownload[] = []
   private downloadSessionBound = false
@@ -261,7 +270,7 @@ export class BrowserController {
     if (win && !win.isDestroyed()) {
       win.contentView.addChildView(tab.view)
       this.attachedTo = win
-      if (this.lastBounds) tab.view.setBounds(sanitizeBounds(this.lastBounds, win))
+      if (this.lastBounds) tab.view.setBounds(sanitizeBounds(this.lastBounds, win, this.zoom))
     }
     return this.refreshState()
   }
@@ -284,7 +293,7 @@ export class BrowserController {
       if (win && !win.isDestroyed()) {
         win.contentView.addChildView(next.view)
         this.attachedTo = win
-        if (this.lastBounds) next.view.setBounds(sanitizeBounds(this.lastBounds, win))
+        if (this.lastBounds) next.view.setBounds(sanitizeBounds(this.lastBounds, win, this.zoom))
       }
     }
     return this.refreshState()
@@ -299,7 +308,7 @@ export class BrowserController {
       this.attachedTo = win
     }
     this.lastBounds = { ...bounds }
-    view.setBounds(sanitizeBounds(bounds, win))
+    view.setBounds(sanitizeBounds(bounds, win, this.zoom))
     return this.getState()
   }
 
@@ -307,10 +316,23 @@ export class BrowserController {
     this.detach()
   }
 
+  /**
+   * Re-places the view when the window's zoom changes: the last bounds
+   * were measured in the old scale, and the renderer may not re-measure.
+   */
+  setZoomFactor(zoom: number): void {
+    const next = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+    if (next === this.zoom) return
+    this.zoom = next
+    if (this.lastBounds && this.view && this.attachedTo && !this.attachedTo.isDestroyed()) {
+      this.view.setBounds(sanitizeBounds(this.lastBounds, this.attachedTo, this.zoom))
+    }
+  }
+
   setBounds(bounds: BrowserBounds): void {
     this.lastBounds = { ...bounds }
     if (!this.view || !this.attachedTo) return
-    this.view.setBounds(sanitizeBounds(bounds, this.attachedTo))
+    this.view.setBounds(sanitizeBounds(bounds, this.attachedTo, this.zoom))
   }
 
   async navigate(input: string): Promise<BrowserState> {
@@ -1052,7 +1074,7 @@ export class BrowserController {
       if (win && !win.isDestroyed()) {
         win.contentView.addChildView(view)
         this.attachedTo = win
-        if (this.lastBounds) view.setBounds(sanitizeBounds(this.lastBounds, win))
+        if (this.lastBounds) view.setBounds(sanitizeBounds(this.lastBounds, win, this.zoom))
       }
     }
     return tab
