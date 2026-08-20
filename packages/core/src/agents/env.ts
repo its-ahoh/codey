@@ -69,6 +69,24 @@ export function withCommonBinPaths(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 /**
+ * The protocols an 'all' model claims but has no base URL for, and so leaves
+ * on the ambient environment. Mirrors the wiring rule in `applyModelEnv` —
+ * change one and this goes stale.
+ *
+ * Only 'all' models can be half-wired: a single-protocol model carries its one
+ * endpoint on `baseUrl`, and an absent `baseUrl` there is the ordinary "talk to
+ * the official API" case rather than a gap. A model with no credentials at all
+ * is likewise opting into the ambient environment on purpose.
+ */
+export function unwiredAllProtocols(model: ModelConfig | undefined): Array<'anthropic' | 'openai'> {
+  if (!model || model.apiType !== 'all' || !model.apiKey) return [];
+  const missing: Array<'anthropic' | 'openai'> = [];
+  if (!model.anthropicBaseUrl) missing.push('anthropic');
+  if (!model.openaiBaseUrl) missing.push('openai');
+  return missing;
+}
+
+/**
  * Apply model credentials to a child-process env map using the style
  * declared on ModelConfig.apiType. Does not mutate the caller's env.
  *

@@ -11,7 +11,7 @@ export { ClaudeCodeAdapter } from './claude-code';
 export { OpenCodeAdapter } from './opencode';
 export { CodexAdapter } from './codex';
 export { PiAdapter } from './pi';
-export { applyModelEnv } from './env';
+export { applyModelEnv, unwiredAllProtocols } from './env';
 export * from './codey-skills';
 
 /**

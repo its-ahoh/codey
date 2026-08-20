@@ -37,3 +37,40 @@ export function modelFitsApiType(modelApiType: ApiType, want?: ApiType): boolean
 export function modelFitsAgent(modelApiType: ApiType, agent?: string): boolean {
   return modelFitsApiType(modelApiType, agent ? AGENT_API_TYPE[agent] : undefined)
 }
+
+/** The base URLs an API key entry defines, as far as this check cares. */
+export interface KeyEndpoints {
+  anthropicBaseUrl?: string
+  openaiBaseUrl?: string
+}
+
+/**
+ * Which protocols an 'all' model promises that its bound key cannot deliver.
+ *
+ * An 'all' model claims both endpoints, but `applyModelEnv` wires each protocol
+ * up only when the key defines that protocol's base URL — the other half is
+ * silently left on the ambient environment, so the spawned CLI aims a
+ * third-party token at the real api.anthropic.com / api.openai.com and fails in
+ * a way that reads like a broken key. Naming the missing halves before the
+ * model is saved is the only place that mismatch is visible.
+ *
+ * Only meaningful for 'all'. A single-protocol model with no base URL is the
+ * ordinary "talk to the official endpoint" case, and a model bound to no key at
+ * all is explicitly opting into the ambient environment.
+ */
+export function missingAllEndpoints(apiType: ApiType, key?: KeyEndpoints): ApiType[] {
+  if (apiType !== 'all' || !key) return []
+  const missing: ApiType[] = []
+  if (!key.anthropicBaseUrl?.trim()) missing.push('anthropic')
+  if (!key.openaiBaseUrl?.trim()) missing.push('openai')
+  return missing
+}
+
+/**
+ * Agents that speak `protocol` and nothing else — the ones with no other
+ * protocol to fall back on when its endpoint is missing. An 'all' agent is
+ * excluded: it can still run on whichever protocol did get wired up.
+ */
+export function agentsPinnedTo(protocol: ApiType): string[] {
+  return AGENT_NAMES.filter(a => AGENT_API_TYPE[a] === protocol)
+}
