@@ -7,11 +7,10 @@ import {
   BLOCK_END,
   applyManagedBlock,
   hasManagedBlock,
-  readSharedMemory,
-  sharedMemoryPath,
+  legacySharedFilePath,
+  renderSharedBody,
   sharedMemoryTargets,
   syncSharedMemory,
-  writeSharedMemory,
 } from './shared-memory'
 
 const roots: string[] = []
@@ -135,12 +134,25 @@ describe('syncSharedMemory', () => {
   })
 })
 
-describe('the Codey-owned file', () => {
-  it('round-trips through write and read', () => {
-    const home = temp()
-    expect(readSharedMemory(fs, path, home)).toBe('')
-    const file = writeSharedMemory(fs, path, home, 'Team knowledge.')
-    expect(file).toBe(sharedMemoryPath(path, home))
-    expect(readSharedMemory(fs, path, home)).toBe('Team knowledge.')
+describe('renderSharedBody', () => {
+  it('renders one bullet per entry', () => {
+    expect(renderSharedBody([{ content: 'Uses tabs' }, { content: 'Ships on Fridays' }]))
+      .toBe('- Uses tabs\n- Ships on Fridays')
+  })
+
+  it('indents the continuation lines of a multi-line entry', () => {
+    expect(renderSharedBody([{ content: 'Node version\nuse v22.17.1' }]))
+      .toBe('- Node version\n  use v22.17.1')
+  })
+
+  it('skips blank entries and returns nothing for an empty store', () => {
+    expect(renderSharedBody([{ content: '  ' }])).toBe('')
+    expect(renderSharedBody([])).toBe('')
+  })
+})
+
+describe('the legacy shared file', () => {
+  it('points at the text that used to hold the shared block', () => {
+    expect(legacySharedFilePath(path, '/Users/test')).toBe('/Users/test/.codey/memory/MEMORY.md')
   })
 })

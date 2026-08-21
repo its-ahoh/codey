@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import { Section, Toggle, fieldStyle, pillButton, unwrap } from './settingsAtoms'
+import { MemoryPanel } from './CodeyMemorySection'
 import { formatBytes, memoryPreview, summarizeMemory } from './agentMemoryView'
 import type { AgentMemoryGroup, MemoryEntry } from '../codey-api'
 
@@ -146,20 +147,18 @@ export const ProjectMemorySection: React.FC<{ workspace: string }> = ({ workspac
 }
 
 /**
- * Settings ▸ Agents: one knowledge base every agent reads. Codey keeps the
- * text and mirrors it into each agent's own global memory file inside a marked
- * block, so all four CLIs see the same thing. Off until the user opts in —
- * syncing writes into files the user owns.
+ * Settings ▸ Agents: the one knowledge base about the user.
+ *
+ * The entries live in Codey's user-global memory store — the same ones it
+ * injects into its own prompts. Turning sharing on also renders them into
+ * each agent's own global memory file, inside a marked block, so the CLIs
+ * know them when run outside Codey too. One place to type, two ways to
+ * deliver; Codey drops its own injection while sharing is on so no fact
+ * reaches the model twice.
  */
 export const SharedMemorySection: React.FC<{ isGatewayRunning: boolean }> = ({ isGatewayRunning }) => {
   const [enabled, setEnabled] = useState(false)
-  const [content, setContent] = useState('')
-  const [draft, setDraft] = useState('')
-  const [filePath, setFilePath] = useState('')
   const [targets, setTargets] = useState<Array<{ agent: string; path: string }>>([])
-  const [loaded, setLoaded] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [savedAt, setSavedAt] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
@@ -167,11 +166,7 @@ export const SharedMemorySection: React.FC<{ isGatewayRunning: boolean }> = ({ i
     try {
       const res = unwrap(await window.codey.memory.shared.get())
       setEnabled(res.enabled)
-      setContent(res.content)
-      setDraft(res.content)
-      setFilePath(res.path)
       setTargets(res.targets)
-      setLoaded(true)
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
@@ -187,64 +182,33 @@ export const SharedMemorySection: React.FC<{ isGatewayRunning: boolean }> = ({ i
     catch (e: any) { setEnabled(!next); setError(e?.message ?? String(e)) }
   }
 
-  const save = async () => {
-    if (saving || draft === content) return
-    setSaving(true)
-    setError(null)
-    try {
-      unwrap(await window.codey.memory.shared.set(draft))
-      setContent(draft)
-      setSavedAt(Date.now())
-    } catch (e: any) { setError(e?.message ?? String(e)) } finally { setSaving(false) }
-  }
+  if (!isGatewayRunning) return null
 
   return (
     <>
       <Section
         title="Shared memory"
-        description="One knowledge base for every agent. Codey mirrors it into each agent's own memory file, inside a marked block — anything you wrote around that block is left alone."
+        description="What Codey knows about you in every workspace. Codey always uses it; sharing also writes it into the agents' own memory files."
       />
       {error && <ErrorBox message={error} />}
-      <div style={{ ...fieldStyle, display: 'block' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-          <div>
-            <div style={{ color: C.fg, fontSize: 13 }}>Share this knowledge with every agent</div>
-            <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>
-              {enabled
-                ? `Synced into ${targets.length} agent file${targets.length === 1 ? '' : 's'} on every launch and every save.`
-                : 'Off — the block is removed from the agent files while this is off.'}
+      <MemoryPanel
+        scope="global"
+        title="About you"
+        description="Standing facts and preferences that hold in every project."
+        banner={
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderTop: `1px solid ${C.border}` }}>
+            <div>
+              <div style={{ color: C.fg, fontSize: 13 }}>Share with every agent</div>
+              <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>
+                {enabled
+                  ? `Written into ${targets.length} agent memory file${targets.length === 1 ? '' : 's'}, inside a Codey-managed block.`
+                  : 'Off — only Codey itself uses these memories. The block is removed from the agent files.'}
+              </div>
             </div>
+            <Toggle on={enabled} onChange={v => void toggle(v)} label="Share memory with every agent" />
           </div>
-          <Toggle on={enabled} onChange={v => void toggle(v)} label="Share memory with every agent" />
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <textarea
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            spellCheck={false}
-            disabled={!loaded}
-            placeholder="What should every agent know? e.g. how you like commits written, which node version this machine needs."
-            style={{
-              width: '100%', minHeight: 160, resize: 'vertical', boxSizing: 'border-box',
-              background: C.surface3, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 8,
-              padding: 10, fontSize: 12, outline: 'none',
-              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-            }}
-          />
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
-            <code style={{ color: C.fg3, fontSize: 11 }}>{filePath}</code>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {savedAt > 0 && Date.now() - savedAt < 4000 && <span style={{ fontSize: 11, color: C.green }}>✓ Saved and synced</span>}
-              <button
-                onClick={() => void save()}
-                disabled={saving || draft === content || !loaded}
-                style={{ ...pillButton('primary'), opacity: (saving || draft === content) ? 0.5 : 1 }}
-              >{saving ? 'Saving…' : 'Save'}</button>
-            </div>
-          </div>
-        </div>
-      </div>
+        }
+      />
     </>
   )
 }

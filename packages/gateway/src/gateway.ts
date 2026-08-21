@@ -362,9 +362,14 @@ export class Codey {
   private buildMergedMemoryContext(query: string, forWorker?: string): string {
     if (this.config.memory?.enabled === false) return '';
     const sections: string[] = [];
-    const globalCtx = this.workspaceManager.getGlobalMemoryStore().buildContext(
-      query, undefined, undefined, forWorker,
-    );
+    // With sharing on, the same global entries are already in every agent's
+    // own memory file, which its CLI loads before the prompt. Injecting them
+    // here too would put each fact in the context twice.
+    const globalCtx = this.config.sharedMemory?.enabled === true
+      ? ''
+      : this.workspaceManager.getGlobalMemoryStore().buildContext(
+        query, undefined, undefined, forWorker,
+      );
     if (globalCtx) {
       // Re-label so the agent can distinguish global vs workspace facts.
       sections.push(globalCtx.replace(/^## Project Memory/, '## User-Global Memory'));

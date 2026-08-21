@@ -15,8 +15,6 @@ contextBridge.exposeInMainWorld('codey', {
     current: () => ipcRenderer.invoke('workspaces:current'),
     switch: (name: string) => ipcRenderer.invoke('workspaces:switch', name),
     info: (name: string) => ipcRenderer.invoke('workspaces:info', name),
-    getMemory: (name: string) => ipcRenderer.invoke('workspaces:memory:get', name),
-    setMemory: (name: string, content: string) => ipcRenderer.invoke('workspaces:memory:set', name, content),
     create: (dir: string) => ipcRenderer.invoke('workspaces:create', dir),
     delete: (name: string) => ipcRenderer.invoke('workspaces:delete', name),
     rename: (oldName: string, newName: string) => ipcRenderer.invoke('workspaces:rename', oldName, newName),
@@ -141,8 +139,20 @@ contextBridge.exposeInMainWorld('codey', {
     project: (workspace?: string) => ipcRenderer.invoke('memory:project', workspace),
     shared: {
       get: () => ipcRenderer.invoke('memory:shared:get'),
-      set: (content: string) => ipcRenderer.invoke('memory:shared:set', content),
       setEnabled: (enabled: boolean) => ipcRenderer.invoke('memory:shared:setEnabled', enabled),
+    },
+    /** Codey's own remembered entries, not the agents' files. */
+    codey: {
+      list: (scope: 'workspace' | 'global', workspace?: string) => ipcRenderer.invoke('codeyMemory:list', scope, workspace),
+      add: (scope: 'workspace' | 'global', workspace: string | undefined, content: string, type?: string) =>
+        ipcRenderer.invoke('codeyMemory:add', scope, workspace, content, type),
+      update: (scope: 'workspace' | 'global', workspace: string | undefined, id: string, content: string, type?: string) =>
+        ipcRenderer.invoke('codeyMemory:update', scope, workspace, id, content, type),
+      remove: (scope: 'workspace' | 'global', workspace: string | undefined, id: string) =>
+        ipcRenderer.invoke('codeyMemory:remove', scope, workspace, id),
+      settings: () => ipcRenderer.invoke('codeyMemory:settings'),
+      setSettings: (patch: { enabled?: boolean; autoExtract?: boolean }) =>
+        ipcRenderer.invoke('codeyMemory:setSettings', patch),
     },
   },
   playbooks: {

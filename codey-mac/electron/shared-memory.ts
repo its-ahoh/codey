@@ -3,8 +3,13 @@ import type * as Path from 'path'
 import { AGENT_MEMORY, userMemoryFiles } from './memory'
 
 /**
- * Shared knowledge: one text Codey owns, mirrored into every agent's own
- * global memory file so all four CLIs read the same thing.
+ * Sharing Codey's user-global memory with the agents.
+ *
+ * The entries in the global store (`~/.codey/memory`) are the single source
+ * of truth for "what is true about this user everywhere". Codey injects them
+ * into its own prompts; with sharing on, the same entries are also rendered
+ * into each agent's own global memory file so the CLIs know them when run
+ * outside Codey too. There is no second place to type this text.
  *
  * The mirror is a marked block rather than a whole-file copy, because those
  * files belong to the user — anything outside the markers is never touched.
@@ -14,16 +19,35 @@ import { AGENT_MEMORY, userMemoryFiles } from './memory'
  * Syncing is one-way (Codey → agents). Nothing an agent writes flows back.
  */
 
-export const SHARED_MEMORY_SUBDIR = '.codey/memory'
-export const SHARED_MEMORY_FILENAME = 'MEMORY.md'
+/** Legacy home of the shared text, before the global store owned it. */
+export const LEGACY_SHARED_FILE = ['.codey', 'memory', 'MEMORY.md']
 
 export const BLOCK_BEGIN = '<!-- BEGIN CODEY SHARED MEMORY -->'
 export const BLOCK_END = '<!-- END CODEY SHARED MEMORY -->'
 const BLOCK_NOTE = '<!-- Managed by Codey. Edit it in Codey: Settings > Agents > Shared memory. -->'
 
-/** Absolute path of the text the user edits in Codey. */
-export function sharedMemoryPath(pathMod: typeof Path, home: string): string {
-  return pathMod.join(home, ...SHARED_MEMORY_SUBDIR.split('/'), SHARED_MEMORY_FILENAME)
+/** Where the pre-merge shared text lived, so it can be migrated once. */
+export function legacySharedFilePath(pathMod: typeof Path, home: string): string {
+  return pathMod.join(home, ...LEGACY_SHARED_FILE)
+}
+
+/** One memory entry as the agents should read it. */
+export interface SharedMemoryEntry {
+  content: string
+}
+
+/**
+ * Render the entries into the block body: one bullet each, so an agent reads
+ * them as a list of standing facts rather than as prose it might follow as
+ * instructions for the current task.
+ */
+export function renderSharedBody(entries: SharedMemoryEntry[]): string {
+  const lines = entries
+    .map(e => e.content.trim())
+    .filter(Boolean)
+    // A multi-line memory keeps its shape, indented under its own bullet.
+    .map(content => `- ${content.split('\n').join('\n  ')}`)
+  return lines.join('\n')
 }
 
 /**
@@ -125,24 +149,4 @@ export function syncSharedMemory(
     result.written.push(target.path)
   }
   return result
-}
-
-/** Read the shared text, or an empty string when it has never been written. */
-export function readSharedMemory(fsMod: typeof Fs, pathMod: typeof Path, home: string): string {
-  try {
-    return fsMod.readFileSync(sharedMemoryPath(pathMod, home), 'utf-8')
-  } catch { return '' }
-}
-
-/** Write the shared text Codey owns. */
-export function writeSharedMemory(
-  fsMod: typeof Fs,
-  pathMod: typeof Path,
-  home: string,
-  content: string,
-): string {
-  const file = sharedMemoryPath(pathMod, home)
-  fsMod.mkdirSync(pathMod.dirname(file), { recursive: true })
-  fsMod.writeFileSync(file, content, 'utf-8')
-  return file
 }

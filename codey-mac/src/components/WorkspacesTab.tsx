@@ -3,6 +3,7 @@ import { apiService } from '../services/api'
 import { C } from '../theme'
 import { emitWorkspacesChanged } from './workspacesChanged'
 import { ProjectMemorySection } from './AgentMemorySection'
+import { CodeyMemorySection, CodeyMemorySettings } from './CodeyMemorySection'
 
 interface WorkspacesTabProps {
   isGatewayRunning: boolean
@@ -157,6 +158,8 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
 
       {error && <div style={styles.error}>{error}</div>}
 
+      <CodeyMemorySettings />
+
       {workspaces.length === 0 ? (
         <div style={{ color: C.fg3, padding: '20px 0' }}>No workspaces yet — click "Add folder" to pick one.</div>
       ) : (
@@ -215,7 +218,7 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
                     </div>
 
                     <div style={{ marginTop: 12 }}>
-                      <MemorySection workspace={ws} />
+                      <CodeyMemorySection workspace={ws} />
                     </div>
 
                     <div style={{ marginTop: 12 }}>
@@ -227,103 +230,6 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
             )
           })}
         </div>
-      )}
-    </div>
-  )
-}
-
-const MemorySection: React.FC<{ workspace: string }> = ({ workspace }) => {
-  const [content, setContent] = useState<string>('')
-  const [draft, setDraft] = useState<string>('')
-  const [loaded, setLoaded] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [savedAt, setSavedAt] = useState(0)
-  const [err, setErr] = useState<string>('')
-
-  useEffect(() => {
-    let cancelled = false
-    setLoaded(false); setEditing(false); setErr('')
-    apiService.getWorkspaceMemory(workspace)
-      .then(text => {
-        if (cancelled) return
-        setContent(text); setDraft(text); setLoaded(true)
-      })
-      .catch(e => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed to load memory') })
-    return () => { cancelled = true }
-  }, [workspace])
-
-  const save = async () => {
-    if (saving || draft === content) { setEditing(false); return }
-    setSaving(true); setErr('')
-    try {
-      await apiService.setWorkspaceMemory(workspace, draft)
-      setContent(draft); setSavedAt(Date.now()); setEditing(false)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to save memory')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const cancel = () => { setDraft(content); setEditing(false); setErr('') }
-
-  return (
-    <div style={{ padding: 16, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <div style={{ fontSize: 14, fontWeight: 600 }}>Memory</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {savedAt > 0 && Date.now() - savedAt < 2000 && <span style={{ fontSize: 11, color: C.green }}>✓ Saved</span>}
-          {editing ? (
-            <>
-              <button
-                onClick={cancel}
-                disabled={saving}
-                style={{ padding: '4px 10px', fontSize: 12, background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 6, cursor: 'pointer' }}
-              >Cancel</button>
-              <button
-                onClick={save}
-                disabled={saving || draft === content}
-                style={{ padding: '4px 10px', fontSize: 12, background: C.accentDim, color: C.accent, border: `1px solid ${C.accent}55`, borderRadius: 6, cursor: 'pointer', opacity: (saving || draft === content) ? 0.6 : 1 }}
-              >{saving ? 'Saving…' : 'Save'}</button>
-            </>
-          ) : (
-            <button
-              onClick={() => setEditing(true)}
-              disabled={!loaded}
-              style={{ padding: '4px 10px', fontSize: 12, background: 'transparent', color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 6, cursor: 'pointer' }}
-            >Edit</button>
-          )}
-        </div>
-      </div>
-      {err && <div style={{ background: C.dangerBg, color: C.dangerFg, padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{err}</div>}
-      {!loaded ? (
-        <div style={{ fontSize: 12, color: C.fg3 }}>Loading…</div>
-      ) : editing ? (
-        <textarea
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          spellCheck={false}
-          style={{
-            width: '100%', minHeight: 220, resize: 'vertical',
-            background: C.bg, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6,
-            padding: 10, fontSize: 12,
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-            outline: 'none', boxSizing: 'border-box',
-          }}
-        />
-      ) : (
-        <pre
-          onDoubleClick={() => setEditing(true)}
-          title="Double-click to edit"
-          style={{
-            margin: 0, padding: 10, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6,
-            fontSize: 12, color: content ? C.fg : C.fg3,
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-            maxHeight: 240, overflowY: 'auto', cursor: 'text',
-          }}
-        >{content || '(empty — click Edit to add notes)'}</pre>
       )}
     </div>
   )

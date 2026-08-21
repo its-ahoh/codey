@@ -8,6 +8,7 @@ import type { CoreState } from '../electron/core-state'
 import type { ScannedSkill } from '../electron/skills'
 import type { SkillUsage, SkillUsageMap } from '../electron/skill-usage'
 import type { MemoryEntry } from '../electron/memory'
+import type { CodeyMemoryItem, MemoryStoreScope } from '../electron/codey-memory'
 import type { Automation, AutomationRun, AutomationEvent } from '../../packages/core/src/types/automation'
 import type { AutomationDraft } from '../../packages/core/src/aide-automation'
 import type { ChatStep } from '../../packages/gateway/src/automations/chat'
@@ -17,7 +18,12 @@ type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 export type SkillEntry = ScannedSkill
 export type { SkillUsage, SkillUsageMap }
 
-export type { MemoryEntry }
+export type { MemoryEntry, CodeyMemoryItem, MemoryStoreScope }
+
+export interface CodeyMemorySettings {
+  enabled: boolean
+  autoExtract: boolean
+}
 
 export interface AgentMemoryGroup { agent: string; entries: MemoryEntry[] }
 
@@ -26,12 +32,9 @@ export interface UserMemoryResult {
 }
 
 export interface SharedMemoryResult {
-  /** Whether Codey mirrors the shared text into the agents' own memory files. */
+  /** Whether Codey mirrors the global memory into the agents' own files. */
   enabled: boolean
-  content: string
-  /** Where Codey keeps the shared text. */
-  path: string
-  /** The agent files the text is mirrored into. */
+  /** The agent files the entries are mirrored into. */
   targets: Array<{ agent: string; path: string }>
 }
 
@@ -235,8 +238,6 @@ declare global {
         current: () => Promise<IpcResult<string>>
         switch: (name: string) => Promise<IpcResult<void>>
         info: (name: string) => Promise<IpcResult<{ workingDir: string }>>
-        getMemory: (name: string) => Promise<IpcResult<string>>
-        setMemory: (name: string, content: string) => Promise<IpcResult<void>>
         create: (dir: string) => Promise<IpcResult<string>>
         delete: (name: string) => Promise<IpcResult<void>>
         rename: (oldName: string, newName: string) => Promise<IpcResult<void>>
@@ -341,12 +342,19 @@ declare global {
         user: () => Promise<IpcResult<UserMemoryResult>>
         /** Read-only: what each agent knows about one workspace's project. */
         project: (workspace?: string) => Promise<IpcResult<ProjectMemoryResult>>
-        /** One knowledge base shared by every agent. */
+        /** Sharing the global memory entries with every agent. */
         shared: {
           get: () => Promise<IpcResult<SharedMemoryResult>>
-          /** Saves the text and re-syncs; returns the files written. */
-          set: (content: string) => Promise<IpcResult<{ synced: string[] }>>
           setEnabled: (enabled: boolean) => Promise<IpcResult<{ synced: string[] }>>
+        }
+        /** Codey's own remembered entries — what it injects into prompts. */
+        codey: {
+          list: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ entries: CodeyMemoryItem[] }>>
+          add: (scope: MemoryStoreScope, workspace: string | undefined, content: string, type?: string) => Promise<IpcResult<CodeyMemoryItem>>
+          update: (scope: MemoryStoreScope, workspace: string | undefined, id: string, content: string, type?: string) => Promise<IpcResult<{ updated: boolean }>>
+          remove: (scope: MemoryStoreScope, workspace: string | undefined, id: string) => Promise<IpcResult<{ removed: boolean }>>
+          settings: () => Promise<IpcResult<CodeyMemorySettings>>
+          setSettings: (patch: Partial<CodeyMemorySettings>) => Promise<IpcResult<CodeyMemorySettings>>
         }
       }
       playbooks: {

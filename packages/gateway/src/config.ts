@@ -81,6 +81,20 @@ export interface GatewayConfigJson {
     induction?: boolean;
   };
   /**
+   * Codey's own memory: structured entries it keeps per workspace (and one
+   * user-global store), injected into prompts at run time. The runtime already
+   * honours these flags — they simply had no home on disk until now, so memory
+   * could not be turned off.
+   */
+  memory?: {
+    /** Inject remembered entries into prompts. Default true. */
+    enabled?: boolean;
+    /** Let Codey record entries by itself from interactions. Default true. */
+    autoExtract?: boolean;
+    /** Cap on auto-recorded entries kept per store. */
+    maxAutoMemories?: number;
+  };
+  /**
    * One shared knowledge base that every agent reads. Codey keeps the text in
    * `~/.codey/memory/MEMORY.md` and mirrors it into each agent's own global
    * memory file inside a marked block. Off until the user opts in, because
@@ -290,6 +304,9 @@ export class ConfigManager extends EventEmitter {
     if (partial.advisor !== undefined) this.config.advisor = partial.advisor;
     if (partial.aide !== undefined) this.config.aide = partial.aide;
     if (partial.teams !== undefined) this.config.teams = partial.teams;
+    if (partial.memory !== undefined) {
+      this.config.memory = { ...this.config.memory, ...partial.memory };
+    }
     if (partial.sharedMemory !== undefined) {
       this.config.sharedMemory = { ...this.config.sharedMemory, ...partial.sharedMemory };
     }
