@@ -3,7 +3,7 @@ import { apiService } from '../services/api'
 import { C } from '../theme'
 import { emitWorkspacesChanged } from './workspacesChanged'
 import { ProjectMemorySection } from './AgentMemorySection'
-import { CodeyMemorySection, CodeyMemorySettings } from './CodeyMemorySection'
+import { CodeyGlobalMemorySection, CodeyMemorySection, CodeyMemorySettings } from './CodeyMemorySection'
 
 interface WorkspacesTabProps {
   isGatewayRunning: boolean
@@ -159,6 +159,10 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
       {error && <div style={styles.error}>{error}</div>}
 
       <CodeyMemorySettings />
+
+      <div style={{ marginBottom: 12 }}>
+        <CodeyGlobalMemorySection />
+      </div>
 
       {workspaces.length === 0 ? (
         <div style={{ color: C.fg3, padding: '20px 0' }}>No workspaces yet — click "Add folder" to pick one.</div>

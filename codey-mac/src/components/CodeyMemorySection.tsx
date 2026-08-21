@@ -1,10 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import { Toggle, unwrap } from './settingsAtoms'
-import type { CodeyMemoryItem } from '../codey-api'
+import type { CodeyMemoryItem, MemoryStoreScope } from '../codey-api'
 
 /**
- * Codey's own memory: the entries it injects into prompts.
+ * Codey's own memory: the entries it injects into prompts. Two scopes share
+ * this panel — the user-global store (`~/.codey/memory`), which applies in
+ * every project, and a workspace's own store. The global store had no UI at
+ * all before: only `/remember --global` in chat could write to it, so it sat
+ * empty.
  *
  * These live in the store's `index.json`. The `memory.md` beside it is a
  * rendered view the store rewrites whenever an entry changes, which is why
@@ -88,7 +92,15 @@ const EntryRow: React.FC<{
   )
 }
 
-export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace }) => {
+interface PanelProps {
+  scope: MemoryStoreScope
+  /** Required for the workspace scope; ignored for the global one. */
+  workspace?: string
+  title: string
+  description: string
+}
+
+const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, description }) => {
   const [entries, setEntries] = useState<CodeyMemoryItem[]>([])
   const [draft, setDraft] = useState('')
   const [adding, setAdding] = useState(false)
@@ -99,9 +111,9 @@ export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace 
     setLoading(true)
     setError(null)
     try {
-      setEntries(unwrap(await window.codey.memory.codey.list('workspace', workspace)).entries)
+      setEntries(unwrap(await window.codey.memory.codey.list(scope, workspace)).entries)
     } catch (e: any) { setError(e?.message ?? String(e)) } finally { setLoading(false) }
-  }, [workspace])
+  }, [scope, workspace])
 
   useEffect(() => { void reload() }, [reload])
 
@@ -114,7 +126,7 @@ export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace 
     if (adding || !draft.trim()) return
     setAdding(true)
     try {
-      await run(async () => { unwrap(await window.codey.memory.codey.add('workspace', workspace, draft)) })
+      await run(async () => { unwrap(await window.codey.memory.codey.add(scope, workspace, draft)) })
       setDraft('')
     } finally { setAdding(false) }
   }
@@ -123,10 +135,8 @@ export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace 
     <div style={{ padding: 16, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Memory</div>
-          <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>
-            What Codey remembers about this workspace and adds to its prompts.
-          </div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
+          <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>{description}</div>
         </div>
         <button onClick={() => void reload()} disabled={loading} style={smallButton()}>
           {loading ? 'Reading…' : '↻ Refresh'}
@@ -167,8 +177,8 @@ export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace 
             <EntryRow
               key={entry.id}
               entry={entry}
-              onSave={async content => { unwrap(await window.codey.memory.codey.update('workspace', workspace, entry.id, content)); await reload() }}
-              onRemove={async () => { unwrap(await window.codey.memory.codey.remove('workspace', workspace, entry.id)); await reload() }}
+              onSave={async content => { unwrap(await window.codey.memory.codey.update(scope, workspace, entry.id, content)); await reload() }}
+              onRemove={async () => { unwrap(await window.codey.memory.codey.remove(scope, workspace, entry.id)); await reload() }}
             />
           ))}
         </div>
@@ -176,6 +186,25 @@ export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace 
     </div>
   )
 }
+
+/** What Codey remembers about one workspace. */
+export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace }) => (
+  <MemoryPanel
+    scope="workspace"
+    workspace={workspace}
+    title="Memory"
+    description="What Codey remembers about this workspace and adds to its prompts."
+  />
+)
+
+/** What Codey remembers about the user, in every workspace. */
+export const CodeyGlobalMemorySection: React.FC = () => (
+  <MemoryPanel
+    scope="global"
+    title="Global memory"
+    description="What Codey remembers about you everywhere, added to its prompts in every workspace."
+  />
+)
 
 /** The two switches that decide whether Codey remembers anything at all. */
 export const CodeyMemorySettings: React.FC = () => {
