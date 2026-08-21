@@ -641,7 +641,10 @@ const iconBtn: React.CSSProperties = {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  root: { height: '100%', overflowY: 'auto', position: 'relative' },
+  root: {
+    height: '100%', overflowY: 'auto', position: 'relative',
+    padding: 20, boxSizing: 'border-box',
+  },
   agentHeader: {
     display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
     gap: 16, marginBottom: 18, flexWrap: 'wrap',
