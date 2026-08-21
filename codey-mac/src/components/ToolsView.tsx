@@ -70,7 +70,7 @@ export const ToolsView: React.FC<Props> = ({ onClose }) => {
           </button>
         )}
       </div>
-      <div style={styles.body}>
+      <div style={{ ...styles.body, ...(tab === 'skills' ? styles.skillsBody : null) }}>
         {tab === 'skills' && <SkillsTab addRequest={addSkillRequest} searchQuery={searchQuery} />}
         {tab === 'playbooks' && <PlaybooksTab searchQuery={searchQuery} />}
         {tab === 'plugins' && <PluginsTab searchQuery={searchQuery} />}
@@ -110,4 +110,5 @@ const styles: Record<string, React.CSSProperties> = {
   },
   addSkillBtn: { display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', borderRadius: 9, padding: '9px 12px', color: C.onAccent, background: C.accent, cursor: 'pointer', fontSize: 12, fontWeight: 700, boxShadow: `0 5px 13px ${C.accentDim}` },
   body: { flex: 1, overflowY: 'auto', padding: 20, background: C.bg },
+  skillsBody: { padding: 0 },
 }
