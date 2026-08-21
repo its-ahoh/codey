@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
-import { fieldStyle, pageStyle, pillButton, Section, selectStyle, unwrap } from './settingsAtoms'
+import { fieldStyle, pageStyle, pillButton, Section, selectStyle, Toggle, unwrap } from './settingsAtoms'
 import {
   AGENT_INSTALL_URL,
   AGENT_NAMES,
@@ -8,6 +8,13 @@ import {
   EnvEditor,
 } from './SettingsTab'
 import { refreshInstalledAgents, useInstalledAgents } from './installedAgents'
+import {
+  AGENT_TEAMS_AGENT,
+  envWithoutAgentTeams,
+  isAgentTeamsOn,
+  mergeEnvKeepingAgentTeams,
+  setAgentTeams,
+} from './agentTeams'
 
 interface Props {
   isGatewayRunning: boolean
@@ -34,6 +41,16 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
     if (!isGatewayRunning) return
     void reload()
   }, [isGatewayRunning, reload])
+
+  // agents:set merges shallowly, so sending just the touched agent's slot is
+  // enough — no need to re-send the others.
+  const saveSlot = useCallback(async (name: string, patch: Partial<AgentSlot>) => {
+    const slot = { ...(agents[name] ?? {}), ...patch }
+    setAgents(prev => ({ ...prev, [name]: slot }))
+    try {
+      unwrap(await window.codey.agents.set({ [name]: slot }))
+    } catch (e: any) { setError(e?.message ?? String(e)) }
+  }, [agents])
 
   if (!isGatewayRunning) {
     return (
@@ -69,17 +86,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
               <span style={{ color: C.fg3, fontSize: 12 }}>Effort</span>
               <select
                 value={agents[a]?.defaultEffort ?? 'medium'}
-                onChange={async e => {
-                  const next = e.target.value
-                  const updated: Record<string, AgentSlot> = {
-                    ...agents,
-                    [a]: { ...(agents[a] ?? {}), defaultEffort: next },
-                  }
-                  setAgents(updated)
-                  // agents:set merges shallowly, so sending just this agent's
-                  // slot is enough — no need to re-send the others.
-                  await unwrap(await window.codey.agents.set({ [a]: updated[a] }))
-                }}
+                onChange={e => { void saveSlot(a, { defaultEffort: e.target.value }) }}
                 style={{ ...selectStyle, width: 180 }}
                 title="Thinking effort used when neither the chat nor a worker overrides it"
               >
@@ -88,17 +95,27 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
                 ))}
               </select>
             </div>
+            {a === AGENT_TEAMS_AGENT && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10 }}>
+                <div>
+                  <div style={{ color: C.fg3, fontSize: 12 }}>Agent Teams</div>
+                  <div style={{ color: C.fg3, fontSize: 11, opacity: 0.8, marginTop: 2 }}>
+                    Experimental — lets Claude Code run a team of teammate agents.
+                  </div>
+                </div>
+                <Toggle
+                  on={isAgentTeamsOn(env)}
+                  label="Agent Teams"
+                  onChange={v => { void saveSlot(a, { env: setAgentTeams(env, v) }) }}
+                />
+              </div>
+            )}
             <EnvEditor
-              env={env}
-              onChange={async (next) => {
-                const updated: Record<string, AgentSlot> = {
-                  ...agents,
-                  [a]: { ...(agents[a] ?? {}), env: next },
-                }
-                setAgents(updated)
-                // agents:set merges shallowly, so sending just this agent's
-                // slot is enough — no need to re-send the others.
-                await unwrap(await window.codey.agents.set({ [a]: updated[a] }))
+              env={a === AGENT_TEAMS_AGENT ? envWithoutAgentTeams(env) : env}
+              onChange={next => {
+                void saveSlot(a, {
+                  env: a === AGENT_TEAMS_AGENT ? mergeEnvKeepingAgentTeams(env, next) : next,
+                })
               }}
             />
           </div>
