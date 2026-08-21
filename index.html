@@ -4,20 +4,20 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Codey — the control plane for your coding agents (Claude Code, Codex, OpenCode, pi)</title>
-<meta name="description" content="Codey is an open-source multi-agent workbench that orchestrates Claude Code, Codex, OpenCode, and pi across your projects — worker teams, parallel runs, and per-project workspaces, from a macOS app, Telegram / Discord / iMessage, or system-wide voice." />
+<meta name="description" content="Codey is an open-source multi-agent workbench for Claude Code, Codex, OpenCode, and pi — with agent teams, automations, shared memory, isolated worktrees, and a permissioned browser in a native macOS app." />
 <meta name="color-scheme" content="light dark" />
 <link rel="canonical" href="https://its-ahoh.github.io/codey/" />
 
 <!-- Social -->
 <meta property="og:title" content="Codey — the control plane for your coding agents" />
-<meta property="og:description" content="Orchestrate Claude Code, Codex, OpenCode, and pi from Telegram, Discord, iMessage, a macOS app, or your voice." />
+<meta property="og:description" content="Run coding agents as a team with automations, shared memory, isolated worktrees, and a permissioned browser — from a native macOS app or anywhere you chat." />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://its-ahoh.github.io/codey/" />
 <meta property="og:image" content="https://its-ahoh.github.io/codey/assets/logo.png" />
 <meta property="og:site_name" content="Codey" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Codey — the control plane for your coding agents" />
-<meta name="twitter:description" content="Orchestrate Claude Code, Codex, OpenCode, and pi from Telegram, Discord, iMessage, a macOS app, or your voice." />
+<meta name="twitter:description" content="Run coding agents as a team with automations, shared memory, isolated worktrees, and a permissioned browser." />
 <meta name="twitter:image" content="https://its-ahoh.github.io/codey/assets/logo.png" />
 
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -196,26 +196,27 @@
 
   /* ---------- Terminal mock ---------- */
   .mock {
-    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    background: #1C1A16; border: 1px solid #3A362D; border-radius: var(--radius);
     box-shadow: var(--shadow-lg); overflow: hidden; transform: rotate(.6deg);
     transition: transform .4s cubic-bezier(.2,.8,.2,1);
+    color: #F4EFE5;
   }
   .mock:hover { transform: rotate(0deg) translateY(-3px); }
-  .mock-bar { display: flex; align-items: center; gap: 8px; padding: 13px 16px; background: var(--paper-2); border-bottom: 1px solid var(--line); }
+  .mock-bar { display: flex; align-items: center; gap: 8px; padding: 13px 16px; background: #232019; border-bottom: 1px solid #3A362D; }
   .mock-bar .dot { width: 11px; height: 11px; border-radius: 50%; }
   .mock-bar .d1{ background:#ff5f57;} .mock-bar .d2{ background:#febc2e;} .mock-bar .d3{ background:#28c840;}
-  .mock-bar .title { margin-left: 10px; font-family: var(--font-mono); font-size: 12.5px; color: var(--ink-faint); }
+  .mock-bar .title { margin-left: 10px; font-family: var(--font-mono); font-size: 12.5px; color: #837B6C; }
   .mock-body { padding: 20px; font-family: var(--font-mono); font-size: 13.5px; line-height: 1.7; }
   .msg { display: flex; gap: 11px; margin-bottom: 16px; }
   .msg .av { flex: 0 0 28px; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-size: 13px; font-weight: 600; }
-  .av.user { background: var(--ink); color: var(--paper); }
-  .av.bot { background: linear-gradient(145deg, var(--accent), var(--accent-deep)); color: #fff; }
+  .av.user { background: #2BE69B; color: #0A1A12; }
+  .av.bot { background: linear-gradient(145deg, #2BE69B, #159D6B); color: #07150F; }
   .msg .body { flex: 1; }
-  .msg .who { font-size: 11px; color: var(--ink-faint); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .05em; }
-  .cmd { color: var(--accent-deep); font-weight: 600; }
-  .tag { display:inline-block; font-size:11px; padding:1px 7px; border-radius:6px; background:var(--accent-soft); color:var(--accent-deep); margin-left:6px; vertical-align:middle; }
+  .msg .who { font-size: 11px; color: #837B6C; margin-bottom: 3px; text-transform: uppercase; letter-spacing: .05em; }
+  .cmd { color: #54F0B0; font-weight: 600; }
+  .tag { display:inline-block; font-size:11px; padding:1px 7px; border-radius:6px; background:#2BE69B22; color:#54F0B0; margin-left:6px; vertical-align:middle; }
   .typing { display:inline-flex; gap:4px; padding:6px 0; }
-  .typing span{ width:6px; height:6px; border-radius:50%; background:var(--ink-faint); animation: blink 1.4s infinite both; }
+  .typing span{ width:6px; height:6px; border-radius:50%; background:#837B6C; animation: blink 1.4s infinite both; }
   .typing span:nth-child(2){ animation-delay:.2s; } .typing span:nth-child(3){ animation-delay:.4s; }
   @keyframes blink { 0%,80%,100%{ opacity:.25; transform: translateY(0);} 40%{ opacity:1; transform: translateY(-3px);} }
 
@@ -240,6 +241,72 @@
   .surface .ic { width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent-deep);margin-bottom:12px; }
   .surface h4 { font-family:var(--font-display); font-size:16px; margin-bottom:3px; }
   .surface p { font-size:13.5px; color:var(--ink-faint); line-height:1.45; }
+
+  /* ---------- Mac app showcase ---------- */
+  .showcase { overflow: hidden; }
+  .showcase .sec-head { margin-bottom: 42px; }
+  .shots { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; align-items:start; }
+  .shot-wrap:first-child { grid-column:1 / -1; }
+  @media (max-width:780px){ .shots{grid-template-columns:1fr;} .shot-wrap:first-child{grid-column:auto;} }
+  .shot-wrap { min-width:0; }
+  .shot-copy { display:flex; align-items:baseline; justify-content:space-between; gap:18px; margin-top:15px; padding:0 3px; }
+  .shot-copy h3 { font-size:19px; }
+  .shot-copy p { color:var(--ink-faint); font-size:14px; text-align:right; }
+  @media (max-width:520px){ .shot-copy{display:block;} .shot-copy p{text-align:left;margin-top:3px;} }
+  .mac-window {
+    --m-bg:#141310; --m-surface:#1C1A16; --m-surface2:#232019; --m-surface3:#2B2820;
+    --m-border:#3A362D; --m-fg:#F4EFE5; --m-fg2:#B6AE9E; --m-fg3:#837B6C;
+    --m-accent:#2BE69B; --m-purple:#A371F7; --m-yellow:#F5C451; --m-red:#FF6B5E;
+    overflow:hidden; color:var(--m-fg); background:var(--m-bg); border:1px solid #3A362D;
+    border-radius:16px; box-shadow:0 28px 70px rgba(10,8,5,.30), 0 2px 8px rgba(10,8,5,.24);
+    font-size:12px; min-height:292px;
+  }
+  .shot-wrap:first-child .mac-window { min-height:430px; }
+  .mac-titlebar { height:42px; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; padding:0 14px; background:#1C1A16; border-bottom:1px solid #2C2922; }
+  .traffic { display:flex; gap:7px; }
+  .traffic i { display:block; width:10px; height:10px; border-radius:50%; }
+  .traffic i:nth-child(1){background:#FF5F57}.traffic i:nth-child(2){background:#FEBC2E}.traffic i:nth-child(3){background:#28C840}
+  .mac-title { color:var(--m-fg3); font-size:11px; font-weight:600; letter-spacing:.02em; }
+  .mac-toolbar { justify-self:end; display:flex; gap:6px; }
+  .tool-pill { width:24px; height:22px; border:1px solid var(--m-border); border-radius:6px; display:grid; place-items:center; color:var(--m-fg3); }
+  .app-shell { display:grid; grid-template-columns:148px minmax(0,1fr) 180px; min-height:388px; }
+  .app-sidebar { background:rgba(28,26,22,.82); border-right:1px solid #2C2922; padding:13px 10px; }
+  .side-label { color:var(--m-fg3); font-size:9px; text-transform:uppercase; letter-spacing:.1em; padding:5px 8px; }
+  .side-row { display:flex; align-items:center; gap:8px; border-radius:7px; padding:7px 8px; color:var(--m-fg2); margin:1px 0; }
+  .side-row.active { color:var(--m-fg); background:var(--m-surface3); }
+  .side-row .mini-ic { width:17px; height:17px; border-radius:5px; display:grid; place-items:center; background:#2BE69B18; color:var(--m-accent); font-size:9px; }
+  .side-row small { margin-left:auto; color:var(--m-fg3); font-size:9px; }
+  .chat-pane { min-width:0; padding:18px 20px; background:var(--m-bg); }
+  .chat-head { display:flex; align-items:center; justify-content:space-between; padding-bottom:14px; border-bottom:1px solid #2C2922; }
+  .chat-head strong { font-size:13px; }
+  .branch { color:var(--m-fg3); border:1px solid var(--m-border); border-radius:6px; padding:4px 7px; font-family:var(--font-mono); font-size:9px; }
+  .bubble { max-width:88%; border-radius:10px; padding:10px 12px; margin-top:15px; line-height:1.5; }
+  .bubble.user-bubble { margin-left:auto; background:var(--m-accent); color:#0A1A12; font-weight:600; }
+  .bubble.agent-bubble { background:var(--m-surface); border:1px solid #2C2922; color:var(--m-fg2); }
+  .bubble.agent-bubble b { color:var(--m-fg); }
+  .activity { display:grid; grid-template-columns:16px 1fr auto; gap:7px; align-items:center; padding:7px 0; border-bottom:1px solid #2C2922; }
+  .activity:last-child{border:0}.activity .ok{color:var(--m-accent)}.activity time{color:var(--m-fg3);font-size:9px}
+  .dock-pane { border-left:1px solid #2C2922; background:var(--m-surface); padding:13px; }
+  .dock-tabs { display:flex; gap:5px; margin-bottom:14px; }
+  .dock-tab { color:var(--m-fg3); padding:5px 7px; border-radius:6px; font-size:9px; }
+  .dock-tab.active{color:var(--m-accent);background:#2BE69B16}.dock-title{font-weight:700;margin-bottom:10px}
+  .todo { display:flex; gap:7px; color:var(--m-fg2); padding:6px 0; line-height:1.35; }
+  .todo.done{color:var(--m-fg3)}.todo .check{color:var(--m-accent)}
+  .change { margin-top:12px; border:1px solid #2C2922; border-radius:7px; padding:8px; color:var(--m-fg2); }
+  .change b{color:var(--m-fg);font-family:var(--font-mono);font-size:9px}.plus{color:var(--m-accent);float:right}
+  @media (max-width:860px){ .app-shell{grid-template-columns:112px minmax(0,1fr)} .dock-pane{display:none;} }
+  @media (max-width:560px){ .app-shell{grid-template-columns:1fr}.app-sidebar{display:none}.shot-wrap:first-child .mac-window{min-height:360px}.app-shell{min-height:318px}.chat-pane{padding:15px} }
+  .compact-shell { display:grid; grid-template-columns:128px 1fr; min-height:250px; }
+  .compact-main { padding:16px; min-width:0; }
+  .automation-row { display:grid; grid-template-columns:30px 1fr auto; gap:10px; align-items:center; padding:10px; background:var(--m-surface); border:1px solid #2C2922; border-radius:9px; margin-top:9px; }
+  .auto-icon { width:30px;height:30px;border-radius:8px;background:#2BE69B18;color:var(--m-accent);display:grid;place-items:center;font-size:15px; }
+  .automation-row b{display:block;font-size:11px}.automation-row span{color:var(--m-fg3);font-size:9px}.status-live{color:var(--m-accent)!important;font-family:var(--font-mono)}
+  .browser-shell { padding:12px; min-height:250px; background:var(--m-bg); }
+  .browser-bar { display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center; }
+  .browser-nav{color:var(--m-fg3);letter-spacing:3px}.address{background:var(--m-surface2);border:1px solid var(--m-border);border-radius:7px;padding:6px 9px;color:var(--m-fg2);font-family:var(--font-mono);font-size:9px}.approval{color:var(--m-yellow);font-size:9px}
+  .web-preview { margin-top:12px; border:1px solid #2C2922; border-radius:9px; background:#100F0C; padding:18px; min-height:175px; position:relative; }
+  .web-preview .web-kicker{color:var(--m-accent);font-family:var(--font-mono);font-size:9px}.web-preview h4{font-family:var(--font-display);font-size:22px;margin:9px 0 5px}.web-preview p{color:var(--m-fg3);max-width:310px;line-height:1.5}.cursor-badge{position:absolute;right:17px;bottom:16px;background:var(--m-yellow);color:#241b06;border-radius:7px;padding:5px 8px;font-weight:700;font-size:9px}
+  @media (max-width:500px){.compact-shell{grid-template-columns:1fr}.compact-shell .app-sidebar{display:none}.automation-row{grid-template-columns:30px 1fr}.automation-row .status-live{display:none}}
 
   /* ---------- Features ---------- */
   .feat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
@@ -371,6 +438,7 @@
       <span class="glyph">&gt;_</span> Codey
     </a>
     <div class="nav-links">
+      <a class="link" href="#mac-app">Mac App</a>
       <a class="link" href="#features">Features</a>
       <a class="link" href="#commands">Commands</a>
       <a class="link" href="#start">Quick Start</a>
@@ -394,7 +462,7 @@
     <div>
       <span class="eyebrow load l1"><span class="dot"></span> Open source · MIT</span>
       <h1 class="hero-title load l2">The <span class="em">control plane</span> for the coding agents you already use.</h1>
-      <p class="hero-sub load l3">Codey is a multi-agent workbench. Orchestrate Claude Code, OpenCode, and Codex across your projects — from a macOS app, your favorite chat platform, or system-wide voice. It's not a chat bridge. It's command central.</p>
+      <p class="hero-sub load l3">Codey is a multi-agent workbench. Orchestrate Claude Code, Codex, OpenCode, and pi across your projects — with teams, automations, memory, and a browser your agents can use. It's not a chat bridge. It's command central.</p>
       <div class="hero-cta load l4">
         <a class="btn btn-accent" href="#download">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M16.36 12.78c-.02-2.1 1.71-3.1 1.79-3.15-0.98-1.43-2.5-1.62-3.04-1.64-1.29-.13-2.52.76-3.18.76-.65 0-1.66-.74-2.73-.72-1.4.02-2.7.82-3.42 2.07-1.46 2.53-.37 6.27 1.05 8.32.7.99 1.53 2.1 2.62 2.06 1.05-.04 1.45-.68 2.72-.68 1.27 0 1.63.68 2.74.66 1.13-.02 1.85-1.01 2.54-2.01.8-1.15 1.13-2.27 1.15-2.32-.03-.01-2.2-.84-2.22-3.34zM14.28 6.66c.58-.7.97-1.67.86-2.66-.83.03-1.85.55-2.45 1.25-.53.62-1 1.61-.88 2.56.93.07 1.88-.47 2.47-1.15z"/></svg>
@@ -406,8 +474,8 @@
         </a>
       </div>
       <div class="hero-meta load l5">
-        <div class="item"><span class="num">3</span><span class="lbl">coding agents</span></div>
-        <div class="item"><span class="num">5</span><span class="lbl">surfaces to drive it</span></div>
+        <div class="item"><span class="num">4+</span><span class="lbl">coding agents</span></div>
+        <div class="item"><span class="num">6</span><span class="lbl">ways to drive it</span></div>
         <div class="item"><span class="num">100%</span><span class="lbl">your machine, your keys</span></div>
       </div>
     </div>
@@ -431,14 +499,14 @@
           <div class="body">
             <div class="who">codey</div>
             <div>Dispatching to <b>3 workers</b><span class="tag">auto</span></div>
-            <div style="color:var(--ink-soft); margin-top:6px;">↳ <b style="color:var(--accent-deep)">architect</b> · claude-code<br>↳ <b style="color:var(--accent-deep)">builder</b> · codex<br>↳ <b style="color:var(--accent-deep)">reviewer</b> · opencode</div>
+            <div style="color:#B6AE9E; margin-top:6px;">↳ <b style="color:#54F0B0">architect</b> · claude-code<br>↳ <b style="color:#54F0B0">builder</b> · codex<br>↳ <b style="color:#54F0B0">reviewer</b> · opencode</div>
           </div>
         </div>
         <div class="msg" style="margin-bottom:0;">
           <div class="av bot">C</div>
           <div class="body">
             <div class="who">reviewer</div>
-            <div style="color:var(--ink-soft);">✓ 4 files changed · 6 tests passing</div>
+            <div style="color:#B6AE9E;">✓ 4 files changed · 6 tests passing</div>
             <div class="typing"><span></span><span></span><span></span></div>
           </div>
         </div>
@@ -453,7 +521,7 @@
     <div class="reveal">
       <span class="sec-tag">What is Codey?</span>
       <p class="lead">One place to point <b>every coding agent you own</b> at the work in front of you.</p>
-      <p class="sub">Most agent tools lock you into one CLI and one window. Codey sits above them — routing prompts to Claude Code, OpenCode, or Codex, isolating each project in its own workspace, and letting you spin up whole teams of agents that pass work between each other. Reach it from your phone, your menu bar, or just by holding a key and talking.</p>
+      <p class="sub">Most agent tools lock you into one CLI and one window. Codey sits above them — routing work to Claude Code, Codex, OpenCode, or pi, isolating parallel chats with git worktrees, and letting teams share context as they hand work to one another. Reach it from your Mac, your phone, your terminal, or just by talking.</p>
     </div>
     <div class="surfaces reveal d2">
       <div class="surface">
@@ -480,6 +548,92 @@
   </div>
 </section>
 
+<!-- MAC APP SHOWCASE -->
+<section class="showcase" id="mac-app">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="sec-tag">The Mac app</span>
+      <h2>Your agents finally have a proper workspace.</h2>
+      <p>Chat, terminal, browser, git, files, and agent activity live in one native workbench — shown here in Codey's Terminal Dark theme.</p>
+    </div>
+    <div class="shots">
+      <div class="shot-wrap reveal">
+        <div class="mac-window" aria-label="Codey Mac chat workspace in Terminal Dark">
+          <div class="mac-titlebar">
+            <div class="traffic"><i></i><i></i><i></i></div>
+            <div class="mac-title">Codey — storefront</div>
+            <div class="mac-toolbar"><span class="tool-pill">⌕</span><span class="tool-pill">···</span></div>
+          </div>
+          <div class="app-shell">
+            <aside class="app-sidebar">
+              <div class="side-label">Workspace</div>
+              <div class="side-row active"><span class="mini-ic">C</span>storefront<small>3</small></div>
+              <div class="side-row"><span class="mini-ic">A</span>API cleanup</div>
+              <div class="side-row"><span class="mini-ic">P</span>Pricing page</div>
+              <div class="side-label" style="margin-top:12px">Tools</div>
+              <div class="side-row"><span class="mini-ic">⌘</span>Automations</div>
+              <div class="side-row"><span class="mini-ic">✦</span>Skills</div>
+              <div class="side-row"><span class="mini-ic">◎</span>Memory</div>
+            </aside>
+            <main class="chat-pane">
+              <div class="chat-head"><strong>Ship checkout recovery</strong><span class="branch">⑂ feature/checkout</span></div>
+              <div class="bubble user-bubble">Find the failed checkout path, fix it, and open a PR.</div>
+              <div class="bubble agent-bubble"><b>Codex</b><br>I found the retry state being cleared before the payment intent resolves. I’m updating the state machine and adding regression coverage.</div>
+              <div class="bubble agent-bubble">
+                <div class="activity"><span class="ok">✓</span><span>Inspected checkout state</span><time>0:14</time></div>
+                <div class="activity"><span class="ok">✓</span><span>Patched retry transition</span><time>0:31</time></div>
+                <div class="activity"><span class="ok">●</span><span>Running integration tests</span><time>now</time></div>
+              </div>
+            </main>
+            <aside class="dock-pane">
+              <div class="dock-tabs"><span class="dock-tab active">Overview</span><span class="dock-tab">Terminal</span><span class="dock-tab">Browser</span></div>
+              <div class="dock-title">Agent plan</div>
+              <div class="todo done"><span class="check">✓</span><span>Trace the payment failure</span></div>
+              <div class="todo done"><span class="check">✓</span><span>Fix retry state</span></div>
+              <div class="todo"><span class="check">●</span><span>Verify all checkout tests</span></div>
+              <div class="change"><b>checkout-machine.ts</b><span class="plus">+18 −6</span></div>
+              <div class="change"><b>checkout.test.ts</b><span class="plus">+42</span></div>
+            </aside>
+          </div>
+        </div>
+        <div class="shot-copy"><h3>One workbench, full context</h3><p>Live plans, diffs, branches, terminal, and browser beside every chat.</p></div>
+      </div>
+
+      <div class="shot-wrap reveal d1">
+        <div class="mac-window" aria-label="Codey scheduled automations in Terminal Dark">
+          <div class="mac-titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="mac-title">Automations</div><div class="mac-toolbar"><span class="tool-pill">＋</span></div></div>
+          <div class="compact-shell">
+            <aside class="app-sidebar">
+              <div class="side-label">Runs</div>
+              <div class="side-row active"><span class="mini-ic">⌘</span>Automations</div>
+              <div class="side-row"><span class="mini-ic">◷</span>Activity</div>
+              <div class="side-row"><span class="mini-ic">✦</span>Playbooks</div>
+            </aside>
+            <div class="compact-main">
+              <div class="chat-head"><strong>Scheduled work</strong><span class="branch">3 active</span></div>
+              <div class="automation-row"><span class="auto-icon">☀</span><div><b>Daily release brief</b><span>Every weekday · 9:00 AM</span></div><span class="status-live">READY</span></div>
+              <div class="automation-row"><span class="auto-icon">⑂</span><div><b>Dependency check</b><span>Every Monday · dry run first</span></div><span class="status-live">READY</span></div>
+              <div class="automation-row"><span class="auto-icon">◎</span><div><b>Issue triage</b><span>When a new issue arrives</span></div><span class="status-live">LIVE</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="shot-copy"><h3>Agents that keep working</h3><p>Schedule recurring jobs, inspect runs, and dry-run before going live.</p></div>
+      </div>
+
+      <div class="shot-wrap reveal d2">
+        <div class="mac-window" aria-label="Codey agent-controlled browser in Terminal Dark">
+          <div class="mac-titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="mac-title">Browser</div><div class="mac-toolbar"><span class="tool-pill">↗</span></div></div>
+          <div class="browser-shell">
+            <div class="browser-bar"><span class="browser-nav">‹ › ↻</span><span class="address">https://github.com/its-ahoh/codey</span><span class="approval">● approval on</span></div>
+            <div class="web-preview"><span class="web-kicker">AGENT-CONTROLLED BROWSER</span><h4>Research. Test. Ship.</h4><p>The agent can read and navigate. Any state-changing action waits for your approval.</p><span class="cursor-badge">Codey is viewing</span></div>
+          </div>
+        </div>
+        <div class="shot-copy"><h3>A browser agents can actually use</h3><p>Visible, permissioned web actions without leaving the workspace.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- FEATURES -->
 <section id="features">
   <div class="wrap">
@@ -492,32 +646,47 @@
       <div class="card reveal">
         <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M9.5 17l-2.5-3M14.5 17l2.5-3"/></svg></div>
         <h3>Multi-agent routing</h3>
-        <p>Switch between Claude Code, OpenCode, and Codex per workspace — each with its own model, from Opus to GPT-5-Codex. One command moves the whole conversation.</p>
+        <p>Switch between Claude Code, Codex, OpenCode, and pi per workspace — with independent models and one consistent interface.</p>
       </div>
       <div class="card reveal d1">
         <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
         <h3>Worker teams</h3>
-        <p>Define workers in markdown — each with a role, tools, and agent. Run them solo, sequentially, or as a manager-moderated roundtable that talks to itself.</p>
+        <p>Build teams with different roles, tools, agents, and models. Route automatically, run roundtables, or draw branching flow graphs with revision loops.</p>
       </div>
       <div class="card reveal d2">
         <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="21"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="18" y1="3" x2="18" y2="21"/><circle cx="6" cy="8" r="2" fill="currentColor"/><circle cx="12" cy="14" r="2" fill="currentColor"/><circle cx="18" cy="7" r="2" fill="currentColor"/></svg></div>
-        <h3>Parallel execution</h3>
-        <p>Fire one prompt at every agent at once with <code class="mono">/parallel</code> and compare answers side by side. Pick the best, or let them race.</p>
+        <h3>Safe parallel work</h3>
+        <p>Run chats side by side in isolated git worktrees, compare agents on the same prompt, then create and watch a pull request without collisions.</p>
       </div>
       <div class="card reveal">
         <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
-        <h3>Workspaces &amp; memory</h3>
-        <p>Every project gets its own working directory, persistent <code class="mono">memory.md</code>, and worker roster. Switch context without losing your place.</p>
+        <h3>Shared agent memory</h3>
+        <p>Project and global memory follows the work across agents. Codey also turns repeated successful procedures into reusable playbooks.</p>
       </div>
       <div class="card reveal d1">
         <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg></div>
-        <h3>On-device voice</h3>
-        <p>Hold a hotkey, speak, release. WhisperKit transcribes on the Neural Engine — no API key, no upload — and types straight into the focused app.</p>
+        <h3>Automations</h3>
+        <p>Schedule recurring agent jobs, review a dry run before enabling them, and inspect a clear activity trail for every unattended run.</p>
       </div>
       <div class="card reveal d2">
         <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
-        <h3>Health &amp; monitoring</h3>
-        <p>Built-in <code class="mono">/health</code>, <code class="mono">/metrics</code>, and <code class="mono">/ready</code> endpoints, per-user rate limiting, and auto-chunked responses keep the gateway production-ready.</p>
+        <h3>Permissioned browser</h3>
+        <p>Agents can open, read, click, and fill in a built-in browser. Viewing is safe by default; state-changing actions wait for your approval.</p>
+      </div>
+      <div class="card reveal">
+        <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14"/><path d="M8 9h8M8 13h5M2 19h20"/></svg></div>
+        <h3>Live workbench</h3>
+        <p>See the agent’s plan, tool activity, file diffs, terminal, branch status, and browser beside the conversation as the work unfolds.</p>
+      </div>
+      <div class="card reveal d1">
+        <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg></div>
+        <h3>Voice, two ways</h3>
+        <p>Use system-wide push-to-talk dictation or have a spoken back-and-forth conversation, including an on-device WhisperKit option.</p>
+      </div>
+      <div class="card reveal d2">
+        <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.5 8.5 8.5 0 1 1 8.1-5.8L21 21l-5.1-1.7"/></svg></div>
+        <h3>Reach it anywhere</h3>
+        <p>Keep working from the Mac app, terminal UI, Telegram, Discord, or iMessage — all connected to the same local gateway.</p>
       </div>
     </div>
   </div>
@@ -610,7 +779,7 @@
   <div class="wrap foot-inner">
     <div class="left">
       <span class="brand" style="font-size:17px;"><span class="glyph" style="width:24px;height:24px;font-size:12px;border-radius:7px;">&gt;_</span> Codey</span>
-      <span class="badge">v0.6.0</span>
+      <span class="badge">v0.12.9</span>
       <span>MIT License</span>
     </div>
     <div class="foot-links">
