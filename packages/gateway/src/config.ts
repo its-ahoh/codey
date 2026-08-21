@@ -81,6 +81,15 @@ export interface GatewayConfigJson {
     induction?: boolean;
   };
   /**
+   * One shared knowledge base that every agent reads. Codey keeps the text in
+   * `~/.codey/memory/MEMORY.md` and mirrors it into each agent's own global
+   * memory file inside a marked block. Off until the user opts in, because
+   * syncing writes into files the user owns.
+   */
+  sharedMemory?: {
+    enabled?: boolean;
+  };
+  /**
    * Global team library. Each entry maps a team name to its members + dispatch
    * mode. Workspaces opt into teams by listing their names in workspace.json's
    * `teams: string[]` field.
@@ -281,6 +290,9 @@ export class ConfigManager extends EventEmitter {
     if (partial.advisor !== undefined) this.config.advisor = partial.advisor;
     if (partial.aide !== undefined) this.config.aide = partial.aide;
     if (partial.teams !== undefined) this.config.teams = partial.teams;
+    if (partial.sharedMemory !== undefined) {
+      this.config.sharedMemory = { ...this.config.sharedMemory, ...partial.sharedMemory };
+    }
     if (partial.plugins !== undefined) {
       this.config.plugins = { ...this.config.plugins, ...partial.plugins };
     }

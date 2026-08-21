@@ -7,6 +7,7 @@ import type { UpdaterEvent } from './hooks/updaterState'
 import type { CoreState } from '../electron/core-state'
 import type { ScannedSkill } from '../electron/skills'
 import type { SkillUsage, SkillUsageMap } from '../electron/skill-usage'
+import type { MemoryEntry } from '../electron/memory'
 import type { Automation, AutomationRun, AutomationEvent } from '../../packages/core/src/types/automation'
 import type { AutomationDraft } from '../../packages/core/src/aide-automation'
 import type { ChatStep } from '../../packages/gateway/src/automations/chat'
@@ -15,6 +16,30 @@ type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
 export type SkillEntry = ScannedSkill
 export type { SkillUsage, SkillUsageMap }
+
+export type { MemoryEntry }
+
+export interface AgentMemoryGroup { agent: string; entries: MemoryEntry[] }
+
+export interface UserMemoryResult {
+  agents: AgentMemoryGroup[]
+}
+
+export interface SharedMemoryResult {
+  /** Whether Codey mirrors the shared text into the agents' own memory files. */
+  enabled: boolean
+  content: string
+  /** Where Codey keeps the shared text. */
+  path: string
+  /** The agent files the text is mirrored into. */
+  targets: Array<{ agent: string; path: string }>
+}
+
+export interface ProjectMemoryResult {
+  agents: AgentMemoryGroup[]
+  /** Working directory the project files were read from, if any. */
+  workingDir: string | null
+}
 
 export interface SkillsListResult {
   skills: SkillEntry[]
@@ -310,6 +335,19 @@ declare global {
         remove: (dir: string) => Promise<IpcResult<void>>
         setEnabled: (dir: string, enabled: boolean) => Promise<IpcResult<void>>
         reveal: (dir: string) => Promise<IpcResult<void>>
+      }
+      memory: {
+        /** Read-only: what each agent knows about the user, in every project. */
+        user: () => Promise<IpcResult<UserMemoryResult>>
+        /** Read-only: what each agent knows about one workspace's project. */
+        project: (workspace?: string) => Promise<IpcResult<ProjectMemoryResult>>
+        /** One knowledge base shared by every agent. */
+        shared: {
+          get: () => Promise<IpcResult<SharedMemoryResult>>
+          /** Saves the text and re-syncs; returns the files written. */
+          set: (content: string) => Promise<IpcResult<{ synced: string[] }>>
+          setEnabled: (enabled: boolean) => Promise<IpcResult<{ synced: string[] }>>
+        }
       }
       playbooks: {
         /** Aggregated across ALL workspaces — entries are keyed by (workspace, name). */
