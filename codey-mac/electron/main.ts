@@ -13,7 +13,7 @@ import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { AGENT_BINARIES, createInstalledAgentsCache, detectInstalledAgents } from './agent-detect'
-import { SKILL_FILE, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
+import { SKILL_FILE, markSkillManagedBy, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import { scanAgentMcpServers, type AgentMcpServer, type McpAgentKey } from './agent-mcp-scan'
@@ -3511,7 +3511,12 @@ app.whenReady().then(async () => {
       }
     }
 
-    return { skills: uniqueSkills(fsMod, pathMod, skills), projectDir }
+    let listed = uniqueSkills(fsMod, pathMod, skills)
+    const browser = browserSkillStatus(home)
+    if (browser.origin === 'codey') {
+      listed = markSkillManagedBy(fsMod, pathMod, listed, browser.dir, 'codey')
+    }
+    return { skills: listed, projectDir }
   }
 
   ipcMain.handle('agents:slashCommands', async (_e, agent: string) =>

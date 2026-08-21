@@ -4,7 +4,7 @@ import { pillButton, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
 import { WorkspaceSelect } from './WorkspaceSelect'
-import { SKILL_SORT_MODES, sortSkills, usageFor, usageLabel } from './skillsSort'
+import { SKILL_SORT_MODES, sortSkills, usageFor, usageLabel, usageMeta } from './skillsSort'
 import type { SkillSortMode } from './skillsSort'
 import type { SkillEntry, SkillUsageMap, SkillsListResult } from '../codey-api'
 
@@ -25,6 +25,14 @@ const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
   'codex': '~/.codex/skills/',
   'opencode': '~/.config/opencode/skills/',
   'pi': '~/.pi/agent/skills/',
+}
+
+/** Keep the on-disk skill name compatible with every agent while making its
+ *  Codey-owned origin obvious in the UI. */
+export function skillDisplayName(skill: Pick<SkillEntry, 'qualifiedName' | 'managedBy'>): string {
+  return skill.managedBy === 'codey' && !skill.qualifiedName.startsWith('codey:')
+    ? `codey:${skill.qualifiedName}`
+    : skill.qualifiedName
 }
 
 export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> = ({ addRequest = 0, searchQuery = '' }) => {
@@ -59,7 +67,13 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   const usageToken = useRef(0)
   const filteredSkills = useMemo(
     () => sortSkills(
-      data.skills.filter(skill => matchesToolSearch(searchQuery, skill.name, skill.qualifiedName, skill.description)),
+      data.skills.filter(skill => matchesToolSearch(
+        searchQuery,
+        skill.name,
+        skill.qualifiedName,
+        skillDisplayName(skill),
+        skill.description,
+      )),
       sortMode,
       usage,
     ),
@@ -220,7 +234,9 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   }
 
   const renderCard = (skill: SkillEntry) => {
-    const meta = usageLabel(usageFor(usage, skill), now)
+    const skillUsage = usageFor(usage, skill)
+    const meta = usageMeta(skillUsage, now)
+    const displayName = skillDisplayName(skill)
     return (
     <button
       key={skill.dir}
@@ -233,7 +249,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           color: C.fg, fontSize: 13, fontWeight: 600,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1,
         }}>
-          {skill.qualifiedName}
+          {displayName}
         </span>
         <span
           onClick={e => e.stopPropagation()}
@@ -269,7 +285,20 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         </div>
       )}
       {meta && (
-        <div style={{ color: C.fg3, fontSize: 10, opacity: 0.85, marginTop: 'auto', paddingTop: 6 }}>{meta}</div>
+        <div style={styles.usageRow} aria-label={usageLabel(skillUsage, now)}>
+          <span style={styles.usageItem} title="Total skill calls">
+            <strong style={styles.usageCount}>{meta.calls}</strong>
+          </span>
+          {meta.recency && (
+            <>
+              <span style={styles.usageDivider} aria-hidden="true" />
+              <span style={styles.usageItem} title="Last used">
+                <UIIcon name="clock" size={12} strokeWidth={2} />
+                <span>{meta.recency}</span>
+              </span>
+            </>
+          )}
+        </div>
       )}
     </button>
     )
@@ -293,7 +322,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <span style={{ color: C.fg, fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }}>{skill.qualifiedName}</span>
+          <span style={{ color: C.fg, fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }}>{skillDisplayName(skill)}</span>
           <div
             style={{
               opacity: busyDirs.has(skill.dir) ? 0.5 : 1,
@@ -749,4 +778,12 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.surface,
   },
   skillGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 },
+  usageRow: {
+    display: 'inline-flex', alignItems: 'center', gap: 8,
+    marginTop: 'auto', paddingTop: 10, color: C.fg3,
+    fontSize: 10, lineHeight: 1, fontVariantNumeric: 'tabular-nums',
+  },
+  usageItem: { display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' },
+  usageCount: { color: C.fg2, fontSize: 11, fontWeight: 720 },
+  usageDivider: { width: 1, height: 11, background: C.border2, flexShrink: 0 },
 }

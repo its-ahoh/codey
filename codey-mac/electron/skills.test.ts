@@ -2,7 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { qualifySkillName, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
+import { markSkillManagedBy, qualifySkillName, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 
 const roots: string[] = []
 const temp = () => {
@@ -94,6 +94,23 @@ describe('agent skill discovery', () => {
   it('does not duplicate an explicit namespace from frontmatter', () => {
     expect(qualifySkillName(path, '/skills', '/skills/superpowers/brainstorming', 'superpowers:brainstorming'))
       .toBe('superpowers:brainstorming')
+  })
+
+  it('marks a managed skill when it is discovered through a symlink', () => {
+    const root = temp()
+    const managed = path.join(root, 'managed', 'browser')
+    const discovery = path.join(root, 'discovery')
+    fs.mkdirSync(managed, { recursive: true })
+    fs.mkdirSync(discovery, { recursive: true })
+    fs.writeFileSync(path.join(managed, 'SKILL.md'), '---\nname: browser\n---\n')
+    fs.symlinkSync(managed, path.join(discovery, 'browser'), 'dir')
+
+    const skills = scanSkillsDir(fs, path, discovery, 'user')
+    expect(markSkillManagedBy(fs, path, skills, managed, 'codey')[0]).toMatchObject({
+      name: 'browser',
+      qualifiedName: 'browser',
+      managedBy: 'codey',
+    })
   })
 
   it('uses the Claude plugin id as the skill collection namespace', () => {

@@ -26,6 +26,13 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
   )
 
   const checkForUpdate = useCallback(async (plugin: PluginInfo) => {
+    // Hide any stale result while re-checking. If the check cannot complete,
+    // we do not know that an update exists and should not offer the action.
+    setUpdate(prev => {
+      const next = { ...prev }
+      delete next[plugin.id]
+      return next
+    })
     try {
       const result = unwrap(await window.codey.plugins.check(plugin.id))
       setUpdate(prev => ({ ...prev, [plugin.id]: result }))
@@ -119,8 +126,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                 <div style={styles.cardHint}>
                   {plugin.state === 'disabled'
                     ? 'Switched off in Skills, so no agent loads it. Turn it back on there.'
-                    : 'Listed in Skills as "browser".'}
-                  {' '}<span style={styles.path}>{plugin.dir}</span>
+                    : 'Listed in Skills as "codey:browser".'}
                   {update[plugin.id]?.needsUpdate === true && (
                     <div style={styles.updateHint}>
                       {update[plugin.id]?.recorded === 'bundled'
@@ -172,14 +178,12 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                 </>
               ) : (
                 <>
-                  {installed && (
+                  {installed && update[plugin.id]?.needsUpdate === true && (
                     <button
                       onClick={() => { if (!working) void act(plugin, 'install') }}
                       disabled={working}
-                      style={pillButton(update[plugin.id]?.needsUpdate === true ? 'primary' : 'ghost')}
-                      title={update[plugin.id]?.needsUpdate === true
-                        ? 'A newer published version is available — update now'
-                        : 'Download the published skill again, replacing your copy'}
+                      style={pillButton('primary')}
+                      title="A newer published version is available — update now"
                     >
                       Update
                     </button>
