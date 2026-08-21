@@ -84,11 +84,6 @@ export const apiService = {
   getWorkspaceInfo: async (name: string): Promise<{ workingDir: string }> =>
     unwrap(await window.codey.workspaces.info(name)),
 
-  getWorkspaceMemory: async (name: string): Promise<string> =>
-    unwrap(await window.codey.workspaces.getMemory(name)),
-
-  setWorkspaceMemory: async (name: string, content: string): Promise<void> =>
-    unwrap(await window.codey.workspaces.setMemory(name, content)),
 
   createWorkspaceFromDir: async (dir: string): Promise<string> =>
     unwrap(await window.codey.workspaces.create(dir)),

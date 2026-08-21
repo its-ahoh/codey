@@ -21,6 +21,8 @@ import { deriveDeliveryState, shouldRediscoverPr } from './delivery-status'
 import type { ScannedSkill } from './skills'
 import { AGENT_MEMORY, scanProjectMemory, scanUserMemory } from './memory'
 import { readSharedMemory, sharedMemoryPath, sharedMemoryTargets, syncSharedMemory, writeSharedMemory } from './shared-memory'
+import { isMemoryType, labelFor, listStore, toMemoryItem, validateContent } from './codey-memory'
+import type { MemoryStoreScope } from './codey-memory'
 import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
@@ -2513,34 +2515,6 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('workspaces:memory:get', async (_e, name: string) =>
-    wrap(async () => {
-      if (!workspaceManager) throw new Error('Workspace manager not ready')
-      const fsMod = await import('fs')
-      const pathMod = await import('path')
-      const root = workspaceManager.getWorkspacesRoot()
-      const memPath = pathMod.join(root, name, 'memory.md')
-      if (!fsMod.existsSync(memPath)) return ''
-      return fsMod.readFileSync(memPath, 'utf-8')
-    })
-  )
-
-  ipcMain.handle('workspaces:memory:set', async (_e, name: string, content: string) =>
-    wrap(async () => {
-      if (!workspaceManager) throw new Error('Workspace manager not ready')
-      if (typeof content !== 'string') throw new Error('Content must be a string')
-      const fsMod = await import('fs')
-      const pathMod = await import('path')
-      const root = workspaceManager.getWorkspacesRoot()
-      const wsDir = pathMod.join(root, name)
-      if (!fsMod.existsSync(wsDir) || !fsMod.statSync(wsDir).isDirectory()) {
-        throw new Error(`Workspace "${name}" does not exist`)
-      }
-      const memPath = pathMod.join(wsDir, 'memory.md')
-      await fsMod.promises.writeFile(memPath, content, 'utf-8')
-    })
-  )
-
   ipcMain.handle('workspaces:info', async (_e, name: string) =>
     wrap(async () => {
       if (!workspaceManager) throw new Error('Workspace manager not ready')
@@ -3807,6 +3781,105 @@ app.whenReady().then(async () => {
           }))
         : []
       return { agents, workingDir }
+    })
+  )
+
+  // ── Codey's own memory (MemoryStore entries) ──────────────────────
+  // Distinct from memory:* above, which reads the agents' own instruction
+  // files. These entries are what Codey injects into prompts, and the UI
+  // manages them directly instead of the rendered memory.md beside them,
+  // which the store overwrites on every change.
+  /**
+   * Resolve the store to edit. When the gateway already holds one for this
+   * target, reuse that instance: two MemoryStore objects over the same
+   * index.json would overwrite each other's entries on the next flush.
+   */
+  async function openMemoryStore(scope: MemoryStoreScope, workspace?: string) {
+    const gatewayWorkspaces = inProcessGateway?.getWorkspaceManager()
+    if (scope === 'global') {
+      if (gatewayWorkspaces) return gatewayWorkspaces.getGlobalMemoryStore()
+      const { MemoryStore, globalMemoryDir } = await import('@codey/core')
+      const store = new MemoryStore(globalMemoryDir())
+      await store.load()
+      return store
+    }
+    if (!workspaceManager) throw new Error('Workspace manager not ready')
+    const name = workspace || workspaceManager.getCurrentWorkspace()
+    if (!name) throw new Error('No workspace selected')
+    if (gatewayWorkspaces && name === gatewayWorkspaces.getCurrentWorkspace()) {
+      return gatewayWorkspaces.getMemoryStore()
+    }
+    const fsMod = await import('fs')
+    const pathMod = await import('path')
+    const root = pathMod.join(workspaceManager.getWorkspacesRoot(), name)
+    if (!fsMod.existsSync(root)) throw new Error(`Workspace "${name}" does not exist`)
+    // Loaded fresh on each call so an edit never writes from a stale snapshot.
+    const { MemoryStore } = await import('@codey/core')
+    const store = new MemoryStore(root)
+    await store.load()
+    return store
+  }
+
+  ipcMain.handle('codeyMemory:list', async (_e, scope: MemoryStoreScope, workspace?: string) =>
+    wrap(async () => {
+      const store = await openMemoryStore(scope, workspace)
+      return { entries: listStore(store) }
+    })
+  )
+
+  ipcMain.handle('codeyMemory:add', async (_e, scope: MemoryStoreScope, workspace: string | undefined, content: string, type?: string) =>
+    wrap(async () => {
+      const store = await openMemoryStore(scope, workspace)
+      const text = validateContent(content)
+      const entry = store.add({
+        type: isMemoryType(type) ? type : 'fact',
+        content: text,
+        label: labelFor(text),
+        tags: ['user'],
+        source: 'user',
+      })
+      await store.flush()
+      return toMemoryItem(entry)
+    })
+  )
+
+  ipcMain.handle('codeyMemory:update', async (_e, scope: MemoryStoreScope, workspace: string | undefined, id: string, content: string, type?: string) =>
+    wrap(async () => {
+      const store = await openMemoryStore(scope, workspace)
+      const text = validateContent(content)
+      const ok = store.update(id, {
+        content: text,
+        label: labelFor(text),
+        ...(isMemoryType(type) ? { type } : {}),
+      })
+      if (!ok) throw new Error('That memory no longer exists')
+      await store.flush()
+      return { updated: true }
+    })
+  )
+
+  ipcMain.handle('codeyMemory:remove', async (_e, scope: MemoryStoreScope, workspace: string | undefined, id: string) =>
+    wrap(async () => {
+      const store = await openMemoryStore(scope, workspace)
+      const removed = store.remove(id)
+      if (removed) await store.flush()
+      return { removed }
+    })
+  )
+
+  ipcMain.handle('codeyMemory:settings', async () =>
+    wrap(async () => {
+      const memory = coreConfigManager?.get().memory ?? {}
+      return { enabled: memory.enabled !== false, autoExtract: memory.autoExtract !== false }
+    })
+  )
+
+  ipcMain.handle('codeyMemory:setSettings', async (_e, patch: { enabled?: boolean; autoExtract?: boolean }) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.update({ memory: patch })
+      const memory = coreConfigManager.get().memory ?? {}
+      return { enabled: memory.enabled !== false, autoExtract: memory.autoExtract !== false }
     })
   )
 
