@@ -744,7 +744,7 @@ export const BrowserPanel: React.FC<Props> = ({
         </div>
       )}
 
-      <div ref={hostRef} style={styles.host}>
+      <div ref={hostRef} data-codey-browser-host style={styles.host}>
         {!state.url && !state.loading && (
           <div style={styles.empty}>
             <div style={styles.emptyIcon}><UIIcon name="globe" size={30} /></div>
