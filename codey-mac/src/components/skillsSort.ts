@@ -47,6 +47,15 @@ export function usageLabel(usage: SkillUsage, now: number): string {
   return `${times} · ${relativeTime(usage.lastUsedAt, now)}`
 }
 
+/** Structured copy lets the card give calls and recency their own visual weight. */
+export function usageMeta(usage: SkillUsage, now: number): { calls: string; recency?: string } | null {
+  if (usage.count === 0) return null
+  return {
+    calls: `${usage.count} ${usage.count === 1 ? 'call' : 'calls'}`,
+    recency: usage.lastUsedAt ? relativeTime(usage.lastUsedAt, now) : undefined,
+  }
+}
+
 function relativeTime(at: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - at) / 1000))
   if (seconds < 60) return 'just now'

@@ -197,6 +197,23 @@ export function uniqueSkills(fsMod: typeof Fs, pathMod: typeof Path, skills: Sca
   })
 }
 
+/** Tag one installed skill with the product/plugin that owns its lifecycle.
+ *  Path identity follows symlinks so the same Codey skill is labelled when it
+ *  is viewed through any agent's discovery directory. */
+export function markSkillManagedBy(
+  fsMod: typeof Fs,
+  pathMod: typeof Path,
+  skills: ScannedSkill[],
+  managedDir: string,
+  managedBy: string,
+): ScannedSkill[] {
+  return skills.map(skill => (
+    samePath(fsMod, pathMod, skill.dir, managedDir)
+      ? { ...skill, managedBy }
+      : skill
+  ))
+}
+
 /**
  * Delete the short-lived `~/.codey/managed-skills` root and the discovery links
  * pointing into it. Skills Codey owned on the user's behalf lived there for one
