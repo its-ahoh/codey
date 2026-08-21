@@ -4,6 +4,7 @@ import { C } from '../theme'
 import { UIIcon } from './UIIcons'
 import { clampCardTop, type ChatHoverCardView } from './chatHoverCardView'
 import type { StatusTone } from './taskHudView'
+import { clampFloatingLeft, floatingViewportRight } from './floatingLayer'
 
 interface Props {
   view: ChatHoverCardView
@@ -24,10 +25,19 @@ const TONE: Record<StatusTone, string> = {
 export const ChatHoverCard: React.FC<Props> = ({ view, anchor }) => {
   const ref = useRef<HTMLDivElement | null>(null)
   const [top, setTop] = useState(anchor.top)
+  const [left, setLeft] = useState(anchor.right + 8)
 
   useLayoutEffect(() => {
     const height = ref.current?.offsetHeight ?? 0
+    const width = ref.current?.offsetWidth ?? 280
     setTop(clampCardTop(anchor.top, height, window.innerHeight))
+    // Right-align as a fallback when the preferred position beside the row
+    // would enter the native browser view (which DOM z-index cannot cover).
+    const preferredLeft = anchor.right + 8
+    const boundaryRight = floatingViewportRight()
+    setLeft(preferredLeft + width + 12 <= boundaryRight
+      ? preferredLeft
+      : clampFloatingLeft(boundaryRight, width, boundaryRight))
   }, [anchor.top, anchor.right, view])
 
   const tone = TONE[view.status.tone]
@@ -36,7 +46,7 @@ export const ChatHoverCard: React.FC<Props> = ({ view, anchor }) => {
   // descendants — a card left inside it renders behind the chat view and gets
   // measured against the sidebar's box instead of the viewport.
   return createPortal(
-    <div ref={ref} role="tooltip" style={{ ...styles.card, top, left: anchor.right + 8 }}>
+    <div ref={ref} role="tooltip" style={{ ...styles.card, top, left }}>
       <div style={styles.title}>{view.title}</div>
       <div style={{ ...styles.status, color: tone }}>
         <span style={{ ...styles.statusDot, background: tone }} />

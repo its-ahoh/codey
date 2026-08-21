@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ChatMessage, ChatSelection, FileAttachment, TeamRunSummary } from '../types'
 import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
@@ -33,6 +34,7 @@ import { useInstalledAgents } from './installedAgents'
 import { applyMention, filterEntries, findActiveMention, splitMentionSegments } from './mentions'
 import { ChatFindBar } from './ChatFindBar'
 import type { ActiveMention, MentionFile } from './mentions'
+import { clampFloatingLeft, floatingViewportRight } from './floatingLayer'
 import { useGitStatus } from '../hooks/useGitStatus'
 import { BranchPicker } from './BranchPicker'
 import { CreatePrModal } from './CreatePrModal'
@@ -896,6 +898,33 @@ export const ChatTab: React.FC<Props> = ({
   const [openingEditor, setOpeningEditor] = useState<string | null>(null)
   const [preferredEditorId, setPreferredEditorId] = useState(() => localStorage.getItem('codey.preferredEditor') ?? '')
   const [runSettingsOpen, setRunSettingsOpen] = useState(false)
+  const runSettingsButtonRef = useRef<HTMLButtonElement>(null)
+  const runSettingsMenuRef = useRef<HTMLDivElement>(null)
+  const [runSettingsPosition, setRunSettingsPosition] = useState({ top: 0, left: 0, ready: false })
+  useLayoutEffect(() => {
+    if (!runSettingsOpen) return
+    const button = runSettingsButtonRef.current
+    const menu = runSettingsMenuRef.current
+    if (!button || !menu) return
+    const place = () => {
+      const anchor = button.getBoundingClientRect()
+      const width = menu.offsetWidth
+      setRunSettingsPosition({
+        top: anchor.bottom + 6,
+        left: clampFloatingLeft(anchor.right, width, floatingViewportRight()),
+        ready: true,
+      })
+    }
+    place()
+    const observer = new ResizeObserver(place)
+    observer.observe(button)
+    observer.observe(menu)
+    window.addEventListener('resize', place)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', place)
+    }
+  }, [runSettingsOpen])
   useEffect(() => {
     if (!isGatewayRunning || !runSettingsOpen) return
     let stale = false
@@ -1997,6 +2026,7 @@ export const ChatTab: React.FC<Props> = ({
         </div>
         <div style={styles.runSettingsWrap}>
           <button
+            ref={runSettingsButtonRef}
             onClick={() => setRunSettingsOpen(open => !open)}
             style={styles.runSettingsButton}
             title="Configure worker, agent, model, and advisor"
@@ -2005,9 +2035,18 @@ export const ChatTab: React.FC<Props> = ({
             <span style={{ display: 'inline-flex', transform: runSettingsOpen ? 'rotate(-90deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={12} /></span>
           </button>
           {runSettingsOpen && (
-            <>
+            createPortal(<>
               <div onClick={() => setRunSettingsOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
-              <div style={styles.runSettingsMenu} onClick={event => event.stopPropagation()}>
+              <div
+                ref={runSettingsMenuRef}
+                style={{
+                  ...styles.runSettingsMenu,
+                  top: runSettingsPosition.top,
+                  left: runSettingsPosition.left,
+                  visibility: runSettingsPosition.ready ? 'visible' : 'hidden',
+                }}
+                onClick={event => event.stopPropagation()}
+              >
                 <label style={styles.runSettingGroup}>
                   <span style={styles.runSettingLabel}>Worker</span>
                   <select value={selectionValue} onChange={e => void onSelectionChange(e.target.value)} style={styles.runSettingSelect}>
@@ -2089,7 +2128,7 @@ export const ChatTab: React.FC<Props> = ({
                   </>
                 )}
               </div>
-            </>
+            </>, document.body)
           )}
         </div>
         <div style={{ position: 'relative' }}>
@@ -2998,7 +3037,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   runSettingsButtonSummary: { color: C.fg2, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   runSettingsMenu: {
-    position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 1000, minWidth: 244,
+    position: 'fixed', zIndex: 1000, minWidth: 244,
     padding: 10, borderRadius: 9, background: C.surface2, border: `1px solid ${C.border2}`,
     boxShadow: '0 12px 28px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', gap: 9,
   },
