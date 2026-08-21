@@ -19,6 +19,8 @@ import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import { scanAgentMcpServers, type AgentMcpServer, type McpAgentKey } from './agent-mcp-scan'
 import { deriveDeliveryState, shouldRediscoverPr } from './delivery-status'
 import type { ScannedSkill } from './skills'
+import { AGENT_MEMORY, scanProjectMemory, scanUserMemory } from './memory'
+import { readSharedMemory, sharedMemoryPath, sharedMemoryTargets, syncSharedMemory, writeSharedMemory } from './shared-memory'
 import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
@@ -3715,6 +3717,97 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('skills:reveal', async (_e, dir: string) =>
     wrap(async () => { shell.showItemInFolder(dir) })
+  )
+
+  // ── Agent memory IPC ──────────────────────────────────────────────
+  // Read-only: the instruction files each agent CLI loads by itself. User
+  // memory (what an agent knows about the user, everywhere) is shown in the
+  // Agents settings; project memory belongs to a workspace.
+  function agentEnv(agent: string): Record<string, string> {
+    return coreConfigManager?.get().agents?.[agent as keyof ReturnType<ConfigManager['get']>['agents']]?.env ?? {}
+  }
+
+  ipcMain.handle('memory:user', async () =>
+    wrap(async () => {
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const osMod = await import('os')
+      const home = osMod.homedir()
+      return {
+        agents: Object.keys(AGENT_MEMORY).map(agent => ({
+          agent,
+          entries: scanUserMemory(fsMod, pathMod, agent, home, agentEnv(agent)),
+        })),
+      }
+    })
+  )
+
+  // ── Shared memory ─────────────────────────────────────────────────
+  // One text Codey owns, mirrored into every agent's own global memory file
+  // inside a marked block. Off until the user opts in, because the sync
+  // writes into files the user owns.
+  async function sharedMemoryState() {
+    const fsMod = await import('fs')
+    const pathMod = await import('path')
+    const osMod = await import('os')
+    const home = osMod.homedir()
+    const enabled = coreConfigManager?.get().sharedMemory?.enabled === true
+    return {
+      fsMod, pathMod, home, enabled,
+      content: readSharedMemory(fsMod, pathMod, home),
+      targets: sharedMemoryTargets(pathMod, home, agentEnv),
+    }
+  }
+
+  /** Push the current text (or clear it when disabled) into every agent file. */
+  async function applySharedMemory(): Promise<string[]> {
+    const { fsMod, pathMod, enabled, content, targets } = await sharedMemoryState()
+    return syncSharedMemory(fsMod, pathMod, targets, enabled ? content : '').written
+  }
+  // Agents read their memory files from disk when they spawn, so one sync per
+  // launch keeps the shared block current everywhere.
+  try {
+    await applySharedMemory()
+  } catch { /* best-effort: a stale block must not break startup */ }
+
+  ipcMain.handle('memory:shared:get', async () =>
+    wrap(async () => {
+      const { pathMod, home, enabled, content, targets } = await sharedMemoryState()
+      return { enabled, content, path: sharedMemoryPath(pathMod, home), targets }
+    })
+  )
+
+  ipcMain.handle('memory:shared:set', async (_e, content: string) =>
+    wrap(async () => {
+      const { fsMod, pathMod, home } = await sharedMemoryState()
+      writeSharedMemory(fsMod, pathMod, home, content)
+      return { synced: await applySharedMemory() }
+    })
+  )
+
+  ipcMain.handle('memory:shared:setEnabled', async (_e, enabled: boolean) =>
+    wrap(async () => {
+      if (!coreConfigManager) throw new Error('Config manager not initialized')
+      coreConfigManager.update({ sharedMemory: { enabled } })
+      return { synced: await applySharedMemory() }
+    })
+  )
+
+  ipcMain.handle('memory:project', async (_e, workspace?: string) =>
+    wrap(async () => {
+      const fsMod = await import('fs')
+      const pathMod = await import('path')
+      const osMod = await import('os')
+      const home = osMod.homedir()
+      const workingDir = getWorkingDir(fsMod, pathMod, workspace)
+      const agents = workingDir
+        ? Object.keys(AGENT_MEMORY).map(agent => ({
+            agent,
+            entries: scanProjectMemory(fsMod, pathMod, agent, home, agentEnv(agent), workingDir),
+          }))
+        : []
+      return { agents, workingDir }
+    })
   )
 
   // ── Playbooks (crystallizer SkillStore) — distinct from skills:* above,

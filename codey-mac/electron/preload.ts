@@ -136,6 +136,15 @@ contextBridge.exposeInMainWorld('codey', {
     setEnabled: (dir: string, enabled: boolean) => ipcRenderer.invoke('skills:setEnabled', dir, enabled),
     reveal: (dir: string) => ipcRenderer.invoke('skills:reveal', dir),
   },
+  memory: {
+    user: () => ipcRenderer.invoke('memory:user'),
+    project: (workspace?: string) => ipcRenderer.invoke('memory:project', workspace),
+    shared: {
+      get: () => ipcRenderer.invoke('memory:shared:get'),
+      set: (content: string) => ipcRenderer.invoke('memory:shared:set', content),
+      setEnabled: (enabled: boolean) => ipcRenderer.invoke('memory:shared:setEnabled', enabled),
+    },
+  },
   playbooks: {
     list: () => ipcRenderer.invoke('playbooks:list'),
     detail: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:detail', workspace, name),

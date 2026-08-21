@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { apiService } from '../services/api'
 import { C } from '../theme'
 import { emitWorkspacesChanged } from './workspacesChanged'
+import { ProjectMemorySection } from './AgentMemorySection'
 
 interface WorkspacesTabProps {
   isGatewayRunning: boolean
@@ -215,6 +216,10 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
 
                     <div style={{ marginTop: 12 }}>
                       <MemorySection workspace={ws} />
+                    </div>
+
+                    <div style={{ marginTop: 12 }}>
+                      <ProjectMemorySection workspace={ws} />
                     </div>
                   </div>
                 )}
