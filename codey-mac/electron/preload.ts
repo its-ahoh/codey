@@ -139,7 +139,6 @@ contextBridge.exposeInMainWorld('codey', {
     project: (workspace?: string) => ipcRenderer.invoke('memory:project', workspace),
     shared: {
       get: () => ipcRenderer.invoke('memory:shared:get'),
-      set: (content: string) => ipcRenderer.invoke('memory:shared:set', content),
       setEnabled: (enabled: boolean) => ipcRenderer.invoke('memory:shared:setEnabled', enabled),
     },
     /** Codey's own remembered entries, not the agents' files. */

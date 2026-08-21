@@ -32,12 +32,9 @@ export interface UserMemoryResult {
 }
 
 export interface SharedMemoryResult {
-  /** Whether Codey mirrors the shared text into the agents' own memory files. */
+  /** Whether Codey mirrors the global memory into the agents' own files. */
   enabled: boolean
-  content: string
-  /** Where Codey keeps the shared text. */
-  path: string
-  /** The agent files the text is mirrored into. */
+  /** The agent files the entries are mirrored into. */
   targets: Array<{ agent: string; path: string }>
 }
 
@@ -345,11 +342,9 @@ declare global {
         user: () => Promise<IpcResult<UserMemoryResult>>
         /** Read-only: what each agent knows about one workspace's project. */
         project: (workspace?: string) => Promise<IpcResult<ProjectMemoryResult>>
-        /** One knowledge base shared by every agent. */
+        /** Sharing the global memory entries with every agent. */
         shared: {
           get: () => Promise<IpcResult<SharedMemoryResult>>
-          /** Saves the text and re-syncs; returns the files written. */
-          set: (content: string) => Promise<IpcResult<{ synced: string[] }>>
           setEnabled: (enabled: boolean) => Promise<IpcResult<{ synced: string[] }>>
         }
         /** Codey's own remembered entries — what it injects into prompts. */

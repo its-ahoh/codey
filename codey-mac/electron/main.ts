@@ -20,7 +20,7 @@ import { scanAgentMcpServers, type AgentMcpServer, type McpAgentKey } from './ag
 import { deriveDeliveryState, shouldRediscoverPr } from './delivery-status'
 import type { ScannedSkill } from './skills'
 import { AGENT_MEMORY, scanProjectMemory, scanUserMemory } from './memory'
-import { readSharedMemory, sharedMemoryPath, sharedMemoryTargets, syncSharedMemory, writeSharedMemory } from './shared-memory'
+import { legacySharedFilePath, renderSharedBody, sharedMemoryTargets, syncSharedMemory } from './shared-memory'
 import { isMemoryType, labelFor, listStore, toMemoryItem, validateContent } from './codey-memory'
 import type { MemoryStoreScope } from './codey-memory'
 import { scanSkillUsage } from './skill-usage'
@@ -935,6 +935,7 @@ function buildRuntimeConfig(json: any): any {
     },
     context: json?.context,
     memory: json?.memory,
+    sharedMemory: json?.sharedMemory,
     // Back-compat: old `dispatcher` block becomes `advisor`.
     advisor: json?.advisor ?? json?.dispatcher,
     aide: json?.aide,
@@ -3716,46 +3717,72 @@ app.whenReady().then(async () => {
     })
   )
 
-  // ── Shared memory ─────────────────────────────────────────────────
-  // One text Codey owns, mirrored into every agent's own global memory file
-  // inside a marked block. Off until the user opts in, because the sync
-  // writes into files the user owns.
-  async function sharedMemoryState() {
+  // ── Sharing the global memory with the agents ─────────────────────
+  // The user-global store owns this text; sharing renders its entries into
+  // each agent's own global memory file inside a marked block. Off until the
+  // user opts in, because the sync writes into files the user owns.
+  function sharingEnabled(): boolean {
+    return coreConfigManager?.get().sharedMemory?.enabled === true
+  }
+
+  /** Render the global entries into every agent file, or clear the block. */
+  async function applySharedMemory(): Promise<string[]> {
     const fsMod = await import('fs')
     const pathMod = await import('path')
     const osMod = await import('os')
     const home = osMod.homedir()
-    const enabled = coreConfigManager?.get().sharedMemory?.enabled === true
-    return {
-      fsMod, pathMod, home, enabled,
-      content: readSharedMemory(fsMod, pathMod, home),
-      targets: sharedMemoryTargets(pathMod, home, agentEnv),
+    const targets = sharedMemoryTargets(pathMod, home, agentEnv)
+    let body = ''
+    if (sharingEnabled()) {
+      const store = await openMemoryStore('global')
+      body = renderSharedBody(store.getAll())
     }
+    return syncSharedMemory(fsMod, pathMod, targets, body).written
   }
 
-  /** Push the current text (or clear it when disabled) into every agent file. */
-  async function applySharedMemory(): Promise<string[]> {
-    const { fsMod, pathMod, enabled, content, targets } = await sharedMemoryState()
-    return syncSharedMemory(fsMod, pathMod, targets, enabled ? content : '').written
+  /**
+   * Carry the pre-merge `~/.codey/memory/MEMORY.md` into the global store, so
+   * a user who had typed shared text keeps it now that entries own the block.
+   * Runs once: the file is removed after it lands in the store.
+   */
+  async function migrateLegacySharedFile(): Promise<void> {
+    const fsMod = await import('fs')
+    const pathMod = await import('path')
+    const osMod = await import('os')
+    const file = legacySharedFilePath(pathMod, osMod.homedir())
+    let text = ''
+    try {
+      text = fsMod.readFileSync(file, 'utf-8').trim()
+    } catch { return }
+    if (text) {
+      const store = await openMemoryStore('global')
+      store.add({
+        type: 'context',
+        content: text,
+        label: labelFor(text),
+        tags: ['user', 'migrated'],
+        source: 'migration',
+      })
+      await store.flush()
+    }
+    try { fsMod.unlinkSync(file) } catch { /* already gone */ }
   }
+
   // Agents read their memory files from disk when they spawn, so one sync per
   // launch keeps the shared block current everywhere.
   try {
+    await migrateLegacySharedFile()
     await applySharedMemory()
   } catch { /* best-effort: a stale block must not break startup */ }
 
   ipcMain.handle('memory:shared:get', async () =>
     wrap(async () => {
-      const { pathMod, home, enabled, content, targets } = await sharedMemoryState()
-      return { enabled, content, path: sharedMemoryPath(pathMod, home), targets }
-    })
-  )
-
-  ipcMain.handle('memory:shared:set', async (_e, content: string) =>
-    wrap(async () => {
-      const { fsMod, pathMod, home } = await sharedMemoryState()
-      writeSharedMemory(fsMod, pathMod, home, content)
-      return { synced: await applySharedMemory() }
+      const pathMod = await import('path')
+      const osMod = await import('os')
+      return {
+        enabled: sharingEnabled(),
+        targets: sharedMemoryTargets(pathMod, osMod.homedir(), agentEnv),
+      }
     })
   )
 
@@ -3839,6 +3866,7 @@ app.whenReady().then(async () => {
         source: 'user',
       })
       await store.flush()
+      if (scope === 'global') await applySharedMemory()
       return toMemoryItem(entry)
     })
   )
@@ -3854,6 +3882,7 @@ app.whenReady().then(async () => {
       })
       if (!ok) throw new Error('That memory no longer exists')
       await store.flush()
+      if (scope === 'global') await applySharedMemory()
       return { updated: true }
     })
   )
@@ -3862,7 +3891,10 @@ app.whenReady().then(async () => {
     wrap(async () => {
       const store = await openMemoryStore(scope, workspace)
       const removed = store.remove(id)
-      if (removed) await store.flush()
+      if (removed) {
+        await store.flush()
+        if (scope === 'global') await applySharedMemory()
+      }
       return { removed }
     })
   )

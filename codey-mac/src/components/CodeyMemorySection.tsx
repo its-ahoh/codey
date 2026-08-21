@@ -98,9 +98,11 @@ interface PanelProps {
   workspace?: string
   title: string
   description: string
+  /** Rendered between the header and the composer, e.g. a sharing switch. */
+  banner?: React.ReactNode
 }
 
-const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, description }) => {
+export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, description, banner }) => {
   const [entries, setEntries] = useState<CodeyMemoryItem[]>([])
   const [draft, setDraft] = useState('')
   const [adding, setAdding] = useState(false)
@@ -146,6 +148,8 @@ const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, descriptio
       {error && (
         <div style={{ background: C.red + '22', color: C.red, padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{error}</div>
       )}
+
+      {banner}
 
       <div>
         <textarea
@@ -194,15 +198,6 @@ export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace 
     workspace={workspace}
     title="Memory"
     description="What Codey remembers about this workspace and adds to its prompts."
-  />
-)
-
-/** What Codey remembers about the user, in every workspace. */
-export const CodeyGlobalMemorySection: React.FC = () => (
-  <MemoryPanel
-    scope="global"
-    title="Global memory"
-    description="What Codey remembers about you everywhere, added to its prompts in every workspace."
   />
 )
 
