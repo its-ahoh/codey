@@ -135,8 +135,12 @@ export interface Chat {
   id: string;
   title: string;
   workspaceName: string;
-  /** 'automation' marks a hidden system chat owned by an automation; absent = normal user chat. */
-  kind?: 'automation';
+  /**
+   * Marks a hidden system chat; absent = normal user chat.
+   * 'automation' — owned by an automation. 'api' — owned by a Router API session.
+   * Both are excluded from the chat list the user sees.
+   */
+  kind?: 'automation' | 'api';
   selection: ChatSelection;
   messages: ChatMessage[];
   createdAt: number;
