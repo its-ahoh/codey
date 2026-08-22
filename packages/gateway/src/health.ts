@@ -1,6 +1,7 @@
 import * as http from 'http';
 import { ConfigManager, stripSecrets } from './config';
-import { ApiTokenStore, parseBearer } from './api-tokens';
+import { ApiTokenRecord, ApiTokenStore, parseBearer } from './api-tokens';
+import { RouterApi } from './router-api';
 import { VoiceConverseEvent } from '@codey/core';
 
 /**
@@ -15,11 +16,6 @@ import { VoiceConverseEvent } from '@codey/core';
  * `/voice/*` is not listed because it has its own guard (no-Origin native
  * clients only) and is called by the Swift helper, which has no way to hold a
  * token yet.
- *
- * `/v1/*` is reserved for the Router API, which currently lives on the
- * `router-api` branch rather than here. The prefix stays behind the token so
- * that nothing under it can ever be reachable unauthenticated — today those
- * paths authenticate and then 404.
  */
 function requiresAuth(url: string | undefined): boolean {
   if (!url) return false;
@@ -64,6 +60,7 @@ export class ApiServer {
   private onConverseHotkey?: () => void;
   private onOpenSettings?: () => void;
   private tokens: ApiTokenStore;
+  private routerApi?: RouterApi;
 
   constructor(
     port: number,
@@ -95,21 +92,32 @@ export class ApiServer {
   }
 
   /**
-   * Authorize a request, writing the error response itself when it fails.
-   * Returns false when the caller should stop handling the request.
+   * Attach the Router API. Separate from the constructor because the gateway
+   * and the server are built in either order depending on the surface (CLI
+   * daemon vs. the Mac app's in-process gateway).
    */
-  private authorize(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  setRouterApi(routerApi: RouterApi): void {
+    this.routerApi = routerApi;
+  }
+
+  /**
+   * Authorize a request, writing the error response itself when it fails.
+   * Returns the matched token (its id keys per-token rate limiting), or null
+   * when the caller should stop handling the request.
+   */
+  private authorize(req: http.IncomingMessage, res: http.ServerResponse): ApiTokenRecord | null {
     // Re-read the store per request: `api-token create` runs in a separate
     // process, so a long-lived gateway would otherwise reject tokens minted
     // after it booted until restarted.
     this.tokens.reload();
-    if (this.tokens.verify(parseBearer(req.headers.authorization))) return true;
+    const matched = this.tokens.verify(parseBearer(req.headers.authorization));
+    if (matched) return matched;
     res.writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' });
     res.end(JSON.stringify({
       error: 'Unauthorized',
       hint: 'Send Authorization: Bearer <token>. Create one with: npm run api-token -- create <name>',
     }));
-    return false;
+    return null;
   }
 
   async start(): Promise<void> {
@@ -143,7 +151,17 @@ export class ApiServer {
         return;
       }
 
-      if (requiresAuth(url) && !this.authorize(req, res)) return;
+      let token: ApiTokenRecord | null = null;
+      if (requiresAuth(url)) {
+        token = this.authorize(req, res);
+        if (!token) return;
+      }
+
+      // `/v1/*` is the Router API. It is delegated wholesale so this file stays
+      // the transport + auth layer rather than growing a second router.
+      if (url?.startsWith('/v1/') && this.routerApi) {
+        if (await this.routerApi.handle(req, res, url, token!.id)) return;
+      }
 
       if (url === '/health' || url === '/') {
         const status = this.getStatus();

@@ -5,6 +5,7 @@ import { handleCommand } from './cli';
 import { GatewayConfig } from '@codey/core';
 import { Codey } from './gateway';
 import { ApiServer, HealthStatusType } from './health';
+import { RouterApi } from './router-api';
 import { assertNoLegacyLayout } from './startup-guard';
 
 dotenv.config();
@@ -74,6 +75,10 @@ function startGateway(): void {
       (transcript, conversationId, emit) => gateway.runVoiceConverse(transcript, conversationId, emit),
       (text, emit, conversationId) => gateway.runVoiceSpeak(text, emit, conversationId),
     );
+    apiServer.setRouterApi(new RouterApi(gateway.asRouterApiHost(), () => ({
+      timeoutSec: configManager.getApiTimeoutSec(),
+      rateLimitPerMin: configManager.getApiRateLimitPerMin(),
+    })));
     await apiServer.start();
 
     // Apply config changes to the running gateway at runtime

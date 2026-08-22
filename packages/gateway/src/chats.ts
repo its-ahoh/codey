@@ -10,8 +10,8 @@ export interface CreateChatInput {
   workspaceName: string;
   selection?: ChatSelection;
   title?: string;
-  /** 'automation' = hidden system chat (excluded from list() by default). */
-  kind?: 'automation';
+  /** Hidden system chat (excluded from list() by default). */
+  kind?: 'automation' | 'api';
   /** Per-chat agent/model overrides, set at creation (used by automations). */
   agent?: Chat['agent'];
   model?: string;
@@ -130,8 +130,10 @@ export class ChatManager {
 
   list(workspaceName?: string, opts?: { includeAutomation?: boolean }): Chat[] {
     this.ensureLoaded();
+    // Any `kind` marks a system-owned chat (automation, Router API session).
+    // The user's chat list shows only chats the user created.
     const all = [...this.cache.values()]
-      .filter(c => opts?.includeAutomation || c.kind !== 'automation');
+      .filter(c => opts?.includeAutomation || c.kind === undefined);
     const filtered = workspaceName
       ? all.filter(c => c.workspaceName === workspaceName)
       : all;
@@ -547,7 +549,7 @@ export class ChatManager {
     chat.messages.push(message);
     chat.updatedAt = Date.now();
     // Automation chats keep their authoritative "Automation: <name>" title.
-    if (chat.messages.length === 1 && message.role === 'user' && chat.kind !== 'automation') {
+    if (chat.messages.length === 1 && message.role === 'user' && chat.kind === undefined) {
       chat.title = deriveTitle(message.content);
     }
     this.persist(chat);

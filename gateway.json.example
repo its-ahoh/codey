@@ -67,7 +67,9 @@
   },
   "api": {
     "bindHost": "127.0.0.1",
-    "allowedOrigins": []
+    "allowedOrigins": [],
+    "timeoutSec": 300,
+    "rateLimitPerMin": 60
   },
   "dev": {
     "logLevel": "info",
