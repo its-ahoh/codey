@@ -41,6 +41,8 @@ describe('ApiServer auth', () => {
   }
 
   const url = (p: string) => `http://127.0.0.1:${port}${p}`;
+  // fetch().json() is typed `unknown`; these are our own responses.
+  const json = async (res: Response): Promise<any> => res.json();
 
   beforeEach(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-health-'));
@@ -57,7 +59,7 @@ describe('ApiServer auth', () => {
   it('serves /health without a token', async () => {
     const res = await fetch(url('/health'));
     expect(res.status).toBe(200);
-    expect((await res.json()).status).toBe('healthy');
+    expect((await json(res)).status).toBe('healthy');
   });
 
   it('rejects /config with no token', async () => {
@@ -77,7 +79,7 @@ describe('ApiServer auth', () => {
     const { token } = store.create('real');
     const res = await fetch(url('/config'), { headers: { Authorization: `Bearer ${token}` } });
     expect(res.status).toBe(200);
-    expect((await res.json()).apiKeys[0].apiKey).toBe('sk-super-secret');
+    expect((await json(res)).apiKeys[0].apiKey).toBe('sk-super-secret');
   });
 
   it('rejects POST /config with no token', async () => {
