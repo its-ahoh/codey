@@ -29,6 +29,7 @@ import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
+import { RouterApiHost } from './router-api';
 import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
@@ -772,6 +773,25 @@ export class Codey {
 
   getWorkspaceManager(): WorkspaceManager { return this.workspaceManager; }
   getChatManager(): ChatManager { return this.chatManager; }
+
+  /**
+   * The Router API's view of this gateway (`RouterApiHost`). Built here rather
+   * than handing `router-api.ts` the whole Codey instance, so the HTTP layer
+   * can only reach what it actually needs — and so its tests can stand in a
+   * plain object.
+   */
+  asRouterApiHost(): RouterApiHost {
+    return {
+      getWorkspaceList: () => this.getWorkspaceList(),
+      getTeamNames: () => Object.keys(this.configManager?.getTeams() ?? {}),
+      getModelNames: () => (this.configManager?.listModels() ?? []).map(m => m.model),
+      getDefaultAgent: () => this.configManager?.getDefaultAgent() ?? this.config.defaultAgent,
+      getDefaultModel: () => this.configManager?.getDefaultModel() ?? '',
+      createApiChat: (input) => this.chatManager.create({ ...input, kind: 'api' }),
+      hasChat: (chatId) => !!this.chatManager.get(chatId),
+      sendToChat: (chatId, text, sink) => this.sendToChat(chatId, text, sink),
+    };
+  }
 
   /** New chats begin in the shared checkout. A worktree is created either by
    *  the explicit Branch Selector action or when the running agent opts in. */

@@ -17,6 +17,9 @@ export interface ExternalMcpServerConfig {
 
 /** Loopback only. Exposing the HTTP server has to be an explicit choice. */
 export const DEFAULT_API_BIND_HOST = '127.0.0.1';
+/** Matches the agent adapters' own 5-minute process ceiling. */
+export const DEFAULT_API_TIMEOUT_SEC = 300;
+export const DEFAULT_API_RATE_LIMIT_PER_MIN = 60;
 
 export interface GatewayConfigJson {
   gateway: {
@@ -127,6 +130,14 @@ export interface GatewayConfigJson {
     bindHost?: string;
     /** Browser origins allowed to call the server. Empty = none. */
     allowedOrigins?: string[];
+    /**
+     * How long a single `/v1/prompt` call waits for the agent. Mirrors the
+     * adapters' own 5-minute ceiling. On expiry the caller gets 504 but the run
+     * is left alone — its result still lands in the session.
+     */
+    timeoutSec?: number;
+    /** Requests per minute per token. */
+    rateLimitPerMin?: number;
   };
   /** Voice input helper (native macOS app) configuration. */
   voice?: {
@@ -363,6 +374,12 @@ export class ConfigManager extends EventEmitter {
 
   /** Browser origins allowed to call the HTTP server. Empty = block all. */
   getApiAllowedOrigins(): string[] { return this.config.api?.allowedOrigins ?? []; }
+
+  /** Seconds a single `/v1/prompt` call waits before returning 504. */
+  getApiTimeoutSec(): number { return this.config.api?.timeoutSec ?? DEFAULT_API_TIMEOUT_SEC; }
+
+  /** Requests per minute per token. */
+  getApiRateLimitPerMin(): number { return this.config.api?.rateLimitPerMin ?? DEFAULT_API_RATE_LIMIT_PER_MIN; }
   getSkipPermissions(): boolean { return this.config.gateway.skipPermissions ?? true; }
 
   /** Canonical default = first entry in fallback.order. */
@@ -890,6 +907,8 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
     } as GatewayConfigJson['voice'];
   }
   if (raw.api && typeof raw.api === 'object') {
+    const positive = (v: unknown): number | undefined =>
+      typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
     out.api = {
       bindHost: typeof raw.api.bindHost === 'string' && raw.api.bindHost.trim()
         ? raw.api.bindHost.trim()
@@ -897,6 +916,8 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
       allowedOrigins: Array.isArray(raw.api.allowedOrigins)
         ? raw.api.allowedOrigins.filter((o: unknown): o is string => typeof o === 'string' && !!o.trim())
         : undefined,
+      timeoutSec: positive(raw.api.timeoutSec),
+      rateLimitPerMin: positive(raw.api.rateLimitPerMin),
     };
   }
   if (raw.notifications && typeof raw.notifications === 'object') {
