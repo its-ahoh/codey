@@ -791,6 +791,7 @@ export class Codey {
       hasChat: (chatId) => !!this.chatManager.get(chatId),
       getChatMessages: (chatId) => this.chatManager.get(chatId)?.messages ?? [],
       deleteChat: (chatId) => this.chatManager.delete(chatId),
+      deleteExpiredChats: () => this.chatManager.deleteExpired(),
       sendToChat: (chatId, text, sink) => this.sendToChat(chatId, text, sink),
     };
   }

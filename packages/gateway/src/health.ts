@@ -160,7 +160,7 @@ export class ApiServer {
       // `/v1/*` is the Router API. It is delegated wholesale so this file stays
       // the transport + auth layer rather than growing a second router.
       if (url?.startsWith('/v1/') && this.routerApi) {
-        if (await this.routerApi.handle(req, res, url, token!.id)) return;
+        if (await this.routerApi.handle(req, res, url, token!)) return;
       }
 
       if (url === '/health' || url === '/') {

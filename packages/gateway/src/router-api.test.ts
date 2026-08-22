@@ -19,6 +19,7 @@ describe('Router API /v1', () => {
   let sent: Array<{ chatId: string; text: string }>;
   let chats: Set<string>;
   let messages: Map<string, any[]>;
+  let sweeps: number;
   let respond: (chatId: string, text: string) => Promise<{
     response: string; chatId: string; tokens?: number; durationSec?: number;
   }>;
@@ -38,6 +39,7 @@ describe('Router API /v1', () => {
     hasChat: (chatId) => chats.has(chatId),
     getChatMessages: (chatId) => messages.get(chatId) ?? [],
     deleteChat: (chatId) => { chats.delete(chatId); messages.delete(chatId); },
+    deleteExpiredChats: () => { sweeps++; return 0; },
     sendToChat: async (chatId, text) => {
       sent.push({ chatId, text });
       return respond(chatId, text);
@@ -78,6 +80,7 @@ describe('Router API /v1', () => {
     sent = [];
     chats = new Set();
     messages = new Map();
+    sweeps = 0;
     opts = { timeoutSec: 5, rateLimitPerMin: 60 };
     respond = async (chatId) => ({ response: 'done', chatId, tokens: 42, durationSec: 1.5 });
 
@@ -440,5 +443,51 @@ describe('Router API /v1', () => {
     await post({ prompt: 'hi', sessionId: 's1' });
     const res = await fetch(sessionUrl('s1'), { method: 'PUT', headers: authed() });
     expect(res.status).toBe(404);
+  });
+
+  // ── retention ───────────────────────────────────────────────────
+
+  it("stamps the chat with the token's retention", async () => {
+    // A fresh server whose token carries a retention choice.
+    await server.stop();
+    store = new ApiTokenStore(path.join(dir, 'api-tokens.json'));
+    token = store.create('retained', 30).token;
+    server = new ApiServer(0, fakeStatus, fakeConfigManager(), undefined, undefined, undefined, undefined, store);
+    server.setRouterApi(new RouterApi(host(), () => opts));
+    await server.start();
+    port = (server as any).server.address().port;
+
+    await post({ prompt: 'hi' });
+    expect(created[0].retentionDays).toBe(30);
+  });
+
+  it('leaves the chat unstamped for an unlimited token', async () => {
+    await post({ prompt: 'hi' });
+    expect(created[0].retentionDays).toBeUndefined();
+  });
+
+  it('sweeps expired chats when a request comes in, at most once an hour', async () => {
+    await post({ prompt: 'a' });
+    expect(sweeps).toBe(1);
+
+    // Throttled: a burst of traffic must not rescan every chat each time.
+    await post({ prompt: 'b' });
+    await post({ prompt: 'c' });
+    expect(sweeps).toBe(1);
+  });
+
+  it('still answers the request when the sweep throws', async () => {
+    const failing: RouterApiHost = {
+      ...host(),
+      deleteExpiredChats: () => { throw new Error('disk on fire'); },
+    };
+    await server.stop();
+    server = new ApiServer(0, fakeStatus, fakeConfigManager(), undefined, undefined, undefined, undefined, store);
+    server.setRouterApi(new RouterApi(failing, () => opts));
+    await server.start();
+    port = (server as any).server.address().port;
+
+    // Housekeeping is not the caller's problem.
+    expect((await post({ prompt: 'hi' })).status).toBe(200);
   });
 });
