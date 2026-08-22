@@ -17,7 +17,8 @@
     "status": "cd ../.. && ts-node packages/gateway/src/index.ts status",
     "set-agent": "cd ../.. && ts-node packages/gateway/src/index.ts set-agent",
     "set-model": "cd ../.. && ts-node packages/gateway/src/index.ts set-model",
-    "tui": "cd ../.. && ts-node packages/gateway/src/index.ts tui"
+    "tui": "cd ../.. && ts-node packages/gateway/src/index.ts tui",
+    "api-token": "cd ../.. && ts-node packages/gateway/src/index.ts api-token"
   },
   "dependencies": {
     "@codey/core": "*",

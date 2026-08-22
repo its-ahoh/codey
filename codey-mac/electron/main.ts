@@ -1078,6 +1078,10 @@ async function bootInProcessCore() {
         // Fn-based converse bindings are pressed in the Swift helper, which
         // reports them over HTTP; hand them to the chat like a local press.
         forwardConverseHotkey,
+        // The helper's Settings menu item used to open /config in a browser.
+        // That endpoint now needs a bearer token (and always leaked every key),
+        // so it asks the app to open its own settings window instead.
+        () => { mainWindow?.show(); mainWindow?.focus(); sendToRenderer('notify:openSettings') },
       )
       void apiServer.start().then(() => {
         sendToRenderer('gateway-log', `[core] API server listening on ${apiPort}`)

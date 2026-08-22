@@ -1,6 +1,24 @@
 import * as http from 'http';
 import { ConfigManager } from './config';
+import { ApiTokenStore, parseBearer } from './api-tokens';
 import { VoiceConverseEvent } from '@codey/core';
+
+/**
+ * Endpoints that require a bearer token.
+ *
+ * `/config` serves the whole gateway configuration — provider API keys, bot
+ * tokens, the lot — and used to be readable, and writable, by anyone who could
+ * reach the port. `/health`, `/metrics` and `/ready` stay open: they are what
+ * process supervisors poll, and they expose only counters.
+ *
+ * `/voice/*` is not listed because it has its own guard (no-Origin native
+ * clients only) and is called by the Swift helper, which has no way to hold a
+ * token yet.
+ */
+function requiresAuth(url: string | undefined): boolean {
+  if (!url) return false;
+  return url === '/config' || url.startsWith('/v1/');
+}
 
 export type HealthStatusType = 'healthy' | 'degraded' | 'down';
 
@@ -38,6 +56,8 @@ export class ApiServer {
     verbatim?: boolean,
   ) => Promise<void>;
   private onConverseHotkey?: () => void;
+  private onOpenSettings?: () => void;
+  private tokens: ApiTokenStore;
 
   constructor(
     port: number,
@@ -55,6 +75,8 @@ export class ApiServer {
       verbatim?: boolean,
     ) => Promise<void>,
     onConverseHotkey?: () => void,
+    onOpenSettings?: () => void,
+    tokens?: ApiTokenStore,
   ) {
     this.port = port;
     this.getStatus = getStatus;
@@ -62,22 +84,60 @@ export class ApiServer {
     this.runVoiceConverse = runVoiceConverse;
     this.runVoiceSpeak = runVoiceSpeak;
     this.onConverseHotkey = onConverseHotkey;
+    this.onOpenSettings = onOpenSettings;
+    this.tokens = tokens ?? new ApiTokenStore();
+  }
+
+  /**
+   * Authorize a request, writing the error response itself when it fails.
+   * Returns false when the caller should stop handling the request.
+   */
+  private authorize(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+    // Re-read the store per request: `api-token create` runs in a separate
+    // process, so a long-lived gateway would otherwise reject tokens minted
+    // after it booted until restarted.
+    this.tokens.reload();
+    if (this.tokens.verify(parseBearer(req.headers.authorization))) return true;
+    res.writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' });
+    res.end(JSON.stringify({
+      error: 'Unauthorized',
+      hint: 'Send Authorization: Bearer <token>. Create one with: npm run api-token -- create <name>',
+    }));
+    return false;
   }
 
   async start(): Promise<void> {
     this.server = http.createServer(async (req, res) => {
-      // CORS headers
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      // CORS: reflect only configured origins. The former blanket `*` let any
+      // web page the user had open read `/config` — including every API key in
+      // it — straight out of the browser.
+      const origin = req.headers.origin;
+      const allowedOrigins = this.configManager.getApiAllowedOrigins();
+      if (origin && allowedOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      }
 
       if (req.method === 'OPTIONS') {
-        res.writeHead(200);
+        res.writeHead(origin && !allowedOrigins.includes(origin) ? 403 : 200);
         res.end();
         return;
       }
 
       const url = req.url?.split('?')[0];
+
+      // A browser-origin request to a protected endpoint is refused outright,
+      // regardless of the token: a page that can reach this port is not a
+      // client we have any reason to serve.
+      if (requiresAuth(url) && origin && !allowedOrigins.includes(origin)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Origin not allowed' }));
+        return;
+      }
+
+      if (requiresAuth(url) && !this.authorize(req, res)) return;
 
       if (url === '/health' || url === '/') {
         const status = this.getStatus();
@@ -271,6 +331,21 @@ export class ApiServer {
         return;
       }
 
+      // The helper's "Settings" menu item used to open `/config` in a browser,
+      // which both dumped every credential into the browser and now returns
+      // 401. It asks the app to open its own settings window instead.
+      if (url === '/voice/open-settings' && req.method === 'POST') {
+        if (!this.onOpenSettings) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'No settings UI is attached to this gateway' }));
+          return;
+        }
+        this.onOpenSettings();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
       // ── Existing endpoints ────────────────────────────────────────
 
       if (url === '/config' && req.method === 'GET') {
@@ -312,12 +387,19 @@ export class ApiServer {
       // instead of rejecting this promise.
       const onBindError = (err: Error) => reject(err);
       server.once('error', onBindError);
-      server.listen(this.port, () => {
+      const host = this.configManager.getApiBindHost();
+      if (host !== '127.0.0.1' && host !== 'localhost') {
+        console.warn(
+          `[API] Binding ${host} — the HTTP server is reachable from other machines. ` +
+          'Every protected endpoint relies on bearer tokens alone.',
+        );
+      }
+      server.listen(this.port, host, () => {
         server.removeListener('error', onBindError);
         server.on('error', (err: Error) => {
           console.error(`[API] Server error: ${err.message}`);
         });
-        console.log(`[API] Server running on port ${this.port}`);
+        console.log(`[API] Server running on ${host}:${this.port}`);
         resolve();
       });
     });

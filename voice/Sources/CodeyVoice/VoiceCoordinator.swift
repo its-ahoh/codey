@@ -824,7 +824,6 @@ final class VoiceCoordinator {
     // MARK: - Settings
 
     private func openSettings() {
-        let url = URL(string: "http://127.0.0.1:\(gatewayPort)/config")!
-        NSWorkspace.shared.open(url)
+        Task { await gateway.openSettings() }
     }
 }
