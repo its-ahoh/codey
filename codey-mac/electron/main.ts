@@ -42,7 +42,6 @@ import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, delete
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
-import { RouterApi } from '@codey/gateway/dist/router-api'
 
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
@@ -1084,10 +1083,6 @@ async function bootInProcessCore() {
         // so it asks the app to open its own settings window instead.
         () => { mainWindow?.show(); mainWindow?.focus(); sendToRenderer('notify:openSettings') },
       )
-      apiServer.setRouterApi(new RouterApi(inProcessGateway!.asRouterApiHost(), () => ({
-        timeoutSec: coreConfigManager!.getApiTimeoutSec(),
-        rateLimitPerMin: coreConfigManager!.getApiRateLimitPerMin(),
-      })))
       void apiServer.start().then(() => {
         sendToRenderer('gateway-log', `[core] API server listening on ${apiPort}`)
       }).catch((err: any) => {
