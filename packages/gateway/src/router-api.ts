@@ -1,6 +1,6 @@
 import * as http from 'http';
-import { CodingAgent } from '@codey/core';
-import { ChatStreamSink } from './chat-runner';
+import { ChatMessage, CodingAgent } from '@codey/core';
+import { CHAT_CONTEXT_WINDOW, ChatStreamEvent, ChatStreamSink } from './chat-runner';
 
 /**
  * The Router API: `/v1/*`, the entry point for programs rather than people.
@@ -29,6 +29,9 @@ export interface RouterApiHost {
     model?: string;
   }): { id: string };
   hasChat(chatId: string): boolean;
+  /** Recent messages for a session's chat, oldest first. */
+  getChatMessages(chatId: string): ChatMessage[];
+  deleteChat(chatId: string): void;
   sendToChat(
     chatId: string,
     text: string,
@@ -46,6 +49,7 @@ const MAX_BODY_BYTES = 1024 * 1024;
 
 interface PromptRequest {
   prompt: string;
+  stream: boolean;
   workspace?: string;
   agent?: CodingAgent;
   model?: string;
@@ -101,6 +105,13 @@ export class RouterApi {
       return true;
     }
 
+    const session = /^\/v1\/sessions\/([^/]+)$/.exec(url);
+    if (session) {
+      const sessionId = decodeURIComponent(session[1]);
+      if (req.method === 'GET') { this.handleGetSession(res, sessionId); return true; }
+      if (req.method === 'DELETE') { this.handleDeleteSession(res, sessionId); return true; }
+    }
+
     return false;
   }
 
@@ -126,6 +137,12 @@ export class RouterApi {
       claimed = true;
 
       const chatId = this.resolveChat(sessionId, parsed);
+
+      if (parsed.stream) {
+        await this.runStreaming(res, chatId, sessionId, parsed.prompt);
+        return;
+      }
+
       const result = await this.runWithTimeout(chatId, parsed.prompt);
 
       send(res, 200, {
@@ -135,6 +152,13 @@ export class RouterApi {
         durationSec: result.durationSec,
       });
     } catch (err) {
+      // Once the NDJSON body has started, the status line is already sent —
+      // an error has to arrive as a final event, not as an HTTP code.
+      if (res.headersSent) {
+        writeEvent(res, { type: 'error', chatId: '', message: (err as Error).message });
+        res.end();
+        return;
+      }
       if (err instanceof HttpError) {
         send(res, err.status, { error: err.message, ...(sessionId ? { sessionId } : {}) });
         return;
@@ -167,11 +191,10 @@ export class RouterApi {
     const prompt = typeof b.prompt === 'string' ? b.prompt.trim() : '';
     if (!prompt) throw new HttpError(400, 'prompt is required');
 
-    // Streaming is P3. Accepting `stream: true` silently and answering with a
-    // single JSON blob would look like a working stream that never streams.
-    if (b.stream === true) {
-      throw new HttpError(400, 'Streaming is not implemented yet; omit `stream` or set it to false');
+    if (b.stream !== undefined && typeof b.stream !== 'boolean') {
+      throw new HttpError(400, 'stream must be a boolean');
     }
+    const stream = b.stream === true;
 
     const workspaces = this.host.getWorkspaceList();
     let workspace: string | undefined;
@@ -222,7 +245,7 @@ export class RouterApi {
       sessionId = b.sessionId.trim();
     }
 
-    return { prompt, workspace, agent, model, team, sessionId };
+    return { prompt, stream, workspace, agent, model, team, sessionId };
   }
 
   /**
@@ -246,6 +269,120 @@ export class RouterApi {
   }
 
   /**
+   * Stream the turn as NDJSON: one `ChatStreamEvent` per line, exactly the
+   * events the Mac app and the channels already consume. Reuses the wire
+   * format `/voice/converse` established rather than introducing SSE.
+   *
+   * The last line is always `done` or `error`, so a client knows the stream
+   * ended on purpose rather than because the socket dropped.
+   */
+  private async runStreaming(
+    res: http.ServerResponse,
+    chatId: string,
+    sessionId: string,
+    prompt: string,
+  ): Promise<void> {
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      // Without this a reverse proxy may buffer the whole body and defeat the
+      // point of streaming.
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+      // The non-streaming reply carries `sessionId` in its JSON body. A stream
+      // has no such envelope, and a caller that omitted `sessionId` would
+      // otherwise never learn the one the server generated — leaving it unable
+      // to continue the conversation or read the history back.
+      'X-Codey-Session-Id': sessionId,
+    });
+
+    // A client that hangs up must not keep the process writing into a dead
+    // socket; the agent itself is left running, same as the 504 path.
+    let aborted = false;
+    const onClose = () => { aborted = true; };
+    res.on('close', onClose);
+
+    // sendToChat emits its own terminal event. Track it so the guaranteed
+    // final line below does not duplicate one the agent already sent.
+    let sawTerminal = false;
+    const sink: ChatStreamSink = (event) => {
+      if (aborted) return;
+      if (event.type === 'done' || event.type === 'error') sawTerminal = true;
+      writeEvent(res, event);
+    };
+
+    const timeoutSec = this.options().timeoutSec;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new HttpError(504, `Agent did not respond within ${timeoutSec}s; the run continues in session context`)),
+        timeoutSec * 1000,
+      );
+    });
+
+    try {
+      const result = await Promise.race([this.host.sendToChat(chatId, prompt, sink), timeout]);
+      // Only synthesize a terminal event when the run produced none, so the
+      // contract "the last line is done or error" holds either way.
+      if (!aborted && !sawTerminal) {
+        writeEvent(res, {
+          type: 'done',
+          chatId,
+          response: result.response,
+          tokens: result.tokens,
+          durationSec: result.durationSec,
+        });
+      }
+    } catch (err) {
+      // An error always terminates the stream, even if the run already emitted
+      // a 'done': the caller must not treat a timed-out turn as complete.
+      if (!aborted) {
+        writeEvent(res, { type: 'error', chatId, message: (err as Error).message });
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+      res.off('close', onClose);
+      if (!aborted) res.end();
+    }
+  }
+
+  /** Recent history for a session, for a client that dropped mid-stream. */
+  private handleGetSession(res: http.ServerResponse, sessionId: string): void {
+    const chatId = this.sessions.get(sessionId);
+    if (!chatId || !this.host.hasChat(chatId)) {
+      send(res, 404, { error: `Unknown session: ${sessionId}` });
+      return;
+    }
+    const messages = this.host.getChatMessages(chatId).slice(-CHAT_CONTEXT_WINDOW);
+    send(res, 200, {
+      sessionId,
+      messages: messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        timestamp: m.timestamp,
+        tokens: m.tokens,
+        durationSec: m.durationSec,
+      })),
+    });
+  }
+
+  /** Discard a session and the chat behind it. Idempotent. */
+  private handleDeleteSession(res: http.ServerResponse, sessionId: string): void {
+    const chatId = this.sessions.get(sessionId);
+    if (!chatId) {
+      send(res, 404, { error: `Unknown session: ${sessionId}` });
+      return;
+    }
+    if (this.inFlight.has(sessionId)) {
+      send(res, 409, { error: `Session ${sessionId} has a request in flight` });
+      return;
+    }
+    this.sessions.delete(sessionId);
+    // The chat may already be gone; deleting a session must still succeed.
+    if (this.host.hasChat(chatId)) this.host.deleteChat(chatId);
+    send(res, 200, { sessionId, deleted: true });
+  }
+
+  /**
    * The agent is NOT cancelled on timeout — it keeps running and its answer
    * lands in the session's chat. Only this HTTP response gives up waiting.
    */
@@ -254,7 +391,7 @@ export class RouterApi {
     prompt: string,
   ): Promise<{ response: string; tokens?: number; durationSec?: number }> {
     const timeoutSec = this.options().timeoutSec;
-    const noop: ChatStreamSink = () => { /* P2 is request/response; P3 streams these */ };
+    const noop: ChatStreamSink = () => { /* non-streaming callers discard events */ };
 
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
@@ -270,6 +407,11 @@ export class RouterApi {
       if (timer) clearTimeout(timer);
     }
   }
+}
+
+/** One NDJSON line. */
+function writeEvent(res: http.ServerResponse, event: ChatStreamEvent): void {
+  res.write(JSON.stringify(event) + '\n');
 }
 
 function send(res: http.ServerResponse, status: number, payload: unknown): void {

@@ -1,6 +1,6 @@
 # Spec: Router API — 让别的应用调用 Codey 的 agent
 
-状态：P1、P2 已合并；统一密钥管理已实现；P3–P4 待做
+状态：P1、P2 已合并；统一密钥管理、P3 已实现；P4 待做
 分支：`router-mode`
 路径：`docs/superpowers/specs/2026-08-22-router-api-design.md`
 
@@ -151,11 +151,20 @@ npm run api-token -- revoke <id>
 沿用 `/voice/converse` 已有的 NDJSON 写法（`health.ts` 里那段），**不引入 SSE**。
 最后一行一定是 `{"type":"done",...}` 或 `{"type":"error",...}`。
 
+响应头 `X-Codey-Session-Id` 带回本轮的 session id（流式没有 JSON 信封可放它）。
+另外发 `Cache-Control: no-cache, no-transform` 和 `X-Accel-Buffering: no`，
+否则反向代理会把整个 body 缓冲住，流式就白做了。
+
+客户端中途断开：不杀 agent（同 504 的取舍），只是停止写入。
+未写完的那一轮结果仍然落在 session 里，可以用 `GET /v1/sessions/:id` 取回。
+
 #### `GET /v1/sessions/:id` — 查一个 session 的最近消息
 
 用于客户端断线后补历史。返回 chat 的 `messages` 尾部（上限 40，同 `CHAT_CONTEXT_WINDOW`）。
 
 #### `DELETE /v1/sessions/:id` — 丢弃 session
+
+幂等。chat 已经不在了也返回 200；正在跑的 session 返回 409。
 
 #### `GET /v1/capabilities` — 客户端发现
 
@@ -225,7 +234,17 @@ npm run api-token -- revoke <id>
 2. **P2 — 已实现**（2026-08-22）。`/v1/prompt`（非流式）+ `/v1/capabilities`，
    `router-api.ts` + `kind: 'api'` 隐藏 chat + session 复用 + 409/429/504/413。
    `stream: true` 显式返回 400 而不是假装支持。真机验过：curl 进去，agent 真回了。
-3. **P3** — 流式 + session 端点。
+3. **P3 — 已实现**（2026-08-22）。`stream: true` 走 NDJSON，
+   `GET/DELETE /v1/sessions/:id`。真机验过：事件在 4.1s–9.5s 之间**逐条**到达，
+   不是最后一口气吐出来。
+
+   实现时改掉的两个设计细节：
+   - **`done` 事件不能重复发。** `sendToChat` 自己会发终止事件，我又补了一条
+     → 真机第一次跑出来两条 `done`。改成只在这一轮没发过终止事件时才补。
+     但 `error` 例外：即使已经 `done` 过也要发，否则超时的一轮会被当成正常完成。
+   - **匿名流式请求拿不到 sessionId。** 非流式的响应体里有，流式没有信封可放。
+     改成走 `X-Codey-Session-Id` 响应头——不然调用方永远不知道自己刚创建的
+     session 叫什么，既没法续聊也没法回查历史。
 4. **P4**（另开）— MCP server，内部转调 `/v1/prompt`。
 
 ## 7. 已决
