@@ -49,6 +49,17 @@ final class GatewayClient {
         _ = try? await session.data(for: request)
     }
 
+    /// Ask the Mac app to open its settings window. Replaces opening
+    /// `/config` in a browser: that endpoint now requires a bearer token, and
+    /// it always dumped every stored credential into the browser.
+    func openSettings() async {
+        var request = URLRequest(url: baseURL.appendingPathComponent("voice/open-settings"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        _ = try? await session.data(for: request)
+    }
+
     /// Report current status to gateway.
     func reportStatus(_ status: String) async {
         var request = URLRequest(url: baseURL.appendingPathComponent("voice/status"))

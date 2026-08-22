@@ -1,6 +1,7 @@
 import * as readline from 'readline';
 import { ConfigManager } from './config';
 import { Logger } from './logger';
+import { ApiTokenStore, defaultTokenFilePath } from './api-tokens';
 
 export class CLI {
   private config: ConfigManager;
@@ -258,6 +259,10 @@ export async function handleCommand(args: string[], config: ConfigManager, logge
       }
       break;
 
+    case 'api-token':
+      handleApiTokenCommand(args.slice(1), logger);
+      break;
+
     case 'set-loglevel':
       if (args[1]) {
         config.setLogLevel(args[1] as 'debug' | 'info' | 'warn' | 'error');
@@ -310,9 +315,68 @@ function showHelp(): void {
 ║  set-discord <token>       Set Discord bot token           ║
 ║  set-imessage <senders>    Set iMessage allowed senders    ║
 ║  set-loglevel <level>      Set log level                   ║
+║  api-token <sub>           Manage HTTP API bearer tokens    ║
 ║  enable <channel>          Enable a channel                 ║
 ║  disable <channel>         Disable a channel               ║
 ║  help                       Show this help                  ║
 ╚════════════════════════════════════════════════════════════╝
   `);
+}
+
+/**
+ * `api-token create|list|revoke`. Tokens are stored hashed, so `create` is the
+ * one and only moment the plaintext exists — print it loudly and never again.
+ */
+function handleApiTokenCommand(args: string[], logger: Logger): void {
+  const store = new ApiTokenStore();
+  const sub = args[0];
+
+  switch (sub) {
+    case 'create': {
+      const name = args.slice(1).join(' ').trim();
+      if (!name) {
+        logger.error('Usage: api-token create <name>');
+        return;
+      }
+      const { token, record } = store.create(name);
+      console.log('');
+      console.log(`Created ${record.id} (${record.name})`);
+      console.log('');
+      console.log(`  ${token}`);
+      console.log('');
+      console.log('This is the only time the token is shown. Copy it now.');
+      console.log(`Stored (hashed) in ${defaultTokenFilePath()}`);
+      console.log('');
+      console.log('  curl -H "Authorization: Bearer <token>" http://127.0.0.1:3000/config');
+      console.log('');
+      return;
+    }
+
+    case 'list': {
+      const tokens = store.list();
+      if (tokens.length === 0) {
+        console.log('No API tokens. Create one with: api-token create <name>');
+        return;
+      }
+      for (const t of tokens) {
+        const used = t.lastUsedAt ? new Date(t.lastUsedAt).toISOString() : 'never';
+        console.log(`${t.id}  ${t.name}  created ${new Date(t.createdAt).toISOString()}  last used ${used}`);
+      }
+      return;
+    }
+
+    case 'revoke': {
+      const id = args[1];
+      if (!id) {
+        logger.error('Usage: api-token revoke <id>');
+        return;
+      }
+      if (store.revoke(id)) logger.info(`Revoked ${id}`);
+      else logger.error(`No such token: ${id}`);
+      return;
+    }
+
+    default:
+      logger.error('Usage: api-token <create <name> | list | revoke <id>>');
+  }
 }

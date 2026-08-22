@@ -65,6 +65,10 @@
     "enabled": true,
     "autoExtract": true
   },
+  "api": {
+    "bindHost": "127.0.0.1",
+    "allowedOrigins": []
+  },
   "dev": {
     "logLevel": "info",
     "logFile": "gateway.log"

@@ -15,6 +15,9 @@ export interface ExternalMcpServerConfig {
   enabled: boolean;
 }
 
+/** Loopback only. Exposing the HTTP server has to be an explicit choice. */
+export const DEFAULT_API_BIND_HOST = '127.0.0.1';
+
 export interface GatewayConfigJson {
   gateway: {
     port: number;
@@ -109,6 +112,22 @@ export interface GatewayConfigJson {
    * `teams: string[]` field.
    */
   teams?: Record<string, TeamConfigRaw>;
+  /**
+   * HTTP API surface (health/metrics/config today, Router API next). Contains
+   * no credentials: bearer tokens live in `~/.codey/api-tokens.json` so that
+   * this file — which is watched, diffed and served over HTTP — never carries
+   * one. See `api-tokens.ts`.
+   */
+  api?: {
+    /**
+     * Which interface the HTTP server binds. Default `127.0.0.1` (this machine
+     * only). Set `0.0.0.0` to expose it on the LAN — deliberately explicit,
+     * because every endpoint including `/config` becomes reachable.
+     */
+    bindHost?: string;
+    /** Browser origins allowed to call the server. Empty = none. */
+    allowedOrigins?: string[];
+  };
   /** Voice input helper (native macOS app) configuration. */
   voice?: {
     /** Legacy aggregate kept true while either global hotkey is enabled. */
@@ -333,6 +352,17 @@ export class ConfigManager extends EventEmitter {
 
   // ── Gateway settings ───────────────────────────────────────────────
   getPort(): number { return this.config.gateway.port; }
+
+  /**
+   * Interface for the HTTP server. Defaults to loopback: none of these
+   * endpoints has a cross-machine use case, and `/config` in particular used to
+   * be reachable from the whole LAN because `listen()` was called without a
+   * host.
+   */
+  getApiBindHost(): string { return this.config.api?.bindHost?.trim() || DEFAULT_API_BIND_HOST; }
+
+  /** Browser origins allowed to call the HTTP server. Empty = block all. */
+  getApiAllowedOrigins(): string[] { return this.config.api?.allowedOrigins ?? []; }
   getSkipPermissions(): boolean { return this.config.gateway.skipPermissions ?? true; }
 
   /** Canonical default = first entry in fallback.order. */
@@ -858,6 +888,16 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
       ...(voice.converseHotkey === 'Control+Fn' ? { converseHotkey: 'Shift+Fn' } : {}),
       ...(rawTts && typeof rawTts === 'object' ? { tts } : {}),
     } as GatewayConfigJson['voice'];
+  }
+  if (raw.api && typeof raw.api === 'object') {
+    out.api = {
+      bindHost: typeof raw.api.bindHost === 'string' && raw.api.bindHost.trim()
+        ? raw.api.bindHost.trim()
+        : undefined,
+      allowedOrigins: Array.isArray(raw.api.allowedOrigins)
+        ? raw.api.allowedOrigins.filter((o: unknown): o is string => typeof o === 'string' && !!o.trim())
+        : undefined,
+    };
   }
   if (raw.notifications && typeof raw.notifications === 'object') {
     out.notifications = { enabled: raw.notifications.enabled };
