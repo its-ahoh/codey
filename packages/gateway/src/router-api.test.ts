@@ -18,6 +18,7 @@ describe('Router API /v1', () => {
   let created: Array<Parameters<RouterApiHost['createApiChat']>[0]>;
   let sent: Array<{ chatId: string; text: string }>;
   let chats: Set<string>;
+  let messages: Map<string, any[]>;
   let respond: (chatId: string, text: string) => Promise<{
     response: string; chatId: string; tokens?: number; durationSec?: number;
   }>;
@@ -35,6 +36,8 @@ describe('Router API /v1', () => {
       return { id };
     },
     hasChat: (chatId) => chats.has(chatId),
+    getChatMessages: (chatId) => messages.get(chatId) ?? [],
+    deleteChat: (chatId) => { chats.delete(chatId); messages.delete(chatId); },
     sendToChat: async (chatId, text) => {
       sent.push({ chatId, text });
       return respond(chatId, text);
@@ -74,6 +77,7 @@ describe('Router API /v1', () => {
     created = [];
     sent = [];
     chats = new Set();
+    messages = new Map();
     opts = { timeoutSec: 5, rateLimitPerMin: 60 };
     respond = async (chatId) => ({ response: 'done', chatId, tokens: 42, durationSec: 1.5 });
 
@@ -209,10 +213,8 @@ describe('Router API /v1', () => {
     expect((await post({ prompt: 'x', agent: 'nope' })).status).toBe(400);
   });
 
-  it('rejects stream:true rather than silently not streaming', async () => {
-    const res = await post({ prompt: 'x', stream: true });
-    expect(res.status).toBe(400);
-    expect((await json(res)).error).toMatch(/[Ss]treaming/);
+  it('rejects a non-boolean stream flag', async () => {
+    expect((await post({ prompt: 'x', stream: 'yes' })).status).toBe(400);
   });
 
   it('never reaches the agent when validation fails', async () => {
@@ -254,5 +256,189 @@ describe('Router API /v1', () => {
   it('rejects an oversized body', async () => {
     const res = await post({ prompt: 'x'.repeat(2 * 1024 * 1024) });
     expect(res.status).toBe(413);
+  });
+
+  // ── streaming ───────────────────────────────────────────────────
+
+  /** Collect an NDJSON body into parsed events. */
+  const readNdjson = async (res: Response): Promise<any[]> =>
+    (await res.text()).split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+
+  it('streams events as NDJSON and ends with done', async () => {
+    respond = async (chatId) => ({ response: 'final', chatId, tokens: 7, durationSec: 2 });
+    const res = await post({ prompt: 'go', stream: true });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/x-ndjson');
+
+    const events = await readNdjson(res);
+    const last = events[events.length - 1];
+    expect(last.type).toBe('done');
+    expect(last.response).toBe('final');
+    expect(last.tokens).toBe(7);
+  });
+
+  it('reports the generated sessionId in a header', async () => {
+    const res = await post({ prompt: 'go', stream: true });
+    const sessionId = res.headers.get('x-codey-session-id');
+    expect(sessionId).toMatch(/^sess_/);
+    await readNdjson(res);
+
+    // The header is enough to keep talking to the same session.
+    const body = await json(await post({ prompt: 'again', sessionId }));
+    expect(body.sessionId).toBe(sessionId);
+    expect(created).toHaveLength(1);
+  });
+
+  it('does not duplicate a terminal event the run already emitted', async () => {
+    const base = host();
+    const emitsDone: RouterApiHost = {
+      ...base,
+      sendToChat: async (chatId, text, sink) => {
+        sink({ type: 'done', chatId, response: 'from the agent', tokens: 3 });
+        return base.sendToChat(chatId, text, sink);
+      },
+    };
+    await server.stop();
+    server = new ApiServer(0, fakeStatus, fakeConfigManager(), undefined, undefined, undefined, undefined, store);
+    server.setRouterApi(new RouterApi(emitsDone, () => opts));
+    await server.start();
+    port = (server as any).server.address().port;
+
+    const events = await readNdjson(await post({ prompt: 'go', stream: true }));
+    expect(events.filter(e => e.type === 'done')).toHaveLength(1);
+    expect(events[events.length - 1].response).toBe('from the agent');
+  });
+
+  it('forwards the agent\'s own events, in order, before done', async () => {
+    respond = async (chatId) => ({ response: 'final', chatId });
+    // The sink is the third argument; drive it from the fake host.
+    const streamingHost = host();
+    const withEvents: RouterApiHost = {
+      ...streamingHost,
+      sendToChat: async (chatId, text, sink) => {
+        sink({ type: 'tool_start', chatId, message: 'reading a file' });
+        sink({ type: 'stream', chatId, token: 'par' });
+        sink({ type: 'stream', chatId, token: 'tial' });
+        return streamingHost.sendToChat(chatId, text, sink);
+      },
+    };
+    await server.stop();
+    server = new ApiServer(0, fakeStatus, fakeConfigManager(), undefined, undefined, undefined, undefined, store);
+    server.setRouterApi(new RouterApi(withEvents, () => opts));
+    await server.start();
+    port = (server as any).server.address().port;
+
+    const events = await readNdjson(await post({ prompt: 'go', stream: true }));
+    expect(events.map(e => e.type)).toEqual(['tool_start', 'stream', 'stream', 'done']);
+    expect(events[1].token + events[2].token).toBe('partial');
+  });
+
+  it('ends the stream with an error event, not a 500, when the agent throws', async () => {
+    respond = async () => { throw new Error('agent exploded'); };
+    const res = await post({ prompt: 'go', stream: true });
+
+    // The status line was already sent, so the failure has to be an event.
+    expect(res.status).toBe(200);
+    const events = await readNdjson(res);
+    expect(events[events.length - 1]).toMatchObject({ type: 'error', message: 'agent exploded' });
+  });
+
+  it('ends the stream with an error event on timeout', async () => {
+    opts = { timeoutSec: 0.05, rateLimitPerMin: 60 };
+    respond = () => new Promise(resolve => setTimeout(() => resolve({ response: 'late', chatId: 'chat-1' }), 500));
+
+    const events = await readNdjson(await post({ prompt: 'slow', stream: true }));
+    const last = events[events.length - 1];
+    expect(last.type).toBe('error');
+    expect(last.message).toMatch(/did not respond/);
+  });
+
+  it('still enforces validation before opening a stream', async () => {
+    const res = await post({ prompt: 'x', workspace: 'nope', stream: true });
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toContain('application/json');
+  });
+
+  it('frees the session after a stream completes', async () => {
+    await post({ prompt: 'a', sessionId: 's1', stream: true }).then(readNdjson);
+    expect((await post({ prompt: 'b', sessionId: 's1' })).status).toBe(200);
+  });
+
+  // ── session endpoints ───────────────────────────────────────────
+
+  const sessionUrl = (id: string) => url(`/v1/sessions/${encodeURIComponent(id)}`);
+  const authed = () => ({ Authorization: `Bearer ${token}` });
+
+  it('returns a session\'s recent messages', async () => {
+    await post({ prompt: 'hi', sessionId: 's1' });
+    messages.set('chat-1', [
+      { id: 'm1', role: 'user', content: 'hi', timestamp: 1 },
+      { id: 'm2', role: 'assistant', content: 'hello', timestamp: 2, tokens: 5 },
+    ]);
+
+    const body = await json(await fetch(sessionUrl('s1'), { headers: authed() }));
+    expect(body.sessionId).toBe('s1');
+    expect(body.messages).toEqual([
+      { role: 'user', content: 'hi', timestamp: 1, tokens: undefined, durationSec: undefined },
+      { role: 'assistant', content: 'hello', timestamp: 2, tokens: 5, durationSec: undefined },
+    ]);
+  });
+
+  it('caps the returned history to the context window', async () => {
+    await post({ prompt: 'hi', sessionId: 's1' });
+    messages.set('chat-1', Array.from({ length: 100 }, (_, i) => ({
+      id: `m${i}`, role: 'user', content: `${i}`, timestamp: i,
+    })));
+
+    const body = await json(await fetch(sessionUrl('s1'), { headers: authed() }));
+    expect(body.messages).toHaveLength(40);
+    // The tail, not the head — a reconnecting client wants the latest.
+    expect(body.messages[39].content).toBe('99');
+  });
+
+  it('404s an unknown session', async () => {
+    expect((await fetch(sessionUrl('nope'), { headers: authed() })).status).toBe(404);
+  });
+
+  it('requires a token on the session endpoints', async () => {
+    expect((await fetch(sessionUrl('s1'))).status).toBe(401);
+    expect((await fetch(sessionUrl('s1'), { method: 'DELETE' })).status).toBe(401);
+  });
+
+  it('deletes a session and its chat', async () => {
+    await post({ prompt: 'hi', sessionId: 's1' });
+    expect(chats.has('chat-1')).toBe(true);
+
+    const res = await fetch(sessionUrl('s1'), { method: 'DELETE', headers: authed() });
+    expect(res.status).toBe(200);
+    expect(chats.has('chat-1')).toBe(false);
+    expect((await fetch(sessionUrl('s1'), { headers: authed() })).status).toBe(404);
+  });
+
+  it('deletes cleanly when the chat is already gone', async () => {
+    await post({ prompt: 'hi', sessionId: 's1' });
+    chats.clear();
+    expect((await fetch(sessionUrl('s1'), { method: 'DELETE', headers: authed() })).status).toBe(200);
+  });
+
+  it('refuses to delete a session with a request in flight', async () => {
+    let release!: () => void;
+    respond = (chatId) => new Promise(resolve => { release = () => resolve({ response: 'd', chatId }); });
+
+    const running = post({ prompt: 'a', sessionId: 's1' });
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+
+    const res = await fetch(sessionUrl('s1'), { method: 'DELETE', headers: authed() });
+    expect(res.status).toBe(409);
+
+    release();
+    await running;
+  });
+
+  it('404s an unknown method on the session route', async () => {
+    await post({ prompt: 'hi', sessionId: 's1' });
+    const res = await fetch(sessionUrl('s1'), { method: 'PUT', headers: authed() });
+    expect(res.status).toBe(404);
   });
 });

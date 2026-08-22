@@ -789,6 +789,8 @@ export class Codey {
       getDefaultModel: () => this.configManager?.getDefaultModel() ?? '',
       createApiChat: (input) => this.chatManager.create({ ...input, kind: 'api' }),
       hasChat: (chatId) => !!this.chatManager.get(chatId),
+      getChatMessages: (chatId) => this.chatManager.get(chatId)?.messages ?? [],
+      deleteChat: (chatId) => this.chatManager.delete(chatId),
       sendToChat: (chatId, text, sink) => this.sendToChat(chatId, text, sink),
     };
   }
