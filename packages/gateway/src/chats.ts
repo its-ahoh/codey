@@ -12,6 +12,8 @@ export interface CreateChatInput {
   title?: string;
   /** Hidden system chat (excluded from list() by default). */
   kind?: 'automation' | 'api';
+  /** Days of inactivity after which the chat is swept. Absent = keep forever. */
+  retentionDays?: number;
   /** Per-chat agent/model overrides, set at creation (used by automations). */
   agent?: Chat['agent'];
   model?: string;
@@ -196,6 +198,7 @@ export class ChatManager {
       createdAt: now,
       updatedAt: now,
       ...(input.kind ? { kind: input.kind } : {}),
+      ...(input.retentionDays ? { retentionDays: input.retentionDays } : {}),
       ...(input.agent ? { agent: input.agent } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.executionMode ? { executionMode: input.executionMode } : {}),
@@ -514,6 +517,28 @@ export class ChatManager {
     else delete chat.pendingSkillSuggestion;
     chat.updatedAt = Date.now();
     this.persist(chat);
+  }
+
+  /**
+   * Delete chats whose retention has lapsed — `retentionDays` past their last
+   * update. Returns how many went.
+   *
+   * Only chats that opted in by carrying `retentionDays` are considered, so a
+   * user's own chats are never touched. Sweeping is caller-driven rather than
+   * on a timer: the Router API costs nothing while idle, and a background
+   * interval purely to delete files would undo that.
+   */
+  deleteExpired(now: number = Date.now()): number {
+    this.ensureLoaded();
+    let deleted = 0;
+    for (const chat of [...this.cache.values()]) {
+      if (!chat.retentionDays) continue;
+      const ageMs = now - chat.updatedAt;
+      if (ageMs <= chat.retentionDays * 24 * 60 * 60 * 1000) continue;
+      this.delete(chat.id);
+      deleted++;
+    }
+    return deleted;
   }
 
   delete(chatId: string): void {

@@ -1,6 +1,6 @@
 # Spec: Router API — 让别的应用调用 Codey 的 agent
 
-状态：P1、P2 已合并；统一密钥管理、P3 已实现；P4 待做
+状态：P1–P3 + 统一密钥管理已合并；session 保留期已实现；P4 待做
 分支：`router-mode`
 路径：`docs/superpowers/specs/2026-08-22-router-api-design.md`
 
@@ -110,10 +110,28 @@ Linux、容器里；Keychain 只有 macOS，而且需要已解锁的登录会话
 #### CLI
 
 ```bash
-npm run api-token -- create <name>   # 生成，打印一次明文
-npm run api-token -- list            # 只列 id / name / 时间
+npm run api-token -- create <name> [--retention unlimited|15|30|60|90]
+npm run api-token -- list            # 只列 id / name / 时间 / 保留期
 npm run api-token -- revoke <id>
 ```
+
+#### Session 保留期（2026-08-22 加）
+
+每次 API 调用都会在磁盘上留一个隐藏 chat，原本**永不清理**——脚本跑一万次
+就是一万个 json 文件，而且在 UI 里看不见。
+
+所以**在发 token 的时候就让用户选**：无限 / 15 / 30 / 60 / 90 天。
+交互式会列出来让你选；`--retention` 可以直接指定；非交互 shell（CI、脚本）
+拿不到回答，就退回"无限"——也就是原有行为——并提示怎么显式指定。
+
+- 保留期**抄一份到 chat 上**（`Chat.retentionDays`），不是运行时回查 token。
+  这样吊销 token 不会让它产生的 chat 变成没人管的孤儿。
+- 只有**带了 `retentionDays` 的 chat** 会被清理。用户自己的 chat、automation chat、
+  以及"无限" token 建的 chat 一律不碰。
+- 计时从**最后一次活动**（`updatedAt`）算，不是从创建算。还在用的 session 不会被删。
+- 清理由**请求触发**，最多每小时一次，**不开后台定时器**——闲置的 Router API
+  仍然是零开销，而需要清理的堆积本来也只能由请求产生。
+- 清理失败只打日志，不影响触发它的那个请求。
 
 ### 3.2 端点
 

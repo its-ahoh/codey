@@ -141,6 +141,13 @@ export interface Chat {
    * Both are excluded from the chat list the user sees.
    */
   kind?: 'automation' | 'api';
+  /**
+   * Days of inactivity after which this chat is deleted. Set from the Router
+   * API token that created it; absent means keep forever. Copied onto the chat
+   * rather than looked up from the token so revoking the token cannot strand
+   * the transcripts it produced.
+   */
+  retentionDays?: number;
   selection: ChatSelection;
   messages: ChatMessage[];
   createdAt: number;

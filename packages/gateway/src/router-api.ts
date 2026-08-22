@@ -27,11 +27,14 @@ export interface RouterApiHost {
     selection?: { type: 'team'; name: string } | { type: 'none' };
     agent?: CodingAgent;
     model?: string;
+    retentionDays?: number;
   }): { id: string };
   hasChat(chatId: string): boolean;
   /** Recent messages for a session's chat, oldest first. */
   getChatMessages(chatId: string): ChatMessage[];
   deleteChat(chatId: string): void;
+  /** Delete chats whose retention has lapsed. Returns how many went. */
+  deleteExpiredChats(): number;
   sendToChat(
     chatId: string,
     text: string,
@@ -46,6 +49,7 @@ export interface RouterApiOptions {
 
 const AGENTS: readonly CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi'];
 const MAX_BODY_BYTES = 1024 * 1024;
+const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
 interface PromptRequest {
   prompt: string;
@@ -73,6 +77,8 @@ export class RouterApi {
   private readonly inFlight = new Set<string>();
   /** tokenId → recent request timestamps, trimmed to the last minute. */
   private readonly recentRequests = new Map<string, number[]>();
+  /** When the retention sweep last ran. 0 = never. */
+  private lastSweepAt = 0;
 
   constructor(host: RouterApiHost, options: () => RouterApiOptions) {
     this.host = host;
@@ -87,7 +93,7 @@ export class RouterApi {
     req: http.IncomingMessage,
     res: http.ServerResponse,
     url: string,
-    tokenId: string,
+    token: { id: string; retentionDays?: number | null },
   ): Promise<boolean> {
     if (url === '/v1/capabilities' && req.method === 'GET') {
       send(res, 200, {
@@ -101,7 +107,7 @@ export class RouterApi {
     }
 
     if (url === '/v1/prompt' && req.method === 'POST') {
-      await this.handlePrompt(req, res, tokenId);
+      await this.handlePrompt(req, res, token);
       return true;
     }
 
@@ -118,12 +124,13 @@ export class RouterApi {
   private async handlePrompt(
     req: http.IncomingMessage,
     res: http.ServerResponse,
-    tokenId: string,
+    token: { id: string; retentionDays?: number | null },
   ): Promise<void> {
     let sessionId: string | undefined;
     let claimed = false;
     try {
-      this.enforceRateLimit(tokenId);
+      this.enforceRateLimit(token.id);
+      this.sweepExpiredChats();
       const body = await readBody(req);
       const parsed = this.validate(body);
 
@@ -136,7 +143,7 @@ export class RouterApi {
       this.inFlight.add(sessionId);
       claimed = true;
 
-      const chatId = this.resolveChat(sessionId, parsed);
+      const chatId = this.resolveChat(sessionId, parsed, token.retentionDays ?? undefined);
 
       if (parsed.stream) {
         await this.runStreaming(res, chatId, sessionId, parsed.prompt);
@@ -169,6 +176,26 @@ export class RouterApi {
       });
     } finally {
       if (claimed && sessionId) this.inFlight.delete(sessionId);
+    }
+  }
+
+  /**
+   * Drop chats past their retention, at most once an hour.
+   *
+   * Driven by incoming requests rather than a timer, so an unused Router API
+   * still costs nothing while idle — the pile-up it cleans up can only grow
+   * through requests anyway.
+   */
+  private sweepExpiredChats(): void {
+    const now = Date.now();
+    if (now - this.lastSweepAt < SWEEP_INTERVAL_MS) return;
+    this.lastSweepAt = now;
+    try {
+      const deleted = this.host.deleteExpiredChats();
+      if (deleted > 0) console.log(`[router-api] deleted ${deleted} expired session chat(s)`);
+    } catch (err) {
+      // Housekeeping must never fail the request that triggered it.
+      console.error(`[router-api] retention sweep failed: ${(err as Error).message}`);
     }
   }
 
@@ -253,7 +280,7 @@ export class RouterApi {
    * has since been deleted gets a fresh chat rather than a 404: the caller's
    * session id stays valid, it just loses the old context.
    */
-  private resolveChat(sessionId: string, parsed: PromptRequest): string {
+  private resolveChat(sessionId: string, parsed: PromptRequest, retentionDays?: number): string {
     const existing = this.sessions.get(sessionId);
     if (existing && this.host.hasChat(existing)) return existing;
 
@@ -263,6 +290,7 @@ export class RouterApi {
       selection: parsed.team ? { type: 'team', name: parsed.team } : { type: 'none' },
       agent: parsed.agent,
       model: parsed.model,
+      retentionDays,
     });
     this.sessions.set(sessionId, chat.id);
     return chat.id;
