@@ -3,12 +3,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ConfigManager } from './config';
+import { SecretStore } from './secret-store';
 
 function withTempConfig(initial: any, fn: (cm: ConfigManager, p: string) => void) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-cfg-'));
   const p = path.join(dir, 'gateway.json');
   fs.writeFileSync(p, JSON.stringify(initial));
-  const cm = new ConfigManager(p);
+  // Own secret store per case: the default one lives under CODEY_HOME and
+  // would carry state between tests.
+  const cm = new ConfigManager(p, new SecretStore(path.join(dir, 'secrets.json')));
   try { fn(cm, p); } finally { cm.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -24,7 +27,7 @@ describe('config normalize', () => {
     });
   });
 
-  it('parses apiKeys array and preserves valid entries', () => {
+  it('parses apiKeys array, dropping only entries without a name', () => {
     withTempConfig({
       apiKeys: [
         { name: 'main', apiKey: 'sk-1', anthropicBaseUrl: 'https://anthropic.example', openaiBaseUrl: 'https://openai.example' },
@@ -33,8 +36,10 @@ describe('config normalize', () => {
       ],
     }, cm => {
       const apiKeys = cm.listApiKeys();
-      expect(apiKeys).toHaveLength(1);
-      expect(apiKeys[0].name).toBe('main');
+      // 'noKey' is kept: a missing secret is the normal on-disk state now that
+      // the value lives in the 0600 store. Only a nameless entry is unusable.
+      expect(apiKeys.map(a => a.name)).toEqual(['main', 'noKey']);
+      expect(apiKeys[1].apiKey).toBe('');
     });
   });
 

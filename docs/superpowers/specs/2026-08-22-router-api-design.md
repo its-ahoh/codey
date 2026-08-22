@@ -1,6 +1,6 @@
 # Spec: Router API — 让别的应用调用 Codey 的 agent
 
-状态：P1、P2 已实现；P3–P4 待做
+状态：P1、P2 已合并；统一密钥管理已实现；P3–P4 待做
 分支：`router-mode`
 路径：`docs/superpowers/specs/2026-08-22-router-api-design.md`
 
@@ -234,11 +234,31 @@ npm run api-token -- revoke <id>
 - **Token 存储**：`~/.codey/api-tokens.json`，`0600`，**只存 sha256 哈希**，
   明文只在生成时打印一次。不上 Keychain（headless / Linux 跑不了）。（2026-08-22 定）
 
-## 8. 后续（已确认要做，不在本 spec 范围）
+## 8. 统一密钥管理 — 已实现（2026-08-22）
 
-- **统一密钥管理**（2026-08-22 用户确认）：Router API 落地后，单开一个 PR，
-  把 `gateway.json` 里现存的第三方 API key（Anthropic / OpenAI / Google、
-  Telegram / Discord bot token 等）也收进 `~/.codey` 下的 0600 密钥库，
-  与 `api-tokens.json` 复用同一套读写原语（`secret-store.ts`）。
-  本期先不动它们（改动面大、与 Router API 正交），
-  但 `/config` 上锁后它们至少不再能被 HTTP 裸读。
+`gateway.json` 里的第三方 API key 和 bot token 已收进 `~/.codey/secrets.json`
+（`0600`），与 `api-tokens.json` 共用 `secure-file.ts` 的读写原语。
+
+- **按敏感度切分，不按功能切分**：非敏感元数据（key 名、base URL、purpose、
+  channel 开关）留在 `gateway.json`，只有密钥串搬走。
+- **密钥字段留空而不是删掉**，这样人打开文件能看出"配过，只是存别处"，
+  不会误以为从没配过。
+- **迁移是自动的、单向的**：老 config 里的内联密钥在加载时先写进密钥库，
+  **然后**才重写 `gateway.json`。顺序不能反——中途崩溃最坏是两边都有，下次加载自动收敛。
+- **`ConfigManager` 在内存里把密钥装回去**，所以 channels、adapters、Mac app
+  的 key 编辑器一行都不用改。存储位置是实现细节，不是 API 变更。
+- `/config` 端点额外做一次 redact：有 token 是"允许读配置"，不是"允许导出全部凭据"。
+- 明文存储，不加密。这跟 `~/.ssh/id_rsa`、`~/.aws/credentials` 是同一个信任模型：
+  只有进程属主能读。加密就要有密钥，密钥又要找地方放，绕回原问题。
+
+实现时抓到的两个真 bug（都是测试先发现的）：
+1. `adoptSecrets` 里直接调 `save()`，而构造函数此时还没给 `this.config` 赋值
+   → 迁移静默失败，密钥留在磁盘上。改成置标志、构造完再存。
+2. `normalize` 原本会丢掉 `apiKey` 为空的条目。剥离密钥后所有条目的 apiKey 都是空的，
+   **重启一次全部 key 条目就没了**。改成只丢没有 `name` 的条目。
+
+还加了 `vitest.setup.ts` 把 `CODEY_HOME` 指向临时目录：
+否则测试里的 fixture 密钥会被"迁移"进开发者真实的密钥库（实现过程中真的发生了一次）。
+
+**不在范围内**：`mcpServers[].env` 里的值仍是明文存在 `gateway.json`。
+那是用户自定义的任意 env，无法可靠判断哪个是密钥；要收也得先让用户显式标注。

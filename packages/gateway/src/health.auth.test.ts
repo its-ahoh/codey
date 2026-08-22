@@ -26,7 +26,11 @@ describe('ApiServer auth', () => {
 
   // Minimal stand-in: the server only needs these three methods.
   const fakeConfigManager = () => ({
-    get: () => ({ gateway: { port: 0 }, apiKeys: [{ name: 'anthropic', apiKey: 'sk-super-secret' }] }),
+    get: () => ({
+      gateway: { port: 0 },
+      channels: { telegram: { enabled: true, botToken: 'bot-secret' } },
+      apiKeys: [{ name: 'anthropic', apiKey: 'sk-super-secret' }],
+    }),
     getApiBindHost: () => apiSettings.bindHost ?? '127.0.0.1',
     getApiAllowedOrigins: () => apiSettings.allowedOrigins ?? [],
     update: () => { /* no-op */ },
@@ -75,11 +79,18 @@ describe('ApiServer auth', () => {
     expect(res.status).toBe(401);
   });
 
-  it('serves /config with a valid token', async () => {
+  it('serves /config with a valid token, secrets redacted', async () => {
     const { token } = store.create('real');
     const res = await fetch(url('/config'), { headers: { Authorization: `Bearer ${token}` } });
     expect(res.status).toBe(200);
-    expect((await json(res)).apiKeys[0].apiKey).toBe('sk-super-secret');
+
+    const body = await res.text();
+    expect(body).not.toContain('sk-super-secret');
+    expect(body).not.toContain('bot-secret');
+    // The entry is still listed — the caller can see a credential exists.
+    const parsed = JSON.parse(body);
+    expect(parsed.apiKeys[0].name).toBe('anthropic');
+    expect(parsed.apiKeys[0].apiKey).toBe('');
   });
 
   it('rejects POST /config with no token', async () => {

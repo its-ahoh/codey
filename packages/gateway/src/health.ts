@@ -1,5 +1,5 @@
 import * as http from 'http';
-import { ConfigManager } from './config';
+import { ConfigManager, stripSecrets } from './config';
 import { ApiTokenRecord, ApiTokenStore, parseBearer } from './api-tokens';
 import { RouterApi } from './router-api';
 import { VoiceConverseEvent } from '@codey/core';
@@ -7,10 +7,11 @@ import { VoiceConverseEvent } from '@codey/core';
 /**
  * Endpoints that require a bearer token.
  *
- * `/config` serves the whole gateway configuration — provider API keys, bot
- * tokens, the lot — and used to be readable, and writable, by anyone who could
- * reach the port. `/health`, `/metrics` and `/ready` stay open: they are what
- * process supervisors poll, and they expose only counters.
+ * `/config` serves the whole gateway configuration and used to be readable,
+ * and writable, by anyone who could reach the port. It is now behind a token
+ * AND has its secrets redacted — the credentials themselves live in the 0600
+ * secret store and are never served. `/health`, `/metrics` and `/ready` stay
+ * open: they are what process supervisors poll, and expose only counters.
  *
  * `/voice/*` is not listed because it has its own guard (no-Origin native
  * clients only) and is called by the Swift helper, which has no way to hold a
@@ -374,7 +375,10 @@ export class ApiServer {
       if (url === '/config' && req.method === 'GET') {
         try {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(this.configManager.get(), null, 2));
+          // Serve the same shape that is written to disk — secrets blanked.
+          // A bearer token authorizes reading configuration, not exfiltrating
+          // every provider credential the user has stored.
+          res.end(JSON.stringify(stripSecrets(this.configManager.get()), null, 2));
         } catch (error) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: String(error) }));

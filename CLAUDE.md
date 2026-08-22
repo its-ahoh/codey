@@ -54,6 +54,19 @@ Gateway config: `gateway.json` (see `gateway.json.example`)
 
 Environment variables override config: `PORT`, `DEFAULT_AGENT`, `DEFAULT_MODEL`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`.
 
+**Secrets do not live in `gateway.json`.** Provider API keys and bot tokens are
+stored in `~/.codey/secrets.json` (mode `0600`), and Router API bearer tokens in
+`~/.codey/api-tokens.json` — both via `secure-file.ts`. `gateway.json` keeps only
+the non-secret metadata (key name, base URL, purpose; channel enabled/disabled)
+with the secret field blanked. A config still holding inline secrets is migrated
+automatically on load: the value is written to the store first, then rewritten
+out of `gateway.json`. `ConfigManager` hydrates the values back into the
+in-memory config, so runtime readers see the shape they always saw.
+
+Tests must never build a `SecretStore` or `ApiTokenStore` on the default path —
+`packages/gateway/vitest.setup.ts` redirects `CODEY_HOME` to a temp dir so a
+fixture key cannot be migrated into a real credential store.
+
 ## TypeScript
 
 - Target: ES2020, Module: CommonJS, strict mode

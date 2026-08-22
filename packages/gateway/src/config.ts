@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
+import { SecretKey, SecretStore, apiKeySecret, channelSecret } from './secret-store';
 import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, isApiType, McpServerSpec, ModelEntry, TeamConfigRaw, ThinkingEffort } from '@codey/core';
 
 // ── Configuration types ─────────────────────────────────────────────
@@ -254,12 +255,23 @@ export class ConfigManager extends EventEmitter {
   private watcher?: fs.FSWatcher;
   private lastSerialized: string = '';
   private reloadTimer?: NodeJS.Timeout;
+  private secrets: SecretStore;
+  /** Set by adoptSecrets when it found inline secrets that must be rewritten out. */
+  private pendingMigration = false;
 
-  constructor(configPath?: string) {
+  constructor(configPath?: string, secrets?: SecretStore) {
     super();
     this.configPath = configPath || path.join(process.cwd(), 'gateway.json');
+    this.secrets = secrets ?? new SecretStore();
     this.config = this.loadConfig();
-    this.lastSerialized = JSON.stringify(this.config);
+    this.lastSerialized = JSON.stringify(stripSecrets(this.config));
+    // A migration is only complete once the secret is off disk. This cannot
+    // happen inside loadConfig(): save() reads this.config, which is not
+    // assigned until the line above.
+    if (this.pendingMigration) {
+      this.pendingMigration = false;
+      this.save();
+    }
     this.startWatching();
   }
 
@@ -267,12 +279,55 @@ export class ConfigManager extends EventEmitter {
     try {
       if (fs.existsSync(this.configPath)) {
         const data = fs.readFileSync(this.configPath, 'utf-8');
-        return normalize(JSON.parse(data));
+        return this.adoptSecrets(normalize(JSON.parse(data)));
       }
     } catch (error) {
       console.error('[Config] Error loading config:', error);
     }
-    return getDefaultConfig();
+    return this.adoptSecrets(getDefaultConfig());
+  }
+
+  /**
+   * Reconcile a freshly-parsed config with the secret store, in both
+   * directions:
+   *
+   * - **Migration.** A secret still written inline in `gateway.json` (an
+   *   existing install, a hand-edited file, `gateway.json.example`) is moved
+   *   into the store and the config is rewritten without it. This is the only
+   *   path that removes a secret from disk, so it must never drop one: the
+   *   store is written first, and only then is the config re-saved.
+   * - **Hydration.** Every secret the store knows about is put back into the
+   *   in-memory config. Existing readers — the channels, the agent adapters,
+   *   the Mac app's key editor — keep seeing the shape they always saw. The
+   *   split is a storage detail, not an API change.
+   */
+  private adoptSecrets(config: GatewayConfigJson): GatewayConfigJson {
+    const migrated: Array<[SecretKey, string]> = [];
+
+    for (const entry of config.apiKeys ?? []) {
+      if (entry.apiKey) migrated.push([apiKeySecret(entry.name), entry.apiKey]);
+    }
+    for (const channel of ['telegram', 'discord'] as const) {
+      const token = config.channels?.[channel]?.botToken;
+      if (token) migrated.push([channelSecret(channel), token]);
+    }
+    if (migrated.length > 0) {
+      this.secrets.setMany(migrated);
+      this.pendingMigration = true;
+      console.log(`[Config] Moved ${migrated.length} secret(s) out of ${this.configPath} into the 0600 secret store`);
+    }
+
+    // Hydrate after migrating so a value present in both places resolves to
+    // the config's — the file the user just edited wins over the cache.
+    for (const entry of config.apiKeys ?? []) {
+      if (!entry.apiKey) entry.apiKey = this.secrets.get(apiKeySecret(entry.name)) ?? '';
+    }
+    for (const channel of ['telegram', 'discord'] as const) {
+      const slot = config.channels?.[channel];
+      if (slot && !slot.botToken) slot.botToken = this.secrets.get(channelSecret(channel)) ?? '';
+    }
+
+    return config;
   }
 
   private startWatching(): void {
@@ -292,12 +347,21 @@ export class ConfigManager extends EventEmitter {
       if (!fs.existsSync(this.configPath)) return;
       const data = fs.readFileSync(this.configPath, 'utf-8');
       const next = normalize(JSON.parse(data));
-      const serialized = JSON.stringify(next);
+      // Compare stripped forms: the file never carries secrets, so including
+      // the hydrated values would make every reload look like a change.
+      const serialized = JSON.stringify(stripSecrets(next));
       if (serialized === this.lastSerialized) return;
-      this.config = next;
+      // Another process may have written a secret since we last read.
+      this.secrets.reload();
+      this.config = this.adoptSecrets(next);
       this.lastSerialized = serialized;
       console.log('[Config] Reloaded from disk');
-      this.emit('change', this.config);
+      if (this.pendingMigration) {
+        this.pendingMigration = false;
+        this.save();  // emits 'change' itself
+      } else {
+        this.emit('change', this.config);
+      }
     } catch (err) {
       console.error('[Config] reload failed:', err);
     }
@@ -312,14 +376,33 @@ export class ConfigManager extends EventEmitter {
 
   save(): void {
     try {
-      const serialized = JSON.stringify(this.config, null, 2);
-      fs.writeFileSync(this.configPath, serialized);
-      this.lastSerialized = JSON.stringify(this.config);
+      // Secrets are pushed to the 0600 store BEFORE the config is written, so
+      // a crash between the two loses nothing: the worst case is a secret in
+      // both places, which the next load reconciles.
+      this.persistSecrets();
+      const onDisk = stripSecrets(this.config);
+      fs.writeFileSync(this.configPath, JSON.stringify(onDisk, null, 2));
+      this.lastSerialized = JSON.stringify(onDisk);
       console.log('[Config] Saved to', this.configPath);
+      // Listeners get the live config, secrets included — they are runtime
+      // consumers (channels, adapters), not writers.
       this.emit('change', this.config);
     } catch (error) {
       console.error('[Config] Error saving config:', error);
     }
+  }
+
+  /** Mirror the in-memory secrets into the store. */
+  private persistSecrets(): void {
+    const entries: Array<[SecretKey, string]> = [];
+    for (const entry of this.config.apiKeys ?? []) {
+      if (entry.apiKey) entries.push([apiKeySecret(entry.name), entry.apiKey]);
+    }
+    for (const channel of ['telegram', 'discord'] as const) {
+      const token = this.config.channels?.[channel]?.botToken;
+      if (token) entries.push([channelSecret(channel), token]);
+    }
+    this.secrets.setMany(entries);
   }
 
   /** Bulk update from external source (e.g. renderer IPC). Merges, saves, emits change. */
@@ -508,6 +591,9 @@ export class ConfigManager extends EventEmitter {
     const idx = this.config.apiKeys.findIndex(a => a.name === oldName);
     if (idx < 0) return false;
     this.config.apiKeys[idx] = { ...this.config.apiKeys[idx], name: newName };
+    // The store is keyed by entry name; without this the secret is orphaned
+    // under the old key and the renamed entry silently loses its credential.
+    this.secrets.rename(apiKeySecret(oldName), apiKeySecret(newName));
     // Rewrite every model that referenced the old name so apiKeyRef stays valid.
     for (const m of this.config.models) {
       if (m.apiKeyRef === oldName) m.apiKeyRef = newName;
@@ -532,6 +618,9 @@ export class ConfigManager extends EventEmitter {
     const before = this.config.apiKeys.length;
     this.config.apiKeys = this.config.apiKeys.filter(a => a.name !== name);
     if (this.config.apiKeys.length !== before) {
+      // Deleting the entry has to delete the credential; `save()` only writes
+      // secrets it can still see in the config.
+      this.secrets.delete(apiKeySecret(name));
       this.save();
       return true;
     }
@@ -806,6 +895,25 @@ function getDefaultConfig(): GatewayConfigJson {
   };
 }
 
+/**
+ * The config as it is allowed to touch disk: same shape, secrets blanked.
+ *
+ * Blanked rather than deleted, so the JSON keeps the field and a reader
+ * (including a human opening the file) sees that a credential exists and is
+ * stored elsewhere — rather than concluding none was ever configured.
+ */
+export function stripSecrets(config: GatewayConfigJson): GatewayConfigJson {
+  return {
+    ...config,
+    apiKeys: (config.apiKeys ?? []).map(entry => ({ ...entry, apiKey: '' })),
+    channels: {
+      ...config.channels,
+      ...(config.channels?.telegram ? { telegram: { ...config.channels.telegram, botToken: '' } } : {}),
+      ...(config.channels?.discord ? { discord: { ...config.channels.discord, botToken: '' } } : {}),
+    },
+  };
+}
+
 /** Fill in any missing top-level fields with defaults so downstream code can assume shape. */
 function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: CodingAgent; model?: string }; planner?: { model?: string } }): GatewayConfigJson {
   const defaults = getDefaultConfig();
@@ -820,8 +928,13 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
     apiKeyRef: (m as any).apiKeyRef,
     provider: m.provider,
   }));
+  // `name` is the identity; an empty `apiKey` is now the normal on-disk state
+  // (the secret lives in the 0600 store) and must NOT drop the entry, or every
+  // saved key would vanish on the first reload after being stripped.
   const apiKeys: ApiKeyEntry[] = Array.isArray(raw.apiKeys)
-    ? raw.apiKeys.filter((a: any) => a && typeof a.name === 'string' && a.name.trim() && typeof a.apiKey === 'string' && a.apiKey.trim())
+    ? raw.apiKeys
+        .filter((a: any) => a && typeof a.name === 'string' && a.name.trim())
+        .map((a: any) => ({ ...a, apiKey: typeof a.apiKey === 'string' ? a.apiKey : '' }))
     : [];
   const out: GatewayConfigJson = {
     gateway: { ...defaults.gateway, ...(raw.gateway ?? {}) },
