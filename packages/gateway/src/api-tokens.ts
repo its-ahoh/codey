@@ -1,7 +1,6 @@
 import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
+import { codeyHome, readSecureJson, writeSecureJson } from './secure-file';
 
 /**
  * Bearer tokens for the Router API.
@@ -21,7 +20,6 @@ import * as path from 'path';
  */
 
 export const TOKEN_PREFIX = 'codey_';
-const FILE_MODE = 0o600;
 const STORE_VERSION = 1;
 
 /** A token as persisted. `hash` never leaves this module. */
@@ -41,10 +39,8 @@ interface TokenFile {
   tokens: StoredToken[];
 }
 
-/** Base dir mirrors workspace.ts / gateway.ts: CODEY_HOME override, else ~/.codey. */
 export function defaultTokenFilePath(): string {
-  const home = process.env.CODEY_HOME ?? path.join(os.homedir(), '.codey');
-  return path.join(home, 'api-tokens.json');
+  return path.join(codeyHome(), 'api-tokens.json');
 }
 
 function sha256(input: string): string {
@@ -71,43 +67,19 @@ export class ApiTokenStore {
   }
 
   private read(): TokenFile {
-    try {
-      if (!fs.existsSync(this.filePath)) return { version: STORE_VERSION, tokens: [] };
-      // The file may have been created by an older build, restored from a
-      // backup, or copied around — re-assert 0600 on every read rather than
-      // trusting whatever mode it arrived with.
-      this.enforceMode();
-      const parsed = JSON.parse(fs.readFileSync(this.filePath, 'utf-8'));
-      const tokens = Array.isArray(parsed?.tokens) ? parsed.tokens : [];
-      return {
-        version: typeof parsed?.version === 'number' ? parsed.version : STORE_VERSION,
-        tokens: tokens.filter((t: unknown): t is StoredToken =>
-          !!t && typeof (t as StoredToken).id === 'string' && typeof (t as StoredToken).hash === 'string'),
-      };
-    } catch (err) {
-      // A broken token file must not take the gateway down; it means "no valid
-      // tokens", which the auth layer already handles as 401.
-      console.error(`[api-tokens] unreadable ${this.filePath}: ${(err as Error).message}`);
-      return { version: STORE_VERSION, tokens: [] };
-    }
-  }
-
-  private enforceMode(): void {
-    try {
-      const mode = fs.statSync(this.filePath).mode & 0o777;
-      if (mode !== FILE_MODE) {
-        console.warn(`[api-tokens] ${this.filePath} was mode ${mode.toString(8)}; tightening to 600`);
-        fs.chmodSync(this.filePath, FILE_MODE);
-      }
-    } catch { /* best effort — a filesystem without POSIX modes is not a failure */ }
+    // A broken token file must not take the gateway down; it means "no valid
+    // tokens", which the auth layer already handles as 401.
+    const parsed = readSecureJson<Partial<TokenFile>>(this.filePath, {});
+    const tokens = Array.isArray(parsed.tokens) ? parsed.tokens : [];
+    return {
+      version: typeof parsed.version === 'number' ? parsed.version : STORE_VERSION,
+      tokens: tokens.filter((t: unknown): t is StoredToken =>
+        !!t && typeof (t as StoredToken).id === 'string' && typeof (t as StoredToken).hash === 'string'),
+    };
   }
 
   private write(): void {
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    // `mode` only applies when the file is created, so chmod afterwards too:
-    // an existing file keeps its old (possibly wider) mode otherwise.
-    fs.writeFileSync(this.filePath, JSON.stringify(this.file, null, 2), { mode: FILE_MODE });
-    this.enforceMode();
+    writeSecureJson(this.filePath, this.file);
   }
 
   /**
