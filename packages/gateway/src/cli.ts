@@ -1,7 +1,7 @@
 import * as readline from 'readline';
 import { ConfigManager } from './config';
 import { Logger } from './logger';
-import { ApiTokenStore, defaultTokenFilePath } from './api-tokens';
+import { ApiTokenStore, RETENTION_CHOICES, defaultTokenFilePath, describeRetention, parseRetention } from './api-tokens';
 
 export class CLI {
   private config: ConfigManager;
@@ -260,7 +260,7 @@ export async function handleCommand(args: string[], config: ConfigManager, logge
       break;
 
     case 'api-token':
-      handleApiTokenCommand(args.slice(1), logger);
+      await handleApiTokenCommand(args.slice(1), logger);
       break;
 
     case 'set-loglevel':
@@ -327,20 +327,44 @@ function showHelp(): void {
  * `api-token create|list|revoke`. Tokens are stored hashed, so `create` is the
  * one and only moment the plaintext exists — print it loudly and never again.
  */
-function handleApiTokenCommand(args: string[], logger: Logger): void {
+async function handleApiTokenCommand(args: string[], logger: Logger): Promise<void> {
   const store = new ApiTokenStore();
   const sub = args[0];
 
   switch (sub) {
     case 'create': {
-      const name = args.slice(1).join(' ').trim();
+      const rest = args.slice(1);
+      // `--retention <value>` anywhere after the sub-command; the rest is the name.
+      let retentionArg: string | undefined;
+      const flag = rest.indexOf('--retention');
+      if (flag >= 0) {
+        retentionArg = rest[flag + 1];
+        if (retentionArg === undefined) {
+          logger.error('--retention needs a value: unlimited, 15, 30, 60 or 90');
+          return;
+        }
+        rest.splice(flag, 2);
+      }
+      const name = rest.join(' ').trim();
       if (!name) {
-        logger.error('Usage: api-token create <name>');
+        logger.error('Usage: api-token create <name> [--retention unlimited|15|30|60|90]');
         return;
       }
-      const { token, record } = store.create(name);
+
+      let retentionDays: number | null;
+      try {
+        retentionDays = retentionArg !== undefined
+          ? parseRetention(retentionArg)
+          : await promptForRetention();
+      } catch (err) {
+        logger.error((err as Error).message);
+        return;
+      }
+
+      const { token, record } = store.create(name, retentionDays);
       console.log('');
       console.log(`Created ${record.id} (${record.name})`);
+      console.log(`Session retention: ${describeRetention(record.retentionDays)}`);
       console.log('');
       console.log(`  ${token}`);
       console.log('');
@@ -360,7 +384,7 @@ function handleApiTokenCommand(args: string[], logger: Logger): void {
       }
       for (const t of tokens) {
         const used = t.lastUsedAt ? new Date(t.lastUsedAt).toISOString() : 'never';
-        console.log(`${t.id}  ${t.name}  created ${new Date(t.createdAt).toISOString()}  last used ${used}`);
+        console.log(`${t.id}  ${t.name}  created ${new Date(t.createdAt).toISOString()}  last used ${used}  retention ${describeRetention(t.retentionDays)}`);
       }
       return;
     }
@@ -377,6 +401,62 @@ function handleApiTokenCommand(args: string[], logger: Logger): void {
     }
 
     default:
-      logger.error('Usage: api-token <create <name> | list | revoke <id>>');
+      logger.error('Usage: api-token <create <name> [--retention ...] | list | revoke <id>>');
+  }
+}
+
+/**
+ * Ask how long the sessions this token creates should be kept.
+ *
+ * Every Router API call writes a hidden chat to disk and nothing used to
+ * remove it, so the choice is made once, up front, by the person who knows
+ * what the token is for. A non-interactive shell (CI, a script) cannot answer,
+ * so it gets 'unlimited' — the pre-existing behaviour — and is told how to
+ * pick explicitly.
+ */
+async function promptForRetention(): Promise<number | null> {
+  if (!process.stdin.isTTY) {
+    console.log('Non-interactive shell: keeping sessions forever.');
+    console.log('Pass --retention <unlimited|15|30|60|90> to choose.');
+    return null;
+  }
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    console.log('');
+    console.log('How long should sessions created with this token be kept?');
+    console.log('(each API call stores a hidden chat; they are deleted after this much inactivity)');
+    console.log('');
+    RETENTION_CHOICES.forEach((choice, i) => {
+      console.log(`  ${i + 1}. ${describeRetention(choice)}`);
+    });
+    console.log('');
+
+    // `closed` distinguishes "user pressed Enter" from "stdin went away"
+    // (Ctrl-D, or a caller that attached a TTY but sent nothing). Without it
+    // the question's callback never fires and the command exits having created
+    // no token, silently.
+    let closed = false;
+    rl.once('close', () => { closed = true; });
+
+    for (;;) {
+      const answer = await new Promise<string | null>(resolve => {
+        rl.once('close', () => resolve(null));
+        rl.question(`Select 1-${RETENTION_CHOICES.length} [1]: `, resolve);
+      });
+      if (answer === null || closed) {
+        console.log('\nNo answer given: keeping sessions forever.');
+        return RETENTION_CHOICES[0];
+      }
+      const raw = answer.trim();
+      if (!raw) return RETENTION_CHOICES[0];
+      const idx = Number(raw);
+      if (Number.isInteger(idx) && idx >= 1 && idx <= RETENTION_CHOICES.length) {
+        return RETENTION_CHOICES[idx - 1];
+      }
+      console.log('Please enter one of the listed numbers.');
+    }
+  } finally {
+    rl.close();
   }
 }

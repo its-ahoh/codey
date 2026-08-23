@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { ApiTokenStore, TOKEN_PREFIX } from './api-tokens';
+import { ApiTokenStore, TOKEN_PREFIX, describeRetention, parseRetention } from './api-tokens';
 
 describe('ApiTokenStore', () => {
   let dir: string;
@@ -105,5 +105,59 @@ describe('ApiTokenStore', () => {
     const b = store.create('b').token;
     expect(a).not.toBe(b);
     expect(store.list()).toHaveLength(2);
+  });
+
+  it('defaults to unlimited retention', () => {
+    const { record } = store.create('a');
+    expect(record.retentionDays).toBeNull();
+    expect(store.verify(store.create('b').token)?.retentionDays).toBeNull();
+  });
+
+  it('stores the chosen retention and reports it on verify', () => {
+    const { token, record } = store.create('a', 30);
+    expect(record.retentionDays).toBe(30);
+    // The auth layer reads it off the verified token to stamp new chats.
+    expect(store.verify(token)?.retentionDays).toBe(30);
+    expect(new ApiTokenStore(file).list()[0].retentionDays).toBe(30);
+  });
+
+  it('reports unlimited retention for a token minted before the field existed', () => {
+    store.create('a');
+    const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    delete raw.tokens[0].retentionDays;
+    fs.writeFileSync(file, JSON.stringify(raw));
+
+    expect(new ApiTokenStore(file).list()[0].retentionDays).toBeUndefined();
+  });
+});
+
+describe('retention parsing', () => {
+  it('accepts every offered choice', () => {
+    expect(parseRetention('unlimited')).toBeNull();
+    expect(parseRetention('15')).toBe(15);
+    expect(parseRetention('30')).toBe(30);
+    expect(parseRetention('60')).toBe(60);
+    expect(parseRetention('90')).toBe(90);
+  });
+
+  it('accepts the synonyms a user is likely to type', () => {
+    expect(parseRetention('never')).toBeNull();
+    expect(parseRetention('Forever')).toBeNull();
+    expect(parseRetention('0')).toBeNull();
+    expect(parseRetention(' 30 ')).toBe(30);
+  });
+
+  it('rejects a value that is not offered', () => {
+    // 7 is plausible but unoffered — silently accepting it would delete
+    // transcripts on a schedule the user never picked from.
+    expect(() => parseRetention('7')).toThrow(/unlimited/);
+    expect(() => parseRetention('abc')).toThrow();
+    expect(() => parseRetention('-30')).toThrow();
+  });
+
+  it('describes a retention for display', () => {
+    expect(describeRetention(null)).toBe('unlimited');
+    expect(describeRetention(undefined)).toBe('unlimited');
+    expect(describeRetention(30)).toBe('30 days');
   });
 });

@@ -22,6 +22,32 @@ import { codeyHome, readSecureJson, writeSecureJson } from './secure-file';
 export const TOKEN_PREFIX = 'codey_';
 const STORE_VERSION = 1;
 
+/**
+ * Retention choices offered when a token is minted, in days. `null` keeps a
+ * session's chat forever.
+ *
+ * A Router API session is a hidden chat on disk, and nothing ever removed one:
+ * a script calling the API in a loop left a JSON file per call, invisible in
+ * the UI. Retention is recorded per token because the caller who creates the
+ * traffic is the one who knows how long its transcripts are worth keeping.
+ */
+export const RETENTION_CHOICES: ReadonlyArray<number | null> = [null, 15, 30, 60, 90];
+
+/** Parse a user-supplied retention value. Throws on anything not offered. */
+export function parseRetention(input: string): number | null {
+  const raw = input.trim().toLowerCase();
+  if (raw === 'unlimited' || raw === 'never' || raw === 'forever' || raw === '0') return null;
+  const days = Number(raw);
+  if (!RETENTION_CHOICES.includes(days)) {
+    throw new Error(`Retention must be one of: unlimited, ${RETENTION_CHOICES.filter(Boolean).join(', ')}`);
+  }
+  return days;
+}
+
+export function describeRetention(days: number | null | undefined): string {
+  return days == null ? 'unlimited' : `${days} days`;
+}
+
 /** A token as persisted. `hash` never leaves this module. */
 interface StoredToken {
   id: string;
@@ -29,6 +55,12 @@ interface StoredToken {
   hash: string;
   createdAt: number;
   lastUsedAt?: number;
+  /**
+   * Days of inactivity after which a chat created through this token is
+   * deleted. Absent or null = keep forever. Chats carry a copy of this value,
+   * so revoking the token does not strand them.
+   */
+  retentionDays?: number | null;
 }
 
 /** A token as shown to the operator — same fields minus the secret material. */
@@ -86,7 +118,7 @@ export class ApiTokenStore {
    * Mint a token. The returned plaintext is the only copy that will ever
    * exist — the caller must show it to the operator and then drop it.
    */
-  create(name: string): { token: string; record: ApiTokenRecord } {
+  create(name: string, retentionDays: number | null = null): { token: string; record: ApiTokenRecord } {
     const secret = crypto.randomBytes(32).toString('base64url');
     const token = `${TOKEN_PREFIX}${secret}`;
     const hash = sha256(token);
@@ -97,6 +129,7 @@ export class ApiTokenStore {
       name,
       hash,
       createdAt: Date.now(),
+      retentionDays,
     };
     this.file.tokens.push(stored);
     this.write();
