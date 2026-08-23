@@ -2270,6 +2270,47 @@ export class Codey {
     return undefined;
   }
 
+  /**
+   * A channel turn with no Codey chat behind it is INVISIBLE in the Mac app:
+   * it runs on the plain-conversation path, persists no chat record, and emits
+   * no chat events, so the reply exists only in the chat platform. That is the
+   * default state right after a bot token is configured — pairing (`/pair`) or
+   * a Mac-side link is what normally creates the chat, and until then the two
+   * surfaces silently disagree about what happened.
+   *
+   * So: give every pairable-channel user a chat on their first prompt. The
+   * route makes `resolveChatId` find it from then on (no second chat is ever
+   * created), and it becomes the binding's current chat when a pairing exists.
+   */
+  private async ensureChannelChat(
+    channel: 'telegram' | 'discord' | 'imessage',
+    userId: string,
+    channelChatId: string,
+  ): Promise<string | undefined> {
+    try {
+      const binding = this.pairingStore.findByChannelUser(channel, userId);
+      const workspaceName = binding?.prefs?.workspace ?? this.workspaceManager.getCurrentWorkspace();
+      const chat = await this.createChat({ workspaceName });
+      if (binding?.prefs?.agent || binding?.prefs?.model) {
+        this.chatManager.updateAgentModel(chat.id, binding.prefs.agent, binding.prefs.model);
+      }
+      this.chatManager.addRoute(chat.id, {
+        channel,
+        channelUserId: userId,
+        channelChatId: binding?.channelChatId ?? channelChatId,
+        attachedAt: Date.now(),
+      });
+      if (binding) this.pairingStore.setCurrentChat(channel, userId, chat.id);
+      this.logger.info(`[chat] auto-created ${chat.id} for ${channel}:${userId} so the Mac app mirrors this turn`);
+      return chat.id;
+    } catch (err) {
+      // Never block the turn on this — worst case we fall back to the old
+      // channel-only path.
+      this.logger.error(`ensureChannelChat failed for ${channel}:${userId}: ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+
   private async processPrompt(
     message: UserMessage,
     parsed: ParsedCommand,
@@ -2300,7 +2341,13 @@ export class Codey {
   ): Promise<void> {
     const { userId, chatId, channel, id: messageId } = message;
 
-    const codeyChatId = this.resolveChatId(channel as ChannelType, userId);
+    let codeyChatId = this.resolveChatId(channel as ChannelType, userId);
+
+    // No chat yet (channel connected but never paired/linked) → make one, so
+    // this turn is mirrored into the Mac app like every other channel turn.
+    if (!codeyChatId && parsed.prompt.trim() && this.isPairableChannel(channel)) {
+      codeyChatId = await this.ensureChannelChat(channel, userId, chatId);
+    }
 
     // Channel-side with a linked Codey chat → route through sendToChat so the
     // Codey Chat record is updated and the Mac app sees the events.
