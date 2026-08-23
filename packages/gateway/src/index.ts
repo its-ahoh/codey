@@ -6,6 +6,7 @@ import { GatewayConfig } from '@codey/core';
 import { Codey } from './gateway';
 import { ApiServer, HealthStatusType } from './health';
 import { RouterApi } from './router-api';
+import { CompatApi } from './compat-api';
 import { assertNoLegacyLayout } from './startup-guard';
 
 dotenv.config();
@@ -78,6 +79,9 @@ function startGateway(): void {
     apiServer.setRouterApi(new RouterApi(gateway.asRouterApiHost(), () => ({
       timeoutSec: configManager.getApiTimeoutSec(),
       rateLimitPerMin: configManager.getApiRateLimitPerMin(),
+    })));
+    apiServer.setCompatApi(new CompatApi(gateway.asRouterApiHost(), () => ({
+      timeoutSec: configManager.getApiTimeoutSec(),
     })));
     await apiServer.start();
 

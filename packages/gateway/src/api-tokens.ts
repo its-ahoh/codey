@@ -197,3 +197,21 @@ export function parseBearer(header: string | string[] | undefined): string | nul
   const match = /^Bearer\s+(.+)$/i.exec(raw.trim());
   return match ? match[1].trim() : null;
 }
+
+/**
+ * The token from a request, accepting either convention.
+ *
+ * OpenAI clients send `Authorization: Bearer <key>`; Anthropic clients send
+ * `x-api-key: <key>` and no Authorization header at all. Both are looked up in
+ * the same store — the header a client happens to use says nothing about which
+ * token is valid.
+ */
+export function tokenFromHeaders(headers: {
+  authorization?: string | string[];
+  'x-api-key'?: string | string[];
+}): string | null {
+  const bearer = parseBearer(headers.authorization);
+  if (bearer) return bearer;
+  const apiKey = Array.isArray(headers['x-api-key']) ? headers['x-api-key'][0] : headers['x-api-key'];
+  return apiKey?.trim() || null;
+}
