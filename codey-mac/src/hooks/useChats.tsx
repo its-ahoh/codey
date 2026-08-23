@@ -52,6 +52,9 @@ type Action =
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
+  // Drop the in-flight entry only, leaving messages alone: used when the
+  // gateway reports it has nothing running for this chat.
+  | { type: 'clearInFlight'; chatId: string }
   | { type: 'patchContextPanelOpen'; chatId: string; open: boolean | null }
   | { type: 'patchSoloAdvisor'; chatId: string; enabled: boolean }
   | { type: 'patchTaskBrief'; chatId: string; brief: TaskBrief }
@@ -444,6 +447,12 @@ export function reducer(state: State, action: Action): State {
         inFlight,
         pendingRestores: { ...state.pendingRestores, [action.chatId]: action.text },
       }
+    }
+    case 'clearInFlight': {
+      if (!state.inFlight[action.chatId]) return state
+      const inFlight = { ...state.inFlight }
+      delete inFlight[action.chatId]
+      return { ...state, inFlight }
     }
     case 'clearRestore': {
       if (!(action.chatId in state.pendingRestores)) return state
@@ -845,7 +854,20 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     sendMessage,
     async stopChat(chatId) {
-      try { await apiService.chats.stop(chatId) } catch { /* nothing in flight */ }
+      let stopped = false
+      try { stopped = await apiService.chats.stop(chatId) } catch { /* treated as nothing to stop */ }
+      if (stopped) return
+      // The gateway had no turn to abort, so our in-flight state is stale — a
+      // terminal event for this chat never reached us (channel-started turns
+      // are especially prone to it: their events are the only thing that ever
+      // clears the spinner). Pressing Stop must not leave the chat stuck on
+      // "Thinking..." forever, so drop the local turn and re-sync from disk.
+      delete pendingAssistantId.current[chatId]
+      adopting.current.delete(chatId)
+      dispatch({ type: 'clearInFlight', chatId })
+      try {
+        dispatch({ type: 'upsert', chat: await apiService.chats.get(chatId) })
+      } catch { /* keep whatever we already show */ }
     },
     async resolvePermission(chatId, allow) {
       if (!allow) {
