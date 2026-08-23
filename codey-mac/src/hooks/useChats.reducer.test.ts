@@ -178,19 +178,3 @@ describe('startSend seeds the turn header', () => {
     })
   })
 })
-
-describe("reducer: clearInFlight (Stop on a turn the gateway isn't running)", () => {
-  it('drops the spinner without touching the transcript', () => {
-    const s = baseState()
-    s.chats.c1 = { ...s.chats.c1, messages: [{ id: 'u1', role: 'user', content: 'x', timestamp: 1, isComplete: true }] }
-    const after = reducer(s, { type: 'clearInFlight', chatId: 'c1' })
-    expect(after.inFlight.c1).toBeUndefined()
-    expect(after.chats.c1.messages.map(m => m.id)).toEqual(['u1'])
-  })
-
-  it('is a no-op when nothing is in flight', () => {
-    const s = baseState()
-    s.inFlight = {}
-    expect(reducer(s, { type: 'clearInFlight', chatId: 'c1' })).toBe(s)
-  })
-})

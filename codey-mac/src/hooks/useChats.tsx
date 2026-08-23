@@ -99,7 +99,21 @@ export function reducer(state: State, action: Action): State {
     case 'loaded': {
       const chats: Record<string, Chat> = {}
       const sorted = [...action.chats].sort((a, b) => b.updatedAt - a.updatedAt)
-      for (const c of sorted) chats[c.id] = c
+      for (const c of sorted) {
+        // A wholesale reload can land MID-TURN — linkChannel re-pulls every
+        // chat, and pairing auto-link fires it while an agent is running. The
+        // server's copy has no in-flight messages (they aren't persisted until
+        // the turn ends), so a blind overwrite drops the assistant placeholder
+        // that `completeSend` later looks up by id: the map matches nothing and
+        // the finished reply is silently thrown away. Carry local-only messages
+        // over for any chat with a turn in flight, same as `upsert` does.
+        const fl = state.inFlight[c.id]
+        const prev = fl ? state.chats[c.id] : undefined
+        if (!prev) { chats[c.id] = c; continue }
+        const serverIds = new Set(c.messages.map(m => m.id))
+        const localOnly = prev.messages.filter(m => !serverIds.has(m.id))
+        chats[c.id] = localOnly.length > 0 ? { ...c, messages: [...c.messages, ...localOnly] } : c
+      }
       return { ...state, chats, order: sorted.map(c => c.id) }
     }
     case 'setWorkspaces':
@@ -404,7 +418,7 @@ export function reducer(state: State, action: Action): State {
             teamMode: firstWorker?.teamMode,
           }]
         }
-      } else {
+      } else if (chat.messages.some(m => m.id === action.assistantMessageId)) {
         messages = chat.messages.map(m =>
           m.id === action.assistantMessageId
             // `?? m.thinking` rather than a plain assignment: thinking that
@@ -413,6 +427,25 @@ export function reducer(state: State, action: Action): State {
             ? { ...m, content: action.content, thinking: action.thinking ?? m.thinking, tokens: action.tokens, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
             : m
         )
+      } else {
+        // The placeholder is gone (a mid-turn reload replaced this chat). Show
+        // the reply anyway rather than dropping the whole turn on the floor.
+        messages = [...chat.messages, {
+          id: action.assistantMessageId,
+          role: 'assistant',
+          content: action.content,
+          thinking: action.thinking,
+          timestamp: Date.now(),
+          toolCalls: [],
+          isComplete: true,
+          tokens: action.tokens,
+          durationSec: action.durationSec,
+          agent: action.agent,
+          model: action.model,
+          choices: action.choices,
+          userQuestion: action.userQuestion,
+          fallback: action.fallback,
+        }]
       }
       const updatedChat: Chat = { ...chat, messages, updatedAt: Date.now() }
       if (action.title) updatedChat.title = action.title
