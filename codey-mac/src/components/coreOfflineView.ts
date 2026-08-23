@@ -18,5 +18,7 @@ export function composerPlaceholder(opts: {
 }): string {
   if (opts.coreFailed) return 'Core offline — relaunch to continue'
   if (!opts.isGatewayRunning) return 'Start gateway to chat'
-  return opts.isSending ? 'Sending…' : 'Message Codey… (↵ to send)'
+  // While a turn runs the composer stays live: what you type is queued and
+  // sent as soon as the agent finishes, so say so instead of "Sending…".
+  return opts.isSending ? 'Queue the next message… (↵ to queue)' : 'Message Codey… (↵ to send)'
 }
