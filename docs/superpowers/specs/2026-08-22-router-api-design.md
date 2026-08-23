@@ -245,7 +245,49 @@ npm run api-token -- revoke <id>
    - **匿名流式请求拿不到 sessionId。** 非流式的响应体里有，流式没有信封可放。
      改成走 `X-Codey-Session-Id` 响应头——不然调用方永远不知道自己刚创建的
      session 叫什么，既没法续聊也没法回查历史。
-4. **P4**（另开）— MCP server，内部转调 `/v1/prompt`。
+4. **协议兼容层 — 已实现**（2026-08-22）。`compat-api.ts`：
+   `POST /v1/chat/completions`（OpenAI）、`POST /v1/messages`（Anthropic）、
+   `GET /v1/models`。官方 OpenAI SDK 和官方 Anthropic SDK 都真机验证能直接调通，
+   含流式和错误类型。见下面第 9 节。
+5. **P4**（另开）— MCP server，内部转调 `/v1/prompt`。
+
+## 9. 协议兼容层（2026-08-22）
+
+目标：别的工具**不需要知道 Codey 的存在**就能用它。
+
+```bash
+OPENAI_BASE_URL=http://127.0.0.1:3000/v1   OPENAI_API_KEY=<codey token>
+ANTHROPIC_BASE_URL=http://127.0.0.1:3000   ANTHROPIC_API_KEY=<codey token>
+```
+
+### 关键取舍
+
+- **无状态是默认**，因为两家的 API 本来就是无状态的：客户端自己拿着历史，每次全量重发。
+  Codey 自己的 `/v1/prompt` 是服务端存历史。两者混用会让每条消息重复一遍。
+  所以兼容请求默认把 `messages` 摊平成一个 prompt，跑在一次性 chat 里。
+  想用 Codey 的服务端上下文，加 `X-Codey-Session-Id` 头显式选择，
+  这时**只发最后一条 user 消息**。
+- **摊平时保留角色标签**（`User:` / `Assistant:`）。不加的话多轮历史会糊成一段话，
+  agent 分不清谁说的。单条提问是特例，原样发过去，不套壳。
+- **鉴权同时认两种头**：OpenAI SDK 发 `Authorization: Bearer`，
+  Anthropic SDK 发 `x-api-key` 且完全不发 Authorization。两个都查同一个 token 库。
+- **错误用各自的信封**（OpenAI 是 `{error:{message,type,param,code}}`，
+  Anthropic 是 `{type:"error",error:{...}}`）。SDK 就是靠这个抛出正确的异常类——
+  真机验过两边都抛 `NotFoundError`。
+- **模型名**接受目录里的名字，也接受 `codex/gpt-5` 这种带 agent 前缀的写法。
+  未知模型返回 404 并列出可用的——这条消息客户端会直接显示给人看。
+- **只转发助手文本**。Codey 的 tool_start / checklist / worker 事件在两家的
+  wire format 里没有对应物，硬造一个只会弄坏本来要支持的客户端。
+- **agent 不吐 token 时兜底**：把最终文本作为一个 delta 发出去，
+  否则流式客户端会收到一条空消息。
+- 只对模型有意义的参数（`temperature`、`n`、`logprobs`、`tools`）**收下但忽略**，
+  不做半吊子实现。Codey 是 agent，不是模型服务器。
+
+### 待办
+
+`compat-api.ts` 里有一条 TODO：等 #332（按 token 的 session 保留期）合进来后，
+兼容层建的 chat 也要盖上 `retentionDays`。**无状态调用每次建一个 chat，
+正是保留期要清理的那个堆积的最大来源。**
 
 ## 7. 已决
 

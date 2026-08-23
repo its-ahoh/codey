@@ -1,7 +1,8 @@
 import * as http from 'http';
 import { ConfigManager, stripSecrets } from './config';
-import { ApiTokenRecord, ApiTokenStore, parseBearer } from './api-tokens';
+import { ApiTokenRecord, ApiTokenStore, tokenFromHeaders } from './api-tokens';
 import { RouterApi } from './router-api';
+import { CompatApi } from './compat-api';
 import { VoiceConverseEvent } from '@codey/core';
 
 /**
@@ -16,6 +17,10 @@ import { VoiceConverseEvent } from '@codey/core';
  * `/voice/*` is not listed because it has its own guard (no-Origin native
  * clients only) and is called by the Swift helper, which has no way to hold a
  * token yet.
+ *
+ * The token may arrive as `Authorization: Bearer` or as `x-api-key` — OpenAI
+ * clients send the first, Anthropic clients the second, and both must reach the
+ * compat endpoints.
  */
 function requiresAuth(url: string | undefined): boolean {
   if (!url) return false;
@@ -61,6 +66,7 @@ export class ApiServer {
   private onOpenSettings?: () => void;
   private tokens: ApiTokenStore;
   private routerApi?: RouterApi;
+  private compatApi?: CompatApi;
 
   constructor(
     port: number,
@@ -100,6 +106,11 @@ export class ApiServer {
     this.routerApi = routerApi;
   }
 
+  /** Attach the OpenAI/Anthropic-compatible endpoints. Same timing rationale. */
+  setCompatApi(compatApi: CompatApi): void {
+    this.compatApi = compatApi;
+  }
+
   /**
    * Authorize a request, writing the error response itself when it fails.
    * Returns the matched token (its id keys per-token rate limiting), or null
@@ -110,12 +121,12 @@ export class ApiServer {
     // process, so a long-lived gateway would otherwise reject tokens minted
     // after it booted until restarted.
     this.tokens.reload();
-    const matched = this.tokens.verify(parseBearer(req.headers.authorization));
+    const matched = this.tokens.verify(tokenFromHeaders(req.headers));
     if (matched) return matched;
     res.writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' });
     res.end(JSON.stringify({
       error: 'Unauthorized',
-      hint: 'Send Authorization: Bearer <token>. Create one with: npm run api-token -- create <name>',
+      hint: 'Send Authorization: Bearer <token> (or x-api-key: <token>). Create one with: npm run api-token -- create <name>',
     }));
     return null;
   }
@@ -161,6 +172,13 @@ export class ApiServer {
       // the transport + auth layer rather than growing a second router.
       if (url?.startsWith('/v1/') && this.routerApi) {
         if (await this.routerApi.handle(req, res, url, token!.id)) return;
+      }
+
+      // Provider-shaped endpoints (`/v1/chat/completions`, `/v1/messages`,
+      // `/v1/models`) are checked after Codey's own routes, so the native API
+      // always wins a path collision.
+      if (url?.startsWith('/v1/') && this.compatApi) {
+        if (await this.compatApi.handle(req, res, url)) return;
       }
 
       if (url === '/health' || url === '/') {

@@ -43,6 +43,7 @@ import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
 import { RouterApi } from '@codey/gateway/dist/router-api'
+import { CompatApi } from '@codey/gateway/dist/compat-api'
 
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
@@ -1087,6 +1088,9 @@ async function bootInProcessCore() {
       apiServer.setRouterApi(new RouterApi(inProcessGateway!.asRouterApiHost(), () => ({
         timeoutSec: coreConfigManager!.getApiTimeoutSec(),
         rateLimitPerMin: coreConfigManager!.getApiRateLimitPerMin(),
+      })))
+      apiServer.setCompatApi(new CompatApi(inProcessGateway!.asRouterApiHost(), () => ({
+        timeoutSec: coreConfigManager!.getApiTimeoutSec(),
       })))
       void apiServer.start().then(() => {
         sendToRenderer('gateway-log', `[core] API server listening on ${apiPort}`)
