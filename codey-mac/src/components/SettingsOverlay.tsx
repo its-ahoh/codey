@@ -3,6 +3,7 @@ import { OverlayWindow } from './OverlayWindow'
 import { StatusTab } from './StatusTab'
 import { SettingsTab } from './SettingsTab'
 import { AgentsTab } from './AgentsTab'
+import { MemoryTab } from './MemoryTab'
 import { WorkspacesTab } from './WorkspacesTab'
 import WorkersTab from './WorkersTab'
 import { TeamsTab } from './TeamsTab'
@@ -12,12 +13,13 @@ import { AppearanceTab } from './AppearanceTab'
 import { WhisperTab } from './WhisperTab'
 import { ApiKeysTab } from './ApiKeysTab'
 import { UIIcon, type IconName } from './UIIcons'
-type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings' | 'agents' | 'whisper' | 'apiKeys'
+type Tab = 'general' | 'workers' | 'teams' | 'workspaces' | 'status' | 'settings' | 'agents' | 'memory' | 'whisper' | 'apiKeys'
 const TABS: { key: Tab; label: string; icon: IconName; description: string }[] = [
   { key: 'general',    label: 'General',    icon: 'settings', description: 'Appearance & behavior' },
   { key: 'apiKeys',    label: 'API Keys',   icon: 'key', description: 'Shared credentials' },
   { key: 'settings',   label: 'AI Models',  icon: 'sparkle', description: 'Models & fallbacks' },
   { key: 'agents',     label: 'Agents',     icon: 'bot', description: 'CLI install & environment' },
+  { key: 'memory',     label: 'Memory',     icon: 'book', description: 'Global & workspace memory' },
   { key: 'whisper',    label: 'Voice',      icon: 'mic', description: 'Voice input & hotkeys' },
   { key: 'workspaces', label: 'Workspaces', icon: 'workspace', description: 'Project directories' },
   { key: 'workers',    label: 'Workers',    icon: 'users', description: 'Personalities' },
@@ -81,6 +83,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
               {tab === 'teams'      && <TeamsTab />}
               {tab === 'settings'   && <SettingsTab isGatewayRunning={isRunning} />}
               {tab === 'agents'     && <AgentsTab isGatewayRunning={isRunning} />}
+              {tab === 'memory'     && <MemoryTab isGatewayRunning={isRunning} />}
               {tab === 'whisper'    && (
                 <WhisperTab
                   isGatewayRunning={isRunning}

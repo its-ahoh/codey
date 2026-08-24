@@ -8,7 +8,6 @@ import {
   EnvEditor,
 } from './SettingsTab'
 import { refreshInstalledAgents, useInstalledAgents } from './installedAgents'
-import { SharedMemorySection, UserMemorySection } from './AgentMemorySection'
 import {
   AGENT_TEAMS_AGENT,
   envWithoutAgentTeams,
@@ -122,10 +121,6 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
           </div>
         )
       })}
-
-      <UserMemorySection isGatewayRunning={isGatewayRunning} />
-
-      <SharedMemorySection isGatewayRunning={isGatewayRunning} />
     </div>
   )
 }

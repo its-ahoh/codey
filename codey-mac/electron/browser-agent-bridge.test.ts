@@ -89,6 +89,15 @@ describe('BrowserAgentBridge', () => {
       switchTab: vi.fn(() => state),
       closeTab: vi.fn(() => state),
       submit: vi.fn(async ref => ({ ok: true as const, url: state.url, message: `Submitted ${ref}` })),
+      listProfiles: vi.fn(() => []),
+      activeProfileName: vi.fn(() => null),
+      saveProfile: vi.fn(async name => ({ name, cookies: [], origins: [], createdAt: 1, updatedAt: 1, sourceUrl: null })),
+      importProfile: vi.fn(async name => ({ name, cookies: [], origins: [], createdAt: 1, updatedAt: 1, sourceUrl: null })),
+      activateProfile: vi.fn(async name => ({
+        name, active: true, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null,
+      })),
+      deleteProfile: vi.fn(async () => ({ deleted: true })),
+      exportProfile: vi.fn(async () => ({ path: '/tmp/exported.json' })),
     }
     const onOpen = vi.fn()
     const requestControl = vi.fn(async () => true)
@@ -146,6 +155,33 @@ describe('BrowserAgentBridge', () => {
       expect(loginEvents.map(event => event.status)).toEqual(['watching', 'changed'])
       expect(loginEvents[1]).toMatchObject({ chatId: 'chat-123', reason: 'signed-in', url: 'https://example.com/home' })
 
+      const profiles = await call(info, 'GET', '/profiles')
+      expect(profiles).toEqual({ status: 200, body: { active: null, profiles: [] } })
+
+      const saved = await call(info, 'POST', '/profile/save', { name: 'work' })
+      expect(saved.status).toBe(200)
+      expect(saved.body).toMatchObject({ name: 'work' })
+      expect(controller.saveProfile).toHaveBeenCalledWith('work')
+
+      const imported = await call(info, 'POST', '/profile/import', {
+        name: 'gh',
+        source: { json: '{"cookies":[]}' },
+      })
+      expect(imported.status).toBe(200)
+      expect(controller.importProfile).toHaveBeenCalledWith('gh', { json: '{"cookies":[]}' }, true)
+      // Import activates by default, so it goes through the user approval gate.
+      expect(requestControl).toHaveBeenCalledWith({ command: 'activate-profile', url: state.url })
+
+      const activated = await call(info, 'POST', '/profile/activate', { name: 'work' })
+      expect(activated.status).toBe(200)
+      expect(controller.activateProfile).toHaveBeenCalledWith('work')
+
+      const exported = await call(info, 'POST', '/profile/export', { name: 'work', path: '/tmp/work.json' })
+      expect(exported.body).toEqual({ path: '/tmp/exported.json' })
+      expect(controller.exportProfile).toHaveBeenCalledWith('work', '/tmp/work.json')
+
+      const deleted = await call(info, 'POST', '/profile/delete', { name: 'work' })
+      expect(deleted.body).toEqual({ deleted: true })
       const tabs = await call(info, 'GET', '/tabs')
       expect(tabs.body[0]).toMatchObject({ id: 't1', active: true })
       const newTab = await call(info, 'POST', '/tab/new', { url: 'https://example.com/auth' })
@@ -185,6 +221,28 @@ describe('BrowserAgentBridge', () => {
       })
       expect(JSON.parse(cliResult.stdout).text).toBe('Hello from the page')
 
+      // `--profile <name>` forwards the profile to the bridge, which
+      // activates it before the command runs.
+      const profileCli = await execFileAsync(process.execPath, [cli, '--profile', 'cli', 'view'], {
+        env: {
+          ...process.env,
+          CODEY_BROWSER_SOCKET: info.socketPath,
+          CODEY_BROWSER_TOKEN: info.token,
+        },
+      })
+      expect(JSON.parse(profileCli.stdout).text).toBe('Hello from the page')
+      expect(controller.activateProfile).toHaveBeenLastCalledWith('cli')
+      // Switching identity mid-command needs the same approval as an explicit activate.
+      expect(requestControl).toHaveBeenLastCalledWith({ command: 'activate-profile', url: state.url })
+
+      const profileListCli = await execFileAsync(process.execPath, [cli, 'profile', 'list'], {
+        env: {
+          ...process.env,
+          CODEY_BROWSER_SOCKET: info.socketPath,
+          CODEY_BROWSER_TOKEN: info.token,
+        },
+      })
+      expect(JSON.parse(profileListCli.stdout)).toEqual({ active: null, profiles: [] })
       const screenshotPath = path.join(os.tmpdir(), `codey-browser-test-${process.pid}.png`)
       try {
         const screenshotResult = await execFileAsync(process.execPath, [cli, 'screenshot', screenshotPath], {

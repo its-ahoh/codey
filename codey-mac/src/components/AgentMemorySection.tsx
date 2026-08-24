@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
-import { Section, Toggle, fieldStyle, pillButton, unwrap } from './settingsAtoms'
+import { selectStyle, Toggle, fieldStyle, unwrap } from './settingsAtoms'
+import { OpenInEditorButton } from './OpenInEditorButton'
 import { MemoryPanel } from './CodeyMemorySection'
 import { formatBytes, memoryPreview, summarizeMemory } from './agentMemoryView'
 import type { AgentMemoryGroup, MemoryEntry } from '../codey-api'
@@ -10,10 +11,10 @@ import type { AgentMemoryGroup, MemoryEntry } from '../codey-api'
  * loads on its own before any prompt. Memory splits by who it is about:
  *
  *   user     what the agent knows about the user everywhere (~/.claude/CLAUDE.md,
- *            ~/.codex/AGENTS.md, …) — shown in Settings ▸ Agents.
+ *            ~/.codex/AGENTS.md, …) — shown in Settings ▸ Memory, under "Your memory".
  *   project  what it knows about one repository (CLAUDE.md, AGENTS.md, Claude
- *            Code's per-project memory and subagent memory) — shown on the
- *            workspace that owns that repository.
+ *            Code's per-project memory and subagent memory) — shown in
+ *            Settings ▸ Memory, under "Workspace memory".
  */
 
 const MemoryRow: React.FC<{ entry: MemoryEntry }> = ({ entry }) => {
@@ -31,11 +32,7 @@ const MemoryRow: React.FC<{ entry: MemoryEntry }> = ({ entry }) => {
           {entry.label}
         </button>
         <span style={{ color: C.fg3, fontSize: 11 }}>{formatBytes(entry.bytes)}</span>
-        <button
-          onClick={() => void window.codey.skills.reveal(entry.path)}
-          style={{ ...pillButton('ghost'), padding: '3px 8px', fontSize: 11 }}
-          title="Show this file in Finder"
-        >Reveal</button>
+        <OpenInEditorButton path={entry.path} />
       </div>
       {!open && preview && (
         <div style={{ color: C.fg3, fontSize: 11, marginTop: 3, marginLeft: 16, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview}</div>
@@ -94,60 +91,105 @@ const ErrorBox: React.FC<{ message: string }> = ({ message }) => (
   <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{message}</div>
 )
 
-/** Settings ▸ Agents: what each agent knows about the user, in every project. */
-export const UserMemorySection: React.FC<{ isGatewayRunning: boolean }> = ({ isGatewayRunning }) => {
-  const load = useCallback(async () => unwrap(await window.codey.memory.user()).agents, [])
-  const { groups, loading, error, reload } = useMemory(load, isGatewayRunning)
+/** A read-only card showing one agent's instruction files, chosen by a
+ *  dropdown that defaults to the gateway's default agent. */
+const AgentMemoryFilesCard: React.FC<{
+  description: string
+  emptyText: string
+  groups: AgentMemoryGroup[]
+  loading: boolean
+  error: string | null
+  reload: () => void
+}> = ({ description, emptyText, groups, loading, error, reload }) => {
+  const [selected, setSelected] = useState<string>('')
 
-  return (
-    <>
-      <Section
-        title="Memory"
-        description="What each agent has been told about you — the global instruction file it loads in every project. Project memory lives on the workspace."
-        right={
-          <button onClick={() => void reload()} style={pillButton('ghost')} disabled={loading} title="Re-read the memory files from disk">
-            {loading ? 'Reading…' : '↻ Refresh'}
-          </button>
-        }
-      />
-      {error && <ErrorBox message={error} />}
-      <MemoryGroups groups={groups} />
-    </>
-  )
-}
+  useEffect(() => {
+    if (groups.length === 0) { setSelected(''); return }
+    void (async () => {
+      let defaultAgent = 'claude-code'
+      try {
+        const fb = unwrap(await window.codey.fallback.get())
+        defaultAgent = fb.order?.[0]?.agent ?? 'claude-code'
+      } catch { /* keep fallback */ }
+      setSelected(prev => {
+        if (groups.some(g => g.agent === prev)) return prev
+        return groups.some(g => g.agent === defaultAgent) ? defaultAgent : groups[0].agent
+      })
+    })()
+  }, [groups])
 
-/** Workspaces tab: what each agent knows about this workspace's repository. */
-export const ProjectMemorySection: React.FC<{ workspace: string }> = ({ workspace }) => {
-  const load = useCallback(async () => unwrap(await window.codey.memory.project(workspace)).agents, [workspace])
-  const { groups, loading, error, reload } = useMemory(load, true)
-  const withFiles = groups.filter(g => g.entries.length > 0)
+  const selectedGroup = groups.find(g => g.agent === selected)
 
   return (
     <div style={{ padding: 16, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Agent memory</div>
-          <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>
-            Instruction files the agents read from this project. Read-only.
-          </div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Agent memory files</div>
+          <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>{description}</div>
         </div>
-        <button
-          onClick={() => void reload()}
-          disabled={loading}
-          style={{ padding: '4px 10px', fontSize: 12, background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 6, cursor: 'pointer' }}
-        >{loading ? 'Reading…' : '↻ Refresh'}</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {groups.length > 1 && (
+            <select
+              value={selected}
+              onChange={e => setSelected(e.target.value)}
+              style={{ ...selectStyle, width: 132 }}
+              title="Choose which agent's memory to view"
+            >
+              {groups.map(g => <option key={g.agent} value={g.agent}>{g.agent}</option>)}
+            </select>
+          )}
+          <button
+            onClick={() => void reload()}
+            disabled={loading}
+            style={{ padding: '4px 10px', fontSize: 12, background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`, borderRadius: 6, cursor: 'pointer' }}
+          >{loading ? 'Reading…' : '↻ Refresh'}</button>
+        </div>
       </div>
       {error && <ErrorBox message={error} />}
-      {!loading && withFiles.length === 0 && !error && (
-        <div style={{ fontSize: 12, color: C.fg3 }}>No agent memory in this project yet.</div>
+      {!loading && groups.length === 0 && !error && (
+        <div style={{ fontSize: 12, color: C.fg3 }}>{emptyText}</div>
       )}
-      <MemoryGroups groups={withFiles} />
+      {selectedGroup && <MemoryGroups groups={[selectedGroup]} />}
     </div>
   )
 }
 
+/** Your memory: the global instruction file each agent loads in every project. */
+export const UserMemorySection: React.FC = () => {
+  const load = useCallback(async () => unwrap(await window.codey.memory.user()).agents, [])
+  const { groups, loading, error, reload } = useMemory(load, true)
+
+  return (
+    <AgentMemoryFilesCard
+      description="The global instruction file each agent loads in every project. Read-only."
+      emptyText="No agent memory files yet."
+      groups={groups}
+      loading={loading}
+      error={error}
+      reload={reload}
+    />
+  )
+}
+
+/** Workspace memory: the instruction files each agent reads from one project. */
+export const ProjectMemorySection: React.FC<{ workspace: string }> = ({ workspace }) => {
+  const load = useCallback(async () => unwrap(await window.codey.memory.project(workspace)).agents, [workspace])
+  const { groups, loading, error, reload } = useMemory(load, true)
+
+  return (
+    <AgentMemoryFilesCard
+      description="Instruction files the agents read from this project. Read-only."
+      emptyText="No agent memory in this project yet."
+      groups={groups}
+      loading={loading}
+      error={error}
+      reload={reload}
+    />
+  )
+}
+
 /**
- * Settings ▸ Agents: the one knowledge base about the user.
+ * Your global memory: the one knowledge base about the user.
  *
  * The entries live in Codey's user-global memory store — the same ones it
  * injects into its own prompts. Turning sharing on also renders them into
@@ -156,7 +198,7 @@ export const ProjectMemorySection: React.FC<{ workspace: string }> = ({ workspac
  * deliver; Codey drops its own injection while sharing is on so no fact
  * reaches the model twice.
  */
-export const SharedMemorySection: React.FC<{ isGatewayRunning: boolean }> = ({ isGatewayRunning }) => {
+export const GlobalMemoryPanel: React.FC = () => {
   const [enabled, setEnabled] = useState(false)
   const [targets, setTargets] = useState<Array<{ agent: string; path: string }>>([])
   const [error, setError] = useState<string | null>(null)
@@ -170,10 +212,7 @@ export const SharedMemorySection: React.FC<{ isGatewayRunning: boolean }> = ({ i
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
-  useEffect(() => {
-    if (!isGatewayRunning) return
-    void reload()
-  }, [isGatewayRunning, reload])
+  useEffect(() => { void reload() }, [reload])
 
   const toggle = async (next: boolean) => {
     setEnabled(next)
@@ -182,27 +221,20 @@ export const SharedMemorySection: React.FC<{ isGatewayRunning: boolean }> = ({ i
     catch (e: any) { setEnabled(!next); setError(e?.message ?? String(e)) }
   }
 
-  if (!isGatewayRunning) return null
-
   return (
     <>
-      <Section
-        title="Shared memory"
-        description="What Codey knows about you in every workspace. Codey always uses it; sharing also writes it into the agents' own memory files."
-      />
       {error && <ErrorBox message={error} />}
       <MemoryPanel
         scope="global"
-        title="About you"
-        description="Standing facts and preferences that hold in every project."
+        description="Standing facts and preferences about you, used in every project."
         banner={
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderTop: `1px solid ${C.border}` }}>
             <div>
               <div style={{ color: C.fg, fontSize: 13 }}>Share with every agent</div>
               <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>
                 {enabled
-                  ? `Written into ${targets.length} agent memory file${targets.length === 1 ? '' : 's'}, inside a Codey-managed block.`
-                  : 'Off — only Codey itself uses these memories. The block is removed from the agent files.'}
+                  ? `Written into ${targets.length} agent memory file${targets.length === 1 ? '' : 's'} below, inside a Codey-managed block.`
+                  : 'Off — only Codey itself uses these memories. The block is removed from the agent files below.'}
               </div>
             </div>
             <Toggle on={enabled} onChange={v => void toggle(v)} label="Share memory with every agent" />

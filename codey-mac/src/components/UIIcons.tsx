@@ -1,7 +1,7 @@
 import React from 'react'
 
 export type IconName =
-  | 'activity' | 'add' | 'alert' | 'archive' | 'bell' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
+  | 'activity' | 'add' | 'alert' | 'archive' | 'bell' | 'book' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
   | 'clock' | 'code' | 'copy' | 'edit' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
   | 'waveform' | 'git-branch' | 'git-merge' | 'pull-request' | 'globe' | 'match-case' | 'overview' | 'refresh' | 'search' | 'server' | 'settings' | 'sparkle' | 'split' | 'terminal' | 'tools' | 'trash' | 'users' | 'workspace'
   | 'telegram' | 'discord' | 'imessage' | 'undo'
@@ -24,6 +24,7 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     alert: <><path {...common} d="M12 4.5L21 19.5H3L12 4.5z" /><path {...common} d="M12 10v4M12 17h.01" /></>,
     archive: <><path {...common} d="M4 7h16v13H4zM3 4h18v3H3zM9 12h6" /></>,
     bell: <><path {...common} d="M18 9a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path {...common} d="M10 21h4" /></>,
+    book: <><path {...common} d="M4 19.5A2.5 2.5 0 016.5 17H20" /><path {...common} d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" /></>,
     bot: <><rect {...common} x="4" y="7" width="16" height="13" rx="3" /><path {...common} d="M12 3v4M9 13h.01M15 13h.01M8 17h8" /><circle fill="currentColor" cx="9" cy="13" r="1" /><circle fill="currentColor" cx="15" cy="13" r="1" /></>,
     chat: <><path {...common} d="M20 11.5a7.5 7.5 0 01-8 7.5 8.7 8.7 0 01-3.3-.65L4 20l1.55-3.9A7.3 7.3 0 014 11.5 7.5 7.5 0 0112 4a7.5 7.5 0 018 7.5z" /></>,
     check: <path {...common} d="M5 12.5l4.2 4.2L19 7" />,
