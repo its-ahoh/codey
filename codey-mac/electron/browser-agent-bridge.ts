@@ -13,6 +13,7 @@ type BridgeController = Pick<
   | 'waitFor' | 'upload' | 'listDownloads' | 'waitForDownload' | 'submit'
   | 'getLoginStatus'
   | 'getState' | 'back' | 'forward' | 'reload' | 'listTabs' | 'newTab' | 'switchTab' | 'closeTab'
+  | 'listProfiles' | 'activeProfileName' | 'saveProfile' | 'importProfile' | 'activateProfile' | 'deleteProfile' | 'exportProfile'
 >
 
 export interface BrowserAgentBridgeInfo {
@@ -129,6 +130,21 @@ export class BrowserAgentBridge {
 
     const route = (req.url || '/').split('?')[0]
     try {
+      // An agent can target a specific browser profile by passing
+      // `--profile <name>` to the CLI, which forwards it here. The profile is
+      // activated first, so the command below operates under that identity —
+      // and because that is the same identity switch as `/profile/activate`,
+      // it goes through the same user approval gate.
+      const requestedProfile = typeof req.headers['x-codey-profile'] === 'string'
+        ? (req.headers['x-codey-profile'] as string).trim()
+        : ''
+      const isProfileRoute = route === '/profiles' || route.startsWith('/profile/')
+      if (requestedProfile && !isProfileRoute) {
+        const active = this.controller.activeProfileName()
+        if (active !== requestedProfile) {
+          await this.controlled('activate-profile', () => this.controller.activateProfile(requestedProfile))
+        }
+      }
       if (req.method === 'POST' && route === '/open') {
         const body = await readJson(req)
         const url = typeof body.url === 'string' ? body.url : ''
@@ -179,7 +195,7 @@ export class BrowserAgentBridge {
         return
       }
       if (req.method === 'GET' && route === '/state') {
-        json(res, 200, this.controller.getState())
+        json(res, 200, { ...this.controller.getState(), profile: this.controller.activeProfileName() })
         return
       }
       if (req.method === 'POST' && route === '/wait-login') {
@@ -317,6 +333,55 @@ export class BrowserAgentBridge {
       if (req.method === 'POST' && route === '/submit') {
         const body = await readJson(req)
         json(res, 200, await this.controlled('submit', () => this.controller.submit(String(body.ref || ''))))
+        return
+      }
+      // ── Profiles ──────────────────────────────────────────────────────
+      if (req.method === 'GET' && route === '/profiles') {
+        json(res, 200, { active: this.controller.activeProfileName(), profiles: this.controller.listProfiles() })
+        return
+      }
+      if (req.method === 'POST' && route === '/profile/save') {
+        const body = await readJson(req)
+        json(res, 200, await this.exclusive(() => this.controller.saveProfile(String(body.name || ''))))
+        return
+      }
+      if (req.method === 'POST' && route === '/profile/import') {
+        const body = await readJson(req)
+        const source = body.source
+        const name = String(body.name || '')
+        const activate = body.activate !== false
+        const operation = async () => {
+          if (typeof source === 'object' && source !== null && 'path' in source) {
+            const filePath = String((source as Record<string, unknown>).path || '')
+            if (!filePath) throw new Error('A profile source path is required')
+            const derived = name || path.basename(filePath).replace(/\.json$/i, '')
+            return await this.controller.importProfile(derived, { path: filePath }, activate)
+          }
+          if (typeof source === 'object' && source !== null && 'json' in source) {
+            if (!name) throw new Error('A profile name is required when importing JSON text')
+            return await this.controller.importProfile(name, { json: String((source as Record<string, unknown>).json || '') }, activate)
+          }
+          throw new Error('profile import needs a source: { path } or { json }')
+        }
+        // Importing activates by default, which replaces the session's cookies
+        // — that identity switch goes through the same user approval gate as
+        // any other mutating browser command.
+        json(res, 200, activate ? await this.controlled('activate-profile', operation) : await this.exclusive(operation))
+        return
+      }
+      if (req.method === 'POST' && route === '/profile/activate') {
+        const body = await readJson(req)
+        json(res, 200, await this.controlled('activate-profile', () => this.controller.activateProfile(String(body.name || ''))))
+        return
+      }
+      if (req.method === 'POST' && route === '/profile/delete') {
+        const body = await readJson(req)
+        json(res, 200, await this.controlled('delete-profile', () => this.controller.deleteProfile(String(body.name || ''))))
+        return
+      }
+      if (req.method === 'POST' && route === '/profile/export') {
+        const body = await readJson(req)
+        json(res, 200, await this.exclusive(() => this.controller.exportProfile(String(body.name || ''), String(body.path || ''))))
         return
       }
       json(res, 404, { error: 'Unknown browser command' })

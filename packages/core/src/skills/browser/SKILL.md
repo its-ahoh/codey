@@ -35,6 +35,34 @@ size and display scale - open that path with your image-reading tool. Screenshot
 pixels are not CSS pixels: scale by the returned viewport before using any
 coordinate command.
 
+## Profiles
+
+The browser can save and restore named sessions ("profiles") - the cookies and
+per-site storage that keep a site signed in - so you can switch identity for a
+task or carry a session to another machine.
+
+- `profile list` - names of saved profiles plus which one is active
+- `profile save <name>` - snapshot the current session into a named profile
+- `profile import <path> [name]` - import a session file (a Codey profile or
+  a Playwright storageState JSON) and activate it in one step
+- `profile activate <name>` - switch the live session to a saved profile
+- `profile export <name> <path>` - write a saved profile to a shareable file
+- `profile delete <name>` - remove a saved profile
+
+To run a command under a specific profile, put `--profile <name>` before the
+command - the profile is activated first if it is not already (an identity
+switch, so the user is asked to approve it):
+
+```
+ELECTRON_RUN_AS_NODE=1 "$CODEY_BROWSER_RUNTIME" "$CODEY_BROWSER_CLI" --profile work open-view "https://github.com"
+```
+
+`state` reports the active profile. Activating a profile replaces the
+session's cookies with the profile's (an identity switch, so the previous
+session's cookies are removed); its site storage is applied best-effort for the
+origins it knows, and a page may need to reload before its stored state is
+visible.
+
 ## Rules
 
 - Browsing is view-only by default. Opening, navigating, tabs, back/forward,

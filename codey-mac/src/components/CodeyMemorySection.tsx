@@ -96,7 +96,8 @@ interface PanelProps {
   scope: MemoryStoreScope
   /** Required for the workspace scope; ignored for the global one. */
   workspace?: string
-  title: string
+  /** Optional header title; omit it when an outer section already names the panel. */
+  title?: string
   description: string
   /** Rendered between the header and the composer, e.g. a sharing switch. */
   banner?: React.ReactNode
@@ -137,8 +138,8 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
     <div style={{ padding: 16, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
-          <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>{description}</div>
+          {title && <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>}
+          <div style={{ color: C.fg3, fontSize: 11, marginTop: title ? 2 : 0 }}>{description}</div>
         </div>
         <button onClick={() => void reload()} disabled={loading} style={smallButton()}>
           {loading ? 'Reading…' : '↻ Refresh'}
@@ -169,13 +170,11 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
             onClick={() => void add()}
             disabled={adding || !draft.trim()}
             style={{ ...smallButton(), color: C.accent, borderColor: C.accent, opacity: (adding || !draft.trim()) ? 0.5 : 1 }}
-          >{adding ? 'Saving…' : 'Remember'}</button>
+          >{adding ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
 
-      {entries.length === 0 && !loading ? (
-        <div style={{ color: C.fg3, fontSize: 12, marginTop: 8 }}>Nothing remembered yet.</div>
-      ) : (
+      {entries.length > 0 && (
         <div style={{ marginTop: 4 }}>
           {entries.map(entry => (
             <EntryRow
@@ -196,7 +195,7 @@ export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace 
   <MemoryPanel
     scope="workspace"
     workspace={workspace}
-    title="Memory"
+    title="Shared memory"
     description="What Codey remembers about this workspace and adds to its prompts."
   />
 )
@@ -240,7 +239,7 @@ export const CodeyMemorySettings: React.FC = () => {
     onChange: (v: boolean) => void,
     disabled?: boolean,
   ) => (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 10, opacity: disabled ? 0.5 : 1 }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '5px 0', opacity: disabled ? 0.5 : 1 }}>
       <div>
         <div style={{ color: C.fg, fontSize: 13 }}>{title}</div>
         <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>{hint}</div>
@@ -250,10 +249,9 @@ export const CodeyMemorySettings: React.FC = () => {
   )
 
   return (
-    <div style={{ padding: 16, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, marginBottom: 12 }}>
-      <div style={{ fontSize: 14, fontWeight: 600 }}>Codey memory</div>
+    <div style={{ padding: '12px 16px', background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, marginBottom: 12 }}>
       {error && (
-        <div style={{ background: C.red + '22', color: C.red, padding: 8, borderRadius: 6, fontSize: 12, marginTop: 8 }}>{error}</div>
+        <div style={{ background: C.red + '22', color: C.red, padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{error}</div>
       )}
       {row('Use memory in prompts', 'Off means nothing remembered is sent to the agents.', enabled, v => void patch({ enabled: v }))}
       {row('Record memories automatically', 'Off means only what you add by hand is kept.', autoExtract, v => void patch({ autoExtract: v }), !enabled)}
