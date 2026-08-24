@@ -359,6 +359,126 @@ export function learnCorrections(spoken: string, edited: string): LearnedCorrect
   return out
 }
 
+/** A correction seen once, waiting to see whether it repeats. */
+export interface PendingCorrection {
+  term: string
+  alias: string
+  /** How many times this exact swap has been observed. */
+  count: number
+}
+
+/** How many sightings before a correction starts rewriting transcripts.
+ *
+ * One sighting cannot tell a mis-hearing from a change of mind: swapping one
+ * short word for another is indistinguishable from fixing a homophone, and
+ * for Chinese the shape test cannot separate them either. What does separate
+ * them is repetition - the recognizer fails the same way every time, while a
+ * deliberate rewording happens once and never again. Waiting for the second
+ * sighting costs one extra correction and removes the failure mode where a
+ * one-off edit quietly rewrites a real word for weeks afterwards. */
+export const SIGHTINGS_BEFORE_ACTIVE = 2
+
+/** Cap on the waiting list, so one-off edits cannot grow without bound. */
+export const MAX_PENDING_CORRECTIONS = 100
+
+export function normalizePending(raw: unknown): PendingCorrection[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((entry): PendingCorrection[] => {
+    if (!entry || typeof entry !== 'object') return []
+    const term = (entry as any).term
+    const alias = (entry as any).alias
+    const count = (entry as any).count
+    if (typeof term !== 'string' || typeof alias !== 'string') return []
+    if (!term.trim() || !alias.trim()) return []
+    return [{ term, alias, count: Number.isFinite(count) && count > 0 ? Math.floor(count) : 1 }]
+  })
+}
+
+function pendingKey(term: string, alias: string): string {
+  return `${alias.toLowerCase()}\u0000${term.toLowerCase()}`
+}
+
+/**
+ * Record this turn's corrections and report the ones that have now been seen
+ * often enough to act on.
+ *
+ * A correction already covered by the dictionary is dropped rather than
+ * counted: the alias is being rewritten before the user ever sees it, so a
+ * second sighting would mean something else entirely.
+ */
+export function recordCorrections(
+  pending: PendingCorrection[],
+  entries: VocabularyEntry[],
+  observed: LearnedCorrection[],
+): { pending: PendingCorrection[]; promoted: LearnedCorrection[] } {
+  if (observed.length === 0) return { pending, promoted: [] }
+
+  const known = new Set<string>()
+  for (const entry of entries) {
+    for (const alias of entry.aliases) known.add(pendingKey(entry.term, alias))
+  }
+
+  const next = pending.map(p => ({ ...p }))
+  const index = new Map(next.map((p, i) => [pendingKey(p.term, p.alias), i]))
+  const promoted: LearnedCorrection[] = []
+  let changed = false
+
+  for (const correction of observed) {
+    const key = pendingKey(correction.term, correction.alias)
+    if (known.has(key)) continue
+
+    const at = index.get(key)
+    if (at === undefined) {
+      if (next.length >= MAX_PENDING_CORRECTIONS) continue
+      next.push({ term: correction.term, alias: correction.alias, count: 1 })
+      index.set(key, next.length - 1)
+      changed = true
+      continue
+    }
+    next[at].count += 1
+    changed = true
+    if (next[at].count >= SIGHTINGS_BEFORE_ACTIVE) {
+      promoted.push({ term: next[at].term, alias: next[at].alias })
+    }
+  }
+
+  // Anything promoted leaves the waiting list; it lives in the dictionary now.
+  const survivors = promoted.length === 0
+    ? next
+    : next.filter(p => !promoted.some(q => pendingKey(q.term, q.alias) === pendingKey(p.term, p.alias)))
+
+  if (!changed && promoted.length === 0) return { pending, promoted: [] }
+  return { pending: survivors, promoted }
+}
+
+/** Drop a correction from both the dictionary and the waiting list. Used by
+ *  undo, which has to work whether or not the correction went active. */
+export function forgetCorrection(
+  entries: VocabularyEntry[],
+  pending: PendingCorrection[],
+  correction: LearnedCorrection,
+): { entries: VocabularyEntry[]; pending: PendingCorrection[] } {
+  const key = pendingKey(correction.term, correction.alias)
+  const nextEntries: VocabularyEntry[] = []
+  for (const entry of entries) {
+    const aliases = entry.aliases.filter(alias => pendingKey(entry.term, alias) !== key)
+    if (aliases.length === entry.aliases.length) {
+      nextEntries.push(entry)
+      continue
+    }
+    // This alias was the entry's only one, so the entry existed to hold it:
+    // learning creates a term and its first mis-hearing together. Undoing
+    // should leave no trace. An entry that still has other aliases, or that
+    // had none to begin with, is the user's and stays.
+    if (aliases.length === 0) continue
+    nextEntries.push({ term: entry.term, aliases })
+  }
+  return {
+    entries: nextEntries,
+    pending: pending.filter(p => pendingKey(p.term, p.alias) !== key),
+  }
+}
+
 /**
  * Fold learned corrections into the saved dictionary.
  *

@@ -173,6 +173,13 @@ export interface GatewayConfigJson {
      * `vocabulary`. Defaults to on; only the Mac app acts on it.
      */
     vocabularyAutoLearn?: boolean;
+    /**
+     * Corrections seen once and waiting to see whether they repeat. A single
+     * sighting cannot tell a mis-hearing from a change of mind, so nothing
+     * rewrites a transcript until it has been observed twice. Managed by the
+     * Mac app; the Swift helper never reads it.
+     */
+    vocabularyPending?: { term: string; alias: string; count: number }[];
     /** Text-to-speech (spoken replies) configuration. */
     tts?: VoiceTtsSettings;
   };

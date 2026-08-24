@@ -45,7 +45,7 @@ import { ApiServer } from '@codey/gateway/dist/health'
 // Pure logic, no DOM and no Node builtins — shared with the Settings editor
 // that renders the same dictionary, so both sides agree on what a valid entry
 // is and the learner can't write a shape the editor would drop.
-import { learnCorrections, mergeLearnedAliases, normalizeVocabulary } from '../src/components/voiceVocabulary'
+import { learnCorrections, mergeLearnedAliases, normalizeVocabulary, normalizePending, recordCorrections, forgetCorrection } from '../src/components/voiceVocabulary'
 
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
@@ -3121,12 +3121,55 @@ app.whenReady().then(async () => {
       if (corrections.length === 0) return { learned: [] }
 
       const current = normalizeVocabulary(voice.vocabulary)
-      const merged = mergeLearnedAliases(current, corrections)
-      if (!merged.changed) return { learned: [] }
+      const pending = normalizePending(voice.vocabularyPending)
 
-      coreConfigManager.update({ voice: { ...voice, vocabulary: merged.entries } } as any)
+      // A correction has to be seen twice before it rewrites anything. The
+      // first sighting only goes on the waiting list, which is what keeps a
+      // deliberate one-off edit from silently rewriting a real word later.
+      const seen = recordCorrections(pending, current, corrections)
+      if (seen.promoted.length === 0) {
+        if (seen.pending !== pending) {
+          coreConfigManager.update({ voice: { ...voice, vocabularyPending: seen.pending } } as any)
+        }
+        return { learned: [] }
+      }
+
+      const merged = mergeLearnedAliases(current, seen.promoted)
+      if (!merged.changed) {
+        coreConfigManager.update({ voice: { ...voice, vocabularyPending: seen.pending } } as any)
+        return { learned: [] }
+      }
+
+      coreConfigManager.update({
+        voice: { ...voice, vocabulary: merged.entries, vocabularyPending: seen.pending },
+      } as any)
       mainWindow?.webContents.send('voice:vocabularyLearned', merged.entries)
       return { learned: merged.added }
+    })
+  )
+
+  // Undo for a correction the composer pill just announced. Has to clear the
+  // waiting list too: the same swap sitting at one sighting would otherwise
+  // go active on the user's very next correction of it.
+  ipcMain.handle('voice:forgetVocabulary', async (_e, payload: { term?: string; alias?: string }) =>
+    wrap(async () => {
+      if (!coreConfigManager) return { ok: false }
+      const term = String(payload?.term ?? '')
+      const alias = String(payload?.alias ?? '')
+      if (!term || !alias) return { ok: false }
+      const voice = (coreConfigManager.get() as any)?.voice
+      if (!voice) return { ok: false }
+
+      const next = forgetCorrection(
+        normalizeVocabulary(voice.vocabulary),
+        normalizePending(voice.vocabularyPending),
+        { term, alias },
+      )
+      coreConfigManager.update({
+        voice: { ...voice, vocabulary: next.entries, vocabularyPending: next.pending },
+      } as any)
+      mainWindow?.webContents.send('voice:vocabularyLearned', next.entries)
+      return { ok: true }
     })
   )
 

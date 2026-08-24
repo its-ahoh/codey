@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   normalizeVocabulary, vocabularyToDraft, draftToVocabulary,
   learnCorrections, mergeLearnedAliases, countAliases,
+  recordCorrections, normalizePending, forgetCorrection,
+  SIGHTINGS_BEFORE_ACTIVE, MAX_PENDING_CORRECTIONS,
   MAX_ALIASES_PER_TERM, MAX_VOCABULARY_ENTRIES,
 } from './voiceVocabulary'
 
@@ -282,5 +284,123 @@ describe('mergeLearnedAliases', () => {
   it('reports no change for an empty correction list', () => {
     const entries = [{ term: 'Codey', aliases: [] }]
     expect(mergeLearnedAliases(entries, []).changed).toBe(false)
+  })
+})
+
+describe('recordCorrections', () => {
+  const codey = { term: 'Codey', alias: 'coday' }
+
+  it('does not promote a correction the first time it is seen', () => {
+    const r = recordCorrections([], [], [codey])
+    expect(r.promoted).toEqual([])
+    expect(r.pending).toEqual([{ ...codey, count: 1 }])
+  })
+
+  it('promotes on the second sighting', () => {
+    const first = recordCorrections([], [], [codey])
+    const second = recordCorrections(first.pending, [], [codey])
+    expect(second.promoted).toEqual([codey])
+  })
+
+  it('takes the promoted correction off the waiting list', () => {
+    const first = recordCorrections([], [], [codey])
+    const second = recordCorrections(first.pending, [], [codey])
+    expect(second.pending).toEqual([])
+  })
+
+  // The whole point: a one-off edit must never start rewriting a real word.
+  it('leaves a one-off edit inert no matter how much else happens', () => {
+    let pending = recordCorrections([], [], [codey]).pending
+    for (const other of ['alpha', 'bravo', 'charlie']) {
+      const r = recordCorrections(pending, [], [{ term: other, alias: `${other}x` }])
+      expect(r.promoted).toEqual([])
+      pending = r.pending
+    }
+    expect(pending.find(p => p.alias === 'coday')?.count).toBe(1)
+  })
+
+  it('matches sightings case-insensitively', () => {
+    const first = recordCorrections([], [], [{ term: 'Codey', alias: 'CODAY' }])
+    const second = recordCorrections(first.pending, [], [codey])
+    expect(second.promoted).toHaveLength(1)
+  })
+
+  it('ignores a correction the dictionary already covers', () => {
+    const entries = [{ term: 'Codey', aliases: ['coday'] }]
+    const r = recordCorrections([], entries, [codey])
+    expect(r.promoted).toEqual([])
+    expect(r.pending).toEqual([])
+  })
+
+  it('returns the same list untouched when nothing was observed', () => {
+    const pending = [{ ...codey, count: 1 }]
+    const r = recordCorrections(pending, [], [])
+    expect(r.pending).toBe(pending)
+  })
+
+  it('stops the waiting list growing without bound', () => {
+    const pending = Array.from({ length: MAX_PENDING_CORRECTIONS }, (_, i) => ({
+      term: `t${i}`, alias: `a${i}`, count: 1,
+    }))
+    const r = recordCorrections(pending, [], [{ term: 'New', alias: 'nue' }])
+    expect(r.pending).toHaveLength(MAX_PENDING_CORRECTIONS)
+  })
+
+  it('needs exactly SIGHTINGS_BEFORE_ACTIVE sightings', () => {
+    let pending: ReturnType<typeof recordCorrections>['pending'] = []
+    let promotedAt = 0
+    for (let i = 1; i <= SIGHTINGS_BEFORE_ACTIVE; i++) {
+      const r = recordCorrections(pending, [], [codey])
+      pending = r.pending
+      if (r.promoted.length > 0 && promotedAt === 0) promotedAt = i
+    }
+    expect(promotedAt).toBe(SIGHTINGS_BEFORE_ACTIVE)
+  })
+})
+
+describe('normalizePending', () => {
+  it('defaults a missing or bad count to one sighting', () => {
+    expect(normalizePending([{ term: 'a', alias: 'b' }])).toEqual([{ term: 'a', alias: 'b', count: 1 }])
+    expect(normalizePending([{ term: 'a', alias: 'b', count: -3 }])).toEqual([{ term: 'a', alias: 'b', count: 1 }])
+  })
+
+  it('skips malformed rows rather than throwing', () => {
+    expect(normalizePending([null, 3, { term: 'a' }, { alias: 'b' }, { term: ' ', alias: 'b' }])).toEqual([])
+  })
+
+  it('returns empty for a missing field', () => {
+    expect(normalizePending(undefined)).toEqual([])
+  })
+})
+
+describe('forgetCorrection', () => {
+  it('removes the alias from the dictionary', () => {
+    const r = forgetCorrection(
+      [{ term: 'Codey', aliases: ['coday', 'kodi'] }], [], { term: 'Codey', alias: 'coday' })
+    expect(r.entries).toEqual([{ term: 'Codey', aliases: ['kodi'] }])
+  })
+
+  it('removes a term that existed only to hold that alias', () => {
+    const r = forgetCorrection([{ term: 'Codey', aliases: ['coday'] }], [], { term: 'Codey', alias: 'coday' })
+    expect(r.entries).toEqual([])
+  })
+
+  it('keeps a hint-only term the user typed', () => {
+    const entries = [{ term: 'WhisperKit', aliases: [] }, { term: 'Codey', aliases: ['coday'] }]
+    const r = forgetCorrection(entries, [], { term: 'Codey', alias: 'coday' })
+    expect(r.entries).toEqual([{ term: 'WhisperKit', aliases: [] }])
+  })
+
+  it('clears the waiting list too, so undo is not just "not yet"', () => {
+    const r = forgetCorrection([], [{ term: 'Codey', alias: 'coday', count: 1 }], { term: 'Codey', alias: 'coday' })
+    expect(r.pending).toEqual([])
+  })
+
+  it('leaves unrelated entries and sightings alone', () => {
+    const entries = [{ term: 'Other', aliases: ['othr'] }]
+    const pending = [{ term: 'Third', alias: 'thrd', count: 1 }]
+    const r = forgetCorrection(entries, pending, { term: 'Codey', alias: 'coday' })
+    expect(r.entries).toEqual(entries)
+    expect(r.pending).toEqual(pending)
   })
 })

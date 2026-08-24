@@ -2687,6 +2687,18 @@ export const ChatTab: React.FC<Props> = ({
                   <span style={styles.learnedAlias}>{word.alias}</span>
                   <span style={{ opacity: 0.5 }}>&rarr;</span>
                   <strong>{word.term}</strong>
+                  <button
+                    onClick={() => {
+                      // Removes it from the dictionary *and* the waiting list,
+                      // so undo means "never mind" rather than "not yet".
+                      void window.codey.voice.forgetVocabulary(word.term, word.alias)
+                      setLearnedWords(prev => prev.filter((_, at) => at !== i))
+                    }}
+                    title={`Undo - stop rewriting "${word.alias}" to "${word.term}"`}
+                    style={styles.learnedUndo}
+                  >
+                    Undo
+                  </button>
                 </span>
               ))}
               <button
@@ -3393,6 +3405,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   learnedAlias: {
     color: C.fg3, textDecoration: 'line-through',
+  },
+  learnedUndo: {
+    background: 'none', border: 'none', cursor: 'pointer', color: C.accent,
+    fontSize: 11, padding: '0 2px', textDecoration: 'underline',
   },
   learnedDismiss: {
     background: 'none', border: 'none', cursor: 'pointer', color: C.fg3,
