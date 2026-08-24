@@ -70,6 +70,19 @@ final class TextInjector {
         return true
     }
 
+    /// Is the Codey window the frontmost app right now?
+    ///
+    /// Compared by process id against our own parent rather than by bundle
+    /// identifier: Electron reports a different identifier in development than
+    /// in the shipped .app, and the helper is spawned by the very process that
+    /// owns the window, so the parent pid is exact and needs no configuration.
+    /// A helper started by hand has a shell as its parent and never matches,
+    /// which is the right answer for that case too.
+    static func isHostAppFrontmost() -> Bool {
+        guard let front = NSWorkspace.shared.frontmostApplication else { return false }
+        return front.processIdentifier == getppid()
+    }
+
     /// Pre-flight check: is there a focused UI element that will actually
     /// accept text? Used to decide between auto-inject and "show in HUD"
     /// when the user fires the hotkey without first clicking into a field.

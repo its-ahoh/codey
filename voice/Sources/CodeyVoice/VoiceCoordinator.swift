@@ -480,10 +480,14 @@ final class VoiceCoordinator {
         }
     }
 
-    private func emitConversationEvent(type: String, payload: [String: Any] = [:]) {
+    /// `modeOverride` exists for the one turn whose destination is decided
+    /// after the fact: a hotkey dictation that turns out to be aimed at Codey
+    /// itself is captured as `.dictation` but delivered like composer
+    /// dictation. Everything else takes the mode from the destination.
+    private func emitConversationEvent(type: String, payload: [String: Any] = [:], modeOverride: String? = nil) {
         var body = payload
         body["type"] = type
-        body["mode"] = captureDestination.composerMode ?? "converse"
+        body["mode"] = modeOverride ?? captureDestination.composerMode ?? "converse"
         // Echo who started the turn so Electron mirrors this side rather than
         // tracking it independently and drifting.
         if captureDestination == .conversation { body["fromHotkey"] = conversationFromHotkey }
@@ -622,8 +626,25 @@ final class VoiceCoordinator {
                     return
                 }
 
-                let canInject = TextInjector.canInjectAtCurrentFocus()
+                // Dictating into Codey's own window: hand the transcript to
+                // the app rather than pasting it. Only that path can compare
+                // what was heard against what the user actually sends, which
+                // is what teaches the dictionary — pasted text is
+                // indistinguishable from typing by the time it lands. The
+                // renderer falls back to pasting if no composer is mounted,
+                // so nothing is lost when the window is on another tab.
                 let finalText = text
+                if !finalText.isEmpty && TextInjector.isHostAppFrontmost() {
+                    print("dictation: Codey is frontmost, routing to the composer")
+                    emitConversationEvent(type: "transcript", payload: ["text": finalText], modeOverride: "dictate")
+                    state = .idle
+                    statusItem?.updateState(.idle)
+                    await MainActor.run { self.hud.show(.success) }
+                    Task { await gateway.reportStatus("idle") }
+                    return
+                }
+
+                let canInject = TextInjector.canInjectAtCurrentFocus()
                 if !finalText.isEmpty && canInject {
                     print("inject: mode=\(config.injection)")
                     textInjector.inject(finalText)
