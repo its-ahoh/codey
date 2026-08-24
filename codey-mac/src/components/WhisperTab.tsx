@@ -905,10 +905,26 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         <div style={sectionBodyStyle}>
 
       <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.55, padding: '10px 12px', background: C.surface3, borderRadius: 7, marginTop: 10 }}>
-        Every word here is passed to the recognizer as a hint <em>before</em> it transcribes,
-        so it can reach spellings it would otherwise never produce. Open a word to also list
-        what it gets <em>heard as</em> — those are rewritten back after transcribing, for
-        mistakes that come out the same way every time. Applies to all three providers.
+        Open a word to list what it gets <strong style={{ color: C.fg2 }}>heard as</strong>.
+        Those spellings are rewritten to the word after transcribing, which is what fixes a
+        mistake that comes out the same way every time.
+        {voice.provider === 'local' ? (
+          // Being specific rather than encouraging: on-device gets no hint, so
+          // a word with nothing under "heard as" genuinely does nothing, and
+          // saying otherwise sends people off adding words that never help.
+          <div style={{ marginTop: 7 }}>
+            <strong style={{ color: C.fg2 }}>On-device transcription needs the mis-hearings.</strong>{' '}
+            A word on its own has no effect here — unlike the API providers, WhisperKit cannot
+            be given the vocabulary up front (its prompt option returns empty transcripts in
+            the version bundled with Codey).
+          </div>
+        ) : (
+          <div style={{ marginTop: 7 }}>
+            A word on its own still helps here: it is sent to the API as a hint before
+            transcribing, so the recognizer can reach spellings it would otherwise never
+            produce. Mis-hearings are optional on top of that.
+          </div>
+        )}
         <div style={{ marginTop: 7 }}>
           The toggle above controls learning: with it on, when you dictate into a Codey chat
           and fix a word before sending, that fix is added here automatically.
@@ -925,19 +941,25 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           const aliases = countAliases(row.aliasText)
           const selected = expandedVocabRow === i
           const label = row.term.trim() || 'Untitled'
+          const inertHintOnly = aliases === 0 && voice.provider === 'local'
           return (
             <button
               key={i}
               onClick={() => setExpandedVocabRow(selected ? null : i)}
-              title={aliases === 0
-                ? `${label} - hint only, no mis-hearings listed`
-                : `${label} - ${aliases} mis-hearing${aliases === 1 ? '' : 's'}`}
+              title={aliases > 0
+                ? `${label} - ${aliases} mis-hearing${aliases === 1 ? '' : 's'}`
+                : inertHintOnly
+                  ? `${label} - no effect yet: on-device transcription needs at least one mis-hearing. Click to add one.`
+                  : `${label} - sent to the API as a hint; no mis-hearings listed`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '5px 11px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
                 background: selected ? C.accent : C.surface3,
                 color: selected ? C.onAccent : C.fg,
-                border: `1px solid ${selected ? C.accent : C.border2}`,
+                border: `1px solid ${selected ? C.accent : inertHintOnly ? C.border : C.border2}`,
+                // Dimmed rather than hidden: the word is saved, it just does
+                // nothing until it has a mis-hearing under it.
+                opacity: !selected && inertHintOnly ? 0.55 : 1,
                 fontStyle: row.term.trim() ? 'normal' : 'italic',
               }}
             >
@@ -1022,7 +1044,9 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
             <div style={{ color: C.fg3, fontSize: 11, marginTop: 6 }}>
               One mis-hearing per line. Each is rewritten to
               <strong style={{ color: C.fg2 }}> {row.term.trim() || 'the word above'}</strong> after transcribing.
-              Leave it empty to use the word as a hint only.
+              {voice.provider === 'local'
+                ? ' Leaving this empty means the word does nothing on on-device transcription.'
+                : ' Leaving it empty still sends the word to the API as a hint.'}
             </div>
           </div>
         )
