@@ -42,6 +42,10 @@ import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, delete
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
+// Pure logic, no DOM and no Node builtins — shared with the Settings editor
+// that renders the same dictionary, so both sides agree on what a valid entry
+// is and the learner can't write a shape the editor would drop.
+import { learnCorrections, mergeLearnedAliases, normalizeVocabulary } from '../src/components/voiceVocabulary'
 
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
@@ -1377,7 +1381,217 @@ function currentOsBuild(): string {
   return _osBuildCache || ''
 }
 
-type WarmMarkers = Record<string, { warmedAt: string; loadSeconds: number; osBuild?: string }>
+// WhisperKit model folders currently on disk. WhisperKit stores downloaded
+// variants under ~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/.
+// Raw folder names are returned so callers can match either the bare variant
+// or the full openai_whisper-<variant> form used in the UI dropdown.
+function listDownloadedVoiceModels(): string[] {
+  const fsMod = require('fs') as typeof import('fs')
+  const pathMod = require('path') as typeof import('path')
+  const home = app.getPath('home')
+  const candidates = [
+    pathMod.join(home, 'Documents', 'huggingface', 'models', 'argmaxinc', 'whisperkit-coreml'),
+    pathMod.join(home, 'Library', 'Application Support', 'huggingface', 'models', 'argmaxinc', 'whisperkit-coreml'),
+  ]
+  const found = new Set<string>()
+  for (const dir of candidates) {
+    if (!fsMod.existsSync(dir)) continue
+    for (const entry of fsMod.readdirSync(dir)) {
+      const full = pathMod.join(dir, entry)
+      try {
+        const st = fsMod.statSync(full)
+        // Only count variants that actually contain .mlmodelc payloads AND
+        // each .mlmodelc has a non-empty weights/weight.bin. CoreML partial
+        // downloads leave the folder + model.mil present but the weight file
+        // missing or zero-byte, which causes runtime "Could not open
+        // weights/weight.bin" errors and an endless warm-failure flicker in
+        // the UI. Checking weights here surfaces incomplete downloads as "not
+        // downloaded" so the user gets a Download button instead of a
+        // confusing warm error.
+        if (!st.isDirectory()) continue
+        const mlmodelcs = fsMod.readdirSync(full).filter(f => f.endsWith('.mlmodelc'))
+        if (mlmodelcs.length === 0) continue
+        const allWeightsOK = mlmodelcs.every(mc => {
+          const w = pathMod.join(full, mc, 'weights', 'weight.bin')
+          try {
+            const ws = fsMod.statSync(w)
+            return ws.isFile() && ws.size > 1024  // any real Whisper weight blob is MBs
+          } catch { return false }
+        })
+        if (allWeightsOK) found.add(entry)
+      } catch { /* skip */ }
+    }
+  }
+  return Array.from(found)
+}
+
+/** Match a UI model value against a folder list, tolerating either name form. */
+function voiceModelInList(list: string[], modelValue: string): boolean {
+  if (list.length === 0) return false
+  const bare = modelValue.startsWith('openai_whisper-')
+    ? modelValue.slice('openai_whisper-'.length)
+    : modelValue
+  return list.some(d => d === modelValue || d === bare || d === `openai_whisper-${bare}`)
+}
+
+/**
+ * Force a WhisperKit variant through CoreML's one-time per-machine compile by
+ * spawning the helper in `--warm-model` mode. Afterwards the model loads in
+ * ~200ms on an Fn press instead of 30-90s (which would blow past the helper's
+ * 10s load timeout and leave the UI stuck on "transcribing").
+ */
+async function runVoiceModelWarm(modelName: string): Promise<{ model: string; loadSeconds: number }> {
+  if (process.platform !== 'darwin') throw new Error('Voice helper is macOS-only')
+  if (typeof modelName !== 'string' || !modelName.trim()) throw new Error('Model name required')
+  const bin = resolveVoiceHelperBinary()
+  if (!bin) throw new Error('Voice helper binary not found')
+
+  const { spawn } = require('child_process') as typeof import('child_process')
+  const proc = spawn(bin, ['--warm-model', modelName], { stdio: ['ignore', 'pipe', 'pipe'] })
+
+  let lastErr = ''
+  let loadSeconds = 0
+  activeVoiceWarm = { model: modelName, startedAt: Date.now() }
+  sendToRenderer('voice:warmStart', { model: modelName })
+
+  const onLine = (line: string) => {
+    const s = line.trim()
+    if (!s) return
+    sendToRenderer('gateway-log', `[voice-warm] ${s}`)
+    if (s.startsWith('warm:done ')) {
+      loadSeconds = parseFloat(s.slice('warm:done '.length)) || 0
+    } else if (s.startsWith('warm:error ')) {
+      lastErr = s.slice('warm:error '.length)
+    }
+  }
+  const wireLines = (stream: NodeJS.ReadableStream | null) => {
+    if (!stream) return
+    let buf = ''
+    stream.on('data', (chunk: Buffer) => {
+      buf += chunk.toString()
+      let idx: number
+      while ((idx = buf.indexOf('\n')) >= 0) {
+        onLine(buf.slice(0, idx))
+        buf = buf.slice(idx + 1)
+      }
+    })
+    stream.on('end', () => { if (buf) onLine(buf) })
+  }
+  wireLines(proc.stdout)
+  wireLines(proc.stderr)
+
+  const code: number = await new Promise(resolve => proc.on('exit', c => resolve(c ?? 1)))
+  activeVoiceWarm = null
+  if (code !== 0) {
+    sendToRenderer('voice:warmError', { model: modelName, error: lastErr || `Warm failed (exit ${code})` })
+    throw new Error(lastErr || `Warm failed (exit ${code})`)
+  }
+  writeWarmMarker(modelName, loadSeconds)
+  sendToRenderer('voice:warmDone', { model: modelName, loadSeconds })
+  return { model: modelName, loadSeconds }
+}
+
+/** Guards against a second startup warm while the first is still running. */
+let startupWarmInFlight = false
+
+/**
+ * The warm currently running, if any.
+ *
+ * Pushed to the renderer as events, but also held here so a window that mounts
+ * *during* a warm can ask. The startup warm begins before the renderer is
+ * ready and runs for minutes, so "I missed the start event" is the normal
+ * case, not the edge case.
+ */
+let activeVoiceWarm: { model: string; startedAt: number } | null = null
+
+export function currentVoiceWarm(): { model: string; startedAt: number } | null {
+  return activeVoiceWarm
+}
+
+/**
+ * On launch, make sure the selected on-device model is actually ready.
+ *
+ * Warming used to happen only from the Whisper settings tab, so a user who
+ * never opened it — or who updated macOS, which invalidates CoreML's compiled
+ * cache — paid a 30-90s compile on their first Fn press. That exceeds the
+ * helper's 10s load timeout, and the failure looks like a hung "transcribing"
+ * with every further press ignored. Checking here means the cost is paid in
+ * the background at launch, when nobody is waiting on it.
+ *
+ * Best-effort throughout: a failure here must never block startup, and the
+ * first press still works (just slowly), so errors are logged and swallowed.
+ */
+async function warmSelectedVoiceModelOnStartup(): Promise<void> {
+  if (process.platform !== 'darwin') return
+  if (startupWarmInFlight) return
+  try {
+    const voice = (coreConfigManager?.get() as any)?.voice
+    if (!voice?.enabled) return
+    if (voice.provider !== 'local') return
+    const model = String(voice.localModel ?? '')
+    if (!model) return
+
+    // Nothing to warm if the weights aren't on disk — that is a Download
+    // button in Settings, not something to kick off unasked at launch.
+    if (!voiceModelInList(listDownloadedVoiceModels(), model)) {
+      sendToRenderer('gateway-log', `[voice-warm] ${model} not downloaded, skipping startup warm`)
+      return
+    }
+    // Both the OS build and the helper binary are part of the key, so an OS
+    // update or an app update correctly reads as "not warmed" and we recompile
+    // here rather than trusting a stale marker and ambushing the first press.
+    if (voiceModelInList(warmedVoiceModels(), model)) return
+
+    startupWarmInFlight = true
+    sendToRenderer('gateway-log', `[voice-warm] warming ${model} at startup`)
+    await runVoiceModelWarm(model)
+  } catch (e: any) {
+    sendToRenderer('gateway-log', `[voice-warm] startup warm failed: ${e?.message ?? e}`)
+  } finally {
+    startupWarmInFlight = false
+  }
+}
+
+/**
+ * Identity of the helper binary the warm was performed with.
+ *
+ * CoreML's compiled Neural Engine cache is keyed on the client binary, so a
+ * new build of the helper invalidates it and the next load pays a full
+ * recompile (measured at ~320s). The warm marker used to record only the OS
+ * build, which meant an app update looked "already warmed", the startup warm
+ * skipped, and the recompile landed on the user's first Fn press instead —
+ * exactly the case this whole mechanism exists to prevent.
+ *
+ * Size + mtime rather than a content hash: the binary is tens of MB, this runs
+ * on every launch, and being conservative (re-warming after a reinstall that
+ * happened to produce identical bytes) is far cheaper than being wrong.
+ */
+function currentHelperId(): string {
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const bin = resolveVoiceHelperBinary()
+    if (!bin) return ''
+    const st = fs.statSync(bin)
+    return `${st.size}-${Math.floor(st.mtimeMs)}`
+  } catch { return '' }
+}
+
+type WarmMarkers = Record<string, { warmedAt: string; loadSeconds: number; osBuild?: string; helperId?: string }>
+
+/**
+ * Variants whose warm still applies: same OS build *and* same helper binary.
+ * A marker missing either field predates that key and is treated as stale,
+ * which costs one re-warm and then settles.
+ */
+function warmedVoiceModels(): string[] {
+  const build = currentOsBuild()
+  const helperId = currentHelperId()
+  const markers = readWarmMarkers()
+  return Object.keys(markers).filter(k => {
+    const m = markers[k]
+    return m?.osBuild === build && m?.helperId === helperId
+  })
+}
 
 function readWarmMarkers(): WarmMarkers {
   try {
@@ -1396,7 +1610,7 @@ function writeWarmMarker(model: string, loadSeconds: number) {
     // Store under both forms so lookups work whether UI sends the prefixed
     // (`openai_whisper-...`) or bare (`large-v3...`) variant string.
     const bare = model.startsWith('openai_whisper-') ? model.slice('openai_whisper-'.length) : model
-    const entry = { warmedAt: new Date().toISOString(), loadSeconds, osBuild: currentOsBuild() }
+    const entry = { warmedAt: new Date().toISOString(), loadSeconds, osBuild: currentOsBuild(), helperId: currentHelperId() }
     cur[model] = entry
     cur[bare] = entry
     cur[`openai_whisper-${bare}`] = entry
@@ -1992,6 +2206,11 @@ app.whenReady().then(async () => {
     })
   )
   await bootInProcessCore()
+
+  // Config is loaded now, so the selected on-device model is known. Not
+  // awaited: warming is a 30-90s CoreML compile in the worst case and nothing
+  // downstream depends on it, so startup continues while it runs.
+  void warmSelectedVoiceModelOnStartup()
 
   // Check Full Disk Access by probing the iMessage database. This reminder is
   // intentionally one-time: it is guidance for the optional iMessage channel,
@@ -2883,6 +3102,34 @@ app.whenReady().then(async () => {
     })
   )
 
+  // Learn mis-hearings by comparing what was dictated against what the user
+  // actually sent. Done here rather than in the renderer because the merge is
+  // read-modify-write on the shared voice config: config:set replaces the
+  // whole `voice` object, so a renderer doing this itself would clobber any
+  // field the Settings tab changed in between.
+  ipcMain.handle('voice:learnVocabulary', async (_e, payload: { spoken?: string; edited?: string }) =>
+    wrap(async () => {
+      if (!coreConfigManager) return { learned: [] }
+      const spoken = String(payload?.spoken ?? '')
+      const edited = String(payload?.edited ?? '')
+      if (!spoken.trim() || !edited.trim()) return { learned: [] }
+
+      const voice = (coreConfigManager.get() as any)?.voice
+      if (!voice || voice.vocabularyAutoLearn === false) return { learned: [] }
+
+      const corrections = learnCorrections(spoken, edited)
+      if (corrections.length === 0) return { learned: [] }
+
+      const current = normalizeVocabulary(voice.vocabulary)
+      const merged = mergeLearnedAliases(current, corrections)
+      if (!merged.changed) return { learned: [] }
+
+      coreConfigManager.update({ voice: { ...voice, vocabulary: merged.entries } } as any)
+      mainWindow?.webContents.send('voice:vocabularyLearned', merged.entries)
+      return { learned: merged.added }
+    })
+  )
+
   ipcMain.handle('voice:transcribed', async (_e, text: string) =>
     wrap(async () => {
       if (typeof text !== 'string' || !text.trim()) return
@@ -3009,65 +3256,19 @@ app.whenReady().then(async () => {
   // succeeds, the model loads in ~200ms on subsequent Fn presses instead of
   // 30-90s. On success we persist a marker so the UI shows ⚡ for warmed models.
   ipcMain.handle('voice:warmModel', async (_e, modelName: string) =>
-    wrap(async () => {
-      if (process.platform !== 'darwin') throw new Error('Voice helper is macOS-only')
-      if (typeof modelName !== 'string' || !modelName.trim()) throw new Error('Model name required')
-      const bin = resolveVoiceHelperBinary()
-      if (!bin) throw new Error('Voice helper binary not found')
+    wrap(async () => runVoiceModelWarm(modelName))
+  )
 
-      const { spawn } = require('child_process') as typeof import('child_process')
-      const proc = spawn(bin, ['--warm-model', modelName], { stdio: ['ignore', 'pipe', 'pipe'] })
-
-      let lastErr = ''
-      let loadSeconds = 0
-      sendToRenderer('voice:warmStart', { model: modelName })
-
-      const onLine = (line: string) => {
-        const s = line.trim()
-        if (!s) return
-        sendToRenderer('gateway-log', `[voice-warm] ${s}`)
-        if (s.startsWith('warm:done ')) {
-          loadSeconds = parseFloat(s.slice('warm:done '.length)) || 0
-        } else if (s.startsWith('warm:error ')) {
-          lastErr = s.slice('warm:error '.length)
-        }
-      }
-      const wireLines = (stream: NodeJS.ReadableStream | null) => {
-        if (!stream) return
-        let buf = ''
-        stream.on('data', (chunk: Buffer) => {
-          buf += chunk.toString()
-          let idx: number
-          while ((idx = buf.indexOf('\n')) >= 0) {
-            onLine(buf.slice(0, idx))
-            buf = buf.slice(idx + 1)
-          }
-        })
-        stream.on('end', () => { if (buf) onLine(buf) })
-      }
-      wireLines(proc.stdout)
-      wireLines(proc.stderr)
-
-      const code: number = await new Promise(resolve => proc.on('exit', c => resolve(c ?? 1)))
-      if (code !== 0) {
-        sendToRenderer('voice:warmError', { model: modelName, error: lastErr || `Warm failed (exit ${code})` })
-        throw new Error(lastErr || `Warm failed (exit ${code})`)
-      }
-      writeWarmMarker(modelName, loadSeconds)
-      sendToRenderer('voice:warmDone', { model: modelName, loadSeconds })
-      return { model: modelName, loadSeconds }
-    })
+  ipcMain.handle('voice:warmState', async () =>
+    wrap(async () => currentVoiceWarm())
   )
 
   ipcMain.handle('voice:listWarmedModels', async () =>
     wrap(async () => {
-      // Only report models whose warm marker matches the current OS build.
-      // Entries from a prior build (or pre-osBuild markers, which read as
-      // undefined) are dropped, so the UI shows ✓ instead of ⚡ and
-      // WhisperTab's auto-warm effect re-warms the selected model on boot.
-      const build = currentOsBuild()
-      const markers = readWarmMarkers()
-      return Object.keys(markers).filter(k => markers[k]?.osBuild === build)
+      // Stale markers are dropped by the shared check, so the UI shows the
+      // "downloaded" state rather than "warmed" after an OS or app update and
+      // WhisperTab's auto-warm effect re-warms the selected model.
+      return warmedVoiceModels()
     })
   )
 
@@ -3077,45 +3278,7 @@ app.whenReady().then(async () => {
   // renderer can match against either the bare variant or the full
   // openai_whisper-<variant> form used in the UI dropdown.
   ipcMain.handle('voice:listDownloadedModels', async () =>
-    wrap(async () => {
-      const fsMod = await import('fs')
-      const pathMod = await import('path')
-      const home = app.getPath('home')
-      const candidates = [
-        pathMod.join(home, 'Documents', 'huggingface', 'models', 'argmaxinc', 'whisperkit-coreml'),
-        pathMod.join(home, 'Library', 'Application Support', 'huggingface', 'models', 'argmaxinc', 'whisperkit-coreml'),
-      ]
-      const found = new Set<string>()
-      for (const dir of candidates) {
-        if (!fsMod.existsSync(dir)) continue
-        for (const entry of fsMod.readdirSync(dir)) {
-          const full = pathMod.join(dir, entry)
-          try {
-            const st = fsMod.statSync(full)
-            // Only count variants that actually contain .mlmodelc payloads
-            // AND each .mlmodelc has a non-empty weights/weight.bin. CoreML
-            // partial downloads leave the folder + model.mil present but the
-            // weight file missing or zero-byte, which causes runtime "Could
-            // not open weights/weight.bin" errors and an endless warm-failure
-            // flicker in the UI. Checking weights here surfaces incomplete
-            // downloads as "not downloaded" so the user gets a Download
-            // button instead of a confusing warm error.
-            if (!st.isDirectory()) continue
-            const mlmodelcs = fsMod.readdirSync(full).filter(f => f.endsWith('.mlmodelc'))
-            if (mlmodelcs.length === 0) continue
-            const allWeightsOK = mlmodelcs.every(mc => {
-              const w = pathMod.join(full, mc, 'weights', 'weight.bin')
-              try {
-                const ws = fsMod.statSync(w)
-                return ws.isFile() && ws.size > 1024  // any real Whisper weight blob is MBs
-              } catch { return false }
-            })
-            if (allWeightsOK) found.add(entry)
-          } catch { /* skip */ }
-        }
-      }
-      return Array.from(found)
-    })
+    wrap(async () => listDownloadedVoiceModels())
   )
 
   // Deletes a WhisperKit model variant from disk: the HuggingFace download

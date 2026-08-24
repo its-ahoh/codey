@@ -36,8 +36,8 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
     /// Transcribe 16 kHz mono Float32 audio via the configured API.
     func transcribe(audio: [Float], language: String) async throws -> String {
         // Snapshot config under the lock so all reads see a consistent version.
-        let (apiUrl, apiKey, apiModel) = configLock.withLock {
-            (_config.apiUrl, _config.apiKey, _config.apiModel)
+        let (apiUrl, apiKey, apiModel, vocabulary) = configLock.withLock {
+            (_config.apiUrl, _config.apiKey, _config.apiModel, _config.vocabulary)
         }
         let baseURL = apiUrl.hasSuffix("/")
             ? String(apiUrl.dropLast())
@@ -51,7 +51,7 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
 
         let wavData = encodeWAV(samples: audio, sampleRate: 16000)
         let streaming = modelSupportsStreaming(apiModel)
-        let request = buildRequest(url: url, apiKey: apiKey, apiModel: apiModel, wav: wavData, language: language, streaming: streaming)
+        let request = buildRequest(url: url, apiKey: apiKey, apiModel: apiModel, wav: wavData, language: language, streaming: streaming, prompt: Vocabulary.promptText(vocabulary))
 
         return streaming
             ? try await runStreaming(request: request)
@@ -68,7 +68,7 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
         return m.contains("gpt-4o") && m.contains("transcribe")
     }
 
-    private func buildRequest(url: URL, apiKey: String, apiModel: String, wav: Data, language: String, streaming: Bool) -> URLRequest {
+    private func buildRequest(url: URL, apiKey: String, apiModel: String, wav: Data, language: String, streaming: Bool, prompt: String?) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -100,6 +100,11 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
         }
         // Streaming endpoints require JSON; the one-shot path still asks for
         // `text` so the response body is the transcript verbatim.
+        // Custom vocabulary hint. OpenAI-compatible endpoints that don't know
+        // the field ignore it, so this is safe to always send.
+        if let prompt = prompt, !prompt.isEmpty {
+            field("prompt", prompt)
+        }
         field("response_format", streaming ? "json" : "text")
         if streaming { field("stream", "true") }
 

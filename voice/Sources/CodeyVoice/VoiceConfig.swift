@@ -30,6 +30,10 @@ struct VoiceConfig: Codable {
     var realtimeUrl: String = "wss://api.openai.com/v1/realtime?intent=transcription"
     /// Realtime transcription model (e.g. "gpt-4o-mini-transcribe").
     var realtimeModel: String = "gpt-4o-mini-transcribe"
+    /// Custom vocabulary: proper nouns the recognizer keeps getting wrong.
+    /// Terms are hinted to the decoder before transcription and their aliases
+    /// are rewritten afterwards. See `Vocabulary`.
+    var vocabulary: [VocabularyTerm] = []
 
     enum Mode: String, Codable {
         case inject
@@ -77,6 +81,9 @@ struct VoiceConfig: Codable {
         localModel = try c.decodeIfPresent(String.self, forKey: .localModel) ?? d.localModel
         realtimeUrl = try c.decodeIfPresent(String.self, forKey: .realtimeUrl) ?? d.realtimeUrl
         realtimeModel = try c.decodeIfPresent(String.self, forKey: .realtimeModel) ?? d.realtimeModel
+        // A malformed vocabulary entry must not take down the whole config
+        // fetch — the field is hand-authored, so drop it and keep going.
+        vocabulary = ((try? c.decodeIfPresent([VocabularyTerm].self, forKey: .vocabulary)) ?? nil) ?? d.vocabulary
     }
 
     init() {}

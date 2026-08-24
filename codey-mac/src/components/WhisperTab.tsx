@@ -3,6 +3,7 @@ import { C } from '../theme'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { Toggle } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
+import { normalizeVocabulary, vocabularyToDraft, draftToVocabulary, type VocabularyEntry, type VocabularyDraftRow } from './voiceVocabulary'
 
 interface WhisperTabProps {
   isGatewayRunning: boolean
@@ -30,6 +31,10 @@ interface VoiceCfg {
   realtimeModel: string
   /** Legacy setting kept for config compatibility. The two hotkeys now have fixed destinations. */
   mode: 'inject' | 'converse'
+  /** Custom vocabulary. See VocabularyEntry. */
+  vocabulary: VocabularyEntry[]
+  /** Learn mis-hearings from corrections made in a Codey chat before sending. */
+  vocabularyAutoLearn: boolean
   tts: TtsCfg
 }
 
@@ -63,6 +68,8 @@ const VOICE_DEFAULT: VoiceCfg = {
   realtimeUrl: 'wss://api.openai.com/v1/realtime?intent=transcription',
   realtimeModel: 'gpt-4o-mini-transcribe',
   mode: 'inject',
+  vocabulary: [],
+  vocabularyAutoLearn: true,
   tts: {
     enabled: false,
     provider: 'api',
@@ -182,6 +189,13 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
   // false → deps change → re-fires → "model folder is not set" flicker).
   // User can manually retry by switching model and back.
   const [warmFailed, setWarmFailed] = useState<Set<string>>(new Set())
+  // Dictionary rows are edited as free text — aliases live as one blob while
+  // the user types, so a half-typed line isn't eaten mid-keystroke. Parsed
+  // back into string[] only on commit.
+  const [vocabDraft, setVocabDraft] = useState<VocabularyDraftRow[]>([])
+  // Which row has its mis-hearings open. One at a time: the list is a scan
+  // target, and the aliases are the rare thing you come here to change.
+  const [expandedVocabRow, setExpandedVocabRow] = useState<number | null>(null)
 
   const refreshDownloaded = useCallback(async () => {
     try {
@@ -304,6 +318,8 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       const keys = await unwrap(await window.codey.apiKeys.list()) as SavedApiKey[]
       setSavedVoiceKeys(keys.filter(key => key.purpose === 'voice').sort((a, b) => a.name.localeCompare(b.name)))
       const storedVoice = cfg?.voice ?? {}
+      const vocabulary = normalizeVocabulary(storedVoice.vocabulary)
+      setVocabDraft(vocabularyToDraft(vocabulary))
       const legacyEnabled = storedVoice.enabled ?? false
       const dictationEnabled = storedVoice.dictationEnabled ?? legacyEnabled
       const conversationEnabled = storedVoice.conversationEnabled ?? legacyEnabled
@@ -318,12 +334,27 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         // Dictation and talk-to-chat now have separate triggers. Migrate old
         // configs so the primary hotkey always keeps its dictation meaning.
         mode: 'inject',
+        vocabulary,
         tts: { ...VOICE_DEFAULT.tts, ...(cfg?.voice?.tts ?? {}) },
       })
     } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [])
 
   useEffect(() => { if (isGatewayRunning) reload() }, [isGatewayRunning, reload])
+
+  // The learner writes straight to config from the main process, so the open
+  // editor has to be told — every save here sends the whole `voice` object,
+  // and a stale copy would silently drop whatever was just learned. The
+  // config state is therefore always refreshed; only the visible rows wait,
+  // because rewriting a textarea under someone mid-edit is worse than showing
+  // them one word out of date until they collapse it.
+  useEffect(() => {
+    return window.codey.voice.onVocabularyLearned(entries => {
+      const normalized = normalizeVocabulary(entries)
+      setVoice(prev => ({ ...prev, vocabulary: normalized }))
+      if (expandedVocabRow === null) setVocabDraft(vocabularyToDraft(normalized))
+    })
+  }, [expandedVocabRow])
 
   useEffect(() => {
     const load = () => setSystemVoices(
@@ -376,6 +407,20 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
+  }
+
+  const commitVocabulary = (draft: VocabularyDraftRow[]) => {
+    updateVoice({ vocabulary: draftToVocabulary(draft) })
+  }
+
+  const patchVocabRow = (index: number, patch: Partial<VocabularyDraftRow>) => {
+    setVocabDraft(rows => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  }
+
+  const removeVocabRow = (index: number) => {
+    const next = vocabDraft.filter((_, i) => i !== index)
+    setVocabDraft(next)
+    commitVocabulary(next)
   }
 
   const handleHotkeyRecordingChange = useCallback((active: boolean) => {
@@ -848,6 +893,107 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       )}
       </>
       )}
+        </div>
+      </div>
+
+      <div style={sectionCardStyle}>
+        <Section
+          title="Dictionary"
+          description="Names the recognizer keeps getting wrong"
+          right={<Toggle on={voice.vocabularyAutoLearn} onChange={vocabularyAutoLearn => updateVoice({ vocabularyAutoLearn })}/>}
+        />
+        <div style={sectionBodyStyle}>
+
+      <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.55, padding: '10px 12px', background: C.surface3, borderRadius: 7, marginTop: 10 }}>
+        Every word here is passed to the recognizer as a hint <em>before</em> it transcribes,
+        so it can reach spellings it would otherwise never produce. Open a word to also list
+        what it gets <em>heard as</em> — those are rewritten back after transcribing, for
+        mistakes that come out the same way every time. Applies to all three providers.
+        <div style={{ marginTop: 7 }}>
+          The toggle above controls learning: with it on, when you dictate into a Codey chat
+          and fix a word before sending, that fix is added here automatically.
+        </div>
+      </div>
+
+      {vocabDraft.length === 0 && (
+        <div style={{ color: C.fg3, fontSize: 12, padding: '16px 0 4px', textAlign: 'center' }}>
+          No words yet.
+        </div>
+      )}
+
+      {vocabDraft.map((row, i) => {
+        const aliases = row.aliasText.split(/[\n,]/).map(a => a.trim()).filter(Boolean)
+        const open = expandedVocabRow === i
+        return (
+          <div key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '7px 0' }}>
+              <button
+                onClick={() => setExpandedVocabRow(open ? null : i)}
+                title={open ? 'Collapse' : 'Edit what this gets heard as'}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px',
+                  color: C.fg3, fontSize: 10, width: 16, textAlign: 'left',
+                }}
+              >
+                {open ? '\u25be' : '\u25b8'}
+              </button>
+              <input
+                value={row.term}
+                onChange={e => patchVocabRow(i, { term: e.target.value })}
+                onBlur={() => commitVocabulary(vocabDraft)}
+                placeholder="Codey"
+                style={{ ...inputStyle, flex: 1, width: 'auto' }}
+              />
+              <span
+                onClick={() => setExpandedVocabRow(open ? null : i)}
+                style={{ color: C.fg3, fontSize: 11, width: 88, cursor: 'pointer', userSelect: 'none' }}
+              >
+                {aliases.length === 0 ? 'hint only' : `${aliases.length} heard as`}
+              </span>
+              <button
+                onClick={() => removeVocabRow(i)}
+                title="Remove word"
+                style={{ ...pillButton('danger'), width: 30, padding: '6px 0', textAlign: 'center' }}
+              >
+                &times;
+              </button>
+            </div>
+            {open && (
+              <div style={{ padding: '0 0 10px 24px' }}>
+                <textarea
+                  value={row.aliasText}
+                  onChange={e => patchVocabRow(i, { aliasText: e.target.value })}
+                  onBlur={() => commitVocabulary(vocabDraft)}
+                  placeholder={'Coday\ncode E\ncody'}
+                  rows={Math.min(8, Math.max(3, aliases.length + 1))}
+                  style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+                />
+                <div style={{ color: C.fg3, fontSize: 11, marginTop: 5 }}>
+                  One mis-hearing per line. Each is rewritten to
+                  <strong style={{ color: C.fg2 }}> {row.term.trim() || 'the word above'}</strong> after transcribing.
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      <div style={{ ...lastSettingBlockStyle, paddingTop: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button
+          onClick={() => {
+            setVocabDraft(rows => {
+              setExpandedVocabRow(rows.length)
+              return [...rows, { term: '', aliasText: '' }]
+            })
+          }}
+          style={pillButton('ghost')}
+        >
+          + Add word
+        </button>
+        <span style={{ color: C.fg3, fontSize: 11 }}>
+          {vocabDraft.length === 0 ? '' : `${vocabDraft.length} word${vocabDraft.length === 1 ? '' : 's'}`}
+        </span>
+      </div>
         </div>
       </div>
     </div>

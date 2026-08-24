@@ -116,8 +116,8 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
     /// configure the session. Returns once the connection opens and the server
     /// acknowledges the session configuration. Throws on failure.
     func startRealtimeSession(language: String) async throws {
-        let (apiKey, realtimeUrl, realtimeModel) = configLock.withLock {
-            (_config.apiKey, _config.realtimeUrl, _config.realtimeModel)
+        let (apiKey, realtimeUrl, realtimeModel, vocabulary) = configLock.withLock {
+            (_config.apiKey, _config.realtimeUrl, _config.realtimeModel, _config.vocabulary)
         }
         guard !apiKey.isEmpty else { throw TranscriptionError.noAPIKey }
         guard let url = URL(string: realtimeUrl) else {
@@ -155,7 +155,8 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
         // Send session configuration
         let updateData = try buildSessionUpdate(
             language: language,
-            model: realtimeModel
+            model: realtimeModel,
+            prompt: Vocabulary.promptText(vocabulary)
         )
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             ws.send(.data(updateData)) { error in
@@ -438,13 +439,17 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
     /// Build the JSON data for `session.update` with the required `"session"`
     /// wrapper key. Uses `NSNull()` to explicitly disable server VAD so the
     /// manual commit model is the only commit source.
-    private func buildSessionUpdate(language: String, model: String) throws -> Data {
+    private func buildSessionUpdate(language: String, model: String, prompt: String?) throws -> Data {
         let lang = language.isEmpty || language == "auto" ? "" : language
         var transcription: [String: Any] = [
             "model": model,
         ]
         if !lang.isEmpty {
             transcription["language"] = lang
+        }
+        // Custom vocabulary hint, same field the batch endpoint takes.
+        if let prompt = prompt, !prompt.isEmpty {
+            transcription["prompt"] = prompt
         }
 
         let body: [String: Any] = [

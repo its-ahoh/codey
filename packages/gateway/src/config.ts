@@ -160,6 +160,19 @@ export interface GatewayConfigJson {
     apiModel: string;
     /** WhisperKit model variant for local mode (e.g. openai_whisper-large-v3-turbo). */
     localModel: string;
+    /**
+     * Proper nouns the recognizer keeps getting wrong. Each term is hinted to
+     * the decoder before transcription; its aliases are rewritten to the term
+     * afterwards. A bare string is shorthand for `{ term, aliases: [] }`.
+     * Passed through to the Swift helper verbatim.
+     */
+    vocabulary?: (string | { term: string; aliases?: string[] })[];
+    /**
+     * Learn mis-hearings automatically: when dictation lands in a Codey chat
+     * and the user fixes a word before sending, the fix is folded into
+     * `vocabulary`. Defaults to on; only the Mac app acts on it.
+     */
+    vocabularyAutoLearn?: boolean;
     /** Text-to-speech (spoken replies) configuration. */
     tts?: VoiceTtsSettings;
   };

@@ -39,6 +39,8 @@ import { useGitStatus } from '../hooks/useGitStatus'
 import { BranchPicker } from './BranchPicker'
 import { CreatePrModal } from './CreatePrModal'
 import { UIIcon } from './UIIcons'
+import { useVoiceWarm } from './useVoiceWarm'
+import { warmTooltip } from './voiceWarmStatus'
 import { chatInputHistory, moveInInputHistory } from './chatInputHistory'
 import vscodeLogo from '../assets/editors/vscode.svg'
 import cursorLogo from '../assets/editors/cursor.svg'
@@ -840,6 +842,15 @@ export const ChatTab: React.FC<Props> = ({
   // (see VoiceTurnProvider) so they survive switching chats. What stays here
   // is the composer half — a transcript has to land in this chat's text box.
   const voiceAutoSendRef = useRef(false)
+  // Dictated text still waiting to be sent. On send we diff it against what
+  // actually went out and learn the mis-hearings — only dictation, because a
+  // converse turn sends itself and never gives the user a chance to correct it.
+  const dictatedPendingRef = useRef<string[]>([])
+  // Words the learner just picked up, shown as a pill above the composer.
+  // Learning is silent otherwise, and a dictionary that edits itself without
+  // saying so is the kind of thing you only discover when it goes wrong.
+  const [learnedWords, setLearnedWords] = useState<Array<{ term: string; alias: string }>>([])
+  const learnedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const voice = useVoiceTurn()
   const { setTranscriptHandler, beginSpokenTurn } = voice
   useEffect(() => {
@@ -849,6 +860,7 @@ export const ChatTab: React.FC<Props> = ({
         setInput(text)
       } else {
         // Dictation appends, so a second pass adds to what's already there.
+        dictatedPendingRef.current.push(text)
         setInput(prev => (prev.trim() ? `${prev.trim()} ${text}` : text))
       }
     })
@@ -1703,6 +1715,17 @@ export const ChatTab: React.FC<Props> = ({
     }
 
     const text = input
+    const dictated = dictatedPendingRef.current
+    dictatedPendingRef.current = []
+    // Fire-and-forget: a dictionary update must never delay or fail the send.
+    for (const spoken of dictated) {
+      void window.codey.voice.learnVocabulary(spoken, text)
+        .then(res => {
+          if (!res.ok || res.data.learned.length === 0) return
+          setLearnedWords(prev => [...prev, ...res.data.learned])
+        })
+        .catch(() => { /* best-effort */ })
+    }
     const atts = pendingAttachments.length > 0 ? [...pendingAttachments] : undefined
     setInput('')
     setPendingAttachments([])
@@ -1846,6 +1869,16 @@ export const ChatTab: React.FC<Props> = ({
   }
 
 
+  // Let the pill sit long enough to read, then clear it. Restarted on every
+  // new word so a second correction extends the window rather than truncating
+  // the first one's.
+  useEffect(() => {
+    if (learnedWords.length === 0) return
+    if (learnedTimerRef.current) clearTimeout(learnedTimerRef.current)
+    learnedTimerRef.current = setTimeout(() => setLearnedWords([]), 6000)
+    return () => { if (learnedTimerRef.current) clearTimeout(learnedTimerRef.current) }
+  }, [learnedWords])
+
   // A finished transcript sends itself — the point of voice mode is not
   // touching the keyboard, so stopping at a filled-in composer defeats it.
   useEffect(() => {
@@ -1859,6 +1892,11 @@ export const ChatTab: React.FC<Props> = ({
   }, [input]) // eslint-disable-line react-hooks/exhaustive-deps
 
 
+  // The model is compiling for the Neural Engine. Voice cannot start until it
+  // finishes, so the controls say so rather than accepting a press that would
+  // sit on "transcribing" for minutes.
+  const { warming: voiceWarming, elapsedSeconds: voiceWarmElapsed } = useVoiceWarm()
+  const voiceWarmTitle = warmTooltip(voiceWarmElapsed)
   const voiceActiveHere = voice.ownerChatId === chatId && voice.state !== 'idle'
   const voiceActiveElsewhere = voice.state !== 'idle' && voice.ownerChatId !== chatId
   const voiceBusy = voiceActiveHere && (voice.state === 'recording' || voice.state === 'transcribing')
@@ -2640,6 +2678,27 @@ export const ChatTab: React.FC<Props> = ({
         {uploadError && (
           <div style={styles.uploadError}>{uploadError}</div>
         )}
+        {learnedWords.length > 0 && (
+          <div style={styles.learnedRow}>
+            <span style={styles.learnedPill}>
+              <span style={{ opacity: 0.7 }}>Learned</span>
+              {learnedWords.map((word, i) => (
+                <span key={`${word.alias}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span style={styles.learnedAlias}>{word.alias}</span>
+                  <span style={{ opacity: 0.5 }}>&rarr;</span>
+                  <strong>{word.term}</strong>
+                </span>
+              ))}
+              <button
+                onClick={() => setLearnedWords([])}
+                title="Dismiss"
+                style={styles.learnedDismiss}
+              >
+                &times;
+              </button>
+            </span>
+          </div>
+        )}
         <div style={styles.composer}>
           <div
             style={styles.composerResizeHandle}
@@ -2780,14 +2839,16 @@ export const ChatTab: React.FC<Props> = ({
                   hold a spoken conversation that reads the reply back. */}
               {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'converse') && <button
                 onClick={() => voice.toggle('dictate')}
-                disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere}
+                disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarming}
                 style={{
                   ...styles.voiceButton,
                   background: voiceBusy && voice.mode === 'dictate' ? C.red : 'transparent',
-                  cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere ? 'pointer' : 'default',
+                  opacity: voiceWarming ? 0.4 : 1,
+                  cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarming ? 'pointer' : 'default',
                 }}
                 title={
-                  voiceActiveElsewhere ? 'Voice is active in another chat'
+                  voiceWarming ? voiceWarmTitle
+                  : voiceActiveElsewhere ? 'Voice is active in another chat'
                   : voiceBusy && voice.mode === 'dictate'
                     ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop — text goes to the box')
                     : 'Dictate into the message box'
@@ -2814,16 +2875,18 @@ export const ChatTab: React.FC<Props> = ({
               </button>}
               {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'dictate') && <button
                 onClick={() => voice.toggle('converse')}
-                disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere}
+                disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarming}
                 style={{
                   ...styles.voiceButton,
                   background: voiceActiveHere && voice.state === 'recording' && voice.mode === 'converse' ? C.red
                     : voiceActiveHere && voice.state === 'speaking' ? C.accent
                     : 'transparent',
-                  cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere ? 'pointer' : 'default',
+                  opacity: voiceWarming ? 0.4 : 1,
+                  cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarming ? 'pointer' : 'default',
                 }}
                 title={
-                  voiceActiveElsewhere ? 'Voice is active in another chat'
+                  voiceWarming ? voiceWarmTitle
+                  : voiceActiveElsewhere ? 'Voice is active in another chat'
                   : voiceActiveHere && voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
                   : voiceBusy && voice.mode === 'converse'
                     ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop and send')
@@ -3319,6 +3382,21 @@ const styles: Record<string, React.CSSProperties> = {
   },
   uploadError: {
     color: C.dangerFg, fontSize: 11, padding: '0 4px',
+  },
+  learnedRow: {
+    display: 'flex', justifyContent: 'flex-start', padding: '0 4px 4px',
+  },
+  learnedPill: {
+    display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' as const,
+    background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 999,
+    color: C.fg2, fontSize: 11, padding: '4px 6px 4px 12px', maxWidth: '100%',
+  },
+  learnedAlias: {
+    color: C.fg3, textDecoration: 'line-through',
+  },
+  learnedDismiss: {
+    background: 'none', border: 'none', cursor: 'pointer', color: C.fg3,
+    fontSize: 13, lineHeight: 1, padding: '0 6px',
   },
   choiceRow: {
     display: 'flex',

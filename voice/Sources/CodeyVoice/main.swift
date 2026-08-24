@@ -59,8 +59,13 @@ if let wIdx = cliArgs.firstIndex(of: "--warm-model"), wIdx + 1 < cliArgs.count {
             // this is a no-op fetch + path resolution. download: false makes
             // WhisperKit throw "model folder is not set" because nothing in
             // this CLI path tells it where the variant lives.
+            // Must match WhisperKitEngine exactly: CoreML caches its compiled
+            // model per compute-unit configuration, so warming with different
+            // units populates a cache the engine never reads and leaves the
+            // real compile to ambush the user's first press.
             let kitConfig = WhisperKitConfig(
                 model: variant,
+                computeOptions: WhisperKitEngine.computeOptions,
                 verbose: false,
                 logLevel: .info,
                 prewarm: false,
@@ -76,6 +81,13 @@ if let wIdx = cliArgs.firstIndex(of: "--warm-model"), wIdx + 1 < cliArgs.count {
             options.task = .transcribe
             options.temperature = 0.0
             options.sampleLength = 32
+            // Mirror the engine's decode shape so the same sub-models get
+            // compiled here rather than on the first press.
+            options.withoutTimestamps = true
+            options.usePrefillPrompt = true
+            options.chunkingStrategy = .vad
+            options.temperatureFallbackCount = 0
+            options.concurrentWorkerCount = 4
             _ = try await pipe.transcribe(audioArray: silence, decodeOptions: options)
             let elapsed = Date().timeIntervalSince(t0)
             print(String(format: "warm:done %.2f", elapsed))

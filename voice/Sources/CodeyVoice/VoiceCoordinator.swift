@@ -29,6 +29,12 @@ final class VoiceCoordinator {
     private var state: State = .idle
     private var captureDestination: CaptureDestination = .dictation
     private var conversationCaptureGeneration = 0
+    /// Bumped whenever a turn is abandoned. The transcribe task captures the
+    /// value it started with and drops its result if it no longer matches, so
+    /// a decode the user gave up on can't inject text or resurrect the HUD
+    /// minutes later. Separate from `conversationCaptureGeneration`, which
+    /// only covers Conversation turns and also bumps on *start*.
+    private var captureGeneration = 0
     /// Whether the conversation turn in progress was started by the hotkey
     /// rather than the composer button. Only hotkey turns get a capsule — if
     /// you clicked the button you are already looking at the window.
@@ -258,7 +264,13 @@ final class VoiceCoordinator {
         case .recording:
             stopRecording()
         case .transcribing:
-            print("handleToggle: ignored, still transcribing")
+            // Give up on this turn. A cold CoreML compile can hold the decode
+            // for far longer than anyone will wait, and refusing the toggle
+            // left the only escape hatch as quitting the app. Abandon rather
+            // than restart: the press means "let go of this", and starting a
+            // recording the user didn't ask for would be its own surprise.
+            print("handleToggle: abandoning in-flight transcription")
+            abandonTranscription()
         case .speaking:
             // Barge-in: the user pressed the hotkey while Codey was talking,
             // which means they want to speak now. Kill the turn and start
@@ -349,6 +361,7 @@ final class VoiceCoordinator {
     private func cancelRecording() {
         guard state == .recording else { return }
         print("cancelRecording: Esc pressed — discarding buffer")
+        captureGeneration += 1
         removeEscMonitor()
         localEngine.stopStreaming()
         audioCapture.onChunk = nil
@@ -363,6 +376,29 @@ final class VoiceCoordinator {
         // Unconditional now that the helper raises the capsule itself: a
         // cancelled turn must take down whatever it put on screen without
         // waiting for Electron to notice.
+        hud.hide()
+        Task { await gateway.reportStatus("idle") }
+    }
+
+    /// Drop an in-flight transcription and return to idle.
+    ///
+    /// The decode itself cannot be cancelled mid-flight — neither WhisperKit's
+    /// CoreML predict nor an HTTP round trip is interruptible here — so the
+    /// work runs to completion in the background. What this does is sever the
+    /// result: `captureGeneration` moves on, the task sees the mismatch when
+    /// it finishes, and drops everything on the floor. The user gets an idle
+    /// helper immediately, which is the part that matters.
+    private func abandonTranscription() {
+        guard state == .transcribing else { return }
+        captureGeneration += 1
+        localEngine.stopStreaming()
+        realtimeEngine.cancelSession()
+        state = .idle
+        statusItem?.updateState(.idle)
+        if captureDestination.composerMode != nil {
+            conversationCaptureGeneration += 1
+            emitConversationEvent(type: "state", payload: ["state": "idle"])
+        }
         hud.hide()
         Task { await gateway.reportStatus("idle") }
     }
@@ -391,11 +427,9 @@ final class VoiceCoordinator {
             if state == .recording && captureDestination.composerMode != nil {
                 cancelRecording()
             } else if state == .transcribing && captureDestination.composerMode != nil {
-                conversationCaptureGeneration += 1
-                state = .idle
-                statusItem?.updateState(.idle)
-                emitConversationEvent(type: "state", payload: ["state": "idle"])
-                hud.hide()
+                // Same teardown as the hotkey path — routed through it so the
+                // result guard (`captureGeneration`) can't be skipped here.
+                abandonTranscription()
             } else if state == .speaking {
                 endSpeaking()
             }
@@ -511,6 +545,7 @@ final class VoiceCoordinator {
     private func handleAudioComplete(_ buffer: [Float]) {
         let destination = captureDestination
         let conversationGeneration = conversationCaptureGeneration
+        let generation = captureGeneration
         let durationStr = String(format: "%.2f", Double(buffer.count) / 16000.0)
         var peak: Float = 0
         var sumSq: Double = 0
@@ -552,8 +587,18 @@ final class VoiceCoordinator {
                     ? "realtime(\(config.realtimeModel))"
                     : "api(\(config.apiModel))"
                 print("transcribe: starting (language=\(lang.isEmpty ? "auto" : lang), provider=\(providerLabel))")
-                let text = try await activeEngine.transcribe(audio: buffer, language: lang)
+                let raw = try await activeEngine.transcribe(audio: buffer, language: lang)
+                // Single place all three engines funnel through, so the alias
+                // rewrite lives here rather than three times over.
+                let text = Vocabulary.apply(raw, terms: config.vocabulary)
+                if text != raw {
+                    print("vocabulary: rewrote \"\(raw)\" -> \"\(text)\"")
+                }
 
+                if generation != self.captureGeneration {
+                    print("transcribe: discarded abandoned result")
+                    return
+                }
                 if destination.composerMode != nil && conversationGeneration != conversationCaptureGeneration {
                     print("transcribe: discarded cancelled Conversation result")
                     return
@@ -603,6 +648,10 @@ final class VoiceCoordinator {
                 }
                 Task { await gateway.reportStatus("idle") }
             } catch {
+                // Same reasoning as the success path: an abandoned turn must
+                // not repaint the HUD with an error the user already moved on
+                // from — including the 10s load timeout they just escaped.
+                if generation != self.captureGeneration { return }
                 if destination.composerMode != nil && conversationGeneration != conversationCaptureGeneration {
                     return
                 }
