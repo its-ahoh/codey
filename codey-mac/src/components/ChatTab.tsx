@@ -2681,15 +2681,16 @@ export const ChatTab: React.FC<Props> = ({
         {learnedWords.length > 0 && (
           <div style={styles.learnedRow}>
             <span style={styles.learnedPill}>
-              {/* The word that was added is the news; the mis-hearing it came
-                  from is context. Leading with "<term> added" answers the
-                  question actually being asked, and the muted "was ..." keeps
-                  the evidence needed to spot a wrong guess. */}
+              {/* The word that was added leads, because that is what the pill
+                  is announcing. The mis-hearing it came from follows the
+                  arrow: it is the only thing on screen that lets a wrong guess
+                  be caught before it starts rewriting transcripts. */}
               {learnedWords.map((word, i) => (
                 <span key={`${word.alias}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                   <strong>{word.term}</strong>
                   <span style={{ opacity: 0.7 }}>added</span>
-                  <span style={styles.learnedAlias}>was &ldquo;{word.alias}&rdquo;</span>
+                  <span style={{ opacity: 0.5 }}>&larr;</span>
+                  <span style={styles.learnedAlias}>{word.alias}</span>
                   <button
                     onClick={() => {
                       // Removes it from the dictionary *and* the waiting list,
