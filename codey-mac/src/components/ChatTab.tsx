@@ -2922,7 +2922,10 @@ export const ChatTab: React.FC<Props> = ({
                       color={voiceActiveHere && voice.state === 'speaking' ? C.onAccent : C.fg2}
                     />}
               </button>}
-              {isSending && (
+              {/* One slot, two jobs: Stop while a turn runs, Send otherwise.
+                  Keeps the action row at three buttons either way. Queuing the
+                  next message has no button - that is what ↵ is for. */}
+              {isSending ? (
                 <button
                   onClick={() => stopChat(chatId)}
                   style={{ ...styles.sendButton, background: C.red, cursor: 'pointer' }}
@@ -2930,12 +2933,11 @@ export const ChatTab: React.FC<Props> = ({
                 >
                   <StopIcon color="#fff" />
                 </button>
-              )}
-              {(
+              ) : (
                 <button
                   onClick={send}
                   disabled={!canSend}
-                  title={isSending ? 'Queue this message (↵)' : 'Send (↵)'}
+                  title="Send (↵)"
                   style={{ ...styles.sendButton, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
                 >
                   <SendIcon color={canSend ? C.onAccent : C.fg3} />
