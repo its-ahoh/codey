@@ -30,7 +30,7 @@ describe('composerPlaceholder', () => {
     expect(composerPlaceholder({ coreFailed: false, isGatewayRunning: false, isSending: false }))
       .toBe('Start gateway to chat')
     expect(composerPlaceholder({ coreFailed: false, isGatewayRunning: true, isSending: true }))
-      .toBe('Sending…')
+      .toBe('Queue the next message… (↵ to queue)')
     expect(composerPlaceholder({ coreFailed: false, isGatewayRunning: true, isSending: false }))
       .toBe('Message Codey… (↵ to send)')
   })

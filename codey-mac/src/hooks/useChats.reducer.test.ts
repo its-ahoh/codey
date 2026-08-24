@@ -5,7 +5,7 @@ import type { Chat } from '../types'
 const emptyState = (): State => ({
   chats: {}, order: [], selectedChatId: null, inFlight: {},
   collapsedWorkspaces: {}, workspaces: [], pendingRestores: {},
-  unreadChats: {}, pendingPermissions: {},
+  unreadChats: {}, pendingPermissions: {}, queuedMessages: {},
 })
 
 // A chat as it exists server-side at turn start: the user message is already
@@ -22,7 +22,7 @@ function baseState(): State {
     chats: { c1: { id: 'c1', title: 't', workspaceName: 'ws', selection: { type: 'team', name: 'team' }, messages: [], createdAt: 0, updatedAt: 0 } },
     order: ['c1'], selectedChatId: 'c1',
     inFlight: { c1: { assistantMessageId: 'asst-x', userMessageId: 'u1', agentStatus: 'thinking' } },
-    collapsedWorkspaces: {}, workspaces: ['ws'], pendingRestores: {}, unreadChats: {}, pendingPermissions: {},
+    collapsedWorkspaces: {}, workspaces: ['ws'], pendingRestores: {}, unreadChats: {}, pendingPermissions: {}, queuedMessages: {},
   };
 }
 
@@ -176,5 +176,52 @@ describe('startSend seeds the turn header', () => {
     expect(s.chats.c1.messages.find(m => m.id === 'a1')).toMatchObject({
       agent: 'codex', model: 'gpt-5', tokens: 2100, durationSec: 60, isComplete: true,
     })
+  })
+})
+
+describe('message queue', () => {
+  const q = (text: string, id: string) => ({ type: 'enqueueMessage' as const, chatId: 'c1', message: { id, text } })
+
+  it('enqueue appends in order', () => {
+    let s = baseState()
+    s = reducer(s, q('one', 'q1'))
+    s = reducer(s, q('two', 'q2'))
+    expect(s.queuedMessages.c1.map(m => m.text)).toEqual(['one', 'two'])
+  })
+
+  it('dequeue removes the head', () => {
+    let s = baseState()
+    s = reducer(s, q('one', 'q1'))
+    s = reducer(s, q('two', 'q2'))
+    s = reducer(s, { type: 'dequeueMessage', chatId: 'c1' })
+    expect(s.queuedMessages.c1.map(m => m.text)).toEqual(['two'])
+    s = reducer(s, { type: 'dequeueMessage', chatId: 'c1' })
+    expect(s.queuedMessages.c1).toBeUndefined()
+  })
+
+  it('removeQueuedMessage drops one by id', () => {
+    let s = baseState()
+    s = reducer(s, q('one', 'q1'))
+    s = reducer(s, q('two', 'q2'))
+    s = reducer(s, { type: 'removeQueuedMessage', chatId: 'c1', id: 'q1' })
+    expect(s.queuedMessages.c1.map(m => m.text)).toEqual(['two'])
+  })
+
+  it('stopping a turn drops the queue so nothing fires after an interrupt', () => {
+    let s = baseState()
+    s.chats.c1.messages = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: 1, isComplete: true },
+      { id: 'asst-x', role: 'assistant', content: '', timestamp: 1, isComplete: false },
+    ]
+    s = reducer(s, q('one', 'q1'))
+    s = reducer(s, { type: 'stoppedSend', chatId: 'c1', text: 'go' })
+    expect(s.queuedMessages.c1).toBeUndefined()
+  })
+
+  it('deleting a chat drops its queue', () => {
+    let s = baseState()
+    s = reducer(s, q('one', 'q1'))
+    s = reducer(s, { type: 'remove', chatId: 'c1' })
+    expect(s.queuedMessages.c1).toBeUndefined()
   })
 })

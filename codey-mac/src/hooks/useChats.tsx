@@ -4,6 +4,7 @@ import type { Chat, ChatSelection, ChatMessage, ChecklistItem, ToolCallEntry, Fi
 import type { ChatStreamEvent } from '../../../packages/gateway/src/chat-runner'
 import { activityForTool, type AgentActivity } from '../components/agentActivity'
 import type { UnreadKind } from '../components/notificationLogic'
+import { readyDeliveries } from './messageQueue'
 
 interface InFlight {
   assistantMessageId: string
@@ -12,6 +13,15 @@ interface InFlight {
   queuedPosition?: number
   thinking?: string
   thinkingByStep?: Record<number, string>
+}
+
+/** A prompt typed while a turn was still running. It waits its turn and is
+ *  sent verbatim once the chat goes idle. */
+export interface QueuedMessage {
+  id: string
+  text: string
+  attachments?: FileAttachment[]
+  identity?: { agent?: ChatMessage['agent']; model?: string }
 }
 
 export interface State {
@@ -28,6 +38,9 @@ export interface State {
   // failures and use a neutral marker for a plain completion.
   unreadChats: Record<string, UnreadKind>
   pendingPermissions: Record<string, string[]>
+  // Prompts typed while a turn was in flight, per chat, oldest first. Drained
+  // one at a time by the provider as soon as the chat has no inFlight turn.
+  queuedMessages: Record<string, QueuedMessage[]>
 }
 
 type Action =
@@ -61,6 +74,9 @@ type Action =
   | { type: 'patchPullRequest'; chatId: string; pullRequest: NonNullable<Chat['pullRequest']> }
   | { type: 'permissionRequest'; chatId: string; toolNames: string[] }
   | { type: 'dismissPermission'; chatId: string }
+  | { type: 'enqueueMessage'; chatId: string; message: QueuedMessage }
+  | { type: 'dequeueMessage'; chatId: string }
+  | { type: 'removeQueuedMessage'; chatId: string; id: string }
   | { type: 'teamStart'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'parallel'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string }> }
   | { type: 'workerStart'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
   | { type: 'workerEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser' }
@@ -92,6 +108,23 @@ export function shouldAdoptExternalTurn(
 
 function mkWorkerStub(teamTurnId: string, teamName: string, mode: ChatMessage['teamMode'], id: string, step: number, worker: string, reason?: string, agent?: ChatMessage['agent'], model?: string): ChatMessage {
   return { id, role: 'assistant', content: '', timestamp: Date.now(), toolCalls: [], isComplete: false, teamTurnId, teamName, teamMode: mode, step, worker, workerStatus: 'running', advisorReason: reason, agent, model }
+}
+
+/** Keep the map free of empty arrays — an absent key and an empty queue mean
+ *  the same thing, and callers test for the key. */
+function setQueue(
+  map: Record<string, QueuedMessage[]>,
+  chatId: string,
+  queue: QueuedMessage[],
+): Record<string, QueuedMessage[]> {
+  const next = { ...map }
+  if (queue.length === 0) delete next[chatId]
+  else next[chatId] = queue
+  return next
+}
+
+function dropQueue(map: Record<string, QueuedMessage[]>, chatId: string): Record<string, QueuedMessage[]> {
+  return setQueue(map, chatId, [])
 }
 
 export function reducer(state: State, action: Action): State {
@@ -214,6 +247,20 @@ export function reducer(state: State, action: Action): State {
       delete pp[action.chatId]
       return { ...state, pendingPermissions: pp }
     }
+    case 'enqueueMessage': {
+      const queue = state.queuedMessages[action.chatId] ?? []
+      return { ...state, queuedMessages: { ...state.queuedMessages, [action.chatId]: [...queue, action.message] } }
+    }
+    case 'dequeueMessage': {
+      const queue = state.queuedMessages[action.chatId]
+      if (!queue || queue.length === 0) return state
+      return { ...state, queuedMessages: setQueue(state.queuedMessages, action.chatId, queue.slice(1)) }
+    }
+    case 'removeQueuedMessage': {
+      const queue = state.queuedMessages[action.chatId]
+      if (!queue) return state
+      return { ...state, queuedMessages: setQueue(state.queuedMessages, action.chatId, queue.filter(m => m.id !== action.id)) }
+    }
     case 'remove': {
       const chats = { ...state.chats }
       delete chats[action.chatId]
@@ -221,7 +268,9 @@ export function reducer(state: State, action: Action): State {
       const selectedChatId = state.selectedChatId === action.chatId ? (order[0] ?? null) : state.selectedChatId
       const inFlight = { ...state.inFlight }
       delete inFlight[action.chatId]
-      return { ...state, chats, order, selectedChatId, inFlight }
+      const queuedMessages = { ...state.queuedMessages }
+      delete queuedMessages[action.chatId]
+      return { ...state, chats, order, selectedChatId, inFlight, queuedMessages }
     }
     case 'select': {
       const unreadChats = { ...state.unreadChats }
@@ -478,6 +527,9 @@ export function reducer(state: State, action: Action): State {
         ...state,
         chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } },
         inFlight,
+        // An interrupt means "stop", so anything queued behind this turn is
+        // dropped rather than fired the instant the turn clears.
+        queuedMessages: dropQueue(state.queuedMessages, action.chatId),
         pendingRestores: { ...state.pendingRestores, [action.chatId]: action.text },
       }
     }
@@ -543,6 +595,8 @@ interface ChatsContextValue {
    *  overrides are used instead. */
   sendMessage: (chatId: string, text: string, attachments?: FileAttachment[], identity?: { agent?: ChatMessage['agent']; model?: string }) => Promise<void>
   stopChat: (chatId: string) => Promise<void>
+  /** Drop a prompt that is still waiting behind the running turn. */
+  removeQueuedMessage: (chatId: string, id: string) => void
   resolvePermission: (chatId: string, allow: boolean) => Promise<void>
   clearRestore: (chatId: string) => void
   toggleWorkspace: (workspaceName: string) => void
@@ -568,6 +622,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     pendingRestores: {},
     unreadChats: {},
     pendingPermissions: {},
+    queuedMessages: {},
   })
 
   const pendingAssistantId = useRef<Record<string, string>>({})
@@ -766,7 +821,12 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return off
   }, [])
 
-  const sendMessage = useCallback(async (
+  // The reducer state as of the last render, for callbacks that must not take
+  // `state` as a dependency (sendMessage is handed to children and would churn).
+  const stateRef = useRef(state)
+  stateRef.current = state
+
+  const deliverMessage = useCallback(async (
     chatId: string,
     text: string,
     attachments?: FileAttachment[],
@@ -790,6 +850,38 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       delete pendingAssistantId.current[chatId]
     }
   }, [])
+
+  // Typing while the agent works does not block and does not interrupt: the
+  // prompt joins a per-chat queue and is delivered when the turn finishes.
+  const sendMessage = useCallback(async (
+    chatId: string,
+    text: string,
+    attachments?: FileAttachment[],
+    identity?: { agent?: ChatMessage['agent']; model?: string },
+  ) => {
+    const busy = !!stateRef.current.inFlight[chatId] || (stateRef.current.queuedMessages[chatId]?.length ?? 0) > 0
+    if (busy) {
+      dispatch({
+        type: 'enqueueMessage',
+        chatId,
+        message: { id: `q-${Date.now()}-${Math.random()}`, text, attachments, identity },
+      })
+      return
+    }
+    await deliverMessage(chatId, text, attachments, identity)
+  }, [deliverMessage])
+
+  // Drain: one queued prompt per idle chat, per pass. `draining` guards against
+  // a second pass firing the same head before `startSend` lands in state.
+  const draining = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    for (const { chatId, message } of readyDeliveries(state.queuedMessages, state.inFlight, draining.current)) {
+      draining.current.add(chatId)
+      dispatch({ type: 'dequeueMessage', chatId })
+      void deliverMessage(chatId, message.text, message.attachments, message.identity)
+        .finally(() => { draining.current.delete(chatId) })
+    }
+  }, [state.queuedMessages, state.inFlight, deliverMessage])
 
   const value = useMemo<ChatsContextValue>(() => ({
     state,
@@ -886,6 +978,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       dispatch({ type: 'upsert', chat })
     },
     sendMessage,
+    removeQueuedMessage(chatId, id) { dispatch({ type: 'removeQueuedMessage', chatId, id }) },
     async stopChat(chatId) {
       let stopped = false
       try { stopped = await apiService.chats.stop(chatId) } catch { /* treated as nothing to stop */ }

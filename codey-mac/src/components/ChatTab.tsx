@@ -831,9 +831,10 @@ export const ChatTab: React.FC<Props> = ({
   rightPanelMode, onRightPanelModeChange, rightPanelWidth, onRightPanelResize,
   browserLoginWait, onConfirmBrowserLogin, onDismissBrowserLogin,
 }) => {
-  const { state, createChat, sendMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, createChat, sendMessage, removeQueuedMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
+  const queuedMessages = state.queuedMessages[chatId] ?? []
 
   // Voice: capture, playback and the turn itself live above this component
   // (see VoiceTurnProvider) so they survive switching chats. What stays here
@@ -1681,7 +1682,9 @@ export const ChatTab: React.FC<Props> = ({
   }
 
   const send = async () => {
-    if ((!input.trim() && pendingAttachments.length === 0) || !isGatewayRunning || !!flight) return
+    // No `flight` guard: sendMessage queues the prompt when a turn is running
+    // and delivers it once the chat goes idle.
+    if ((!input.trim() && pendingAttachments.length === 0) || !isGatewayRunning) return
 
     // Quick Question triggers — these never go to the main chat.
     const trimmed = input.trim()
@@ -1889,7 +1892,7 @@ export const ChatTab: React.FC<Props> = ({
     setEditingMsgId(null)
     await resendMessage(text, msg.attachments)
   }
-  const canSend = isGatewayRunning && !coreFailed && !isSending && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
+  const canSend = isGatewayRunning && !coreFailed && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
   // Three layers when the agent gave us its task list: what it is on, the tool
   // it is running right now, and how far through it is — a bare "Editing…"
   // withholds information we already have in hand.
@@ -2651,6 +2654,21 @@ export const ChatTab: React.FC<Props> = ({
               opacity: composerHandleHover || composerResizing ? 1 : 0,
             }} />
           </div>
+          {queuedMessages.length > 0 && (
+            <div style={styles.queuedRow}>
+              {queuedMessages.map((queued, i) => (
+                <div key={queued.id} style={styles.queuedChip} title={queued.text}>
+                  <span style={styles.queuedIndex}>{i + 1}</span>
+                  <span style={styles.queuedText}>{queued.text.trim() || `${queued.attachments?.length ?? 0} attachment(s)`}</span>
+                  <button
+                    onClick={() => removeQueuedMessage(chatId, queued.id)}
+                    style={styles.queuedRemoveBtn}
+                    aria-label="Remove queued message"
+                  >×</button>
+                </div>
+              ))}
+            </div>
+          )}
           {pendingAttachments.length > 0 && (
             <div style={styles.pendingRow}>
               {pendingAttachments.map(att => {
@@ -2730,11 +2748,11 @@ export const ChatTab: React.FC<Props> = ({
             <div style={styles.composerTools}>
               <button
                 onClick={() => fileInputRef.current?.click()}
-                disabled={!isGatewayRunning || !!coreFailed || isSending}
+                disabled={!isGatewayRunning || !!coreFailed}
                 style={styles.attachButton}
                 title="Attach file"
               >
-                <PaperclipIcon color={isGatewayRunning && !isSending ? C.fg2 : C.fg3} />
+                <PaperclipIcon color={isGatewayRunning ? C.fg2 : C.fg3} />
               </button>
             </div>
             <div style={styles.voiceIndicatorSlot}>
@@ -2820,7 +2838,7 @@ export const ChatTab: React.FC<Props> = ({
                       color={voiceActiveHere && voice.state === 'speaking' ? C.onAccent : C.fg2}
                     />}
               </button>}
-              {isSending ? (
+              {isSending && (
                 <button
                   onClick={() => stopChat(chatId)}
                   style={{ ...styles.sendButton, background: C.red, cursor: 'pointer' }}
@@ -2828,10 +2846,12 @@ export const ChatTab: React.FC<Props> = ({
                 >
                   <StopIcon color="#fff" />
                 </button>
-              ) : (
+              )}
+              {(
                 <button
                   onClick={send}
                   disabled={!canSend}
+                  title={isSending ? 'Queue this message (↵)' : 'Send (↵)'}
                   style={{ ...styles.sendButton, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
                 >
                   <SendIcon color={canSend ? C.onAccent : C.fg3} />
@@ -3234,6 +3254,30 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 160,
   },
   attachmentFileSize: { color: `${C.onAccent}b8`, fontSize: 10, fontVariantNumeric: 'tabular-nums' as const },
+  // Queued prompts sit directly above the composer, oldest first, so the order
+  // they will run in is the order you read them.
+  queuedRow: {
+    display: 'flex', flexDirection: 'column' as const, gap: 4,
+    padding: '8px 8px 0',
+  },
+  queuedChip: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    padding: '5px 8px', borderRadius: 8,
+    background: C.surface2, border: `1px dashed ${C.border2}`,
+  },
+  queuedIndex: {
+    flexShrink: 0, minWidth: 16, height: 16, borderRadius: 8,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 10, color: C.fg3, background: C.surface3,
+  },
+  queuedText: {
+    flex: 1, fontSize: 12, color: C.fg2,
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
+  },
+  queuedRemoveBtn: {
+    flexShrink: 0, border: 'none', background: 'transparent',
+    color: C.fg3, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 2,
+  },
   pendingRow: {
     display: 'flex', flexWrap: 'wrap' as const, gap: 8,
     padding: '8px 8px 4px',
