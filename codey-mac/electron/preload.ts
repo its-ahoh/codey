@@ -365,6 +365,22 @@ contextBridge.exposeInMainWorld('codey', {
     speak: (text: string, conversationId?: string, verbatim?: boolean) =>
       ipcRenderer.invoke('voice:speak', { text, conversationId, verbatim }),
     ack: (transcript: string) => ipcRenderer.invoke('voice:ack', transcript),
+    /** Compare a dictated transcript against what the user actually sent and
+     *  fold any mis-hearings into the Dictionary. No-op when auto-learn is off. */
+    learnVocabulary: (spoken: string, edited: string) =>
+      ipcRenderer.invoke('voice:learnVocabulary', { spoken, edited }),
+    /** The warm running right now, or null. Needed because the startup warm
+     *  can begin before this window exists and runs for minutes. */
+    getWarmState: () => ipcRenderer.invoke('voice:warmState'),
+    /** Undo a learned correction: removes it from the dictionary and from the
+     *  waiting list, so it does not go active on the next sighting either. */
+    forgetVocabulary: (term: string, alias: string) =>
+      ipcRenderer.invoke('voice:forgetVocabulary', { term, alias }),
+    onVocabularyLearned: (handler: (entries: Array<{ term: string; aliases: string[] }>) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, entries: Array<{ term: string; aliases: string[] }>) => handler(entries)
+      ipcRenderer.on('voice:vocabularyLearned', listener)
+      return () => ipcRenderer.removeListener('voice:vocabularyLearned', listener)
+    },
     stopSpeaking: () => ipcRenderer.invoke('voice:stopSpeaking'),
     /** Temporarily unregister voice hotkeys while a replacement is captured. */
     setHotkeyCaptureActive: (active: boolean) => ipcRenderer.invoke('voice:setHotkeyCaptureActive', active),

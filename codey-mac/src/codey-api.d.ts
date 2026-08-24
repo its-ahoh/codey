@@ -501,6 +501,10 @@ declare global {
         onNativeDictationLevel: (handler: (level: number) => void) => () => void
         onNativeDictationTranscript: (handler: (text: string) => void) => () => void
         onNativeDictationError: (handler: (message: string) => void) => () => void
+        getWarmState: () => Promise<IpcResult<{ model: string; startedAt: number } | null>>
+        forgetVocabulary: (term: string, alias: string) => Promise<IpcResult<{ ok: boolean }>>
+        learnVocabulary: (spoken: string, edited: string) => Promise<IpcResult<{ learned: Array<{ term: string; alias: string }> }>>
+        onVocabularyLearned: (handler: (entries: Array<{ term: string; aliases: string[] }>) => void) => () => void
         /** Speak text through the gateway's digest + TTS pipeline. */
         speak: (text: string, conversationId?: string, verbatim?: boolean) => Promise<IpcResult<void>>
         ack: (transcript: string) => Promise<IpcResult<{ text: string }>>

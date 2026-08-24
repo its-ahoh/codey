@@ -37,10 +37,56 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
     private var lastUsed: Date = .distantPast
     // Kept the pipeline warm across pauses in dictation. 30s was over-eager —
     // it punished every "type a sentence, think, type another" cadence with a
-    // 1–3s cold reload. 5 min covers normal interactive use; the unload still
-    // fires when the user genuinely walks away.
-    private let idleUnloadAfter: TimeInterval = 300
+    // 1-3s cold reload. 5 min turned out to be over-eager too: a measured cold
+    // reload of large-v3-turbo is ~4.8s, and dictation across a working
+    // session has gaps far longer than five minutes, so the reload was landing
+    // on a large share of presses. 30 min covers a working session while still
+    // releasing the ~600 MB and the ANE state when the user genuinely walks
+    // away, which was the point of moving off whisper.cpp's eager context.
+    private let idleUnloadAfter: TimeInterval = 1800
+    /// How long to wait for the pipeline before giving up.
+    ///
+    /// This was 10s, which is right for the steady state — a warm load is
+    /// ~200ms and a cold one ~5s — but wrong for the case that actually
+    /// matters: when CoreML has to recompile the model for the Neural Engine
+    /// it takes minutes (measured at 315s), and that recompile is triggered by
+    /// something the user never sees, namely a new build of this binary. The
+    /// old budget turned a slow-but-succeeding load into a hard failure, and
+    /// the log said so in the same breath as "ready (load took 314.7s)".
+    ///
+    /// Ten minutes is not a wait anyone should sit through; it is a ceiling
+    /// that stops a genuinely wedged load from hanging forever. The user's
+    /// escape hatch is pressing the key again, which now abandons the turn.
+    private static let loadTimeoutSeconds: TimeInterval = 600
+    /// Past this, say out loud that we are compiling rather than hanging.
+    private static let slowLoadWarnSeconds: TimeInterval = 8
+    /// Pin compute units: ANE for the encoder (fastest on M-series, big mel +
+    /// attention layers), GPU for the decoder (token-by-token autoregressive,
+    /// ANE underutilized here). This is the WhisperKit benchmark-winning combo
+    /// on Apple Silicon - leaving it at `.all` sometimes lets CoreML route the
+    /// encoder to GPU, costing 30-40% throughput.
+    ///
+    /// Exposed rather than local because CoreML compiles and caches per
+    /// compute-unit configuration, so the `--warm-model` path has to ask for
+    /// the exact same one. It used to use the default, which meant every warm
+    /// compiled a variant the engine never loads: the marker recorded a
+    /// plausible-looking 12.9s while the first real press still paid the full
+    /// ~320s ANE compile. Anything that loads this model must go through here.
+    static let computeOptions = ModelComputeOptions(
+        audioEncoderCompute: .cpuAndNeuralEngine,
+        textDecoderCompute: .cpuAndGPU
+    )
     private let loadQueue = DispatchQueue(label: "codey.voice.whisperkit.load")
+    /// The load currently in flight, with the variant it is loading.
+    ///
+    /// `ensurePipeline` is reachable from three places at once — the streaming
+    /// task, prewarm, and the final transcribe — and none of them held a lock,
+    /// so a cold start could enter it concurrently and materialize the same
+    /// ~600 MB of weights more than once. Callers now join the in-flight load
+    /// instead. Keyed by variant so a load kicked off before the user switched
+    /// models isn't handed back as if it were the new one.
+    private var loadTask: (model: String, task: Task<WhisperKit, Error>)?
+    private let loadTaskLock = NSLock()
     /// Background sliding-window task that pulls partial transcripts from the
     /// in-progress recording. Owned by the engine so we can cancel it on
     /// stop/cancel without the coordinator having to track Task lifetimes.
@@ -190,6 +236,23 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
         }
     }
 
+    // Custom vocabulary is NOT hinted to this engine, unlike the API and
+    // realtime ones. `DecodingOptions.promptTokens` is broken in the pinned
+    // WhisperKit: setting it to anything at all makes `transcribe` return an
+    // empty string. Measured on large-v3-v20240930_turbo_632MB against a
+    // 5.7s clip — 96 chars without it, 0 chars with it, across eleven option
+    // combinations (VAD on/off, timestamps on/off, prefill cache off,
+    // sampleLength 144/224, one worker, explicit language, no first-token
+    // threshold, no temperature fallback, longer prompt). `prefixTokens` is
+    // not a substitute: it force-feeds the words as the *start of the
+    // transcript*, which ate the first word of the sentence.
+    //
+    // So on-device gets the second half of the feature only — aliases are
+    // still rewritten after decoding, in VoiceCoordinator. Re-check on the
+    // next WhisperKit bump; if promptTokens starts working, restore the hint
+    // here and remember that setting it also disables the kv-cache prefill,
+    // so it must stay nil when the user has no vocabulary configured.
+
     /// Decode options shared by the streaming loop and the post-stop "settle"
     /// decode. Kept lean — temperature fallback off, fewer workers — because
     /// these run on a partial buffer and we want fast iteration; the final
@@ -278,7 +341,7 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
             streamingTask = nil
         }
 
-        let pipe = try await withLoadTimeout(seconds: 10) { try await self.ensurePipeline() }
+        let pipe = try await withLoadTimeout(seconds: Self.loadTimeoutSeconds) { try await self.ensurePipeline() }
         lastUsed = Date()
 
         // Peak-normalize to ~0.9 before sending. Mic levels often peak around
@@ -309,10 +372,19 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
         // Skip silence chunks via voice activity detection — large win on
         // press-to-talk audio that has leading/trailing silence and pauses.
         options.chunkingStrategy = .vad
-        // If a chunk decodes with very low logprob, retry with slightly higher
-        // temperature instead of returning an empty/garbled result. CJK on
-        // quantized turbo trips this often; 0 means "give up, return empty".
-        options.temperatureFallbackCount = 2
+        // Retrying a low-confidence chunk at a higher temperature costs a full
+        // extra decode pass each time, and CJK on quantized turbo trips the
+        // threshold often enough that the same audio could run three times.
+        // That is the source of the "sometimes 1s, sometimes 5s" spread the
+        // user actually feels; the quality it buys back is a marginally
+        // cleaner sentence on the clips that were already marginal. The
+        // streaming pass has always run at 0 for the same reason.
+        //
+        // Empty results are not a risk we are trading away here: the streaming
+        // partial is still there as a fallback, and the one confirmed cause of
+        // empty output turned out to be `promptTokens` (see the note above),
+        // not the temperature floor.
+        options.temperatureFallbackCount = 0
         // VAD splits long press-to-talk clips into N voiced chunks; with
         // workers > 1 they decode concurrently. 4 saturates ANE+GPU on
         // M-series; short single-chunk clips are unaffected.
@@ -383,28 +455,70 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
 
     private func ensurePipeline() async throws -> WhisperKit {
         let currentModel = configLock.withLock { _config.localModel }
-        if let p = pipeline, loadedModel == currentModel {
-            return p
-        }
         // WhisperKit's HF glob is `*openai*<variant>/*`; the variant must be
         // the bare name (`large-v3-turbo`), not the full folder name
         // (`openai_whisper-large-v3-turbo`). UI/config may store either form.
+        //
+        // Normalize BEFORE the cache check. `loadedModel` records the
+        // normalized name, so comparing it against the raw config value meant
+        // a config holding the prefixed form — which is what the model picker
+        // writes — never matched, and every single transcription silently
+        // reloaded the pipeline from disk. Measured at ~4.1s of a ~5.4s
+        // "warm" decode, i.e. most of the wait was this.
         let modelName = normalizeVariant(currentModel)
+        if let p = pipeline, loadedModel == modelName {
+            return p
+        }
+
+        // Join an in-flight load for the same variant rather than starting a
+        // second one. The task clears itself on the way out, so a failed load
+        // is retried by the next caller instead of being cached as a failure.
+        let task: Task<WhisperKit, Error> = loadTaskLock.withLock {
+            if let existing = loadTask, existing.model == modelName {
+                return existing.task
+            }
+            let created = Task<WhisperKit, Error> { [weak self] in
+                guard let self = self else {
+                    throw NSError(domain: "WhisperKitEngine", code: -3, userInfo: [NSLocalizedDescriptionKey: "Engine deallocated during load"])
+                }
+                defer {
+                    self.loadTaskLock.withLock {
+                        if self.loadTask?.model == modelName { self.loadTask = nil }
+                    }
+                }
+                return try await self.loadPipeline(named: modelName)
+            }
+            loadTask = (modelName, created)
+            return created
+        }
+        return try await task.value
+    }
+
+    /// Materialize the CoreML pipeline. Only ever called from the single task
+    /// `ensurePipeline` owns, so it doesn't need its own guarding.
+    private func loadPipeline(named modelName: String) async throws -> WhisperKit {
         let t0 = Date()
         print("WhisperKitEngine: loading model '\(modelName)'")
 
-        // Pin compute units: ANE for encoder (fastest on M-series, big mel +
-        // attention layers), GPU for decoder (token-by-token autoregressive,
-        // ANE underutilized here). This is the WhisperKit benchmark-winning
-        // combo on Apple Silicon — leaving it to .all sometimes lets CoreML
-        // route encoder to GPU, costing 30-40% throughput.
-        let computeOptions = ModelComputeOptions(
-            audioEncoderCompute: .cpuAndNeuralEngine,
-            textDecoderCompute: .cpuAndGPU
-        )
+        // A silent multi-minute load is indistinguishable from a hang, and
+        // this one has a specific cause worth naming: CoreML recompiles for
+        // the Neural Engine whenever the client binary changes, so the first
+        // press after an app update pays it once. Ticking here turns "Codey
+        // is broken" into "Codey is busy, and here is why".
+        let heartbeat = Task.detached(priority: .utility) {
+            var waited: TimeInterval = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(Self.slowLoadWarnSeconds * 1_000_000_000))
+                if Task.isCancelled { break }
+                waited += Self.slowLoadWarnSeconds
+                print(String(format: "WhisperKitEngine: still preparing '%@' (%.0fs) - CoreML is compiling for the Neural Engine, this happens once per app build", modelName, waited))
+            }
+        }
+        defer { heartbeat.cancel() }
+
         let kitConfig = WhisperKitConfig(
             model: modelName,
-            computeOptions: computeOptions,
+            computeOptions: Self.computeOptions,
             verbose: false,
             logLevel: .info,
             prewarm: false,
@@ -424,7 +538,7 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
             group.addTask { try await op() }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw NSError(domain: "WhisperKitEngine", code: -1, userInfo: [NSLocalizedDescriptionKey: "Model load/transcribe timed out after \(Int(seconds))s"])
+                throw NSError(domain: "WhisperKitEngine", code: -1, userInfo: [NSLocalizedDescriptionKey: "Model still not ready after \(Int(seconds))s. Try again - the load continues in the background."])
             }
             guard let first = try await group.next() else {
                 throw NSError(domain: "WhisperKitEngine", code: -2, userInfo: [NSLocalizedDescriptionKey: "Task group returned no result"])

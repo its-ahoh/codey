@@ -49,7 +49,20 @@ export const VoiceTurnProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const transcriptHandlerRef = useRef<TranscriptHandler | null>(null)
   const voice = useChatVoice({
-    onTranscript: (text, mode) => transcriptHandlerRef.current?.(text, mode),
+    onTranscript: (text, mode) => {
+      const handler = transcriptHandlerRef.current
+      if (handler) {
+        handler(text, mode)
+        return
+      }
+      // No composer is mounted — Settings is open, say. A hotkey dictation
+      // aimed at Codey is routed here by the helper instead of being pasted,
+      // so without this the words would simply vanish. Falling back to the
+      // paste path puts them where they would have gone before.
+      if (mode === 'dictate') {
+        void window.codey.voice.notifyTranscribed(text)
+      }
+    },
     onError: msg => void window.codey.voice.showError(msg),
   })
 
