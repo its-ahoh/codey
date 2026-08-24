@@ -1,7 +1,7 @@
 {
   "name": "codey-monorepo",
   "private": true,
-  "version": "0.12.9",
+  "version": "0.12.10",
   "engines": {
     "node": ">=22.12.0"
   },
