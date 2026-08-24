@@ -188,6 +188,17 @@ export interface BrowserTab {
   active: boolean
 }
 
+/** A saved browser session ("profile") as listed by the profiles manager. */
+export interface BrowserProfileSummary {
+  name: string
+  createdAt: number
+  updatedAt: number
+  cookieCount: number
+  originCount: number
+  active: boolean
+  sourceUrl: string | null
+}
+
 export interface BrowserLoginWaitEvent {
   id: string
   chatId: string
@@ -556,6 +567,14 @@ declare global {
         switchTab: (id: string) => Promise<IpcResult<BrowserState>>
         closeTab: (id: string) => Promise<IpcResult<BrowserState>>
         resetSession: () => Promise<IpcResult<BrowserState>>
+        profiles: {
+          list: () => Promise<IpcResult<{ active: string | null; profiles: BrowserProfileSummary[] }>>
+          save: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
+          activate: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
+          delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>
+          import: () => Promise<IpcResult<{ imported: boolean; profile: BrowserProfileSummary | null }>>
+          export: (name: string) => Promise<IpcResult<{ exported: boolean; path: string | null }>>
+        }
         extensions: {
           list: () => Promise<IpcResult<BrowserExtensionEntry[]>>
           discoverChrome: () => Promise<IpcResult<ChromeBrowserExtensionCandidate[]>>

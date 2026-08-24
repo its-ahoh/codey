@@ -9,6 +9,17 @@ import {
   type WebContents,
 } from 'electron'
 import type { BrowserSitePermissionDetails, BrowserSitePermissionManager } from './browser-site-permissions'
+import {
+  assertProfileName,
+  BrowserProfileStore,
+  parseProfileJsonText,
+  readProfileJson,
+  type BrowserProfile,
+  type BrowserProfileCookie,
+  type BrowserProfileData,
+  type BrowserProfileStorageOrigin,
+  type BrowserProfileSummary,
+} from './browser-profiles'
 
 export const BROWSER_PARTITION = 'persist:codey-browser'
 
@@ -74,6 +85,15 @@ export interface BrowserActionResult {
 export interface HumanInputOptions {
   random?: () => number
   sleep?: (ms: number) => Promise<void>
+}
+
+/** Constructor seams for the browser profile feature: where profile files live
+ *  (defaults to a temp dir so the controller works without the app), and a
+ *  factory for the hidden page used to apply localStorage of origins that are
+ *  not currently open (injectable so tests need no real Electron). */
+export interface BrowserControllerOptions extends HumanInputOptions {
+  getProfilesDir?: () => string
+  createHiddenView?: () => WebContentsView
 }
 
 export interface BrowserWaitRequest {
@@ -220,6 +240,10 @@ export class BrowserController {
   private pointer: { x: number; y: number } | null = null
   private readonly random: () => number
   private readonly sleep: (ms: number) => Promise<void>
+  private readonly getProfilesDir: () => string
+  private readonly createHiddenView?: () => WebContentsView
+  private profileStore: BrowserProfileStore | null = null
+  private profileStoreDir: string | null = null
 
   constructor(
     private readonly getWindow: () => BrowserWindow | null,
@@ -227,10 +251,33 @@ export class BrowserController {
     private readonly onDownload: (download: BrowserDownload) => void = () => {},
     private readonly getDownloadDirectory: () => string = () => path.join(os.tmpdir(), 'codey-downloads'),
     private readonly getBrowserSession: () => Session = () => session.fromPartition(BROWSER_PARTITION, { cache: true }),
-    options: HumanInputOptions = {},
+    options: BrowserControllerOptions = {},
   ) {
     this.random = options.random ?? Math.random
     this.sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
+    this.getProfilesDir = options.getProfilesDir ?? (() => path.join(os.tmpdir(), 'codey-browser-profiles'))
+    // Hidden page used to apply a profile's localStorage for origins that are
+    // not currently open in a tab. Shares the browser's persistent partition,
+    // so it reads and writes the same storage the visible tabs use.
+    this.createHiddenView = options.createHiddenView ?? (() => new WebContentsView({
+      webPreferences: {
+        partition: BROWSER_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+        backgroundThrottling: false,
+      },
+    }))
+  }
+
+  private profiles(): BrowserProfileStore {
+    const dir = this.getProfilesDir()
+    if (!this.profileStore || this.profileStoreDir !== dir) {
+      this.profileStore = new BrowserProfileStore(dir)
+      this.profileStoreDir = dir
+    }
+    return this.profileStore
   }
 
   setSitePermissionManager(manager: BrowserSitePermissionManager): void {
@@ -880,6 +927,255 @@ export class BrowserController {
     await browserSession.clearCache()
     await browserSession.clearAuthCache()
     return this.patchState({ ...EMPTY_STATE })
+  }
+
+  // ── Profiles ─────────────────────────────────────────────────────────
+  // A profile is a named snapshot of the browser's session state — cookies
+  // plus per-origin localStorage — that can be saved from the live session,
+  // imported from a file, and activated to switch the browser's identity.
+  // See browser-profiles.ts for the model and store.
+
+  /** All saved profiles, with the enabled one flagged. */
+  listProfiles(): BrowserProfileSummary[] {
+    return this.profiles().list()
+  }
+
+  /** Name of the enabled profile, or null when none is enabled. */
+  activeProfileName(): string | null {
+    return this.profiles().active()
+  }
+
+  /** Snapshot the live session (cookies + reachable per-site storage) into a
+   *  named profile. Saving does not activate the profile — call activateProfile
+   *  (or import with activate) to switch the browser to it. */
+  async saveProfile(name: string): Promise<BrowserProfile> {
+    assertProfileName(name)
+    const data = await this.captureProfileData()
+    const sourceUrl = this.view?.webContents.getURL() || null
+    return this.profiles().write(name, data, sourceUrl)
+  }
+
+  /** Import a session snapshot from a file path or raw JSON (our profile
+   *  format or a Playwright storageState) into a named profile. Activating is
+   *  the default — "import then enable" in one step. */
+  async importProfile(
+    name: string,
+    source: { path: string } | { json: string },
+    activate = true,
+  ): Promise<BrowserProfile> {
+    assertProfileName(name)
+    const data = 'path' in source
+      ? readProfileJson(source.path)
+      : parseProfileJsonText(source.json)
+    const profile = this.profiles().write(name, data, null)
+    if (activate) {
+      await this.applyProfileData(profile)
+      this.profiles().setActive(name)
+    }
+    return profile
+  }
+
+  /** Switch the live session to a saved profile: the session's cookies are
+   *  replaced with the profile's and its site storage is applied best-effort.
+   *  Activating a profile that is already enabled is a no-op — the live
+   *  session already carries that snapshot. */
+  async activateProfile(name: string): Promise<BrowserProfileSummary> {
+    assertProfileName(name)
+    if (this.profiles().active() === name) {
+      const current = this.profiles().list().find(profile => profile.name === name)
+      if (current) return current
+      throw new Error(`Profile ${name} is enabled but missing on disk`)
+    }
+    const profile = this.profiles().read(name)
+    await this.applyProfileData(profile)
+    this.profiles().setActive(name)
+    return this.profiles().list().find(summary => summary.name === name) ?? {
+      name,
+      createdAt: profile.createdAt,
+      updatedAt: profile.updatedAt,
+      cookieCount: profile.cookies.length,
+      originCount: profile.origins.length,
+      active: true,
+      sourceUrl: profile.sourceUrl,
+    }
+  }
+
+  /** Remove a saved profile. Deleting the enabled profile disables it. */
+  async deleteProfile(name: string): Promise<{ deleted: boolean }> {
+    assertProfileName(name)
+    this.profiles().remove(name)
+    if (this.profiles().active() === name) this.profiles().setActive(null)
+    return { deleted: true }
+  }
+
+  /** Write a saved profile to an arbitrary path, so a session can be handed to
+   *  another machine (or another profile-enabled tool). */
+  async exportProfile(name: string, targetPath: string): Promise<{ path: string }> {
+    const profile = this.profiles().read(name)
+    const file = path.resolve(String(targetPath))
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, JSON.stringify(profile, null, 2), { encoding: 'utf8', mode: 0o600 })
+    try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
+    return { path: file }
+  }
+
+  /** Collect the live session's cookies and the localStorage of every open
+   *  http(s) tab (unique origins). Page text and fields are never read — only
+   *  the storage that holds login state. */
+  private async captureProfileData(): Promise<BrowserProfileData> {
+    let cookies: BrowserProfileCookie[] = []
+    try {
+      const found = await this.getBrowserSession().cookies.get({})
+      cookies = found.map(cookie => ({
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain || '',
+        path: cookie.path || '/',
+        expires: cookie.expirationDate !== undefined && Number.isFinite(cookie.expirationDate)
+          ? cookie.expirationDate
+          : -1,
+        httpOnly: cookie.httpOnly === true,
+        secure: cookie.secure === true,
+        sameSite: cookie.sameSite || 'unspecified',
+        ...(cookie.hostOnly ? { hostOnly: true } : {}),
+      })).filter(cookie => cookie.domain)
+    } catch {
+      // Cookies unavailable (session torn down) — save what is reachable.
+    }
+
+    const origins = new Map<string, BrowserProfileStorageOrigin>()
+    for (const tab of this.tabs) {
+      const contents = tab.view.webContents
+      if (contents.isDestroyed()) continue
+      const url = contents.getURL()
+      if (!url || url === 'about:blank') continue
+      let origin: string
+      try {
+        const parsed = new URL(url)
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue
+        origin = parsed.origin
+      } catch {
+        continue
+      }
+      if (origins.has(origin)) continue
+      try {
+        const result = await contents.executeJavaScript(`(() => {
+          const entries = []
+          for (let i = 0; i < localStorage.length; i += 1) {
+            const key = localStorage.key(i)
+            if (key === null) continue
+            try { entries.push({ name: key, value: localStorage.getItem(key) || '' }) } catch { /* skip */ }
+          }
+          return { origin: location.origin, entries }
+        })()`, true) as { origin?: unknown; entries?: unknown }
+        const originName = typeof result?.origin === 'string' && result.origin ? result.origin : origin
+        const entries = Array.isArray(result?.entries)
+          ? result.entries
+            .map(entry => {
+              if (typeof entry !== 'object' || entry === null) return null
+              const record = entry as Record<string, unknown>
+              return {
+                name: typeof record.name === 'string' ? record.name : '',
+                value: typeof record.value === 'string' ? record.value : String(record.value ?? ''),
+              }
+            })
+            .filter((entry): entry is { name: string; value: string } => !!entry && !!entry.name)
+          : []
+        if (entries.length > 0) origins.set(originName, { origin: originName, localStorage: entries })
+      } catch {
+        // Page context unavailable — skip this tab's storage.
+      }
+    }
+    return { cookies, origins: Array.from(origins.values()) }
+  }
+
+  /** Replace the live session's cookies with the profile's, then apply its
+   *  per-origin localStorage. Replacing rather than merging is what makes
+   *  activating a profile an identity switch: leftovers from the previous
+   *  profile cannot leak into the new one. */
+  private async applyProfileData(profile: BrowserProfile): Promise<void> {
+    const browserSession = this.getBrowserSession()
+    let existing: Electron.Cookie[] = []
+    try {
+      existing = await browserSession.cookies.get({})
+    } catch {
+      // Session unavailable — nothing to replace.
+    }
+    for (const cookie of existing) {
+      const domain = cookie.domain || ''
+      if (!domain) continue
+      const url = `https://${domain.replace(/^\./, '')}${cookie.path || '/'}`
+      try { await browserSession.cookies.remove(url, cookie.name) } catch { /* best-effort */ }
+    }
+    for (const cookie of profile.cookies) {
+      try {
+        const url = `https://${cookie.domain}${cookie.path || '/'}`
+        await browserSession.cookies.set({
+          url,
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path || '/',
+          secure: cookie.secure,
+          httpOnly: cookie.httpOnly,
+          ...(cookie.expires > 0 ? { expirationDate: cookie.expires } : {}),
+          ...(cookie.sameSite !== 'unspecified' ? { sameSite: cookie.sameSite } : {}),
+        })
+      } catch {
+        // One cookie failing must not abort the whole activation.
+      }
+    }
+    for (const origin of profile.origins) {
+      await this.applyLocalStorage(origin.origin, origin.localStorage)
+    }
+  }
+
+  /** Write localStorage entries for one origin: through a tab that is already
+   *  on it when possible, otherwise through a hidden page loaded for that
+   *  origin. Best-effort — a site that refuses to load just keeps its storage
+   *  untouched (cookies, the part that matters most for logins, are applied
+   *  unconditionally). */
+  private async applyLocalStorage(origin: string, items: Array<{ name: string; value: string }>): Promise<void> {
+    if (items.length === 0) return
+    const open = this.tabs.find(tab => {
+      try { return new URL(tab.view.webContents.getURL()).origin === origin } catch { return false }
+    })
+    if (open && !open.view.webContents.isDestroyed()) {
+      try {
+        await open.view.webContents.executeJavaScript(this.localStorageApplyScript(items), true)
+        return
+      } catch {
+        // Fall through to a hidden page.
+      }
+    }
+    const view = this.createHiddenView?.()
+    if (!view) return
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('timeout')), 10000)
+        view.webContents.once('did-finish-load', () => { clearTimeout(timer); resolve() })
+        view.webContents.once('did-fail-load', (_event, errorCode, errorDescription) => {
+          clearTimeout(timer)
+          reject(new Error(errorDescription || String(errorCode)))
+        })
+        void view.webContents.loadURL(origin + '/').catch(() => {})
+      })
+      await view.webContents.executeJavaScript(this.localStorageApplyScript(items), true)
+    } catch {
+      // Best-effort per origin.
+    } finally {
+      if (!view.webContents.isDestroyed()) view.webContents.close({ waitForBeforeUnload: false })
+    }
+  }
+
+  private localStorageApplyScript(items: Array<{ name: string; value: string }>): string {
+    return `(() => {
+      const items = ${JSON.stringify(items)}
+      for (const item of items) {
+        try { localStorage.setItem(item.name, item.value) } catch { /* quota or private mode */ }
+      }
+      return true
+    })()`
   }
 
   destroy(options: { closeContents?: boolean } = {}): void {
