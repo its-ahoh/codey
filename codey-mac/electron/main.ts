@@ -27,6 +27,7 @@ import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
+import { deriveProfileNameFromFile } from './browser-profiles'
 import { BrowserControlPermissionGate } from './browser-control-permission'
 import { BrowserSitePermissionManager } from './browser-site-permissions'
 import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLabel, type BrowserPasskeyPickerRequest } from './browser-webauthn'
@@ -45,7 +46,7 @@ import { ApiServer } from '@codey/gateway/dist/health'
 // Pure logic, no DOM and no Node builtins — shared with the Settings editor
 // that renders the same dictionary, so both sides agree on what a valid entry
 // is and the learner can't write a shape the editor would drop.
-import { learnCorrections, mergeLearnedAliases, normalizeVocabulary, normalizePending, recordCorrections, forgetCorrection } from '../src/components/voiceVocabulary'
+import { learnCorrections, mergeLearnedTerms, normalizeVocabulary, normalizePending, recordCorrections, forgetCorrection } from '../src/components/voiceVocabulary'
 
 let mainWindow: BrowserWindow | null = null
 let captureWindow: BrowserWindow | null = null
@@ -70,6 +71,10 @@ const browserController = new BrowserController(
   state => sendToRenderer('browser:state', state),
   download => sendToRenderer('browser:download', download),
   () => join(app.getPath('downloads'), 'Codey'),
+  undefined,
+  // Named browser profiles (saved/imported sessions) live in the app's own
+  // data directory, next to the browser-control permission store.
+  { getProfilesDir: () => join(app.getPath('userData'), 'browser-profiles') },
 )
 let browserAgentBridge: BrowserAgentBridge | null = null
 let browserControlPermission: BrowserControlPermissionGate | null = null
@@ -1244,7 +1249,42 @@ function sendVoiceHelperCommand(command: string): boolean {
   return true
 }
 
+/**
+ * The resident helper's own model load, if one is running.
+ *
+ * Separate from `activeVoiceWarm` (the one-shot `--warm-model` process) but
+ * indistinguishable to the user: both are "the model isn't usable yet", and
+ * they routinely overlap. The UI reads them merged, through
+ * `currentVoiceWarm()` and the `voice:prepareChange` push below, so the
+ * indicator stays up until *both* are done rather than disappearing when the
+ * first one finishes.
+ */
+let helperModelLoad: { model: string; startedAt: number } | null = null
+
+/** Last value pushed to the renderer, so we only emit on real transitions —
+ *  re-sending "started" would restart the elapsed counter every time. */
+let voicePreparingPushed = false
+
+function syncVoicePreparing() {
+  const active = activeVoiceWarm ?? helperModelLoad
+  if (active && !voicePreparingPushed) {
+    voicePreparingPushed = true
+    sendToRenderer('voice:prepareChange', { model: active.model, startedAt: active.startedAt })
+  } else if (!active && voicePreparingPushed) {
+    voicePreparingPushed = false
+    sendToRenderer('voice:prepareChange', null)
+  }
+}
+
 function handleVoiceHelperLine(line: string) {
+  // Machine-readable load markers from WhisperKitEngine.loadPipeline.
+  if (line.startsWith('model:loading ')) {
+    helperModelLoad = { model: line.slice('model:loading '.length).trim(), startedAt: Date.now() }
+    syncVoicePreparing()
+  } else if (line.startsWith('model:ready ') || line.startsWith('model:failed ')) {
+    helperModelLoad = null
+    syncVoicePreparing()
+  }
   const marker = 'CODEY_CONVERSATION_EVENT '
   if (!line.startsWith(marker)) {
     if (line) sendToRenderer('gateway-log', `[voice-helper] ${line}`)
@@ -1452,6 +1492,7 @@ async function runVoiceModelWarm(modelName: string): Promise<{ model: string; lo
   let lastErr = ''
   let loadSeconds = 0
   activeVoiceWarm = { model: modelName, startedAt: Date.now() }
+  syncVoicePreparing()
   sendToRenderer('voice:warmStart', { model: modelName })
 
   const onLine = (line: string) => {
@@ -1482,6 +1523,7 @@ async function runVoiceModelWarm(modelName: string): Promise<{ model: string; lo
 
   const code: number = await new Promise(resolve => proc.on('exit', c => resolve(c ?? 1)))
   activeVoiceWarm = null
+  syncVoicePreparing()
   if (code !== 0) {
     sendToRenderer('voice:warmError', { model: modelName, error: lastErr || `Warm failed (exit ${code})` })
     throw new Error(lastErr || `Warm failed (exit ${code})`)
@@ -1505,7 +1547,12 @@ let startupWarmInFlight = false
 let activeVoiceWarm: { model: string; startedAt: number } | null = null
 
 export function currentVoiceWarm(): { model: string; startedAt: number } | null {
-  return activeVoiceWarm
+  // Whichever started first is the one the elapsed counter should reflect: it
+  // is the wait the user has actually been sitting through.
+  if (activeVoiceWarm && helperModelLoad) {
+    return activeVoiceWarm.startedAt <= helperModelLoad.startedAt ? activeVoiceWarm : helperModelLoad
+  }
+  return activeVoiceWarm ?? helperModelLoad
 }
 
 /**
@@ -1731,6 +1778,8 @@ async function applyVoiceHelper(rawCfg: any) {
     voiceHelperProc.stderr?.on('data', d => sendToRenderer('gateway-log', `[voice-helper] ${d.toString().trimEnd()}`))
     voiceHelperProc.on('exit', code => {
       sendToRenderer('gateway-log', `[voice-helper] exited (code ${code})`)
+      helperModelLoad = null
+      syncVoicePreparing()
       voiceHelperProc = null
       voiceHelperStarted = false
       nativeConverseActive = false
@@ -1973,6 +2022,48 @@ app.whenReady().then(async () => {
     browserSitePermissions?.clear()
     browserControlPermission?.revoke()
     return state
+  }))
+  // Browser profiles: saved/imported sessions the renderer (browser toolbar
+  // and Settings) manages through the same controller the agents use.
+  ipcMain.handle('browser:profiles:list', event => browserCall(event, () => ({
+    active: browserController.activeProfileName(),
+    profiles: browserController.listProfiles(),
+  })))
+  ipcMain.handle('browser:profiles:save', (event, name: string) =>
+    browserCall(event, () => browserController.saveProfile(String(name || ''))))
+  ipcMain.handle('browser:profiles:activate', (event, name: string) =>
+    browserCall(event, () => browserController.activateProfile(String(name || ''))))
+  ipcMain.handle('browser:profiles:delete', (event, name: string) =>
+    browserCall(event, () => browserController.deleteProfile(String(name || ''))))
+  ipcMain.handle('browser:profiles:import', event => browserCall(event, async () => {
+    const result = await dialog.showOpenDialog(mainWindow ?? (undefined as any), {
+      title: 'Import browser profile',
+      buttonLabel: 'Import',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Browser profile (JSON)', extensions: ['json'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    })
+    if (result.canceled || result.filePaths.length === 0) return { imported: false, profile: null }
+    const filePath = result.filePaths[0]
+    const name = deriveProfileNameFromFile(filePath)
+    // Importing activates by default — "import then enable" in one step — and
+    // the identity switch prompts the user like any mutating browser command.
+    const profile = await browserController.importProfile(name, { path: filePath })
+    return { imported: true, profile }
+  }))
+  ipcMain.handle('browser:profiles:export', (event, name: string) => browserCall(event, async () => {
+    const requested = String(name || '')
+    const result = await dialog.showSaveDialog(mainWindow ?? (undefined as any), {
+      title: 'Export browser profile',
+      buttonLabel: 'Export',
+      defaultPath: requested ? `${requested}.json` : 'profile.json',
+      filters: [{ name: 'Browser profile (JSON)', extensions: ['json'] }],
+    })
+    if (result.canceled || !result.filePath) return { exported: false, path: null }
+    const out = await browserController.exportProfile(requested, result.filePath)
+    return { exported: true, path: out.path }
   }))
   ipcMain.handle('browser:extensions:list', event => browserCall(event, () => {
     if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')
@@ -2807,20 +2898,18 @@ app.whenReady().then(async () => {
     }))))
   )
 
-  ipcMain.handle('editors:open', async (_e, editorId: string, workingDir: string) =>
+  ipcMain.handle('editors:open', async (_e, editorId: string, target: string) =>
     wrap(async () => {
       const editor = supportedEditors.find(candidate => candidate.id === editorId)
       if (!editor) throw new Error('Unsupported editor')
-      if (!workingDir || typeof workingDir !== 'string') throw new Error('A project directory is required')
+      if (!target || typeof target !== 'string') throw new Error('A file or directory path is required')
       const fsMod = await import('fs')
-      if (!fsMod.existsSync(workingDir) || !fsMod.statSync(workingDir).isDirectory()) {
-        throw new Error('Project directory is unavailable')
-      }
+      if (!fsMod.existsSync(target)) throw new Error('Path is unavailable')
       const appPath = await findEditorApp(editor)
       if (!appPath) throw new Error(`${editor.name} is not installed`)
       const { execFile } = await import('child_process')
       await new Promise<void>((resolve, reject) => {
-        execFile('open', ['-a', appPath, workingDir], (error) => error ? reject(error) : resolve())
+        execFile('open', ['-a', appPath, target], (error) => error ? reject(error) : resolve())
       })
     })
   )
@@ -3102,7 +3191,7 @@ app.whenReady().then(async () => {
     })
   )
 
-  // Learn mis-hearings by comparing what was dictated against what the user
+  // Learn new dictionary words by comparing what was dictated against what the user
   // actually sent. Done here rather than in the renderer because the merge is
   // read-modify-write on the shared voice config: config:set replaces the
   // whole `voice` object, so a renderer doing this itself would clobber any
@@ -3123,9 +3212,9 @@ app.whenReady().then(async () => {
       const current = normalizeVocabulary(voice.vocabulary)
       const pending = normalizePending(voice.vocabularyPending)
 
-      // A correction has to be seen twice before it rewrites anything. The
-      // first sighting only goes on the waiting list, which is what keeps a
-      // deliberate one-off edit from silently rewriting a real word later.
+      // A correction has to be seen twice before it enters the dictionary.
+      // The first sighting only goes on the waiting list, which keeps a
+      // deliberate one-off edit from becoming a permanent hint.
       const seen = recordCorrections(pending, current, corrections)
       if (seen.promoted.length === 0) {
         if (seen.pending !== pending) {
@@ -3134,17 +3223,21 @@ app.whenReady().then(async () => {
         return { learned: [] }
       }
 
-      const merged = mergeLearnedAliases(current, seen.promoted)
+      const merged = mergeLearnedTerms(current, seen.promoted)
       if (!merged.changed) {
         coreConfigManager.update({ voice: { ...voice, vocabularyPending: seen.pending } } as any)
         return { learned: [] }
       }
 
       coreConfigManager.update({
-        voice: { ...voice, vocabulary: merged.entries, vocabularyPending: seen.pending },
+        voice: { ...voice, vocabulary: merged.terms, vocabularyPending: seen.pending },
       } as any)
-      mainWindow?.webContents.send('voice:vocabularyLearned', merged.entries)
-      return { learned: merged.added }
+      mainWindow?.webContents.send('voice:vocabularyLearned', merged.terms)
+      // The alias goes back with each word purely so undo can find its waiting
+      // list entry; it is not stored anywhere and the pill does not show it.
+      const promotedFor = (term: string) =>
+        seen.promoted.find(p => p.term.toLowerCase() === term.toLowerCase())?.alias ?? ''
+      return { learned: merged.added.map(term => ({ term, alias: promotedFor(term) })) }
     })
   )
 
@@ -3166,9 +3259,9 @@ app.whenReady().then(async () => {
         { term, alias },
       )
       coreConfigManager.update({
-        voice: { ...voice, vocabulary: next.entries, vocabularyPending: next.pending },
+        voice: { ...voice, vocabulary: next.terms, vocabularyPending: next.pending },
       } as any)
-      mainWindow?.webContents.send('voice:vocabularyLearned', next.entries)
+      mainWindow?.webContents.send('voice:vocabularyLearned', next.terms)
       return { ok: true }
     })
   )

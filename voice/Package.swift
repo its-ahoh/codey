@@ -5,7 +5,7 @@ let package = Package(
     name: "CodeyVoice",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(url: "https://github.com/argmaxinc/WhisperKit", from: "0.9.0"),
+        .package(url: "https://github.com/argmaxinc/WhisperKit", from: "1.1.0"),
     ],
     targets: [
         .executableTarget(

@@ -188,6 +188,17 @@ export interface BrowserTab {
   active: boolean
 }
 
+/** A saved browser session ("profile") as listed by the profiles manager. */
+export interface BrowserProfileSummary {
+  name: string
+  createdAt: number
+  updatedAt: number
+  cookieCount: number
+  originCount: number
+  active: boolean
+  sourceUrl: string | null
+}
+
 export interface BrowserLoginWaitEvent {
   id: string
   chatId: string
@@ -248,7 +259,8 @@ declare global {
       }
       editors: {
         list: () => Promise<IpcResult<Array<{ id: string; name: string; installed: boolean }>>>
-        open: (editorId: string, workingDir: string) => Promise<IpcResult<void>>
+        /** Open a file or directory in the given editor. */
+        open: (editorId: string, path: string) => Promise<IpcResult<void>>
       }
       globalTeams: {
         get: () => Promise<IpcResult<Record<string, TeamConfigRaw>>>
@@ -504,7 +516,7 @@ declare global {
         getWarmState: () => Promise<IpcResult<{ model: string; startedAt: number } | null>>
         forgetVocabulary: (term: string, alias: string) => Promise<IpcResult<{ ok: boolean }>>
         learnVocabulary: (spoken: string, edited: string) => Promise<IpcResult<{ learned: Array<{ term: string; alias: string }> }>>
-        onVocabularyLearned: (handler: (entries: Array<{ term: string; aliases: string[] }>) => void) => () => void
+        onVocabularyLearned: (handler: (terms: string[]) => void) => () => void
         /** Speak text through the gateway's digest + TTS pipeline. */
         speak: (text: string, conversationId?: string, verbatim?: boolean) => Promise<IpcResult<void>>
         ack: (transcript: string) => Promise<IpcResult<{ text: string }>>
@@ -523,6 +535,7 @@ declare global {
         onWarmStart: (handler: (msg: { model: string }) => void) => () => void
         onWarmDone: (handler: (msg: { model: string; loadSeconds: number }) => void) => () => void
         onWarmError: (handler: (msg: { model: string; error: string }) => void) => () => void
+        onPrepareChange: (handler: (msg: { model: string; startedAt: number } | null) => void) => () => void
       }
       app: {
         version: () => Promise<string>
@@ -556,6 +569,14 @@ declare global {
         switchTab: (id: string) => Promise<IpcResult<BrowserState>>
         closeTab: (id: string) => Promise<IpcResult<BrowserState>>
         resetSession: () => Promise<IpcResult<BrowserState>>
+        profiles: {
+          list: () => Promise<IpcResult<{ active: string | null; profiles: BrowserProfileSummary[] }>>
+          save: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
+          activate: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
+          delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>
+          import: () => Promise<IpcResult<{ imported: boolean; profile: BrowserProfileSummary | null }>>
+          export: (name: string) => Promise<IpcResult<{ exported: boolean; path: string | null }>>
+        }
         extensions: {
           list: () => Promise<IpcResult<BrowserExtensionEntry[]>>
           discoverChrome: () => Promise<IpcResult<ChromeBrowserExtensionCandidate[]>>

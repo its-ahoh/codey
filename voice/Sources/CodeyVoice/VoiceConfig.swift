@@ -30,9 +30,8 @@ struct VoiceConfig: Codable {
     var realtimeUrl: String = "wss://api.openai.com/v1/realtime?intent=transcription"
     /// Realtime transcription model (e.g. "gpt-4o-mini-transcribe").
     var realtimeModel: String = "gpt-4o-mini-transcribe"
-    /// Custom vocabulary: proper nouns the recognizer keeps getting wrong.
-    /// Terms are hinted to the decoder before transcription and their aliases
-    /// are rewritten afterwards. See `Vocabulary`.
+    /// Custom vocabulary: proper nouns the recognizer would not otherwise
+    /// reach. Hinted to the decoder before transcription. See `Vocabulary`.
     var vocabulary: [VocabularyTerm] = []
 
     enum Mode: String, Codable {

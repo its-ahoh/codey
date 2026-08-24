@@ -1,19 +1,16 @@
-/** One preferred spelling plus the mis-hearings that map onto it.
- *  Mirrors `VocabularyTerm` in the Swift helper (voice/Sources/CodeyVoice/Vocabulary.swift). */
-export interface VocabularyEntry {
-  term: string
-  aliases: string[]
-}
+/**
+ * The dictionary is a plain list of preferred spellings.
+ *
+ * Each one is handed to the recognizer *before* it decodes, as a prompt hint,
+ * so a name it would otherwise snap to a common word becomes reachable. There
+ * is no after-the-fact rewrite table any more: that existed because
+ * WhisperKit 0.18 ignored the hint entirely, and 1.1 does not.
+ */
 
-/** A Dictionary row mid-edit. Aliases stay one free-text blob while the user
- *  types, so a half-typed line isn't eaten between keystrokes. */
-export interface VocabularyDraftRow {
-  term: string
-  aliasText: string
-}
-
-/** A mis-hearing observed by comparing what was dictated against what the
- *  user actually sent. */
+/** A word swap observed by comparing what was dictated against what the user
+ *  actually sent. `alias` never reaches the dictionary — it is the evidence
+ *  that `term` is a word the recognizer cannot spell, and the key the waiting
+ *  list counts sightings under. */
 export interface LearnedCorrection {
   /** The corrected spelling — what the user left in the composer. */
   term: string
@@ -22,64 +19,32 @@ export interface LearnedCorrection {
 }
 
 /**
- * Widen whatever is in gateway.json into editor rows.
+ * Widen whatever is in gateway.json into a clean word list.
  *
- * The Swift side also accepts the terse hand-authored form — a bare string
- * means "hint only, no aliases" — so the editor has to understand it too,
- * otherwise opening Settings would silently drop hand-written entries.
- * Anything else in the array is skipped rather than thrown on: this field is
+ * Accepts three shapes because all three exist on disk: a bare string (the
+ * terse hand-authored form the Swift helper has always taken), the old
+ * `{ term, aliases }` object (aliases are dropped — this is the migration),
+ * and anything else, which is skipped rather than thrown on. This field is
  * hand-edited, and one bad row must not blank the whole dictionary.
  */
-export function normalizeVocabulary(raw: unknown): VocabularyEntry[] {
+export function normalizeVocabulary(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
-  return raw.flatMap((entry): VocabularyEntry[] => {
-    if (typeof entry === 'string') return entry.trim() ? [{ term: entry, aliases: [] }] : []
-    if (entry && typeof entry === 'object' && typeof (entry as any).term === 'string') {
-      const aliases = Array.isArray((entry as any).aliases)
-        ? (entry as any).aliases.filter((a: unknown): a is string => typeof a === 'string')
-        : []
-      return [{ term: (entry as any).term, aliases }]
-    }
-    return []
-  })
-}
-
-export function vocabularyToDraft(entries: VocabularyEntry[]): VocabularyDraftRow[] {
-  return entries.map(entry => ({ term: entry.term, aliasText: entry.aliases.join('\n') }))
-}
-
-/**
- * Parse editor rows back into config entries.
- *
- * Blank terms are dropped here but stay visible in the draft, so "+ Add word"
- * can leave an empty row on screen without writing junk into gateway.json.
- * Aliases split on newlines *and* commas: the textarea invites one per line,
- * but comma-separated is what people type by habit and both are unambiguous.
- */
-export function draftToVocabulary(draft: VocabularyDraftRow[]): VocabularyEntry[] {
-  return draft
-    .map(row => ({
-      term: row.term.trim(),
-      aliases: dedupeAliases(row.aliasText.split(/[\n,]/).map(a => a.trim()).filter(Boolean)),
-    }))
-    .filter(row => row.term !== '')
-}
-
-/** Aliases in a mid-edit draft row, matching what `draftToVocabulary` would
- *  keep. Used for the chip badge, so the count on screen can never disagree
- *  with what actually gets saved. */
-export function countAliases(aliasText: string): number {
-  return dedupeAliases(aliasText.split(/[\n,]/).map(a => a.trim()).filter(Boolean)).length
-}
-
-function dedupeAliases(aliases: string[]): string[] {
   const seen = new Set<string>()
-  return aliases.filter(alias => {
-    const key = alias.toLowerCase()
-    if (seen.has(key)) return false
+  const out: string[] = []
+  for (const entry of raw) {
+    const word = typeof entry === 'string'
+      ? entry
+      : entry && typeof entry === 'object' && typeof (entry as any).term === 'string'
+        ? (entry as any).term
+        : ''
+    const trimmed = word.trim()
+    if (!trimmed) continue
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) continue
     seen.add(key)
-    return true
-  })
+    out.push(trimmed)
+  }
+  return out
 }
 
 // ── Learning from edits ─────────────────────────────────────────────
@@ -102,8 +67,7 @@ const MIN_SIMILARITY = 0.5
 /** Diffing is O(n*m); a pasted wall of text isn't a dictation correction
  *  anyway, so bail rather than burn the main thread. */
 const MAX_DIFF_TOKENS = 400
-/** Ceilings so a runaway learner can't crowd out the prompt hint or the UI. */
-export const MAX_ALIASES_PER_TERM = 12
+/** Ceiling so a runaway learner can't crowd out the prompt hint or the UI. */
 export const MAX_VOCABULARY_ENTRIES = 200
 
 /**
@@ -402,21 +366,18 @@ function pendingKey(term: string, alias: string): string {
  * Record this turn's corrections and report the ones that have now been seen
  * often enough to act on.
  *
- * A correction already covered by the dictionary is dropped rather than
- * counted: the alias is being rewritten before the user ever sees it, so a
- * second sighting would mean something else entirely.
+ * A correction whose term is already in the dictionary is dropped rather than
+ * counted: the hint was in play and did not take, so counting to two would
+ * only add the word a second time.
  */
 export function recordCorrections(
   pending: PendingCorrection[],
-  entries: VocabularyEntry[],
+  terms: string[],
   observed: LearnedCorrection[],
 ): { pending: PendingCorrection[]; promoted: LearnedCorrection[] } {
   if (observed.length === 0) return { pending, promoted: [] }
 
-  const known = new Set<string>()
-  for (const entry of entries) {
-    for (const alias of entry.aliases) known.add(pendingKey(entry.term, alias))
-  }
+  const known = new Set(terms.map(t => t.toLowerCase()))
 
   const next = pending.map(p => ({ ...p }))
   const index = new Map(next.map((p, i) => [pendingKey(p.term, p.alias), i]))
@@ -424,8 +385,10 @@ export function recordCorrections(
   let changed = false
 
   for (const correction of observed) {
+    // Already a dictionary word: the recognizer had the hint and still got it
+    // wrong, which a second sighting would not change. Nothing to learn.
+    if (known.has(correction.term.toLowerCase())) continue
     const key = pendingKey(correction.term, correction.alias)
-    if (known.has(key)) continue
 
     const at = index.get(key)
     if (at === undefined) {
@@ -451,75 +414,48 @@ export function recordCorrections(
   return { pending: survivors, promoted }
 }
 
-/** Drop a correction from both the dictionary and the waiting list. Used by
+/** Drop a learned word from both the dictionary and the waiting list. Used by
  *  undo, which has to work whether or not the correction went active. */
 export function forgetCorrection(
-  entries: VocabularyEntry[],
+  terms: string[],
   pending: PendingCorrection[],
   correction: LearnedCorrection,
-): { entries: VocabularyEntry[]; pending: PendingCorrection[] } {
+): { terms: string[]; pending: PendingCorrection[] } {
   const key = pendingKey(correction.term, correction.alias)
-  const nextEntries: VocabularyEntry[] = []
-  for (const entry of entries) {
-    const aliases = entry.aliases.filter(alias => pendingKey(entry.term, alias) !== key)
-    if (aliases.length === entry.aliases.length) {
-      nextEntries.push(entry)
-      continue
-    }
-    // This alias was the entry's only one, so the entry existed to hold it:
-    // learning creates a term and its first mis-hearing together. Undoing
-    // should leave no trace. An entry that still has other aliases, or that
-    // had none to begin with, is the user's and stays.
-    if (aliases.length === 0) continue
-    nextEntries.push({ term: entry.term, aliases })
-  }
   return {
-    entries: nextEntries,
+    terms: terms.filter(t => t.toLowerCase() !== correction.term.toLowerCase()),
     pending: pending.filter(p => pendingKey(p.term, p.alias) !== key),
   }
 }
 
 /**
- * Fold learned corrections into the saved dictionary.
+ * Fold learned words into the saved dictionary.
  *
  * Returns a new array plus the subset that actually landed, so the caller can
  * skip the config write on the common "nothing new" path and tell the user
- * exactly what was learned. `added` is not the same as the input: a
- * correction can be dropped here for being a duplicate or hitting a cap.
+ * exactly what was added. `added` is not the same as the input: a word can be
+ * dropped here for already being present or for hitting the cap.
  */
-export function mergeLearnedAliases(
-  entries: VocabularyEntry[],
+export function mergeLearnedTerms(
+  terms: string[],
   learned: LearnedCorrection[],
-): { entries: VocabularyEntry[]; changed: boolean; added: LearnedCorrection[] } {
-  if (learned.length === 0) return { entries, changed: false, added: [] }
+): { terms: string[]; changed: boolean; added: string[] } {
+  if (learned.length === 0) return { terms, changed: false, added: [] }
 
-  const next = entries.map(entry => ({ term: entry.term, aliases: [...entry.aliases] }))
-  const termIndex = new Map(next.map((entry, i) => [entry.term.toLowerCase(), i]))
-  const added: LearnedCorrection[] = []
-  let changed = false
+  const next = [...terms]
+  const known = new Set(next.map(t => t.toLowerCase()))
+  const added: string[] = []
 
-  for (const { term, alias } of learned) {
-    if (alias.toLowerCase() === term.toLowerCase()) continue
-    // Never learn an alias that is itself somebody's preferred spelling —
-    // the two rules would fight, and the correct word would get rewritten
-    // into a different one.
-    if (termIndex.has(alias.toLowerCase())) continue
-
-    let index = termIndex.get(term.toLowerCase())
-    if (index === undefined) {
-      if (next.length >= MAX_VOCABULARY_ENTRIES) continue
-      next.push({ term, aliases: [] })
-      index = next.length - 1
-      termIndex.set(term.toLowerCase(), index)
-      changed = true
-    }
-    const entry = next[index]
-    if (entry.aliases.some(a => a.toLowerCase() === alias.toLowerCase())) continue
-    if (entry.aliases.length >= MAX_ALIASES_PER_TERM) continue
-    entry.aliases.push(alias)
-    added.push({ term: entry.term, alias })
-    changed = true
+  for (const { term } of learned) {
+    const word = term.trim()
+    if (!word) continue
+    const key = word.toLowerCase()
+    if (known.has(key)) continue
+    if (next.length >= MAX_VOCABULARY_ENTRIES) continue
+    next.push(word)
+    known.add(key)
+    added.push(word)
   }
 
-  return changed ? { entries: next, changed: true, added } : { entries, changed: false, added: [] }
+  return added.length > 0 ? { terms: next, changed: true, added } : { terms, changed: false, added: [] }
 }

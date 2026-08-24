@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('codey', {
   },
   editors: {
     list: () => ipcRenderer.invoke('editors:list'),
-    open: (editorId: string, workingDir: string) => ipcRenderer.invoke('editors:open', editorId, workingDir),
+    open: (editorId: string, path: string) => ipcRenderer.invoke('editors:open', editorId, path),
   },
   globalTeams: {
     get: () => ipcRenderer.invoke('globalTeams:get'),
@@ -419,6 +419,13 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.on('voice:warmError', listener)
       return () => ipcRenderer.removeListener('voice:warmError', listener)
     },
+    // "The on-device model is not usable yet", merging the one-shot warm
+    // process and the resident helper's own load. `null` means ready.
+    onPrepareChange: (handler: (msg: { model: string; startedAt: number } | null) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, msg: any) => handler(msg)
+      ipcRenderer.on('voice:prepareChange', listener)
+      return () => ipcRenderer.removeListener('voice:prepareChange', listener)
+    },
   },
   app: {
     version: () => ipcRenderer.invoke('app:version'),
@@ -467,6 +474,14 @@ contextBridge.exposeInMainWorld('codey', {
     switchTab: (id: string) => ipcRenderer.invoke('browser:switchTab', id),
     closeTab: (id: string) => ipcRenderer.invoke('browser:closeTab', id),
     resetSession: () => ipcRenderer.invoke('browser:resetSession'),
+    profiles: {
+      list: () => ipcRenderer.invoke('browser:profiles:list'),
+      save: (name: string) => ipcRenderer.invoke('browser:profiles:save', name),
+      activate: (name: string) => ipcRenderer.invoke('browser:profiles:activate', name),
+      delete: (name: string) => ipcRenderer.invoke('browser:profiles:delete', name),
+      import: () => ipcRenderer.invoke('browser:profiles:import'),
+      export: (name: string) => ipcRenderer.invoke('browser:profiles:export', name),
+    },
     extensions: {
       list: () => ipcRenderer.invoke('browser:extensions:list'),
       discoverChrome: () => ipcRenderer.invoke('browser:extensions:discoverChrome'),

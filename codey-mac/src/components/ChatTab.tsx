@@ -844,8 +844,9 @@ export const ChatTab: React.FC<Props> = ({
   // is the composer half — a transcript has to land in this chat's text box.
   const voiceAutoSendRef = useRef(false)
   // Dictated text still waiting to be sent. On send we diff it against what
-  // actually went out and learn the mis-hearings — only dictation, because a
-  // converse turn sends itself and never gives the user a chance to correct it.
+  // actually went out and take the words the user fixed — only dictation,
+  // because a converse turn sends itself and never gives the user a chance to
+  // correct it.
   const dictatedPendingRef = useRef<string[]>([])
   // Words the learner just picked up, shown as a pill above the composer.
   // Learning is silent otherwise, and a dictionary that edits itself without
@@ -1250,6 +1251,25 @@ export const ChatTab: React.FC<Props> = ({
     })
     return () => cancelAnimationFrame(frame)
   }, [chat?.messages?.length, lastMsg?.content, lastMsg?.toolCalls?.length, chat?.contextPanelOpen, updateLatestMessageVisibility])
+
+  // The deps above can't see every way the transcript moves: a tool card
+  // expanding, a status row appearing mid-turn, or the composer growing as the
+  // user types (which shrinks the viewport and pushes the last message out of
+  // sight without any React state changing). Observe the boxes instead, so a
+  // pinned view stays pinned whatever caused the shift.
+  useEffect(() => {
+    const messages = messagesRef.current
+    if (!messages) return
+    const stick = () => {
+      if (stickToBottomRef.current) messages.scrollTop = messages.scrollHeight
+      updateLatestMessageVisibility()
+    }
+    const resize = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(stick) : null
+    resize?.observe(messages)
+    const mutate = typeof MutationObserver !== 'undefined' ? new MutationObserver(stick) : null
+    mutate?.observe(messages, { childList: true, subtree: true, characterData: true })
+    return () => { resize?.disconnect(); mutate?.disconnect() }
+  }, [updateLatestMessageVisibility])
 
   const scrollToLatestMessage = useCallback(() => {
     const messages = messagesRef.current
@@ -1906,6 +1926,7 @@ export const ChatTab: React.FC<Props> = ({
   const voiceBusy = voiceActiveHere && (voice.state === 'recording' || voice.state === 'transcribing')
   const isSending = !!flight
   const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
+  const canSend = isGatewayRunning && !coreFailed && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
   // Retry and edit-and-resend both re-run a past user message. They append a
   // new turn rather than rewriting history: the agent keeps the whole
   // conversation as context, and the transcript stays an honest record.
@@ -1934,7 +1955,6 @@ export const ChatTab: React.FC<Props> = ({
     setEditingMsgId(null)
     await resendMessage(text, msg.attachments)
   }
-  const canSend = isGatewayRunning && !coreFailed && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
   // Three layers when the agent gave us its task list: what it is on, the tool
   // it is running right now, and how far through it is — a bare "Editing…"
   // withholds information we already have in hand.
@@ -2685,16 +2705,14 @@ export const ChatTab: React.FC<Props> = ({
         {learnedWords.length > 0 && (
           <div style={styles.learnedRow}>
             <span style={styles.learnedPill}>
-              {/* Reads as the rule it created: mis-hearing, arrow, corrected
-                  spelling. The mis-hearing has to stay on screen - it is the
-                  only thing that lets a wrong guess be caught before it starts
-                  rewriting transcripts. */}
+              {/* Just the word that went in. The mis-hearing that triggered it
+                  is not shown: nothing gets rewritten any more, so there is no
+                  rule to double-check - only a word the recognizer will now be
+                  told about. */}
               {learnedWords.map((word, i) => (
-                <span key={`${word.alias}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  <span style={styles.learnedAlias}>{word.alias}</span>
-                  <span style={{ opacity: 0.5 }}>&rarr;</span>
+                <span key={`${word.term}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                   <strong>{word.term}</strong>
-                  <span style={{ opacity: 0.7 }}>learned</span>
+                  <span style={{ opacity: 0.7 }}>is added</span>
                   <button
                     onClick={() => {
                       // Removes it from the dictionary *and* the waiting list,
@@ -2702,8 +2720,8 @@ export const ChatTab: React.FC<Props> = ({
                       void window.codey.voice.forgetVocabulary(word.term, word.alias)
                       setLearnedWords(prev => prev.filter((_, at) => at !== i))
                     }}
-                    title={`Undo - stop rewriting "${word.alias}" to "${word.term}"`}
-                    aria-label={`Undo learning ${word.alias} as ${word.term}`}
+                    title={`Undo - remove "${word.term}" from the dictionary`}
+                    aria-label={`Undo adding ${word.term}`}
                     style={styles.learnedUndo}
                   >
                     <UIIcon name="undo" size={13} color={C.accent} />
@@ -2858,8 +2876,24 @@ export const ChatTab: React.FC<Props> = ({
             <div style={styles.composerActions}>
               {/* Two ways to use your voice: dictate into the composer, or
                   hold a spoken conversation that reads the reply back. */}
-              {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'converse') && <button
+              {/* The tooltip lives on the wrapper, not the button: a disabled
+                  button takes no mouse events in Chromium, so its own `title`
+                  never appears - and disabled is exactly when the explanation
+                  is needed (gateway down, model still warming). */}
+              {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'converse') && <span
+                style={styles.voiceButtonWrap}
+                title={
+                  voiceWarming ? voiceWarmTitle
+                  : !isGatewayRunning ? 'Start the gateway to use voice'
+                  : coreFailed ? 'Voice is unavailable while the gateway is failing'
+                  : voiceActiveElsewhere ? 'Voice is active in another chat'
+                  : voiceBusy && voice.mode === 'dictate'
+                    ? (voice.state === 'transcribing' ? 'Transcribing… (Esc to cancel)' : 'Stop — text goes to the box')
+                    : 'Dictate into the message box'
+                }
+              ><button
                 onClick={() => voice.toggle('dictate')}
+                aria-label="Dictate into the message box"
                 disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarming}
                 style={{
                   ...styles.voiceButton,
@@ -2867,13 +2901,6 @@ export const ChatTab: React.FC<Props> = ({
                   opacity: voiceWarming ? 0.4 : 1,
                   cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarming ? 'pointer' : 'default',
                 }}
-                title={
-                  voiceWarming ? voiceWarmTitle
-                  : voiceActiveElsewhere ? 'Voice is active in another chat'
-                  : voiceBusy && voice.mode === 'dictate'
-                    ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop — text goes to the box')
-                    : 'Dictate into the message box'
-                }
               >
                 {voice.state === 'recording' && voice.mode === 'dictate'
                   ? <StopIcon color="#fff" />
@@ -2882,7 +2909,7 @@ export const ChatTab: React.FC<Props> = ({
                       size={19}
                       color={voiceBusy && voice.mode === 'dictate' ? '#fff' : C.fg2}
                     />}
-              </button>}
+              </button></span>}
               {/* While dictating, the mic slot is the stop button, so the way
                   out of the recording needs a control of its own — same thing
                   Esc does: drop the audio instead of transcribing it. */}
@@ -2894,8 +2921,21 @@ export const ChatTab: React.FC<Props> = ({
               >
                 <UIIcon name="close" size={15} color={C.fg3} />
               </button>}
-              {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'dictate') && <button
+              {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'dictate') && <span
+                style={styles.voiceButtonWrap}
+                title={
+                  voiceWarming ? voiceWarmTitle
+                  : !isGatewayRunning ? 'Start the gateway to use voice'
+                  : coreFailed ? 'Voice is unavailable while the gateway is failing'
+                  : voiceActiveElsewhere ? 'Voice is active in another chat'
+                  : voiceActiveHere && voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
+                  : voiceBusy && voice.mode === 'converse'
+                    ? (voice.state === 'transcribing' ? 'Transcribing… (Esc to cancel)' : 'Stop and send')
+                    : 'Talk to this chat — the reply is read back'
+                }
+              ><button
                 onClick={() => voice.toggle('converse')}
+                aria-label="Talk to this chat"
                 disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarming}
                 style={{
                   ...styles.voiceButton,
@@ -2905,14 +2945,6 @@ export const ChatTab: React.FC<Props> = ({
                   opacity: voiceWarming ? 0.4 : 1,
                   cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarming ? 'pointer' : 'default',
                 }}
-                title={
-                  voiceWarming ? voiceWarmTitle
-                  : voiceActiveElsewhere ? 'Voice is active in another chat'
-                  : voiceActiveHere && voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
-                  : voiceBusy && voice.mode === 'converse'
-                    ? (voice.state === 'transcribing' ? 'Transcribing…' : 'Stop and send')
-                    : 'Talk to this chat — the reply is read back'
-                }
               >
                 {voice.state === 'recording' && voice.mode === 'converse'
                   ? <StopIcon color="#fff" />
@@ -2921,8 +2953,11 @@ export const ChatTab: React.FC<Props> = ({
                       size={19}
                       color={voiceActiveHere && voice.state === 'speaking' ? C.onAccent : C.fg2}
                     />}
-              </button>}
-              {isSending && (
+              </button></span>}
+              {/* One slot, two jobs: Stop while a turn runs, Send otherwise.
+                  Keeps the action row at three buttons either way. Queuing the
+                  next message has no button - that is what ↵ is for. */}
+              {isSending ? (
                 <button
                   onClick={() => stopChat(chatId)}
                   style={{ ...styles.sendButton, background: C.red, cursor: 'pointer' }}
@@ -2930,12 +2965,11 @@ export const ChatTab: React.FC<Props> = ({
                 >
                   <StopIcon color="#fff" />
                 </button>
-              )}
-              {(
+              ) : (
                 <button
                   onClick={send}
                   disabled={!canSend}
-                  title={isSending ? 'Queue this message (↵)' : 'Send (↵)'}
+                  title="Send (↵)"
                   style={{ ...styles.sendButton, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
                 >
                   <SendIcon color={canSend ? C.onAccent : C.fg3} />
@@ -3290,6 +3324,9 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, transition: 'background 0.15s',
   },
+  voiceButtonWrap: {
+    display: 'inline-flex', flexShrink: 0,
+  },
   voiceButton: {
     width: 36, height: 36, borderRadius: 9, border: 'none',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -3411,12 +3448,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' as const,
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 999,
     color: C.fg2, fontSize: 11, padding: '4px 6px 4px 12px', maxWidth: '100%',
-  },
-  learnedAlias: {
-    // Muted rather than struck through: with "was" already saying it is the
-    // old spelling, a strikethrough only makes the evidence harder to read -
-    // and reading it is how a wrong guess gets caught.
-    color: C.fg3,
   },
   learnedUndo: {
     background: 'none', border: 'none', cursor: 'pointer', color: C.accent,

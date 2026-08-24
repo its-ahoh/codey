@@ -260,6 +260,7 @@ final class VoiceCoordinator {
         print("handleToggle: current state=\(state)")
         switch state {
         case .idle:
+            guard localModelReady(for: destination) else { return }
             startRecording(destination: destination)
         case .recording:
             stopRecording()
@@ -281,6 +282,30 @@ final class VoiceCoordinator {
             endSpeaking()
             startRecording(destination: destination)
         }
+    }
+
+    /// Refuse a press the on-device pipeline can't serve yet, and say so.
+    ///
+    /// The load is lazy: a few seconds cold, minutes on the first press after
+    /// an app update while CoreML recompiles for the Neural Engine. Recording
+    /// anyway looked like it worked and then stalled *after* the user had
+    /// finished talking, which is the worst moment to discover the wait. Say
+    /// "not yet" up front, kick the load, and let them press again.
+    private func localModelReady(for destination: CaptureDestination) -> Bool {
+        guard config.provider == .local, !localEngine.isReady else { return true }
+        print("handleToggle: refused — the on-device model is not loaded yet")
+        localEngine.prewarm()
+        let message = "Preparing the speech model"
+        if destination.composerMode != nil {
+            emitConversationEvent(type: "error", payload: ["message": message])
+            emitConversationEvent(type: "state", payload: ["state": "idle"])
+        }
+        // The composer button reports through the event above; only turns the
+        // user started away from the window need the pill.
+        if destination == .dictation || (destination == .conversation && conversationFromHotkey) {
+            hud.show(.notice(message))
+        }
+        return false
     }
 
     private func startRecording(destination: CaptureDestination = .dictation) {
@@ -343,7 +368,9 @@ final class VoiceCoordinator {
 
     private func stopRecording() {
         print("stopRecording: requesting stop")
-        removeEscMonitor()
+        // The monitor deliberately stays up through the decode: a cold CoreML
+        // compile can hold `.transcribing` for minutes, which is exactly when
+        // someone reaches for Esc. Torn down on the way back to idle instead.
         if captureDestination.composerMode != nil {
             setConversationCapsule(.thinking)
             emitConversationEvent(type: "state", payload: ["state": "transcribing"])
@@ -391,6 +418,7 @@ final class VoiceCoordinator {
     private func abandonTranscription() {
         guard state == .transcribing else { return }
         captureGeneration += 1
+        removeEscMonitor()
         localEngine.stopStreaming()
         realtimeEngine.cancelSession()
         state = .idle
@@ -511,7 +539,11 @@ final class VoiceCoordinator {
                 // state: discard the recording, or shut Codey up mid-reply.
                 switch self.state {
                 case .speaking: self.endSpeaking()
-                case .recording, .transcribing: self.cancelRecording()
+                case .recording: self.cancelRecording()
+                // Not cancelRecording: that one guards on `.recording` and so
+                // was a silent no-op here, which is why Esc did nothing while
+                // "Transcribing" was on screen.
+                case .transcribing: self.abandonTranscription()
                 default: self.cancelElectronTurn()
                 }
             }
@@ -562,6 +594,7 @@ final class VoiceCoordinator {
         print("handleAudioComplete: \(buffer.count) samples (\(durationStr)s) peak=\(String(format: "%.4f", peak)) rms=\(String(format: "%.4f", rms))")
         guard !buffer.isEmpty else {
             print("handleAudioComplete: EMPTY buffer — nothing to transcribe")
+            removeEscMonitor()
             state = .idle
             statusItem?.updateState(.idle)
             if destination.composerMode != nil {
@@ -591,13 +624,7 @@ final class VoiceCoordinator {
                     ? "realtime(\(config.realtimeModel))"
                     : "api(\(config.apiModel))"
                 print("transcribe: starting (language=\(lang.isEmpty ? "auto" : lang), provider=\(providerLabel))")
-                let raw = try await activeEngine.transcribe(audio: buffer, language: lang)
-                // Single place all three engines funnel through, so the alias
-                // rewrite lives here rather than three times over.
-                let text = Vocabulary.apply(raw, terms: config.vocabulary)
-                if text != raw {
-                    print("vocabulary: rewrote \"\(raw)\" -> \"\(text)\"")
-                }
+                let text = try await activeEngine.transcribe(audio: buffer, language: lang)
 
                 if generation != self.captureGeneration {
                     print("transcribe: discarded abandoned result")
@@ -611,6 +638,10 @@ final class VoiceCoordinator {
                 print("transcribe: result = \"\(text)\" (\(text.count) chars)")
 
                 if destination.composerMode != nil {
+                    // Capture is over, so this helper's Esc monitor comes down.
+                    // Electron reinstalls it via `hud-state thinking` for the
+                    // rest of the turn.
+                    await MainActor.run { self.removeEscMonitor() }
                     state = .idle
                     statusItem?.updateState(.idle)
                     if text.isEmpty {
@@ -639,7 +670,7 @@ final class VoiceCoordinator {
                     emitConversationEvent(type: "transcript", payload: ["text": finalText], modeOverride: "dictate")
                     state = .idle
                     statusItem?.updateState(.idle)
-                    await MainActor.run { self.hud.show(.success) }
+                    await MainActor.run { self.removeEscMonitor(); self.hud.show(.success) }
                     Task { await gateway.reportStatus("idle") }
                     return
                 }
@@ -657,6 +688,7 @@ final class VoiceCoordinator {
                 state = .idle
                 statusItem?.updateState(.idle)
                 await MainActor.run {
+                    self.removeEscMonitor()
                     if finalText.isEmpty {
                         self.hud.hide()
                     } else if canInject {
@@ -681,6 +713,7 @@ final class VoiceCoordinator {
                 statusItem?.updateState(.error(error.localizedDescription))
                 let msg = error.localizedDescription
                 await MainActor.run {
+                    self.removeEscMonitor()
                     if destination.composerMode != nil {
                         self.emitConversationEvent(type: "error", payload: ["message": msg])
                         self.emitConversationEvent(type: "state", payload: ["state": "idle"])

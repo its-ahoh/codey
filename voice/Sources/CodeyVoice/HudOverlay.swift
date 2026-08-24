@@ -17,6 +17,10 @@ final class HudOverlay {
         /// user sees progress before injection happens at the end.
         case partial(String)
         case success
+        /// A press that was refused because the on-device model is not loaded
+        /// yet. Spinner rather than a cross: nothing failed, the answer is
+        /// "not yet".
+        case notice(String)
         case error(String)
         case dictation(String)
         /// The conversation capsule. Distinct from the dictation pill on
@@ -144,6 +148,16 @@ final class HudOverlay {
             applyPillLayout()
             panel.ignoresMouseEvents = true
             scheduleHide(after: 1.0)
+        case .notice(let msg):
+            setCapsuleMode(false)
+            label.stringValue = msg
+            label.textColor = NSColor.secondaryLabelColor
+            setMeterVisible(false)
+            spinner.isHidden = false
+            spinner.startAnimation(nil)
+            applyPillLayout()
+            panel.ignoresMouseEvents = true
+            scheduleHide(after: 2.5)
         case .error(let msg):
             setCapsuleMode(false)
             label.stringValue = "✕ \(msg)"
