@@ -2681,16 +2681,16 @@ export const ChatTab: React.FC<Props> = ({
         {learnedWords.length > 0 && (
           <div style={styles.learnedRow}>
             <span style={styles.learnedPill}>
-              {/* The word that was added leads, because that is what the pill
-                  is announcing. The mis-hearing it came from follows the
-                  arrow: it is the only thing on screen that lets a wrong guess
-                  be caught before it starts rewriting transcripts. */}
+              {/* Reads as the rule it created: mis-hearing, arrow, corrected
+                  spelling. The mis-hearing has to stay on screen - it is the
+                  only thing that lets a wrong guess be caught before it starts
+                  rewriting transcripts. */}
               {learnedWords.map((word, i) => (
                 <span key={`${word.alias}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  <strong>{word.term}</strong>
-                  <span style={{ opacity: 0.7 }}>added</span>
-                  <span style={{ opacity: 0.5 }}>&larr;</span>
                   <span style={styles.learnedAlias}>{word.alias}</span>
+                  <span style={{ opacity: 0.5 }}>&rarr;</span>
+                  <strong>{word.term}</strong>
+                  <span style={{ opacity: 0.7 }}>learned</span>
                   <button
                     onClick={() => {
                       // Removes it from the dictionary *and* the waiting list,
