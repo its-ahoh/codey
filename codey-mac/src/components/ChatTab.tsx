@@ -2695,9 +2695,10 @@ export const ChatTab: React.FC<Props> = ({
                       setLearnedWords(prev => prev.filter((_, at) => at !== i))
                     }}
                     title={`Undo - stop rewriting "${word.alias}" to "${word.term}"`}
+                    aria-label={`Undo learning ${word.alias} as ${word.term}`}
                     style={styles.learnedUndo}
                   >
-                    Undo
+                    <UIIcon name="undo" size={13} color={C.accent} />
                   </button>
                 </span>
               ))}
@@ -3408,7 +3409,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   learnedUndo: {
     background: 'none', border: 'none', cursor: 'pointer', color: C.accent,
-    fontSize: 11, padding: '0 2px', textDecoration: 'underline',
+    padding: '0 2px', display: 'inline-flex', alignItems: 'center',
   },
   learnedDismiss: {
     background: 'none', border: 'none', cursor: 'pointer', color: C.fg3,

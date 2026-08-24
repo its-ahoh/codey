@@ -4,7 +4,7 @@ export type IconName =
   | 'activity' | 'add' | 'alert' | 'archive' | 'bell' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
   | 'clock' | 'code' | 'copy' | 'edit' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
   | 'waveform' | 'git-branch' | 'git-merge' | 'pull-request' | 'globe' | 'match-case' | 'overview' | 'refresh' | 'search' | 'server' | 'settings' | 'sparkle' | 'split' | 'terminal' | 'tools' | 'trash' | 'users' | 'workspace'
-  | 'telegram' | 'discord' | 'imessage'
+  | 'telegram' | 'discord' | 'imessage' | 'undo'
 
 interface Props {
   name: IconName
@@ -57,6 +57,9 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     plus: <path {...common} d="M12 5v14M5 12h14" />,
     refresh: <><path {...common} d="M20 11a8 8 0 00-14.7-4.4L3 9" /><path {...common} d="M3 4v5h5M4 13a8 8 0 0014.7 4.4L21 15" /><path {...common} d="M21 20v-5h-5" /></>,
     search: <><circle {...common} cx="11" cy="11" r="7" /><path {...common} d="M16.5 16.5L21 21" /></>,
+    // The familiar curved-back arrow. Distinct from `refresh`, which is a
+    // closed loop and reads as "do it again" rather than "put it back".
+    undo: <><path {...common} d="M9 14L4 9l5-5" /><path {...common} d="M4 9h10.5A5.5 5.5 0 0 1 20 14.5v0A5.5 5.5 0 0 1 14.5 20H11" /></>,
     // "Aa" — the familiar match-case glyph from editor search bars.
     'match-case': <><path {...common} d="M2.5 17.5L7 6.5l4.5 11M4.3 14h5.4" /><circle {...common} cx="17" cy="14" r="3.4" /><path {...common} d="M20.4 10.2v7.3" /></>,
     server: <><rect {...common} x="3" y="4" width="18" height="6" rx="2" /><rect {...common} x="3" y="14" width="18" height="6" rx="2" /><path {...common} d="M7 7h.01M7 17h.01" /></>,
