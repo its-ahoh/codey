@@ -29,6 +29,7 @@ import { ShimmerStatus } from './ShimmerStatus'
 import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft } from './chatDrafts'
+import { isBottomTerminalOpen, setBottomTerminalOpen as rememberBottomTerminalOpen } from './terminalVisibility'
 import { AGENT_API_TYPE, AGENT_NAMES, ApiType, modelFitsApiType } from './modelApiType'
 import { useInstalledAgents } from './installedAgents'
 import { applyMention, filterEntries, findActiveMention, splitMentionSegments } from './mentions'
@@ -963,7 +964,9 @@ export const ChatTab: React.FC<Props> = ({
   )
   // Settings switch. Off hides both status surfaces and suppresses brief generation.
   const statusPanelEnabled = useStatusPanelEnabled()
-  const [bottomTerminalOpen, setBottomTerminalOpen] = useState(false)
+  // Seeded from the module store so a Terminal left open survives the remount
+  // that a chat switch causes (App.tsx keys ChatTab by chat id).
+  const [bottomTerminalOpen, setBottomTerminalOpen] = useState(() => isBottomTerminalOpen(chatId))
   const [bottomTerminalHeight, setBottomTerminalHeight] = useState<number>(() => {
     const value = Number(localStorage.getItem('codey.bottomTerminalHeight'))
     return Number.isFinite(value) ? Math.max(180, Math.min(560, value)) : 280
@@ -1295,6 +1298,7 @@ export const ChatTab: React.FC<Props> = ({
     })
   }, [restoreText, chatId])
   useEffect(() => { localStorage.setItem('codey.bottomTerminalHeight', String(bottomTerminalHeight)) }, [bottomTerminalHeight])
+  useEffect(() => { rememberBottomTerminalOpen(chatId, bottomTerminalOpen) }, [chatId, bottomTerminalOpen])
   // Track window width so the context panel can shrink (or be hidden) when
   // the user resizes Codey down — at small widths the middle column was
   // collapsing to ~200px and wrapping CJK characters one per line.
