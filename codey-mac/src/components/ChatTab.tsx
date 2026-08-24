@@ -2681,12 +2681,15 @@ export const ChatTab: React.FC<Props> = ({
         {learnedWords.length > 0 && (
           <div style={styles.learnedRow}>
             <span style={styles.learnedPill}>
-              <span style={{ opacity: 0.7 }}>Learned</span>
+              {/* The word that was added is the news; the mis-hearing it came
+                  from is context. Leading with "<term> added" answers the
+                  question actually being asked, and the muted "was ..." keeps
+                  the evidence needed to spot a wrong guess. */}
               {learnedWords.map((word, i) => (
-                <span key={`${word.alias}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <span style={styles.learnedAlias}>{word.alias}</span>
-                  <span style={{ opacity: 0.5 }}>&rarr;</span>
+                <span key={`${word.alias}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                   <strong>{word.term}</strong>
+                  <span style={{ opacity: 0.7 }}>added</span>
+                  <span style={styles.learnedAlias}>was &ldquo;{word.alias}&rdquo;</span>
                   <button
                     onClick={() => {
                       // Removes it from the dictionary *and* the waiting list,
@@ -3405,7 +3408,10 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg2, fontSize: 11, padding: '4px 6px 4px 12px', maxWidth: '100%',
   },
   learnedAlias: {
-    color: C.fg3, textDecoration: 'line-through',
+    // Muted rather than struck through: with "was" already saying it is the
+    // old spelling, a strikethrough only makes the evidence harder to read -
+    // and reading it is how a wrong guess gets caught.
+    color: C.fg3,
   },
   learnedUndo: {
     background: 'none', border: 'none', cursor: 'pointer', color: C.accent,
