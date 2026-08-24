@@ -467,6 +467,14 @@ contextBridge.exposeInMainWorld('codey', {
     switchTab: (id: string) => ipcRenderer.invoke('browser:switchTab', id),
     closeTab: (id: string) => ipcRenderer.invoke('browser:closeTab', id),
     resetSession: () => ipcRenderer.invoke('browser:resetSession'),
+    profiles: {
+      list: () => ipcRenderer.invoke('browser:profiles:list'),
+      save: (name: string) => ipcRenderer.invoke('browser:profiles:save', name),
+      activate: (name: string) => ipcRenderer.invoke('browser:profiles:activate', name),
+      delete: (name: string) => ipcRenderer.invoke('browser:profiles:delete', name),
+      import: () => ipcRenderer.invoke('browser:profiles:import'),
+      export: (name: string) => ipcRenderer.invoke('browser:profiles:export', name),
+    },
     extensions: {
       list: () => ipcRenderer.invoke('browser:extensions:list'),
       discoverChrome: () => ipcRenderer.invoke('browser:extensions:discoverChrome'),

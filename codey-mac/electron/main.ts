@@ -27,6 +27,7 @@ import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
+import { deriveProfileNameFromFile } from './browser-profiles'
 import { BrowserControlPermissionGate } from './browser-control-permission'
 import { BrowserSitePermissionManager } from './browser-site-permissions'
 import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLabel, type BrowserPasskeyPickerRequest } from './browser-webauthn'
@@ -70,6 +71,10 @@ const browserController = new BrowserController(
   state => sendToRenderer('browser:state', state),
   download => sendToRenderer('browser:download', download),
   () => join(app.getPath('downloads'), 'Codey'),
+  undefined,
+  // Named browser profiles (saved/imported sessions) live in the app's own
+  // data directory, next to the browser-control permission store.
+  { getProfilesDir: () => join(app.getPath('userData'), 'browser-profiles') },
 )
 let browserAgentBridge: BrowserAgentBridge | null = null
 let browserControlPermission: BrowserControlPermissionGate | null = null
@@ -1973,6 +1978,48 @@ app.whenReady().then(async () => {
     browserSitePermissions?.clear()
     browserControlPermission?.revoke()
     return state
+  }))
+  // Browser profiles: saved/imported sessions the renderer (browser toolbar
+  // and Settings) manages through the same controller the agents use.
+  ipcMain.handle('browser:profiles:list', event => browserCall(event, () => ({
+    active: browserController.activeProfileName(),
+    profiles: browserController.listProfiles(),
+  })))
+  ipcMain.handle('browser:profiles:save', (event, name: string) =>
+    browserCall(event, () => browserController.saveProfile(String(name || ''))))
+  ipcMain.handle('browser:profiles:activate', (event, name: string) =>
+    browserCall(event, () => browserController.activateProfile(String(name || ''))))
+  ipcMain.handle('browser:profiles:delete', (event, name: string) =>
+    browserCall(event, () => browserController.deleteProfile(String(name || ''))))
+  ipcMain.handle('browser:profiles:import', event => browserCall(event, async () => {
+    const result = await dialog.showOpenDialog(mainWindow ?? (undefined as any), {
+      title: 'Import browser profile',
+      buttonLabel: 'Import',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Browser profile (JSON)', extensions: ['json'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    })
+    if (result.canceled || result.filePaths.length === 0) return { imported: false, profile: null }
+    const filePath = result.filePaths[0]
+    const name = deriveProfileNameFromFile(filePath)
+    // Importing activates by default — "import then enable" in one step — and
+    // the identity switch prompts the user like any mutating browser command.
+    const profile = await browserController.importProfile(name, { path: filePath })
+    return { imported: true, profile }
+  }))
+  ipcMain.handle('browser:profiles:export', (event, name: string) => browserCall(event, async () => {
+    const requested = String(name || '')
+    const result = await dialog.showSaveDialog(mainWindow ?? (undefined as any), {
+      title: 'Export browser profile',
+      buttonLabel: 'Export',
+      defaultPath: requested ? `${requested}.json` : 'profile.json',
+      filters: [{ name: 'Browser profile (JSON)', extensions: ['json'] }],
+    })
+    if (result.canceled || !result.filePath) return { exported: false, path: null }
+    const out = await browserController.exportProfile(requested, result.filePath)
+    return { exported: true, path: out.path }
   }))
   ipcMain.handle('browser:extensions:list', event => browserCall(event, () => {
     if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')

@@ -448,3 +448,217 @@ describe('sanitizeBounds', () => {
       .toEqual({ x: 10, y: 10, width: 100, height: 100 })
   })
 })
+
+describe('BrowserController profiles', () => {
+  function makeFixture(dir: string, overrides: {
+    tabs?: Array<{ id: string; view: { webContents: any } }>
+    session?: any
+    options?: any
+  } = {}) {
+    const cookiesGet = vi.fn(async () => [
+      { name: 'sid', value: 'abc', domain: 'example.com', path: '/', secure: true, httpOnly: true, sameSite: 'lax', hostOnly: false },
+    ])
+    const cookiesSet = vi.fn(async () => {})
+    const cookiesRemove = vi.fn(async () => {})
+    const session = overrides.session ?? { cookies: { get: cookiesGet, set: cookiesSet, remove: cookiesRemove } }
+    const contents = {
+      isDestroyed: vi.fn(() => false),
+      getURL: vi.fn(() => 'https://example.com/dashboard'),
+      getTitle: vi.fn(() => 'Dashboard'),
+      executeJavaScript: vi.fn(async (_script: string) => ({
+        origin: 'https://example.com',
+        entries: [{ name: 'token', value: 't0k3n' }],
+      })),
+      close: vi.fn(),
+      once: vi.fn(),
+      loadURL: vi.fn(async () => {}),
+    }
+    const tabs = overrides.tabs ?? [{ id: 't1', view: { webContents: contents } }]
+    const controller = new BrowserController(
+      () => null,
+      vi.fn(),
+      vi.fn(),
+      undefined,
+      () => session as any,
+      { getProfilesDir: () => dir, ...(overrides.options ?? {}) },
+    )
+    ;(controller as any).tabs = tabs
+    ;(controller as any).view = tabs[0]?.view ?? null
+    return { controller, session, contents, cookiesGet, cookiesSet, cookiesRemove }
+  }
+
+  it('saves the live session into a named profile file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller, contents } = makeFixture(dir)
+      const profile = await controller.saveProfile('work')
+      expect(profile.name).toBe('work')
+      expect(profile.sourceUrl).toBe('https://example.com/dashboard')
+      expect(profile.cookies).toEqual([expect.objectContaining({ name: 'sid', value: 'abc', domain: 'example.com', expires: -1 })])
+      expect(profile.origins).toEqual([{ origin: 'https://example.com', localStorage: [{ name: 'token', value: 't0k3n' }] }])
+      // The capture script only reads localStorage — never page text or fields.
+      const script = contents.executeJavaScript.mock.calls[0][0]
+      expect(script).toContain('localStorage')
+      expect(script).not.toContain('innerText')
+      const stored = JSON.parse(fs.readFileSync(path.join(dir, 'work.json'), 'utf8'))
+      expect(stored.name).toBe('work')
+      expect(controller.listProfiles()[0]).toMatchObject({ name: 'work', cookieCount: 1, originCount: 1, active: false })
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects unsafe profile names', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller } = makeFixture(dir)
+      await expect(controller.saveProfile('../evil')).rejects.toThrow(/Profile names/)
+      await expect(controller.activateProfile('.hidden')).rejects.toThrow(/Profile names/)
+      await expect(controller.deleteProfile('a/b')).rejects.toThrow(/Profile names/)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('imports Playwright storageState JSON and activates it by default', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      // The profile's only origin (github.com) is not open in any tab, so a
+      // hidden view applies its localStorage — stub it because the test
+      // environment has no real Electron views.
+      const hidden = {
+        webContents: {
+          isDestroyed: vi.fn(() => false),
+          getURL: vi.fn(() => 'about:blank'),
+          executeJavaScript: vi.fn(async (_script: string) => true),
+          once: vi.fn((event: string, cb: () => void) => { if (event === 'did-finish-load') cb() }),
+          loadURL: vi.fn(async () => {}),
+          close: vi.fn(),
+        },
+      }
+      const { controller, cookiesSet, cookiesRemove } = makeFixture(dir, {
+        options: { createHiddenView: () => hidden },
+      })
+      const json = JSON.stringify({
+        cookies: [
+          { name: 'gh', value: 'tok', domain: 'github.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'Lax' },
+        ],
+        origins: [{ origin: 'https://github.com', localStorage: [{ name: 'gh-token', value: 'xyz' }] }],
+      })
+      const profile = await controller.importProfile('gh', { json }, true)
+      expect(profile.name).toBe('gh')
+      // Activating removed the live cookies and applied the profile's.
+      expect(cookiesRemove).toHaveBeenCalledWith('https://example.com/', 'sid')
+      expect(cookiesSet).toHaveBeenCalledWith(expect.objectContaining({
+        url: 'https://github.com/',
+        name: 'gh',
+        domain: 'github.com',
+        secure: true,
+        httpOnly: true,
+        sameSite: 'lax',
+      }))
+      expect(controller.activeProfileName()).toBe('gh')
+      expect(controller.listProfiles().find(profile => profile.name === 'gh')?.active).toBe(true)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('import with activate:false stores without switching identity', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller, cookiesSet } = makeFixture(dir)
+      await controller.importProfile('work', { json: '{"cookies":[]}' }, false)
+      expect(controller.activeProfileName()).toBeNull()
+      expect(cookiesSet).not.toHaveBeenCalled()
+      expect(controller.listProfiles()).toHaveLength(1)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('applies localStorage through an already-open tab when available', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      // The fixture's tab is already on https://example.com, so applying that
+      // origin's storage goes through the open tab, never a hidden view.
+      const createHiddenView = vi.fn()
+      const { controller, contents } = makeFixture(dir, { options: { createHiddenView } })
+      await controller.importProfile('work', { json: JSON.stringify({
+        cookies: [],
+        origins: [{ origin: 'https://example.com', localStorage: [{ name: 'token', value: 'new' }] }],
+      }) }, true)
+      const setCalls = contents.executeJavaScript.mock.calls.map(call => call[0])
+      const applyScript = setCalls.find(script => script.includes('localStorage.setItem'))
+      expect(applyScript).toContain('"name":"token"')
+      // No hidden view was needed because the tab was already on the origin.
+      expect(createHiddenView).not.toHaveBeenCalled()
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses a hidden view to apply localStorage of origins that are not open', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const hidden = {
+        webContents: {
+          isDestroyed: vi.fn(() => false),
+          getURL: vi.fn(() => 'about:blank'),
+          executeJavaScript: vi.fn(async (_script: string) => true),
+          once: vi.fn((event: string, cb: () => void) => { if (event === 'did-finish-load') cb() }),
+          loadURL: vi.fn(async () => {}),
+          close: vi.fn(),
+        },
+      }
+      const { controller } = makeFixture(dir, {
+        tabs: [{ id: 't1', view: { webContents: { ...hidden.webContents } } }],
+        options: { createHiddenView: () => hidden },
+      })
+      await controller.importProfile('work', { json: JSON.stringify({
+        cookies: [],
+        origins: [{ origin: 'https://github.com', localStorage: [{ name: 'gh', value: 'tok' }] }],
+      }) }, true)
+      expect(hidden.webContents.loadURL).toHaveBeenCalledWith('https://github.com/')
+      expect(hidden.webContents.close).toHaveBeenCalled()
+      const applyScript = hidden.webContents.executeJavaScript.mock.calls[0][0]
+      expect(applyScript).toContain('localStorage.setItem')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('activate is a no-op when the profile is already active, and delete clears it', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller, cookiesSet, cookiesRemove } = makeFixture(dir)
+      await controller.importProfile('work', { json: '{"cookies":[]}' }, true)
+      expect(controller.activeProfileName()).toBe('work')
+      cookiesRemove.mockClear()
+      cookiesSet.mockClear()
+      const summary = await controller.activateProfile('work')
+      expect(summary.active).toBe(true)
+      expect(cookiesRemove).not.toHaveBeenCalled()
+      await controller.deleteProfile('work')
+      expect(controller.activeProfileName()).toBeNull()
+      expect(controller.listProfiles()).toEqual([])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('exportProfile writes the profile to an arbitrary path', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller } = makeFixture(dir)
+      await controller.importProfile('work', { json: '{"cookies":[]}' }, false)
+      const out = path.join(dir, '..', 'exported-work.json')
+      const result = await controller.exportProfile('work', out)
+      expect(result.path).toBe(path.resolve(out))
+      expect(JSON.parse(fs.readFileSync(out, 'utf8')).name).toBe('work')
+      fs.rmSync(out, { force: true })
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

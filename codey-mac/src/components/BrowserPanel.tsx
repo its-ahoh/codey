@@ -14,6 +14,7 @@ import type {
 } from '../codey-api'
 import { C } from '../theme'
 import { UIIcon } from './UIIcons'
+import { BrowserProfiles } from './BrowserProfiles'
 import { getDraft, setDraft } from './chatDrafts'
 import { buildBrowserContextPrompt } from './browserContextPrompt'
 
@@ -37,6 +38,13 @@ const EMPTY_STATE: BrowserState = {
 
 const VIEW_ONLY: BrowserControlPermissionState = { approved: false, pending: null }
 const NO_SITE_PERMISSION: BrowserSitePermissionState = { pending: null, savedSiteCount: 0 }
+
+type BrowserSettingsSection = 'extensions' | 'profiles'
+
+const SETTINGS_SECTIONS: Record<BrowserSettingsSection, { title: string; url: string }> = {
+  extensions: { title: 'Extensions', url: 'codey://settings/extensions' },
+  profiles: { title: 'Profiles', url: 'codey://settings/profiles' },
+}
 
 const SITE_PERMISSION_LABELS: Record<BrowserSitePermission, string> = {
   camera: 'camera',
@@ -62,8 +70,12 @@ export const BrowserPanel: React.FC<Props> = ({
   onClose,
   embedded = false,
 }) => {
+  const rootRef = useRef<HTMLElement>(null)
   const hostRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
   const shownRef = useRef(false)
+  const browserCoveredRef = useRef(false)
   const addressFocusedRef = useRef(false)
   const [state, setState] = useState<BrowserState>(EMPTY_STATE)
   const [address, setAddress] = useState('')
@@ -74,13 +86,29 @@ export const BrowserPanel: React.FC<Props> = ({
   const [resetBusy, setResetBusy] = useState(false)
   const [tabs, setTabs] = useState<BrowserTab[]>([])
   const [latestDownload, setLatestDownload] = useState<BrowserDownload | null>(null)
-  const [extensionsOpen, setExtensionsOpen] = useState(false)
+  const [settingsTabOpen, setSettingsTabOpen] = useState(false)
+  const [activeSettingsSection, setActiveSettingsSection] = useState<BrowserSettingsSection | null>(null)
+  const [lastSettingsSection, setLastSettingsSection] = useState<BrowserSettingsSection>('extensions')
   const [extensions, setExtensions] = useState<BrowserExtensionEntry[]>([])
   const [extensionCandidate, setExtensionCandidate] = useState<BrowserExtensionCandidate | null>(null)
   const [chromeExtensions, setChromeExtensions] = useState<ChromeBrowserExtensionCandidate[]>([])
   const [chromeScanComplete, setChromeScanComplete] = useState(false)
   const [extensionBusy, setExtensionBusy] = useState(false)
   const [browserMenuOpen, setBrowserMenuOpen] = useState(false)
+  const [panelWidth, setPanelWidth] = useState(900)
+
+  const browserCovered = browserMenuOpen || activeSettingsSection !== null
+  browserCoveredRef.current = browserCovered
+
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    const updateWidth = () => setPanelWidth(Math.round(root.getBoundingClientRect().width))
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(root)
+    updateWidth()
+    return () => observer.disconnect()
+  }, [])
 
   const useResult = <T,>(result: { ok: true; data: T } | { ok: false; error: string }): T | undefined => {
     if (!result.ok) {
@@ -163,7 +191,7 @@ export const BrowserPanel: React.FC<Props> = ({
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
         const bounds = rectToBounds(host.getBoundingClientRect())
-        if (bounds.width === 0 || bounds.height === 0) return
+        if (bounds.width === 0 || bounds.height === 0 || browserCoveredRef.current) return
         if (!shownRef.current) {
           shownRef.current = true
           void window.codey.browser.show(bounds).then(result => {
@@ -186,6 +214,40 @@ export const BrowserPanel: React.FC<Props> = ({
       window.removeEventListener('resize', placeBrowser)
     }
   }, [])
+
+  useLayoutEffect(() => {
+    if (browserCovered) {
+      shownRef.current = false
+      void window.codey.browser.hide()
+      return
+    }
+    const host = hostRef.current
+    if (!host) return
+    const bounds = rectToBounds(host.getBoundingClientRect())
+    if (bounds.width === 0 || bounds.height === 0) return
+    shownRef.current = true
+    void window.codey.browser.show(bounds).then(result => {
+      const next = useResult(result)
+      if (next) setState(next)
+    })
+  }, [browserCovered])
+
+  useEffect(() => {
+    if (!browserMenuOpen) return
+    const closeMenu = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (!menuRef.current?.contains(target) && !menuButtonRef.current?.contains(target)) setBrowserMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setBrowserMenuOpen(false)
+    }
+    document.addEventListener('mousedown', closeMenu)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeMenu)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [browserMenuOpen])
 
   const navigate = async () => {
     const next = useResult(await window.codey.browser.navigate(address))
@@ -253,13 +315,32 @@ export const BrowserPanel: React.FC<Props> = ({
     }
   }
 
+  const openSettingsSection = (section: BrowserSettingsSection) => {
+    setSettingsTabOpen(true)
+    setLastSettingsSection(section)
+    setActiveSettingsSection(section)
+    setBrowserMenuOpen(false)
+  }
+
   const openExtensions = async () => {
-    const nextOpen = !extensionsOpen
-    setExtensionsOpen(nextOpen)
+    openSettingsSection('extensions')
     setExtensionCandidate(null)
-    if (!nextOpen) return
     const next = useResult(await window.codey.browser.extensions.list())
     if (next) setExtensions(next)
+  }
+
+  const openProfiles = () => {
+    openSettingsSection('profiles')
+  }
+
+  const showWebTab = async (operation: () => Promise<{ ok: true; data: BrowserState } | { ok: false; error: string }>) => {
+    setActiveSettingsSection(null)
+    await run(operation)
+  }
+
+  const closeSettingsTab = () => {
+    setSettingsTabOpen(false)
+    setActiveSettingsSection(null)
   }
 
   const pickExtension = async () => {
@@ -331,8 +412,19 @@ export const BrowserPanel: React.FC<Props> = ({
     catch { return controlPermission.pending?.url || '' }
   })()
 
+  const compactSettings = panelWidth < 700
+  const narrowSettings = panelWidth < 480
+  const settingsContentTop = compactSettings ? 138 : 82
+  const settingsSidebarStyle: React.CSSProperties = compactSettings
+    ? { ...styles.settingsSidebar, inset: '82px 0 auto 0', width: 'auto', height: 56, padding: '9px 12px', flexDirection: 'row', alignItems: 'center', gap: 6, borderRight: 'none', borderBottom: `1px solid ${C.border}` }
+    : styles.settingsSidebar
+  const settingsPanelStyle: React.CSSProperties = {
+    inset: `${settingsContentTop}px 0 0 ${compactSettings ? 0 : 216}px`,
+    padding: narrowSettings ? '18px 14px 28px' : '28px clamp(22px, 5vw, 56px) 40px',
+  }
+
   return (
-    <section style={styles.root} aria-label="Codey Browser">
+    <section ref={rootRef} style={styles.root} aria-label="Codey Browser">
       <div style={{ ...styles.toolbar, ...(embedded ? styles.compactToolbar : null) }}>
         <div style={styles.navGroup}>
           <button
@@ -366,14 +458,15 @@ export const BrowserPanel: React.FC<Props> = ({
           style={{ ...styles.addressForm, ...(displayedError ? styles.addressError : null) }}
           onSubmit={event => { event.preventDefault(); void navigate() }}
         >
-          <span style={{ ...styles.security, color: secure ? C.green : C.fg3 }} title={secure ? 'Secure connection' : 'Connection information'}>
-            {secure ? '●' : '○'}
+          <span style={{ ...styles.security, color: activeSettingsSection ? C.accent : secure ? C.green : C.fg3 }} title={activeSettingsSection ? 'Codey browser page' : secure ? 'Secure connection' : 'Connection information'}>
+            {activeSettingsSection ? '◆' : secure ? '●' : '○'}
           </span>
           <input
-            value={address}
+            value={activeSettingsSection ? SETTINGS_SECTIONS[activeSettingsSection].url : address}
             onChange={event => setAddress(event.target.value)}
             onFocus={event => { addressFocusedRef.current = true; event.currentTarget.select() }}
             onBlur={() => { addressFocusedRef.current = false }}
+            readOnly={activeSettingsSection !== null}
             placeholder="Search or enter an address"
             aria-label="Browser address"
             spellCheck={false}
@@ -385,73 +478,38 @@ export const BrowserPanel: React.FC<Props> = ({
 
         <button
           type="button"
-          style={{ ...styles.contextButton, opacity: chatId && state.url ? 1 : 0.5 }}
+          style={{ ...styles.contextButton, opacity: chatId && state.url && !activeSettingsSection ? 1 : 0.5 }}
           title={chatId ? 'Add this page and its performance timing to the current chat' : 'Select a chat first'}
-          disabled={!chatId || !state.url}
+          disabled={!chatId || !state.url || activeSettingsSection !== null}
           onClick={() => void usePageInChat()}
         >
           <UIIcon name="sparkle" size={14} />
           {!embedded && <span>Use in chat</span>}
         </button>
-        {!embedded && <button
+        <button
+          ref={menuButtonRef}
           type="button"
-          style={{ ...styles.iconButton, ...(extensionsOpen ? styles.iconButtonActive : null) }}
-          title="Browser extensions"
-          aria-label="Browser extensions"
-          aria-expanded={extensionsOpen}
-          onClick={() => void openExtensions()}
-        >⊞</button>}
-        {!embedded && <button
-          type="button"
-          style={styles.iconButton}
-          title="Open in default browser"
-          aria-label="Open in default browser"
-          disabled={!state.url}
-          onClick={() => { if (state.url) void window.codey.openExternal(state.url) }}
-        >↗</button>}
-        {!embedded && <button
-          type="button"
-          style={{
-            ...styles.permissionBadge,
-            ...(controlPermission.approved ? styles.permissionApproved : styles.permissionViewOnly),
-          }}
-          title={controlPermission.approved ? 'Revoke agent browser control' : 'Agents can only view until you approve control'}
-          onClick={() => {
-            if (controlPermission.approved) void updateControlPermission(window.codey.browser.controlPermission.revoke)
-          }}
-        >
-          <span style={styles.permissionDot} />
-          {controlPermission.approved ? 'Full Control' : 'View Only'}
-        </button>}
-        {!embedded && <button
-          type="button"
-          style={{ ...styles.iconButton, ...(resetConfirmation ? styles.iconButtonDanger : null) }}
-          title="Clear browser data and sign out"
-          aria-label="Clear browser data and sign out"
-          aria-expanded={resetConfirmation}
-          onClick={() => setResetConfirmation(current => !current)}
-        ><UIIcon name="trash" size={14} /></button>}
-        {embedded && (
-          <button
-            type="button"
-            style={{ ...styles.iconButton, ...(browserMenuOpen ? styles.iconButtonActive : null) }}
-            title="More browser actions"
-            aria-label="More browser actions"
-            aria-expanded={browserMenuOpen}
-            onClick={() => setBrowserMenuOpen(current => !current)}
-          ><UIIcon name="more" size={15} /></button>
-        )}
+          style={{ ...styles.iconButton, ...(browserMenuOpen ? styles.iconButtonActive : null) }}
+          title="More browser actions"
+          aria-label="More browser actions"
+          aria-haspopup="menu"
+          aria-expanded={browserMenuOpen}
+          onClick={() => setBrowserMenuOpen(current => !current)}
+        ><UIIcon name="more" size={15} /></button>
         {!embedded && <button type="button" style={styles.closeButton} onClick={onClose} title="Close browser" aria-label="Close browser">
           <UIIcon name="close" size={15} />
         </button>}
       </div>
 
-      {embedded && browserMenuOpen && (
-        <div style={styles.browserMenu} aria-label="Browser actions">
+      {browserMenuOpen && (
+        <div ref={menuRef} style={styles.browserMenu} role="menu" aria-label="Browser actions">
           <button type="button" style={styles.menuButton} onClick={() => { setBrowserMenuOpen(false); void openExtensions() }}>
             <span aria-hidden="true">⊞</span> Extensions
           </button>
-          <button type="button" style={styles.menuButton} disabled={!state.url} onClick={() => { setBrowserMenuOpen(false); if (state.url) void window.codey.openExternal(state.url) }}>
+          <button type="button" style={styles.menuButton} onClick={() => { setBrowserMenuOpen(false); openProfiles() }}>
+            <UIIcon name="users" size={13} /> Profiles
+          </button>
+          <button type="button" style={styles.menuButton} disabled={!state.url || activeSettingsSection !== null} onClick={() => { setBrowserMenuOpen(false); if (state.url && !activeSettingsSection) void window.codey.openExternal(state.url) }}>
             <span aria-hidden="true">↗</span> Open externally
           </button>
           <button
@@ -477,12 +535,12 @@ export const BrowserPanel: React.FC<Props> = ({
             key={tab.id}
             role="tab"
             tabIndex={0}
-            aria-selected={tab.active}
+            aria-selected={tab.active && activeSettingsSection === null}
             title={tab.title || tab.url || 'New tab'}
-            style={{ ...styles.tab, ...(tab.active ? styles.activeTab : null) }}
-            onClick={() => void run(() => window.codey.browser.switchTab(tab.id))}
+            style={{ ...styles.tab, ...(tab.active && activeSettingsSection === null ? styles.activeTab : null) }}
+            onClick={() => void showWebTab(() => window.codey.browser.switchTab(tab.id))}
             onKeyDown={event => {
-              if (event.key === 'Enter' || event.key === ' ') void run(() => window.codey.browser.switchTab(tab.id))
+              if (event.key === 'Enter' || event.key === ' ') void showWebTab(() => window.codey.browser.switchTab(tab.id))
             }}
           >
             <span style={styles.tabTitle}>{tab.title || 'New tab'}</span>
@@ -497,36 +555,81 @@ export const BrowserPanel: React.FC<Props> = ({
             >×</button>
           </div>
         ))}
+        {settingsTabOpen && (
+          <div
+            role="tab"
+            tabIndex={0}
+            aria-selected={activeSettingsSection !== null}
+            title="Browser settings"
+            style={{ ...styles.tab, ...(activeSettingsSection !== null ? styles.activeTab : null) }}
+            onClick={() => setActiveSettingsSection(lastSettingsSection)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') setActiveSettingsSection(lastSettingsSection)
+            }}
+          >
+            <span style={styles.tabTitle}>Browser settings</span>
+            <button
+              type="button"
+              aria-label="Close browser settings"
+              style={styles.tabClose}
+              onClick={event => { event.stopPropagation(); closeSettingsTab() }}
+            >×</button>
+          </div>
+        )}
         <button
           type="button"
           style={styles.newTabButton}
           title="New tab"
           aria-label="New tab"
-          onClick={() => void run(() => window.codey.browser.newTab())}
+          onClick={() => void showWebTab(() => window.codey.browser.newTab())}
         >+</button>
       </div>
 
-      {extensionsOpen && (
-        <div style={styles.extensionsPanel} aria-label="Browser extensions">
-          <div style={styles.extensionsHeader}>
+      {activeSettingsSection !== null && (
+        <aside style={settingsSidebarStyle} aria-label="Browser settings sections">
+          {!compactSettings && <div style={styles.settingsSidebarTitle}>Browser settings</div>}
+          <button
+            type="button"
+            style={{ ...styles.settingsNavButton, ...(compactSettings ? styles.settingsNavButtonCompact : null), ...(activeSettingsSection === 'extensions' ? styles.settingsNavButtonActive : null) }}
+            aria-current={activeSettingsSection === 'extensions' ? 'page' : undefined}
+            onClick={() => void openExtensions()}
+          >
+            <span aria-hidden="true">⊞</span> Extensions
+          </button>
+          <button
+            type="button"
+            style={{ ...styles.settingsNavButton, ...(compactSettings ? styles.settingsNavButtonCompact : null), ...(activeSettingsSection === 'profiles' ? styles.settingsNavButtonActive : null) }}
+            aria-current={activeSettingsSection === 'profiles' ? 'page' : undefined}
+            onClick={openProfiles}
+          >
+            <UIIcon name="users" size={14} /> Profiles
+          </button>
+        </aside>
+      )}
+
+      {activeSettingsSection === 'extensions' && (
+        <div style={{ ...styles.settingsPanel, ...settingsPanelStyle }} aria-label="Browser extensions">
+          <div style={styles.settingsContent}>
+          <div style={styles.settingsPageHeader}>
+            <div style={styles.settingsPageIcon}><UIIcon name="tools" size={20} /></div>
             <div>
-              <div style={styles.extensionsTitle}>Extensions</div>
+              <div style={styles.settingsPageTitle}>Extensions</div>
               <div style={styles.extensionsCopy}>Install in Chrome first, then import a compatible copy into Codey. Chrome Web Store buttons cannot install directly into Electron.</div>
             </div>
-            <div style={styles.extensionsActions}>
+          </div>
+            <div style={{ ...styles.extensionsActions, ...(narrowSettings ? styles.extensionsActionsNarrow : null) }}>
               <button
                 type="button"
-                style={styles.secondaryButton}
+                style={{ ...styles.secondaryButton, ...(narrowSettings ? styles.responsiveActionButton : null) }}
                 onClick={() => void window.codey.openExternal('https://chromewebstore.google.com/category/extensions')}
               >View Web Store ↗</button>
-              <button type="button" style={styles.primaryButton} disabled={extensionBusy} onClick={() => void discoverChromeExtensions()}>
+              <button type="button" style={{ ...styles.primaryButton, ...(narrowSettings ? styles.responsiveActionButton : null) }} disabled={extensionBusy} onClick={() => void discoverChromeExtensions()}>
                 {chromeScanComplete ? 'Scan Chrome again' : 'Import from Chrome'}
               </button>
-              <button type="button" style={styles.secondaryButton} disabled={extensionBusy} onClick={() => void pickExtension()}>
+              <button type="button" style={{ ...styles.secondaryButton, ...(narrowSettings ? styles.responsiveActionButton : null) }} disabled={extensionBusy} onClick={() => void pickExtension()}>
                 Load unpacked
               </button>
             </div>
-          </div>
 
           {extensionCandidate && (
             <div style={styles.extensionReview} role="dialog" aria-label="Review unpacked extension">
@@ -549,7 +652,7 @@ export const BrowserPanel: React.FC<Props> = ({
           )}
 
           {!extensionCandidate && chromeExtensions.map(candidate => (
-            <div key={`${candidate.profile}:${candidate.extensionId}`} style={styles.extensionRow}>
+            <div key={`${candidate.profile}:${candidate.extensionId}`} style={{ ...styles.extensionRow, ...(narrowSettings ? styles.extensionRowNarrow : null) }}>
               <div style={{ ...styles.extensionStatusIcon, color: candidate.compatible ? C.green : C.warningFg }}>
                 {candidate.compatible ? '●' : '⚠'}
               </div>
@@ -589,7 +692,7 @@ export const BrowserPanel: React.FC<Props> = ({
           )}
 
           {!extensionCandidate && extensions.map(extension => (
-            <div key={extension.key} style={styles.extensionRow}>
+            <div key={extension.key} style={{ ...styles.extensionRow, ...(narrowSettings ? styles.extensionRowNarrow : null) }}>
               <div style={styles.extensionStatusIcon}>{extension.enabled && !extension.error ? '●' : '○'}</div>
               <div style={styles.extensionInfo}>
                 <div style={styles.extensionName}>
@@ -619,6 +722,22 @@ export const BrowserPanel: React.FC<Props> = ({
               >Remove</button>
             </div>
           ))}
+          </div>
+        </div>
+      )}
+
+      {activeSettingsSection === 'profiles' && (
+        <div style={{ ...styles.settingsPanel, ...settingsPanelStyle }} aria-label="Browser profiles">
+          <div style={styles.settingsContent}>
+          <div style={styles.settingsPageHeader}>
+            <div style={styles.settingsPageIcon}><UIIcon name="users" size={20} /></div>
+            <div>
+              <div style={styles.settingsPageTitle}>Profiles</div>
+              <div style={styles.extensionsCopy}>Manage saved browser sessions, cookies, and site storage.</div>
+            </div>
+          </div>
+          <BrowserProfiles compact={narrowSettings} />
+          </div>
         </div>
       )}
 
@@ -758,12 +877,21 @@ export const BrowserPanel: React.FC<Props> = ({
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  root: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg },
+  root: { position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg },
   toolbar: { height: 48, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 7, padding: '7px 10px', background: C.surface, borderBottom: `1px solid ${C.border}` },
   compactToolbar: { gap: 4, padding: '7px 6px' },
-  browserMenu: { minHeight: 38, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, padding: '5px 7px', overflowX: 'auto', background: C.surface2, borderBottom: `1px solid ${C.border}` },
-  menuButton: { height: 28, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5, padding: '0 8px', border: `1px solid ${C.border}`, borderRadius: 6, background: C.surface, color: C.fg2, cursor: 'pointer', fontSize: 10, whiteSpace: 'nowrap' },
-  menuButtonWarning: { color: C.warningFg, borderColor: `${C.warningFg}88`, background: C.warningBg },
+  browserMenu: {
+    position: 'absolute', top: 43, right: 8, zIndex: 20, width: 230,
+    display: 'flex', flexDirection: 'column', gap: 2, padding: 6,
+    background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 10,
+    boxShadow: '0 12px 30px rgba(0,0,0,0.32)',
+  },
+  menuButton: {
+    width: '100%', minHeight: 32, display: 'flex', alignItems: 'center', gap: 8,
+    padding: '0 9px', border: 'none', borderRadius: 6, background: 'transparent',
+    color: C.fg2, cursor: 'pointer', fontSize: 11, textAlign: 'left', whiteSpace: 'nowrap',
+  },
+  menuButtonWarning: { color: C.warningFg, background: C.warningBg },
   tabStrip: { height: 34, flexShrink: 0, display: 'flex', alignItems: 'flex-end', gap: 3, padding: '4px 8px 0', overflowX: 'auto', background: C.surface, borderBottom: `1px solid ${C.border}` },
   tab: { maxWidth: 180, minWidth: 90, height: 29, padding: '0 6px 0 9px', display: 'flex', alignItems: 'center', gap: 7, border: `1px solid transparent`, borderBottom: 'none', borderRadius: '7px 7px 0 0', background: 'transparent', color: C.fg3, cursor: 'pointer', fontSize: 10.5 },
   activeTab: { background: C.bg, color: C.fg, borderColor: C.border },
@@ -804,19 +932,29 @@ const styles: Record<string, React.CSSProperties> = {
   security: { fontSize: 9, flexShrink: 0 },
   address: { flex: 1, minWidth: 0, height: '100%', padding: 0, border: 'none', outline: 'none', background: 'transparent', color: C.fg, fontSize: 12.5 },
   loadingDot: { width: 7, height: 7, borderRadius: '50%', background: C.accent, animation: 'codey-pulse 1s ease-in-out infinite', flexShrink: 0 },
-  extensionsPanel: { maxHeight: 360, flexShrink: 0, overflowY: 'auto', padding: '10px 12px', background: C.surface, borderBottom: `1px solid ${C.border}` },
-  extensionsHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 },
-  extensionsTitle: { color: C.fg, fontSize: 12.5, fontWeight: 750 },
-  extensionsCopy: { color: C.fg3, fontSize: 10.5, lineHeight: 1.4, marginTop: 2 },
-  extensionsActions: { display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 },
+  settingsSidebar: { position: 'absolute', inset: '82px auto 0 0', zIndex: 4, width: 216, padding: '24px 14px', display: 'flex', flexDirection: 'column', background: C.surface, borderRight: `1px solid ${C.border}` },
+  settingsSidebarTitle: { padding: '0 10px 14px', color: C.fg3, fontSize: 10, fontWeight: 750, textTransform: 'uppercase', letterSpacing: 0.8 },
+  settingsNavButton: { width: '100%', minHeight: 38, display: 'flex', alignItems: 'center', gap: 10, padding: '0 11px', border: '1px solid transparent', borderRadius: 9, background: 'transparent', color: C.fg2, cursor: 'pointer', fontSize: 12, textAlign: 'left' },
+  settingsNavButtonCompact: { width: 'auto', flex: 1, justifyContent: 'center', minHeight: 36, padding: '0 12px' },
+  settingsNavButtonActive: { color: C.accent, background: C.accentDim, fontWeight: 700 },
+  settingsPanel: { position: 'absolute', zIndex: 3, overflowY: 'auto', background: C.bg },
+  settingsContent: { width: '100%', maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 },
+  settingsPageHeader: { display: 'flex', alignItems: 'center', gap: 14 },
+  settingsPageIcon: { width: 42, height: 42, flexShrink: 0, display: 'grid', placeItems: 'center', borderRadius: 12, color: C.accent, background: C.accentDim, border: `1px solid ${C.accent}44` },
+  settingsPageTitle: { color: C.fg, fontSize: 20, lineHeight: 1.2, fontWeight: 750 },
+  extensionsCopy: { maxWidth: 620, color: C.fg3, fontSize: 11.5, lineHeight: 1.5, marginTop: 3 },
+  extensionsActions: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: 12, borderRadius: 11, background: C.surface, border: `1px solid ${C.border}` },
+  extensionsActionsNarrow: { alignItems: 'stretch' },
+  responsiveActionButton: { flex: '1 1 140px' },
   primaryButton: { minHeight: 29, padding: '0 10px', border: `1px solid ${C.accent}`, borderRadius: 7, background: C.accent, color: C.onAccent, cursor: 'pointer', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' },
   secondaryButton: { minHeight: 29, padding: '0 10px', border: `1px solid ${C.border2}`, borderRadius: 7, background: C.surface2, color: C.fg2, cursor: 'pointer', fontSize: 10.5, whiteSpace: 'nowrap' },
   smallButton: { minHeight: 25, padding: '0 8px', border: `1px solid ${C.border}`, borderRadius: 6, background: C.surface2, color: C.fg2, cursor: 'pointer', fontSize: 10 },
-  extensionsEmpty: { marginTop: 10, padding: '10px 12px', color: C.fg3, background: C.surface2, border: `1px dashed ${C.border2}`, borderRadius: 8, fontSize: 10.5 },
-  extensionReview: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, padding: 10, background: C.surface2, border: `1px solid ${C.accent}66`, borderRadius: 9 },
+  extensionsEmpty: { padding: '18px 20px', color: C.fg3, background: C.surface, border: `1px dashed ${C.border2}`, borderRadius: 11, fontSize: 11.5, lineHeight: 1.5 },
+  extensionReview: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: 12, background: C.surface, border: `1px solid ${C.accent}66`, borderRadius: 11 },
   extensionReviewBody: { flex: 1, minWidth: 0 },
   extensionSectionLabel: { marginTop: 11, color: C.fg2, fontSize: 10, fontWeight: 750, textTransform: 'uppercase', letterSpacing: 0.5 },
-  extensionRow: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, padding: '8px 9px', background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8 },
+  extensionRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '11px 12px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10 },
+  extensionRowNarrow: { flexWrap: 'wrap', alignItems: 'center' },
   extensionStatusIcon: { width: 15, flexShrink: 0, color: C.green, fontSize: 9, textAlign: 'center' },
   extensionInfo: { flex: 1, minWidth: 0 },
   extensionName: { color: C.fg, fontSize: 11.5, fontWeight: 700 },
