@@ -1251,6 +1251,25 @@ export const ChatTab: React.FC<Props> = ({
     return () => cancelAnimationFrame(frame)
   }, [chat?.messages?.length, lastMsg?.content, lastMsg?.toolCalls?.length, chat?.contextPanelOpen, updateLatestMessageVisibility])
 
+  // The deps above can't see every way the transcript moves: a tool card
+  // expanding, a status row appearing mid-turn, or the composer growing as the
+  // user types (which shrinks the viewport and pushes the last message out of
+  // sight without any React state changing). Observe the boxes instead, so a
+  // pinned view stays pinned whatever caused the shift.
+  useEffect(() => {
+    const messages = messagesRef.current
+    if (!messages) return
+    const stick = () => {
+      if (stickToBottomRef.current) messages.scrollTop = messages.scrollHeight
+      updateLatestMessageVisibility()
+    }
+    const resize = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(stick) : null
+    resize?.observe(messages)
+    const mutate = typeof MutationObserver !== 'undefined' ? new MutationObserver(stick) : null
+    mutate?.observe(messages, { childList: true, subtree: true, characterData: true })
+    return () => { resize?.disconnect(); mutate?.disconnect() }
+  }, [updateLatestMessageVisibility])
+
   const scrollToLatestMessage = useCallback(() => {
     const messages = messagesRef.current
     if (!messages) return
