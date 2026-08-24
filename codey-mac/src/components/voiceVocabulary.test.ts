@@ -1,96 +1,37 @@
 import { describe, it, expect } from 'vitest'
 import {
-  normalizeVocabulary, vocabularyToDraft, draftToVocabulary,
-  learnCorrections, mergeLearnedAliases, countAliases,
+  normalizeVocabulary,
+  learnCorrections, mergeLearnedTerms,
   recordCorrections, normalizePending, forgetCorrection,
   SIGHTINGS_BEFORE_ACTIVE, MAX_PENDING_CORRECTIONS,
-  MAX_ALIASES_PER_TERM, MAX_VOCABULARY_ENTRIES,
+  MAX_VOCABULARY_ENTRIES,
 } from './voiceVocabulary'
 
 describe('normalizeVocabulary', () => {
-  it('widens the bare-string shorthand into a term with no aliases', () => {
-    expect(normalizeVocabulary(['WhisperKit'])).toEqual([{ term: 'WhisperKit', aliases: [] }])
+  it('takes the bare-string shorthand as-is', () => {
+    expect(normalizeVocabulary(['WhisperKit'])).toEqual(['WhisperKit'])
   })
 
-  it('keeps the object form intact', () => {
-    expect(normalizeVocabulary([{ term: 'Codey', aliases: ['Coday', 'code E'] }]))
-      .toEqual([{ term: 'Codey', aliases: ['Coday', 'code E'] }])
-  })
-
-  it('defaults a missing aliases field to empty', () => {
-    expect(normalizeVocabulary([{ term: 'Codey' }])).toEqual([{ term: 'Codey', aliases: [] }])
-  })
-
-  it('drops non-string aliases rather than passing them through', () => {
-    expect(normalizeVocabulary([{ term: 'Codey', aliases: ['ok', 3, null] }]))
-      .toEqual([{ term: 'Codey', aliases: ['ok'] }])
+  it('migrates the old { term, aliases } shape by keeping only the term', () => {
+    expect(normalizeVocabulary([{ term: 'Codey', aliases: ['Coday', 'code E'] }])).toEqual(['Codey'])
   })
 
   it('skips malformed rows without losing the good ones', () => {
-    expect(normalizeVocabulary(['A', 42, null, { noTerm: true }, { term: 'B' }]))
-      .toEqual([{ term: 'A', aliases: [] }, { term: 'B', aliases: [] }])
+    expect(normalizeVocabulary(['A', 42, null, { noTerm: true }, { term: 'B' }])).toEqual(['A', 'B'])
   })
 
-  it('skips blank strings', () => {
-    expect(normalizeVocabulary(['   ', 'A'])).toEqual([{ term: 'A', aliases: [] }])
+  it('drops blanks, so "+ Add word" can leave an empty chip on screen', () => {
+    expect(normalizeVocabulary(['   ', 'A'])).toEqual(['A'])
+  })
+
+  it('trims and de-duplicates case-insensitively', () => {
+    expect(normalizeVocabulary(['  Codey  ', 'codey', 'Codey'])).toEqual(['Codey'])
   })
 
   it('returns empty for a missing or non-array field', () => {
     expect(normalizeVocabulary(undefined)).toEqual([])
     expect(normalizeVocabulary('Codey')).toEqual([])
     expect(normalizeVocabulary({ term: 'Codey' })).toEqual([])
-  })
-})
-
-describe('draft round-trip', () => {
-  it('survives entries -> draft -> entries unchanged', () => {
-    const entries = [
-      { term: 'Codey', aliases: ['Coday', 'code E'] },
-      { term: 'WhisperKit', aliases: [] },
-    ]
-    expect(draftToVocabulary(vocabularyToDraft(entries))).toEqual(entries)
-  })
-
-  it('shows aliases one per line for the textarea', () => {
-    expect(vocabularyToDraft([{ term: 'Codey', aliases: ['a', 'b'] }]))
-      .toEqual([{ term: 'Codey', aliasText: 'a\nb' }])
-  })
-})
-
-describe('draftToVocabulary', () => {
-  it('drops a row whose term is blank, so "+ Add word" writes nothing', () => {
-    expect(draftToVocabulary([{ term: '', aliasText: '' }, { term: '  ', aliasText: 'x' }])).toEqual([])
-  })
-
-  it('keeps a term with no aliases — it still works as a hint', () => {
-    expect(draftToVocabulary([{ term: 'Codey', aliasText: '' }]))
-      .toEqual([{ term: 'Codey', aliases: [] }])
-  })
-
-  it('trims whitespace around the term and each alias', () => {
-    expect(draftToVocabulary([{ term: '  Codey  ', aliasText: ' Coday ,  code E ' }]))
-      .toEqual([{ term: 'Codey', aliases: ['Coday', 'code E'] }])
-  })
-
-  it('ignores empty slots from trailing or doubled commas while typing', () => {
-    expect(draftToVocabulary([{ term: 'Codey', aliasText: 'a,,b, ' }]))
-      .toEqual([{ term: 'Codey', aliases: ['a', 'b'] }])
-  })
-})
-
-describe('countAliases', () => {
-  it('agrees with what draftToVocabulary would save', () => {
-    const text = 'Coday\ncode E, cody'
-    expect(countAliases(text)).toBe(draftToVocabulary([{ term: 'Codey', aliasText: text }])[0].aliases.length)
-  })
-
-  it('counts nothing for an empty or whitespace-only field', () => {
-    expect(countAliases('')).toBe(0)
-    expect(countAliases('  \n , ')).toBe(0)
-  })
-
-  it('does not double-count a duplicate the save would drop', () => {
-    expect(countAliases('Coday\ncoday')).toBe(1)
   })
 })
 
@@ -201,92 +142,6 @@ describe('learnCorrections', () => {
   })
 })
 
-describe('mergeLearnedAliases', () => {
-  it('adds an alias to the matching existing term', () => {
-    const result = mergeLearnedAliases(
-      [{ term: 'Codey', aliases: ['cody'] }],
-      [{ term: 'Codey', alias: 'coday' }],
-    )
-    expect(result.changed).toBe(true)
-    expect(result.entries).toEqual([{ term: 'Codey', aliases: ['cody', 'coday'] }])
-  })
-
-  it('creates a new entry when the term is unknown', () => {
-    const result = mergeLearnedAliases([], [{ term: 'WhisperKit', alias: 'whisper kit' }])
-    expect(result.entries).toEqual([{ term: 'WhisperKit', aliases: ['whisper kit'] }])
-  })
-
-  it('reports no change when the alias is already known', () => {
-    const entries = [{ term: 'Codey', aliases: ['coday'] }]
-    const result = mergeLearnedAliases(entries, [{ term: 'Codey', alias: 'CODAY' }])
-    expect(result.changed).toBe(false)
-    expect(result.entries).toBe(entries)
-  })
-
-  it('does not mutate the array it was given', () => {
-    const entries = [{ term: 'Codey', aliases: ['cody'] }]
-    mergeLearnedAliases(entries, [{ term: 'Codey', alias: 'coday' }])
-    expect(entries).toEqual([{ term: 'Codey', aliases: ['cody'] }])
-  })
-
-  it('refuses an alias that is another entry preferred spelling', () => {
-    const entries = [{ term: 'Codey', aliases: [] }, { term: 'Cody', aliases: [] }]
-    const result = mergeLearnedAliases(entries, [{ term: 'Codey', alias: 'Cody' }])
-    expect(result.changed).toBe(false)
-  })
-
-  it('stops adding aliases to one term past the cap', () => {
-    const aliases = Array.from({ length: MAX_ALIASES_PER_TERM }, (_, i) => `a${i}`)
-    const result = mergeLearnedAliases(
-      [{ term: 'Codey', aliases }],
-      [{ term: 'Codey', alias: 'one-too-many' }],
-    )
-    expect(result.changed).toBe(false)
-  })
-
-  it('stops creating entries past the cap', () => {
-    const entries = Array.from({ length: MAX_VOCABULARY_ENTRIES }, (_, i) => ({ term: `t${i}`, aliases: [] }))
-    const result = mergeLearnedAliases(entries, [{ term: 'Codey', alias: 'coday' }])
-    expect(result.changed).toBe(false)
-  })
-
-  it('reports exactly what landed, so the UI can name it', () => {
-    const result = mergeLearnedAliases([], [
-      { term: 'Codey', alias: 'coday' },
-      { term: 'WhisperKit', alias: 'whisper kit' },
-    ])
-    expect(result.added).toEqual([
-      { term: 'Codey', alias: 'coday' },
-      { term: 'WhisperKit', alias: 'whisper kit' },
-    ])
-  })
-
-  it('leaves a dropped correction out of added', () => {
-    const result = mergeLearnedAliases(
-      [{ term: 'Codey', aliases: ['coday'] }],
-      [{ term: 'Codey', alias: 'CODAY' }, { term: 'Codey', alias: 'cody' }],
-    )
-    expect(result.added).toEqual([{ term: 'Codey', alias: 'cody' }])
-  })
-
-  it('reports added under the existing spelling of the term, not the typed one', () => {
-    const result = mergeLearnedAliases(
-      [{ term: 'Codey', aliases: [] }],
-      [{ term: 'codey', alias: 'coday' }],
-    )
-    expect(result.added).toEqual([{ term: 'Codey', alias: 'coday' }])
-  })
-
-  it('reports an empty added list when nothing changed', () => {
-    expect(mergeLearnedAliases([{ term: 'Codey', aliases: ['coday'] }], [{ term: 'Codey', alias: 'coday' }]).added).toEqual([])
-  })
-
-  it('reports no change for an empty correction list', () => {
-    const entries = [{ term: 'Codey', aliases: [] }]
-    expect(mergeLearnedAliases(entries, []).changed).toBe(false)
-  })
-})
-
 describe('recordCorrections', () => {
   const codey = { term: 'Codey', alias: 'coday' }
 
@@ -325,9 +180,8 @@ describe('recordCorrections', () => {
     expect(second.promoted).toHaveLength(1)
   })
 
-  it('ignores a correction the dictionary already covers', () => {
-    const entries = [{ term: 'Codey', aliases: ['coday'] }]
-    const r = recordCorrections([], entries, [codey])
+  it('ignores a correction whose word is already in the dictionary', () => {
+    const r = recordCorrections([], ['Codey'], [codey])
     expect(r.promoted).toEqual([])
     expect(r.pending).toEqual([])
   })
@@ -374,21 +228,14 @@ describe('normalizePending', () => {
 })
 
 describe('forgetCorrection', () => {
-  it('removes the alias from the dictionary', () => {
-    const r = forgetCorrection(
-      [{ term: 'Codey', aliases: ['coday', 'kodi'] }], [], { term: 'Codey', alias: 'coday' })
-    expect(r.entries).toEqual([{ term: 'Codey', aliases: ['kodi'] }])
+  it('removes the learned word from the dictionary', () => {
+    const r = forgetCorrection(['WhisperKit', 'Codey'], [], { term: 'Codey', alias: 'coday' })
+    expect(r.terms).toEqual(['WhisperKit'])
   })
 
-  it('removes a term that existed only to hold that alias', () => {
-    const r = forgetCorrection([{ term: 'Codey', aliases: ['coday'] }], [], { term: 'Codey', alias: 'coday' })
-    expect(r.entries).toEqual([])
-  })
-
-  it('keeps a hint-only term the user typed', () => {
-    const entries = [{ term: 'WhisperKit', aliases: [] }, { term: 'Codey', aliases: ['coday'] }]
-    const r = forgetCorrection(entries, [], { term: 'Codey', alias: 'coday' })
-    expect(r.entries).toEqual([{ term: 'WhisperKit', aliases: [] }])
+  it('matches the word case-insensitively', () => {
+    const r = forgetCorrection(['codey'], [], { term: 'Codey', alias: 'coday' })
+    expect(r.terms).toEqual([])
   })
 
   it('clears the waiting list too, so undo is not just "not yet"', () => {
@@ -396,11 +243,47 @@ describe('forgetCorrection', () => {
     expect(r.pending).toEqual([])
   })
 
-  it('leaves unrelated entries and sightings alone', () => {
-    const entries = [{ term: 'Other', aliases: ['othr'] }]
+  it('leaves unrelated words and sightings alone', () => {
+    const terms = ['Other']
     const pending = [{ term: 'Third', alias: 'thrd', count: 1 }]
-    const r = forgetCorrection(entries, pending, { term: 'Codey', alias: 'coday' })
-    expect(r.entries).toEqual(entries)
+    const r = forgetCorrection(terms, pending, { term: 'Codey', alias: 'coday' })
+    expect(r.terms).toEqual(terms)
     expect(r.pending).toEqual(pending)
+  })
+})
+
+describe('mergeLearnedTerms', () => {
+  it('appends the corrected spelling as a new word', () => {
+    const r = mergeLearnedTerms(['WhisperKit'], [{ term: 'Codey', alias: 'coday' }])
+    expect(r.terms).toEqual(['WhisperKit', 'Codey'])
+    expect(r.added).toEqual(['Codey'])
+    expect(r.changed).toBe(true)
+  })
+
+  it('reports no change when the word is already there', () => {
+    const terms = ['Codey']
+    const r = mergeLearnedTerms(terms, [{ term: 'codey', alias: 'coday' }])
+    expect(r.changed).toBe(false)
+    expect(r.terms).toBe(terms)
+    expect(r.added).toEqual([])
+  })
+
+  it('adds a word only once even if it was corrected twice in one turn', () => {
+    const r = mergeLearnedTerms([], [
+      { term: 'Codey', alias: 'coday' },
+      { term: 'Codey', alias: 'cody' },
+    ])
+    expect(r.terms).toEqual(['Codey'])
+  })
+
+  it('stops at the dictionary cap rather than crowding out the prompt hint', () => {
+    const terms = Array.from({ length: MAX_VOCABULARY_ENTRIES }, (_, i) => `w${i}`)
+    const r = mergeLearnedTerms(terms, [{ term: 'New', alias: 'nue' }])
+    expect(r.changed).toBe(false)
+  })
+
+  it('does nothing when nothing was learned', () => {
+    const terms = ['Codey']
+    expect(mergeLearnedTerms(terms, []).terms).toBe(terms)
   })
 })

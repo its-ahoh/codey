@@ -22,15 +22,13 @@ export function formatWarmElapsed(seconds: number): string {
 /**
  * Tooltip for a voice control disabled by a warm in progress.
  *
- * Says three things, in this order: it is busy rather than broken, roughly how
- * long, and why it is happening at all. The "one time" part matters — without
- * it a multi-minute wait reads as what every launch will be like.
+ * Busy rather than broken, and roughly how long. The typical duration is the
+ * part that matters — without it a multi-minute wait reads as a hang.
  */
 export function warmTooltip(elapsedSeconds: number): string {
   const elapsed = formatWarmElapsed(elapsedSeconds)
   const mins = Math.round(TYPICAL_WARM_SECONDS / 60)
   return `Preparing the on-device model (${elapsed} so far, usually about ${mins} minutes).`
-    + ` macOS compiles it for the Neural Engine once per app update; voice is unavailable until it finishes.`
 }
 
 /** Short label for the same state where there is no room for the tooltip. */

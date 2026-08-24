@@ -183,7 +183,7 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
                     (self.streamingState.confirmedEndSeconds, self.streamingState.confirmedText)
                 }
 
-                var options = self.streamingOptions(language: lang)
+                var options = self.streamingOptions(language: lang, pipe: pipe)
                 if clipStart > 0 { options.clipTimestamps = [clipStart] }
 
                 self.lastUsed = Date()
@@ -236,29 +236,41 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
         }
     }
 
-    // Custom vocabulary is NOT hinted to this engine, unlike the API and
-    // realtime ones. `DecodingOptions.promptTokens` is broken in the pinned
-    // WhisperKit: setting it to anything at all makes `transcribe` return an
-    // empty string. Measured on large-v3-v20240930_turbo_632MB against a
-    // 5.7s clip — 96 chars without it, 0 chars with it, across eleven option
-    // combinations (VAD on/off, timestamps on/off, prefill cache off,
-    // sampleLength 144/224, one worker, explicit language, no first-token
-    // threshold, no temperature fallback, longer prompt). `prefixTokens` is
-    // not a substitute: it force-feeds the words as the *start of the
-    // transcript*, which ate the first word of the sentence.
-    //
-    // So on-device gets the second half of the feature only — aliases are
-    // still rewritten after decoding, in VoiceCoordinator. Re-check on the
-    // next WhisperKit bump; if promptTokens starts working, restore the hint
-    // here and remember that setting it also disables the kv-cache prefill,
-    // so it must stay nil when the user has no vocabulary configured.
+    /// Tokenized vocabulary hint for `DecodingOptions.promptTokens`, or nil
+    /// when the user has no terms.
+    ///
+    /// Whisper conditions the decoder on this as if it were the text just
+    /// before the audio, so a name the model would otherwise snap to a common
+    /// word becomes reachable. This was dead on WhisperKit 0.18, where setting
+    /// `promptTokens` to anything at all returned an empty transcript; 1.1
+    /// fixed it. Verified against `large-v3-v20240930_turbo_632MB`:
+    /// "Whisper Kid" -> "WhisperKit", "Cody" -> "Codey", and 用Code -> 用Codey
+    /// on Chinese audio, with no change to a clip containing none of the terms.
+    ///
+    /// Special tokens are filtered out: the values are spliced in ahead of the
+    /// SOT/language/task prefill, and a stray `<|...|>` there desynchronizes
+    /// the whole prefix. Returns nil rather than an empty array so the option
+    /// stays unset when there is nothing to say — WhisperKit takes a different
+    /// (slower) decode path whenever `promptTokens` is non-nil.
+    private func vocabularyPromptTokens(_ pipe: WhisperKit) -> [Int]? {
+        let terms = configLock.withLock { _config.vocabulary }
+        guard let text = Vocabulary.promptText(terms, repeats: 2),
+              let tokenizer = pipe.tokenizer else { return nil }
+        let specialBegin = tokenizer.specialTokens.specialTokenBegin
+        // Leading space: Whisper's BPE encodes a word differently at the start
+        // of a segment than mid-sentence, and mid-sentence is what the model
+        // will actually be decoding.
+        let tokens = tokenizer.encode(text: " " + text).filter { $0 < specialBegin }
+        return tokens.isEmpty ? nil : tokens
+    }
 
     /// Decode options shared by the streaming loop and the post-stop "settle"
     /// decode. Kept lean — temperature fallback off, fewer workers — because
     /// these run on a partial buffer and we want fast iteration; the final
     /// non-streaming `transcribe()` path keeps the more conservative options.
-    private func streamingOptions(language: String) -> DecodingOptions {
+    private func streamingOptions(language: String, pipe: WhisperKit) -> DecodingOptions {
         var options = DecodingOptions()
+        options.promptTokens = vocabularyPromptTokens(pipe)
         options.task = .transcribe
         if !language.isEmpty && language != "auto" { options.language = language }
         options.temperature = 0.0
@@ -352,6 +364,7 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
         let normalized = peakNormalize(audio, target: 0.9)
 
         var options = DecodingOptions()
+        options.promptTokens = vocabularyPromptTokens(pipe)
         options.task = .transcribe
         if !language.isEmpty && language != "auto" {
             options.language = language
@@ -381,9 +394,7 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
         // streaming pass has always run at 0 for the same reason.
         //
         // Empty results are not a risk we are trading away here: the streaming
-        // partial is still there as a fallback, and the one confirmed cause of
-        // empty output turned out to be `promptTokens` (see the note above),
-        // not the temperature floor.
+        // partial is still there as a fallback.
         options.temperatureFallbackCount = 0
         // VAD splits long press-to-talk clips into N voiced chunks; with
         // workers > 1 they decode concurrently. 4 saturates ANE+GPU on
@@ -433,6 +444,17 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
         guard peak > 0.0001, peak < target else { return samples }
         let gain = target / peak
         return samples.map { $0 * gain }
+    }
+
+    /// Whether the pipeline for the *currently selected* variant is already in
+    /// memory, i.e. a press right now would decode rather than first sit
+    /// through a load. Compares against the normalized name for the same
+    /// reason `ensurePipeline` does: `loadedModel` is normalized, the config
+    /// may hold the prefixed folder name, and a raw comparison would report
+    /// "not ready" forever.
+    var isReady: Bool {
+        let modelName = normalizeVariant(configLock.withLock { _config.localModel })
+        return loadQueue.sync { pipeline != nil && loadedModel == modelName }
     }
 
     func unloadIfIdle() {
@@ -499,6 +521,11 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
     private func loadPipeline(named modelName: String) async throws -> WhisperKit {
         let t0 = Date()
         print("WhisperKitEngine: loading model '\(modelName)'")
+        // Machine-readable twin of the log line above. Electron turns these
+        // into the "preparing" state the composer shows: the prose line is for
+        // humans reading the log, and parsing it would break the first time
+        // someone reworded it.
+        print("model:loading \(modelName)")
 
         // A silent multi-minute load is indistinguishable from a hang, and
         // this one has a specific cause worth naming: CoreML recompiles for
@@ -525,11 +552,21 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
             load: true,
             download: true
         )
-        let pipe = try await WhisperKit(kitConfig)
+        let pipe: WhisperKit
+        do {
+            pipe = try await WhisperKit(kitConfig)
+        } catch {
+            // Electron is holding a "preparing" indicator up on the strength of
+            // `model:loading`. Without a terminal marker it would stay there
+            // forever on a failed load.
+            print("model:failed \(modelName)")
+            throw error
+        }
         let elapsed = Date().timeIntervalSince(t0)
         self.pipeline = pipe
         self.loadedModel = modelName
         print(String(format: "WhisperKitEngine: model '%@' ready (load took %.1fs)", modelName, elapsed))
+        print(String(format: "model:ready %@ %.1f", modelName, elapsed))
         return pipe
     }
 

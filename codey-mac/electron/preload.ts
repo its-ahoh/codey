@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('codey', {
   },
   editors: {
     list: () => ipcRenderer.invoke('editors:list'),
-    open: (editorId: string, workingDir: string) => ipcRenderer.invoke('editors:open', editorId, workingDir),
+    open: (editorId: string, path: string) => ipcRenderer.invoke('editors:open', editorId, path),
   },
   globalTeams: {
     get: () => ipcRenderer.invoke('globalTeams:get'),
@@ -418,6 +418,13 @@ contextBridge.exposeInMainWorld('codey', {
       const listener = (_e: Electron.IpcRendererEvent, msg: any) => handler(msg)
       ipcRenderer.on('voice:warmError', listener)
       return () => ipcRenderer.removeListener('voice:warmError', listener)
+    },
+    // "The on-device model is not usable yet", merging the one-shot warm
+    // process and the resident helper's own load. `null` means ready.
+    onPrepareChange: (handler: (msg: { model: string; startedAt: number } | null) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, msg: any) => handler(msg)
+      ipcRenderer.on('voice:prepareChange', listener)
+      return () => ipcRenderer.removeListener('voice:prepareChange', listener)
     },
   },
   app: {

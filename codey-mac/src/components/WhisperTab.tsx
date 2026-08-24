@@ -3,7 +3,7 @@ import { C } from '../theme'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { Toggle } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
-import { normalizeVocabulary, vocabularyToDraft, draftToVocabulary, countAliases, type VocabularyEntry, type VocabularyDraftRow } from './voiceVocabulary'
+import { normalizeVocabulary } from './voiceVocabulary'
 
 interface WhisperTabProps {
   isGatewayRunning: boolean
@@ -31,9 +31,9 @@ interface VoiceCfg {
   realtimeModel: string
   /** Legacy setting kept for config compatibility. The two hotkeys now have fixed destinations. */
   mode: 'inject' | 'converse'
-  /** Custom vocabulary. See VocabularyEntry. */
-  vocabulary: VocabularyEntry[]
-  /** Learn mis-hearings from corrections made in a Codey chat before sending. */
+  /** Preferred spellings, handed to the recognizer as a prompt hint. */
+  vocabulary: string[]
+  /** Add words to the dictionary from corrections made in a Codey chat before sending. */
   vocabularyAutoLearn: boolean
   tts: TtsCfg
 }
@@ -189,12 +189,11 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
   // false → deps change → re-fires → "model folder is not set" flicker).
   // User can manually retry by switching model and back.
   const [warmFailed, setWarmFailed] = useState<Set<string>>(new Set())
-  // Dictionary rows are edited as free text — aliases live as one blob while
-  // the user types, so a half-typed line isn't eaten mid-keystroke. Parsed
-  // back into string[] only on commit.
-  const [vocabDraft, setVocabDraft] = useState<VocabularyDraftRow[]>([])
-  // Which row has its mis-hearings open. One at a time: the list is a scan
-  // target, and the aliases are the rare thing you come here to change.
+  // Words are held as a draft so a half-typed one isn't written to config on
+  // every keystroke; committed on blur.
+  const [vocabDraft, setVocabDraft] = useState<string[]>([])
+  // Which word is being edited. One at a time: the list is a scan target, and
+  // editing is the rare thing you come here to do.
   const [expandedVocabRow, setExpandedVocabRow] = useState<number | null>(null)
 
   const refreshDownloaded = useCallback(async () => {
@@ -319,7 +318,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       setSavedVoiceKeys(keys.filter(key => key.purpose === 'voice').sort((a, b) => a.name.localeCompare(b.name)))
       const storedVoice = cfg?.voice ?? {}
       const vocabulary = normalizeVocabulary(storedVoice.vocabulary)
-      setVocabDraft(vocabularyToDraft(vocabulary))
+      setVocabDraft(vocabulary)
       const legacyEnabled = storedVoice.enabled ?? false
       const dictationEnabled = storedVoice.dictationEnabled ?? legacyEnabled
       const conversationEnabled = storedVoice.conversationEnabled ?? legacyEnabled
@@ -352,7 +351,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
     return window.codey.voice.onVocabularyLearned(entries => {
       const normalized = normalizeVocabulary(entries)
       setVoice(prev => ({ ...prev, vocabulary: normalized }))
-      if (expandedVocabRow === null) setVocabDraft(vocabularyToDraft(normalized))
+      if (expandedVocabRow === null) setVocabDraft(normalized)
     })
   }, [expandedVocabRow])
 
@@ -409,12 +408,14 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
     }
   }
 
-  const commitVocabulary = (draft: VocabularyDraftRow[]) => {
-    updateVoice({ vocabulary: draftToVocabulary(draft) })
+  const commitVocabulary = (draft: string[]) => {
+    // Blank rows stay visible in the draft so "+ Add word" can leave an empty
+    // chip on screen, but they must never reach gateway.json.
+    updateVoice({ vocabulary: normalizeVocabulary(draft) })
   }
 
-  const patchVocabRow = (index: number, patch: Partial<VocabularyDraftRow>) => {
-    setVocabDraft(rows => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  const patchVocabRow = (index: number, word: string) => {
+    setVocabDraft(rows => rows.map((row, i) => (i === index ? word : row)))
   }
 
   const removeVocabRow = (index: number) => {
@@ -899,37 +900,10 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       <div style={sectionCardStyle}>
         <Section
           title="Dictionary"
-          description="Names the recognizer keeps getting wrong"
+          description="Words the recognizer should know about"
           right={<Toggle on={voice.vocabularyAutoLearn} onChange={vocabularyAutoLearn => updateVoice({ vocabularyAutoLearn })}/>}
         />
         <div style={sectionBodyStyle}>
-
-      <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.55, padding: '10px 12px', background: C.surface3, borderRadius: 7, marginTop: 10 }}>
-        Open a word to list what it gets <strong style={{ color: C.fg2 }}>heard as</strong>.
-        Those spellings are rewritten to the word after transcribing, which is what fixes a
-        mistake that comes out the same way every time.
-        {voice.provider === 'local' ? (
-          // Being specific rather than encouraging: on-device gets no hint, so
-          // a word with nothing under "heard as" genuinely does nothing, and
-          // saying otherwise sends people off adding words that never help.
-          <div style={{ marginTop: 7 }}>
-            <strong style={{ color: C.fg2 }}>On-device transcription needs the mis-hearings.</strong>{' '}
-            A word on its own has no effect here — unlike the API providers, WhisperKit cannot
-            be given the vocabulary up front (its prompt option returns empty transcripts in
-            the version bundled with Codey).
-          </div>
-        ) : (
-          <div style={{ marginTop: 7 }}>
-            A word on its own still helps here: it is sent to the API as a hint before
-            transcribing, so the recognizer can reach spellings it would otherwise never
-            produce. Mis-hearings are optional on top of that.
-          </div>
-        )}
-        <div style={{ marginTop: 7 }}>
-          The toggle above controls learning: with it on, when you dictate into a Codey chat
-          and fix a word before sending, that fix is added here automatically.
-        </div>
-      </div>
 
       {/* Chips rather than a column of inputs: the list is a scan target -
           "is this word already in here?" - and a wrapping row of words answers
@@ -937,42 +911,24 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           the rare action, so it lives in one panel below rather than inline,
           which would also break the wrap. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '14px 0 4px' }}>
-        {vocabDraft.map((row, i) => {
-          const aliases = countAliases(row.aliasText)
+        {vocabDraft.map((word, i) => {
           const selected = expandedVocabRow === i
-          const label = row.term.trim() || 'Untitled'
-          const inertHintOnly = aliases === 0 && voice.provider === 'local'
+          const label = word.trim() || 'Untitled'
           return (
             <button
               key={i}
               onClick={() => setExpandedVocabRow(selected ? null : i)}
-              title={aliases > 0
-                ? `${label} - ${aliases} mis-hearing${aliases === 1 ? '' : 's'}`
-                : inertHintOnly
-                  ? `${label} - no effect yet: on-device transcription needs at least one mis-hearing. Click to add one.`
-                  : `${label} - sent to the API as a hint; no mis-hearings listed`}
+              title={`${label} - click to edit or remove`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '5px 11px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
                 background: selected ? C.accent : C.surface3,
                 color: selected ? C.onAccent : C.fg,
-                border: `1px solid ${selected ? C.accent : inertHintOnly ? C.border : C.border2}`,
-                // Dimmed rather than hidden: the word is saved, it just does
-                // nothing until it has a mis-hearing under it.
-                opacity: !selected && inertHintOnly ? 0.55 : 1,
-                fontStyle: row.term.trim() ? 'normal' : 'italic',
+                border: `1px solid ${selected ? C.accent : C.border2}`,
+                fontStyle: word.trim() ? 'normal' : 'italic',
               }}
             >
               {label}
-              {aliases > 0 && (
-                <span style={{
-                  fontSize: 10, lineHeight: 1, padding: '2px 5px', borderRadius: 999,
-                  background: selected ? '#ffffff33' : C.border2,
-                  color: selected ? C.onAccent : C.fg3,
-                }}>
-                  {aliases}
-                </span>
-              )}
             </button>
           )
         })}
@@ -982,7 +938,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
             // another setter's callback runs during render in StrictMode's
             // double-invoke and would select the wrong chip.
             const index = vocabDraft.length
-            setVocabDraft([...vocabDraft, { term: '', aliasText: '' }])
+            setVocabDraft([...vocabDraft, ''])
             setExpandedVocabRow(index)
           }}
           title="Add a word"
@@ -1002,10 +958,8 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         </div>
       )}
 
-      {expandedVocabRow !== null && vocabDraft[expandedVocabRow] && (() => {
+      {expandedVocabRow !== null && vocabDraft[expandedVocabRow] !== undefined && (() => {
         const i = expandedVocabRow
-        const row = vocabDraft[i]
-        const aliases = countAliases(row.aliasText)
         return (
           <div style={{
             marginTop: 8, padding: 12, borderRadius: 9,
@@ -1013,8 +967,8 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input
-                value={row.term}
-                onChange={e => patchVocabRow(i, { term: e.target.value })}
+                value={vocabDraft[i]}
+                onChange={e => patchVocabRow(i, e.target.value)}
                 onBlur={() => commitVocabulary(vocabDraft)}
                 placeholder="Codey"
                 autoFocus
@@ -1029,24 +983,6 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
               <button onClick={() => setExpandedVocabRow(null)} style={pillButton('ghost')}>
                 Done
               </button>
-            </div>
-            <div style={{ color: C.fg2, fontSize: 11, fontWeight: 700, letterSpacing: 0.55, textTransform: 'uppercase', padding: '12px 0 6px' }}>
-              Heard as
-            </div>
-            <textarea
-              value={row.aliasText}
-              onChange={e => patchVocabRow(i, { aliasText: e.target.value })}
-              onBlur={() => commitVocabulary(vocabDraft)}
-              placeholder={'Coday\ncode E\ncody'}
-              rows={Math.min(8, Math.max(3, aliases + 1))}
-              style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
-            />
-            <div style={{ color: C.fg3, fontSize: 11, marginTop: 6 }}>
-              One mis-hearing per line. Each is rewritten to
-              <strong style={{ color: C.fg2 }}> {row.term.trim() || 'the word above'}</strong> after transcribing.
-              {voice.provider === 'local'
-                ? ' Leaving this empty means the word does nothing on on-device transcription.'
-                : ' Leaving it empty still sends the word to the API as a hint.'}
             </div>
           </div>
         )

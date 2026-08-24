@@ -259,7 +259,8 @@ declare global {
       }
       editors: {
         list: () => Promise<IpcResult<Array<{ id: string; name: string; installed: boolean }>>>
-        open: (editorId: string, workingDir: string) => Promise<IpcResult<void>>
+        /** Open a file or directory in the given editor. */
+        open: (editorId: string, path: string) => Promise<IpcResult<void>>
       }
       globalTeams: {
         get: () => Promise<IpcResult<Record<string, TeamConfigRaw>>>
@@ -515,7 +516,7 @@ declare global {
         getWarmState: () => Promise<IpcResult<{ model: string; startedAt: number } | null>>
         forgetVocabulary: (term: string, alias: string) => Promise<IpcResult<{ ok: boolean }>>
         learnVocabulary: (spoken: string, edited: string) => Promise<IpcResult<{ learned: Array<{ term: string; alias: string }> }>>
-        onVocabularyLearned: (handler: (entries: Array<{ term: string; aliases: string[] }>) => void) => () => void
+        onVocabularyLearned: (handler: (terms: string[]) => void) => () => void
         /** Speak text through the gateway's digest + TTS pipeline. */
         speak: (text: string, conversationId?: string, verbatim?: boolean) => Promise<IpcResult<void>>
         ack: (transcript: string) => Promise<IpcResult<{ text: string }>>
@@ -534,6 +535,7 @@ declare global {
         onWarmStart: (handler: (msg: { model: string }) => void) => () => void
         onWarmDone: (handler: (msg: { model: string; loadSeconds: number }) => void) => () => void
         onWarmError: (handler: (msg: { model: string; error: string }) => void) => () => void
+        onPrepareChange: (handler: (msg: { model: string; startedAt: number } | null) => void) => () => void
       }
       app: {
         version: () => Promise<string>

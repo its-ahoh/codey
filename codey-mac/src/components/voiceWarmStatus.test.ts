@@ -24,14 +24,12 @@ describe('formatWarmElapsed', () => {
 })
 
 describe('warmTooltip', () => {
-  it('says it is busy, how long so far, and that it is one-time', () => {
+  it('says it is busy, how long so far, and how long it usually takes', () => {
     const text = warmTooltip(90)
     expect(text).toContain('Preparing')
     expect(text).toContain('1m 30s')
+    // Without the typical duration a multi-minute wait reads as a hang.
     expect(text).toContain('about 5 minutes')
-    // The reason the wait exists at all, and that it is not every launch.
-    expect(text).toContain('once per app update')
-    expect(text).toContain('unavailable until it finishes')
   })
 
   it('works at zero, which is what the first render shows', () => {

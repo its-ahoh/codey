@@ -84,6 +84,11 @@ export function useChatVoice({ onTranscript, onError }: Options) {
   const recorderRef = useRef<MediaRecorder | null>(null)
   /** Set by cancel() so the recorder's onstop discards instead of transcribing. */
   const cancelledRef = useRef(false)
+  /** Bumped by cancel() and by each new recording. The transcribe call keeps
+   *  the value it started with and drops its result on a mismatch: the HTTP
+   *  round trip can't be interrupted, so Esc during `transcribing` has to work
+   *  by severing the result rather than by stopping the work. */
+  const captureGenRef = useRef(0)
   const chunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const stateRef = useRef<ChatVoiceState>('idle')
@@ -372,9 +377,11 @@ export function useChatVoice({ onTranscript, onError }: Options) {
   // ── Recording ─────────────────────────────────────────────────────
 
   const transcribe = useCallback(async (blob: Blob, mime: string) => {
+    const generation = captureGenRef.current
     updateState('transcribing')
     try {
       const result = await window.codey.voice.transcribe(await blob.arrayBuffer(), mime)
+      if (generation !== captureGenRef.current) return // Esc: the turn is gone
       if (!result.ok) throw new Error(result.error)
       const text = result.data.text.trim()
       if (!text) throw new Error('No speech detected.')
@@ -384,6 +391,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
       // starts speaking; hiding here made a successful stop look like failure.
       if (capturedMode === 'dictate') updateState('idle')
     } catch (err: any) {
+      if (generation !== captureGenRef.current) return
       fail(err?.message ?? String(err))
       updateState('idle')
     }
@@ -402,6 +410,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
       const rec = new MediaRecorder(stream, { mimeType: mime })
       chunksRef.current = []
       cancelledRef.current = false
+      captureGenRef.current += 1
       rec.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       rec.onstop = () => {
         stopMeter()
@@ -473,6 +482,7 @@ export function useChatVoice({ onTranscript, onError }: Options) {
       return
     }
     cancelledRef.current = true
+    captureGenRef.current += 1
     try { recorderRef.current?.stop() } catch { /* already stopped */ }
     streamRef.current?.getTracks().forEach(t => t.stop())
     streamRef.current = null

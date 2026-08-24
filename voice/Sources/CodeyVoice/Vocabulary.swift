@@ -1,55 +1,55 @@
 import Foundation
 
-/// One preferred spelling plus the mis-hearings that should be rewritten to it.
+/// One preferred spelling the recognizer should be biased toward.
 ///
-/// Authored in `gateway.json` under `voice.vocabulary`, either as a bare string
-/// (hint only) or as an object:
+/// Authored in `gateway.json` under `voice.vocabulary`, normally as a bare
+/// string:
 /// ```json
-/// "vocabulary": [
-///   "WhisperKit",
-///   { "term": "Codey", "aliases": ["寇迪", "Coday", "code E"] }
-/// ]
+/// "vocabulary": ["WhisperKit", "Codey"]
 /// ```
 struct VocabularyTerm: Codable, Equatable {
-    /// The correct spelling. Fed to the recognizer as a prompt hint so it
-    /// biases *toward* this word while decoding.
     var term: String
-    /// Known mis-transcriptions, rewritten to `term` after decoding. Empty is
-    /// fine — the term still works as a prompt hint.
-    var aliases: [String] = []
 
-    init(term: String, aliases: [String] = []) {
+    init(term: String) {
         self.term = term
-        self.aliases = aliases
     }
 
-    /// Accepts either a bare string or the full object form. Hand-edited
-    /// config is the normal authoring path here, so the terse form matters.
+    /// Accepts a bare string or an object with a `term` field. The object form
+    /// is what older configs hold — together with an `aliases` array that this
+    /// build no longer reads, since the recognizer is now given the word up
+    /// front instead of having its output rewritten afterwards.
     init(from decoder: Decoder) throws {
         if let single = try? decoder.singleValueContainer(),
            let text = try? single.decode(String.self) {
             self.term = text
-            self.aliases = []
             return
         }
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.term = try c.decodeIfPresent(String.self, forKey: .term) ?? ""
-        self.aliases = try c.decodeIfPresent([String].self, forKey: .aliases) ?? []
     }
+
+    /// Written back as a bare string, which is also the shape the Mac app now
+    /// saves.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(term)
+    }
+
+    private enum CodingKeys: String, CodingKey { case term }
 }
 
 /// Custom-vocabulary support, shared by all three transcription engines.
 ///
-/// Two independent halves, because neither alone is enough:
+/// One mechanism, applied *before* decoding: Whisper — local, API and realtime
+/// all expose it — conditions the decoder on this text, so a name it has never
+/// seen becomes reachable instead of being snapped to a common word. Bounded
+/// to ~224 tokens by the models, so we cap it here rather than let the tail
+/// get silently trimmed.
 ///
-/// - `promptText` runs *before* decoding. Whisper (local, API and realtime all
-///   expose it) conditions the decoder on this text, so a name it has never
-///   seen becomes reachable instead of being snapped to a common word.
-///   Bounded to ~224 tokens by the models, so we cap it here rather than let
-///   the tail get silently trimmed.
-/// - `apply` runs *after* decoding, in the coordinator, on whatever any engine
-///   returned. It fixes the residue: mis-hearings that repeat verbatim every
-///   time, which a prompt hint alone does not always shake loose.
+/// There used to be a second half that rewrote known mis-hearings after
+/// decoding. It existed because WhisperKit 0.18 ignored the hint outright; 1.1
+/// does not, and a blind find-and-replace over a transcript is worse than
+/// letting the model spell the word itself.
 enum Vocabulary {
     /// Rough cap on the hint string. Whisper's prompt window is ~224 tokens;
     /// CJK runs about one token per character, so 300 characters is a
@@ -60,62 +60,27 @@ enum Vocabulary {
     /// Comma-joined list of preferred spellings, or nil when there is nothing
     /// to hint. Terms are taken in author order and stop at the cap — earlier
     /// entries win, which makes ordering a usable priority knob.
-    static func promptText(_ terms: [VocabularyTerm]) -> String? {
+    ///
+    /// `repeats` emits the whole list more than once. A single mention of a
+    /// name is a weak signal: measured on `large-v3-v20240930_turbo_632MB`,
+    /// a bare "Codey" left the transcript as "Cody" on English audio and
+    /// "Code" on Chinese, while the same list twice got both right. The cap
+    /// covers the finished string, so more repeats means fewer terms fit.
+    static func promptText(_ terms: [VocabularyTerm], repeats: Int = 1) -> String? {
+        let copies = max(1, repeats)
+        let budget = maxPromptCharacters / copies
         var picked: [String] = []
         var length = 0
         for term in terms {
             let word = term.term.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !word.isEmpty, !picked.contains(word) else { continue }
             let cost = word.count + (picked.isEmpty ? 0 : 2)
-            if length + cost > maxPromptCharacters { break }
+            if length + cost > budget { break }
             picked.append(word)
             length += cost
         }
-        return picked.isEmpty ? nil : picked.joined(separator: ", ")
-    }
-
-    /// Rewrite every known alias in `text` to its preferred spelling.
-    ///
-    /// Longest alias first, so a term whose alias is a prefix of another's
-    /// cannot shadow it. Matching is case-insensitive and guarded by ASCII
-    /// alphanumeric lookarounds: "cody" will not fire inside "codybase", while
-    /// CJK aliases — whose neighbours are never ASCII alphanumerics — always
-    /// match as plain substrings, which is the behaviour those need.
-    static func apply(_ text: String, terms: [VocabularyTerm]) -> String {
-        guard !text.isEmpty, !terms.isEmpty else { return text }
-
-        var pairs: [(alias: String, term: String)] = []
-        for entry in terms {
-            let word = entry.term.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !word.isEmpty else { continue }
-            for rawAlias in entry.aliases {
-                let alias = rawAlias.trimmingCharacters(in: .whitespacesAndNewlines)
-                // Exact match only: an alias that differs from the term just
-                // by case ("cody" -> "Cody") is a legitimate capitalization
-                // fix, so it must not be treated as a redundant self-mapping.
-                guard !alias.isEmpty, alias != word else { continue }
-                pairs.append((alias, word))
-            }
-        }
-        guard !pairs.isEmpty else { return text }
-        pairs.sort { $0.alias.count > $1.alias.count }
-
-        var result = text
-        for pair in pairs {
-            let pattern = "(?<![A-Za-z0-9])"
-                + NSRegularExpression.escapedPattern(for: pair.alias)
-                + "(?![A-Za-z0-9])"
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-                continue
-            }
-            let range = NSRange(result.startIndex..<result.endIndex, in: result)
-            result = regex.stringByReplacingMatches(
-                in: result,
-                options: [],
-                range: range,
-                withTemplate: NSRegularExpression.escapedTemplate(for: pair.term)
-            )
-        }
-        return result
+        guard !picked.isEmpty else { return nil }
+        let list = picked.joined(separator: ", ")
+        return Array(repeating: list, count: copies).joined(separator: ", ")
     }
 }
