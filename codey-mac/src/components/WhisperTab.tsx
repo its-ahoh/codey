@@ -3,7 +3,7 @@ import { C } from '../theme'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { Toggle } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
-import { normalizeVocabulary, vocabularyToDraft, draftToVocabulary, type VocabularyEntry, type VocabularyDraftRow } from './voiceVocabulary'
+import { normalizeVocabulary, vocabularyToDraft, draftToVocabulary, countAliases, type VocabularyEntry, type VocabularyDraftRow } from './voiceVocabulary'
 
 interface WhisperTabProps {
   isGatewayRunning: boolean
@@ -915,84 +915,121 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         </div>
       </div>
 
+      {/* Chips rather than a column of inputs: the list is a scan target -
+          "is this word already in here?" - and a wrapping row of words answers
+          that at a glance where a stack of text fields does not. Editing is
+          the rare action, so it lives in one panel below rather than inline,
+          which would also break the wrap. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '14px 0 4px' }}>
+        {vocabDraft.map((row, i) => {
+          const aliases = countAliases(row.aliasText)
+          const selected = expandedVocabRow === i
+          const label = row.term.trim() || 'Untitled'
+          return (
+            <button
+              key={i}
+              onClick={() => setExpandedVocabRow(selected ? null : i)}
+              title={aliases === 0
+                ? `${label} - hint only, no mis-hearings listed`
+                : `${label} - ${aliases} mis-hearing${aliases === 1 ? '' : 's'}`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '5px 11px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
+                background: selected ? C.accent : C.surface3,
+                color: selected ? C.onAccent : C.fg,
+                border: `1px solid ${selected ? C.accent : C.border2}`,
+                fontStyle: row.term.trim() ? 'normal' : 'italic',
+              }}
+            >
+              {label}
+              {aliases > 0 && (
+                <span style={{
+                  fontSize: 10, lineHeight: 1, padding: '2px 5px', borderRadius: 999,
+                  background: selected ? '#ffffff33' : C.border2,
+                  color: selected ? C.onAccent : C.fg3,
+                }}>
+                  {aliases}
+                </span>
+              )}
+            </button>
+          )
+        })}
+        <button
+          onClick={() => {
+            // Index computed outside the updater: a state setter inside
+            // another setter's callback runs during render in StrictMode's
+            // double-invoke and would select the wrong chip.
+            const index = vocabDraft.length
+            setVocabDraft([...vocabDraft, { term: '', aliasText: '' }])
+            setExpandedVocabRow(index)
+          }}
+          title="Add a word"
+          style={{
+            padding: '5px 11px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
+            background: 'transparent', color: C.fg2,
+            border: `1px dashed ${C.border2}`,
+          }}
+        >
+          + Add word
+        </button>
+      </div>
+
       {vocabDraft.length === 0 && (
-        <div style={{ color: C.fg3, fontSize: 12, padding: '16px 0 4px', textAlign: 'center' }}>
+        <div style={{ color: C.fg3, fontSize: 12, padding: '4px 0 8px' }}>
           No words yet.
         </div>
       )}
 
-      {vocabDraft.map((row, i) => {
-        const aliases = row.aliasText.split(/[\n,]/).map(a => a.trim()).filter(Boolean)
-        const open = expandedVocabRow === i
+      {expandedVocabRow !== null && vocabDraft[expandedVocabRow] && (() => {
+        const i = expandedVocabRow
+        const row = vocabDraft[i]
+        const aliases = countAliases(row.aliasText)
         return (
-          <div key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '7px 0' }}>
-              <button
-                onClick={() => setExpandedVocabRow(open ? null : i)}
-                title={open ? 'Collapse' : 'Edit what this gets heard as'}
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px',
-                  color: C.fg3, fontSize: 10, width: 16, textAlign: 'left',
-                }}
-              >
-                {open ? '\u25be' : '\u25b8'}
-              </button>
+          <div style={{
+            marginTop: 8, padding: 12, borderRadius: 9,
+            background: C.surface3, border: `1px solid ${C.border2}`,
+          }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input
                 value={row.term}
                 onChange={e => patchVocabRow(i, { term: e.target.value })}
                 onBlur={() => commitVocabulary(vocabDraft)}
                 placeholder="Codey"
-                style={{ ...inputStyle, flex: 1, width: 'auto' }}
+                autoFocus
+                style={{ ...inputStyle, flex: 1, width: 'auto', fontWeight: 600 }}
               />
-              <span
-                onClick={() => setExpandedVocabRow(open ? null : i)}
-                style={{ color: C.fg3, fontSize: 11, width: 88, cursor: 'pointer', userSelect: 'none' }}
-              >
-                {aliases.length === 0 ? 'hint only' : `${aliases.length} heard as`}
-              </span>
               <button
-                onClick={() => removeVocabRow(i)}
-                title="Remove word"
-                style={{ ...pillButton('danger'), width: 30, padding: '6px 0', textAlign: 'center' }}
+                onClick={() => { setExpandedVocabRow(null); removeVocabRow(i) }}
+                style={pillButton('danger')}
               >
-                &times;
+                Remove
+              </button>
+              <button onClick={() => setExpandedVocabRow(null)} style={pillButton('ghost')}>
+                Done
               </button>
             </div>
-            {open && (
-              <div style={{ padding: '0 0 10px 24px' }}>
-                <textarea
-                  value={row.aliasText}
-                  onChange={e => patchVocabRow(i, { aliasText: e.target.value })}
-                  onBlur={() => commitVocabulary(vocabDraft)}
-                  placeholder={'Coday\ncode E\ncody'}
-                  rows={Math.min(8, Math.max(3, aliases.length + 1))}
-                  style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
-                />
-                <div style={{ color: C.fg3, fontSize: 11, marginTop: 5 }}>
-                  One mis-hearing per line. Each is rewritten to
-                  <strong style={{ color: C.fg2 }}> {row.term.trim() || 'the word above'}</strong> after transcribing.
-                </div>
-              </div>
-            )}
+            <div style={{ color: C.fg2, fontSize: 11, fontWeight: 700, letterSpacing: 0.55, textTransform: 'uppercase', padding: '12px 0 6px' }}>
+              Heard as
+            </div>
+            <textarea
+              value={row.aliasText}
+              onChange={e => patchVocabRow(i, { aliasText: e.target.value })}
+              onBlur={() => commitVocabulary(vocabDraft)}
+              placeholder={'Coday\ncode E\ncody'}
+              rows={Math.min(8, Math.max(3, aliases + 1))}
+              style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+            />
+            <div style={{ color: C.fg3, fontSize: 11, marginTop: 6 }}>
+              One mis-hearing per line. Each is rewritten to
+              <strong style={{ color: C.fg2 }}> {row.term.trim() || 'the word above'}</strong> after transcribing.
+              Leave it empty to use the word as a hint only.
+            </div>
           </div>
         )
-      })}
+      })()}
 
-      <div style={{ ...lastSettingBlockStyle, paddingTop: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button
-          onClick={() => {
-            setVocabDraft(rows => {
-              setExpandedVocabRow(rows.length)
-              return [...rows, { term: '', aliasText: '' }]
-            })
-          }}
-          style={pillButton('ghost')}
-        >
-          + Add word
-        </button>
-        <span style={{ color: C.fg3, fontSize: 11 }}>
-          {vocabDraft.length === 0 ? '' : `${vocabDraft.length} word${vocabDraft.length === 1 ? '' : 's'}`}
-        </span>
+      <div style={{ ...lastSettingBlockStyle, paddingTop: 12, color: C.fg3, fontSize: 11 }}>
+        {vocabDraft.length === 0 ? '' : `${vocabDraft.length} word${vocabDraft.length === 1 ? '' : 's'}`}
       </div>
         </div>
       </div>

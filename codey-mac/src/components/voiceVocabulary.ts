@@ -65,6 +65,13 @@ export function draftToVocabulary(draft: VocabularyDraftRow[]): VocabularyEntry[
     .filter(row => row.term !== '')
 }
 
+/** Aliases in a mid-edit draft row, matching what `draftToVocabulary` would
+ *  keep. Used for the chip badge, so the count on screen can never disagree
+ *  with what actually gets saved. */
+export function countAliases(aliasText: string): number {
+  return dedupeAliases(aliasText.split(/[\n,]/).map(a => a.trim()).filter(Boolean)).length
+}
+
 function dedupeAliases(aliases: string[]): string[] {
   const seen = new Set<string>()
   return aliases.filter(alias => {
@@ -176,6 +183,58 @@ function lcsLength(a: string, b: string): number {
   return prev[b.length]
 }
 
+/** A single CJK character, i.e. a token the diff can narrow a change down to
+ *  even though the word it belongs to is longer. */
+function isSingleCJKToken(token: string): boolean {
+  return token.length === 1 && CJK_RE.test(token)
+}
+
+/**
+ * Widen a change that the diff narrowed below `MIN_ALIAS_CHARS`.
+ *
+ * Chinese has no spaces, so a one-character slip inside a word diffs down to
+ * exactly that character: "zhuan-LU-qi" vs "zhuan-XIE-qi" yields a single-token
+ * region. Recording that as an alias is unsafe — it would rewrite the
+ * character everywhere it appears — so the old code dropped it, which is why
+ * almost nothing was learned from Chinese dictation.
+ *
+ * Pulling unchanged neighbours onto *both* sides keeps the rewrite rule valid
+ * (the same context is added to each side) and makes it more specific rather
+ * than less. Symmetric on purpose: expanding one way only would need to know
+ * where the word boundary is, and there is no segmenter here — left-only turns
+ * "xian->jin" into the wrong pair, right-only does the same to another. Taking
+ * one from each side is right in both.
+ */
+function expandCJKRegion(
+  deleted: string[],
+  inserted: string[],
+  before: string[],
+  after: string[],
+): { alias: string; term: string; aliasTokens: number; termTokens: number } | null {
+  let left = [...before]
+  let right = [...after]
+  let del = [...deleted]
+  let ins = [...inserted]
+
+  while (del.join('').length < MIN_ALIAS_CHARS || ins.join('').length < MIN_ALIAS_CHARS) {
+    const canLeft = isSingleCJKToken(left[left.length - 1] ?? '')
+    const canRight = isSingleCJKToken(right[0] ?? '')
+    if (!canLeft && !canRight) return null
+    if (del.length + ins.length + 2 > MAX_CORRECTION_TOKENS * 2) return null
+    if (canLeft) {
+      const token = left.pop() as string
+      del.unshift(token)
+      ins.unshift(token)
+    }
+    if (canRight) {
+      const token = right.shift() as string
+      del.push(token)
+      ins.push(token)
+    }
+  }
+  return { alias: del.join(''), term: ins.join(''), aliasTokens: del.length, termTokens: ins.length }
+}
+
 /**
  * Does this replacement look like a mis-hearing rather than a rewrite?
  *
@@ -190,6 +249,21 @@ function looksLikeMishearing(alias: string, term: string): boolean {
   const a = similarityKey(alias)
   const b = similarityKey(term)
   if (!a || !b) return false
+
+  // Chinese mis-hearings are homophones: they sound alike and look nothing
+  // alike, so character overlap says "unrelated" about exactly the corrections
+  // worth learning. Judging a Chinese pair by shape rejected essentially all
+  // of them. Length is the signal that survives — a homophone slip has the
+  // same syllable count as the word it replaced — combined with the fact that
+  // the change is already short and surrounded by untouched text.
+  //
+  // This does let a deliberate short swap through. That is the accepted cost:
+  // without pronunciation data the two are indistinguishable, and the result
+  // is shown in the composer pill and removable in Settings.
+  if (CJK_RE.test(alias) && CJK_RE.test(term)) {
+    return Math.abs(a.length - b.length) <= 1
+  }
+
   return lcsLength(a, b) / Math.max(a.length, b.length) >= MIN_SIMILARITY
 }
 
@@ -213,28 +287,57 @@ export function learnCorrections(spoken: string, edited: string): LearnedCorrect
 
   const ops = diffTokens(before, after)
 
-  // Group runs of non-equal ops into replacement regions.
-  const regions: Array<{ alias: string; term: string; aliasTokens: number; termTokens: number }> = []
+  // Group runs of non-equal ops into replacement regions, keeping the
+  // untouched tokens on either side: a change the diff narrowed to a single
+  // CJK character needs that context to be widened back into a usable alias.
+  type RawRegion = { deleted: string[]; inserted: string[]; before: string[]; after: string[] }
+  const raw: RawRegion[] = []
+  let equalRun: string[] = []
+  let pendingBefore: string[] = []
   let deleted: string[] = []
   let inserted: string[] = []
   const flush = () => {
     if (deleted.length || inserted.length) {
-      regions.push({
-        alias: deleted.join('').trim(),
-        term: inserted.join('').trim(),
-        aliasTokens: deleted.length,
-        termTokens: inserted.length,
-      })
+      raw.push({ deleted, inserted, before: pendingBefore, after: [] })
     }
     deleted = []
     inserted = []
+    pendingBefore = []
   }
   for (const op of ops) {
-    if (op.kind === 'equal') flush()
-    else if (op.kind === 'delete') deleted.push(op.token)
-    else inserted.push(op.token)
+    if (op.kind === 'equal') {
+      flush()
+      equalRun.push(op.token)
+      // The equal run *after* a region is only known once we reach it.
+      const last = raw[raw.length - 1]
+      if (last && last.after.length < MAX_CORRECTION_TOKENS) last.after.push(op.token)
+    } else {
+      // Snapshot the left-hand context as the region opens; `equalRun` is
+      // about to start collecting the *next* region's context instead.
+      if (deleted.length === 0 && inserted.length === 0) {
+        pendingBefore = equalRun.slice(-MAX_CORRECTION_TOKENS)
+        equalRun = []
+      }
+      if (op.kind === 'delete') deleted.push(op.token)
+      else inserted.push(op.token)
+    }
   }
   flush()
+
+  const regions = raw.flatMap(r => {
+    const alias = r.deleted.join('').trim()
+    const term = r.inserted.join('').trim()
+    // Both sides present and long enough already: take it as-is.
+    if (alias && term && alias.length >= MIN_ALIAS_CHARS && term.length >= MIN_ALIAS_CHARS) {
+      return [{ alias, term, aliasTokens: r.deleted.length, termTokens: r.inserted.length }]
+    }
+    // Too short, but a real swap — try to widen it using untouched neighbours.
+    if (alias && term) {
+      const widened = expandCJKRegion(r.deleted, r.inserted, r.before, r.after)
+      if (widened) return [widened]
+    }
+    return [{ alias, term, aliasTokens: r.deleted.length, termTokens: r.inserted.length }]
+  })
 
   const out: LearnedCorrection[] = []
   const seen = new Set<string>()

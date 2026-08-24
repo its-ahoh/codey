@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   normalizeVocabulary, vocabularyToDraft, draftToVocabulary,
-  learnCorrections, mergeLearnedAliases,
+  learnCorrections, mergeLearnedAliases, countAliases,
   MAX_ALIASES_PER_TERM, MAX_VOCABULARY_ENTRIES,
 } from './voiceVocabulary'
 
@@ -76,6 +76,22 @@ describe('draftToVocabulary', () => {
   })
 })
 
+describe('countAliases', () => {
+  it('agrees with what draftToVocabulary would save', () => {
+    const text = 'Coday\ncode E, cody'
+    expect(countAliases(text)).toBe(draftToVocabulary([{ term: 'Codey', aliasText: text }])[0].aliases.length)
+  })
+
+  it('counts nothing for an empty or whitespace-only field', () => {
+    expect(countAliases('')).toBe(0)
+    expect(countAliases('  \n , ')).toBe(0)
+  })
+
+  it('does not double-count a duplicate the save would drop', () => {
+    expect(countAliases('Coday\ncoday')).toBe(1)
+  })
+})
+
 describe('learnCorrections', () => {
   it('learns a single misheard word from an edit', () => {
     expect(learnCorrections('open coday now', 'open Codey now'))
@@ -138,6 +154,39 @@ describe('learnCorrections', () => {
 
   it('refuses a same-script swap for an unrelated word', () => {
     expect(learnCorrections('the build is wrong', 'the build is different')).toEqual([])
+  })
+
+  // Chinese dictation is the main use here and almost none of it was being
+  // learned: homophone slips look nothing alike, and a one-character slip
+  // inside a word diffs down to that character alone.
+  it('learns a Chinese homophone, which shares no characters', () => {
+    // "\u5973\u827a" for "\u8bed\u4e49" - same sound, unrelated shapes.
+    expect(learnCorrections('\u5973\u827a\u7684\u4f18\u5316', '\u8bed\u4e49\u7684\u4f18\u5316'))
+      .toEqual([{ term: '\u8bed\u4e49', alias: '\u5973\u827a' }])
+  })
+
+  it('widens a one-character Chinese slip into a usable alias', () => {
+    // Only the middle character differs; on its own it would be too dangerous
+    // an alias, so unchanged neighbours are pulled in from both sides.
+    expect(learnCorrections('\u7528\u4e00\u4e0b\u8f6c\u5f55\u5668', '\u7528\u4e00\u4e0b\u8f6c\u5199\u5668'))
+      .toEqual([{ term: '\u8f6c\u5199\u5668', alias: '\u8f6c\u5f55\u5668' }])
+  })
+
+  it('widens symmetrically rather than guessing a word boundary', () => {
+    // Expanding left alone would pair "\u5728\u7ebf"/"\u5728\u8fdb"; both sides gives a
+    // rule that is correct without needing a segmenter.
+    expect(learnCorrections('\u8fd9\u4e2a\u5728\u7ebf\u7a0b\u91cc\u9762', '\u8fd9\u4e2a\u5728\u8fdb\u7a0b\u91cc\u9762'))
+      .toEqual([{ term: '\u5728\u8fdb\u7a0b', alias: '\u5728\u7ebf\u7a0b' }])
+  })
+
+  it('still refuses a Chinese swap of clearly different length', () => {
+    // Not a homophone slip: the replacement is much longer than the original.
+    expect(learnCorrections('\u7528\u5b83', '\u7528\u90a3\u4e2a\u5de5\u5177')).toEqual([])
+  })
+
+  it('has no left context to borrow at the start of a sentence', () => {
+    // Must not crash or invent context that is not there.
+    expect(() => learnCorrections('\u5f55\u5668\u597d', '\u5199\u5668\u597d')).not.toThrow()
   })
 
   it('returns nothing when the text is unchanged', () => {
