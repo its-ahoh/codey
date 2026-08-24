@@ -6,7 +6,7 @@ import { UserMessage, GatewayResponse, ChatRoute } from '@codey/core';
  * Convert markdown to Telegram HTML.
  * Handles code blocks, inline code, bold, italic, and escapes HTML entities.
  */
-function markdownToTelegramHtml(text: string): string {
+export function markdownToTelegramHtml(text: string): string {
   // Escape HTML entities first (but we'll restore them in formatted sections)
   const escapeHtml = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -43,14 +43,41 @@ function markdownToTelegramHtml(text: string): string {
     // Process inline formatting
     let processed = escapeHtml(line);
 
-    // Inline code (must be before bold/italic to avoid conflicts)
-    processed = processed.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Headings: Telegram has no heading tag, so render them bold.
+    const headingMatch = processed.match(/^\s{0,3}#{1,6}\s+(.*)$/);
+    const isHeading = headingMatch !== null;
+    if (headingMatch) processed = headingMatch[1].replace(/\s+#+\s*$/, '');
+
+    // Bullet lists: no list tag either, so normalise the marker to a bullet.
+    // Done before italic so a "* item" marker is not read as emphasis.
+    processed = processed.replace(/^(\s*)[-*+][ \t]+/, '$1\u2022 ');
+
+    // Inline code and links are pulled out first so the emphasis passes below
+    // cannot chew on their contents (URLs may contain * or _).
+    const held: string[] = [];
+    const hold = (html: string) => {
+      held.push(html);
+      return `\u0000${held.length - 1}\u0000`;
+    };
+    processed = processed.replace(/`([^`]+)`/g, (_m, code) => hold(`<code>${code}</code>`));
+    processed = processed.replace(
+      /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      (_m, label, href) => hold(`<a href="${href}">${label}</a>`),
+    );
 
     // Bold
     processed = processed.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 
+    // Strikethrough
+    processed = processed.replace(/~~(.+?)~~/g, '<s>$1</s>');
+
     // Italic
     processed = processed.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<i>$1</i>');
+
+    if (isHeading) processed = `<b>${processed}</b>`;
+
+    // Restore the held inline code / links
+    processed = processed.replace(/\u0000(\d+)\u0000/g, (_m, idx) => held[Number(idx)]);
 
     result.push(processed);
   }
@@ -248,7 +275,14 @@ export class TelegramHandler extends BaseChannelHandler {
 
   async sendToRoute(route: ChatRoute, text: string): Promise<void> {
     if (route.channel !== 'telegram' || !this.bot || !route.channelChatId) return;
-    await this.bot.sendMessage(route.channelChatId, text);
+    // Fanned-out messages get the same markdown -> HTML treatment as sendMessage,
+    // otherwise relayed replies show raw "**bold**" markers.
+    try {
+      await this.bot.sendMessage(route.channelChatId, markdownToTelegramHtml(text), { parse_mode: 'HTML' });
+    } catch {
+      // Malformed HTML (e.g. a chunk split mid-tag) — fall back to plain text.
+      await this.bot.sendMessage(route.channelChatId, text);
+    }
   }
 
   private startTyping(chatId: string): void {
