@@ -1,12 +1,19 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
-import { fieldStyle, pageStyle, pillButton, Section, selectStyle, Toggle, unwrap } from './settingsAtoms'
+import { pageStyle, Section, selectStyle, Toggle, unwrap } from './settingsAtoms'
+import { AGENT_INSTALL_URL, AGENT_NAMES } from './SettingsTab'
 import {
-  AGENT_INSTALL_URL,
-  AGENT_NAMES,
+  AgentEnvEditor,
   AgentInstallChip,
-  EnvEditor,
-} from './SettingsTab'
+  cardBodyStyle,
+  cardHeadStyle,
+  cardStyle,
+  iconButtonStyle,
+  rowHintStyle,
+  rowLabelStyle,
+  rowStyle,
+  textButtonStyle,
+} from './agentSettingsUi'
 import { publishInstalledAgents, refreshInstalledAgents, useInstalledAgents } from './installedAgents'
 import { AgentUpdateFailureModal } from './AgentUpdateFailureModal'
 import { publishAgentUpdates, refreshAgentUpdates, useAgentUpdates, type Availability } from './agentUpdates'
@@ -120,32 +127,35 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
         />
       )}
 
-      <Section first title="Installed agents" description="CLI availability and environment variables for each coding agent." right={
+      <Section first title="Installed agents" description="CLI availability, thinking effort, and environment for each coding agent." right={
         <button
           onClick={() => { void refreshInstalledAgents(true); void refreshAgentUpdates(true) }}
-          style={pillButton('ghost')}
+          style={{ ...textButtonStyle, opacity: checkingInstalls ? 0.65 : 1 }}
           disabled={checkingInstalls}
           title="Re-check what is installed, and whether a newer version has been published"
         >
-          {checkingInstalls ? 'Checking…' : '↻ Recheck'}
+          <UIIcon name="refresh" size={13} />
+          {checkingInstalls ? 'Checking…' : 'Recheck'}
         </button>
       } />
       {AGENT_NAMES.map(a => {
         const status = installStatus?.[a]
         const env = agents[a]?.env ?? {}
+        const update = availabilityOf(a)
+        const busy = updating === a
         return (
-          <div key={a} style={{ ...fieldStyle, display: 'block' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <div key={a} style={cardStyle}>
+            <div style={cardHeadStyle}>
               <div style={{ minWidth: 0 }}>
-                <span style={{ color: C.fg, fontSize: 13 }}>{a}</span>
+                <div style={{ color: C.fg, fontSize: 13, fontWeight: 600 }}>{a}</div>
                 {/* The version the CLI reported for itself — the only honest
                     answer about what will actually run — and, when there is
                     one, where an update would take it. */}
                 {status?.installed && (
-                  <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>
+                  <div style={rowHintStyle}>
                     {status.version ?? 'version unknown'}
-                    {availabilityOf(a).updateAvailable && (
-                      <span style={{ color: C.accent }}> &rarr; {availabilityOf(a).latest}</span>
+                    {update.updateAvailable && (
+                      <span style={{ color: C.accent }}> &rarr; {update.latest}</span>
                     )}
                   </div>
                 )}
@@ -156,20 +166,17 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
                     onClick={() => { void updateAgent(a) }}
                     disabled={updating !== null}
                     aria-label={`Update ${a}`}
-                    style={{
-                      display: 'grid', placeItems: 'center', width: 28, height: 28, padding: 0,
-                      borderRadius: 8, cursor: updating !== null ? 'default' : 'pointer',
-                      background: 'transparent',
-                      border: `1px solid ${availabilityOf(a).updateAvailable ? C.accent : C.border2}`,
-                      color: availabilityOf(a).updateAvailable ? C.accent : C.fg2,
-                      opacity: updating !== null && updating !== a ? 0.4 : 1,
-                    }}
                     title={updateTitle(a)}
+                    style={iconButtonStyle({
+                      accent: update.updateAvailable,
+                      disabled: updating !== null && !busy,
+                    })}
                   >
-                    <span style={updating === a
-                      ? { display: 'grid', animation: 'codey-agent-update-spin 1s linear infinite' }
-                      : { display: 'grid' }}>
-                      <UIIcon name={updating === a ? 'refresh' : 'download'} size={14} />
+                    <span style={{
+                      display: 'grid',
+                      animation: busy ? 'codey-agent-update-spin 1s linear infinite' : undefined,
+                    }}>
+                      <UIIcon name={busy ? 'refresh' : 'download'} size={14} />
                     </span>
                   </button>
                 )}
@@ -180,42 +187,47 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
                 />
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10 }}>
-              <span style={{ color: C.fg3, fontSize: 12 }}>Effort</span>
-              <select
-                value={agents[a]?.defaultEffort ?? 'medium'}
-                onChange={e => { void saveSlot(a, { defaultEffort: e.target.value }) }}
-                style={{ ...selectStyle, width: 180 }}
-                title="Thinking effort used when neither the chat nor a worker overrides it"
-              >
-                {EFFORT_OPTIONS.map(o => (
-                  <option key={o} value={o}>{o}</option>
-                ))}
-              </select>
-            </div>
-            {a === AGENT_TEAMS_AGENT && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10 }}>
+
+            <div style={cardBodyStyle}>
+              <div style={rowStyle}>
                 <div>
-                  <div style={{ color: C.fg3, fontSize: 12 }}>Agent Teams</div>
-                  <div style={{ color: C.fg3, fontSize: 11, opacity: 0.8, marginTop: 2 }}>
-                    Experimental — lets Claude Code run a team of teammate agents.
-                  </div>
+                  <div style={rowLabelStyle}>Effort</div>
+                  <div style={rowHintStyle}>Used when neither the chat nor a worker overrides it.</div>
                 </div>
-                <Toggle
-                  on={isAgentTeamsOn(env)}
-                  label="Agent Teams"
-                  onChange={v => { void saveSlot(a, { env: setAgentTeams(env, v) }) }}
-                />
+                <select
+                  value={agents[a]?.defaultEffort ?? 'medium'}
+                  onChange={e => { void saveSlot(a, { defaultEffort: e.target.value }) }}
+                  style={{ ...selectStyle, width: 180, height: 28, padding: '0 10px' }}
+                >
+                  {EFFORT_OPTIONS.map(o => (
+                    <option key={o} value={o}>{o}</option>
+                  ))}
+                </select>
               </div>
-            )}
-            <EnvEditor
-              env={a === AGENT_TEAMS_AGENT ? envWithoutAgentTeams(env) : env}
-              onChange={next => {
-                void saveSlot(a, {
-                  env: a === AGENT_TEAMS_AGENT ? mergeEnvKeepingAgentTeams(env, next) : next,
-                })
-              }}
-            />
+
+              {a === AGENT_TEAMS_AGENT && (
+                <div style={rowStyle}>
+                  <div>
+                    <div style={rowLabelStyle}>Agent Teams</div>
+                    <div style={rowHintStyle}>Experimental — lets Claude Code run a team of teammate agents.</div>
+                  </div>
+                  <Toggle
+                    on={isAgentTeamsOn(env)}
+                    label="Agent Teams"
+                    onChange={v => { void saveSlot(a, { env: setAgentTeams(env, v) }) }}
+                  />
+                </div>
+              )}
+
+              <AgentEnvEditor
+                env={a === AGENT_TEAMS_AGENT ? envWithoutAgentTeams(env) : env}
+                onChange={next => {
+                  void saveSlot(a, {
+                    env: a === AGENT_TEAMS_AGENT ? mergeEnvKeepingAgentTeams(env, next) : next,
+                  })
+                }}
+              />
+            </div>
           </div>
         )
       })}
