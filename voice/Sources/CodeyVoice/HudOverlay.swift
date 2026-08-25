@@ -126,7 +126,7 @@ final class HudOverlay {
             panel.ignoresMouseEvents = true
         case .transcribing, .polishing:
             setCapsuleMode(false)
-            label.stringValue = mode.isPolishing ? "Cleaning up" : "Transcribing"
+            label.stringValue = mode.isPolishing ? "Polishing" : "Transcribing"
             label.textColor = NSColor.labelColor
             setMeterVisible(false)
             spinner.isHidden = false

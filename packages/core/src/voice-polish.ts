@@ -26,8 +26,15 @@
  */
 export const MIN_POLISH_LENGTH = 12;
 
-/** Default ceiling on the cleanup call. */
-export const DEFAULT_POLISH_TIMEOUT_MS = 4000;
+/**
+ * Default ceiling on the cleanup call.
+ *
+ * Generous on purpose. Nothing is lost by waiting — the transcript that goes
+ * in on timeout is the same one that would have gone in without the feature —
+ * so the cost of a ceiling set too low is a cleanup that was about to succeed
+ * being thrown away, which is worse than the wait it saved.
+ */
+export const DEFAULT_POLISH_TIMEOUT_MS = 10000;
 
 /** Whether `text` is worth sending through cleanup at all. */
 export function needsPolish(text: string): boolean {

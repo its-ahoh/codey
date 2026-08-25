@@ -191,8 +191,9 @@ export interface GatewayConfigJson {
       enabled?: boolean;
       /**
        * Named model to run the cleanup on, resolved the same way as
-       * `tts.digestModel`. Unset uses the Aide model. A small fast model is
-       * the right choice: the task is mechanical and the latency is felt.
+       * `tts.digestModel`. Unset — the normal case, and the only one the Mac
+       * app produces — uses the Aide model. Kept as a hand-editable escape
+       * hatch for a setup where the Aide model is a poor fit for the job.
        */
       model?: string;
       /**

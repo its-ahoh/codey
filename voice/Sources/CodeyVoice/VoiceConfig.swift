@@ -43,7 +43,7 @@ struct VoiceConfig: Codable {
         /// Ceiling on the round trip, including the gateway's own model call.
         /// The gateway applies this too; the helper's copy is a backstop for a
         /// gateway that hangs rather than answers slowly.
-        var timeoutMs: Int = 4000
+        var timeoutMs: Int = 10000
 
         init() {}
 

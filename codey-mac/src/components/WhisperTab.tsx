@@ -39,12 +39,16 @@ interface VoiceCfg {
   tts: TtsCfg
 }
 
-/** Post-transcription cleanup. See voice-polish.ts. */
+/**
+ * Post-transcription cleanup. See voice-polish.ts.
+ *
+ * Only `enabled` is surfaced — the other two are carried so that a value
+ * hand-written into gateway.json survives a save from this page, which
+ * rewrites the whole `voice` object. `model` empty means the Aide model.
+ */
 interface PolishCfg {
   enabled: boolean
-  /** Named model to clean up with. Empty means the Aide model. */
   model: string
-  /** Ceiling on the cleanup call; on timeout the raw transcript is used. */
   timeoutMs: number
 }
 
@@ -80,7 +84,7 @@ const VOICE_DEFAULT: VoiceCfg = {
   mode: 'inject',
   vocabulary: [],
   vocabularyAutoLearn: true,
-  polish: { enabled: false, model: '', timeoutMs: 4000 },
+  polish: { enabled: false, model: '', timeoutMs: 10000 },
   tts: {
     enabled: false,
     provider: 'api',
@@ -521,7 +525,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         </div>
       </div>
 
-      <div style={lastFieldStyle}>
+      <div style={fieldStyle}>
         <span style={{ color: C.fg, fontSize: 13 }}>Insertion</span>
         <select
           value={voice.injection}
@@ -531,6 +535,19 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           <option value="paste">Paste (⌘V — works everywhere)</option>
           <option value="ax">Accessibility API (no clipboard touch)</option>
         </select>
+      </div>
+
+      <div style={{ ...lastFieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <span style={{ color: C.fg, fontSize: 13 }}>Polish the transcript</span>
+          <Toggle on={voice.polish.enabled} onChange={enabled => updatePolish({ enabled })}/>
+        </div>
+        <span style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>
+          Drops filler and repeated words and fixes grammar before the text lands. Never
+          translates, summarizes, or answers what you said &mdash; a result that drifts is
+          thrown away and what you actually said goes in instead. Costs a moment after you
+          stop talking.
+        </span>
       </div>
         </div>
       </div>
@@ -1009,62 +1026,6 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         </div>
       </div>
 
-      <div style={sectionCardStyle}>
-        <Section
-          title="Cleanup"
-          description="Tidy up the transcript before it lands"
-          right={<Toggle on={voice.polish.enabled} onChange={enabled => updatePolish({ enabled })}/>}
-        />
-        <div style={sectionBodyStyle}>
-          <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, padding: '10px 0 4px' }}>
-            Runs the transcript past a model to drop filler and repeated words and fix
-            grammar and punctuation. It never translates, summarizes, or answers what you
-            said &mdash; a result that drifts is thrown away and the raw transcript is used
-            instead. Off by default: it adds a round trip to the pause right after you stop
-            talking.
-          </div>
-          <div style={settingBlockStyle}>
-            <div style={settingRowStyle}>
-              <span style={{ color: C.fg, fontSize: 13 }}>Model</span>
-              <input
-                value={voice.polish.model}
-                onChange={e => setVoice({ ...voice, polish: { ...voice.polish, model: e.target.value } })}
-                onBlur={() => updatePolish({ model: voice.polish.model })}
-                placeholder="Aide model"
-                style={inputStyle}
-              />
-            </div>
-            <span style={{ color: C.fg3, fontSize: 11 }}>
-              A saved model name. Leave empty to use the Aide model. The work is mechanical
-              and the wait is felt, so a small fast model is the right pick.
-            </span>
-          </div>
-          <div style={lastSettingBlockStyle}>
-            <div style={settingRowStyle}>
-              <span style={{ color: C.fg, fontSize: 13 }}>Give up after</span>
-              <input
-                type="number"
-                min={0.5}
-                max={30}
-                step={0.5}
-                value={voice.polish.timeoutMs / 1000}
-                onChange={e => setVoice({
-                  ...voice,
-                  polish: { ...voice.polish, timeoutMs: Math.round(Number(e.target.value) * 1000) },
-                })}
-                onBlur={() => updatePolish({
-                  timeoutMs: Math.min(30000, Math.max(500, voice.polish.timeoutMs || 4000)),
-                })}
-                style={{ ...inputStyle, width: 90 }}
-              />
-            </div>
-            <span style={{ color: C.fg3, fontSize: 11 }}>
-              Seconds. This is the longest the cleanup can make you wait, not a failure
-              threshold &mdash; when it runs out, what you said goes in unchanged.
-            </span>
-          </div>
-        </div>
-      </div>
     </div>
   )
 }
