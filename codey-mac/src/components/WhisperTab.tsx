@@ -555,7 +555,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
             question the user has no reason to answer yet. */}
         {voice.polish.enabled && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', paddingTop: 10 }}>
-            <span style={{ color: C.fg, fontSize: 13 }}>Your own instructions</span>
+            <span style={{ color: C.fg, fontSize: 13 }}>Instructions</span>
             <textarea
               value={voice.polish.extraInstructions}
               onChange={e => setVoice({
