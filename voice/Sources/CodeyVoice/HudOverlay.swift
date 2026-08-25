@@ -12,6 +12,11 @@ final class HudOverlay {
     enum Mode {
         case recording
         case transcribing
+        /// The optional cleanup pass, after the words exist but before they
+        /// land. Its own label rather than a longer `.transcribing`: the wait
+        /// has a different cause and a different worst case, and "still
+        /// transcribing" would read as the recognizer having stalled.
+        case polishing
         /// Live partial transcript shown while a streaming-capable API is
         /// returning deltas. Replaces the spinner with the text so far so the
         /// user sees progress before injection happens at the end.
@@ -27,6 +32,11 @@ final class HudOverlay {
         /// purpose: a conversation is ongoing and two-way, so it gets the live
         /// rainbow rather than a static chrome.
         case conversation(ConversationPhase)
+
+        var isPolishing: Bool {
+            if case .polishing = self { return true }
+            return false
+        }
     }
 
     /// Mirrors the three states Electron reports for a converse turn. The
@@ -114,9 +124,9 @@ final class HudOverlay {
             renderMeter()
             applyPillLayout()
             panel.ignoresMouseEvents = true
-        case .transcribing:
+        case .transcribing, .polishing:
             setCapsuleMode(false)
-            label.stringValue = "Transcribing"
+            label.stringValue = mode.isPolishing ? "Polishing" : "Transcribing"
             label.textColor = NSColor.labelColor
             setMeterVisible(false)
             spinner.isHidden = false

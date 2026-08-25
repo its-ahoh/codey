@@ -624,7 +624,7 @@ final class VoiceCoordinator {
                     ? "realtime(\(config.realtimeModel))"
                     : "api(\(config.apiModel))"
                 print("transcribe: starting (language=\(lang.isEmpty ? "auto" : lang), provider=\(providerLabel))")
-                let text = try await activeEngine.transcribe(audio: buffer, language: lang)
+                let heard = try await activeEngine.transcribe(audio: buffer, language: lang)
 
                 if generation != self.captureGeneration {
                     print("transcribe: discarded abandoned result")
@@ -635,7 +635,25 @@ final class VoiceCoordinator {
                     return
                 }
 
-                print("transcribe: result = \"\(text)\" (\(text.count) chars)")
+                print("transcribe: result = \"\(heard)\" (\(heard.count) chars)")
+
+                let text = await self.polished(
+                    Punctuation.normalizeChinese(heard),
+                    destination: destination,
+                )
+
+                // The cleanup is a round trip, so the same two escapes have to
+                // be re-checked: the user can abandon the turn while it is in
+                // flight, and injecting after that is the exact bug the
+                // generation counters exist to prevent.
+                if generation != self.captureGeneration {
+                    print("polish: discarded abandoned result")
+                    return
+                }
+                if destination.composerMode != nil && conversationGeneration != conversationCaptureGeneration {
+                    print("polish: discarded cancelled Conversation result")
+                    return
+                }
 
                 if destination.composerMode != nil {
                     // Capture is over, so this helper's Esc monitor comes down.
@@ -728,6 +746,39 @@ final class VoiceCoordinator {
     }
 
     // MARK: - Converse mode
+
+    /// Runs the transcript through the gateway's cleanup pass when the user
+    /// has switched it on, and returns the text to actually use.
+    ///
+    /// Returns `text` untouched on every unhappy path — switched off, empty,
+    /// gateway unreachable, slow, or a rewrite the gateway rejected. The raw
+    /// transcript is a correct outcome, so there is nothing here to surface
+    /// as an error.
+    private func polished(_ text: String, destination: CaptureDestination) async -> String {
+        let settings = config.polish
+        guard settings.enabled, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return text
+        }
+
+        // The conversation capsule is already showing `thinking` and belongs
+        // to the turn, not to us; only the dictation pill changes label.
+        if destination.composerMode == nil {
+            await MainActor.run { self.hud.show(.polishing) }
+        }
+        Task { await gateway.reportStatus("polishing") }
+
+        // Normalized again on the way out: cleanup is a rewrite, so the model
+        // can reintroduce the ASCII marks that were just fixed on the way in.
+        let cleaned = Punctuation.normalizeChinese(
+            await gateway.polish(text, timeoutMs: settings.timeoutMs)
+        )
+        if cleaned != text {
+            print("polish: result = \"\(cleaned)\" (\(cleaned.count) chars)")
+        } else {
+            print("polish: unchanged")
+        }
+        return cleaned
+    }
 
     /// Sends the transcript to the gateway and plays the reply as it streams
     /// back. Enters `.speaking` immediately rather than on first audio, so the

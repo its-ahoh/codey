@@ -74,6 +74,7 @@ function startGateway(): void {
       (transcript, conversationId, emit) => gateway.runVoiceConverse(transcript, conversationId, emit),
       (text, emit, conversationId) => gateway.runVoiceSpeak(text, emit, conversationId),
     );
+    apiServer.setVoicePolishRunner(text => gateway.runVoicePolish(text));
     await apiServer.start();
 
     // Apply config changes to the running gateway at runtime

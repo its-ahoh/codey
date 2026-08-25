@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -1090,6 +1090,45 @@ export class Codey {
     if (!text) return false;
     accumulator.flush().forEach(onSentence);
     return true;
+  }
+
+  /**
+   * Cleans up a raw dictation transcript, or returns null to keep it as-is.
+   *
+   * Direct API call only — no agent-CLI fallback, unlike the digest above.
+   * This sits in the silence right after the user stops talking, where a
+   * 5-15s process boot is not a degraded experience but a broken one, and the
+   * text it would eventually improve was already good enough to paste. The
+   * timeout is the user's, from `voice.polish.timeoutMs`.
+   */
+  async runVoicePolish(transcript: string): Promise<string | null> {
+    const polish = this.configManager?.get().voice?.polish;
+    if (!polish?.enabled) return null;
+    if (!needsPolish(transcript)) return null;
+
+    let model: ModelConfig | undefined;
+    try {
+      const { agent, model: aideModel } = this.getAideAgentAndModel();
+      model = polish.model ? (this.getModelConfig(agent, polish.model) ?? aideModel) : aideModel;
+    } catch (e) {
+      this.logger.warn(`Voice cleanup model unavailable, keeping the raw transcript: ${e}`);
+      return null;
+    }
+    if (!canRunDirectly(model)) return null;
+
+    const raw = await runTextCompletion(buildVoicePolishPrompt(transcript), model, {
+      // Cleanup only ever returns the same sentence back, so the transcript's
+      // own length is the budget. The floor covers short utterances, where a
+      // tight cap would truncate mid-sentence and the guard would then throw
+      // the whole rewrite away.
+      maxTokens: Math.max(256, transcript.length),
+      timeoutMs: polish.timeoutMs ?? DEFAULT_POLISH_TIMEOUT_MS,
+    });
+    const clean = sanitizePolished(raw, transcript);
+    if (raw && !clean) {
+      this.logger.warn('Voice cleanup produced text that failed its guards; keeping the raw transcript.');
+    }
+    return clean;
   }
 
   private async runVoiceDigestPrompt(fullReply: string): Promise<string | null> {

@@ -180,6 +180,29 @@ export interface GatewayConfigJson {
      * Mac app; the Swift helper never reads it.
      */
     vocabularyPending?: { term: string; alias: string; count: number }[];
+    /**
+     * Post-transcription cleanup: a model pass that removes the false starts
+     * and repeated words speech leaves behind and fixes the grammar a
+     * recognizer gets wrong. Off by default — it adds a round trip to the
+     * silence right after the user stops talking, which is the most
+     * latency-sensitive moment of a dictation turn.
+     */
+    polish?: {
+      enabled?: boolean;
+      /**
+       * Named model to run the cleanup on, resolved the same way as
+       * `tts.digestModel`. Unset — the normal case, and the only one the Mac
+       * app produces — uses the Aide model. Kept as a hand-editable escape
+       * hatch for a setup where the Aide model is a poor fit for the job.
+       */
+      model?: string;
+      /**
+       * Ceiling on the cleanup call. On timeout the raw transcript is used,
+       * so this is the worst case the user can be made to wait, not a
+       * failure threshold.
+       */
+      timeoutMs?: number;
+    };
     /** Text-to-speech (spoken replies) configuration. */
     tts?: VoiceTtsSettings;
   };

@@ -35,7 +35,21 @@ interface VoiceCfg {
   vocabulary: string[]
   /** Add words to the dictionary from corrections made in a Codey chat before sending. */
   vocabularyAutoLearn: boolean
+  polish: PolishCfg
   tts: TtsCfg
+}
+
+/**
+ * Post-transcription cleanup. See voice-polish.ts.
+ *
+ * Only `enabled` is surfaced — the other two are carried so that a value
+ * hand-written into gateway.json survives a save from this page, which
+ * rewrites the whole `voice` object. `model` empty means the Aide model.
+ */
+interface PolishCfg {
+  enabled: boolean
+  model: string
+  timeoutMs: number
 }
 
 interface TtsCfg {
@@ -70,6 +84,7 @@ const VOICE_DEFAULT: VoiceCfg = {
   mode: 'inject',
   vocabulary: [],
   vocabularyAutoLearn: true,
+  polish: { enabled: false, model: '', timeoutMs: 10000 },
   tts: {
     enabled: false,
     provider: 'api',
@@ -334,6 +349,9 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         // configs so the primary hotkey always keeps its dictation meaning.
         mode: 'inject',
         vocabulary,
+        // Same one-level-deeper merge as tts, and for the same reason: a
+        // config written before this section existed must not blank it out.
+        polish: { ...VOICE_DEFAULT.polish, ...(cfg?.voice?.polish ?? {}) },
         tts: { ...VOICE_DEFAULT.tts, ...(cfg?.voice?.tts ?? {}) },
       })
     } catch (e: any) { setError(e?.message ?? String(e)) }
@@ -389,6 +407,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
   }
 
   const updateTts = (patch: Partial<TtsCfg>) => updateVoice({ tts: { ...voice.tts, ...patch } })
+  const updatePolish = (patch: Partial<PolishCfg>) => updateVoice({ polish: { ...voice.polish, ...patch } })
 
   const updateVoice = async (patch: Partial<VoiceCfg>) => {
     const patched = { ...voice, ...patch }
@@ -506,7 +525,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         </div>
       </div>
 
-      <div style={lastFieldStyle}>
+      <div style={fieldStyle}>
         <span style={{ color: C.fg, fontSize: 13 }}>Insertion</span>
         <select
           value={voice.injection}
@@ -516,6 +535,19 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           <option value="paste">Paste (⌘V — works everywhere)</option>
           <option value="ax">Accessibility API (no clipboard touch)</option>
         </select>
+      </div>
+
+      <div style={{ ...lastFieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <span style={{ color: C.fg, fontSize: 13 }}>Polish the transcript</span>
+          <Toggle on={voice.polish.enabled} onChange={enabled => updatePolish({ enabled })}/>
+        </div>
+        <span style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>
+          Drops filler and repeated words and fixes grammar before the text lands. Never
+          translates, summarizes, or answers what you said &mdash; a result that drifts is
+          thrown away and what you actually said goes in instead. Costs a moment after you
+          stop talking.
+        </span>
       </div>
         </div>
       </div>
@@ -993,6 +1025,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       </div>
         </div>
       </div>
+
     </div>
   )
 }

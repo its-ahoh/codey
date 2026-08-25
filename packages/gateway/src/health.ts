@@ -1,7 +1,7 @@
 import * as http from 'http';
 import { ConfigManager, stripSecrets } from './config';
 import { ApiTokenStore, parseBearer } from './api-tokens';
-import { VoiceConverseEvent } from '@codey/core';
+import { VoiceConverseEvent, needsPolish } from '@codey/core';
 
 /**
  * Endpoints that require a bearer token.
@@ -61,6 +61,12 @@ export class ApiServer {
     conversationId?: string,
     verbatim?: boolean,
   ) => Promise<void>;
+  /**
+   * Cleanup pass over a raw transcript. Wired after construction rather than
+   * through the constructor's positional list, which is already long enough
+   * that adding to it invites the wrong argument landing in the wrong slot.
+   */
+  private runVoicePolish?: (text: string) => Promise<string | null>;
   private onConverseHotkey?: () => void;
   private onOpenSettings?: () => void;
   private tokens: ApiTokenStore;
@@ -92,6 +98,12 @@ export class ApiServer {
     this.onConverseHotkey = onConverseHotkey;
     this.onOpenSettings = onOpenSettings;
     this.tokens = tokens ?? new ApiTokenStore();
+  }
+
+  /** See `runVoicePolish`. Safe to leave unset — the endpoint then reports
+   *  the transcript as unchanged, which is what the caller already has. */
+  setVoicePolishRunner(run: (text: string) => Promise<string | null>): void {
+    this.runVoicePolish = run;
   }
 
   /**
@@ -247,6 +259,41 @@ export class ApiServer {
           } catch {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          }
+        });
+        return;
+      }
+
+      // Cleans up a raw dictation transcript. Answers with the text to use,
+      // always — a disabled feature, a missing runner, a model that drifted
+      // and a timeout all come back as the original marked `changed: false`,
+      // so the helper has one code path and no failure to handle.
+      if (url === '/voice/polish' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+          let text: string;
+          try {
+            const parsed = JSON.parse(body);
+            text = typeof parsed.text === 'string' ? parsed.text : '';
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+            return;
+          }
+          const reply = (out: string) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ text: out, changed: out !== text }));
+          };
+          const polish = this.configManager.get().voice?.polish;
+          if (!text || !polish?.enabled || !this.runVoicePolish || !needsPolish(text)) {
+            reply(text);
+            return;
+          }
+          try {
+            reply((await this.runVoicePolish(text)) ?? text);
+          } catch {
+            reply(text);
           }
         });
         return;

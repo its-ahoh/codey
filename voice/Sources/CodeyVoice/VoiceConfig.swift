@@ -33,6 +33,29 @@ struct VoiceConfig: Codable {
     /// Custom vocabulary: proper nouns the recognizer would not otherwise
     /// reach. Hinted to the decoder before transcription. See `Vocabulary`.
     var vocabulary: [VocabularyTerm] = []
+    /// Post-transcription cleanup. The model call itself lives in the gateway
+    /// — it owns the credentials and the model resolution — so all this helper
+    /// needs is whether to make the round trip and how long to wait for it.
+    var polish: PolishConfig = PolishConfig()
+
+    struct PolishConfig: Codable {
+        var enabled: Bool = false
+        /// Ceiling on the round trip, including the gateway's own model call.
+        /// The gateway applies this too; the helper's copy is a backstop for a
+        /// gateway that hangs rather than answers slowly.
+        var timeoutMs: Int = 10000
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let d = PolishConfig()
+            enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
+            timeoutMs = try c.decodeIfPresent(Int.self, forKey: .timeoutMs) ?? d.timeoutMs
+        }
+
+        enum CodingKeys: String, CodingKey { case enabled, timeoutMs }
+    }
 
     enum Mode: String, Codable {
         case inject
@@ -83,6 +106,7 @@ struct VoiceConfig: Codable {
         // A malformed vocabulary entry must not take down the whole config
         // fetch — the field is hand-authored, so drop it and keep going.
         vocabulary = ((try? c.decodeIfPresent([VocabularyTerm].self, forKey: .vocabulary)) ?? nil) ?? d.vocabulary
+        polish = ((try? c.decodeIfPresent(PolishConfig.self, forKey: .polish)) ?? nil) ?? d.polish
     }
 
     init() {}

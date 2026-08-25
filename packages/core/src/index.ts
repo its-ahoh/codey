@@ -32,4 +32,5 @@ export * from './judge';
 export * from './speech-digest';
 export * from './voice-commands';
 export * from './voice-ack';
+export * from './voice-polish';
 export * from './voice-converse';
