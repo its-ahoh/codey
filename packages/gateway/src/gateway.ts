@@ -1116,7 +1116,8 @@ export class Codey {
     }
     if (!canRunDirectly(model)) return null;
 
-    const raw = await runTextCompletion(buildVoicePolishPrompt(transcript), model, {
+    const prompt = buildVoicePolishPrompt(transcript, polish.extraInstructions);
+    const raw = await runTextCompletion(prompt, model, {
       // Cleanup only ever returns the same sentence back, so the transcript's
       // own length is the budget. The floor covers short utterances, where a
       // tight cap would truncate mid-sentence and the guard would then throw

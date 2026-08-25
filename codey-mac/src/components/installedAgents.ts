@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 
-export type InstallStatus = { installed: boolean; path?: string }
+export type InstallStatus = { installed: boolean; path?: string; version?: string }
 export type InstalledAgentsState = {
   /** null until the first probe answers — callers must not treat it as "nothing installed". */
   status: Record<string, InstallStatus> | null
@@ -28,6 +28,15 @@ const publish = (next: InstalledAgentsState) => {
 const subscribe = (l: () => void) => {
   listeners.add(l)
   return () => { listeners.delete(l) }
+}
+
+/**
+ * Push a status the app already knows to be current — the re-probe an update
+ * just paid for — into the shared store, so every consumer sees the new
+ * version without a second trip through the login shell.
+ */
+export function publishInstalledAgents(status: Record<string, InstallStatus>): void {
+  publish({ ...snapshot, status })
 }
 
 /**

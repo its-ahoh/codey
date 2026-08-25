@@ -3,6 +3,7 @@ import { OverlayWindow } from './OverlayWindow'
 import { StatusTab } from './StatusTab'
 import { SettingsTab } from './SettingsTab'
 import { AgentsTab } from './AgentsTab'
+import { hasAgentUpdate, useAgentUpdates } from './agentUpdates'
 import { MemoryTab } from './MemoryTab'
 import { WorkspacesTab } from './WorkspacesTab'
 import WorkersTab from './WorkersTab'
@@ -35,6 +36,10 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
   )
   const [apiKeyCreateIntent, setApiKeyCreateIntent] = useState<'voice' | undefined>()
   const { isRunning, status, logs } = useGateway()
+  // Checked as soon as Settings opens, so the dot is already right on the row
+  // the user has not clicked yet — which is the only reason it exists.
+  const { updates } = useAgentUpdates(isRunning)
+  const agentUpdate = hasAgentUpdate(updates)
 
   const activeTab = TABS.find(t => t.key === tab)!
 
@@ -55,10 +60,13 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
                   }}
                 >
                   <span style={{ ...styles.sideIcon, color: active ? C.accent : C.fg3 }}><UIIcon name={t.icon} size={16} /></span>
-                  <span style={styles.sideLabel}>
-                    <span style={{ fontWeight: 500 }}>{t.label}</span>
-                    <span style={styles.sideDesc}>{t.description}</span>
-                  </span>
+                  <span style={styles.sideLabel}>{t.label}</span>
+                  {/* One agent CLI has a newer version published. A dot, not a
+                      count: the number is on the row inside, and out here the
+                      only question is whether it is worth opening. */}
+                  {t.key === 'agents' && agentUpdate && (
+                    <span style={styles.sideDot} title="An agent CLI has an update" />
+                  )}
                 </button>
               )
             })}
@@ -103,7 +111,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
 const styles: Record<string, React.CSSProperties> = {
   body: { flex: 1, display: 'flex', overflow: 'hidden' },
   sidebar: {
-    width: 222, flexShrink: 0,
+    width: 194, flexShrink: 0,
     background: C.surface2,
     borderRight: `1px solid ${C.border}`,
     padding: '14px 10px',
@@ -112,13 +120,15 @@ const styles: Record<string, React.CSSProperties> = {
   },
   sideItem: {
     display: 'flex', alignItems: 'center', gap: 10,
-    padding: '9px 10px', border: '1px solid transparent',
+    padding: '7px 10px', border: '1px solid transparent',
     borderRadius: 9, cursor: 'pointer',
     fontSize: 13, textAlign: 'left',
   },
-  sideIcon: { width: 29, height: 29, borderRadius: 8, background: C.surface3, display: 'grid', placeItems: 'center', flexShrink: 0 },
-  sideLabel: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 },
-  sideDesc: { fontSize: 11, color: C.fg3, fontWeight: 400 },
+  sideIcon: { width: 26, height: 26, borderRadius: 8, background: C.surface3, display: 'grid', placeItems: 'center', flexShrink: 0 },
+  sideLabel: { fontWeight: 500, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  // Pushed to the trailing edge, so it reads as a property of the row rather
+  // than of the label it happens to sit after.
+  sideDot: { width: 7, height: 7, borderRadius: 4, background: C.accent, marginLeft: 'auto', flexShrink: 0 },
   main: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg },
   mainHeader: { padding: '14px 22px', fontSize: 15, fontWeight: 750, color: C.fg, borderBottom: `1px solid ${C.border}`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, background: C.surface },
   mainHeaderIcon: { width: 30, height: 30, display: 'grid', placeItems: 'center', borderRadius: 9, color: C.accent, background: C.accentDim },

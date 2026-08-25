@@ -137,51 +137,52 @@ const AgentMemoryFilesCard: React.FC<{
 
   return (
     <div style={{ padding: 16, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+      {/* Which agent, and how much of it, belong with the heading they describe,
+          so they read left-to-right under the title instead of floating away at
+          the far right edge. Refresh is the one action, and stays on the right. */}
       <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        flexWrap: 'wrap', gap: 12, marginBottom: 12,
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+        gap: 12, marginBottom: 12,
       }}>
-        <div style={{ minWidth: 220, flex: '1 1 280px' }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>Agent memory files</div>
           <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.45, marginTop: 3 }}>{description}</div>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+            {groups.length > 1 && (
+              <select
+                value={selected}
+                onChange={e => setSelected(e.target.value)}
+                style={{ ...selectStyle, width: 148, paddingTop: 6, paddingBottom: 6 }}
+                title="Choose which agent's memory to view"
+                aria-label="Agent"
+              >
+                {groups.map(g => <option key={g.agent} value={g.agent}>{g.agent}</option>)}
+              </select>
+            )}
+            {selectedGroup && (
+              <span style={{
+                color: C.fg3, fontSize: 11, lineHeight: 1, whiteSpace: 'nowrap',
+                boxSizing: 'border-box', padding: '8px 10px',
+                background: C.surface3, borderRadius: 6,
+              }}>
+                {summarizeMemory(selectedGroup.entries)}
+              </span>
+            )}
+          </div>
         </div>
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8,
-          width: 376, maxWidth: '100%', marginLeft: 'auto',
-        }}>
-          {groups.length > 1 && (
-            <select
-              value={selected}
-              onChange={e => setSelected(e.target.value)}
-              style={{ ...selectStyle, width: 148, paddingTop: 6, paddingBottom: 6 }}
-              title="Choose which agent's memory to view"
-              aria-label="Agent"
-            >
-              {groups.map(g => <option key={g.agent} value={g.agent}>{g.agent}</option>)}
-            </select>
-          )}
-          {selectedGroup && (
-            <span style={{
-              color: C.fg3, fontSize: 11, lineHeight: 1, whiteSpace: 'nowrap',
-              width: 112, boxSizing: 'border-box', textAlign: 'center',
-              padding: '6px 8px', background: C.surface3, borderRadius: 6,
-            }}>
-              {summarizeMemory(selectedGroup.entries)}
-            </span>
-          )}
-          <button
-            onClick={() => void reload()}
-            disabled={loading}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 9px', fontSize: 12,
-              background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`,
-              borderRadius: 7, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1,
-            }}
-          >
-            <UIIcon name="refresh" size={13} />
-            {loading ? 'Reading…' : 'Refresh'}
-          </button>
-        </div>
+        <button
+          onClick={() => void reload()}
+          disabled={loading}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 9px', fontSize: 12,
+            flexShrink: 0,
+            background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`,
+            borderRadius: 7, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1,
+          }}
+        >
+          <UIIcon name="refresh" size={13} />
+          {loading ? 'Reading…' : 'Refresh'}
+        </button>
       </div>
       {error && <ErrorBox message={error} />}
       {!loading && groups.length === 0 && !error && (

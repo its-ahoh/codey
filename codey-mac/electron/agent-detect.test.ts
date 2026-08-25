@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'events'
-import { AGENT_BINARIES, createInstalledAgentsCache, detectInstalledAgents, parseProbeOutput } from './agent-detect'
+import { AGENT_BINARIES, buildProbeScript, createInstalledAgentsCache, detectInstalledAgents, parseProbeOutput } from './agent-detect'
 
 const BINS = Object.values(AGENT_BINARIES)
 
@@ -26,8 +26,11 @@ function spawnEmitting(out: string, code = 0) {
 }
 
 /** The exact stdout the real probe script produces for a given resolution map. */
-function probeStdout(resolved: Record<string, string>) {
-  return BINS.map(b => `codey-probe\t${b}\t${resolved[b] ?? ''}`).join('\n') + '\n'
+function probeStdout(resolved: Record<string, string>, versions: Record<string, string> = {}) {
+  return [
+    ...BINS.map(b => `codey-probe\t${b}\t${resolved[b] ?? ''}`),
+    ...BINS.map(b => `codey-probe-version\t${b}\t${versions[b] ?? ''}`),
+  ].join('\n') + '\n'
 }
 
 describe('detectInstalledAgents', () => {
@@ -80,6 +83,39 @@ describe('detectInstalledAgents', () => {
     }) as any
     const r = await detectInstalledAgents({ spawn, shell: '/bin/zsh' })
     expect(r.conclusive).toBe(false)
+  })
+})
+
+describe('versions', () => {
+  it('reports the version each installed CLI printed', async () => {
+    const { spawn } = spawnEmitting(probeStdout(
+      { claude: '/usr/local/bin/claude' },
+      { claude: '2.1.238 (Claude Code)' },
+    ))
+    const r = await detectInstalledAgents({ spawn, shell: '/bin/zsh' })
+    expect(r.status['claude-code'].version).toBe('2.1.238 (Claude Code)')
+  })
+
+  it('asks for every version only after every path is printed', () => {
+    const script = buildProbeScript(['claude', 'codex'])
+    expect(script.lastIndexOf('command -v')).toBeLessThan(script.indexOf('--version'))
+  })
+
+  it('still answers what is installed when the probe is killed mid-version', async () => {
+    const partial = BINS.map(b => `codey-probe\t${b}\t${b === 'claude' ? '/usr/local/bin/claude' : ''}`).join('\n') + '\n'
+    const spawn = ((_s: string, _a: string[]) => {
+      const p = fakeChild()
+      queueMicrotask(() => p.stdout.emit('data', Buffer.from(partial)))  // then hangs
+      return p
+    }) as any
+    const r = await detectInstalledAgents({ spawn, shell: '/bin/zsh', timeoutMs: 5 })
+    expect(r.conclusive).toBe(true)
+    expect(r.status['claude-code']).toEqual({ installed: true, path: '/usr/local/bin/claude' })
+  })
+
+  it('leaves the version out when the CLI printed nothing', () => {
+    const status = parseProbeOutput(['claude'], 'codey-probe\tclaude\t/x\ncodey-probe-version\tclaude\t\n')
+    expect(status).toEqual({ claude: { installed: true, path: '/x' } })
   })
 })
 
