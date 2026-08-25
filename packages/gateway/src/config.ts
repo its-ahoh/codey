@@ -202,6 +202,16 @@ export interface GatewayConfigJson {
        * failure threshold.
        */
       timeoutMs?: number;
+      /**
+       * The user's own cleanup instructions, added to the built-in ones.
+       *
+       * Additive rather than a replacement on purpose: the guards in
+       * `sanitizePolished` reject a rewrite that summarizes, translates or
+       * answers whatever the prompt asked for, so a prompt free to drop the
+       * built-in prohibitions would mostly produce results that are thrown
+       * away without the user being told why.
+       */
+      extraInstructions?: string;
     };
     /** Text-to-speech (spoken replies) configuration. */
     tts?: VoiceTtsSettings;
