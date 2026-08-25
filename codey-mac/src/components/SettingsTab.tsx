@@ -549,7 +549,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         <span style={{
           color: C.fg3, fontSize: 11, fontWeight: 400,
           width: 56, letterSpacing: 0.3,
-        }}>ROUTER</span>
+        }}>ADVISOR</span>
         <select
           value={advisor.agent}
           onChange={e => {
