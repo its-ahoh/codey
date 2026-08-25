@@ -17,6 +17,10 @@ final class VoiceCoordinator {
         case composerDictation
         case conversation
 
+        /// Dictation is text the user reads before it goes anywhere, so it
+        /// is worth cleaning up; a spoken turn is not. See `shouldPolish`.
+        var allowsPolish: Bool { self != .conversation }
+
         var composerMode: String? {
             switch self {
             case .dictation: return nil
@@ -637,10 +641,10 @@ final class VoiceCoordinator {
 
                 print("transcribe: result = \"\(heard)\" (\(heard.count) chars)")
 
-                let text = await self.polished(
-                    Punctuation.normalizeChinese(heard),
-                    destination: destination,
-                )
+                let normalized = Punctuation.normalize(heard)
+                let text = self.shouldPolish(normalized, destination: destination)
+                    ? await self.polished(normalized, showsPill: destination.composerMode == nil)
+                    : normalized
 
                 // The cleanup is a round trip, so the same two escapes have to
                 // be re-checked: the user can abandon the turn while it is in
@@ -747,37 +751,38 @@ final class VoiceCoordinator {
 
     // MARK: - Converse mode
 
-    /// Runs the transcript through the gateway's cleanup pass when the user
-    /// has switched it on, and returns the text to actually use.
-    ///
-    /// Returns `text` untouched on every unhappy path — switched off, empty,
-    /// gateway unreachable, slow, or a rewrite the gateway rejected. The raw
-    /// transcript is a correct outcome, so there is nothing here to surface
-    /// as an error.
+    /// Whether this turn's transcript is worth sending through the cleanup
+    /// pass. The decision lives out here so that `polished` is only ever asked
+    /// to do the work, never to decide whether the work applies.
     ///
     /// Conversation never polishes. Cleanup exists so that text the user is
     /// about to read and send is tidy; in a spoken turn nobody reads it, and
     /// the round trip lands in the silence right after they stop talking,
     /// where the wait is the whole cost and the tidiness buys nothing.
-    private func polished(_ text: String, destination: CaptureDestination) async -> String {
-        let settings = config.polish
-        guard destination != .conversation,
-              settings.enabled,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return text
-        }
+    private func shouldPolish(_ text: String, destination: CaptureDestination) -> Bool {
+        guard destination.allowsPolish, config.polish.enabled else { return false }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
-        // The composer's own pill owns the label there; only the free-floating
-        // dictation pill changes to `polishing`.
-        if destination.composerMode == nil {
+    /// Runs the transcript through the gateway's cleanup pass and returns the
+    /// text to actually use. Callers gate this with `shouldPolish`.
+    ///
+    /// Returns `text` untouched on every unhappy path — gateway unreachable,
+    /// slow, or a rewrite the gateway rejected. The raw transcript is a
+    /// correct outcome, so there is nothing here to surface as an error.
+    ///
+    /// `showsPill` is false wherever some other surface already owns the
+    /// label for this turn, such as the composer's own capsule.
+    private func polished(_ text: String, showsPill: Bool) async -> String {
+        if showsPill {
             await MainActor.run { self.hud.show(.polishing) }
         }
         Task { await gateway.reportStatus("polishing") }
 
         // Normalized again on the way out: cleanup is a rewrite, so the model
         // can reintroduce the ASCII marks that were just fixed on the way in.
-        let cleaned = Punctuation.normalizeChinese(
-            await gateway.polish(text, timeoutMs: settings.timeoutMs)
+        let cleaned = Punctuation.normalize(
+            await gateway.polish(text, timeoutMs: config.polish.timeoutMs)
         )
         if cleaned != text {
             print("polish: result = \"\(cleaned)\" (\(cleaned.count) chars)")
