@@ -8,6 +8,8 @@ import {
   EnvEditor,
 } from './SettingsTab'
 import { publishInstalledAgents, refreshInstalledAgents, useInstalledAgents } from './installedAgents'
+import { AgentUpdateFailureModal } from './AgentUpdateFailureModal'
+import { UIIcon } from './UIIcons'
 import {
   AGENT_TEAMS_AGENT,
   envWithoutAgentTeams,
@@ -24,37 +26,68 @@ type AgentSlot = { enabled?: boolean; defaultModel?: string; defaultEffort?: str
 
 const EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
-type UpdateNote = { ok: boolean; text: string }
+type Availability = { current?: string; latest?: string; updateAvailable: boolean; unknown: boolean }
+type Failure = { agent: string; command: string; output: string }
 
 export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
   const [agents, setAgents] = useState<Record<string, AgentSlot>>({})
   const [error, setError] = useState<string | null>(null)
   const [updating, setUpdating] = useState<string | null>(null)
-  const [updateNotes, setUpdateNotes] = useState<Record<string, UpdateNote>>({})
+  const [updates, setUpdates] = useState<Record<string, Availability>>({})
+  const [failure, setFailure] = useState<Failure | null>(null)
   const { status: installStatus, checking: checkingInstalls } = useInstalledAgents(isGatewayRunning)
 
-  // The updater runs in the user's login shell and can take minutes, so the
-  // result is reported in place rather than thrown away: on failure the CLI's
-  // own last words are the only useful thing we have.
+  // What is published, next to what is installed. Main caches both, so this
+  // costs a lookup at most once every few hours — and nothing at all offline,
+  // where every agent simply comes back `unknown`.
+  const loadUpdates = useCallback(async (force = false) => {
+    try {
+      const r = unwrap(await window.codey.agents.updateStatus(force))
+      setUpdates(r.updates)
+    } catch { /* leave the last answer up; an update check is not worth an error banner */ }
+  }, [])
+
+  useEffect(() => {
+    if (!isGatewayRunning) return
+    void loadUpdates()
+  }, [isGatewayRunning, loadUpdates])
+
+  // The updater runs in the user's login shell and can take minutes. Success
+  // needs no words — the version on the row changes and the button goes away.
+  // Failure gets a dialog, because the only useful thing then is the updater's
+  // own output, which does not fit under a settings row.
   const updateAgent = useCallback(async (name: string) => {
     setUpdating(name)
-    setUpdateNotes(prev => ({ ...prev, [name]: { ok: true, text: 'Updating…' } }))
     try {
       const r = unwrap(await window.codey.agents.update(name))
       publishInstalledAgents(r.status)
-      const now = r.status[name]?.version
-      setUpdateNotes(prev => ({
-        ...prev,
-        [name]: r.ok
-          ? { ok: true, text: now ? `Up to date — ${now}` : `Ran ${r.command}.` }
-          : { ok: false, text: r.output || `${r.command} failed.` },
-      }))
+      setUpdates(r.updates)
+      if (!r.ok) setFailure({ agent: name, command: r.command, output: r.output })
     } catch (e: any) {
-      setUpdateNotes(prev => ({ ...prev, [name]: { ok: false, text: e?.message ?? String(e) } }))
+      setFailure({ agent: name, command: 'the update', output: e?.message ?? String(e) })
     } finally {
       setUpdating(null)
     }
   }, [])
+
+  const availabilityOf = (name: string): Availability =>
+    updates[name] ?? { updateAvailable: false, unknown: true }
+
+  // Shown when there is an update, and also when we could not find out: an
+  // offline check must not take the button away from someone who needs it.
+  // Hidden only when we know the CLI is current, which is the common case and
+  // the one where a button would just be noise.
+  const offersUpdate = (name: string) => {
+    const a = availabilityOf(name)
+    return a.updateAvailable || a.unknown
+  }
+
+  const updateTitle = (name: string) => {
+    const a = availabilityOf(name)
+    if (updating === name) return 'Updating…'
+    if (a.updateAvailable) return `Update to ${a.latest}`
+    return 'Could not check for a newer version — run the updater anyway'
+  }
 
   const reload = useCallback(async () => {
     setError(null)
@@ -89,10 +122,24 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
 
   return (
     <div style={pageStyle}>
+      <style>{'@keyframes codey-agent-update-spin { to { transform: rotate(360deg) } }'}</style>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
+      {failure && (
+        <AgentUpdateFailureModal
+          agent={failure.agent}
+          command={failure.command}
+          output={failure.output}
+          onClose={() => setFailure(null)}
+        />
+      )}
 
       <Section first title="Installed agents" description="CLI availability and environment variables for each coding agent." right={
-        <button onClick={() => void refreshInstalledAgents(true)} style={pillButton('ghost')} disabled={checkingInstalls} title="Re-check whether each agent's CLI is installed">
+        <button
+          onClick={() => { void refreshInstalledAgents(true); void loadUpdates(true) }}
+          style={pillButton('ghost')}
+          disabled={checkingInstalls}
+          title="Re-check what is installed, and whether a newer version has been published"
+        >
           {checkingInstalls ? 'Checking…' : '↻ Recheck'}
         </button>
       } />
@@ -105,22 +152,38 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
               <div style={{ minWidth: 0 }}>
                 <span style={{ color: C.fg, fontSize: 13 }}>{a}</span>
                 {/* The version the CLI reported for itself — the only honest
-                    answer about what will actually run. */}
+                    answer about what will actually run — and, when there is
+                    one, where an update would take it. */}
                 {status?.installed && (
                   <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>
                     {status.version ?? 'version unknown'}
+                    {availabilityOf(a).updateAvailable && (
+                      <span style={{ color: C.accent }}> &rarr; {availabilityOf(a).latest}</span>
+                    )}
                   </div>
                 )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                {status?.installed && (
+                {status?.installed && offersUpdate(a) && (
                   <button
                     onClick={() => { void updateAgent(a) }}
                     disabled={updating !== null}
-                    style={{ ...pillButton('ghost'), opacity: updating !== null ? 0.6 : 1 }}
-                    title="Run this CLI's own updater in your login shell"
+                    aria-label={`Update ${a}`}
+                    style={{
+                      display: 'grid', placeItems: 'center', width: 28, height: 28, padding: 0,
+                      borderRadius: 8, cursor: updating !== null ? 'default' : 'pointer',
+                      background: 'transparent',
+                      border: `1px solid ${availabilityOf(a).updateAvailable ? C.accent : C.border2}`,
+                      color: availabilityOf(a).updateAvailable ? C.accent : C.fg2,
+                      opacity: updating !== null && updating !== a ? 0.4 : 1,
+                    }}
+                    title={updateTitle(a)}
                   >
-                    {updating === a ? 'Updating…' : 'Update'}
+                    <span style={updating === a
+                      ? { display: 'grid', animation: 'codey-agent-update-spin 1s linear infinite' }
+                      : { display: 'grid' }}>
+                      <UIIcon name={updating === a ? 'refresh' : 'download'} size={14} />
+                    </span>
                   </button>
                 )}
                 <AgentInstallChip
@@ -130,16 +193,6 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
                 />
               </div>
             </div>
-            {updateNotes[a] && (
-              <div style={{
-                marginTop: 8, padding: '7px 9px', borderRadius: 7, fontSize: 11, lineHeight: 1.5,
-                whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto',
-                color: updateNotes[a].ok ? C.fg3 : C.red,
-                background: updateNotes[a].ok ? C.surface3 : C.red + '18',
-              }}>
-                {updateNotes[a].text}
-              </div>
-            )}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10 }}>
               <span style={{ color: C.fg3, fontSize: 12 }}>Effort</span>
               <select
