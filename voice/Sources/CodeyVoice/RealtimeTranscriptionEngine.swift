@@ -156,7 +156,7 @@ final class RealtimeTranscriptionEngine: NSObject, TranscriptionEngineProtocol, 
         let updateData = try buildSessionUpdate(
             language: language,
             model: realtimeModel,
-            prompt: Vocabulary.promptText(vocabulary)
+            prompt: Vocabulary.promptText(vocabulary, language: language)
         )
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             ws.send(.data(updateData)) { error in

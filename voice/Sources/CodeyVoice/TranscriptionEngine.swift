@@ -51,7 +51,7 @@ final class TranscriptionEngine: TranscriptionEngineProtocol, @unchecked Sendabl
 
         let wavData = encodeWAV(samples: audio, sampleRate: 16000)
         let streaming = modelSupportsStreaming(apiModel)
-        let request = buildRequest(url: url, apiKey: apiKey, apiModel: apiModel, wav: wavData, language: language, streaming: streaming, prompt: Vocabulary.promptText(vocabulary))
+        let request = buildRequest(url: url, apiKey: apiKey, apiModel: apiModel, wav: wavData, language: language, streaming: streaming, prompt: Vocabulary.promptText(vocabulary, language: language))
 
         return streaming
             ? try await runStreaming(request: request)

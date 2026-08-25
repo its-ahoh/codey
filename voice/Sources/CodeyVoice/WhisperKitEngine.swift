@@ -252,9 +252,9 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
     /// the whole prefix. Returns nil rather than an empty array so the option
     /// stays unset when there is nothing to say — WhisperKit takes a different
     /// (slower) decode path whenever `promptTokens` is non-nil.
-    private func vocabularyPromptTokens(_ pipe: WhisperKit) -> [Int]? {
+    private func vocabularyPromptTokens(_ pipe: WhisperKit, language: String) -> [Int]? {
         let terms = configLock.withLock { _config.vocabulary }
-        guard let text = Vocabulary.promptText(terms, repeats: 2),
+        guard let text = Vocabulary.promptText(terms, repeats: 2, language: language),
               let tokenizer = pipe.tokenizer else { return nil }
         let specialBegin = tokenizer.specialTokens.specialTokenBegin
         // Leading space: Whisper's BPE encodes a word differently at the start
@@ -270,7 +270,7 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
     /// non-streaming `transcribe()` path keeps the more conservative options.
     private func streamingOptions(language: String, pipe: WhisperKit) -> DecodingOptions {
         var options = DecodingOptions()
-        options.promptTokens = vocabularyPromptTokens(pipe)
+        options.promptTokens = vocabularyPromptTokens(pipe, language: language)
         options.task = .transcribe
         if !language.isEmpty && language != "auto" { options.language = language }
         options.temperature = 0.0
@@ -364,7 +364,7 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
         let normalized = peakNormalize(audio, target: 0.9)
 
         var options = DecodingOptions()
-        options.promptTokens = vocabularyPromptTokens(pipe)
+        options.promptTokens = vocabularyPromptTokens(pipe, language: language)
         options.task = .transcribe
         if !language.isEmpty && language != "auto" {
             options.language = language
