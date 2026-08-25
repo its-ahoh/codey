@@ -50,6 +50,8 @@ interface PolishCfg {
   enabled: boolean
   model: string
   timeoutMs: number
+  /** The user's own cleanup instructions, added to the built-in ones. */
+  extraInstructions: string
 }
 
 interface TtsCfg {
@@ -84,7 +86,7 @@ const VOICE_DEFAULT: VoiceCfg = {
   mode: 'inject',
   vocabulary: [],
   vocabularyAutoLearn: true,
-  polish: { enabled: false, model: '', timeoutMs: 10000 },
+  polish: { enabled: false, model: '', timeoutMs: 10000, extraInstructions: '' },
   tts: {
     enabled: false,
     provider: 'api',
@@ -548,6 +550,30 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           thrown away and what you actually said goes in instead. Costs a moment after you
           stop talking.
         </span>
+
+        {/* Only once it is on: an empty box for a switched-off feature is a
+            question the user has no reason to answer yet. */}
+        {voice.polish.enabled && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', paddingTop: 10 }}>
+            <span style={{ color: C.fg, fontSize: 13 }}>Your own instructions</span>
+            <textarea
+              value={voice.polish.extraInstructions}
+              onChange={e => setVoice({
+                ...voice,
+                polish: { ...voice.polish, extraInstructions: e.target.value },
+              })}
+              onBlur={() => updatePolish({ extraInstructions: voice.polish.extraInstructions })}
+              placeholder={'Keep English technical terms as they are.\nDrop "basically" and "you know".'}
+              rows={3}
+              style={{ ...inputStyle, width: '100%', resize: 'vertical', lineHeight: 1.5 }}
+            />
+            <span style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>
+              Added to the built-in instructions, not a replacement for them. Asking here for
+              a summary, a translation, or an answer will not work: those are thrown away by
+              the same check that protects your words, whatever the instructions say.
+            </span>
+          </div>
+        )}
       </div>
         </div>
       </div>
