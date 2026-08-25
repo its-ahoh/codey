@@ -27,6 +27,10 @@ describe('buildVoicePolishPrompt', () => {
     expect(prompt).toContain('Do not summarize');
     expect(prompt).toContain('Do not answer');
   });
+
+  it('asks for the punctuation of the language being written', () => {
+    expect(buildVoicePolishPrompt('hello')).toContain('full-width');
+  });
 });
 
 describe('sanitizePolished', () => {

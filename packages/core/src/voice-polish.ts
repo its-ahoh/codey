@@ -55,6 +55,7 @@ export function buildVoicePolishPrompt(text: string): string {
     'Do this:',
     '- Remove filler words, false starts, and words the speaker repeated by accident.',
     '- Fix punctuation, capitalization, and spacing.',
+    '- Use the punctuation marks that belong to the language you are writing in. Chinese takes the full-width marks, so write a Chinese sentence with the Chinese comma and the Chinese full stop, not the ASCII ones.',
     '- Fix grammar and obvious mis-transcriptions, where the intended word is unambiguous.',
     'Never do this:',
     '- Do not translate. Reply in exactly the language the transcript is written in.',

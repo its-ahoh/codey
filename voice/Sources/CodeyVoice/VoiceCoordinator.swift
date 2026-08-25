@@ -637,7 +637,10 @@ final class VoiceCoordinator {
 
                 print("transcribe: result = \"\(heard)\" (\(heard.count) chars)")
 
-                let text = await self.polished(heard, destination: destination)
+                let text = await self.polished(
+                    Punctuation.normalizeChinese(heard),
+                    destination: destination,
+                )
 
                 // The cleanup is a round trip, so the same two escapes have to
                 // be re-checked: the user can abandon the turn while it is in
@@ -764,7 +767,11 @@ final class VoiceCoordinator {
         }
         Task { await gateway.reportStatus("polishing") }
 
-        let cleaned = await gateway.polish(text, timeoutMs: settings.timeoutMs)
+        // Normalized again on the way out: cleanup is a rewrite, so the model
+        // can reintroduce the ASCII marks that were just fixed on the way in.
+        let cleaned = Punctuation.normalizeChinese(
+            await gateway.polish(text, timeoutMs: settings.timeoutMs)
+        )
         if cleaned != text {
             print("polish: result = \"\(cleaned)\" (\(cleaned.count) chars)")
         } else {
