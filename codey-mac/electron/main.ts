@@ -1092,6 +1092,7 @@ async function bootInProcessCore() {
         // so it asks the app to open its own settings window instead.
         () => { mainWindow?.show(); mainWindow?.focus(); sendToRenderer('notify:openSettings') },
       )
+      apiServer.setVoicePolishRunner((text: string) => inProcessGateway!.runVoicePolish(text))
       void apiServer.start().then(() => {
         sendToRenderer('gateway-log', `[core] API server listening on ${apiPort}`)
       }).catch((err: any) => {

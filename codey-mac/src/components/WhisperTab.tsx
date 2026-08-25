@@ -35,7 +35,17 @@ interface VoiceCfg {
   vocabulary: string[]
   /** Add words to the dictionary from corrections made in a Codey chat before sending. */
   vocabularyAutoLearn: boolean
+  polish: PolishCfg
   tts: TtsCfg
+}
+
+/** Post-transcription cleanup. See voice-polish.ts. */
+interface PolishCfg {
+  enabled: boolean
+  /** Named model to clean up with. Empty means the Aide model. */
+  model: string
+  /** Ceiling on the cleanup call; on timeout the raw transcript is used. */
+  timeoutMs: number
 }
 
 interface TtsCfg {
@@ -70,6 +80,7 @@ const VOICE_DEFAULT: VoiceCfg = {
   mode: 'inject',
   vocabulary: [],
   vocabularyAutoLearn: true,
+  polish: { enabled: false, model: '', timeoutMs: 4000 },
   tts: {
     enabled: false,
     provider: 'api',
@@ -334,6 +345,9 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         // configs so the primary hotkey always keeps its dictation meaning.
         mode: 'inject',
         vocabulary,
+        // Same one-level-deeper merge as tts, and for the same reason: a
+        // config written before this section existed must not blank it out.
+        polish: { ...VOICE_DEFAULT.polish, ...(cfg?.voice?.polish ?? {}) },
         tts: { ...VOICE_DEFAULT.tts, ...(cfg?.voice?.tts ?? {}) },
       })
     } catch (e: any) { setError(e?.message ?? String(e)) }
@@ -389,6 +403,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
   }
 
   const updateTts = (patch: Partial<TtsCfg>) => updateVoice({ tts: { ...voice.tts, ...patch } })
+  const updatePolish = (patch: Partial<PolishCfg>) => updateVoice({ polish: { ...voice.polish, ...patch } })
 
   const updateVoice = async (patch: Partial<VoiceCfg>) => {
     const patched = { ...voice, ...patch }
@@ -991,6 +1006,63 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       <div style={{ ...lastSettingBlockStyle, paddingTop: 12, color: C.fg3, fontSize: 11 }}>
         {vocabDraft.length === 0 ? '' : `${vocabDraft.length} word${vocabDraft.length === 1 ? '' : 's'}`}
       </div>
+        </div>
+      </div>
+
+      <div style={sectionCardStyle}>
+        <Section
+          title="Cleanup"
+          description="Tidy up the transcript before it lands"
+          right={<Toggle on={voice.polish.enabled} onChange={enabled => updatePolish({ enabled })}/>}
+        />
+        <div style={sectionBodyStyle}>
+          <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, padding: '10px 0 4px' }}>
+            Runs the transcript past a model to drop filler and repeated words and fix
+            grammar and punctuation. It never translates, summarizes, or answers what you
+            said &mdash; a result that drifts is thrown away and the raw transcript is used
+            instead. Off by default: it adds a round trip to the pause right after you stop
+            talking.
+          </div>
+          <div style={settingBlockStyle}>
+            <div style={settingRowStyle}>
+              <span style={{ color: C.fg, fontSize: 13 }}>Model</span>
+              <input
+                value={voice.polish.model}
+                onChange={e => setVoice({ ...voice, polish: { ...voice.polish, model: e.target.value } })}
+                onBlur={() => updatePolish({ model: voice.polish.model })}
+                placeholder="Aide model"
+                style={inputStyle}
+              />
+            </div>
+            <span style={{ color: C.fg3, fontSize: 11 }}>
+              A saved model name. Leave empty to use the Aide model. The work is mechanical
+              and the wait is felt, so a small fast model is the right pick.
+            </span>
+          </div>
+          <div style={lastSettingBlockStyle}>
+            <div style={settingRowStyle}>
+              <span style={{ color: C.fg, fontSize: 13 }}>Give up after</span>
+              <input
+                type="number"
+                min={0.5}
+                max={30}
+                step={0.5}
+                value={voice.polish.timeoutMs / 1000}
+                onChange={e => setVoice({
+                  ...voice,
+                  polish: { ...voice.polish, timeoutMs: Math.round(Number(e.target.value) * 1000) },
+                })}
+                onBlur={() => updatePolish({
+                  timeoutMs: Math.min(30000, Math.max(500, voice.polish.timeoutMs || 4000)),
+                })}
+                style={{ ...inputStyle, width: 90 }}
+              />
+            </div>
+            <span style={{ color: C.fg3, fontSize: 11 }}>
+              Seconds. This is the longest the cleanup can make you wait, not a failure
+              threshold &mdash; when it runs out, what you said goes in unchanged.
+            </span>
+          </div>
         </div>
       </div>
     </div>
