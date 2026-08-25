@@ -405,6 +405,14 @@ declare global {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; defaultEffort?: string; env?: Record<string, string> }>>>
         set: (updates: Record<string, { enabled?: boolean; defaultModel?: string; defaultEffort?: string; env?: Record<string, string> }>) => Promise<IpcResult<void>>
         checkInstalled: (force?: boolean) => Promise<IpcResult<{ status: Record<string, { installed: boolean; path?: string; version?: string }>; conclusive: boolean }>>
+        /** Installed versions plus what each agent publishes, so the panel can
+         *  offer an update only when there is one. `unknown` means the lookup
+         *  failed — offline, say — not that the CLI is current. */
+        updateStatus: (force?: boolean) => Promise<IpcResult<{
+          status: Record<string, { installed: boolean; path?: string; version?: string }>
+          conclusive: boolean
+          updates: Record<string, { current?: string; latest?: string; updateAvailable: boolean; unknown: boolean }>
+        }>>
         /** Runs the agent CLI's own updater (or `brew upgrade` for a Homebrew
          *  install) and re-probes, so `status` is the state after the attempt. */
         update: (agent: string) => Promise<IpcResult<{
@@ -413,6 +421,7 @@ declare global {
           ok: boolean
           output: string
           status: Record<string, { installed: boolean; path?: string; version?: string }>
+          updates: Record<string, { current?: string; latest?: string; updateAvailable: boolean; unknown: boolean }>
         }>>
         slashCommands: (agent: string) => Promise<IpcResult<Array<{ name: string; description: string; source: 'agent' | 'gateway' | 'skill' }>>>
       }
