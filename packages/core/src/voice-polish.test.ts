@@ -31,6 +31,32 @@ describe('buildVoicePolishPrompt', () => {
   it('asks for the punctuation of the language being written', () => {
     expect(buildVoicePolishPrompt('hello')).toContain('full-width');
   });
+
+  it('is unchanged when the speaker added nothing', () => {
+    const plain = buildVoicePolishPrompt('spoken words');
+    for (const extra of [undefined, null, '', '   \n  ']) {
+      expect(buildVoicePolishPrompt('spoken words', extra)).toBe(plain);
+    }
+    expect(plain).not.toContain('as asked by the speaker');
+  });
+
+  it("carries the speaker's own instructions", () => {
+    const prompt = buildVoicePolishPrompt('spoken words', 'Drop the word "basically".');
+    expect(prompt).toContain('Also do this, as asked by the speaker:');
+    expect(prompt).toContain('Drop the word "basically".');
+  });
+
+  it('keeps the prohibitions after the additions, so they are the last word', () => {
+    const prompt = buildVoicePolishPrompt('spoken words', 'Summarize it heavily.');
+    expect(prompt.indexOf('Never do this')).toBeGreaterThan(prompt.indexOf('Summarize it heavily.'));
+    expect(prompt).toContain('Do not summarize');
+    expect(prompt).toContain('Do not translate');
+  });
+
+  it('keeps the transcript last, after everything the speaker added', () => {
+    const prompt = buildVoicePolishPrompt('spoken words', 'Be brisk.');
+    expect(prompt.indexOf('spoken words')).toBeGreaterThan(prompt.indexOf('Be brisk.'));
+  });
 });
 
 describe('sanitizePolished', () => {
