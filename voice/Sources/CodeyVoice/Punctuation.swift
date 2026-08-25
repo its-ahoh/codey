@@ -27,6 +27,19 @@ enum Punctuation {
         ";": "；",
     ]
 
+    /// Applies the punctuation rules for the script `text` is written in.
+    ///
+    /// The dispatch is on the text, not on the configured language: that
+    /// setting is usually `auto`, and a single turn can be Chinese while the
+    /// one before it was not. Only Chinese has a rule today — Whisper already
+    /// writes Latin text with the marks Latin text wants — so every other
+    /// script comes back untouched, and this is the seam a second one hangs
+    /// off when it needs one.
+    static func normalize(_ text: String) -> String {
+        guard text.contains(where: isHan) else { return text }
+        return normalizeChinese(text)
+    }
+
     /// Returns `text` with Chinese-context ASCII punctuation replaced.
     ///
     /// A mark is converted when the text touching it is Chinese — the nearest
