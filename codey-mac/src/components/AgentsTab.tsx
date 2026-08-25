@@ -9,6 +9,7 @@ import {
 } from './SettingsTab'
 import { publishInstalledAgents, refreshInstalledAgents, useInstalledAgents } from './installedAgents'
 import { AgentUpdateFailureModal } from './AgentUpdateFailureModal'
+import { publishAgentUpdates, refreshAgentUpdates, useAgentUpdates, type Availability } from './agentUpdates'
 import { UIIcon } from './UIIcons'
 import {
   AGENT_TEAMS_AGENT,
@@ -26,31 +27,17 @@ type AgentSlot = { enabled?: boolean; defaultModel?: string; defaultEffort?: str
 
 const EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
-type Availability = { current?: string; latest?: string; updateAvailable: boolean; unknown: boolean }
 type Failure = { agent: string; command: string; output: string }
 
 export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
   const [agents, setAgents] = useState<Record<string, AgentSlot>>({})
   const [error, setError] = useState<string | null>(null)
   const [updating, setUpdating] = useState<string | null>(null)
-  const [updates, setUpdates] = useState<Record<string, Availability>>({})
   const [failure, setFailure] = useState<Failure | null>(null)
   const { status: installStatus, checking: checkingInstalls } = useInstalledAgents(isGatewayRunning)
-
-  // What is published, next to what is installed. Main caches both, so this
-  // costs a lookup at most once every few hours — and nothing at all offline,
-  // where every agent simply comes back `unknown`.
-  const loadUpdates = useCallback(async (force = false) => {
-    try {
-      const r = unwrap(await window.codey.agents.updateStatus(force))
-      setUpdates(r.updates)
-    } catch { /* leave the last answer up; an update check is not worth an error banner */ }
-  }, [])
-
-  useEffect(() => {
-    if (!isGatewayRunning) return
-    void loadUpdates()
-  }, [isGatewayRunning, loadUpdates])
+  // Shared with the Settings sidebar, which shows the dot; whichever mounts
+  // first pays for the lookup and both read the same answer.
+  const { updates } = useAgentUpdates(isGatewayRunning)
 
   // The updater runs in the user's login shell and can take minutes. Success
   // needs no words — the version on the row changes and the button goes away.
@@ -61,7 +48,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
     try {
       const r = unwrap(await window.codey.agents.update(name))
       publishInstalledAgents(r.status)
-      setUpdates(r.updates)
+      publishAgentUpdates(r.updates)
       if (!r.ok) setFailure({ agent: name, command: r.command, output: r.output })
     } catch (e: any) {
       setFailure({ agent: name, command: 'the update', output: e?.message ?? String(e) })
@@ -71,7 +58,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
   }, [])
 
   const availabilityOf = (name: string): Availability =>
-    updates[name] ?? { updateAvailable: false, unknown: true }
+    updates?.[name] ?? { updateAvailable: false, unknown: true }
 
   // Shown when there is an update, and also when we could not find out: an
   // offline check must not take the button away from someone who needs it.
@@ -135,7 +122,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
 
       <Section first title="Installed agents" description="CLI availability and environment variables for each coding agent." right={
         <button
-          onClick={() => { void refreshInstalledAgents(true); void loadUpdates(true) }}
+          onClick={() => { void refreshInstalledAgents(true); void refreshAgentUpdates(true) }}
           style={pillButton('ghost')}
           disabled={checkingInstalls}
           title="Re-check what is installed, and whether a newer version has been published"
