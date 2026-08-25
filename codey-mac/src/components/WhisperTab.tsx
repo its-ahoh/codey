@@ -546,7 +546,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           Drops filler and repeated words and fixes grammar before the text lands. Never
           translates, summarizes, or answers what you said &mdash; a result that drifts is
           thrown away and what you actually said goes in instead. Costs a moment after you
-          stop talking.
+          stop talking, so Conversation skips it &mdash; nobody reads that text.
         </span>
       </div>
         </div>

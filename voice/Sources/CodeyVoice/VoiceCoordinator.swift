@@ -754,14 +754,21 @@ final class VoiceCoordinator {
     /// gateway unreachable, slow, or a rewrite the gateway rejected. The raw
     /// transcript is a correct outcome, so there is nothing here to surface
     /// as an error.
+    ///
+    /// Conversation never polishes. Cleanup exists so that text the user is
+    /// about to read and send is tidy; in a spoken turn nobody reads it, and
+    /// the round trip lands in the silence right after they stop talking,
+    /// where the wait is the whole cost and the tidiness buys nothing.
     private func polished(_ text: String, destination: CaptureDestination) async -> String {
         let settings = config.polish
-        guard settings.enabled, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard destination != .conversation,
+              settings.enabled,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return text
         }
 
-        // The conversation capsule is already showing `thinking` and belongs
-        // to the turn, not to us; only the dictation pill changes label.
+        // The composer's own pill owns the label there; only the free-floating
+        // dictation pill changes to `polishing`.
         if destination.composerMode == nil {
             await MainActor.run { self.hud.show(.polishing) }
         }

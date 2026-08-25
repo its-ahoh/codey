@@ -227,7 +227,13 @@ final class WhisperKitEngine: TranscriptionEngineProtocol, @unchecked Sendable {
                     if !fullText.isEmpty, let cb = self.onPartial {
                         await MainActor.run { cb(fullText) }
                     }
+                } catch is CancellationError {
+                    // The user released the hotkey mid-decode. Expected on
+                    // nearly every turn, so it is neither an error to report
+                    // nor a reason to loop again.
+                    break
                 } catch {
+                    if Task.isCancelled { break }
                     // Partial decode errors are non-fatal — keep the loop going
                     // so a transient hiccup doesn't kill the live preview.
                     print("WhisperKitEngine.startStreaming: partial decode error — \(error.localizedDescription)")
