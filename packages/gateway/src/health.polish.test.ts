@@ -10,6 +10,7 @@ describe('POST /voice/polish', () => {
   let server: ApiServer;
   let port: number;
   let polish: { enabled?: boolean } | undefined;
+  let realPlatform: PropertyDescriptor | undefined;
 
   const fakeStatus = () => ({
     status: 'healthy' as const,
@@ -39,13 +40,27 @@ describe('POST /voice/polish', () => {
   const spoken = 'so um I I want to add a button here right';
 
   beforeEach(async () => {
+    // `/voice/*` answers 501 off macOS, and CI runs on Linux. The endpoint's
+    // behaviour is platform-independent and worth covering on every runner,
+    // so the platform is stubbed rather than the suite skipped.
+    realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     polish = { enabled: true };
     server = new ApiServer(0, fakeStatus, fakeConfigManager());
     await server.start();
     port = (server as any).server.address().port;
   });
 
-  afterEach(async () => { await server.stop(); });
+  afterEach(async () => {
+    await server.stop();
+    if (realPlatform) Object.defineProperty(process, 'platform', realPlatform);
+  });
+
+  it('is not served at all off macOS', async () => {
+    if (realPlatform) Object.defineProperty(process, 'platform', realPlatform);
+    if (process.platform === 'darwin') return;
+    expect((await post({ text: spoken })).status).toBe(501);
+  });
 
   it('returns the cleaned text when the runner produces one', async () => {
     server.setVoicePolishRunner(async () => 'So I want to add a button here.');
