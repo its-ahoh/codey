@@ -7,7 +7,7 @@ import {
   AgentInstallChip,
   EnvEditor,
 } from './SettingsTab'
-import { refreshInstalledAgents, useInstalledAgents } from './installedAgents'
+import { publishInstalledAgents, refreshInstalledAgents, useInstalledAgents } from './installedAgents'
 import {
   AGENT_TEAMS_AGENT,
   envWithoutAgentTeams,
@@ -24,10 +24,37 @@ type AgentSlot = { enabled?: boolean; defaultModel?: string; defaultEffort?: str
 
 const EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
+type UpdateNote = { ok: boolean; text: string }
+
 export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
   const [agents, setAgents] = useState<Record<string, AgentSlot>>({})
   const [error, setError] = useState<string | null>(null)
+  const [updating, setUpdating] = useState<string | null>(null)
+  const [updateNotes, setUpdateNotes] = useState<Record<string, UpdateNote>>({})
   const { status: installStatus, checking: checkingInstalls } = useInstalledAgents(isGatewayRunning)
+
+  // The updater runs in the user's login shell and can take minutes, so the
+  // result is reported in place rather than thrown away: on failure the CLI's
+  // own last words are the only useful thing we have.
+  const updateAgent = useCallback(async (name: string) => {
+    setUpdating(name)
+    setUpdateNotes(prev => ({ ...prev, [name]: { ok: true, text: 'Updating…' } }))
+    try {
+      const r = unwrap(await window.codey.agents.update(name))
+      publishInstalledAgents(r.status)
+      const now = r.status[name]?.version
+      setUpdateNotes(prev => ({
+        ...prev,
+        [name]: r.ok
+          ? { ok: true, text: now ? `Up to date — ${now}` : `Ran ${r.command}.` }
+          : { ok: false, text: r.output || `${r.command} failed.` },
+      }))
+    } catch (e: any) {
+      setUpdateNotes(prev => ({ ...prev, [name]: { ok: false, text: e?.message ?? String(e) } }))
+    } finally {
+      setUpdating(null)
+    }
+  }, [])
 
   const reload = useCallback(async () => {
     setError(null)
@@ -74,14 +101,45 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
         const env = agents[a]?.env ?? {}
         return (
           <div key={a} style={{ ...fieldStyle, display: 'block' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ color: C.fg, fontSize: 13 }}>{a}</span>
-              <AgentInstallChip
-                status={status}
-                checking={checkingInstalls && !status}
-                onInstall={() => window.codey.openExternal(AGENT_INSTALL_URL[a])}
-              />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+              <div style={{ minWidth: 0 }}>
+                <span style={{ color: C.fg, fontSize: 13 }}>{a}</span>
+                {/* The version the CLI reported for itself — the only honest
+                    answer about what will actually run. */}
+                {status?.installed && (
+                  <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>
+                    {status.version ?? 'version unknown'}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                {status?.installed && (
+                  <button
+                    onClick={() => { void updateAgent(a) }}
+                    disabled={updating !== null}
+                    style={{ ...pillButton('ghost'), opacity: updating !== null ? 0.6 : 1 }}
+                    title="Run this CLI's own updater in your login shell"
+                  >
+                    {updating === a ? 'Updating…' : 'Update'}
+                  </button>
+                )}
+                <AgentInstallChip
+                  status={status}
+                  checking={checkingInstalls && !status}
+                  onInstall={() => window.codey.openExternal(AGENT_INSTALL_URL[a])}
+                />
+              </div>
             </div>
+            {updateNotes[a] && (
+              <div style={{
+                marginTop: 8, padding: '7px 9px', borderRadius: 7, fontSize: 11, lineHeight: 1.5,
+                whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto',
+                color: updateNotes[a].ok ? C.fg3 : C.red,
+                background: updateNotes[a].ok ? C.surface3 : C.red + '18',
+              }}>
+                {updateNotes[a].text}
+              </div>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10 }}>
               <span style={{ color: C.fg3, fontSize: 12 }}>Effort</span>
               <select

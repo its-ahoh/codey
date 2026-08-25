@@ -13,6 +13,7 @@ import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { AGENT_BINARIES, createInstalledAgentsCache, detectInstalledAgents } from './agent-detect'
+import { runAgentUpdate, updatePlanFor } from './agent-update'
 import { SKILL_FILE, markSkillManagedBy, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
@@ -3707,6 +3708,24 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('agents:checkInstalled', async (_e, force?: boolean) =>
     wrap(async () => getInstalledAgents(force === true))
+  )
+
+  // Update one agent CLI in place. The re-probe afterwards is not optional:
+  // the version on screen is the reason the user pressed the button, and a
+  // successful update that still reads as the old version looks like a failure.
+  ipcMain.handle('agents:update', async (_e, agent: string) =>
+    wrap(async () => {
+      const probed = await getInstalledAgents(false)
+      const plan = updatePlanFor(agent, probed.status[agent])
+      if (!plan) throw new Error(`No update available for ${agent} — its CLI was not found.`)
+      const outcome = await runAgentUpdate({
+        plan,
+        spawn: (await import('child_process')).spawn,
+        shell: process.env.SHELL || '/bin/zsh',
+      })
+      const after = await getInstalledAgents(true)
+      return { ...outcome, status: after.status }
+    })
   )
 
   // ── Skills IPC ────────────────────────────────────────────────────
