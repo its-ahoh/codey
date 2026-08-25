@@ -13,6 +13,8 @@ import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { AGENT_BINARIES, createInstalledAgentsCache, detectInstalledAgents } from './agent-detect'
+import { runAgentUpdate, updatePlanFor } from './agent-update'
+import { availability, createLatestVersionsCache, fetchAllLatestVersions } from './agent-latest'
 import { SKILL_FILE, markSkillManagedBy, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
@@ -742,6 +744,26 @@ const getInstalledAgents = createInstalledAgentsCache(async () =>
     shell: process.env.SHELL || '/bin/zsh',
   })
 )
+
+const getLatestAgentVersions = createLatestVersionsCache(() =>
+  fetchAllLatestVersions(globalThis.fetch as any)
+)
+
+/** What is installed, what is published, and whether that is an update. */
+async function agentUpdateStatus(force = false) {
+  const [probed, latest] = await Promise.all([
+    getInstalledAgents(force),
+    // The registry lookup must never take the install probe down with it: a
+    // laptop offline still deserves to be told what it has installed.
+    getLatestAgentVersions(force).catch(() => ({} as Record<string, string | null>)),
+  ])
+  const updates: Record<string, ReturnType<typeof availability>> = {}
+  for (const [agent, status] of Object.entries(probed.status)) {
+    if (!status?.installed) continue
+    updates[agent] = availability(status.version, latest[agent])
+  }
+  return { status: probed.status, conclusive: probed.conclusive, updates }
+}
 
 interface SlashCommand {
   name: string
@@ -3707,6 +3729,33 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('agents:checkInstalled', async (_e, force?: boolean) =>
     wrap(async () => getInstalledAgents(force === true))
+  )
+
+  // Installed + published, in one call: the panel needs both to decide whether
+  // to offer an update at all, and asking for them separately would show the
+  // button flicker into existence a second after the versions land.
+  ipcMain.handle('agents:updateStatus', async (_e, force?: boolean) =>
+    wrap(async () => agentUpdateStatus(force === true))
+  )
+
+  // Update one agent CLI in place. The re-probe afterwards is not optional:
+  // the version on screen is the reason the user pressed the button, and a
+  // successful update that still reads as the old version looks like a failure.
+  ipcMain.handle('agents:update', async (_e, agent: string) =>
+    wrap(async () => {
+      const probed = await getInstalledAgents(false)
+      const plan = updatePlanFor(agent, probed.status[agent])
+      if (!plan) throw new Error(`No update available for ${agent} — its CLI was not found.`)
+      const outcome = await runAgentUpdate({
+        plan,
+        spawn: (await import('child_process')).spawn,
+        shell: process.env.SHELL || '/bin/zsh',
+      })
+      // Re-probe, and re-decide: after a successful update the button must
+      // disappear, which only happens if the comparison is redone here.
+      const after = await agentUpdateStatus(true)
+      return { ...outcome, status: after.status, updates: after.updates }
+    })
   )
 
   // ── Skills IPC ────────────────────────────────────────────────────

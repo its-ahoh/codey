@@ -20,7 +20,13 @@ export const AGENT_BINARIES: Record<string, string> = {
   'pi': 'pi',
 }
 
-export type InstallStatus = { installed: boolean; path?: string }
+export type InstallStatus = {
+  installed: boolean
+  path?: string
+  /** First line of `<bin> --version`, trimmed. Absent when the binary is
+   *  missing, prints nothing, or the probe was cut short before reaching it. */
+  version?: string
+}
 
 export type ProbeResult = {
   status: Record<string, InstallStatus>
@@ -30,12 +36,27 @@ export type ProbeResult = {
 
 /** Tags our lines so dotfile chatter (banners, nvm notices) can't be mistaken for output. */
 const MARKER = 'codey-probe'
+/** Tags the version lines. Deliberately not a suffix of MARKER, so the two
+ *  kinds of line can never be read as each other. */
+const VERSION_MARKER = 'codey-probe-version'
 
-/** One shell command emitting exactly one `MARKER\tbin\tpath` line per binary. */
+/**
+ * One shell command emitting one `MARKER\tbin\tpath` line per binary, and then
+ * one `VERSION_MARKER\tbin\tversion` line per binary.
+ *
+ * Order matters: every path line is printed before the first version is asked
+ * for. Running a CLI is far slower and far more able to hang than resolving its
+ * name, so if the probe runs out of time it still ends up having answered the
+ * question it exists to answer — what is installed — and only loses the
+ * versions. `--version` reads no input, but stdin is closed anyway so a CLI
+ * that decides to prompt cannot hold the whole probe open.
+ */
 export function buildProbeScript(bins: string[]): string {
-  return bins
+  const paths = bins
     .map(b => `printf '${MARKER}\\t${b}\\t%s\\n' "$(command -v ${b} 2>/dev/null | head -n1)"`)
-    .join('; ')
+  const versions = bins
+    .map(b => `printf '${VERSION_MARKER}\\t${b}\\t%s\\n' "$(${b} --version 2>/dev/null </dev/null | head -n1)"`)
+  return [...paths, ...versions].join('; ')
 }
 
 /**
@@ -44,18 +65,23 @@ export function buildProbeScript(bins: string[]): string {
  */
 export function parseProbeOutput(bins: string[], out: string): Record<string, InstallStatus> | null {
   const seen = new Map<string, string>()
+  const versions = new Map<string, string>()
   for (const line of out.split('\n')) {
     const parts = line.split('\t')
+    if (parts.length < 3) continue
+    const value = parts.slice(2).join('\t').trim()
     // endsWith, not ===: an rc file that prints without a trailing newline
     // leaves its text glued to the front of our first line.
-    if (parts.length < 3 || !parts[0].endsWith(MARKER)) continue
-    seen.set(parts[1], parts.slice(2).join('\t').trim())
+    if (parts[0].endsWith(VERSION_MARKER)) { versions.set(parts[1], value); continue }
+    if (parts[0].endsWith(MARKER)) seen.set(parts[1], value)
   }
   if (bins.some(b => !seen.has(b))) return null
   const status: Record<string, InstallStatus> = {}
   for (const b of bins) {
     const path = seen.get(b) as string
-    status[b] = path ? { installed: true, path } : { installed: false }
+    if (!path) { status[b] = { installed: false }; continue }
+    const version = versions.get(b)?.slice(0, 80).trim()
+    status[b] = version ? { installed: true, path, version } : { installed: true, path }
   }
   return status
 }
@@ -72,8 +98,11 @@ export async function detectInstalledAgents(opts: {
   const bins = Object.values(binaries)
   // Generous: this is one shell, it runs about once per app launch, and the old
   // budget was tight enough that launch-time load alone could blow through it.
-  const timeoutMs = opts.timeoutMs ?? 20_000
+  const timeoutMs = opts.timeoutMs ?? 30_000
 
+  // On timeout we keep what the shell had already printed rather than throwing
+  // it away: the path lines come first, so a probe killed while asking a slow
+  // CLI for its version still answers what is installed.
   const out = await new Promise<string | null>(resolve => {
     // -i so login dotfiles populate PATH the way they do in Terminal.
     const p = opts.spawn(opts.shell, ['-i', '-c', buildProbeScript(bins)], {
@@ -82,7 +111,7 @@ export async function detectInstalledAgents(opts: {
     let buf = ''
     let done = false
     const finish = (v: string | null) => { if (!done) { done = true; clearTimeout(timer); resolve(v) } }
-    const timer = setTimeout(() => { try { p.kill() } catch { /* already gone */ } finish(null) }, timeoutMs)
+    const timer = setTimeout(() => { try { p.kill() } catch { /* already gone */ } finish(buf) }, timeoutMs)
     p.stdout?.on('data', (d: Buffer) => { buf += d.toString() })
     p.on('close', () => finish(buf))
     p.on('error', () => finish(null))
