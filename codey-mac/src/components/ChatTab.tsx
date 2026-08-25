@@ -2900,6 +2900,11 @@ export const ChatTab: React.FC<Props> = ({
                   background: voiceBusy && voice.mode === 'dictate' ? C.red : 'transparent',
                   opacity: voiceWarming ? 0.4 : 1,
                   cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarming ? 'pointer' : 'default',
+                  // A disabled button still hit-tests, so it swallows the hover
+                  // and the wrapper's title never fires - which is precisely the
+                  // state the explanation exists for. Hand the hover to the
+                  // wrapper instead.
+                  pointerEvents: !isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarming ? 'none' : 'auto',
                 }}
               >
                 {voice.state === 'recording' && voice.mode === 'dictate'
@@ -2944,6 +2949,11 @@ export const ChatTab: React.FC<Props> = ({
                     : 'transparent',
                   opacity: voiceWarming ? 0.4 : 1,
                   cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarming ? 'pointer' : 'default',
+                  // A disabled button still hit-tests, so it swallows the hover
+                  // and the wrapper's title never fires - which is precisely the
+                  // state the explanation exists for. Hand the hover to the
+                  // wrapper instead.
+                  pointerEvents: !isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarming ? 'none' : 'auto',
                 }}
               >
                 {voice.state === 'recording' && voice.mode === 'converse'
