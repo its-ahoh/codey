@@ -10,7 +10,6 @@ describe('POST /voice/polish', () => {
   let server: ApiServer;
   let port: number;
   let polish: { enabled?: boolean } | undefined;
-  let realPlatform: PropertyDescriptor | undefined;
 
   const fakeStatus = () => ({
     status: 'healthy' as const,
@@ -39,27 +38,35 @@ describe('POST /voice/polish', () => {
 
   const spoken = 'so um I I want to add a button here right';
 
+  // `/voice/*` answers 501 off macOS. vitest.setup.ts reports darwin to the
+  // whole suite so these run on CI's Linux runner too; this is how the one
+  // case that wants the truth gets it back.
+  const realPlatform = process.env.CODEY_REAL_PLATFORM ?? 'darwin';
+  // Awaits `body` before restoring: the server reads the platform when it
+  // handles the request, which is after the promise is returned, so a plain
+  // synchronous try/finally puts darwin back before the guard is ever reached.
+  const asRealPlatform = async <T>(body: () => Promise<T>): Promise<T> => {
+    Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
+    try {
+      return await body();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    }
+  };
+
   beforeEach(async () => {
-    // `/voice/*` answers 501 off macOS, and CI runs on Linux. The endpoint's
-    // behaviour is platform-independent and worth covering on every runner,
-    // so the platform is stubbed rather than the suite skipped.
-    realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     polish = { enabled: true };
     server = new ApiServer(0, fakeStatus, fakeConfigManager());
     await server.start();
     port = (server as any).server.address().port;
   });
 
-  afterEach(async () => {
-    await server.stop();
-    if (realPlatform) Object.defineProperty(process, 'platform', realPlatform);
-  });
+  afterEach(async () => { await server.stop(); });
 
   it('is not served at all off macOS', async () => {
-    if (realPlatform) Object.defineProperty(process, 'platform', realPlatform);
-    if (process.platform === 'darwin') return;
-    expect((await post({ text: spoken })).status).toBe(501);
+    if (realPlatform === 'darwin') return;
+    const res = await asRealPlatform(() => post({ text: spoken }));
+    expect(res.status).toBe(501);
   });
 
   it('returns the cleaned text when the runner produces one', async () => {
