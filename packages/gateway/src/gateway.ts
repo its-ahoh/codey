@@ -685,8 +685,6 @@ export class Codey {
     );
     this.logger = logger || Logger.getInstance();
     this.contextManager = new ContextManager({
-      maxTokenBudget: config.context?.maxTokenBudget ?? 12000,
-      maxTurns: config.context?.maxTurns ?? 30,
       ttlMs: (config.context?.ttlMinutes ?? 60) * 60 * 1000,
       persistDir: './workspaces',
     });

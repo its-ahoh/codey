@@ -86,15 +86,14 @@ export interface ContextWindow {
   sessionAnchor?: SessionAnchor;
   /** Warm CLI sessions for workers running in this conversation, by name. */
   workerAnchors?: Record<string, WorkerAnchor>;
+  /** Lines written to the transcript sidecar so far. Line N holds the Nth turn
+   *  this window ever saw — including turns already evicted from `turns`. */
+  transcriptLines: number;
 }
 
 // ── Configuration ──────────────────────────────────────────────────
 
 export interface ContextConfig {
-  /** Max estimated tokens before compaction kicks in (default 12000) */
-  maxTokenBudget: number;
-  /** Max number of turns to keep (default 30) */
-  maxTurns: number;
   /** TTL in ms (default 60 minutes) */
   ttlMs: number;
   /** Directory for persisting context snapshots (optional) */
@@ -102,10 +101,26 @@ export interface ContextConfig {
 }
 
 const DEFAULT_CONFIG: ContextConfig = {
-  maxTokenBudget: 12000,
-  maxTurns: 30,
   ttlMs: 60 * 60 * 1000,
 };
+
+/**
+ * Above this many turns a prompt stops inlining history and hands over a
+ * transcript cursor instead. Below it, inlining beats making the agent spend
+ * a tool call on a handful of short turns.
+ */
+export const CONTEXT_INLINE_LIMIT = 20;
+
+/** Recent turns kept inline even in pointer mode, so a self-contained
+ *  follow-up can be answered without reading the transcript at all. */
+export const CONTEXT_TAIL_INLINE = 4;
+
+/**
+ * Turns retained in memory per window. The sidecar holds every turn, so
+ * evicting the head is lossless — it bounds RAM for a long-running
+ * conversation without bounding what the agent can reach.
+ */
+export const CONTEXT_RETAINED_TURNS = 200;
 
 // ── Context Manager ────────────────────────────────────────────────
 
@@ -142,6 +157,21 @@ export class ContextManager {
     }
   }
 
+  /**
+   * Start a window from zero. The sidecar is truncated with it: a window is
+   * only ever recreated after the previous one expired or was cleared, and
+   * leaving the old lines in place would silently desynchronise the cursor —
+   * line N would no longer be turn N. The archived JSON snapshot keeps the
+   * history that is being dropped here.
+   */
+  private createWindow(id: string): ContextWindow {
+    const file = this.transcriptFile(id);
+    if (file) {
+      try { fs.rmSync(file, { force: true }); } catch { /* best-effort */ }
+    }
+    return { id, turns: [], lastActive: Date.now(), totalTokens: 0, transcriptLines: 0 };
+  }
+
   // ── CRUD ───────────────────────────────────────────────────────
 
   async getOrCreate(conversationId: string): Promise<ContextWindow> {
@@ -157,12 +187,7 @@ export class ContextManager {
         this.windows.delete(conversationId);
       }
 
-      const window: ContextWindow = {
-        id: conversationId,
-        turns: [],
-        lastActive: Date.now(),
-        totalTokens: 0,
-      };
+      const window = this.createWindow(conversationId);
       this.windows.set(conversationId, window);
       return window;
     });
@@ -225,7 +250,7 @@ export class ContextManager {
     return this.withLock(windowId, () => {
       let window = this.windows.get(windowId);
       if (!window) {
-        window = { id: windowId, turns: [], lastActive: Date.now(), totalTokens: 0 };
+        window = this.createWindow(windowId);
         this.windows.set(windowId, window);
       }
       if (!window.workerAnchors) window.workerAnchors = {};
@@ -264,22 +289,23 @@ export class ContextManager {
     return this.withLock(windowId, () => {
       let window = this.windows.get(windowId);
       if (!window) {
-        window = { id: windowId, turns: [], lastActive: Date.now(), totalTokens: 0 };
+        window = this.createWindow(windowId);
         this.windows.set(windowId, window);
       }
 
       const tokenEstimate = estimateTokens(text);
-      window.turns.push({
+      const turn: ContextTurn = {
         id: `turn-${++this.turnCounter}`,
         role: 'user',
         timestamp: Date.now(),
         text,
         tokenEstimate,
-      });
+      };
+      window.turns.push(turn);
       window.totalTokens += tokenEstimate;
       window.lastActive = Date.now();
 
-      this.compact(window);
+      this.recordTurn(window, turn);
     });
   }
 
@@ -289,18 +315,19 @@ export class ContextManager {
       if (!window) return;
 
       const tokenEstimate = estimateTokens(text);
-      window.turns.push({
+      const turn: ContextTurn = {
         id: `turn-${++this.turnCounter}`,
         role: 'assistant',
         timestamp: Date.now(),
         text,
         meta,
         tokenEstimate,
-      });
+      };
+      window.turns.push(turn);
       window.totalTokens += tokenEstimate;
       window.lastActive = Date.now();
 
-      this.compact(window);
+      this.recordTurn(window, turn);
     });
   }
 
@@ -326,10 +353,33 @@ export class ContextManager {
       sections.push(workspaceMemory);
     }
 
+    // Past the inline limit, hand over a cursor instead of the replay. Codey
+    // owns the cursor — the CLI is a fresh process every turn and cannot be
+    // asked to remember where it left off. A short tail stays inline so a
+    // self-contained follow-up needs no tool round-trip at all.
+    const transcript = this.transcriptFile(window.id);
+    let inline = window.turns;
+    if (transcript && window.turns.length > CONTEXT_INLINE_LIMIT) {
+      const pointerLast = window.transcriptLines - CONTEXT_TAIL_INLINE;
+      // The window only holds the retained tail; earlier lines exist on disk.
+      const pointerFirst = window.transcriptLines - window.turns.length + 1;
+      if (pointerLast >= pointerFirst) {
+        sections.push([
+          `## Earlier Conversation (${pointerLast - pointerFirst + 1} turns, not inlined)`,
+          `Transcript: ${transcript}`,
+          'One JSON object per line, one line per turn, oldest first.',
+          `Lines ${pointerFirst}-${pointerLast} hold this history.`,
+          `Read them before answering (e.g. \`sed -n '${pointerFirst},${pointerLast}p'\`) unless the current request below is fully self-contained.`,
+          'Context only — do not repeat or fabricate turns.',
+        ].join('\n'));
+        inline = window.turns.slice(-CONTEXT_TAIL_INLINE);
+      }
+    }
+
     // Build conversation context
     sections.push('## Conversation History');
 
-    for (const turn of window.turns) {
+    for (const turn of inline) {
       const displayText = turn.summary || turn.text;
 
       if (turn.role === 'user') {
@@ -364,86 +414,68 @@ export class ContextManager {
     return sections.join('\n\n');
   }
 
-  // ── Compaction ─────────────────────────────────────────────────
+  // ── Transcript sidecar ─────────────────────────────────────────
 
   /**
-   * Compress older turns when the context window exceeds budget.
-   * Strategy: summarize the oldest half of turns into a single summary turn.
+   * Append-only transcript for a conversation: one JSON object per line, one
+   * line per turn, line N == the Nth turn the window ever saw. `archive()`
+   * rewrites its JSON snapshot wholesale, so that file's line offsets are not
+   * stable; this file's are, which is what lets a prompt hand an agent a
+   * `path:line` cursor instead of inlining the history.
    */
-  private compact(window: ContextWindow): void {
-    // Enforce turn limit
-    while (window.turns.length > this.config.maxTurns) {
-      const removed = window.turns.shift();
-      if (removed) window.totalTokens -= removed.tokenEstimate;
-    }
+  private transcriptFile(windowId: string): string | undefined {
+    if (!this.config.persistDir) return undefined;
+    return path.resolve(
+      path.join(this.config.persistDir, 'context-archive', `${windowId}.jsonl`),
+    );
+  }
 
-    // Token budget compaction
-    if (window.totalTokens > this.config.maxTokenBudget && window.turns.length > 4) {
-      const halfIdx = Math.floor(window.turns.length / 2);
-      const oldTurns = window.turns.slice(0, halfIdx);
-      const newTurns = window.turns.slice(halfIdx);
+  /** Absolute transcript path for a conversation, or undefined when the
+   *  manager was built without a persist dir (tests, embedded use). */
+  transcriptPath(windowId: string): string | undefined {
+    return this.transcriptFile(windowId);
+  }
 
-      // Create a summary of the old turns
-      const summary = this.summarizeTurns(oldTurns);
-      const summaryTokens = estimateTokens(summary);
-
-      // Replace old turns with a single summary turn
-      const summaryTurn: ContextTurn = {
-        id: `summary-${Date.now()}`,
-        role: 'assistant',
-        timestamp: oldTurns[0].timestamp,
-        text: '',
-        summary,
-        tokenEstimate: summaryTokens,
-      };
-
-      const removedTokens = oldTurns.reduce((sum, t) => sum + t.tokenEstimate, 0);
-      window.turns = [summaryTurn, ...newTurns];
-      window.totalTokens = window.totalTokens - removedTokens + summaryTokens;
-    }
+  /** Lean projection — what a catching-up agent needs. Tool call payloads and
+   *  token accounting are omitted: they dominate the byte count and add
+   *  nothing to "what was said". */
+  private transcriptLine(turn: ContextTurn): string {
+    return JSON.stringify({
+      id: turn.id,
+      role: turn.role,
+      timestamp: turn.timestamp,
+      ...(turn.meta?.agent ? { agent: turn.meta.agent } : {}),
+      ...(turn.meta?.toolCalls?.length
+        ? { tools: turn.meta.toolCalls.map(tc => tc.tool) }
+        : {}),
+      ...(turn.meta?.filesChanged?.length
+        ? { files: turn.meta.filesChanged.map(fc => `${fc.action}:${fc.path}`) }
+        : {}),
+      text: turn.summary || turn.text,
+    });
   }
 
   /**
-   * Create a compact summary of turns. This is a local heuristic —
-   * not an LLM call — to keep it fast and free.
+   * Persist a turn to the sidecar and evict the head of the in-memory window
+   * once it outgrows the retention cap. Eviction is lossless: everything
+   * evicted is still on disk and still reachable through the cursor.
    */
-  private summarizeTurns(turns: ContextTurn[]): string {
-    const parts: string[] = ['[Earlier conversation summary]'];
-
-    // Extract key topics discussed
-    const userMessages = turns.filter(t => t.role === 'user').map(t => t.summary || t.text);
-    if (userMessages.length > 0) {
-      parts.push(`User asked about: ${userMessages.map(m => m.substring(0, 80)).join('; ')}`);
-    }
-
-    // Extract all tools used
-    const allTools = new Set<string>();
-    const allFiles = new Set<string>();
-    const allErrors: string[] = [];
-
-    for (const turn of turns) {
-      if (turn.meta?.toolCalls) {
-        for (const tc of turn.meta.toolCalls) allTools.add(tc.tool);
-      }
-      if (turn.meta?.filesChanged) {
-        for (const fc of turn.meta.filesChanged) allFiles.add(`${fc.action}:${fc.path}`);
-      }
-      if (turn.meta?.errors) {
-        allErrors.push(...turn.meta.errors);
+  private recordTurn(window: ContextWindow, turn: ContextTurn): void {
+    const file = this.transcriptFile(window.id);
+    if (file) {
+      try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.appendFileSync(file, this.transcriptLine(turn) + '\n');
+      } catch {
+        // Best-effort: a failed append costs the cursor a line, never the turn.
       }
     }
+    window.transcriptLines += 1;
 
-    if (allTools.size > 0) {
-      parts.push(`Tools used: ${Array.from(allTools).join(', ')}`);
+    while (window.turns.length > CONTEXT_RETAINED_TURNS) {
+      const evicted = window.turns.shift();
+      if (evicted) window.totalTokens -= evicted.tokenEstimate;
     }
-    if (allFiles.size > 0) {
-      parts.push(`Files touched: ${Array.from(allFiles).join(', ')}`);
-    }
-    if (allErrors.length > 0) {
-      parts.push(`Errors encountered: ${allErrors.slice(0, 3).join('; ')}`);
-    }
-
-    return parts.join('\n');
   }
 
   // ── Persistence ────────────────────────────────────────────────
@@ -461,6 +493,7 @@ export class ContextManager {
       const data = {
         id: window.id,
         turns: window.turns,
+        transcriptLines: window.transcriptLines,
         archivedAt: Date.now(),
       };
       fs.writeFileSync(path.join(archiveDir, filename), JSON.stringify(data, null, 2));
@@ -488,6 +521,7 @@ export class ContextManager {
           const data = JSON.parse(raw) as {
             id: string;
             turns: ContextTurn[];
+            transcriptLines?: number;
             archivedAt: number;
           };
 
@@ -502,6 +536,9 @@ export class ContextManager {
             turns: data.turns || [],
             lastActive: data.archivedAt,
             totalTokens: (data.turns || []).reduce((sum, t) => sum + (t.tokenEstimate || 0), 0),
+            // Snapshots written before the sidecar existed have no count; the
+            // retained turns are all we can vouch for, so start the cursor there.
+            transcriptLines: data.transcriptLines ?? (data.turns || []).length,
           };
           this.windows.set(window.id, window);
           fs.unlinkSync(path.join(archiveDir, file));

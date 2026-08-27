@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { ContextManager } from './context';
 
 function manager(): ContextManager {
-  return new ContextManager({ maxTokenBudget: 50000, maxTurns: 10, ttlMs: 60000 });
+  return new ContextManager({ ttlMs: 60000 });
 }
 
 describe('ContextManager conversation keying', () => {
