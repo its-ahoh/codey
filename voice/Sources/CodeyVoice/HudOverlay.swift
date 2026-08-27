@@ -6,8 +6,9 @@ import Cocoa
 /// is minimized or hidden behind another app.
 ///
 /// `.dictation` is the special "nowhere to paste" mode: we display the full
-/// transcript in a wider card, copy it to the clipboard, and wait for the
-/// user to click-to-dismiss (mouse events are enabled only in that mode).
+/// transcript in a wider card, copy it to the clipboard, and auto-dismiss
+/// after a few seconds (a click dismisses it sooner; mouse events are enabled
+/// only in that mode).
 final class HudOverlay {
     enum Mode {
         case recording
@@ -189,11 +190,15 @@ final class HudOverlay {
             spinner.stopAnimation(nil)
             spinner.isHidden = true
             label.textColor = NSColor.labelColor
-            label.stringValue = "\(text)\n\n✓ Copied — click to dismiss"
+            label.stringValue = "\(text)\n\n✓ Copied"
             setMeterVisible(false)
             applyDictationLayout()
+            // Mouse events stay on so a click can dismiss it early, but the
+            // card no longer waits for one: the text is already on the
+            // clipboard, so making the user confirm buys nothing and leaves a
+            // panel floating over whatever they do next.
             panel.ignoresMouseEvents = false
-            // No scheduled hide — user dismisses by clicking.
+            scheduleHide(after: 5.0)
         case .conversation(let phase):
             label.stringValue = phase.label
             label.textColor = NSColor.white
