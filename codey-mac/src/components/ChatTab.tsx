@@ -28,7 +28,7 @@ import { ACTIVITY_LABEL } from './agentActivity'
 import { ShimmerStatus } from './ShimmerStatus'
 import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
-import { getDraft, setDraft } from './chatDrafts'
+import { getDraft, setDraft, subscribeDrafts } from './chatDrafts'
 import { isBottomTerminalOpen, setBottomTerminalOpen as rememberBottomTerminalOpen } from './terminalVisibility'
 import { AGENT_API_TYPE, AGENT_NAMES, ApiType, modelFitsApiType } from './modelApiType'
 import { useInstalledAgents } from './installedAgents'
@@ -1313,6 +1313,21 @@ export const ChatTab: React.FC<Props> = ({
   useEffect(() => {
     setDraft(chatId, { text: input, attachments: pendingAttachments })
   }, [chatId, input, pendingAttachments])
+  // Drafts pushed from outside the composer (browser panel "Use in chat") land
+  // in the store while this ChatTab is already mounted, so the mount-time seed
+  // above would never see them — pull them into the live composer instead.
+  useEffect(() => subscribeDrafts((id, draft) => {
+    if (id !== chatId) return
+    setInput(draft.text)
+    setPendingAttachments(draft.attachments)
+    requestAnimationFrame(() => {
+      const ta = taRef.current
+      if (!ta) return
+      ta.focus()
+      const len = ta.value.length
+      try { ta.setSelectionRange(len, len) } catch { /* not supported */ }
+    })
+  }), [chatId])
   useEffect(() => { setInputHistoryIndex(null) }, [chatId, chat?.messages.length])
   // When a turn is interrupted, lift the original prompt back into the input
   // and focus the textarea so the user can edit/resend without retyping.

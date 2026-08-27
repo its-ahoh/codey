@@ -8,6 +8,7 @@ import type {
   BrowserExtensionCandidate,
   BrowserExtensionEntry,
   BrowserLoginWaitEvent,
+  BrowserProfileSummary,
   ChromeBrowserExtensionCandidate,
   BrowserState,
   BrowserTab,
@@ -15,7 +16,7 @@ import type {
 import { C } from '../theme'
 import { UIIcon } from './UIIcons'
 import { BrowserProfiles } from './BrowserProfiles'
-import { getDraft, setDraft } from './chatDrafts'
+import { appendDraftText } from './chatDrafts'
 import { buildBrowserContextPrompt } from './browserContextPrompt'
 
 interface Props {
@@ -74,6 +75,8 @@ export const BrowserPanel: React.FC<Props> = ({
   const hostRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const profileMenuRef = useRef<HTMLDivElement>(null)
+  const profileButtonRef = useRef<HTMLButtonElement>(null)
   const shownRef = useRef(false)
   const browserCoveredRef = useRef(false)
   const addressFocusedRef = useRef(false)
@@ -95,9 +98,13 @@ export const BrowserPanel: React.FC<Props> = ({
   const [chromeScanComplete, setChromeScanComplete] = useState(false)
   const [extensionBusy, setExtensionBusy] = useState(false)
   const [browserMenuOpen, setBrowserMenuOpen] = useState(false)
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const [profiles, setProfiles] = useState<BrowserProfileSummary[]>([])
+  const [activeProfile, setActiveProfile] = useState<string | null>(null)
+  const [profileBusy, setProfileBusy] = useState(false)
   const [panelWidth, setPanelWidth] = useState(900)
 
-  const browserCovered = browserMenuOpen || activeSettingsSection !== null
+  const browserCovered = browserMenuOpen || profileMenuOpen || activeSettingsSection !== null
   browserCoveredRef.current = browserCovered
 
   useLayoutEffect(() => {
@@ -249,6 +256,51 @@ export const BrowserPanel: React.FC<Props> = ({
     }
   }, [browserMenuOpen])
 
+  useEffect(() => {
+    if (!profileMenuOpen) return
+    const closeMenu = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (!profileMenuRef.current?.contains(target) && !profileButtonRef.current?.contains(target)) setProfileMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfileMenuOpen(false)
+    }
+    document.addEventListener('mousedown', closeMenu)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeMenu)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [profileMenuOpen])
+
+  // The toolbar's profile chip. There is no profile-changed event, so refresh
+  // on mount and every time the menu opens — the Settings ▸ Profiles page can
+  // have activated a different one behind our back.
+  const refreshProfiles = async () => {
+    if (!window.codey?.browser?.profiles) return
+    const result = await window.codey.browser.profiles.list()
+    if (!result.ok) {
+      setLocalError(result.error)
+      return
+    }
+    setProfiles(result.data.profiles)
+    setActiveProfile(result.data.active)
+  }
+
+  useEffect(() => { void refreshProfiles() }, [])
+
+  const activateProfile = async (name: string) => {
+    setProfileBusy(true)
+    try {
+      const result = await window.codey.browser.profiles.activate(name)
+      if (!result.ok) setLocalError(result.error)
+      await refreshProfiles()
+    } finally {
+      setProfileBusy(false)
+      setProfileMenuOpen(false)
+    }
+  }
+
   const navigate = async () => {
     const next = useResult(await window.codey.browser.navigate(address))
     if (next) setState(next)
@@ -271,12 +323,7 @@ export const BrowserPanel: React.FC<Props> = ({
     if (!chatId) return
     const context = useResult(await window.codey.browser.getPageContext())
     if (!context) return
-    const current = getDraft(chatId)
-    const pagePrompt = buildBrowserContextPrompt(context)
-    setDraft(chatId, {
-      ...current,
-      text: current.text ? `${current.text}\n\n${pagePrompt}` : pagePrompt,
-    })
+    appendDraftText(chatId, buildBrowserContextPrompt(context))
     onClose()
   }
 
@@ -477,6 +524,24 @@ export const BrowserPanel: React.FC<Props> = ({
         </form>
 
         <button
+          ref={profileButtonRef}
+          type="button"
+          style={{ ...styles.profileButton, ...(profileMenuOpen ? styles.profileButtonActive : null) }}
+          title={activeProfile ? `Browser profile: ${activeProfile} — click to switch` : 'No browser profile active — click to pick one'}
+          aria-label="Browser profile"
+          aria-haspopup="menu"
+          aria-expanded={profileMenuOpen}
+          onClick={() => {
+            setProfileMenuOpen(current => {
+              if (!current) void refreshProfiles()
+              return !current
+            })
+          }}
+        >
+          <UIIcon name="users" size={13} color={activeProfile ? C.green : undefined} />
+          {panelWidth >= 640 && <span style={styles.profileButtonLabel}>{activeProfile ?? 'No profile'}</span>}
+        </button>
+        <button
           type="button"
           style={{ ...styles.contextButton, opacity: chatId && state.url && !activeSettingsSection ? 1 : 0.5 }}
           title={chatId ? 'Add this page and its performance timing to the current chat' : 'Select a chat first'}
@@ -500,6 +565,33 @@ export const BrowserPanel: React.FC<Props> = ({
           <UIIcon name="close" size={15} />
         </button>}
       </div>
+
+      {profileMenuOpen && (
+        <div ref={profileMenuRef} style={styles.profileMenu} role="menu" aria-label="Browser profiles">
+          <div style={styles.profileMenuHeading}>Active profile</div>
+          {profiles.length === 0 && (
+            <div style={styles.profileMenuEmpty}>No profiles saved yet.</div>
+          )}
+          {profiles.map(profile => (
+            <button
+              key={profile.name}
+              type="button"
+              role="menuitemradio"
+              aria-checked={profile.active}
+              disabled={profileBusy || profile.active}
+              style={{ ...styles.menuButton, ...(profile.active ? styles.profileMenuItemActive : null) }}
+              onClick={() => void activateProfile(profile.name)}
+            >
+              <span aria-hidden="true" style={styles.profileMenuCheck}>{profile.active ? '✓' : ''}</span>
+              <span style={styles.profileMenuName}>{profile.name}</span>
+            </button>
+          ))}
+          <div style={styles.profileMenuDivider} />
+          <button type="button" style={styles.menuButton} onClick={() => { setProfileMenuOpen(false); openProfiles() }}>
+            <UIIcon name="settings" size={13} /> Manage profiles…
+          </button>
+        </div>
+      )}
 
       {browserMenuOpen && (
         <div ref={menuRef} style={styles.browserMenu} role="menu" aria-label="Browser actions">
@@ -903,6 +995,25 @@ const styles: Record<string, React.CSSProperties> = {
   iconButtonActive: { background: C.accentDim, color: C.accent },
   iconButtonDanger: { background: `${C.red}18`, color: C.red },
   closeButton: { width: 31, height: 31, padding: 0, border: `1px solid ${C.border}`, borderRadius: 7, display: 'grid', placeItems: 'center', background: C.surface2, color: C.fg3, cursor: 'pointer' },
+  profileButton: {
+    height: 31, maxWidth: 150, padding: '0 9px', border: `1px solid ${C.border}`, borderRadius: 7,
+    display: 'flex', alignItems: 'center', gap: 6, background: C.surface2, color: C.fg2,
+    cursor: 'pointer', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+  },
+  profileButtonActive: { background: C.accentDim, color: C.accent, borderColor: `${C.accent}66` },
+  profileButtonLabel: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  profileMenu: {
+    position: 'absolute', top: 43, right: 8, zIndex: 20, width: 230,
+    display: 'flex', flexDirection: 'column', gap: 2, padding: 6,
+    background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 10,
+    boxShadow: '0 12px 30px rgba(0,0,0,0.32)',
+  },
+  profileMenuHeading: { padding: '4px 9px', color: C.fg3, fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase' },
+  profileMenuEmpty: { padding: '4px 9px 8px', color: C.fg3, fontSize: 11 },
+  profileMenuItemActive: { color: C.accent },
+  profileMenuCheck: { width: 12, flexShrink: 0, textAlign: 'center' },
+  profileMenuName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  profileMenuDivider: { height: 1, margin: '4px 0', background: C.border },
   contextButton: { height: 31, padding: '0 10px', border: `1px solid ${C.accent}66`, borderRadius: 7, display: 'flex', alignItems: 'center', gap: 6, background: C.accentDim, color: C.accent, cursor: 'pointer', fontSize: 11, fontWeight: 650, whiteSpace: 'nowrap' },
   permissionBadge: { height: 28, padding: '0 8px', borderRadius: 7, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: 10, fontWeight: 650, whiteSpace: 'nowrap' },
   permissionApproved: { color: C.warningFg, background: C.warningBg, border: `1px solid ${C.warningFg}88` },
