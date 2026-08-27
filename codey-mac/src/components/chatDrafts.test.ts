@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { getDraft, setDraft, __resetDrafts } from './chatDrafts'
+import { getDraft, setDraft, appendDraftText, subscribeDrafts, __resetDrafts } from './chatDrafts'
 import type { FileAttachment } from '../types'
 
 const att = (id: string): FileAttachment => ({
@@ -34,5 +34,39 @@ describe('chatDrafts', () => {
     setDraft('a', { text: 'hi', attachments: [] })
     setDraft('a', { text: '', attachments: [] })
     expect(getDraft('a')).toEqual({ text: '', attachments: [] })
+  })
+})
+
+describe('appendDraftText', () => {
+  beforeEach(() => __resetDrafts())
+
+  it('appends to an empty draft and notifies subscribers', () => {
+    const seen: Array<[string, string]> = []
+    subscribeDrafts((chatId, draft) => seen.push([chatId, draft.text]))
+    appendDraftText('a', 'page context')
+    expect(getDraft('a').text).toBe('page context')
+    expect(seen).toEqual([['a', 'page context']])
+  })
+
+  it('keeps existing text and attachments, separated by a blank line', () => {
+    setDraft('a', { text: 'typed', attachments: [att('x')] })
+    appendDraftText('a', 'page context')
+    expect(getDraft('a')).toEqual({ text: 'typed\n\npage context', attachments: [att('x')] })
+  })
+
+  it('stops notifying after unsubscribe', () => {
+    let calls = 0
+    const off = subscribeDrafts(() => { calls += 1 })
+    appendDraftText('a', 'one')
+    off()
+    appendDraftText('a', 'two')
+    expect(calls).toBe(1)
+  })
+
+  it('does not notify on a plain setDraft write', () => {
+    let calls = 0
+    subscribeDrafts(() => { calls += 1 })
+    setDraft('a', { text: 'typing', attachments: [] })
+    expect(calls).toBe(0)
   })
 })
