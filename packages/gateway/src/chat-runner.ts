@@ -178,11 +178,20 @@ export function buildChatResumePrompt(
  * agent receives the gap exactly once instead of being polluted by the full
  * transcript every time the user switches back.
  */
+/**
+ * Above this many missed messages a catch-up stops inlining the replay and
+ * points at the transcript sidecar instead. Inlining is cheaper for a short
+ * gap (no extra tool round-trip); past the threshold the replay is what
+ * actually blows up the argv the CLI is spawned with.
+ */
+export const CATCHUP_INLINE_LIMIT = 20;
+
 export function buildChatCatchupPrompt(
   chat: Chat,
   syncedThroughMessageId: string,
   userText: string,
   attachments?: FileAttachment[],
+  opts?: { transcriptPath?: string; inlineLimit?: number },
 ): string {
   const cursor = chat.messages.findIndex(message => message.id === syncedThroughMessageId);
   if (cursor < 0 || cursor === chat.messages.length - 1) {
@@ -192,16 +201,37 @@ export function buildChatCatchupPrompt(
   const parts: string[] = [];
   if (attachments && attachments.length > 0) parts.push(formatAttachmentList(attachments));
 
-  const updates = chat.messages.slice(cursor + 1).map(message => {
-    if (message.role === 'user') return `[user]\n${message.content}`;
-    const identity = [message.agent, message.model].filter(Boolean).join(' / ');
-    return `[assistant${identity ? ` via ${identity}` : ''}]\n${message.content}`;
-  }).join('\n\n');
+  const missed = chat.messages.slice(cursor + 1);
+  const inlineLimit = opts?.inlineLimit ?? CATCHUP_INLINE_LIMIT;
 
-  parts.push(
-    `[Codey conversation updates since this agent was last active — context only; do not repeat or fabricate turns]\n${updates}`,
-    `[Respond to this new user message]\n${userText}`,
-  );
+  if (opts?.transcriptPath && missed.length > inlineLimit) {
+    // Sidecar line N holds messages[N-1], so the first unseen message sits on
+    // line cursor + 2. Codey owns this cursor — the agent is a fresh process
+    // every turn and cannot be asked to remember where it left off.
+    const firstUnseenLine = cursor + 2;
+    const lastLine = chat.messages.length;
+    parts.push(
+      [
+        `[Codey conversation updates since this agent was last active — ${missed.length} messages, not inlined]`,
+        `Transcript: ${opts.transcriptPath}`,
+        'One JSON object per line, one line per message, oldest first.',
+        `You last saw line ${cursor + 1}. Lines ${firstUnseenLine}-${lastLine} are new.`,
+        `Read them if you need the detail (e.g. \`sed -n '${firstUnseenLine},${lastLine}p'\`); skip it if the new request stands on its own.`,
+        'Context only — do not repeat or fabricate turns.',
+      ].join('\n'),
+    );
+  } else {
+    const updates = missed.map(message => {
+      if (message.role === 'user') return `[user]\n${message.content}`;
+      const identity = [message.agent, message.model].filter(Boolean).join(' / ');
+      return `[assistant${identity ? ` via ${identity}` : ''}]\n${message.content}`;
+    }).join('\n\n');
+    parts.push(
+      `[Codey conversation updates since this agent was last active — context only; do not repeat or fabricate turns]\n${updates}`,
+    );
+  }
+
+  parts.push(`[Respond to this new user message]\n${userText}`);
   return parts.join('\n\n');
 }
 

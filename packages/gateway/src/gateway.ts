@@ -6158,7 +6158,8 @@ Example: /model gpt-4.1 write a Python script`;
       // Resume the agent's own session. If other agents produced messages
       // while it was inactive, replay only that unseen gap before the new turn.
       prompt = selPrefix + (warmAnchor.syncedThroughMessageId
-        ? buildChatCatchupPrompt(chat, warmAnchor.syncedThroughMessageId, userText, attachments)
+        ? buildChatCatchupPrompt(chat, warmAnchor.syncedThroughMessageId, userText, attachments,
+            { transcriptPath: this.chatManager.transcriptPath(chatId) })
         : buildChatResumePrompt(chat, userText, attachments));
       resumeSessionId = warmAnchor.sessionId;
     } else {
