@@ -4,6 +4,17 @@ export const MAX_CONCURRENT_AGENTS = 4;
 export const CHAT_CONTEXT_WINDOW = 40;
 
 /**
+ * Above this many windowed messages a bootstrap stops inlining prior history
+ * and points at the transcript sidecar instead. Below it, inlining is cheaper
+ * than making the agent spend a tool call on a handful of short turns.
+ */
+export const BOOTSTRAP_INLINE_LIMIT = 20;
+
+/** Recent messages kept inline even in pointer mode, so a self-contained
+ *  follow-up can be answered without reading the transcript at all. */
+export const BOOTSTRAP_TAIL_INLINE = 4;
+
+/**
  * Appended to the prompt only when a chat has soloAdvisor enabled. Tells the
  * single agent to self-escalate when stuck via the [ASK_ADVISOR] marker.
  */
@@ -73,7 +84,11 @@ function formatAttachmentList(attachments: FileAttachment[]): string {
  * windowed transcript). Shared by buildChatPrompt and buildQuickQuestionPrompt
  * so both window/compact identically.
  */
-function renderChatContextSections(chat: Chat, windowSize: number): string[] {
+function renderChatContextSections(
+  chat: Chat,
+  windowSize: number,
+  opts?: { transcriptPath?: string; inlineLimit?: number },
+): string[] {
   const sections: string[] = [];
 
   const summarizedUpTo = chat.compaction?.summarizedUpTo ?? 0;
@@ -83,7 +98,32 @@ function renderChatContextSections(chat: Chat, windowSize: number): string[] {
     );
   }
 
-  const start = Math.max(summarizedUpTo, chat.messages.length - windowSize);
+  let start = Math.max(summarizedUpTo, chat.messages.length - windowSize);
+  const inlineLimit = opts?.inlineLimit ?? BOOTSTRAP_INLINE_LIMIT;
+
+  // Past the inline limit, hand over a transcript cursor instead of the
+  // replay. Sidecar line N holds messages[N-1]. The pointer deliberately
+  // reaches back further than `windowSize` — reading more costs the agent a
+  // longer `sed` range, not a longer prompt — while a short tail stays inlined
+  // so a self-contained follow-up needs no tool round-trip at all.
+  if (opts?.transcriptPath && chat.messages.length - start > inlineLimit) {
+    const pointerFirst = summarizedUpTo + 1;
+    const pointerLast = chat.messages.length - BOOTSTRAP_TAIL_INLINE;
+    if (pointerLast >= pointerFirst) {
+      sections.push(
+        [
+          `[Earlier conversation — ${pointerLast - pointerFirst + 1} messages, not inlined]`,
+          `Transcript: ${opts.transcriptPath}`,
+          'One JSON object per line, one line per message, oldest first.',
+          `Lines ${pointerFirst}-${pointerLast} hold this history.`,
+          `Read them before answering (e.g. \`sed -n '${pointerFirst},${pointerLast}p'\`) unless the new request below is fully self-contained.`,
+          'Context only — do not repeat or fabricate turns.',
+        ].join('\n'),
+      );
+      start = pointerLast;
+    }
+  }
+
   const tail = chat.messages.slice(start);
   if (tail.length > 0) {
     const transcript = tail.map(m => {
@@ -103,6 +143,7 @@ export function buildChatPrompt(
   userText: string,
   attachments?: FileAttachment[],
   windowSize = CHAT_CONTEXT_WINDOW,
+  opts?: { transcriptPath?: string; inlineLimit?: number },
 ): string {
   const sections: string[] = [];
 
@@ -110,7 +151,7 @@ export function buildChatPrompt(
     sections.push(formatAttachmentList(attachments));
   }
 
-  sections.push(...renderChatContextSections(chat, windowSize));
+  sections.push(...renderChatContextSections(chat, windowSize, opts));
 
   sections.push(`[Respond to this new user message]\n${userText}`);
   return sections.join('\n\n');
@@ -126,8 +167,9 @@ export function buildChatBootstrapPrompt(
   userText: string,
   attachments?: FileAttachment[],
   windowSize = CHAT_CONTEXT_WINDOW,
+  opts?: { transcriptPath?: string; inlineLimit?: number },
 ): string {
-  return buildChatPrompt(chat, userText, attachments, windowSize);
+  return buildChatPrompt(chat, userText, attachments, windowSize, opts);
 }
 
 const RESUME_CONTEXT_MAX_CHARS = 8_000;
@@ -294,6 +336,7 @@ export function buildQuickQuestionPrompt(
   question: string,
   attachments?: FileAttachment[],
   windowSize = CHAT_CONTEXT_WINDOW,
+  opts?: { transcriptPath?: string; inlineLimit?: number },
 ): string {
   const sections: string[] = [];
 
@@ -301,7 +344,7 @@ export function buildQuickQuestionPrompt(
     sections.push(formatAttachmentList(attachments));
   }
 
-  const ctx = renderChatContextSections(chat, windowSize);
+  const ctx = renderChatContextSections(chat, windowSize, opts);
   if (ctx.length > 0) {
     sections.push(
       '[Main chat — read-only reference. Do not continue or modify this conversation.]',

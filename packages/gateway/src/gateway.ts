@@ -29,7 +29,7 @@ import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
-import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
+import { CHAT_CONTEXT_WINDOW, buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
 import { resolveChoiceDigit } from './digit-mapping';
@@ -5820,7 +5820,8 @@ Example: /model gpt-4.1 write a Python script`;
     this.qqAborts.set(chatId, abortController);
 
     const started = Date.now();
-    const prompt = buildQuickQuestionPrompt(chat, qqHistory, question, attachments);
+    const prompt = buildQuickQuestionPrompt(chat, qqHistory, question, attachments, CHAT_CONTEXT_WINDOW,
+      { transcriptPath: this.chatManager.transcriptPath(chatId) });
 
     let streamedText = '';
     const onStream = (text: string) => {
@@ -6165,7 +6166,8 @@ Example: /model gpt-4.1 write a Python script`;
     } else {
       // Bootstrap turn: include prior history once. For claude-code, pre-allocate
       // a session id so we can resume on the next turn without parsing CLI output.
-      prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments);
+      prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments, CHAT_CONTEXT_WINDOW,
+        { transcriptPath: this.chatManager.transcriptPath(chatId) });
       if (canResume && agent === 'claude-code') {
         newSessionId = randomUUID();
       }
@@ -6358,7 +6360,8 @@ Example: /model gpt-4.1 write a Python script`;
           streamedText = '';
           resumeSessionId = undefined;
           newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
-          prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments) + chatWorkspaceInstruction;
+          prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments, CHAT_CONTEXT_WINDOW,
+            { transcriptPath: this.chatManager.transcriptPath(chatId) }) + chatWorkspaceInstruction;
           // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
           // the one that carried it (still exactly once per prompt build).
           if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);
