@@ -716,8 +716,8 @@ final class VoiceCoordinator {
                     } else if canInject {
                         self.hud.show(.success)
                     } else {
-                        // Nowhere to paste: show full text + auto-copy, wait
-                        // for click to dismiss.
+                        // Nowhere to paste: show full text + auto-copy, then
+                        // auto-dismiss after a few seconds.
                         self.hud.show(.dictation(finalText))
                     }
                 }
