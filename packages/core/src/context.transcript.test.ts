@@ -147,11 +147,14 @@ describe('ContextManager.buildPrompt', () => {
     expect(prompt.trimEnd().endsWith('## Current Request\nnow what')).toBe(true);
   });
 
-  it('starts the pointer after evicted turns rather than claiming line 1', async () => {
-    await seed('s5', CONTEXT_RETAINED_TURNS + 50);
+  it('reaches back past evicted turns, not just what memory retained', async () => {
+    const total = CONTEXT_RETAINED_TURNS + 50;
+    await seed('s5', total);
+    // Only CONTEXT_RETAINED_TURNS are still in RAM, but every turn is on disk,
+    // so the cursor must still offer line 1.
+    expect(mgr.getWindow('s5')!.turns.length).toBe(CONTEXT_RETAINED_TURNS);
     const prompt = mgr.buildPrompt('s5', 'now what');
-    const first = CONTEXT_RETAINED_TURNS + 50 - CONTEXT_RETAINED_TURNS + 1;
-    expect(prompt).toContain(`Lines ${first}-${CONTEXT_RETAINED_TURNS + 50 - CONTEXT_TAIL_INLINE}`);
+    expect(prompt).toContain(`Lines 1-${total - CONTEXT_TAIL_INLINE} hold this history.`);
   });
 
   it('shrinks the prompt substantially versus inlining', async () => {

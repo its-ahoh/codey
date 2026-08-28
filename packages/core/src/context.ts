@@ -116,11 +116,16 @@ export const CONTEXT_INLINE_LIMIT = 20;
 export const CONTEXT_TAIL_INLINE = 4;
 
 /**
- * Turns retained in memory per window. The sidecar holds every turn, so
- * evicting the head is lossless — it bounds RAM for a long-running
- * conversation without bounding what the agent can reach.
+ * Turns retained in memory per window — derived, not chosen. Nothing outside
+ * this module reads `turns`, and the only reader here inlines at most
+ * CONTEXT_INLINE_LIMIT of them, so retaining more buys nothing; the margin
+ * just keeps pointer mode reachable once eviction starts.
+ *
+ * Eviction is lossless for the prompt but not for the snapshot: retained turns
+ * carry tool status, an output preview and errors, which the sidecar
+ * deliberately omits. That is what this working set exists to hold.
  */
-export const CONTEXT_RETAINED_TURNS = 200;
+export const CONTEXT_RETAINED_TURNS = CONTEXT_INLINE_LIMIT + 4;
 
 // ── Context Manager ────────────────────────────────────────────────
 
@@ -361,8 +366,11 @@ export class ContextManager {
     let inline = window.turns;
     if (transcript && window.turns.length > CONTEXT_INLINE_LIMIT) {
       const pointerLast = window.transcriptLines - CONTEXT_TAIL_INLINE;
-      // The window only holds the retained tail; earlier lines exist on disk.
-      const pointerFirst = window.transcriptLines - window.turns.length + 1;
+      // Always line 1: the sidecar is truncated whenever a window restarts, so
+      // its first line is this conversation's first turn. How many turns are
+      // still retained in memory must not bound how far back the agent can
+      // read — everything evicted is on disk precisely so it stays reachable.
+      const pointerFirst = 1;
       if (pointerLast >= pointerFirst) {
         sections.push([
           `## Earlier Conversation (${pointerLast - pointerFirst + 1} turns, not inlined)`,
