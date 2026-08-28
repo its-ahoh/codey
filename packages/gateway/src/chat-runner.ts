@@ -1,14 +1,30 @@
-import { Chat, ChatMessage, ChecklistItem, CodingAgent, FileAttachment, TaskBrief, TeamRunSummary, ToolCallEntry } from '@codey/core';
+import { Chat, ChatMessage, ChecklistItem, CodingAgent, FileAttachment, TaskBrief, TeamRunSummary, ToolCallEntry, TranscriptSlice, renderSliceSection } from '@codey/core';
 
 export const MAX_CONCURRENT_AGENTS = 4;
 export const CHAT_CONTEXT_WINDOW = 40;
 
 /**
  * Above this many windowed messages a bootstrap stops inlining prior history
- * and points at the transcript sidecar instead. Below it, inlining is cheaper
+ * and hands over a transcript slice instead. Below it, inlining is cheaper
  * than making the agent spend a tool call on a handful of short turns.
  */
 export const BOOTSTRAP_INLINE_LIMIT = 20;
+
+/**
+ * Materialises lines `first`..`last` (1-based, inclusive) of the chat's
+ * transcript sidecar as a standalone file. Injected rather than called
+ * directly so the prompt builders stay free of filesystem access; the gateway
+ * supplies the real writer.
+ */
+export type SliceWriter = (first: number, last: number) => TranscriptSlice | undefined;
+
+export interface HistoryDeliveryOptions {
+  /** Absolute path of the transcript sidecar, when one exists. */
+  transcriptPath?: string;
+  /** Writer used to cut the un-inlined range out into its own file. */
+  writeSlice?: SliceWriter;
+  inlineLimit?: number;
+}
 
 /** Recent messages kept inline even in pointer mode, so a self-contained
  *  follow-up can be answered without reading the transcript at all. */
@@ -87,7 +103,7 @@ function formatAttachmentList(attachments: FileAttachment[]): string {
 function renderChatContextSections(
   chat: Chat,
   windowSize: number,
-  opts?: { transcriptPath?: string; inlineLimit?: number },
+  opts?: HistoryDeliveryOptions,
 ): string[] {
   const sections: string[] = [];
 
@@ -110,15 +126,23 @@ function renderChatContextSections(
     const pointerFirst = summarizedUpTo + 1;
     const pointerLast = chat.messages.length - BOOTSTRAP_TAIL_INLINE;
     if (pointerLast >= pointerFirst) {
-      sections.push(
-        [
-          `[Earlier conversation — ${pointerLast - pointerFirst + 1} messages, not inlined]`,
-          `Transcript: ${opts.transcriptPath}`,
-          'One JSON object per line, one line per message, oldest first.',
-          `Lines ${pointerFirst}-${pointerLast} hold this history.`,
-          `Read them before answering (e.g. \`sed -n '${pointerFirst},${pointerLast}p'\`) unless the new request below is fully self-contained.`,
-          'Context only — do not repeat or fabricate turns.',
-        ].join('\n'),
+      const slice = opts.writeSlice?.(pointerFirst, pointerLast);
+      sections.push(slice
+        ? renderSliceSection(slice, {
+            heading: 'Earlier conversation',
+            closing: 'Context only — do not repeat or fabricate turns.',
+          })
+        : [
+            // No slice (unreadable sidecar, or no writer wired): fall back to
+            // naming the range in place. Strictly worse — the agent has to
+            // extract it — but better than dropping the history entirely.
+            `[Earlier conversation — ${pointerLast - pointerFirst + 1} messages, not inlined]`,
+            `Transcript: ${opts.transcriptPath}`,
+            'One JSON object per line, one line per message, oldest first.',
+            `Lines ${pointerFirst}-${pointerLast} hold this history.`,
+            `Read them before answering (e.g. \`sed -n '${pointerFirst},${pointerLast}p'\`) unless the new request below is fully self-contained.`,
+            'Context only — do not repeat or fabricate turns.',
+          ].join('\n'),
       );
       start = pointerLast;
     }
@@ -143,7 +167,7 @@ export function buildChatPrompt(
   userText: string,
   attachments?: FileAttachment[],
   windowSize = CHAT_CONTEXT_WINDOW,
-  opts?: { transcriptPath?: string; inlineLimit?: number },
+  opts?: HistoryDeliveryOptions,
 ): string {
   const sections: string[] = [];
 
@@ -167,7 +191,7 @@ export function buildChatBootstrapPrompt(
   userText: string,
   attachments?: FileAttachment[],
   windowSize = CHAT_CONTEXT_WINDOW,
-  opts?: { transcriptPath?: string; inlineLimit?: number },
+  opts?: HistoryDeliveryOptions,
 ): string {
   return buildChatPrompt(chat, userText, attachments, windowSize, opts);
 }
@@ -233,7 +257,7 @@ export function buildChatCatchupPrompt(
   syncedThroughMessageId: string,
   userText: string,
   attachments?: FileAttachment[],
-  opts?: { transcriptPath?: string; inlineLimit?: number },
+  opts?: HistoryDeliveryOptions,
 ): string {
   const cursor = chat.messages.findIndex(message => message.id === syncedThroughMessageId);
   if (cursor < 0 || cursor === chat.messages.length - 1) {
@@ -252,15 +276,20 @@ export function buildChatCatchupPrompt(
     // every turn and cannot be asked to remember where it left off.
     const firstUnseenLine = cursor + 2;
     const lastLine = chat.messages.length;
-    parts.push(
-      [
-        `[Codey conversation updates since this agent was last active — ${missed.length} messages, not inlined]`,
-        `Transcript: ${opts.transcriptPath}`,
-        'One JSON object per line, one line per message, oldest first.',
-        `You last saw line ${cursor + 1}. Lines ${firstUnseenLine}-${lastLine} are new.`,
-        `Read them if you need the detail (e.g. \`sed -n '${firstUnseenLine},${lastLine}p'\`); skip it if the new request stands on its own.`,
-        'Context only — do not repeat or fabricate turns.',
-      ].join('\n'),
+    const slice = opts.writeSlice?.(firstUnseenLine, lastLine);
+    parts.push(slice
+      ? renderSliceSection(slice, {
+          heading: 'Codey conversation updates since this agent was last active',
+          closing: 'Context only — do not repeat or fabricate turns.',
+        })
+      : [
+          `[Codey conversation updates since this agent was last active — ${missed.length} messages, not inlined]`,
+          `Transcript: ${opts.transcriptPath}`,
+          'One JSON object per line, one line per message, oldest first.',
+          `You last saw line ${cursor + 1}. Lines ${firstUnseenLine}-${lastLine} are new.`,
+          `Read them if you need the detail (e.g. \`sed -n '${firstUnseenLine},${lastLine}p'\`); skip it if the new request stands on its own.`,
+          'Context only — do not repeat or fabricate turns.',
+        ].join('\n'),
     );
   } else {
     const updates = missed.map(message => {
@@ -336,7 +365,7 @@ export function buildQuickQuestionPrompt(
   question: string,
   attachments?: FileAttachment[],
   windowSize = CHAT_CONTEXT_WINDOW,
-  opts?: { transcriptPath?: string; inlineLimit?: number },
+  opts?: HistoryDeliveryOptions,
 ): string {
   const sections: string[] = [];
 

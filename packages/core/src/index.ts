@@ -14,6 +14,7 @@ export * from './memory';
 export * from './agents';
 export * from './errors';
 export * from './context';
+export * from './transcript-slice';
 export * from './advisor';
 export * from './advisor-personality';
 export * from './solo-advisor';

@@ -133,8 +133,8 @@ describe('ContextManager.buildPrompt', () => {
     const win = mgr.getWindow('s1b')!;
     expect(win.turns.length).toBeLessThan(20);
     const prompt = mgr.buildPrompt('s1b', 'now what');
-    expect(prompt).toContain('not inlined');
-    expect(prompt).toContain('Lines 1-2 hold this history.');
+    expect(prompt).toContain('extracted into a file for you');
+    expect(prompt).toContain('2 messages');
   });
 
   it('keeps inlining many small turns that a turn cap would have cut off', async () => {
@@ -159,9 +159,23 @@ describe('ContextManager.buildPrompt', () => {
     await seed('s3', 100);
     // 100 turns of real text clears the byte budget.
     const prompt = mgr.buildPrompt('s3', 'now what');
-    expect(prompt).toContain(path.join(dir, 'context-archive', 's3.jsonl'));
-    expect(prompt).toContain(`Lines 1-${100 - CONTEXT_TAIL_INLINE} hold this history.`);
-    expect(prompt).toContain(`sed -n '1,${100 - CONTEXT_TAIL_INLINE}p'`);
+    const slice = path.join(dir, 'context-archive', '.slices', 's3.slice.jsonl');
+    expect(prompt).toContain(slice);
+    expect(prompt).toContain(`${100 - CONTEXT_TAIL_INLINE} messages`);
+    // The file holds exactly the un-inlined range, so there is no range left
+    // for the agent to work out.
+    expect(fs.readFileSync(slice, 'utf-8').split('\n').filter(Boolean)).toHaveLength(
+      100 - CONTEXT_TAIL_INLINE,
+    );
+  });
+
+  it('inlines a skeleton so a skipped file is not a blind turn', async () => {
+    await seed('s3b', 100);
+    const prompt = mgr.buildPrompt('s3b', 'now what');
+    expect(prompt).toContain('Skeleton of the same messages');
+    // Recognisable, but nothing like the full replay.
+    expect(prompt).toContain('turn-1');
+    expect(prompt.length).toBeLessThan(100 * 400 / 4);
   });
 
   it('still inlines the recent tail in pointer mode', async () => {
@@ -170,8 +184,9 @@ describe('ContextManager.buildPrompt', () => {
     for (let i = 100 - CONTEXT_TAIL_INLINE + 1; i <= 100; i++) {
       expect(prompt).toContain(`turn-${i} `);
     }
-    expect(prompt).not.toContain('turn-1 ');
-    expect(prompt).not.toContain(`turn-${100 - CONTEXT_TAIL_INLINE} `);
+    // The skeleton may name an early turn; its body must not be inlined.
+    expect(prompt).not.toContain(`turn-1 ${'.'.repeat(400)}`);
+    expect(prompt).not.toContain(`turn-${100 - CONTEXT_TAIL_INLINE} ${'.'.repeat(400)}`);
     expect(prompt.trimEnd().endsWith('## Current Request\nnow what')).toBe(true);
   });
 
@@ -182,7 +197,10 @@ describe('ContextManager.buildPrompt', () => {
     // so the cursor must still offer line 1.
     expect(mgr.getWindow('s5')!.turns.length).toBe(CONTEXT_RETAINED_TURNS);
     const prompt = mgr.buildPrompt('s5', 'now what');
-    expect(prompt).toContain(`Lines 1-${total - CONTEXT_TAIL_INLINE} hold this history.`);
+    const slice = path.join(dir, 'context-archive', '.slices', 's5.slice.jsonl');
+    expect(fs.readFileSync(slice, 'utf-8').split('\n').filter(Boolean)).toHaveLength(
+      total - CONTEXT_TAIL_INLINE,
+    );
   });
 
   it('shrinks the prompt substantially versus inlining', async () => {

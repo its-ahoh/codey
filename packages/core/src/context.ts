@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { estimateTokens } from './utils/tokens';
 import { toolPhaseOf } from './agents/tool-events';
+import { writeTranscriptSlice, renderSliceSection } from './transcript-slice';
 
 // ── Structured turn types ──────────────────────────────────────────
 
@@ -390,14 +391,24 @@ export class ContextManager {
       // read — everything evicted is on disk precisely so it stays reachable.
       const pointerFirst = 1;
       if (pointerLast >= pointerFirst) {
-        sections.push([
-          `## Earlier Conversation (${pointerLast - pointerFirst + 1} turns, not inlined)`,
-          `Transcript: ${transcript}`,
-          'One JSON object per line, one line per turn, oldest first.',
-          `Lines ${pointerFirst}-${pointerLast} hold this history.`,
-          `Read them before answering (e.g. \`sed -n '${pointerFirst},${pointerLast}p'\`) unless the current request below is fully self-contained.`,
-          'Context only — do not repeat or fabricate turns.',
-        ].join('\n'));
+        // Cut the range out into its own file rather than naming it. The agent
+        // then has nothing to get wrong: the file is the range.
+        const slice = writeTranscriptSlice(transcript, pointerFirst, pointerLast);
+        sections.push(slice
+          ? renderSliceSection(slice, {
+              heading: 'Earlier conversation',
+              closing: 'Context only — do not repeat or fabricate turns.',
+            })
+          : [
+              // Unreadable sidecar: name the range in place instead of
+              // dropping the history.
+              `## Earlier Conversation (${pointerLast - pointerFirst + 1} turns, not inlined)`,
+              `Transcript: ${transcript}`,
+              'One JSON object per line, one line per turn, oldest first.',
+              `Lines ${pointerFirst}-${pointerLast} hold this history.`,
+              `Read them before answering (e.g. \`sed -n '${pointerFirst},${pointerLast}p'\`) unless the current request below is fully self-contained.`,
+              'Context only — do not repeat or fabricate turns.',
+            ].join('\n'));
         inline = window.turns.slice(-CONTEXT_TAIL_INLINE);
       }
     }
