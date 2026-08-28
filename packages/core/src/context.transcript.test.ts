@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   ContextManager,
-  CONTEXT_INLINE_LIMIT,
+  CONTEXT_INLINE_MAX_BYTES,
   CONTEXT_TAIL_INLINE,
   CONTEXT_RETAINED_TURNS,
 } from './context';
@@ -104,20 +104,46 @@ describe('ContextManager.buildPrompt', () => {
 
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+  /** Turns of a realistic size: 100 of these clear the byte budget, which is
+   *  what pushes the prompt into pointer mode. */
   async function seed(id: string, turns: number): Promise<void> {
     await mgr.getOrCreate(id);
     for (let i = 1; i <= turns; i++) {
-      if (i % 2) await mgr.addUserTurn(id, `user ${i}`);
-      else await mgr.addAssistantTurn(id, `assistant ${i}`);
+      const body = `turn-${i} ${'.'.repeat(400)}`;
+      if (i % 2) await mgr.addUserTurn(id, body);
+      else await mgr.addAssistantTurn(id, body);
     }
   }
 
-  it('inlines everything when the history is short', async () => {
-    await seed('s1', CONTEXT_INLINE_LIMIT);
+  it('inlines everything while the replay stays under the byte budget', async () => {
+    await seed('s1', 40);
     const prompt = mgr.buildPrompt('s1', 'now what');
     expect(prompt).not.toContain('not inlined');
-    expect(prompt).toContain('user 1');
+    expect(prompt).toContain('turn-1 ');
     expect(prompt).toContain('now what');
+  });
+
+  it('switches to a pointer on bytes, not on turn count', async () => {
+    await mgr.getOrCreate('s1b');
+    // Six turns, but well past the byte budget: turn count would have inlined
+    // these, and inlining them is exactly what the budget exists to prevent.
+    for (let i = 0; i < 6; i++) {
+      await mgr.addUserTurn('s1b', 'z'.repeat(CONTEXT_INLINE_MAX_BYTES / 4));
+    }
+    const win = mgr.getWindow('s1b')!;
+    expect(win.turns.length).toBeLessThan(20);
+    const prompt = mgr.buildPrompt('s1b', 'now what');
+    expect(prompt).toContain('not inlined');
+    expect(prompt).toContain('Lines 1-2 hold this history.');
+  });
+
+  it('keeps inlining many small turns that a turn cap would have cut off', async () => {
+    await mgr.getOrCreate('s1c');
+    for (let i = 1; i <= 60; i++) await mgr.addUserTurn('s1c', `tiny ${i}`);
+    const prompt = mgr.buildPrompt('s1c', 'now what');
+    expect(prompt).not.toContain('not inlined');
+    expect(prompt).toContain('tiny 1');
+    expect(prompt).toContain('tiny 60');
   });
 
   it('inlines everything when no persist dir is configured', async () => {
@@ -131,6 +157,7 @@ describe('ContextManager.buildPrompt', () => {
 
   it('points at the transcript once the history is long', async () => {
     await seed('s3', 100);
+    // 100 turns of real text clears the byte budget.
     const prompt = mgr.buildPrompt('s3', 'now what');
     expect(prompt).toContain(path.join(dir, 'context-archive', 's3.jsonl'));
     expect(prompt).toContain(`Lines 1-${100 - CONTEXT_TAIL_INLINE} hold this history.`);
@@ -141,9 +168,10 @@ describe('ContextManager.buildPrompt', () => {
     await seed('s4', 100);
     const prompt = mgr.buildPrompt('s4', 'now what');
     for (let i = 100 - CONTEXT_TAIL_INLINE + 1; i <= 100; i++) {
-      expect(prompt).toContain(`${i}`);
+      expect(prompt).toContain(`turn-${i} `);
     }
-    expect(prompt).not.toContain('user 1\n');
+    expect(prompt).not.toContain('turn-1 ');
+    expect(prompt).not.toContain(`turn-${100 - CONTEXT_TAIL_INLINE} `);
     expect(prompt.trimEnd().endsWith('## Current Request\nnow what')).toBe(true);
   });
 

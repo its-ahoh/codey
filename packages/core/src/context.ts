@@ -105,27 +105,35 @@ const DEFAULT_CONFIG: ContextConfig = {
 };
 
 /**
- * Above this many turns a prompt stops inlining history and hands over a
- * transcript cursor instead. Below it, inlining beats making the agent spend
- * a tool call on a handful of short turns.
+ * Above this much inlined history a prompt hands over a transcript cursor
+ * instead of the replay. Below it, inlining wins: reading the sidecar costs
+ * the agent a tool round-trip, which is a bad trade for a few short turns.
+ *
+ * Measured in bytes rather than turns because bytes are the thing that
+ * actually hurts — the prompt is passed as a command-line argument, and twenty
+ * turns of chat and twenty turns of pasted logs differ by orders of magnitude.
+ * The threshold itself is a judgement call, not a measurement: roughly 6k
+ * tokens, small beside any current model's window but well past the point
+ * where one extra tool call is the cheaper option.
  */
-export const CONTEXT_INLINE_LIMIT = 20;
+export const CONTEXT_INLINE_MAX_BYTES = 24_000;
 
 /** Recent turns kept inline even in pointer mode, so a self-contained
  *  follow-up can be answered without reading the transcript at all. */
 export const CONTEXT_TAIL_INLINE = 4;
 
 /**
- * Turns retained in memory per window — derived, not chosen. Nothing outside
- * this module reads `turns`, and the only reader here inlines at most
- * CONTEXT_INLINE_LIMIT of them, so retaining more buys nothing; the margin
- * just keeps pointer mode reachable once eviction starts.
+ * Turns retained in memory per window. Purely a RAM ceiling: what the prompt
+ * inlines is decided by CONTEXT_INLINE_MAX_BYTES, and how far the cursor
+ * reaches is decided by the sidecar, so this number does not shape the prompt.
+ * It is set high enough that the byte budget, not eviction, is normally what
+ * ends inlining.
  *
  * Eviction is lossless for the prompt but not for the snapshot: retained turns
  * carry tool status, an output preview and errors, which the sidecar
  * deliberately omits. That is what this working set exists to hold.
  */
-export const CONTEXT_RETAINED_TURNS = CONTEXT_INLINE_LIMIT + 4;
+export const CONTEXT_RETAINED_TURNS = 200;
 
 // ── Context Manager ────────────────────────────────────────────────
 
@@ -358,13 +366,23 @@ export class ContextManager {
       sections.push(workspaceMemory);
     }
 
-    // Past the inline limit, hand over a cursor instead of the replay. Codey
-    // owns the cursor — the CLI is a fresh process every turn and cannot be
-    // asked to remember where it left off. A short tail stays inline so a
-    // self-contained follow-up needs no tool round-trip at all.
+    // Hand over a cursor instead of the replay once inlining stops paying for
+    // itself. Codey owns the cursor — the CLI is a fresh process every turn and
+    // cannot be asked to remember where it left off. A short tail stays inline
+    // so a self-contained follow-up needs no tool round-trip at all.
+    //
+    // Two independent reasons to switch: the replay has grown past the byte
+    // budget, or part of the history was evicted from memory and simply is not
+    // there to inline. Neither consults the retention cap — how much Codey
+    // keeps in RAM must not decide how the prompt is shaped.
     const transcript = this.transcriptFile(window.id);
     let inline = window.turns;
-    if (transcript && window.turns.length > CONTEXT_INLINE_LIMIT) {
+    const evicted = window.transcriptLines - window.turns.length;
+    const inlineBytes = window.turns.reduce(
+      (sum, turn) => sum + Buffer.byteLength(turn.summary || turn.text, 'utf8'),
+      0,
+    );
+    if (transcript && (evicted > 0 || inlineBytes > CONTEXT_INLINE_MAX_BYTES)) {
       const pointerLast = window.transcriptLines - CONTEXT_TAIL_INLINE;
       // Always line 1: the sidecar is truncated whenever a window restarts, so
       // its first line is this conversation's first turn. How many turns are
