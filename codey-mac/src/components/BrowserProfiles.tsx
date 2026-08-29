@@ -26,6 +26,9 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  // True once the user tried to save with an empty name. Greying the button
+  // out hid what was missing, so say it and mark the field instead.
+  const [nameMissing, setNameMissing] = useState(false)
 
   const refresh = useCallback(async () => {
     // A stale preload (app not restarted since the profiles bridge was added)
@@ -66,7 +69,12 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
 
   const saveCurrent = () => {
     const trimmed = name.trim()
-    if (!trimmed) return
+    if (!trimmed) {
+      setNameMissing(true)
+      setError('Give the profile a name first — type one in the field on the left.')
+      return
+    }
+    setNameMissing(false)
     setName('')
     void run(() => window.codey.browser.profiles.save(trimmed))
   }
@@ -103,19 +111,20 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
       <div style={compact ? styles.compactComposer : styles.composer}>
         <input
           value={name}
-          onChange={event => setName(event.target.value)}
+          onChange={event => { setName(event.target.value); if (nameMissing) { setNameMissing(false); setError(null) } }}
           onKeyDown={event => { if (event.key === 'Enter') saveCurrent() }}
           placeholder="Profile name"
           aria-label="New profile name"
           spellCheck={false}
           style={{
-            flex: '1 1 260px', minWidth: 0, background: C.surface2, border: `1px solid ${C.border2}`, color: C.fg,
+            flex: '1 1 260px', minWidth: 0, background: C.surface2,
+            border: `1px solid ${nameMissing ? C.red : C.border2}`, color: C.fg,
             borderRadius: 8, padding: '7px 10px', fontSize: compact ? 12 : 13, outline: 'none',
           }}
         />
         <button
           type="button"
-          disabled={busy || !name.trim()}
+          disabled={busy}
           onClick={saveCurrent}
           style={buttonStyle(compact)}
           title="Snapshot the current session into a profile"

@@ -30,11 +30,21 @@ const ApiRow: React.FC<{
   const [draft, setDraft] = useState<ApiKeyEntry>(entry)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // Which required fields the user left blank. Greying the Save button out
+  // hid *which* field was missing, so name them instead and mark them red.
+  const [missing, setMissing] = useState<{ name: boolean; apiKey: boolean }>({ name: false, apiKey: false })
 
   useEffect(() => { if (!editing) setDraft(entry) }, [entry.name, editing])
 
   const save = async () => {
-    if (!draft.name.trim() || !draft.apiKey.trim()) return
+    const blank = { name: !draft.name.trim(), apiKey: !draft.apiKey.trim() }
+    if (blank.name || blank.apiKey) {
+      setMissing(blank)
+      const labels = [blank.name && 'Name', blank.apiKey && 'API Key'].filter(Boolean)
+      setErr(`${labels.join(' and ')} ${labels.length > 1 ? 'are' : 'is'} required.`)
+      return
+    }
+    setMissing({ name: false, apiKey: false })
     setBusy(true); setErr(null)
     try { await onSave(draft, entry.name); setEditing(false) }
     catch (e: any) { setErr(e?.message ?? String(e)) }
@@ -105,11 +115,15 @@ const ApiRow: React.FC<{
     }}>
       <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, alignItems: 'center' }}>
         <label style={{ color: C.fg3, fontSize: 12 }}>Name</label>
-        <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}
-          placeholder="e.g. my-proxy" style={{ ...inputStyle, width: '100%' }} />
+        <input value={draft.name}
+          onChange={e => { setDraft({ ...draft, name: e.target.value }); if (missing.name) { setMissing(m => ({ ...m, name: false })); setErr(null) } }}
+          placeholder="e.g. my-proxy"
+          style={{ ...inputStyle, width: '100%', ...(missing.name ? { border: `1px solid ${C.red}` } : null) }} />
         <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
-        <input type="password" value={draft.apiKey} onChange={e => setDraft({ ...draft, apiKey: e.target.value })}
-          placeholder="API key" style={{ ...inputStyle, width: '100%' }} />
+        <input type="password" value={draft.apiKey}
+          onChange={e => { setDraft({ ...draft, apiKey: e.target.value }); if (missing.apiKey) { setMissing(m => ({ ...m, apiKey: false })); setErr(null) } }}
+          placeholder="API key"
+          style={{ ...inputStyle, width: '100%', ...(missing.apiKey ? { border: `1px solid ${C.red}` } : null) }} />
         {draft.purpose !== 'voice' && <>
           <label style={{ color: C.fg3, fontSize: 12 }}>Anthropic Base URL</label>
           <input value={draft.anthropicBaseUrl ?? ''} onChange={e => setDraft({ ...draft, anthropicBaseUrl: e.target.value || undefined })}
@@ -121,8 +135,8 @@ const ApiRow: React.FC<{
       </div>
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
-        <button onClick={() => { setEditing(false); setDraft(entry); setErr(null); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
-        <button onClick={save} style={pillButton('primary')} disabled={busy || !draft.name.trim() || !draft.apiKey.trim()}>
+        <button onClick={() => { setEditing(false); setDraft(entry); setErr(null); setMissing({ name: false, apiKey: false }); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
+        <button onClick={save} style={pillButton('primary')} disabled={busy}>
           {busy ? 'Saving…' : 'Save'}
         </button>
       </div>
