@@ -119,6 +119,7 @@ describe('BrowserProfileStore', () => {
         origins: [],
       }, 'https://example.com/')
       expect(written.name).toBe('work')
+      expect(written.avatar).toBeNull()
       expect(written.createdAt).toBeGreaterThanOrEqual(before)
       expect(written.sourceUrl).toBe('https://example.com/')
 
@@ -136,6 +137,11 @@ describe('BrowserProfileStore', () => {
       const summaries = store.list()
       expect(summaries.map(profile => profile.name)).toEqual(['work', 'zebra'])
       expect(summaries[0]).toMatchObject({ name: 'work', cookieCount: 0, originCount: 0, active: false })
+
+      const customized = store.setAvatar('work', '💼')
+      expect(customized.avatar).toBe('💼')
+      expect(store.read('work').avatar).toBe('💼')
+      expect(() => store.setAvatar('work', 'not-an-avatar')).toThrow(/available profile avatars/)
 
       store.remove('work')
       expect(store.list().map(profile => profile.name)).toEqual(['zebra'])

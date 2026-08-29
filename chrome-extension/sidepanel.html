@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Codey</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <main class="app">
+      <div class="chat-switcher">
+        <label for="chat-select">Continue chat</label>
+        <select id="chat-select" aria-label="Choose a Codey chat">
+          <option value="">New chat</option>
+        </select>
+      </div>
+
+      <div id="status" class="status" hidden>
+        <span id="status-text"></span>
+        <button id="status-retry" type="button">Retry</button>
+      </div>
+
+      <div id="page-context" class="page-context" hidden>
+        <span class="page-dot"></span>
+        <span id="page-title" class="page-title"></span>
+      </div>
+
+      <section id="messages" class="messages" aria-live="polite">
+        <div id="welcome" class="welcome">
+          <img src="icons/codey-avatar-512.png" alt="" class="welcome-avatar">
+          <h2>How can I help?</h2>
+          <p>Ask Codey a question or include the current page for context.</p>
+        </div>
+      </section>
+
+      <form id="composer" class="composer">
+        <div id="settings-popover" class="settings-popover" hidden>
+          <label>
+            <span>Agent</span>
+            <select id="agent-select" aria-label="Choose agent"><option value="">Default agent</option></select>
+          </label>
+          <label>
+            <span>Model</span>
+            <select id="model-select" aria-label="Choose model"><option value="">Default model</option></select>
+          </label>
+        </div>
+        <div id="attachments" class="attachments" hidden></div>
+        <textarea id="message" rows="1" maxlength="20000" placeholder="Message Codey…" aria-label="Message Codey"></textarea>
+        <div class="composer-footer">
+          <div class="composer-tools">
+            <label id="attach" class="tool-button" title="Attach files" aria-label="Attach files">
+              <input id="file-input" type="file" multiple aria-label="Attach files">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 10.7 4.9-4.9a2.4 2.4 0 0 1 3.4 3.4l-6.2 6.2a4 4 0 0 1-5.7-5.7l6-6"/></svg>
+            </label>
+            <input id="include-page" type="checkbox" checked hidden>
+          </div>
+          <div class="composer-actions">
+            <button id="settings-toggle" class="model-trigger" type="button" title="Choose Agent and Model" aria-label="Choose Agent and Model" aria-expanded="false">
+              <span id="model-label">Model</span>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg>
+            </button>
+            <button id="send" class="send" type="submit" aria-label="Send message">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 10 5-5 5 5M10 5v10"/></svg>
+            </button>
+          </div>
+        </div>
+      </form>
+    </main>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

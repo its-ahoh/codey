@@ -1,18 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { C } from '../theme'
-import { pillButton, unwrap } from './settingsAtoms'
+import { pillButton, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
+import { PluginLogo } from './PluginLogos'
 import { matchesToolSearch } from './tools-search'
 import { BrowserProfiles } from './BrowserProfiles'
+import { ChromeCompanionSettings } from './ChromeCompanionSettings'
 import type { PluginInfo, PluginInstallResult, PluginUpdateCheck } from '../codey-api'
 
 /** Codey refused to touch a skill of this name it did not write. The user
  *  decides; nothing is replaced or deleted until they say so. */
 type Pending = { action: 'install' | 'uninstall'; dir: string }
 
-/** Plugins whose card carries a settings page. The browser plugin's settings
- *  are the session profiles: save, import, activate, export and delete. */
-const SETTINGS_PLUGINS = new Set<string>(['browser'])
+/** Plugins whose card carries its own settings surface. Browser owns session
+ *  profiles; Chrome Companion owns the real-Chrome extension connection. */
+const SETTINGS_PLUGINS = new Set<string>(['browser', 'chrome-companion'])
 
 /** Toggle which plugin's settings page is open: clicking the same plugin again
  *  closes it, clicking another opens it. */
@@ -61,7 +63,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
       const listed = unwrap(await window.codey.plugins.list())
       setPlugins(listed)
       for (const plugin of listed) {
-        if (plugin.state !== 'absent') void checkForUpdate(plugin)
+        if (plugin.id === 'browser' && plugin.state !== 'absent') void checkForUpdate(plugin)
       }
     } catch (e: any) {
       setError(e?.message ?? String(e))
@@ -106,42 +108,64 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
     }
   }
 
+  const setChromeEnabled = async (plugin: PluginInfo, enabled: boolean) => {
+    setBusy(plugin.id)
+    setError(null)
+    try {
+      unwrap(await window.codey.plugins.setEnabled(plugin.id, enabled))
+      await reload()
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
   if (loading && plugins.length === 0) return <div style={styles.note}>Loading plugins…</div>
 
   return (
     <div>
       <div style={styles.intro}>
-        Plugins give agents extra capabilities. Installing one downloads a skill into
-        your own skill folder, where the Skills tab can turn it off or remove it;
-        changes apply to the next agent run.
+        Plugins give agents extra capabilities. Browser installs its published skill;
+        Chrome Companion is built into Codey and can be enabled with its switch.
+        Changes apply to the next agent run.
       </div>
       {error && <div style={styles.errorBanner}>{error}</div>}
       {filteredPlugins.map(plugin => {
         const installed = plugin.state !== 'absent'
+        const enabled = plugin.state === 'installed'
+        const bundled = plugin.id === 'chrome-companion'
         const working = busy === plugin.id
         const last = outcome[plugin.id]
         const ask = pending[plugin.id]
-        const hasSettings = SETTINGS_PLUGINS.has(plugin.id) && installed
+        const hasSettings = SETTINGS_PLUGINS.has(plugin.id) && (bundled || installed)
         const settingsOpen = settingsFor === plugin.id
         return (
-          <div key={plugin.id} style={styles.pluginWrap}>
+          <div key={plugin.id} style={{ ...styles.pluginWrap, ...(bundled ? styles.bundledWrap : styles.optionalWrap) }}>
             <div style={{ ...styles.card, ...(settingsOpen ? styles.cardWithSettings : null) }}>
-              <div style={styles.cardIcon}><UIIcon name="tools" size={18} /></div>
+              <div style={styles.cardIcon}><PluginLogo id={plugin.id} size={34} /></div>
               <div style={styles.cardBody}>
                 <div style={styles.cardName}>
                   {plugin.name}
-                  {installed && (
+                  <span style={bundled ? styles.builtInBadge : styles.optionalBadge}>
+                    {bundled ? 'Built-in' : 'Optional install'}
+                  </span>
+                  {bundled ? (
+                    <span style={enabled ? styles.badge : styles.badgeMuted}>
+                      {enabled ? 'Enabled' : 'Off'}
+                    </span>
+                  ) : installed && (
                     <span style={plugin.state === 'disabled' ? styles.badgeMuted : styles.badge}>
                       {plugin.state === 'disabled' ? 'Off in Skills' : 'Installed'}
                     </span>
                   )}
                 </div>
                 <div style={styles.cardDesc}>{plugin.description}</div>
-                {installed ? (
+                {bundled ? null : installed ? (
                   <div style={styles.cardHint}>
                     {plugin.state === 'disabled'
                       ? 'Switched off in Skills, so no agent loads it. Turn it back on there.'
-                      : 'Listed in Skills as "codey:browser".'}
+                      : `Listed in Skills as "codey:${plugin.id}".`}
                     {update[plugin.id]?.needsUpdate === true && (
                       <div style={styles.updateHint}>
                         {update[plugin.id]?.recorded === 'bundled'
@@ -157,7 +181,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                     Downloads from <span style={styles.path}>{plugin.sourceUrl}</span>
                   </div>
                 )}
-                {last?.installed && last.source === 'bundled' && (
+                {!bundled && last?.installed && last.source === 'bundled' && (
                   <div style={styles.cardWarn}>
                     Could not reach the skills repository, so Codey installed the copy it
                     ships with. {last.reason}
@@ -165,7 +189,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                 )}
                 {ask && (
                   <div style={styles.cardWarn}>
-                    A skill named "browser" is already at <span style={styles.path}>{ask.dir}</span>,
+                    A skill named “{plugin.id}” is already at <span style={styles.path}>{ask.dir}</span>,
                     and Codey did not write it.{' '}
                     {ask.action === 'install'
                       ? 'Installing replaces it.'
@@ -178,13 +202,23 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
                   <button
                     onClick={() => setSettingsFor(current => toggleSettingsId(current, plugin.id))}
                     disabled={working}
+                    aria-expanded={settingsOpen}
                     style={pluginActionButton(settingsOpen ? 'active' : 'neutral')}
-                    title="Browser settings — session profiles"
+                    title={plugin.id === 'browser' ? 'Browser settings — session profiles' : 'Chrome Companion settings'}
                   >
-                    <UIIcon name="settings" size={13} /> Settings
+                    <UIIcon name="settings" size={13} />
+                    {settingsOpen ? 'Hide' : plugin.id === 'browser' ? 'Profiles' : 'Setup'}
                   </button>
                 )}
-                {ask ? (
+                {bundled ? (
+                  <div style={working ? styles.toggleBusy : undefined} title={enabled ? 'Disable Chrome Companion for agents' : 'Enable Chrome Companion for agents'}>
+                    <Toggle
+                      on={enabled}
+                      onChange={next => { if (!working) void setChromeEnabled(plugin, next) }}
+                      label="Enable Chrome Companion"
+                    />
+                  </div>
+                ) : ask ? (
                   <>
                     <button
                       onClick={() => setPending(prev => forget(plugin.id, prev))}
@@ -226,23 +260,8 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
               </div>
             </div>
             {settingsOpen && (
-              <div style={styles.settingsPanel}>
-                <div style={styles.settingsHeader}>
-                  <div style={styles.settingsHeading}>
-                    <div style={styles.settingsIcon}><UIIcon name="users" size={15} /></div>
-                    <div>
-                      <div style={styles.settingsTitle}>Session profiles</div>
-                      <div style={styles.settingsCopy}>
-                        Save your current browser session, import a Codey or Playwright profile, and switch identities
-                        without signing in again.
-                      </div>
-                    </div>
-                  </div>
-                  <button type="button" onClick={() => setSettingsFor(null)} style={pillButton('ghost')}>
-                    Done
-                  </button>
-                </div>
-                <BrowserProfiles />
+              <div style={styles.settingsPanel} aria-label={`${plugin.name} settings`}>
+                {plugin.id === 'browser' ? <BrowserProfiles /> : <ChromeCompanionSettings />}
               </div>
             )}
           </div>
@@ -266,25 +285,17 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 10, border: `1px solid ${C.border}`, borderRadius: 12,
     background: C.surface2, overflow: 'hidden',
   },
+  bundledWrap: { borderLeft: `3px solid ${C.accent}` },
+  optionalWrap: { borderLeft: `3px solid ${C.border2}` },
   card: {
     display: 'flex', alignItems: 'center', gap: 12, padding: '15px 16px',
     background: C.surface2,
   },
   cardWithSettings: { paddingBottom: 14 },
   settingsPanel: {
-    padding: '16px', borderTop: `1px solid ${C.border}`, background: C.surface,
+    padding: '12px', borderTop: `1px solid ${C.border}`, background: C.surface,
   },
-  settingsHeader: {
-    display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12,
-  },
-  settingsHeading: { display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0 },
-  settingsIcon: {
-    width: 30, height: 30, display: 'grid', placeItems: 'center', flexShrink: 0,
-    borderRadius: 8, background: C.accentDim, color: C.accent,
-  },
-  settingsTitle: { color: C.fg, fontSize: 13, fontWeight: 750 },
-  settingsCopy: { color: C.fg3, fontSize: 11, lineHeight: 1.45, marginTop: 3, maxWidth: 650 },
-  cardIcon: { color: C.accent, flexShrink: 0 },
+  cardIcon: { width: 34, height: 34, flexShrink: 0 },
   cardBody: { flex: 1, minWidth: 0 },
   cardName: { color: C.fg, fontSize: 13, fontWeight: 700, marginBottom: 3 },
   cardDesc: { color: C.fg3, fontSize: 11.5, lineHeight: 1.45 },
@@ -300,7 +311,16 @@ const styles: Record<string, React.CSSProperties> = {
     marginLeft: 8, padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 650,
     background: C.surface3, color: C.fg3, verticalAlign: 'middle',
   },
+  builtInBadge: {
+    marginLeft: 8, padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 650,
+    background: C.accentDim, color: C.accent, verticalAlign: 'middle',
+  },
+  optionalBadge: {
+    marginLeft: 8, padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 650,
+    background: C.surface3, color: C.fg2, verticalAlign: 'middle',
+  },
   cardActions: { display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 },
+  toggleBusy: { opacity: 0.5, pointerEvents: 'none' },
   emptySearch: { color: C.fg3, fontSize: 12, textAlign: 'center', padding: '30px 16px' },
 }
 

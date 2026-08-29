@@ -102,11 +102,25 @@ describe('BrowserAgentBridge', () => {
     const onOpen = vi.fn()
     const requestControl = vi.fn(async () => true)
     const loginEvents: BrowserLoginWaitEvent[] = []
-    const bridge = new BrowserAgentBridge(controller, onOpen, requestControl, event => loginEvents.push(event), 5)
+    const companion = {
+      status: vi.fn(() => ({
+        endpoint: 'http://127.0.0.1:49321', paired: true, connected: true,
+        clientName: 'Test Chrome', pairedAt: 1, lastSeenAt: 2,
+      })),
+      activeTab: vi.fn(async () => ({ id: 9, windowId: 2, title: 'Chrome account', url: 'https://example.com/account' })),
+      snapshot: vi.fn(async () => ({
+        tab: { id: 9, windowId: 2, title: 'Chrome account', url: 'https://example.com/account' },
+        text: 'Signed in through Chrome', links: [], forms: [],
+      })),
+      navigate: vi.fn(async (url: string) => ({ id: 9, windowId: 2, title: 'Chrome', url })),
+    }
+    const bridge = new BrowserAgentBridge(controller, onOpen, requestControl, event => loginEvents.push(event), 5, companion)
     const info = await bridge.start()
     try {
       const denied = await call(info, 'GET', '/state', undefined, 'wrong')
       expect(denied.status).toBe(401)
+      expect((await call(info, 'GET', '/chrome/view')).status).toBe(401)
+      expect((await call(info, 'GET', '/view', undefined, info.chromeToken)).status).toBe(401)
 
       const opened = await call(info, 'POST', '/open', { url: 'https://example.com' })
       expect(opened).toEqual({ status: 200, body: state })
@@ -121,6 +135,12 @@ describe('BrowserAgentBridge', () => {
       const viewed = await call(info, 'GET', '/view')
       expect(viewed.status).toBe(200)
       expect(viewed.body.text).toBe('Hello from the page')
+
+      const chromeViewed = await call(info, 'GET', '/chrome/view', undefined, info.chromeToken)
+      expect(chromeViewed.body.text).toBe('Signed in through Chrome')
+      const chromeOpened = await call(info, 'POST', '/chrome/open', { url: 'https://github.com' }, info.chromeToken)
+      expect(chromeOpened.body.url).toBe('https://github.com')
+      expect(companion.navigate).toHaveBeenCalledWith('https://github.com')
 
       const snapshot = await call(info, 'GET', '/snapshot')
       expect(snapshot.body.elements[0]).toMatchObject({ ref: 'e1', label: 'Post' })
@@ -217,9 +237,21 @@ describe('BrowserAgentBridge', () => {
           ...process.env,
           CODEY_BROWSER_SOCKET: info.socketPath,
           CODEY_BROWSER_TOKEN: info.token,
+          CODEY_BROWSER_PLUGIN_ENABLED: '1',
         },
       })
       expect(JSON.parse(cliResult.stdout).text).toBe('Hello from the page')
+
+      const chromeCli = await execFileAsync(process.execPath, [cli, 'chrome', 'view'], {
+        env: {
+          ...process.env,
+          CODEY_BROWSER_SOCKET: info.socketPath,
+          CODEY_BROWSER_TOKEN: info.token,
+          CODEY_CHROME_COMPANION_TOKEN: info.chromeToken,
+          CODEY_CHROME_COMPANION_PLUGIN_ENABLED: '1',
+        },
+      })
+      expect(JSON.parse(chromeCli.stdout).text).toBe('Signed in through Chrome')
 
       // `--profile <name>` forwards the profile to the bridge, which
       // activates it before the command runs.
@@ -228,6 +260,7 @@ describe('BrowserAgentBridge', () => {
           ...process.env,
           CODEY_BROWSER_SOCKET: info.socketPath,
           CODEY_BROWSER_TOKEN: info.token,
+          CODEY_BROWSER_PLUGIN_ENABLED: '1',
         },
       })
       expect(JSON.parse(profileCli.stdout).text).toBe('Hello from the page')
@@ -240,6 +273,7 @@ describe('BrowserAgentBridge', () => {
           ...process.env,
           CODEY_BROWSER_SOCKET: info.socketPath,
           CODEY_BROWSER_TOKEN: info.token,
+          CODEY_BROWSER_PLUGIN_ENABLED: '1',
         },
       })
       expect(JSON.parse(profileListCli.stdout)).toEqual({ active: null, profiles: [] })
@@ -250,6 +284,7 @@ describe('BrowserAgentBridge', () => {
             ...process.env,
             CODEY_BROWSER_SOCKET: info.socketPath,
             CODEY_BROWSER_TOKEN: info.token,
+            CODEY_BROWSER_PLUGIN_ENABLED: '1',
           },
         })
         expect(JSON.parse(screenshotResult.stdout)).toMatchObject({

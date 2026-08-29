@@ -116,6 +116,7 @@ contextBridge.exposeInMainWorld('codey', {
     list: () => ipcRenderer.invoke('plugins:list'),
     install: (id: string, force?: boolean) => ipcRenderer.invoke('plugins:install', id, force),
     uninstall: (id: string, force?: boolean) => ipcRenderer.invoke('plugins:uninstall', id, force),
+    setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('plugins:setEnabled', id, enabled),
     check: (id: string) => ipcRenderer.invoke('plugins:check', id),
   },
   mcp: {
@@ -457,6 +458,20 @@ contextBridge.exposeInMainWorld('codey', {
       return () => ipcRenderer.removeListener('terminal:exit', listener)
     },
   },
+  chromeCompanion: {
+    status: () => ipcRenderer.invoke('chromeCompanion:status'),
+    disconnect: () => ipcRenderer.invoke('chromeCompanion:disconnect'),
+    activeTab: () => ipcRenderer.invoke('chromeCompanion:activeTab'),
+    snapshot: () => ipcRenderer.invoke('chromeCompanion:snapshot'),
+    exportSession: (name: string) => ipcRenderer.invoke('chromeCompanion:exportSession', name),
+    navigate: (url: string) => ipcRenderer.invoke('chromeCompanion:navigate', url),
+    showExtensionFolder: () => ipcRenderer.invoke('chromeCompanion:showExtensionFolder'),
+    onStatus: (handler: (state: any) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: any) => handler(state)
+      ipcRenderer.on('chromeCompanion:status', listener)
+      return () => ipcRenderer.removeListener('chromeCompanion:status', listener)
+    },
+  },
   browser: {
     getState: () => ipcRenderer.invoke('browser:getState'),
     show: (bounds: { x: number; y: number; width: number; height: number }) =>
@@ -480,6 +495,7 @@ contextBridge.exposeInMainWorld('codey', {
       list: () => ipcRenderer.invoke('browser:profiles:list'),
       save: (name: string) => ipcRenderer.invoke('browser:profiles:save', name),
       activate: (name: string) => ipcRenderer.invoke('browser:profiles:activate', name),
+      setAvatar: (name: string, avatar: string) => ipcRenderer.invoke('browser:profiles:setAvatar', name, avatar),
       delete: (name: string) => ipcRenderer.invoke('browser:profiles:delete', name),
       import: () => ipcRenderer.invoke('browser:profiles:import'),
       export: (name: string) => ipcRenderer.invoke('browser:profiles:export', name),

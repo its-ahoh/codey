@@ -1,15 +1,14 @@
 import type { BrowserSkillStatus } from '@codey/core'
 
 /**
- * A plugin is a capability Codey installs as an ordinary skill, pulled from the
- * published skills repository. Installing is the only thing the Plugins tab
- * does: once installed, the skill belongs to the user, and the Skills tab's own
- * on/off and delete are the controls that act on it. That is why the state is
- * read from disk rather than from config — two tabs describe one directory, and
- * neither may claim something the other contradicts.
+ * A plugin is an agent capability represented by an ordinary skill. Browser is
+ * pulled from the published skills repository; Chrome Companion ships with the
+ * app and uses a reversible enable switch. State is read from the skill file on
+ * disk rather than duplicated in config, so Plugins, Skills and agent execution
+ * always agree.
  */
 export interface PluginInfo extends BrowserSkillStatus {
-  id: 'browser'
+  id: 'browser' | 'chrome-companion'
   name: string
   description: string
 }
@@ -23,6 +22,13 @@ export const PLUGINS: Array<Pick<PluginInfo, 'id' | 'name' | 'description'>> = [
       'Let agents see and control the in-app Codey Browser. Works with every agent '
       + 'Codey runs. Browsing stays view-only by default; actions that change page '
       + 'state still require your approval in the app.',
+  },
+  {
+    id: 'chrome-companion',
+    name: 'Chrome Companion',
+    description:
+      'Let agents work through your real Google Chrome tabs and existing signed-in session. '
+      + 'The companion extension connects locally and is independent from the in-app Browser plugin.',
   },
 ]
 

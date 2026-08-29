@@ -18,6 +18,7 @@ import { UIIcon } from './UIIcons'
 import { BrowserProfiles } from './BrowserProfiles'
 import { appendDraftText } from './chatDrafts'
 import { buildBrowserContextPrompt } from './browserContextPrompt'
+import { browserProfileAvatar } from './browserProfileAvatars'
 
 interface Props {
   chatId?: string
@@ -106,6 +107,7 @@ export const BrowserPanel: React.FC<Props> = ({
 
   const browserCovered = browserMenuOpen || profileMenuOpen || activeSettingsSection !== null
   browserCoveredRef.current = browserCovered
+  const browserPageVisible = !browserCovered && !!state.url
 
   useLayoutEffect(() => {
     const root = rootRef.current
@@ -198,7 +200,7 @@ export const BrowserPanel: React.FC<Props> = ({
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
         const bounds = rectToBounds(host.getBoundingClientRect())
-        if (bounds.width === 0 || bounds.height === 0 || browserCoveredRef.current) return
+        if (bounds.width === 0 || bounds.height === 0 || browserCoveredRef.current || !state.url) return
         if (!shownRef.current) {
           shownRef.current = true
           void window.codey.browser.show(bounds).then(result => {
@@ -220,10 +222,10 @@ export const BrowserPanel: React.FC<Props> = ({
       observer.disconnect()
       window.removeEventListener('resize', placeBrowser)
     }
-  }, [])
+  }, [state.url])
 
   useLayoutEffect(() => {
-    if (browserCovered) {
+    if (!browserPageVisible) {
       shownRef.current = false
       void window.codey.browser.hide()
       return
@@ -237,7 +239,7 @@ export const BrowserPanel: React.FC<Props> = ({
       const next = useResult(result)
       if (next) setState(next)
     })
-  }, [browserCovered])
+  }, [browserPageVisible])
 
   useEffect(() => {
     if (!browserMenuOpen) return
@@ -318,6 +320,7 @@ export const BrowserPanel: React.FC<Props> = ({
 
   const displayedError = localError ?? state.error
   const secure = state.url.startsWith('https://')
+  const currentProfile = profiles.find(profile => profile.name === activeProfile)
 
   const usePageInChat = async () => {
     if (!chatId) return
@@ -538,7 +541,7 @@ export const BrowserPanel: React.FC<Props> = ({
             })
           }}
         >
-          <UIIcon name="users" size={13} color={activeProfile ? C.green : undefined} />
+          <span aria-hidden="true" style={styles.profileAvatarSmall}>{browserProfileAvatar(currentProfile)}</span>
           {panelWidth >= 640 && <span style={styles.profileButtonLabel}>{activeProfile ?? 'No profile'}</span>}
         </button>
         <button
@@ -582,8 +585,9 @@ export const BrowserPanel: React.FC<Props> = ({
               style={{ ...styles.menuButton, ...(profile.active ? styles.profileMenuItemActive : null) }}
               onClick={() => void activateProfile(profile.name)}
             >
-              <span aria-hidden="true" style={styles.profileMenuCheck}>{profile.active ? '✓' : ''}</span>
+              <span aria-hidden="true" style={styles.profileMenuAvatar}>{browserProfileAvatar(profile)}</span>
               <span style={styles.profileMenuName}>{profile.name}</span>
+              <span aria-hidden="true" style={styles.profileMenuCheck}>{profile.active ? '✓' : ''}</span>
             </button>
           ))}
           <div style={styles.profileMenuDivider} />
@@ -1002,6 +1006,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   profileButtonActive: { background: C.accentDim, color: C.accent, borderColor: `${C.accent}66` },
   profileButtonLabel: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  profileAvatarSmall: { width: 17, textAlign: 'center', fontSize: 14, lineHeight: 1 },
   profileMenu: {
     position: 'absolute', top: 43, right: 8, zIndex: 20, width: 230,
     display: 'flex', flexDirection: 'column', gap: 2, padding: 6,
@@ -1012,6 +1017,7 @@ const styles: Record<string, React.CSSProperties> = {
   profileMenuEmpty: { padding: '4px 9px 8px', color: C.fg3, fontSize: 11 },
   profileMenuItemActive: { color: C.accent },
   profileMenuCheck: { width: 12, flexShrink: 0, textAlign: 'center' },
+  profileMenuAvatar: { width: 20, flexShrink: 0, textAlign: 'center', fontSize: 15 },
   profileMenuName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   profileMenuDivider: { height: 1, margin: '4px 0', background: C.border },
   contextButton: { height: 31, padding: '0 10px', border: `1px solid ${C.accent}66`, borderRadius: 7, display: 'flex', alignItems: 'center', gap: 6, background: C.accentDim, color: C.accent, cursor: 'pointer', fontSize: 11, fontWeight: 650, whiteSpace: 'nowrap' },

@@ -545,8 +545,9 @@ describe('BrowserController profiles', () => {
         ],
         origins: [{ origin: 'https://github.com', localStorage: [{ name: 'gh-token', value: 'xyz' }] }],
       })
-      const profile = await controller.importProfile('gh', { json }, true)
+      const profile = await controller.importProfile('gh', { json }, true, 'https://github.com/settings')
       expect(profile.name).toBe('gh')
+      expect(profile.sourceUrl).toBe('https://github.com/settings')
       // Activating removed the live cookies and applied the profile's.
       expect(cookiesRemove).toHaveBeenCalledWith('https://example.com/', 'sid')
       expect(cookiesSet).toHaveBeenCalledWith(expect.objectContaining({

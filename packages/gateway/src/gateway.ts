@@ -272,6 +272,7 @@ export class Codey {
     signal?: AbortSignal;
     workingDir?: string;
     browserChatId?: string;
+    browserSurface?: 'chrome-companion';
     interactive?: boolean;
     skipPermissions?: boolean;
   }): Promise<{ response: AgentResponse; usedResume: boolean }> {
@@ -291,6 +292,7 @@ export class Codey {
       context: { workingDir: opts.workingDir ?? this.workingDir },
       browserTools: true,
       browserChatId: opts.browserChatId,
+      browserSurface: opts.browserSurface,
       onStream: opts.onStream,
       onThinking: opts.onThinking,
       onStatus: opts.onStatus,
@@ -4950,6 +4952,7 @@ Example: /model gpt-4.1 write a Python script`;
     opts: { forceAll?: boolean; routingTask?: string } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
+    browserSurface?: 'chrome-companion',
   ): Promise<{ response: string; tokens?: number; choices?: string[]; thinkingByStep?: Record<number, string>; teamTurnId?: string }> {
     if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
@@ -4991,6 +4994,7 @@ Example: /model gpt-4.1 write a Python script`;
       const { response } = await this.runWorkerStep({
         conversationId: teamConv,
         browserChatId: chatId,
+        browserSurface,
         workerName,
         task: prompt,
         blackboard,
@@ -5121,6 +5125,7 @@ Example: /model gpt-4.1 write a Python script`;
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
+          browserSurface,
           onStream: (text: string) => workerMsgs.onStream(text, workerName),
           onThinking: (text: string) => workerMsgs.onThinking(text, workerStep.get(workerName) ?? 0, workerName),
           onStatus: (update: any) => {
@@ -5950,7 +5955,12 @@ Example: /model gpt-4.1 write a Python script`;
     // `skillInvoke` is an explicit `/skill <name> <task>` invocation threaded
     // per-turn from the channel surface (Task 12: apply it in this method's
     // skill pre-run pass, taking precedence over the auto-apply matcher).
-    origin?: { channel: ChannelType; channelUserId: string; skillInvoke?: SkillInvoke },
+    origin?: {
+      channel?: ChannelType;
+      channelUserId?: string;
+      skillInvoke?: SkillInvoke;
+      surface?: 'chrome-companion';
+    },
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     let chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
@@ -6194,6 +6204,16 @@ Example: /model gpt-4.1 write a Python script`;
       : agentWorktreeParent
         ? `\n\n[Codey chat workspace]\nThis chat uses the shared checkout. Work there; do not create a worktree on your own initiative. Only when the user explicitly asks for one, choose a short semantic lower-kebab name with no slash, then run \`git worktree add -b <name> ${JSON.stringify(path.join(agentWorktreeParent, '<name>'))} HEAD\` and perform all subsequent work in that new directory. Create it only as a direct child of ${JSON.stringify(agentWorktreeParent)} so Codey can bind and display it.`
         : '\n\n[Codey chat workspace]\nThis chat already has a user-managed worktree. Continue using the selected checkout; do not create another worktree.';
+    const browserSurface = origin?.surface === 'chrome-companion'
+      || /(?:\b(?:google\s+)?chrome\b|谷歌浏览器|chrome\s*(?:插件|扩展))/iu.test(userText)
+      ? 'chrome-companion' as const
+      : undefined;
+    const browserSurfaceInstruction = browserSurface === 'chrome-companion'
+      ? `\n\n[Browser surface routing]\n${origin?.surface === 'chrome-companion'
+          ? 'This turn originated in Codey\'s Chrome Side Panel.'
+          : 'The user explicitly selected Google Chrome in this turn.'}
+For browser work, use the chrome-companion skill and the user's real Chrome tab/session. Do not use or substitute Codey's embedded Browser for this turn.`
+      : '';
     if (warmAnchor) {
       // Resume the agent's own session. If other agents produced messages
       // while it was inactive, replay only that unseen gap before the new turn.
@@ -6211,7 +6231,7 @@ Example: /model gpt-4.1 write a Python script`;
         newSessionId = randomUUID();
       }
     }
-    prompt += chatWorkspaceInstruction;
+    prompt += chatWorkspaceInstruction + browserSurfaceInstruction;
 
     // Solo advisor: when enabled (and not a team), tell the agent how to escalate.
     if (chat.soloAdvisor && chat.selection.type !== 'team') {
@@ -6387,7 +6407,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
         const team: TeamConfig = wsTeam ?? fallbackTeam;
         this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasParallel=${!!team.parallel} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
-        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model);
+        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model, browserSurface);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
@@ -6402,6 +6422,7 @@ Example: /model gpt-4.1 write a Python script`;
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
+          browserSurface,
           skipPermissions: this.getSkipPermissions(),
           onStream,
           onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
@@ -6419,7 +6440,7 @@ Example: /model gpt-4.1 write a Python script`;
           resumeSessionId = undefined;
           newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
           prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments, CHAT_CONTEXT_WINDOW,
-            this.historyDelivery(chatId)) + chatWorkspaceInstruction;
+            this.historyDelivery(chatId)) + chatWorkspaceInstruction + browserSurfaceInstruction;
           // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
           // the one that carried it (still exactly once per prompt build).
           if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);
@@ -6431,6 +6452,7 @@ Example: /model gpt-4.1 write a Python script`;
             context: { workingDir },
             browserTools: true,
             browserChatId: chatId,
+            browserSurface,
             skipPermissions: this.getSkipPermissions(),
             onStream,
             onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
@@ -6466,7 +6488,7 @@ Example: /model gpt-4.1 write a Python script`;
             reason: ask.reason,
             guidance,
           };
-          const followup = selPrefix + buildSoloAdvisorFollowupPrompt(followupInput);
+          const followup = selPrefix + buildSoloAdvisorFollowupPrompt(followupInput) + browserSurfaceInstruction;
           // Intentionally no resumeSessionId/newSessionId — each re-run bootstraps
           // fresh (the prior attempt + guidance are inlined in the followup prompt)
           // so this works uniformly across all agent types, not just claude-code.
@@ -6479,6 +6501,7 @@ Example: /model gpt-4.1 write a Python script`;
             context: { workingDir },
             browserTools: true,
             browserChatId: chatId,
+            browserSurface,
             skipPermissions: this.getSkipPermissions(),
             onStream,
             onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),

@@ -962,12 +962,13 @@ export class BrowserController {
     name: string,
     source: { path: string } | { json: string },
     activate = true,
+    sourceUrl: string | null = null,
   ): Promise<BrowserProfile> {
     assertProfileName(name)
     const data = 'path' in source
       ? readProfileJson(source.path)
       : parseProfileJsonText(source.json)
-    const profile = this.profiles().write(name, data, null)
+    const profile = this.profiles().write(name, data, sourceUrl)
     if (activate) {
       await this.applyProfileData(profile)
       this.profiles().setActive(name)
@@ -991,6 +992,7 @@ export class BrowserController {
     this.profiles().setActive(name)
     return this.profiles().list().find(summary => summary.name === name) ?? {
       name,
+      avatar: profile.avatar ?? null,
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
       cookieCount: profile.cookies.length,
@@ -998,6 +1000,10 @@ export class BrowserController {
       active: true,
       sourceUrl: profile.sourceUrl,
     }
+  }
+
+  setProfileAvatar(name: string, avatar: string): BrowserProfileSummary {
+    return this.profiles().setAvatar(name, avatar)
   }
 
   /** Remove a saved profile. Deleting the enabled profile disables it. */

@@ -7,8 +7,11 @@ const os = require('os')
 const path = require('path')
 
 const socketPath = process.env.CODEY_BROWSER_SOCKET
-const token = process.env.CODEY_BROWSER_TOKEN
+const browserToken = process.env.CODEY_BROWSER_TOKEN
+const chromeToken = process.env.CODEY_CHROME_COMPANION_TOKEN
 const chatId = process.env.CODEY_BROWSER_CHAT_ID
+const browserPluginEnabled = process.env.CODEY_BROWSER_PLUGIN_ENABLED === '1'
+const chromeCompanionPluginEnabled = process.env.CODEY_CHROME_COMPANION_PLUGIN_ENABLED === '1'
 
 // `--profile <name>` (or `-p <name>`) before the command selects the browser
 // profile this command operates under. It is forwarded to the bridge as a
@@ -62,12 +65,16 @@ function usage() {
     '  profile activate <name>    Switch the live session to a profile',
     '  profile export <name> <path>  Write a profile to a shareable JSON file',
     '  profile delete <name>      Remove a profile',
+    '  chrome status              Read Chrome Companion connection state',
+    '  chrome tab                 Read the active real-Chrome tab',
+    '  chrome view                Read the active real-Chrome page',
+    '  chrome open <url>          Navigate the active real-Chrome tab',
   ].join('\n')
 }
 
 function authHeaders() {
   return {
-    Authorization: `Bearer ${token}`,
+    Authorization: `Bearer ${command === 'chrome' ? chromeToken : browserToken}`,
     ...(profile ? { 'X-Codey-Profile': profile } : {}),
   }
 }
@@ -132,7 +139,16 @@ function request(method, route, body) {
 }
 
 async function main() {
-  if (!socketPath || !token) throw new Error('Codey Browser is not available in this agent session')
+  if (!socketPath) throw new Error('Codey browser tools are not available in this agent session')
+  const helpCommand = command === 'help' || command === '--help' || command === '-h' || command === undefined
+  if (!helpCommand && command === 'chrome' && !chromeCompanionPluginEnabled) {
+    throw new Error('The Chrome Companion plugin is not installed or enabled')
+  }
+  if (!helpCommand && command === 'chrome' && !chromeToken) throw new Error('Chrome Companion credentials are unavailable')
+  if (!helpCommand && command !== 'chrome' && !browserPluginEnabled) {
+    throw new Error('The Browser plugin is not installed or enabled')
+  }
+  if (!helpCommand && command !== 'chrome' && !browserToken) throw new Error('Browser credentials are unavailable')
   let value
   switch (command) {
     case 'open': {
@@ -251,6 +267,23 @@ async function main() {
       }
       break
     }
+    case 'chrome': {
+      const sub = rest[0]
+      if (sub === 'status') {
+        value = await request('GET', '/chrome/status')
+      } else if (sub === 'tab') {
+        value = await request('GET', '/chrome/tab')
+      } else if (sub === 'view') {
+        value = await request('GET', '/chrome/view')
+      } else if (sub === 'open') {
+        const url = rest.slice(1).join(' ').trim()
+        if (!url) throw new Error(`Missing Chrome URL\n${usage()}`)
+        value = await request('POST', '/chrome/open', { url })
+      } else {
+        throw new Error(`Unknown Chrome command: ${sub || ''}\n${usage()}`)
+      }
+      break
+    }
     case 'help':
     case '--help':
     case '-h':
@@ -266,4 +299,3 @@ main().catch(error => {
   process.stderr.write(`codey-browser: ${error.message || error}\n`)
   process.exitCode = 1
 })
-

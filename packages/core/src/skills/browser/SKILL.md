@@ -1,9 +1,19 @@
 ---
 name: browser
-description: Use when a task needs the live web or a real UI - open, read, screenshot, or click through pages in the user-visible Codey Browser, including pages behind the user's existing logins. Triggers - "open this page", "check the site", "log in and", "what does the page say", "click the button", "fill the form", "test the UI".
+description: Control Codey's embedded Browser only. Use for generic live-web/UI tasks from Codey when the user does not request Google Chrome. Never use for a turn from the Chrome Side Panel, the user's current Chrome tab, or an existing Chrome login; those belong to chrome-companion.
 ---
 
 # Codey Browser
+
+## Choosing between Browser and Chrome
+
+- Use this skill when the user says **Codey Browser**, **in-app Browser**, or
+  asks for generic web work without naming Chrome.
+- If the user says **Chrome**, **current Chrome tab**, **Chrome session**, or the
+  turn says it originated in the Chrome Side Panel, do not use this skill. Use
+  `chrome-companion` instead.
+- Never switch from Chrome Companion to this browser merely because this skill
+  is preinstalled or already open.
 
 Drive the browser window the user can see. Every command is one shell call:
 

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import { UIIcon } from './UIIcons'
 import type { BrowserProfileSummary } from '../codey-api'
+import { BROWSER_PROFILE_AVATARS, browserProfileAvatar } from './browserProfileAvatars'
 
 type IpcLike = { ok: boolean; error?: string }
 
@@ -29,6 +30,7 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
   // True once the user tried to save with an empty name. Greying the button
   // out hid what was missing, so say it and mark the field instead.
   const [nameMissing, setNameMissing] = useState(false)
+  const [avatarPicker, setAvatarPicker] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     // A stale preload (app not restarted since the profiles bridge was added)
@@ -154,7 +156,34 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
           display: 'flex', alignItems: 'center', flexWrap: compact ? 'wrap' : 'nowrap', gap: 8,
           background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: compact ? '10px' : '9px 11px',
         }}>
-          <UIIcon name="users" size={14} color={profile.active ? C.green : C.fg3} />
+          <div style={styles.avatarControl}>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setAvatarPicker(current => current === profile.name ? null : profile.name)}
+              style={{ ...styles.avatarButton, ...(profile.active ? styles.avatarButtonActive : null) }}
+              title={`Choose an avatar for ${profile.name}`}
+              aria-label={`Choose an avatar for ${profile.name}`}
+              aria-expanded={avatarPicker === profile.name}
+            >{browserProfileAvatar(profile)}</button>
+            {avatarPicker === profile.name && (
+              <div style={styles.avatarPicker} role="menu" aria-label={`Avatars for ${profile.name}`}>
+                {BROWSER_PROFILE_AVATARS.map(avatar => (
+                  <button
+                    key={avatar}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={profile.avatar === avatar}
+                    style={{ ...styles.avatarOption, ...(browserProfileAvatar(profile) === avatar ? styles.avatarOptionActive : null) }}
+                    onClick={() => {
+                      setAvatarPicker(null)
+                      void run(() => window.codey.browser.profiles.setAvatar(profile.name, avatar))
+                    }}
+                  >{avatar}</button>
+                ))}
+              </div>
+            )}
+          </div>
           <div style={{ flex: 1, minWidth: compact ? 180 : 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ color: C.fg, fontSize: compact ? 12 : 13, fontWeight: 600 }}>{profile.name}</span>
@@ -228,6 +257,12 @@ function activeBadgeStyle(compact: boolean): React.CSSProperties {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  avatarControl: { position: 'relative', flexShrink: 0 },
+  avatarButton: { width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, cursor: 'pointer', fontSize: 18 },
+  avatarButtonActive: { borderColor: C.green, background: `${C.green}14` },
+  avatarPicker: { position: 'absolute', top: 39, left: 0, zIndex: 4, width: 224, display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4, padding: 6, borderRadius: 10, border: `1px solid ${C.border2}`, background: C.surface2, boxShadow: '0 10px 24px rgba(0,0,0,0.28)' },
+  avatarOption: { width: 32, height: 32, padding: 0, borderRadius: 8, border: '1px solid transparent', background: 'transparent', cursor: 'pointer', fontSize: 18 },
+  avatarOptionActive: { borderColor: C.accent, background: C.accentDim },
   composer: {
     display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8,
     padding: 12, borderRadius: 11, background: C.surface, border: `1px solid ${C.border}`,

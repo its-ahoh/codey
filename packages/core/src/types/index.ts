@@ -238,6 +238,14 @@ export interface AgentRequest {
    */
   browserChatId?: string;
   /**
+   * Browser surface that initiated this turn. Chrome Side Panel turns use this
+   * to expose only Chrome Companion credentials, preventing the embedded
+   * Codey Browser from winning an otherwise ambiguous browser-tool choice.
+   * Absent means the normal Codey chat surface, where both enabled browser
+   * capabilities remain available and the user's wording selects between them.
+   */
+  browserSurface?: 'chrome-companion';
+  /**
    * MCP servers to expose to this agent turn. Populated by AgentFactory from
    * enabled plugins; each adapter serializes the record into its CLI's native
    * MCP configuration mechanism. Absent when no plugin applies.
