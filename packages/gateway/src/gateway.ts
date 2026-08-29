@@ -4966,6 +4966,13 @@ Example: /model gpt-4.1 write a Python script`;
       { teamTurnId, teamName, mode: teamMode },
     );
 
+    // Serial team runs sample the working tree around each shell command, as a
+    // single-agent turn does. One tracker for the whole run is right because the
+    // workers run one after another; the parallel path below shares a directory
+    // between concurrent workers, where no sample can say which one wrote what.
+    const teamWriteTracker = new ShellWriteTracker(workingDir, defaultGitRunner, defaultStatRunner);
+    let teamStatusChain: Promise<void> = Promise.resolve();
+
     const runOneWorker = async (
       workerName: string,
       workerPrompt: string,
@@ -4992,18 +4999,29 @@ Example: /model gpt-4.1 write a Python script`;
           // Mirrors the single-agent onStatus; step narration stays on
           // emitter.status. (Parallel path below is left untouched — its tool
           // events interleave and can't be attributed by order.)
+          let parsed: any;
           try {
-            const parsed = typeof update === 'string' ? JSON.parse(update) : update;
+            parsed = typeof update === 'string' ? JSON.parse(update) : update;
+          } catch { return; /* non-JSON status */ }
+          // Sampling is async; chaining keeps the worker's tool rows in order.
+          teamStatusChain = teamStatusChain.then(async () => {
             if (parsed?.type === 'tool_start') {
+              if (isShellTool(parsed.tool)) await teamWriteTracker.noteStart(shellCommandText(parsed.input));
               workerMsgs.onTool({ type: 'tool_start', tool: parsed.tool, message: parsed.message ?? '', input: parsed.input });
             } else if (parsed?.type === 'tool_end') {
-              workerMsgs.onTool({ type: 'tool_end', tool: parsed.tool, message: parsed.message ?? '', output: parsed.output });
+              const writes = isShellTool(parsed.tool) ? await teamWriteTracker.noteEnd() : [];
+              workerMsgs.onTool({
+                type: 'tool_end', tool: parsed.tool, message: parsed.message ?? '', output: parsed.output,
+                ...(writes.length ? { writes } : {}),
+              });
             }
-          } catch { /* non-JSON status */ }
+          }).catch(() => { /* a status update must never break the run */ });
         },
         signal,
         workingDir,
       });
+      // endWorker is about to freeze this worker's toolCalls into its message.
+      await teamStatusChain;
       if (response) this.extractWorkerMemories(workerName, prompt, codingAgent, response);
       return response?.success
         ? { success: true, output: this.formatAgentResponse(response), thinking: response.thinking || undefined }

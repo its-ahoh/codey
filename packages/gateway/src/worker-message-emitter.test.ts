@@ -40,6 +40,23 @@ describe('WorkerMessageEmitter — serial', () => {
     expect(h.events.find(e => e.type === 'tool_start')).toMatchObject({ messageId: id, tool: 'Read' });
   });
 
+  it('carries sampled shell writes onto the tool_end row and its event', () => {
+    const h = harness();
+    h.em.beginWorker({ step: 1, worker: 'pm' });
+    h.em.onTool({ type: 'tool_end', tool: 'Bash', message: 'ran', writes: ['/repo/a.ts'] });
+    h.em.endWorker('done');
+    expect(h.events.find(e => e.type === 'tool_end')).toMatchObject({ writes: ['/repo/a.ts'] });
+    expect(h.patched[0].patch.toolCalls[0]).toMatchObject({ type: 'tool_end', writes: ['/repo/a.ts'] });
+  });
+
+  it('leaves the writes field off a tool call that wrote nothing', () => {
+    const h = harness();
+    h.em.beginWorker({ step: 1, worker: 'pm' });
+    h.em.onTool({ type: 'tool_end', tool: 'Bash', message: 'ran' });
+    h.em.endWorker('done');
+    expect('writes' in (h.patched[0].patch.toolCalls[0] as object)).toBe(false);
+  });
+
   it('end patches the message with the accumulated buffers + status and emits worker_end', () => {
     const h = harness();
     const id = h.em.beginWorker({ step: 1, worker: 'pm' });
