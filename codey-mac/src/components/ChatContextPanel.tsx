@@ -5,6 +5,7 @@ import { parseTeamMessage } from './teamMessageFormat'
 import { CombinedDiffView, normalizeTool } from './toolFormat'
 import { stepMatchIndex } from './diffSearch'
 import { foldFileChanges } from './foldChanges'
+import { parseShellWriteTargets, shellCommandText } from './shellWrites'
 import { ToolCallList } from './ToolCallList'
 import { QuickQuestionView } from './QuickQuestionView'
 import { TaskHud } from './TaskHud'
@@ -513,6 +514,38 @@ const extractReads = (chat: Chat): Array<{ path: string; msgId: string }> => {
   return out
 }
 
+/**
+ * Files a shell command wrote to. Agents rewrite files with `sed -i`, heredocs,
+ * and redirects as often as they use Edit/Write, and those never reach
+ * extractChanges — without this the panel reports no activity on a run that
+ * changed the working tree. No diff is recoverable, so these are listed by path.
+ */
+const extractShellWrites = (
+  chat: Chat,
+  workingDir?: string,
+): Array<{ path: string; msgId: string; command: string }> => {
+  const out: Array<{ path: string; msgId: string; command: string }> = []
+  const seen = new Set<string>()
+  for (const m of chat.messages) {
+    if (m.role !== 'assistant') continue
+    for (const tc of m.toolCalls ?? []) {
+      if (tc.type !== 'tool_start') continue
+      if (normalizeTool(tc.tool) !== 'Bash') continue
+      const command = shellCommandText(tc.input)
+      if (!command) continue
+      for (const raw of parseShellWriteTargets(command)) {
+        const path = raw.startsWith('/') || !workingDir
+          ? raw
+          : `${workingDir.replace(/\/$/, '')}/${raw.replace(/^\.\//, '')}`
+        if (seen.has(path)) continue
+        seen.add(path)
+        out.push({ path, msgId: m.id, command })
+      }
+    }
+  }
+  return out
+}
+
 const extractChanges = (chat: Chat): FileChange[] => {
   const out: FileChange[] = []
   let turnNum = 0
@@ -610,6 +643,7 @@ const FileChangesView: React.FC<{
 }> = ({ chat, workingDir, selectedTurnId, onReveal }) => {
   const changes = React.useMemo(() => extractChanges(chat), [chat])
   const reads = React.useMemo(() => extractReads(chat), [chat])
+  const shellWrites = React.useMemo(() => extractShellWrites(chat, workingDir), [chat, workingDir])
   const [filter, setFilter] = React.useState<'all' | 'turn'>('all')
   // Files default to expanded; this set tracks the ones the user collapsed.
   const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set())
@@ -688,11 +722,19 @@ const FileChangesView: React.FC<{
     ? reads.filter(r => r.msgId === selectedTurnId)
     : reads
 
-  // Reads that aren't already shown in the edits section
-  const editedPaths = new Set(visible.map(c => c.path))
-  const readOnlyFiles = visibleReads.filter(r => !editedPaths.has(r.path))
+  const visibleShellWrites = filter === 'turn' && selectedTurnId
+    ? shellWrites.filter(w => w.msgId === selectedTurnId)
+    : shellWrites
 
-  if (changes.length === 0 && reads.length === 0) {
+  // A file with a real diff is always better than a bare path, so shell writes
+  // to a file that Edit/Write also touched are dropped as duplicates.
+  const editedPaths = new Set(visible.map(c => c.path))
+  const shellFiles = visibleShellWrites.filter(w => !editedPaths.has(w.path))
+  const shellPaths = new Set(shellFiles.map(w => w.path))
+  // Reads that aren't already shown in the edits or shell sections
+  const readOnlyFiles = visibleReads.filter(r => !editedPaths.has(r.path) && !shellPaths.has(r.path))
+
+  if (changes.length === 0 && reads.length === 0 && shellWrites.length === 0) {
     return <div style={styles.emptyHint}>No file activity in this chat yet.</div>
   }
 
@@ -769,7 +811,7 @@ const FileChangesView: React.FC<{
           <button
             style={{ ...fcStyles.scopeBtn, ...(filter === 'all' ? fcStyles.scopeBtnActive : null) }}
             onClick={() => setFilter('all')}
-          >All ({changes.length})</button>
+          >All ({changes.length + shellWrites.length})</button>
           <button
             style={{ ...fcStyles.scopeBtn, ...(filter === 'turn' ? fcStyles.scopeBtnActive : null) }}
             onClick={() => setFilter('turn')}
@@ -778,13 +820,14 @@ const FileChangesView: React.FC<{
           >This turn</button>
         </div>
         <div style={fcStyles.summary}>
-          {order.length + readOnlyFiles.length} file{order.length + readOnlyFiles.length === 1 ? '' : 's'}
+          {order.length + shellFiles.length + readOnlyFiles.length} file{order.length + shellFiles.length + readOnlyFiles.length === 1 ? '' : 's'}
           {visible.length > 0 && <> · {visible.length} edit{visible.length === 1 ? '' : 's'}</>}
+          {shellFiles.length > 0 && <> · {shellFiles.length} shell</>}
           {readOnlyFiles.length > 0 && <> · {readOnlyFiles.length} read</>}
         </div>
       </div>
 
-      {visible.length === 0 && readOnlyFiles.length === 0 && (
+      {visible.length === 0 && shellFiles.length === 0 && readOnlyFiles.length === 0 && (
         <div style={styles.emptyHint}>No file activity in the selected turn.</div>
       )}
 
@@ -859,6 +902,22 @@ const FileChangesView: React.FC<{
           </div>
         )
       })}
+
+      {shellFiles.length > 0 && (
+        <div style={fcStyles.readSection}>
+          <div style={fcStyles.readHeader}>Changed by shell command</div>
+          <div style={fcStyles.shellHint}>Written outside Edit/Write — no diff available.</div>
+          {shellFiles.map(w => (
+            <div key={w.path} style={filesStyles.row} title={w.command}>
+              <span style={filesStyles.path}>{displayPath(w.path, workingDir)}</span>
+              {w.path.startsWith('/') && (
+                <button style={filesStyles.iconBtn} onClick={() => onReveal(w.path)} title="Reveal in Finder">⤴</button>
+              )}
+              <button style={filesStyles.iconBtn} onClick={() => navigator.clipboard.writeText(w.path)} title="Copy path">⧉</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {readOnlyFiles.length > 0 && (
         <div style={fcStyles.readSection}>
@@ -964,6 +1023,7 @@ const fcStyles: Record<string, React.CSSProperties> = {
     marginTop: 14, padding: '10px', background: C.surface2,
     border: `1px solid ${C.border}`, borderRadius: 8,
   },
+  shellHint: { color: C.fg3, fontSize: 10, fontStyle: 'italic', marginBottom: 6 },
   readHeader: { color: C.fg2, fontSize: 10, fontWeight: 650, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 6 },
   changeBody: { padding: 9, background: C.bg, display: 'flex', flexDirection: 'column', gap: 7 },
   noNetChange: { color: C.fg3, fontSize: 11, fontStyle: 'italic' },
