@@ -1,7 +1,7 @@
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { McpServerSpec } from '../types';
+import { codeyTmpDir } from '../codey-paths';
 
 /**
  * Write a Claude Code MCP config file and return the CLI args referencing it.
@@ -12,7 +12,7 @@ import { McpServerSpec } from '../types';
 export function writeClaudeMcpConfig(
   servers: Record<string, McpServerSpec>,
 ): { args: string[]; cleanup: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-mcp-'));
+  const dir = fs.mkdtempSync(path.join(codeyTmpDir(), 'mcp-'));
   const file = path.join(dir, 'mcp.json');
   const mcpServers: Record<string, unknown> = {};
   for (const [name, spec] of Object.entries(servers)) {
@@ -76,7 +76,7 @@ export function codexMcpArgs(servers: Record<string, McpServerSpec>): string[] {
 export function writeOpenCodeMcpConfig(
   servers: Record<string, McpServerSpec>,
 ): { env: Record<string, string>; cleanup: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-mcp-'));
+  const dir = fs.mkdtempSync(path.join(codeyTmpDir(), 'mcp-'));
   const file = path.join(dir, 'opencode.json');
   const mcp: Record<string, unknown> = {};
   for (const [name, spec] of Object.entries(servers)) {

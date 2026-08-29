@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 import QuartzCore  // CACurrentMediaTime
 
@@ -55,6 +56,11 @@ final class AudioCapture {
 
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
+        // Log which device we actually got. A dictation session that comes back
+        // empty is almost always the input having silently moved to another
+        // device (headset disconnect, a call app grabbing it), and the format
+        // line is the only place that shows up.
+        print("AudioCapture: input '\(Self.currentInputDeviceName())' \(inputFormat.sampleRate)Hz x\(inputFormat.channelCount)")
 
         // Install tap at device sample rate, we'll resample to 16 kHz
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
@@ -173,5 +179,31 @@ final class AudioCapture {
                 self?.stopRecording()
             }
         }
+    }
+
+    /// Human-readable name of the current default input device, for logs.
+    /// Falls back to "unknown" rather than throwing — this is diagnostics only.
+    static func currentInputDeviceName() -> String {
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID) == noErr else {
+            return "unknown"
+        }
+        var name: CFString = "" as CFString
+        var nameSize = UInt32(MemoryLayout<CFString>.size)
+        var nameAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &name) == noErr else {
+            return "unknown"
+        }
+        return name as String
     }
 }

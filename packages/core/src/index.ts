@@ -1,5 +1,6 @@
 // @codey/core — barrel export
 export * from './types';
+export * from './codey-paths';
 export * from './utils/format';
 export * from './utils/fs';
 export * from './utils/json';
