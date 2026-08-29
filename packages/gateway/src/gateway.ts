@@ -18,6 +18,7 @@ import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, VoiceChan
 import { synthesizeSpeech } from './voice-tts';
 import { runTextCompletion, streamTextCompletion, canRunDirectly } from './text-completion';
 import { AgentFactory, isThinkingEffort } from '@codey/core';
+import { pruneCodeyTmp } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
@@ -1563,6 +1564,12 @@ export class Codey {
   async start(): Promise<void> {
     this.startTime = Date.now();
     this.logger.info('Starting Codey...');
+
+    // Sweep ~/.codey/tmp of day-old scratch files. The same sweep rides along
+    // with every temp-file write, but that only fires while something is
+    // actively writing — a leftover from a crashed run would otherwise sit
+    // there until the next one.
+    pruneCodeyTmp();
 
     // Load workspace and workers
     await this.workspaceManager.load();

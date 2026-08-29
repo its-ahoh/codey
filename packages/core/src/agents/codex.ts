@@ -1,11 +1,11 @@
 import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { AgentRequest, AgentResponse, AgentStateEntry } from '../types';
 import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
+import { codeyTmpFile } from '../codey-paths';
 import { ToolCallCollector } from './tool-events';
 import { ChecklistTracker, checklistFromCodexItem } from './checklist';
 import { codexMcpArgs } from './mcp-config';
@@ -120,8 +120,9 @@ export class CodexAdapter extends BaseAgentAdapter {
 
   async run(request: AgentRequest): Promise<AgentResponse> {
     return new Promise((resolve) => {
-      // Tempfile for `--output-last-message`. Cleaned up after the run.
-      const outFile = path.join(os.tmpdir(), `codex-out-${randomUUID()}.txt`);
+      // Tempfile for `--output-last-message`. Cleaned up after the run; the
+      // age sweep in `codeyTmpDir` covers the runs that are killed before that.
+      const outFile = codeyTmpFile(`codex-out-${randomUUID()}.txt`);
 
       const args = ['exec'];
       if (request.resumeSessionId) {
