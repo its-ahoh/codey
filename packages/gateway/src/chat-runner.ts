@@ -44,7 +44,7 @@ export const SOLO_ADVISOR_INSTRUCTION =
 export type ChatStreamEvent =
   | { type: 'queued'; chatId: string; position: number }
   | { type: 'tool_start'; chatId: string; tool?: string; message: string; input?: Record<string, unknown>; messageId?: string; step?: number }
-  | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string; messageId?: string; step?: number }
+  | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string; messageId?: string; step?: number; writes?: string[] }
   | { type: 'info'; chatId: string; message: string; skillNotice?: boolean }
   // The agent's own task list, restated in full. Consumers replace whatever
   // they were showing; the list is authoritative, not incremental.

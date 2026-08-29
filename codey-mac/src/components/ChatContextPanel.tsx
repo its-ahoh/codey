@@ -497,20 +497,32 @@ const extractShellWrites = (
 ): Array<{ path: string; msgId: string; command: string }> => {
   const out: Array<{ path: string; msgId: string; command: string }> = []
   const seen = new Set<string>()
+  const add = (path: string, msgId: string, command: string) => {
+    if (!path || seen.has(path)) return
+    seen.add(path)
+    out.push({ path, msgId, command })
+  }
   for (const m of chat.messages) {
     if (m.role !== 'assistant') continue
+    // A shell tool_end carries the paths the gateway sampled from the working
+    // tree, which catch writes the command text cannot show (an interpreter
+    // heredoc, `git apply`, a Makefile). The most recent shell command is the
+    // one they belong to.
+    let lastCommand = ''
     for (const tc of m.toolCalls ?? []) {
-      if (tc.type !== 'tool_start') continue
       if (normalizeTool(tc.tool) !== 'Bash') continue
-      const command = shellCommandText(tc.input)
-      if (!command) continue
-      for (const raw of parseShellWriteTargets(command)) {
-        const path = raw.startsWith('/') || !workingDir
-          ? raw
-          : `${workingDir.replace(/\/$/, '')}/${raw.replace(/^\.\//, '')}`
-        if (seen.has(path)) continue
-        seen.add(path)
-        out.push({ path, msgId: m.id, command })
+      if (tc.type === 'tool_start') {
+        lastCommand = shellCommandText(tc.input)
+        // Fallback for chats recorded before sampling existed, and for working
+        // directories git cannot sample (not a repo, tree too dirty).
+        for (const raw of parseShellWriteTargets(lastCommand)) {
+          const path = raw.startsWith('/') || !workingDir
+            ? raw
+            : `${workingDir.replace(/\/$/, '')}/${raw.replace(/^\.\//, '')}`
+          add(path, m.id, lastCommand)
+        }
+      } else if (tc.type === 'tool_end') {
+        for (const path of tc.writes ?? []) add(path, m.id, lastCommand)
       }
     }
   }

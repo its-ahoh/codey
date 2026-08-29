@@ -16,13 +16,21 @@ interface ParsedStatus {
   checklist?: ChecklistItem[];
 }
 
-export function chatStreamEventForStatus(chatId: string, parsed: ParsedStatus): ChatStreamEvent | null {
+export function chatStreamEventForStatus(
+  chatId: string,
+  parsed: ParsedStatus,
+  /** Files a shell command wrote, when the caller sampled them. */
+  writes?: string[],
+): ChatStreamEvent | null {
   const message = parsed.message ?? '';
   switch (parsed.type) {
     case 'tool_start':
       return { type: 'tool_start', chatId, tool: parsed.tool, message, input: parsed.input };
     case 'tool_end':
-      return { type: 'tool_end', chatId, tool: parsed.tool, message, output: parsed.output };
+      return {
+        type: 'tool_end', chatId, tool: parsed.tool, message, output: parsed.output,
+        ...(writes?.length ? { writes } : {}),
+      };
     case 'checklist':
       // No items means nothing to show; emitting it would blank a panel that
       // is currently displaying a perfectly good list.

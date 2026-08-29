@@ -7,7 +7,7 @@ import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 export type ChatStreamEvent =
   | { type: 'queued'; chatId: string; position: number }
   | { type: 'tool_start'; chatId: string; tool?: string; message: string; input?: Record<string, unknown>; messageId?: string; step?: number }
-  | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string; messageId?: string; step?: number }
+  | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string; messageId?: string; step?: number; writes?: string[] }
   | { type: 'info'; chatId: string; message: string }
   | { type: 'checklist'; chatId: string; message: string; items: ChecklistItem[] }
   | { type: 'stream'; chatId: string; token: string; messageId?: string; step?: number }

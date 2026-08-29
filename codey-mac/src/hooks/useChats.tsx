@@ -699,7 +699,10 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           dispatch({
             type: 'toolCall',
             chatId: ev.chatId,
-            entry: { id: `tc-${Date.now()}-${Math.random()}`, type: 'tool_end', tool: ev.tool, message: ev.message, output: ev.output },
+            entry: {
+              id: `tc-${Date.now()}-${Math.random()}`, type: 'tool_end', tool: ev.tool, message: ev.message, output: ev.output,
+              ...(ev.writes?.length ? { writes: ev.writes } : {}),
+            },
             // Hold the tool's own activity rather than snapping back to
             // "Working": the label would flicker between every paired event.
             status: activityForTool(ev.tool),
