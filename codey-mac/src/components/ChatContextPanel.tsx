@@ -18,8 +18,8 @@ interface Props {
   chat: Chat
   selectedTurnId: string | null
   followLatest: boolean
-  /** 1-based index of the selected assistant turn in the chat (for "Turn N" display). */
-  selectedTurnIndex: number | null
+  /** 1-based index of the selected assistant turn. Kept for callers; unused since the turn header was removed. */
+  selectedTurnIndex?: number | null
   /** Effective agent for this chat (resolved by ChatTab from override/worker/default). */
   effectiveAgent: string
   /** Effective model for this chat. May be undefined when no model is resolvable. */
@@ -57,18 +57,8 @@ interface Props {
   embedded?: boolean
 }
 
-const fmtTime = (ts: number) =>
-  new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-
-const formatTokens = (n: number): string | null => {
-  if (!Number.isFinite(n) || n < 0) return null
-  if (n < 1000) return String(n)
-  if (n < 10_000) return `${(n / 1000).toFixed(1)}k`
-  return `${Math.round(n / 1000)}k`
-}
-
 export const ChatContextPanel: React.FC<Props> = ({
-  chat, selectedTurnId, followLatest, selectedTurnIndex,
+  chat, selectedTurnId, followLatest,
   effectiveAgent, effectiveModel, workerName, teamName, teamGraph, workingDir,
   width, onFollowLatest, onClose, onResize, onRevealFile, onScrollToStep, isTurnStreaming,
   activeTab, onTabChange, qqInputRef,
@@ -82,6 +72,7 @@ export const ChatContextPanel: React.FC<Props> = ({
 
   const [flowOpen, setFlowOpen] = React.useState(false)
 
+  // The user message that produced this turn — its attachments are surfaced below.
   const triggeringUserMsg: ChatMessage | undefined = (() => {
     if (!turn) return undefined
     const idx = chat.messages.findIndex(m => m.id === turn.id)
@@ -128,37 +119,17 @@ export const ChatContextPanel: React.FC<Props> = ({
   return (
     <div style={{ ...styles.root, width: embedded ? '100%' : width, ...(embedded ? styles.rootEmbedded : null) }}>
       {!embedded && <div style={styles.resizer} onMouseDown={onResizerMouseDown} title="Drag to resize" />}
-      {/* Header */}
-      <div style={styles.header}>
-        <div style={styles.headerMeta}>
-          {turn ? (
-            <>
-              {(() => {
-                const prompt = (triggeringUserMsg?.content ?? '').replace(/\s+/g, ' ').trim()
-                const label = prompt ? (prompt.length > 60 ? prompt.slice(0, 59) + '…' : prompt) : `Turn ${selectedTurnIndex ?? '?'}`
-                return <span style={styles.headerTitle} title={prompt || undefined}>{label}</span>
-              })()}
-              <div style={styles.headerSubLine}>
-                {selectedTurnIndex != null && <><span style={styles.headerSub}>Turn {selectedTurnIndex}</span><span style={styles.headerDot}>·</span></>}
-                <span style={styles.headerSub}>{fmtTime(turn.timestamp)}</span>
-                {turn.durationSec != null && Number.isFinite(turn.durationSec) && (
-                  <><span style={styles.headerDot}>·</span><span style={styles.headerSub}>{turn.durationSec}s</span></>
-                )}
-                {(() => {
-                  const t = turn.tokens != null ? formatTokens(turn.tokens) : null
-                  return t ? <><span style={styles.headerDot}>·</span><span style={styles.headerSub}>{t} tok</span></> : null
-                })()}
-              </div>
-            </>
-          ) : (
-            <span style={styles.headerSub}>No turn selected</span>
+      {/* Controls. The turn's prompt and timestamp already head the turn in the
+          transcript, so repeating them here only cost vertical space. The bar
+          renders only when a control needs it. */}
+      {(!followLatest || !embedded) && (
+        <div style={styles.header}>
+          {!followLatest && (
+            <button style={styles.followPill} onClick={onFollowLatest} title="Follow live updates">Follow latest ↓</button>
           )}
+          {!embedded && <button style={styles.closeBtn} onClick={onClose} aria-label="Close panel">×</button>}
         </div>
-        {!followLatest && (
-          <button style={styles.followPill} onClick={onFollowLatest} title="Follow live updates">Follow latest ↓</button>
-        )}
-        {!embedded && <button style={styles.closeBtn} onClick={onClose} aria-label="Close panel">×</button>}
-      </div>
+      )}
 
       {/* Tabs */}
       <div style={styles.tabs} role="tablist">
@@ -1060,8 +1031,8 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 5,
   },
   header: {
-    display: 'flex', alignItems: 'center', gap: 8,
-    padding: '13px 14px', borderBottom: `1px solid ${C.border}`,
+    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8,
+    padding: '8px 14px', borderBottom: `1px solid ${C.border}`,
     flexShrink: 0,
   },
   tabs: {
@@ -1085,14 +1056,6 @@ const styles: Record<string, React.CSSProperties> = {
   tabActive: {
     color: C.fg, background: C.accentDim,
   },
-  headerMeta: { flex: 1, display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 },
-  headerSubLine: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  headerTitle: {
-    color: C.fg, fontSize: 12, fontWeight: 600,
-    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%',
-  },
-  headerSub: { color: C.fg3, fontSize: 11, fontVariantNumeric: 'tabular-nums' },
-  headerDot: { color: C.fg3, fontSize: 11, opacity: 0.5 },
   followPill: {
     background: C.accent, color: C.onAccent, border: 'none',
     borderRadius: 10, fontSize: 10, padding: '2px 8px', cursor: 'pointer',
