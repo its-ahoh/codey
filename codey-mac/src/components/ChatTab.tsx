@@ -98,6 +98,73 @@ const ArrowDownIcon: React.FC<{ color: string }> = ({ color }) => (
 const fmtTime = (ts: number) =>
   new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 
+interface PermissionCardProps {
+  toolNames: string[]
+  onAllow: () => Promise<void>
+  onDeny: () => Promise<void>
+}
+
+/** A permission denial ends the current Claude turn, so this card makes the
+ * persistence and resume behaviour explicit instead of presenting an
+ * ambiguous Accept/Deny pair. */
+const PermissionCard: React.FC<PermissionCardProps> = ({ toolNames, onAllow, onDeny }) => {
+  const [decision, setDecision] = useState<'allow' | 'deny' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const decide = async (next: 'allow' | 'deny') => {
+    if (decision) return
+    setDecision(next)
+    setError(null)
+    try {
+      await (next === 'allow' ? onAllow() : onDeny())
+    } catch (err) {
+      setDecision(null)
+      setError((err as Error).message || 'Something went wrong. Please try again.')
+    }
+  }
+
+  return (
+    <div style={styles.permissionBanner} role="alertdialog" aria-label="Tool permission request">
+      <div style={styles.permissionHeader}>
+        <span style={styles.permissionIcon} aria-hidden="true">
+          <UIIcon name="key" size={17} strokeWidth={1.9} />
+        </span>
+        <div style={styles.permissionCopy}>
+          <div style={styles.permissionTitle}>Permission needed to continue</div>
+          <div style={styles.permissionText}>
+            Allow {toolNames.length === 1 ? 'this tool' : 'these tools'} for this project?
+          </div>
+        </div>
+      </div>
+      <div style={styles.permissionTools} aria-label="Requested tools">
+        {toolNames.map((name, index) => (
+          <code key={`${name}-${index}`} style={styles.permissionTool}>{name}</code>
+        ))}
+      </div>
+      <div style={styles.permissionNote}>
+        Allowing saves these tools for this project, then resumes the interrupted task.
+      </div>
+      {error && <div style={styles.permissionError} role="alert">Couldn’t update permissions: {error}</div>}
+      <div style={styles.permissionActions}>
+        <button
+          style={{ ...styles.permissionDeny, ...(decision ? styles.permissionButtonDisabled : null) }}
+          disabled={decision !== null}
+          onClick={() => { void decide('deny') }}
+        >
+          {decision === 'deny' ? 'Blocking…' : 'Keep blocked'}
+        </button>
+        <button
+          style={{ ...styles.permissionAllow, ...(decision ? styles.permissionButtonDisabled : null) }}
+          disabled={decision !== null}
+          onClick={() => { void decide('allow') }}
+        >
+          {decision === 'allow' ? 'Allowing…' : 'Allow & continue'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /** Elapsed recording time. A counter answers "is it still listening?" without
  *  a sentence of prose, and reassures during a long dictation. */
 const VoiceElapsed: React.FC<{ since: number }> = ({ since }) => {
@@ -2580,17 +2647,11 @@ export const ChatTab: React.FC<Props> = ({
                 && idx === chat.messages.length - 1
                 && state.pendingPermissions[chatId]
                 && (
-                  <div style={styles.permissionBanner}>
-                    <span style={styles.permissionText}>
-                      Needs permission: {state.pendingPermissions[chatId].join(', ')}
-                    </span>
-                    <div style={styles.permissionActions}>
-                      <button style={styles.permissionAllow} onClick={() => {
-                        void resolvePermission(chatId, true).catch(err => alert(`Couldn’t grant permission: ${(err as Error).message}`))
-                      }}>Accept</button>
-                      <button style={styles.permissionDeny} onClick={() => { void resolvePermission(chatId, false) }}>Deny</button>
-                    </div>
-                  </div>
+                  <PermissionCard
+                    toolNames={state.pendingPermissions[chatId]}
+                    onAllow={() => resolvePermission(chatId, true)}
+                    onDeny={() => resolvePermission(chatId, false)}
+                  />
                 )
               }
               {/* Model, fallback, tokens and duration now live in TurnHeader.
@@ -3534,40 +3595,79 @@ const styles: Record<string, React.CSSProperties> = {
   permissionBanner: {
     display: 'flex',
     flexDirection: 'column' as const,
-    gap: 6,
-    marginTop: 8,
+    gap: 10,
+    marginTop: 10,
     marginLeft: 12,
-    padding: '8px 12px',
-    borderRadius: 6,
-    border: `1px solid ${C.border2}`,
-    background: C.surface3,
+    width: 'min(440px, calc(100% - 12px))',
+    boxSizing: 'border-box' as const,
+    padding: 14,
+    borderRadius: 12,
+    border: `1px solid color-mix(in srgb, ${C.yellow} 42%, ${C.border2})`,
+    background: `color-mix(in srgb, ${C.warningBg} 72%, ${C.surface})`,
+    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.12)',
+  },
+  permissionHeader: {
+    display: 'flex', alignItems: 'flex-start', gap: 10,
+  },
+  permissionIcon: {
+    width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+    display: 'grid', placeItems: 'center',
+    color: C.warningFg,
+    background: `color-mix(in srgb, ${C.yellow} 16%, transparent)`,
+    border: `1px solid color-mix(in srgb, ${C.yellow} 32%, transparent)`,
+  },
+  permissionCopy: {
+    minWidth: 0, display: 'flex', flexDirection: 'column' as const, gap: 3,
+  },
+  permissionTitle: {
+    color: C.fg, fontSize: 13, fontWeight: 650 as const, lineHeight: 1.35,
   },
   permissionText: {
-    fontSize: 12,
-    color: C.fg2,
+    fontSize: 12, lineHeight: 1.45, color: C.fg2,
+  },
+  permissionTools: {
+    display: 'flex', flexWrap: 'wrap' as const, gap: 6,
+    paddingLeft: 42,
+  },
+  permissionTool: {
+    maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
+    padding: '4px 7px', borderRadius: 6,
+    background: C.inlineCodeBg, color: C.inlineCodeFg,
+    border: `1px solid ${C.border2}`,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 10.5,
+  },
+  permissionNote: {
+    paddingLeft: 42, color: C.fg3, fontSize: 10.5, lineHeight: 1.45,
+  },
+  permissionError: {
+    marginLeft: 42, padding: '7px 9px', borderRadius: 7,
+    background: C.dangerBg, color: C.dangerFg,
+    border: `1px solid ${C.dangerBorder}`, fontSize: 11, lineHeight: 1.4,
   },
   permissionActions: {
-    display: 'flex',
-    gap: 8,
+    display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 1,
   },
   permissionAllow: {
-    padding: '4px 12px',
-    borderRadius: 4,
+    minHeight: 30, padding: '6px 13px',
+    borderRadius: 7,
     border: 'none',
     background: C.accent,
     color: C.onAccent,
     cursor: 'pointer',
     fontSize: 12,
-    fontWeight: 500 as const,
+    fontWeight: 650 as const,
   },
   permissionDeny: {
-    padding: '4px 12px',
-    borderRadius: 4,
+    minHeight: 30, padding: '6px 13px',
+    borderRadius: 7,
     border: `1px solid ${C.border2}`,
-    background: 'transparent',
+    background: C.surface,
     color: C.fg2,
     cursor: 'pointer',
     fontSize: 12,
+  },
+  permissionButtonDisabled: {
+    cursor: 'default', opacity: 0.62,
   },
   voiceStatusText: {
     color: C.fg2, fontSize: 11, fontVariantNumeric: 'tabular-nums',
