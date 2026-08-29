@@ -1,7 +1,34 @@
-import { Chat, ChatMessage, ChecklistItem, CodingAgent, FileAttachment, TaskBrief, TeamRunSummary, ToolCallEntry } from '@codey/core';
+import { Chat, ChatMessage, ChecklistItem, CodingAgent, FileAttachment, TaskBrief, TeamRunSummary, ToolCallEntry, TranscriptSlice, renderSliceSection } from '@codey/core';
 
 export const MAX_CONCURRENT_AGENTS = 4;
 export const CHAT_CONTEXT_WINDOW = 40;
+
+/**
+ * Above this many windowed messages a bootstrap stops inlining prior history
+ * and hands over a transcript slice instead. Below it, inlining is cheaper
+ * than making the agent spend a tool call on a handful of short turns.
+ */
+export const BOOTSTRAP_INLINE_LIMIT = 20;
+
+/**
+ * Materialises lines `first`..`last` (1-based, inclusive) of the chat's
+ * transcript sidecar as a standalone file. Injected rather than called
+ * directly so the prompt builders stay free of filesystem access; the gateway
+ * supplies the real writer.
+ */
+export type SliceWriter = (first: number, last: number) => TranscriptSlice | undefined;
+
+export interface HistoryDeliveryOptions {
+  /** Absolute path of the transcript sidecar, when one exists. */
+  transcriptPath?: string;
+  /** Writer used to cut the un-inlined range out into its own file. */
+  writeSlice?: SliceWriter;
+  inlineLimit?: number;
+}
+
+/** Recent messages kept inline even in pointer mode, so a self-contained
+ *  follow-up can be answered without reading the transcript at all. */
+export const BOOTSTRAP_TAIL_INLINE = 4;
 
 /**
  * Appended to the prompt only when a chat has soloAdvisor enabled. Tells the
@@ -73,7 +100,11 @@ function formatAttachmentList(attachments: FileAttachment[]): string {
  * windowed transcript). Shared by buildChatPrompt and buildQuickQuestionPrompt
  * so both window/compact identically.
  */
-function renderChatContextSections(chat: Chat, windowSize: number): string[] {
+function renderChatContextSections(
+  chat: Chat,
+  windowSize: number,
+  opts?: HistoryDeliveryOptions,
+): string[] {
   const sections: string[] = [];
 
   const summarizedUpTo = chat.compaction?.summarizedUpTo ?? 0;
@@ -83,7 +114,40 @@ function renderChatContextSections(chat: Chat, windowSize: number): string[] {
     );
   }
 
-  const start = Math.max(summarizedUpTo, chat.messages.length - windowSize);
+  let start = Math.max(summarizedUpTo, chat.messages.length - windowSize);
+  const inlineLimit = opts?.inlineLimit ?? BOOTSTRAP_INLINE_LIMIT;
+
+  // Past the inline limit, hand over a transcript cursor instead of the
+  // replay. Sidecar line N holds messages[N-1]. The pointer deliberately
+  // reaches back further than `windowSize` — reading more costs the agent a
+  // longer `sed` range, not a longer prompt — while a short tail stays inlined
+  // so a self-contained follow-up needs no tool round-trip at all.
+  if (opts?.transcriptPath && chat.messages.length - start > inlineLimit) {
+    const pointerFirst = summarizedUpTo + 1;
+    const pointerLast = chat.messages.length - BOOTSTRAP_TAIL_INLINE;
+    if (pointerLast >= pointerFirst) {
+      const slice = opts.writeSlice?.(pointerFirst, pointerLast);
+      sections.push(slice
+        ? renderSliceSection(slice, {
+            heading: 'Earlier conversation',
+            closing: 'Context only — do not repeat or fabricate turns.',
+          })
+        : [
+            // No slice (unreadable sidecar, or no writer wired): fall back to
+            // naming the range in place. Strictly worse — the agent has to
+            // extract it — but better than dropping the history entirely.
+            `[Earlier conversation — ${pointerLast - pointerFirst + 1} messages, not inlined]`,
+            `Transcript: ${opts.transcriptPath}`,
+            'One JSON object per line, one line per message, oldest first.',
+            `Lines ${pointerFirst}-${pointerLast} hold this history.`,
+            `Read them before answering (e.g. \`sed -n '${pointerFirst},${pointerLast}p'\`) unless the new request below is fully self-contained.`,
+            'Context only — do not repeat or fabricate turns.',
+          ].join('\n'),
+      );
+      start = pointerLast;
+    }
+  }
+
   const tail = chat.messages.slice(start);
   if (tail.length > 0) {
     const transcript = tail.map(m => {
@@ -103,6 +167,7 @@ export function buildChatPrompt(
   userText: string,
   attachments?: FileAttachment[],
   windowSize = CHAT_CONTEXT_WINDOW,
+  opts?: HistoryDeliveryOptions,
 ): string {
   const sections: string[] = [];
 
@@ -110,7 +175,7 @@ export function buildChatPrompt(
     sections.push(formatAttachmentList(attachments));
   }
 
-  sections.push(...renderChatContextSections(chat, windowSize));
+  sections.push(...renderChatContextSections(chat, windowSize, opts));
 
   sections.push(`[Respond to this new user message]\n${userText}`);
   return sections.join('\n\n');
@@ -126,8 +191,9 @@ export function buildChatBootstrapPrompt(
   userText: string,
   attachments?: FileAttachment[],
   windowSize = CHAT_CONTEXT_WINDOW,
+  opts?: HistoryDeliveryOptions,
 ): string {
-  return buildChatPrompt(chat, userText, attachments, windowSize);
+  return buildChatPrompt(chat, userText, attachments, windowSize, opts);
 }
 
 const RESUME_CONTEXT_MAX_CHARS = 8_000;
@@ -178,11 +244,20 @@ export function buildChatResumePrompt(
  * agent receives the gap exactly once instead of being polluted by the full
  * transcript every time the user switches back.
  */
+/**
+ * Above this many missed messages a catch-up stops inlining the replay and
+ * points at the transcript sidecar instead. Inlining is cheaper for a short
+ * gap (no extra tool round-trip); past the threshold the replay is what
+ * actually blows up the argv the CLI is spawned with.
+ */
+export const CATCHUP_INLINE_LIMIT = 20;
+
 export function buildChatCatchupPrompt(
   chat: Chat,
   syncedThroughMessageId: string,
   userText: string,
   attachments?: FileAttachment[],
+  opts?: HistoryDeliveryOptions,
 ): string {
   const cursor = chat.messages.findIndex(message => message.id === syncedThroughMessageId);
   if (cursor < 0 || cursor === chat.messages.length - 1) {
@@ -192,16 +267,42 @@ export function buildChatCatchupPrompt(
   const parts: string[] = [];
   if (attachments && attachments.length > 0) parts.push(formatAttachmentList(attachments));
 
-  const updates = chat.messages.slice(cursor + 1).map(message => {
-    if (message.role === 'user') return `[user]\n${message.content}`;
-    const identity = [message.agent, message.model].filter(Boolean).join(' / ');
-    return `[assistant${identity ? ` via ${identity}` : ''}]\n${message.content}`;
-  }).join('\n\n');
+  const missed = chat.messages.slice(cursor + 1);
+  const inlineLimit = opts?.inlineLimit ?? CATCHUP_INLINE_LIMIT;
 
-  parts.push(
-    `[Codey conversation updates since this agent was last active — context only; do not repeat or fabricate turns]\n${updates}`,
-    `[Respond to this new user message]\n${userText}`,
-  );
+  if (opts?.transcriptPath && missed.length > inlineLimit) {
+    // Sidecar line N holds messages[N-1], so the first unseen message sits on
+    // line cursor + 2. Codey owns this cursor — the agent is a fresh process
+    // every turn and cannot be asked to remember where it left off.
+    const firstUnseenLine = cursor + 2;
+    const lastLine = chat.messages.length;
+    const slice = opts.writeSlice?.(firstUnseenLine, lastLine);
+    parts.push(slice
+      ? renderSliceSection(slice, {
+          heading: 'Codey conversation updates since this agent was last active',
+          closing: 'Context only — do not repeat or fabricate turns.',
+        })
+      : [
+          `[Codey conversation updates since this agent was last active — ${missed.length} messages, not inlined]`,
+          `Transcript: ${opts.transcriptPath}`,
+          'One JSON object per line, one line per message, oldest first.',
+          `You last saw line ${cursor + 1}. Lines ${firstUnseenLine}-${lastLine} are new.`,
+          `Read them if you need the detail (e.g. \`sed -n '${firstUnseenLine},${lastLine}p'\`); skip it if the new request stands on its own.`,
+          'Context only — do not repeat or fabricate turns.',
+        ].join('\n'),
+    );
+  } else {
+    const updates = missed.map(message => {
+      if (message.role === 'user') return `[user]\n${message.content}`;
+      const identity = [message.agent, message.model].filter(Boolean).join(' / ');
+      return `[assistant${identity ? ` via ${identity}` : ''}]\n${message.content}`;
+    }).join('\n\n');
+    parts.push(
+      `[Codey conversation updates since this agent was last active — context only; do not repeat or fabricate turns]\n${updates}`,
+    );
+  }
+
+  parts.push(`[Respond to this new user message]\n${userText}`);
   return parts.join('\n\n');
 }
 
@@ -264,6 +365,7 @@ export function buildQuickQuestionPrompt(
   question: string,
   attachments?: FileAttachment[],
   windowSize = CHAT_CONTEXT_WINDOW,
+  opts?: HistoryDeliveryOptions,
 ): string {
   const sections: string[] = [];
 
@@ -271,7 +373,7 @@ export function buildQuickQuestionPrompt(
     sections.push(formatAttachmentList(attachments));
   }
 
-  const ctx = renderChatContextSections(chat, windowSize);
+  const ctx = renderChatContextSections(chat, windowSize, opts);
   if (ctx.length > 0) {
     sections.push(
       '[Main chat — read-only reference. Do not continue or modify this conversation.]',

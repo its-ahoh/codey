@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -29,7 +29,7 @@ import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
-import { buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
+import { CHAT_CONTEXT_WINDOW, buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
 import { resolveChoiceDigit } from './digit-mapping';
@@ -607,6 +607,21 @@ export class Codey {
    * summary via the Aide, leaving a recent tail untouched so the next turn
    * still has fresh transcript to anchor on.
    */
+  /**
+   * History delivery for a chat turn: the sidecar path, plus a writer that
+   * cuts a line range out of it into a standalone file. Handing the agent a
+   * file that contains exactly the missing messages removes the two ways a
+   * line range goes wrong — reading too much, or miscounting the range.
+   */
+  private historyDelivery(chatId: string): { transcriptPath?: string; writeSlice?: (first: number, last: number) => TranscriptSlice | undefined } {
+    const transcriptPath = this.chatManager.transcriptPath(chatId);
+    if (!transcriptPath) return {};
+    return {
+      transcriptPath,
+      writeSlice: (first, last) => writeTranscriptSlice(transcriptPath, first, last),
+    };
+  }
+
   private async runChatCompaction(chat: Chat): Promise<ChatCompaction | null> {
     const KEEP_TAIL = 40;
     const already = chat.compaction?.summarizedUpTo ?? 0;
@@ -685,8 +700,6 @@ export class Codey {
     );
     this.logger = logger || Logger.getInstance();
     this.contextManager = new ContextManager({
-      maxTokenBudget: config.context?.maxTokenBudget ?? 12000,
-      maxTurns: config.context?.maxTurns ?? 30,
       ttlMs: (config.context?.ttlMinutes ?? 60) * 60 * 1000,
       persistDir: './workspaces',
     });
@@ -5820,7 +5833,8 @@ Example: /model gpt-4.1 write a Python script`;
     this.qqAborts.set(chatId, abortController);
 
     const started = Date.now();
-    const prompt = buildQuickQuestionPrompt(chat, qqHistory, question, attachments);
+    const prompt = buildQuickQuestionPrompt(chat, qqHistory, question, attachments, CHAT_CONTEXT_WINDOW,
+      this.historyDelivery(chatId));
 
     let streamedText = '';
     const onStream = (text: string) => {
@@ -6158,13 +6172,15 @@ Example: /model gpt-4.1 write a Python script`;
       // Resume the agent's own session. If other agents produced messages
       // while it was inactive, replay only that unseen gap before the new turn.
       prompt = selPrefix + (warmAnchor.syncedThroughMessageId
-        ? buildChatCatchupPrompt(chat, warmAnchor.syncedThroughMessageId, userText, attachments)
+        ? buildChatCatchupPrompt(chat, warmAnchor.syncedThroughMessageId, userText, attachments,
+            this.historyDelivery(chatId))
         : buildChatResumePrompt(chat, userText, attachments));
       resumeSessionId = warmAnchor.sessionId;
     } else {
       // Bootstrap turn: include prior history once. For claude-code, pre-allocate
       // a session id so we can resume on the next turn without parsing CLI output.
-      prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments);
+      prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments, CHAT_CONTEXT_WINDOW,
+        this.historyDelivery(chatId));
       if (canResume && agent === 'claude-code') {
         newSessionId = randomUUID();
       }
@@ -6357,7 +6373,8 @@ Example: /model gpt-4.1 write a Python script`;
           streamedText = '';
           resumeSessionId = undefined;
           newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
-          prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments) + chatWorkspaceInstruction;
+          prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments, CHAT_CONTEXT_WINDOW,
+            this.historyDelivery(chatId)) + chatWorkspaceInstruction;
           // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
           // the one that carried it (still exactly once per prompt build).
           if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);

@@ -57,8 +57,6 @@
   ],
   "activeProfile": "default",
   "context": {
-    "maxTokenBudget": 12000,
-    "maxTurns": 30,
     "ttlMinutes": 60
   },
   "memory": {

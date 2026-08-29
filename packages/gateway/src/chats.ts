@@ -34,6 +34,8 @@ export class ChatManager {
   private loaded = false;
   private compactionRunner?: CompactionRunner;
   private compactingChats = new Set<string>();
+  /** chatId -> lines currently in that chat's transcript sidecar. */
+  private transcriptLines = new Map<string, number>();
 
   constructor(private readonly workspacesRoot: string) {}
 
@@ -52,6 +54,79 @@ export class ChatManager {
 
   private chatFile(workspaceName: string, chatId: string): string {
     return path.join(this.chatsDir(workspaceName), `${chatId}.json`);
+  }
+
+  /**
+   * Append-only transcript sidecar: one JSON object per line, one line per
+   * message, line N == messages[N-1]. Written next to the chat's `.json` so a
+   * catch-up prompt can hand an agent a stable `path:line` cursor instead of
+   * inlining a large replay. The `.json` is rewritten wholesale on every
+   * persist, so its line offsets are not stable; this file's are.
+   */
+  private transcriptFile(workspaceName: string, chatId: string): string {
+    return path.join(this.chatsDir(workspaceName), `${chatId}.jsonl`);
+  }
+
+  /** Absolute transcript path for a chat, or undefined if the chat is gone.
+   *  Resolved: `workspacesRoot` defaults to a relative './workspaces', and the
+   *  agent runs with the workspace as cwd, not the gateway's. */
+  transcriptPath(chatId: string): string | undefined {
+    this.ensureLoaded();
+    const chat = this.cache.get(chatId);
+    if (!chat) return undefined;
+    return path.resolve(this.transcriptFile(chat.workspaceName, chat.id));
+  }
+
+  /** Lean projection — the fields a catching-up agent needs, nothing else.
+   *  Tool calls and thinking are deliberately omitted: they dominate the byte
+   *  count and add nothing to "what did I miss". */
+  private transcriptLine(message: ChatMessage): string {
+    return JSON.stringify({
+      id: message.id,
+      role: message.role,
+      timestamp: message.timestamp,
+      ...(message.agent ? { agent: message.agent } : {}),
+      ...(message.model ? { model: message.model } : {}),
+      ...(message.worker ? { worker: message.worker } : {}),
+      content: message.content,
+    });
+  }
+
+  /** Rewrite the whole sidecar from the in-memory messages. Used to backfill
+   *  chats that predate the sidecar and to repair it after a mid-list delete. */
+  private rewriteTranscript(chat: Chat): void {
+    const file = this.transcriptFile(chat.workspaceName, chat.id);
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const body = chat.messages.map(m => this.transcriptLine(m)).join('\n');
+      const tmp = `${file}.tmp`;
+      fs.writeFileSync(tmp, body ? `${body}\n` : '', 'utf8');
+      fs.renameSync(tmp, file);
+      this.transcriptLines.set(chat.id, chat.messages.length);
+    } catch (err) {
+      log.warn(`ChatManager: transcript rewrite failed for ${chat.id}: ${(err as Error).message}`);
+      this.transcriptLines.delete(chat.id);
+    }
+  }
+
+  /** Append the last message to the sidecar. Falls back to a full rewrite when
+   *  our line count is unknown or has drifted (fresh process, missing file). */
+  private appendTranscript(chat: Chat): void {
+    const known = this.transcriptLines.get(chat.id);
+    const file = this.transcriptFile(chat.workspaceName, chat.id);
+    if (known !== chat.messages.length - 1 || !fs.existsSync(file)) {
+      this.rewriteTranscript(chat);
+      return;
+    }
+    const last = chat.messages[chat.messages.length - 1];
+    if (!last) return;
+    try {
+      fs.appendFileSync(file, `${this.transcriptLine(last)}\n`, 'utf8');
+      this.transcriptLines.set(chat.id, chat.messages.length);
+    } catch (err) {
+      log.warn(`ChatManager: transcript append failed for ${chat.id}: ${(err as Error).message}`);
+      this.transcriptLines.delete(chat.id);
+    }
   }
 
   private ensureLoaded(): void {
@@ -519,6 +594,9 @@ export class ChatManager {
     if (!chat) return;
     const file = this.chatFile(chat.workspaceName, chat.id);
     if (fs.existsSync(file)) fs.unlinkSync(file);
+    const transcript = this.transcriptFile(chat.workspaceName, chat.id);
+    if (fs.existsSync(transcript)) fs.unlinkSync(transcript);
+    this.transcriptLines.delete(chatId);
     const chatDir = path.join(this.workspacesRoot, chat.workspaceName, 'chats', chatId);
     if (fs.existsSync(chatDir)) {
       fs.rmSync(chatDir, { recursive: true, force: true });
@@ -538,6 +616,8 @@ export class ChatManager {
     chat.messages.splice(idx, 1);
     chat.updatedAt = Date.now();
     this.persist(chat);
+    // A mid-list removal breaks the append-only invariant — rebuild the sidecar.
+    this.rewriteTranscript(chat);
     return chat;
   }
 
@@ -551,6 +631,7 @@ export class ChatManager {
       chat.title = deriveTitle(message.content);
     }
     this.persist(chat);
+    this.appendTranscript(chat);
     this.maybeScheduleCompaction(chat);
     return chat;
   }
@@ -565,6 +646,11 @@ export class ChatManager {
     chat.messages[idx] = { ...chat.messages[idx], ...patch };
     chat.updatedAt = Date.now();
     this.persist(chat);
+    // Team stubs are appended empty and filled here, so the sidecar's copy of
+    // this line is stale whenever the patch carries new content or identity.
+    if (patch.content !== undefined || patch.agent !== undefined || patch.model !== undefined) {
+      this.rewriteTranscript(chat);
+    }
     return chat;
   }
 

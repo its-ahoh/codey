@@ -370,8 +370,8 @@ export interface AideSettings {
 
 // Context configuration
 export interface ContextSettings {
-  maxTokenBudget?: number;
-  maxTurns?: number;
+  /** Conversation lifetime in minutes. History is no longer bounded by turn
+   *  or token count: the prompt hands the agent a transcript cursor instead. */
   ttlMinutes?: number;
 }
 

@@ -37,8 +37,6 @@ async function run() {
     planner: { enabled: false },  // disable planner to skip LLM call
     memory: { enabled: false, autoExtract: false },
     context: {
-      maxTokenBudget: 12000,
-      maxTurns: 30,
       ttlMinutes: 60,
     },
   };
