@@ -32,6 +32,10 @@ export interface ToolCallEntry {
   message: string;
   input?: Record<string, unknown>;
   output?: string;
+  /** Absolute paths a shell tool call wrote, sampled from the working tree.
+   *  Only a shell `tool_end` carries this — a write that happens inside an
+   *  interpreter is invisible in the command text itself. */
+  writes?: string[];
 }
 
 export interface TeamRunSummaryEntry {

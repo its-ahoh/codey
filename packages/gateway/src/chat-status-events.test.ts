@@ -43,6 +43,18 @@ describe('chatStreamEventForStatus', () => {
   });
 });
 
+describe('chatStreamEventForStatus writes', () => {
+  it('carries sampled shell writes on a tool_end', () => {
+    expect(chatStreamEventForStatus('c1', { type: 'tool_end', tool: 'Bash', message: 'ran' }, ['/repo/a.ts']))
+      .toEqual({ type: 'tool_end', chatId: 'c1', tool: 'Bash', message: 'ran', output: undefined, writes: ['/repo/a.ts'] });
+  });
+
+  it('omits the field when nothing was sampled', () => {
+    const ev = chatStreamEventForStatus('c1', { type: 'tool_end', tool: 'Bash', message: 'ran' }, []);
+    expect(ev && 'writes' in ev).toBe(false);
+  });
+});
+
 describe('isPersistableToolCall', () => {
   it('keeps real tool activity in the message transcript', () => {
     expect(isPersistableToolCall('tool_start')).toBe(true);

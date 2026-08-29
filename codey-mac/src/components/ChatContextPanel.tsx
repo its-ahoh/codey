@@ -5,6 +5,7 @@ import { parseTeamMessage } from './teamMessageFormat'
 import { CombinedDiffView, normalizeTool } from './toolFormat'
 import { stepMatchIndex } from './diffSearch'
 import { foldFileChanges } from './foldChanges'
+import { parseShellWriteTargets, shellCommandText } from './shellWrites'
 import { ToolCallList } from './ToolCallList'
 import { QuickQuestionView } from './QuickQuestionView'
 import { TaskHud } from './TaskHud'
@@ -17,8 +18,8 @@ interface Props {
   chat: Chat
   selectedTurnId: string | null
   followLatest: boolean
-  /** 1-based index of the selected assistant turn in the chat (for "Turn N" display). */
-  selectedTurnIndex: number | null
+  /** 1-based index of the selected assistant turn. Kept for callers; unused since the turn header was removed. */
+  selectedTurnIndex?: number | null
   /** Effective agent for this chat (resolved by ChatTab from override/worker/default). */
   effectiveAgent: string
   /** Effective model for this chat. May be undefined when no model is resolvable. */
@@ -56,18 +57,8 @@ interface Props {
   embedded?: boolean
 }
 
-const fmtTime = (ts: number) =>
-  new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-
-const formatTokens = (n: number): string | null => {
-  if (!Number.isFinite(n) || n < 0) return null
-  if (n < 1000) return String(n)
-  if (n < 10_000) return `${(n / 1000).toFixed(1)}k`
-  return `${Math.round(n / 1000)}k`
-}
-
 export const ChatContextPanel: React.FC<Props> = ({
-  chat, selectedTurnId, followLatest, selectedTurnIndex,
+  chat, selectedTurnId, followLatest,
   effectiveAgent, effectiveModel, workerName, teamName, teamGraph, workingDir,
   width, onFollowLatest, onClose, onResize, onRevealFile, onScrollToStep, isTurnStreaming,
   activeTab, onTabChange, qqInputRef,
@@ -81,6 +72,7 @@ export const ChatContextPanel: React.FC<Props> = ({
 
   const [flowOpen, setFlowOpen] = React.useState(false)
 
+  // The user message that produced this turn — its attachments are surfaced below.
   const triggeringUserMsg: ChatMessage | undefined = (() => {
     if (!turn) return undefined
     const idx = chat.messages.findIndex(m => m.id === turn.id)
@@ -127,37 +119,17 @@ export const ChatContextPanel: React.FC<Props> = ({
   return (
     <div style={{ ...styles.root, width: embedded ? '100%' : width, ...(embedded ? styles.rootEmbedded : null) }}>
       {!embedded && <div style={styles.resizer} onMouseDown={onResizerMouseDown} title="Drag to resize" />}
-      {/* Header */}
-      <div style={styles.header}>
-        <div style={styles.headerMeta}>
-          {turn ? (
-            <>
-              {(() => {
-                const prompt = (triggeringUserMsg?.content ?? '').replace(/\s+/g, ' ').trim()
-                const label = prompt ? (prompt.length > 60 ? prompt.slice(0, 59) + '…' : prompt) : `Turn ${selectedTurnIndex ?? '?'}`
-                return <span style={styles.headerTitle} title={prompt || undefined}>{label}</span>
-              })()}
-              <div style={styles.headerSubLine}>
-                {selectedTurnIndex != null && <><span style={styles.headerSub}>Turn {selectedTurnIndex}</span><span style={styles.headerDot}>·</span></>}
-                <span style={styles.headerSub}>{fmtTime(turn.timestamp)}</span>
-                {turn.durationSec != null && Number.isFinite(turn.durationSec) && (
-                  <><span style={styles.headerDot}>·</span><span style={styles.headerSub}>{turn.durationSec}s</span></>
-                )}
-                {(() => {
-                  const t = turn.tokens != null ? formatTokens(turn.tokens) : null
-                  return t ? <><span style={styles.headerDot}>·</span><span style={styles.headerSub}>{t} tok</span></> : null
-                })()}
-              </div>
-            </>
-          ) : (
-            <span style={styles.headerSub}>No turn selected</span>
+      {/* Controls. The turn's prompt and timestamp already head the turn in the
+          transcript, so repeating them here only cost vertical space. The bar
+          renders only when a control needs it. */}
+      {(!followLatest || !embedded) && (
+        <div style={styles.header}>
+          {!followLatest && (
+            <button style={styles.followPill} onClick={onFollowLatest} title="Follow live updates">Follow latest ↓</button>
           )}
+          {!embedded && <button style={styles.closeBtn} onClick={onClose} aria-label="Close panel">×</button>}
         </div>
-        {!followLatest && (
-          <button style={styles.followPill} onClick={onFollowLatest} title="Follow live updates">Follow latest ↓</button>
-        )}
-        {!embedded && <button style={styles.closeBtn} onClick={onClose} aria-label="Close panel">×</button>}
-      </div>
+      )}
 
       {/* Tabs */}
       <div style={styles.tabs} role="tablist">
@@ -513,6 +485,50 @@ const extractReads = (chat: Chat): Array<{ path: string; msgId: string }> => {
   return out
 }
 
+/**
+ * Files a shell command wrote to. Agents rewrite files with `sed -i`, heredocs,
+ * and redirects as often as they use Edit/Write, and those never reach
+ * extractChanges — without this the panel reports no activity on a run that
+ * changed the working tree. No diff is recoverable, so these are listed by path.
+ */
+const extractShellWrites = (
+  chat: Chat,
+  workingDir?: string,
+): Array<{ path: string; msgId: string; command: string }> => {
+  const out: Array<{ path: string; msgId: string; command: string }> = []
+  const seen = new Set<string>()
+  const add = (path: string, msgId: string, command: string) => {
+    if (!path || seen.has(path)) return
+    seen.add(path)
+    out.push({ path, msgId, command })
+  }
+  for (const m of chat.messages) {
+    if (m.role !== 'assistant') continue
+    // A shell tool_end carries the paths the gateway sampled from the working
+    // tree, which catch writes the command text cannot show (an interpreter
+    // heredoc, `git apply`, a Makefile). The most recent shell command is the
+    // one they belong to.
+    let lastCommand = ''
+    for (const tc of m.toolCalls ?? []) {
+      if (normalizeTool(tc.tool) !== 'Bash') continue
+      if (tc.type === 'tool_start') {
+        lastCommand = shellCommandText(tc.input)
+        // Fallback for chats recorded before sampling existed, and for working
+        // directories git cannot sample (not a repo, tree too dirty).
+        for (const raw of parseShellWriteTargets(lastCommand)) {
+          const path = raw.startsWith('/') || !workingDir
+            ? raw
+            : `${workingDir.replace(/\/$/, '')}/${raw.replace(/^\.\//, '')}`
+          add(path, m.id, lastCommand)
+        }
+      } else if (tc.type === 'tool_end') {
+        for (const path of tc.writes ?? []) add(path, m.id, lastCommand)
+      }
+    }
+  }
+  return out
+}
+
 const extractChanges = (chat: Chat): FileChange[] => {
   const out: FileChange[] = []
   let turnNum = 0
@@ -610,6 +626,7 @@ const FileChangesView: React.FC<{
 }> = ({ chat, workingDir, selectedTurnId, onReveal }) => {
   const changes = React.useMemo(() => extractChanges(chat), [chat])
   const reads = React.useMemo(() => extractReads(chat), [chat])
+  const shellWrites = React.useMemo(() => extractShellWrites(chat, workingDir), [chat, workingDir])
   const [filter, setFilter] = React.useState<'all' | 'turn'>('all')
   // Files default to expanded; this set tracks the ones the user collapsed.
   const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set())
@@ -688,11 +705,19 @@ const FileChangesView: React.FC<{
     ? reads.filter(r => r.msgId === selectedTurnId)
     : reads
 
-  // Reads that aren't already shown in the edits section
-  const editedPaths = new Set(visible.map(c => c.path))
-  const readOnlyFiles = visibleReads.filter(r => !editedPaths.has(r.path))
+  const visibleShellWrites = filter === 'turn' && selectedTurnId
+    ? shellWrites.filter(w => w.msgId === selectedTurnId)
+    : shellWrites
 
-  if (changes.length === 0 && reads.length === 0) {
+  // A file with a real diff is always better than a bare path, so shell writes
+  // to a file that Edit/Write also touched are dropped as duplicates.
+  const editedPaths = new Set(visible.map(c => c.path))
+  const shellFiles = visibleShellWrites.filter(w => !editedPaths.has(w.path))
+  const shellPaths = new Set(shellFiles.map(w => w.path))
+  // Reads that aren't already shown in the edits or shell sections
+  const readOnlyFiles = visibleReads.filter(r => !editedPaths.has(r.path) && !shellPaths.has(r.path))
+
+  if (changes.length === 0 && reads.length === 0 && shellWrites.length === 0) {
     return <div style={styles.emptyHint}>No file activity in this chat yet.</div>
   }
 
@@ -769,7 +794,7 @@ const FileChangesView: React.FC<{
           <button
             style={{ ...fcStyles.scopeBtn, ...(filter === 'all' ? fcStyles.scopeBtnActive : null) }}
             onClick={() => setFilter('all')}
-          >All ({changes.length})</button>
+          >All ({changes.length + shellWrites.length})</button>
           <button
             style={{ ...fcStyles.scopeBtn, ...(filter === 'turn' ? fcStyles.scopeBtnActive : null) }}
             onClick={() => setFilter('turn')}
@@ -778,13 +803,14 @@ const FileChangesView: React.FC<{
           >This turn</button>
         </div>
         <div style={fcStyles.summary}>
-          {order.length + readOnlyFiles.length} file{order.length + readOnlyFiles.length === 1 ? '' : 's'}
+          {order.length + shellFiles.length + readOnlyFiles.length} file{order.length + shellFiles.length + readOnlyFiles.length === 1 ? '' : 's'}
           {visible.length > 0 && <> · {visible.length} edit{visible.length === 1 ? '' : 's'}</>}
+          {shellFiles.length > 0 && <> · {shellFiles.length} shell</>}
           {readOnlyFiles.length > 0 && <> · {readOnlyFiles.length} read</>}
         </div>
       </div>
 
-      {visible.length === 0 && readOnlyFiles.length === 0 && (
+      {visible.length === 0 && shellFiles.length === 0 && readOnlyFiles.length === 0 && (
         <div style={styles.emptyHint}>No file activity in the selected turn.</div>
       )}
 
@@ -859,6 +885,22 @@ const FileChangesView: React.FC<{
           </div>
         )
       })}
+
+      {shellFiles.length > 0 && (
+        <div style={fcStyles.readSection}>
+          <div style={fcStyles.readHeader}>Changed by shell command</div>
+          <div style={fcStyles.shellHint}>Written outside Edit/Write — no diff available.</div>
+          {shellFiles.map(w => (
+            <div key={w.path} style={filesStyles.row} title={w.command}>
+              <span style={filesStyles.path}>{displayPath(w.path, workingDir)}</span>
+              {w.path.startsWith('/') && (
+                <button style={filesStyles.iconBtn} onClick={() => onReveal(w.path)} title="Reveal in Finder">⤴</button>
+              )}
+              <button style={filesStyles.iconBtn} onClick={() => navigator.clipboard.writeText(w.path)} title="Copy path">⧉</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {readOnlyFiles.length > 0 && (
         <div style={fcStyles.readSection}>
@@ -964,6 +1006,7 @@ const fcStyles: Record<string, React.CSSProperties> = {
     marginTop: 14, padding: '10px', background: C.surface2,
     border: `1px solid ${C.border}`, borderRadius: 8,
   },
+  shellHint: { color: C.fg3, fontSize: 10, fontStyle: 'italic', marginBottom: 6 },
   readHeader: { color: C.fg2, fontSize: 10, fontWeight: 650, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 6 },
   changeBody: { padding: 9, background: C.bg, display: 'flex', flexDirection: 'column', gap: 7 },
   noNetChange: { color: C.fg3, fontSize: 11, fontStyle: 'italic' },
@@ -1000,8 +1043,8 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 5,
   },
   header: {
-    display: 'flex', alignItems: 'center', gap: 8,
-    padding: '13px 14px', borderBottom: `1px solid ${C.border}`,
+    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8,
+    padding: '8px 14px', borderBottom: `1px solid ${C.border}`,
     flexShrink: 0,
   },
   tabs: {
@@ -1025,14 +1068,6 @@ const styles: Record<string, React.CSSProperties> = {
   tabActive: {
     color: C.fg, background: C.accentDim,
   },
-  headerMeta: { flex: 1, display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 },
-  headerSubLine: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  headerTitle: {
-    color: C.fg, fontSize: 12, fontWeight: 600,
-    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%',
-  },
-  headerSub: { color: C.fg3, fontSize: 11, fontVariantNumeric: 'tabular-nums' },
-  headerDot: { color: C.fg3, fontSize: 11, opacity: 0.5 },
   followPill: {
     background: C.accent, color: C.onAccent, border: 'none',
     borderRadius: 10, fontSize: 10, padding: '2px 8px', cursor: 'pointer',

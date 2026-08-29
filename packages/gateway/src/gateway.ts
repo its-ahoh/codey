@@ -30,6 +30,7 @@ import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
+import { ShellWriteTracker, isShellTool, shellCommandText, defaultGitRunner, defaultStatRunner } from './shell-write-tracker';
 import { CHAT_CONTEXT_WINDOW, buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
@@ -4972,6 +4973,13 @@ Example: /model gpt-4.1 write a Python script`;
       { teamTurnId, teamName, mode: teamMode },
     );
 
+    // Serial team runs sample the working tree around each shell command, as a
+    // single-agent turn does. One tracker for the whole run is right because the
+    // workers run one after another; the parallel path below shares a directory
+    // between concurrent workers, where no sample can say which one wrote what.
+    const teamWriteTracker = new ShellWriteTracker(workingDir, defaultGitRunner, defaultStatRunner);
+    let teamStatusChain: Promise<void> = Promise.resolve();
+
     const runOneWorker = async (
       workerName: string,
       workerPrompt: string,
@@ -4998,18 +5006,29 @@ Example: /model gpt-4.1 write a Python script`;
           // Mirrors the single-agent onStatus; step narration stays on
           // emitter.status. (Parallel path below is left untouched — its tool
           // events interleave and can't be attributed by order.)
+          let parsed: any;
           try {
-            const parsed = typeof update === 'string' ? JSON.parse(update) : update;
+            parsed = typeof update === 'string' ? JSON.parse(update) : update;
+          } catch { return; /* non-JSON status */ }
+          // Sampling is async; chaining keeps the worker's tool rows in order.
+          teamStatusChain = teamStatusChain.then(async () => {
             if (parsed?.type === 'tool_start') {
+              if (isShellTool(parsed.tool)) await teamWriteTracker.noteStart(shellCommandText(parsed.input));
               workerMsgs.onTool({ type: 'tool_start', tool: parsed.tool, message: parsed.message ?? '', input: parsed.input });
             } else if (parsed?.type === 'tool_end') {
-              workerMsgs.onTool({ type: 'tool_end', tool: parsed.tool, message: parsed.message ?? '', output: parsed.output });
+              const writes = isShellTool(parsed.tool) ? await teamWriteTracker.noteEnd() : [];
+              workerMsgs.onTool({
+                type: 'tool_end', tool: parsed.tool, message: parsed.message ?? '', output: parsed.output,
+                ...(writes.length ? { writes } : {}),
+              });
             }
-          } catch { /* non-JSON status */ }
+          }).catch(() => { /* a status update must never break the run */ });
         },
         signal,
         workingDir,
       });
+      // endWorker is about to freeze this worker's toolCalls into its message.
+      await teamStatusChain;
       if (response) this.extractWorkerMemories(workerName, prompt, codingAgent, response);
       return response?.success
         ? { success: true, output: this.formatAgentResponse(response), thinking: response.thinking || undefined }
@@ -6253,9 +6272,25 @@ Example: /model gpt-4.1 write a Python script`;
       streamedText += text;
       sink({ type: 'stream', chatId, token: text });
     };
+    // A shell command can write files in ways the command text never reveals
+    // (`python3 - <<'PY' … open(p,'w') … PY`), so the working tree is sampled
+    // around each one. Sampling is async, and status updates must still reach
+    // the client in the order the agent produced them, so every update runs
+    // through one chain rather than racing.
+    const writeTracker = new ShellWriteTracker(workingDir, defaultGitRunner, defaultStatRunner);
+    let statusChain: Promise<void> = Promise.resolve();
     const onStatus = (update: any) => {
+      let parsed: any;
       try {
-        const parsed = typeof update === 'string' ? JSON.parse(update) : update;
+        parsed = typeof update === 'string' ? JSON.parse(update) : update;
+      } catch { return; /* non-JSON status */ }
+      statusChain = statusChain.then(async () => {
+        if (parsed.type === 'tool_start' && isShellTool(parsed.tool)) {
+          await writeTracker.noteStart(shellCommandText(parsed.input));
+        }
+        const writes = parsed.type === 'tool_end' && isShellTool(parsed.tool)
+          ? await writeTracker.noteEnd()
+          : [];
         if (isPersistableToolCall(parsed.type)) {
           toolCalls.push({
             id: randomUUID(),
@@ -6264,6 +6299,7 @@ Example: /model gpt-4.1 write a Python script`;
             message: parsed.message ?? '',
             input: parsed.input,
             output: parsed.output,
+            ...(writes.length ? { writes } : {}),
           });
         }
         if (parsed.type === 'checklist' && parsed.checklist?.length) {
@@ -6271,10 +6307,12 @@ Example: /model gpt-4.1 write a Python script`;
           // sees the list without waiting for the agent's next revision.
           this.chatManager.setChecklist(chatId, parsed.checklist);
         }
-        const event = chatStreamEventForStatus(chatId, parsed);
+        const event = chatStreamEventForStatus(chatId, parsed, writes);
         if (event) sink(event);
-      } catch { /* non-JSON status */ }
+      }).catch(() => { /* a status update must never break the turn */ });
     };
+    /** Drains the status chain so `toolCalls` is complete before it is saved. */
+    const settleStatus = () => statusChain;
 
     try {
       let output = '';
@@ -6494,6 +6532,10 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
 
+      // The last shell command's working-tree sample may still be in flight;
+      // toolCalls is about to be frozen into the message.
+      await settleStatus();
+
       // Fallback metadata already carries the exact successful identity as
       // "agent(model)". Persist that identity instead of the failed primary;
       // otherwise use the configured agent/model for this turn.
@@ -6696,6 +6738,7 @@ Example: /model gpt-4.1 write a Python script`;
         sink({ type: 'stopped', chatId, userMessageId: userMessage.id, text: userText });
         return { response: '', chatId };
       }
+      await settleStatus();
       const message = `Error: ${(err as Error).message}`;
       const assistantMessage: ChatMessage = {
         id: randomUUID(),

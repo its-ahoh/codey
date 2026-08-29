@@ -72,13 +72,19 @@ export class WorkerMessageEmitter {
     this.sink({ type: 'thinking', chatId: this.chatId, token, step, messageId: buf.messageId });
   }
 
-  onTool(entry: { type: 'tool_start' | 'tool_end'; tool?: string; message?: string; input?: Record<string, unknown>; output?: string }, worker?: string): void {
+  onTool(entry: { type: 'tool_start' | 'tool_end'; tool?: string; message?: string; input?: Record<string, unknown>; output?: string; writes?: string[] }, worker?: string): void {
     const buf = this.target(worker);
     if (!buf) return;
-    const tc: ToolCallEntry = { id: this.newId(), type: entry.type, tool: entry.tool, message: entry.message ?? '', input: entry.input, output: entry.output };
+    const tc: ToolCallEntry = {
+      id: this.newId(), type: entry.type, tool: entry.tool, message: entry.message ?? '', input: entry.input, output: entry.output,
+      ...(entry.writes?.length ? { writes: entry.writes } : {}),
+    };
     buf.toolCalls.push(tc);
     if (entry.type === 'tool_start') this.sink({ type: 'tool_start', chatId: this.chatId, tool: entry.tool, message: entry.message ?? '', input: entry.input, messageId: buf.messageId, step: buf.step });
-    else this.sink({ type: 'tool_end', chatId: this.chatId, tool: entry.tool, message: entry.message ?? '', output: entry.output, messageId: buf.messageId, step: buf.step });
+    else this.sink({
+      type: 'tool_end', chatId: this.chatId, tool: entry.tool, message: entry.message ?? '', output: entry.output, messageId: buf.messageId, step: buf.step,
+      ...(entry.writes?.length ? { writes: entry.writes } : {}),
+    });
   }
 
   /** Finalize a worker. For parallel pass `worker`; for serial it finalizes the active one. */
