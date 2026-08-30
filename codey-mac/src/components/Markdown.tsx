@@ -2,6 +2,8 @@ import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { C } from '../theme'
+import { FilePathLink } from './FilePathLink'
+import { parseFileRef } from './filePathRef'
 
 interface MarkdownProps {
   children: string
@@ -345,26 +347,36 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
             if (isBlock) {
               return <code className={className} style={{ fontFamily: MONO, background: 'transparent', padding: 0 }}>{children}</code>
             }
-            return (
-              <code
-                {...props}
-                style={{
-                  background: inlineCodeBg,
-                  color: inlineCodeFg,
-                  padding: '1px 6px',
-                  borderRadius: 4,
-                  fontSize: 12,
-                  fontFamily: MONO,
-                  // Preserve spaces while still allowing long inline snippets
-                  // to wrap inside a narrow message bubble.
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  overflowWrap: 'anywhere',
-                }}
-              >
-                {children}
-              </code>
-            )
+            const inlineStyle: React.CSSProperties = {
+              background: inlineCodeBg,
+              color: inlineCodeFg,
+              padding: '1px 6px',
+              borderRadius: 4,
+              fontSize: 12,
+              fontFamily: MONO,
+              // Preserve spaces while still allowing long inline snippets
+              // to wrap inside a narrow message bubble.
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              overflowWrap: 'anywhere',
+            }
+            // A backticked path is the way agents name files, so offer the
+            // same affordance links get. FilePathLink falls back to plain
+            // inline code when the path does not exist on disk.
+            const text = typeof children === 'string'
+              ? children
+              : Array.isArray(children) && children.every(c => typeof c === 'string')
+                ? children.join('')
+                : null
+            const ref = text ? parseFileRef(text) : null
+            if (ref) {
+              return (
+                <FilePathLink path={ref.path} line={ref.line} style={inlineStyle} linkColor={linkColor}>
+                  {children}
+                </FilePathLink>
+              )
+            }
+            return <code {...props} style={inlineStyle}>{children}</code>
           },
         }}
       >

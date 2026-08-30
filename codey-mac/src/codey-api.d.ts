@@ -289,6 +289,11 @@ declare global {
         /** Open a file or directory in the given editor. */
         open: (editorId: string, path: string) => Promise<IpcResult<void>>
       }
+      /** Paths mentioned inside a chat message. */
+      fileRef: {
+        locate: (path: string, cwd: string | null) => Promise<IpcResult<{ absPath: string | null; exists: boolean; isDirectory: boolean }>>
+        open: (path: string, cwd: string | null, options?: { editorId?: string; reveal?: boolean }) => Promise<IpcResult<void>>
+      }
       globalTeams: {
         get: () => Promise<IpcResult<Record<string, TeamConfigRaw>>>
         set: (teams: Record<string, TeamConfigRaw>) => Promise<IpcResult<void>>
