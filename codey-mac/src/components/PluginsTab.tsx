@@ -146,10 +146,6 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
 
   return (
     <div style={styles.root}>
-      <div style={styles.intro}>
-        Plugins give agents extra capabilities. Codey Browser uses Codey’s own window;
-        Chrome uses the browser already open on your Mac.
-      </div>
       {error && <div style={styles.errorBanner}>{error}</div>}
       <div style={styles.list}>
         {filteredPlugins.map((plugin, index) => {
@@ -341,7 +337,6 @@ const detailDangerButton: React.CSSProperties = {
 const styles: Record<string, React.CSSProperties> = {
   root: { maxWidth: 820, margin: '0 auto' },
   note: { color: C.fg3, fontSize: 12, padding: 8 },
-  intro: { color: C.fg3, fontSize: 11.5, lineHeight: 1.5, margin: '0 12px 10px' },
   errorBanner: {
     background: C.dangerBg, color: C.dangerFg, border: `1px solid ${C.dangerBorder}`,
     padding: '9px 11px', borderRadius: 9, marginBottom: 14, fontSize: 12,
