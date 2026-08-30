@@ -6,11 +6,13 @@ const base = (): AgentRequest => ({
   prompt: 'do the thing',
   context: { workingDir: '/tmp/work' },
   browserTools: true,
+  browserTarget: 'codey-browser',
 } as AgentRequest);
 
 const env = {
   CODEY_BROWSER_SOCKET: '/tmp/codey-browser.sock',
   CODEY_BROWSER_TOKEN: 'secret-token',
+  CODEY_CHROME_COMPANION_TOKEN: 'chrome-secret-token',
   CODEY_BROWSER_RUNTIME: '/Applications/Codey.app/Contents/MacOS/Codey',
   CODEY_BROWSER_CLI: '/Applications/Codey.app/browser-agent-cli.cjs',
 } as NodeJS.ProcessEnv;
@@ -23,6 +25,7 @@ describe('addCodeyBrowserTools', () => {
       CODEY_BROWSER_TOKEN: env.CODEY_BROWSER_TOKEN,
       CODEY_BROWSER_CLI: env.CODEY_BROWSER_CLI,
       CODEY_BROWSER_RUNTIME: env.CODEY_BROWSER_RUNTIME,
+      CODEY_BROWSER_PLUGIN_ENABLED: '1',
       CODEY_BROWSER_CHAT_ID: 'chat-1',
     });
   });
@@ -45,6 +48,46 @@ describe('addCodeyBrowserTools', () => {
 
   it('does nothing when the plugin is disabled', () => {
     expect(addCodeyBrowserTools(base(), false, env).extraEnv).toBeUndefined();
+  });
+
+  it('can expose only the independent Chrome Companion capability', () => {
+    const request = addCodeyBrowserTools({ ...base(), browserTarget: 'chrome' }, false, env, true);
+    expect(request.extraEnv).toMatchObject({
+      CODEY_CHROME_COMPANION_PLUGIN_ENABLED: '1',
+      CODEY_CHROME_COMPANION_TOKEN: env.CODEY_CHROME_COMPANION_TOKEN,
+      CODEY_BROWSER_SOCKET: env.CODEY_BROWSER_SOCKET,
+    });
+    expect(request.extraEnv).not.toHaveProperty('CODEY_BROWSER_PLUGIN_ENABLED');
+  });
+
+  it('exposes only Chrome Companion for turns originating in the Chrome side panel', () => {
+    const request = addCodeyBrowserTools(
+      { ...base(), browserTarget: 'chrome' },
+      true,
+      env,
+      true,
+    );
+    expect(request.extraEnv).toMatchObject({
+      CODEY_CHROME_COMPANION_PLUGIN_ENABLED: '1',
+      CODEY_CHROME_COMPANION_TOKEN: env.CODEY_CHROME_COMPANION_TOKEN,
+    });
+    expect(request.extraEnv).not.toHaveProperty('CODEY_BROWSER_PLUGIN_ENABLED');
+    expect(request.extraEnv).not.toHaveProperty('CODEY_BROWSER_TOKEN');
+  });
+
+  it('exposes neither browser when the turn target is none', () => {
+    const request = addCodeyBrowserTools(
+      { ...base(), browserTarget: 'none' },
+      true,
+      env,
+      true,
+    );
+    expect(request.extraEnv).toBeUndefined();
+  });
+
+  it('does not infer a browser target when none was supplied', () => {
+    const { browserTarget: _target, ...request } = base();
+    expect(addCodeyBrowserTools(request as AgentRequest, true, env, true).extraEnv).toBeUndefined();
   });
 
   it('does nothing when the bridge env is missing', () => {

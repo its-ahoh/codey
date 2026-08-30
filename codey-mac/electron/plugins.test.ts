@@ -12,15 +12,16 @@ const status = (over: Partial<BrowserSkillStatus> = {}): BrowserSkillStatus => (
 })
 
 describe('plugin registry', () => {
-  it('registers exactly the browser plugin', () => {
-    expect(PLUGINS.map(p => p.id)).toEqual(['browser'])
+  it('registers Browser and Chrome Companion as independent plugins', () => {
+    expect(PLUGINS.map(p => p.id)).toEqual(['browser', 'chrome-companion'])
     expect(PLUGINS[0].name).toBe('Browser')
+    expect(PLUGINS[1].name).toBe('Chrome Companion')
     expect(PLUGINS[0].description.length).toBeGreaterThan(10)
   })
 
   it('reports the state the skill is actually in on disk', () => {
     for (const state of ['installed', 'disabled', 'absent'] as const) {
-      expect(listPlugins(() => status({ state }))[0].state).toBe(state)
+      expect(listPlugins(() => status({ state })).every(plugin => plugin.state === state)).toBe(true)
     }
   })
 
@@ -35,11 +36,12 @@ describe('plugin registry', () => {
   it('asks about each registered plugin by id', () => {
     const asked: string[] = []
     listPlugins(id => { asked.push(id); return status() })
-    expect(asked).toEqual(['browser'])
+    expect(asked).toEqual(['browser', 'chrome-companion'])
   })
 
   it('isKnownPlugin accepts registry ids and rejects others', () => {
     expect(isKnownPlugin('browser')).toBe(true)
+    expect(isKnownPlugin('chrome-companion')).toBe(true)
     expect(isKnownPlugin('nope')).toBe(false)
     expect(isKnownPlugin('')).toBe(false)
   })

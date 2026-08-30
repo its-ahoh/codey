@@ -44,6 +44,8 @@ export interface BrowserProfileData {
 
 export interface BrowserProfile extends BrowserProfileData {
   name: string
+  /** User-selected visual marker shown in the browser profile switcher. */
+  avatar?: string | null
   createdAt: number
   updatedAt: number
   /** The page that was showing when the profile was saved; null for imports. */
@@ -52,6 +54,7 @@ export interface BrowserProfile extends BrowserProfileData {
 
 export interface BrowserProfileSummary {
   name: string
+  avatar?: string | null
   createdAt: number
   updatedAt: number
   cookieCount: number
@@ -62,6 +65,19 @@ export interface BrowserProfileSummary {
 
 /** The dot-file that records which profile is enabled. */
 export const ACTIVE_PROFILE_FILE = '.active'
+
+export const BROWSER_PROFILE_AVATARS = [
+  '👤', '💼', '🏠', '🚀', '🧑‍💻', '🎨', '🌟', '🦊',
+  '🐱', '🐶', '🐼', '🐸', '🦁', '🐯', '🐵', '🐧',
+  '🌈', '🔥', '⚡️', '💎', '🎯', '🧠', '🤖', '👻',
+  '☕️', '📚', '🎮', '🎵', '📷', '✈️', '🌍', '🍀',
+] as const
+
+export function assertProfileAvatar(avatar: unknown): asserts avatar is string {
+  if (typeof avatar !== 'string' || !(BROWSER_PROFILE_AVATARS as readonly string[]).includes(avatar)) {
+    throw new Error('Choose one of the available profile avatars')
+  }
+}
 
 /** Profile names are file names inside the store directory, so they must be
  *  safe on every platform: no separators, no leading dot (hidden files), and
@@ -226,6 +242,7 @@ export class BrowserProfileStore {
     }
     return {
       name,
+      avatar: profile?.avatar ?? null,
       createdAt: profile?.createdAt ?? 0,
       updatedAt: profile?.updatedAt ?? 0,
       cookieCount: profile?.cookies.length ?? 0,
@@ -249,6 +266,9 @@ export class BrowserProfileStore {
     return {
       ...data,
       name,
+      avatar: typeof record.avatar === 'string' && (BROWSER_PROFILE_AVATARS as readonly string[]).includes(record.avatar)
+        ? record.avatar
+        : null,
       createdAt: typeof record.createdAt === 'number' ? record.createdAt : 0,
       updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : 0,
       sourceUrl: typeof record.sourceUrl === 'string' ? record.sourceUrl : null,
@@ -268,6 +288,7 @@ export class BrowserProfileStore {
     const profile: BrowserProfile = {
       ...data,
       name,
+      avatar: existing?.avatar ?? null,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       sourceUrl: sourceUrl ?? existing?.sourceUrl ?? null,
@@ -277,6 +298,18 @@ export class BrowserProfileStore {
     fs.writeFileSync(file, JSON.stringify(profile, null, 2), { encoding: 'utf8', mode: 0o600 })
     try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
     return profile
+  }
+
+  /** Update only presentation metadata; the saved browser session is untouched. */
+  setAvatar(name: string, avatar: string): BrowserProfileSummary {
+    assertProfileName(name)
+    assertProfileAvatar(avatar)
+    const profile = this.read(name)
+    const next: BrowserProfile = { ...profile, avatar }
+    const file = this.file(name)
+    fs.writeFileSync(file, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 })
+    try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
+    return this.summary(name, this.active())
   }
 
   remove(name: string): void {

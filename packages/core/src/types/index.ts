@@ -171,6 +171,9 @@ export interface McpServerSpec {
   url?: string;
 }
 
+/** Browser capability made available to one agent turn. */
+export type BrowserTarget = 'codey-browser' | 'chrome' | 'none';
+
 export interface AgentRequest {
   prompt: string;
   agent: CodingAgent;
@@ -237,6 +240,12 @@ export interface AgentRequest {
    * the UI, because the user may switch chats while the watcher is active.
    */
   browserChatId?: string;
+  /**
+   * Exact browser capability selected for this turn. This is enforced by
+   * credential injection rather than prompt wording: an agent can only see
+   * the selected browser's token. `none` (and an absent value) expose neither.
+   */
+  browserTarget?: BrowserTarget;
   /**
    * MCP servers to expose to this agent turn. Populated by AgentFactory from
    * enabled plugins; each adapter serializes the record into its CLI's native

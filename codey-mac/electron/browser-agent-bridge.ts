@@ -5,6 +5,7 @@ import * as path from 'path'
 import { randomBytes } from 'crypto'
 import type { BrowserController, BrowserLoginStatus } from './browser-controller'
 import type { BrowserControlRequest } from './browser-control-permission'
+import type { ChromeCompanionBridge } from './chrome-companion'
 
 type BridgeController = Pick<
   BrowserController,
@@ -16,9 +17,12 @@ type BridgeController = Pick<
   | 'listProfiles' | 'activeProfileName' | 'saveProfile' | 'importProfile' | 'activateProfile' | 'deleteProfile' | 'exportProfile'
 >
 
+type CompanionController = Pick<ChromeCompanionBridge, 'status' | 'activeTab' | 'snapshot' | 'navigate'>
+
 export interface BrowserAgentBridgeInfo {
   socketPath: string
   token: string
+  chromeToken: string
 }
 
 export interface BrowserLoginWaitEvent {
@@ -82,14 +86,16 @@ export class BrowserAgentBridge {
     private readonly requestControl: (request: BrowserControlRequest) => Promise<boolean> = async () => false,
     private readonly onLoginWait: (event: BrowserLoginWaitEvent) => void = () => {},
     private readonly loginPollIntervalMs = 2000,
+    private readonly companion?: CompanionController,
   ) {}
 
   async start(): Promise<BrowserAgentBridgeInfo> {
     if (this.info) return this.info
 
     const token = randomBytes(32).toString('hex')
+    const chromeToken = randomBytes(32).toString('hex')
     const socketPath = path.join(os.tmpdir(), `cyb-${process.pid}-${randomBytes(5).toString('hex')}.sock`)
-    const server = http.createServer((req, res) => { void this.handle(req, res, token) })
+    const server = http.createServer((req, res) => { void this.handle(req, res, token, chromeToken) })
     this.server = server
 
     await new Promise<void>((resolve, reject) => {
@@ -101,7 +107,7 @@ export class BrowserAgentBridge {
       })
     })
     try { fs.chmodSync(socketPath, 0o600) } catch { /* best-effort socket permissions */ }
-    this.info = { socketPath, token }
+    this.info = { socketPath, token, chromeToken }
     return this.info
   }
 
@@ -122,13 +128,18 @@ export class BrowserAgentBridge {
     }
   }
 
-  private async handle(req: http.IncomingMessage, res: http.ServerResponse, token: string): Promise<void> {
-    if (req.headers.authorization !== `Bearer ${token}`) {
+  private async handle(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    browserToken: string,
+    chromeToken: string,
+  ): Promise<void> {
+    const route = (req.url || '/').split('?')[0]
+    const expectedToken = route.startsWith('/chrome/') ? chromeToken : browserToken
+    if (req.headers.authorization !== `Bearer ${expectedToken}`) {
       json(res, 401, { error: 'Unauthorized' })
       return
     }
-
-    const route = (req.url || '/').split('?')[0]
     try {
       // An agent can target a specific browser profile by passing
       // `--profile <name>` to the CLI, which forwards it here. The profile is
@@ -333,6 +344,31 @@ export class BrowserAgentBridge {
       if (req.method === 'POST' && route === '/submit') {
         const body = await readJson(req)
         json(res, 200, await this.controlled('submit', () => this.controller.submit(String(body.ref || ''))))
+        return
+      }
+      // ── Real Chrome companion ─────────────────────────────────────────
+      // These commands use the explicitly paired Chrome extension instead of
+      // the embedded Electron browser. Page reads remain origin-scoped by the
+      // extension's optional host permissions.
+      if (req.method === 'GET' && route === '/chrome/status') {
+        if (!this.companion) throw new Error('Chrome companion is unavailable')
+        json(res, 200, this.companion.status())
+        return
+      }
+      if (req.method === 'GET' && route === '/chrome/tab') {
+        if (!this.companion) throw new Error('Chrome companion is unavailable')
+        json(res, 200, await this.companion.activeTab())
+        return
+      }
+      if (req.method === 'GET' && route === '/chrome/view') {
+        if (!this.companion) throw new Error('Chrome companion is unavailable')
+        json(res, 200, await this.companion.snapshot())
+        return
+      }
+      if (req.method === 'POST' && route === '/chrome/open') {
+        if (!this.companion) throw new Error('Chrome companion is unavailable')
+        const body = await readJson(req)
+        json(res, 200, await this.companion.navigate(String(body.url || '')))
         return
       }
       // ── Profiles ──────────────────────────────────────────────────────

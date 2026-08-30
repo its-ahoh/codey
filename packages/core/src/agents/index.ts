@@ -6,6 +6,7 @@ import { CodexAdapter } from './codex';
 import { PiAdapter } from './pi';
 import { syncCodeyGlobalSkills, syncCodeyProjectSkills } from './codey-skills';
 import { isBrowserSkillActive } from './browser-skill';
+import { isChromeCompanionSkillActive } from './chrome-companion-skill';
 
 export type { CodingAgentAdapter } from './base';
 export { ClaudeCodeAdapter } from './claude-code';
@@ -15,29 +16,35 @@ export { PiAdapter } from './pi';
 export { applyModelEnv, unwiredAllProtocols } from './env';
 export * from './codey-skills';
 export * from './browser-skill';
+export * from './chrome-companion-skill';
 
 /**
- * Hand the in-app browser's bridge credentials to a task-performing agent
- * turn. Requires the installed and enabled `browser` skill AND a live bridge
- * (the Mac app exports CODEY_BROWSER_* on the gateway process). Advisor,
+ * Hand the shared local browser bridge credentials to a task-performing agent
+ * turn. Requires the installed and enabled `browser` and/or `chrome-companion`
+ * skill plus a live bridge (the Mac app exports CODEY_BROWSER_*). Separate env
+ * flags tell the CLI which command family this turn may use. Advisor,
  * housekeeping, and tool-restricted turns are excluded via the same
  * browserTools / allowedTools gating the earlier MCP server used.
  *
- * The agent learns the commands from the `browser` skill, and reaches them
- * through its own shell tool — the one capability every coding agent has, MCP
- * or not. That makes this env the real gate: a turn without it gets a CLI that
- * refuses to run, whatever the skill list says.
+ * Each skill teaches only its own commands. Both reach the shared CLI through
+ * the agent's shell tool, while the command-family flags remain the real gate.
  */
 export function addCodeyBrowserTools(
   request: AgentRequest,
   skillActive: boolean,
   env: NodeJS.ProcessEnv = process.env,
+  chromeCompanionActive = false,
 ): AgentRequest {
   const socket = env.CODEY_BROWSER_SOCKET;
   const token = env.CODEY_BROWSER_TOKEN;
+  const chromeToken = env.CODEY_CHROME_COMPANION_TOKEN;
   const runtime = env.CODEY_BROWSER_RUNTIME;
   const cli = env.CODEY_BROWSER_CLI;
-  if (!skillActive || !socket || !token || !runtime || !cli) return request;
+  // Browser selection is a capability boundary, not a prompt hint. Supplying
+  // only the chosen token makes it impossible for the other browser to win.
+  const browserReady = request.browserTarget === 'codey-browser' && skillActive && !!token;
+  const chromeReady = request.browserTarget === 'chrome' && chromeCompanionActive && !!chromeToken;
+  if ((!browserReady && !chromeReady) || !socket || !runtime || !cli) return request;
   if (request.browserTools !== true || !request.context?.workingDir || request.allowedTools) {
     return request;
   }
@@ -47,9 +54,12 @@ export function addCodeyBrowserTools(
     extraEnv: {
       ...(request.extraEnv ?? {}),
       CODEY_BROWSER_SOCKET: socket,
-      CODEY_BROWSER_TOKEN: token,
+      ...(browserReady ? { CODEY_BROWSER_TOKEN: token } : {}),
+      ...(chromeReady ? { CODEY_CHROME_COMPANION_TOKEN: chromeToken } : {}),
       CODEY_BROWSER_CLI: cli,
       CODEY_BROWSER_RUNTIME: runtime,
+      ...(browserReady ? { CODEY_BROWSER_PLUGIN_ENABLED: '1' } : {}),
+      ...(chromeReady ? { CODEY_CHROME_COMPANION_PLUGIN_ENABLED: '1' } : {}),
       ...(request.browserChatId ? { CODEY_BROWSER_CHAT_ID: request.browserChatId } : {}),
     },
   };
@@ -150,12 +160,14 @@ export class AgentFactory {
     // hand are the same fact, and the agent must see whichever the user did
     // last without a restart.
     let browserActive = false;
+    let chromeCompanionActive = false;
     try {
       browserActive = isBrowserSkillActive();
+      chromeCompanionActive = isChromeCompanionSkillActive();
     } catch {
       // Unreadable home: no skill, so no capability.
     }
-    request = addCodeyBrowserTools(request, browserActive);
+    request = addCodeyBrowserTools(request, browserActive, process.env, chromeCompanionActive);
     request = addExternalMcpServers(request, this.externalMcpProvider?.());
 
     // `~/.codey/skills` and `<project>/.codey/skills` are Codey's global and

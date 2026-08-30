@@ -191,6 +191,7 @@ export interface BrowserTab {
 /** A saved browser session ("profile") as listed by the profiles manager. */
 export interface BrowserProfileSummary {
   name: string
+  avatar: string | null
   createdAt: number
   updatedAt: number
   cookieCount: number
@@ -232,6 +233,30 @@ export interface ChromeBrowserExtensionCandidate extends BrowserExtensionCandida
   profile: string
   compatible: boolean
   incompatibilities: string[]
+}
+
+export interface ChromeCompanionStatus {
+  endpoint: string | null
+  paired: boolean
+  connected: boolean
+  clientName: string | null
+  pairedAt: number | null
+  lastSeenAt: number | null
+}
+
+export interface ChromeTabInfo {
+  id: number
+  windowId: number
+  title: string
+  url: string
+  favIconUrl?: string
+}
+
+export interface ChromePageSnapshot {
+  tab: ChromeTabInfo
+  text: string
+  links: Array<{ text: string; href: string }>
+  forms: Array<{ tag: string; type: string; name: string; placeholder: string }>
 }
 
 declare global {
@@ -330,6 +355,7 @@ declare global {
         list: () => Promise<IpcResult<PluginInfo[]>>
         install: (id: string, force?: boolean) => Promise<IpcResult<PluginInstallResult>>
         uninstall: (id: string, force?: boolean) => Promise<IpcResult<PluginUninstallResult>>
+        setEnabled: (id: string, enabled: boolean) => Promise<IpcResult<PluginInfo>>
         check: (id: string) => Promise<IpcResult<PluginUpdateCheck>>
       }
       mcp: {
@@ -570,6 +596,16 @@ declare global {
         onData: (handler: (event: { sessionId: string; chatId: string; data: string }) => void) => () => void
         onExit: (handler: (event: { sessionId: string; chatId: string; exitCode: number; signal?: number }) => void) => () => void
       }
+      chromeCompanion: {
+        status: () => Promise<IpcResult<ChromeCompanionStatus>>
+        disconnect: () => Promise<IpcResult<ChromeCompanionStatus>>
+        activeTab: () => Promise<IpcResult<ChromeTabInfo>>
+        snapshot: () => Promise<IpcResult<ChromePageSnapshot>>
+        exportSession: (name: string) => Promise<IpcResult<{ profile: BrowserProfileSummary; tab: ChromeTabInfo }>>
+        navigate: (url: string) => Promise<IpcResult<ChromeTabInfo>>
+        showExtensionFolder: () => Promise<IpcResult<string>>
+        onStatus: (handler: (state: ChromeCompanionStatus) => void) => () => void
+      }
       browser: {
         getState: () => Promise<IpcResult<BrowserState>>
         show: (bounds: BrowserBounds) => Promise<IpcResult<BrowserState>>
@@ -591,6 +627,7 @@ declare global {
           list: () => Promise<IpcResult<{ active: string | null; profiles: BrowserProfileSummary[] }>>
           save: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
           activate: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
+          setAvatar: (name: string, avatar: string) => Promise<IpcResult<BrowserProfileSummary>>
           delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>
           import: () => Promise<IpcResult<{ imported: boolean; profile: BrowserProfileSummary | null }>>
           export: (name: string) => Promise<IpcResult<{ exported: boolean; path: string | null }>>

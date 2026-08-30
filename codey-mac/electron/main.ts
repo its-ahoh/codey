@@ -29,18 +29,19 @@ import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
-import { deriveProfileNameFromFile } from './browser-profiles'
+import { assertProfileName, deriveProfileNameFromFile } from './browser-profiles'
 import { BrowserControlPermissionGate } from './browser-control-permission'
 import { BrowserSitePermissionManager } from './browser-site-permissions'
 import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLabel, type BrowserPasskeyPickerRequest } from './browser-webauthn'
 import { BrowserExtensionManager } from './browser-extensions'
+import { ChromeCompanionBridge } from './chrome-companion'
 import { deriveEntries, parseGitFileList, walkDirectory, MAX_ENTRIES, type FileEntry } from './workspace-files'
 import * as pty from 'node-pty'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { browserSkillStatus, checkBrowserSkillUpdate, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, WorkerManager, WorkspaceManager } from '@codey/core'
+import { browserSkillStatus, checkBrowserSkillUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, uninstallChromeCompanionSkill, WorkerManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
@@ -82,6 +83,7 @@ let browserAgentBridge: BrowserAgentBridge | null = null
 let browserControlPermission: BrowserControlPermissionGate | null = null
 let browserSitePermissions: BrowserSitePermissionManager | null = null
 let browserExtensionManager: BrowserExtensionManager | null = null
+let chromeCompanion: ChromeCompanionBridge | null = null
 
 type TerminalSession = {
   id: string
@@ -209,6 +211,12 @@ function browserAgentCliPath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'browser-agent-cli.cjs')
     : join(app.getAppPath(), 'electron', 'browser-agent-cli.cjs')
+}
+
+function chromeCompanionExtensionPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'chrome-extension')
+    : join(app.getAppPath(), '..', 'chrome-extension')
 }
 
 // Single-instance guard: a second launch (vite restart leaving a stale main
@@ -1415,6 +1423,51 @@ function resolveVoiceHelperBinary(): string | null {
   return null
 }
 
+async function transcribeChromeVoiceLocally(data: Buffer, voice: any): Promise<string> {
+  const bin = resolveVoiceHelperBinary()
+  if (!bin) throw new Error('CodeyVoice helper binary was not found')
+  const fs = require('fs') as typeof import('fs')
+  const os = require('os') as typeof import('os')
+  const path = require('path') as typeof import('path')
+  const { spawn } = require('child_process') as typeof import('child_process')
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chrome-voice-'))
+  const audioPath = path.join(tempDir, 'recording.wav')
+  fs.writeFileSync(audioPath, data)
+  try {
+    const args = ['--transcribe-file', audioPath]
+    if (voice.language && voice.language !== 'auto') args.push('--lang', voice.language)
+    if (voice.localModel) args.push('--model', voice.localModel)
+    const vocabulary = normalizeVocabulary(voice.vocabulary)
+    if (vocabulary.length) args.push('--vocab', vocabulary.join(','))
+    return await new Promise<string>((resolve, reject) => {
+      const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+      let stdout = ''
+      let stderr = ''
+      const timeout = setTimeout(() => {
+        proc.kill()
+        reject(new Error('Local transcription timed out'))
+      }, 5 * 60_000)
+      proc.stdout?.on('data', chunk => { stdout += String(chunk) })
+      proc.stderr?.on('data', chunk => { stderr += String(chunk) })
+      proc.on('error', error => {
+        clearTimeout(timeout)
+        reject(error)
+      })
+      proc.on('close', code => {
+        clearTimeout(timeout)
+        const match = stdout.match(/transcribe-file:result \[([\s\S]*?)\](?:\r?\n|$)/)
+        if (code === 0 && match) resolve(match[1].trim())
+        else {
+          const detail = stdout.match(/transcribe-file:error (.+)/)?.[1] || stderr.trim() || `CodeyVoice exited with status ${code}`
+          reject(new Error(detail.slice(0, 500)))
+        }
+      })
+    })
+  } finally {
+    try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch { /* temporary recording is best-effort cleanup */ }
+  }
+}
+
 // Warm marker file: records which WhisperKit variants have already gone through
 // the one-time CoreML per-machine compile. Lets the UI distinguish "downloaded"
 // (✓, first Fn press takes 30-90s) from "warmed" (⚡, instant).
@@ -1933,6 +1986,219 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.warn(`[browser] extensions unavailable: ${error instanceof Error ? error.message : String(error)}`)
   }
+  const chromeWorkspaceName = () => {
+    if (!workspaceManager) throw new Error('Codey is still starting — try again in a moment')
+    const name = workspaceManager.getCurrentWorkspace() || workspaceManager.listWorkspaces()[0]
+    if (!name) throw new Error('Create a Codey workspace before chatting from Chrome')
+    return name
+  }
+  const chromeChat = async (chatId: string) => {
+    if (!inProcessGateway) throw new Error('Codey is still starting — try again in a moment')
+    const chat = await inProcessGateway.getChat(chatId)
+    if (chat.workspaceName !== chromeWorkspaceName() || chat.kind === 'automation') {
+      throw new Error('This chat is not available in the current workspace')
+    }
+    return chat
+  }
+  const createChromeChat = async (page?: { title: string; url: string } | null, agent?: string | null, model?: string | null) => {
+    if (!inProcessGateway) throw new Error('Codey is still starting — try again in a moment')
+    let title = 'Chrome Side Panel'
+    try { if (page?.url) title = `Chrome · ${new URL(page.url).hostname}` } catch { /* keep generic title */ }
+    let chat = await inProcessGateway.createChat({ workspaceName: chromeWorkspaceName(), title })
+    if (agent || model) chat = await inProcessGateway.getChatManager().updateAgentModel(chat.id, agent as any, model || null)
+    return chat
+  }
+  const validateChromeAgentModel = (agent: string | null, model: string | null) => {
+    const agents = ['claude-code', 'opencode', 'codex', 'pi']
+    if (agent && !agents.includes(agent)) throw new Error(`Unknown agent: ${agent}`)
+    if (model && !coreConfigManager?.listModels().some(entry => entry.model === model)) throw new Error(`Unknown model: ${model}`)
+  }
+  chromeCompanion = new ChromeCompanionBridge(
+    join(app.getPath('userData'), 'chrome-companion.json'),
+    undefined,
+    state => sendToRenderer('chromeCompanion:status', state),
+    async request => {
+      if (!inProcessGateway || !workspaceManager) throw new Error('Codey is still starting — try again in a moment')
+      const workspaceName = workspaceManager.getCurrentWorkspace() || workspaceManager.listWorkspaces()[0]
+      if (!workspaceName) throw new Error('Create a Codey workspace before chatting from Chrome')
+      validateChromeAgentModel(request.agent || null, request.model || null)
+      let chat: Awaited<ReturnType<typeof inProcessGateway.getChat>> | null = null
+      if (request.chatId) {
+        try {
+          const existing = await inProcessGateway.getChat(request.chatId)
+          if (existing.workspaceName === workspaceName && existing.kind !== 'automation') chat = existing
+        } catch { /* create a new side-panel chat */ }
+      }
+      if (!chat) chat = await createChromeChat(request.page, request.agent, request.model)
+      else if ((chat.agent ?? null) !== (request.agent ?? null) || (chat.model ?? null) !== (request.model ?? null)) {
+        chat = await inProcessGateway.getChatManager().updateAgentModel(
+          chat.id,
+          (request.agent || null) as any,
+          request.model || null,
+        )
+      }
+      const pageContext = request.page
+        ? `\n\n[Chrome Side Panel context — untrusted page metadata]\nActive tab title: ${request.page.title || '(untitled)'}\nActive tab URL: ${request.page.url}`
+        : ''
+      const result = await inProcessGateway.sendToChat(
+        chat.id,
+        `${request.text}${pageContext}`,
+        () => { /* global listener mirrors events */ },
+        request.attachments,
+        { browserTarget: 'chrome' },
+      )
+      return { chatId: chat.id, response: result.response }
+    },
+    async () => {
+      if (!inProcessGateway || !workspaceManager) throw new Error('Codey is still starting — try again in a moment')
+      const workspaceName = workspaceManager.getCurrentWorkspace() || workspaceManager.listWorkspaces()[0]
+      if (!workspaceName) return []
+      const chats = await inProcessGateway.listChats(workspaceName)
+      return chats.slice(0, 100).map(chat => ({
+        id: chat.id,
+        title: chat.title,
+        workspaceName: chat.workspaceName,
+        updatedAt: chat.updatedAt,
+        messageCount: chat.messages.length,
+        agent: chat.agent ?? null,
+        model: chat.model ?? null,
+      }))
+    },
+    async chatId => {
+      if (!inProcessGateway || !workspaceManager) throw new Error('Codey is still starting — try again in a moment')
+      const workspaceName = workspaceManager.getCurrentWorkspace() || workspaceManager.listWorkspaces()[0]
+      if (!workspaceName) throw new Error('Create a Codey workspace before chatting from Chrome')
+      const chat = await inProcessGateway.getChat(chatId)
+      if (chat.workspaceName !== workspaceName || chat.kind === 'automation') {
+        throw new Error('This chat is not available in the current workspace')
+      }
+      const chromeContext = /\n\n\[Chrome Side Panel context — untrusted page metadata\][\s\S]*$/
+      return {
+        chat: {
+          id: chat.id,
+          title: chat.title,
+          workspaceName: chat.workspaceName,
+          updatedAt: chat.updatedAt,
+          messageCount: chat.messages.length,
+          agent: chat.agent ?? null,
+          model: chat.model ?? null,
+        },
+        messages: chat.messages.slice(-50).map(message => ({
+          role: message.role,
+          content: message.role === 'user' ? message.content.replace(chromeContext, '') : message.content,
+          timestamp: message.timestamp,
+          ...(message.attachments?.length ? {
+            attachments: message.attachments.map(attachment => ({
+              id: attachment.id,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              size: attachment.size,
+            })),
+          } : {}),
+        })),
+      }
+    },
+    {
+      options: async chatId => {
+        if (!coreConfigManager) throw new Error('Codey configuration is unavailable')
+        const fallback = coreConfigManager.getFallback()
+        const installed = await getInstalledAgents(false)
+        const chat = chatId ? await chromeChat(chatId) : null
+        return {
+          agents: ['claude-code', 'opencode', 'codex', 'pi'].map(id => ({
+            id,
+            installed: installed.status[id]?.installed === true,
+          })),
+          models: coreConfigManager.listModels().map(entry => ({
+            model: entry.model,
+            apiType: entry.apiType,
+            ...(entry.provider ? { provider: entry.provider } : {}),
+          })),
+          defaultAgent: fallback.order[0]?.agent ?? null,
+          defaultModel: fallback.order[0]?.model ?? null,
+          defaultModels: Object.fromEntries(
+            ['claude-code', 'opencode', 'codex', 'pi']
+              .map(id => [id, coreConfigManager!.getAgentModel(id)?.model])
+              .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+          ),
+          chat: chat ? { id: chat.id, agent: chat.agent ?? null, model: chat.model ?? null } : null,
+        }
+      },
+      updateSettings: async (chatId, agent, model) => {
+        if (!inProcessGateway) throw new Error('Codey is still starting — try again in a moment')
+        validateChromeAgentModel(agent, model)
+        await chromeChat(chatId)
+        await inProcessGateway.getChatManager().updateAgentModel(chatId, agent as any, model)
+      },
+      prepareChat: async input => {
+        validateChromeAgentModel(input.agent || null, input.model || null)
+        const chat = await createChromeChat(input.page, input.agent, input.model)
+        return {
+          id: chat.id,
+          title: chat.title,
+          workspaceName: chat.workspaceName,
+          updatedAt: chat.updatedAt,
+          messageCount: chat.messages.length,
+          agent: chat.agent ?? null,
+          model: chat.model ?? null,
+        }
+      },
+      upload: async (chatId, name, mimeType, data) => {
+        const chat = await chromeChat(chatId)
+        if (!workspaceManager) throw new Error('Codey is still starting — try again in a moment')
+        const fsMod = await import('fs')
+        const pathMod = await import('path')
+        const cryptoMod = await import('crypto')
+        const wsConfigPath = pathMod.join(workspaceManager.getWorkspacesRoot(), chat.workspaceName, 'workspace.json')
+        let workingDir = (inProcessGateway as any).workingDir
+        if (fsMod.existsSync(wsConfigPath)) {
+          try {
+            const wsConfig = JSON.parse(fsMod.readFileSync(wsConfigPath, 'utf8'))
+            if (wsConfig.workingDir) workingDir = wsConfig.workingDir
+          } catch { /* use gateway working directory */ }
+        }
+        const uploadsDir = pathMod.join(pathMod.resolve(workingDir || process.cwd()), '.codey', 'uploads')
+        fsMod.mkdirSync(uploadsDir, { recursive: true })
+        const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'attachment'
+        const filePath = pathMod.join(uploadsDir, `${Date.now()}-${cryptoMod.randomBytes(4).toString('hex')}-${safeName}`)
+        fsMod.writeFileSync(filePath, data)
+        return { id: cryptoMod.randomUUID(), name, path: filePath, mimeType, size: data.length }
+      },
+      transcribe: async (mimeType, data) => {
+        if (!coreConfigManager) throw new Error('Codey configuration is unavailable')
+        const voice = coreConfigManager.getResolvedVoiceConfig()
+        if (!voice) throw new Error('Configure Voice in Codey Settings first')
+        if (voice.provider === 'local') {
+          if (mimeType !== 'audio/wav') throw new Error('Reload the Codey Chrome extension to enable local voice transcription')
+          return { text: await transcribeChromeVoiceLocally(data, voice) }
+        }
+        if (!voice.apiKey) throw new Error('Select a transcription key in Codey Voice settings')
+        const base = (voice.apiUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+        const form = new FormData()
+        const audioBytes = Uint8Array.from(data)
+        const fileName = mimeType.includes('wav') ? 'audio.wav' : mimeType.includes('webm') ? 'audio.webm' : 'audio.mp4'
+        form.append('file', new Blob([audioBytes], { type: mimeType }), fileName)
+        form.append('model', voice.apiModel || 'gpt-4o-mini-transcribe')
+        if (voice.language && voice.language !== 'auto') form.append('language', voice.language)
+        const response = await fetch(`${base}/audio/transcriptions`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${voice.apiKey}` },
+          body: form,
+        })
+        if (!response.ok) {
+          const detail = (await response.text().catch(() => '')).trim()
+          throw new Error(`Transcription failed (${response.status})${detail ? `: ${detail.slice(0, 240)}` : ''}`)
+        }
+        const body = await response.json() as any
+        return { text: typeof body?.text === 'string' ? body.text.trim() : '' }
+      },
+    },
+  )
+  try {
+    await chromeCompanion.start()
+  } catch (error) {
+    console.warn(`[browser] Chrome companion unavailable: ${error instanceof Error ? error.message : String(error)}`)
+  }
   if (canConfigureBrowserWebAuthn()) {
     configureBrowserWebAuthn(app, browserSession, pickBrowserPasskey, error => {
       const message = error instanceof Error ? error.message : String(error)
@@ -2056,6 +2322,8 @@ app.whenReady().then(async () => {
     browserCall(event, () => browserController.saveProfile(String(name || ''))))
   ipcMain.handle('browser:profiles:activate', (event, name: string) =>
     browserCall(event, () => browserController.activateProfile(String(name || ''))))
+  ipcMain.handle('browser:profiles:setAvatar', (event, name: string, avatar: string) =>
+    browserCall(event, () => browserController.setProfileAvatar(String(name || ''), String(avatar || ''))))
   ipcMain.handle('browser:profiles:delete', (event, name: string) =>
     browserCall(event, () => browserController.deleteProfile(String(name || ''))))
   ipcMain.handle('browser:profiles:import', event => browserCall(event, async () => {
@@ -2126,6 +2394,48 @@ app.whenReady().then(async () => {
     if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')
     return browserExtensionManager.remove(String(key || ''))
   }))
+  ipcMain.handle('chromeCompanion:status', event => browserCall(event, () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    return chromeCompanion.status()
+  }))
+  ipcMain.handle('chromeCompanion:disconnect', event => browserCall(event, () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    return chromeCompanion.disconnect()
+  }))
+  ipcMain.handle('chromeCompanion:activeTab', event => browserCall(event, () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    return chromeCompanion.activeTab()
+  }))
+  ipcMain.handle('chromeCompanion:snapshot', event => browserCall(event, () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    return chromeCompanion.snapshot()
+  }))
+  ipcMain.handle('chromeCompanion:exportSession', (event, name: string) => browserCall(event, async () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    const requested = String(name || '').trim()
+    assertProfileName(requested)
+    if (browserController.listProfiles().some(profile => profile.name === requested)) {
+      throw new Error(`A Codey Browser profile named "${requested}" already exists — choose another name`)
+    }
+    const sessionState = await chromeCompanion.exportSession()
+    await browserController.importProfile(requested, {
+      json: JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins }),
+    }, true, sessionState.tab.url)
+    const profile = browserController.listProfiles().find(item => item.name === requested)
+    if (!profile) throw new Error('Chrome session was imported but its Codey Browser profile could not be found')
+    return { profile, tab: sessionState.tab }
+  }))
+  ipcMain.handle('chromeCompanion:navigate', (event, url: string) => browserCall(event, () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    return chromeCompanion.navigate(String(url || ''))
+  }))
+  ipcMain.handle('chromeCompanion:showExtensionFolder', event => browserCall(event, async () => {
+    const extensionPath = chromeCompanionExtensionPath()
+    const fsMod = await import('fs')
+    if (!fsMod.existsSync(extensionPath)) throw new Error('The Chrome companion extension is missing from this build')
+    shell.showItemInFolder(join(extensionPath, 'manifest.json'))
+    return extensionPath
+  }))
   ipcMain.handle('browser:controlPermission:get', event => browserCall(event, () =>
     browserControlPermission?.getState() ?? { approved: false, pending: null }
   ))
@@ -2172,11 +2482,12 @@ app.whenReady().then(async () => {
     mainWindow?.show()
     sendToRenderer('browser:agentOpen', { url: request.url })
     return browserControlPermission!.request(request)
-  }, handleBrowserLoginWait)
+  }, handleBrowserLoginWait, 2000, chromeCompanion ?? undefined)
   try {
     const bridge = await browserAgentBridge.start()
     process.env.CODEY_BROWSER_SOCKET = bridge.socketPath
     process.env.CODEY_BROWSER_TOKEN = bridge.token
+    process.env.CODEY_CHROME_COMPANION_TOKEN = bridge.chromeToken
     // How agents reach the browser: the managed `browser` skill tells them to
     // run this CLI through their own shell tool, so every agent Codey supports
     // gets the plugin, MCP surface or not.
@@ -3501,7 +3812,7 @@ app.whenReady().then(async () => {
 
   // ── Plugins IPC ───────────────────────────────────────────────────
   ipcMain.handle('plugins:list', async () =>
-    wrap(async () => listPlugins(() => browserSkillStatus()))
+    wrap(async () => listPlugins(id => id === 'browser' ? browserSkillStatus() : chromeCompanionSkillStatus()))
   )
 
   // Installing writes the skill into the user's own ~/.codey/skills and links
@@ -3514,7 +3825,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('plugins:install', async (_e, id: string, force?: boolean) =>
     wrap(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
-      const result = await installBrowserSkill(undefined, { force: force === true })
+      const result = id === 'browser'
+        ? await installBrowserSkill(undefined, { force: force === true })
+        : await installChromeCompanionSkill(undefined, { force: force === true })
       if (result.installed) await syncCodeyGlobalSkills()
       return result
     })
@@ -3523,9 +3836,25 @@ app.whenReady().then(async () => {
   ipcMain.handle('plugins:uninstall', async (_e, id: string, force?: boolean) =>
     wrap(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
-      const result = await uninstallBrowserSkill(undefined, { force: force === true })
+      const result = id === 'browser'
+        ? await uninstallBrowserSkill(undefined, { force: force === true })
+        : await uninstallChromeCompanionSkill(undefined, { force: force === true })
       if (result.removed) await syncCodeyGlobalSkills()
       return result
+    })
+  )
+
+  // Chrome Companion ships with Codey. Its switch enables or disables the
+  // bundled agent instructions without downloading, updating, or deleting the
+  // extension and without touching the user's Chrome session.
+  ipcMain.handle('plugins:setEnabled', async (_e, id: string, enabled: boolean) =>
+    wrap(async () => {
+      if (id !== 'chrome-companion') throw new Error(`Plugin ${id} does not use an enable switch`)
+      if (typeof enabled !== 'boolean') throw new Error('Invalid enabled flag')
+      await setChromeCompanionSkillEnabled(enabled)
+      await syncCodeyGlobalSkills()
+      return listPlugins(pluginId => pluginId === 'browser' ? browserSkillStatus() : chromeCompanionSkillStatus())
+        .find(plugin => plugin.id === id)!
     })
   )
 
@@ -3536,7 +3865,7 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
       try {
-        return await checkBrowserSkillUpdate()
+        return id === 'browser' ? await checkBrowserSkillUpdate() : await checkChromeCompanionSkillUpdate()
       } catch {
         return { needsUpdate: null }
       }
@@ -4658,6 +4987,7 @@ app.on('before-quit', () => {
   browserControlPermission?.dispose()
   browserSitePermissions?.dispose()
   void browserAgentBridge?.stop()
+  void chromeCompanion?.stop()
   try { globalShortcut.unregisterAll() } catch { /* nothing to unregister */ }
   stopVoiceHelper()
 })
