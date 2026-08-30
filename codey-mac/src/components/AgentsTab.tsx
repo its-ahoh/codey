@@ -12,7 +12,6 @@ import {
   rowHintStyle,
   rowLabelStyle,
   rowStyle,
-  textButtonStyle,
 } from './agentSettingsUi'
 import { publishInstalledAgents, refreshInstalledAgents, useInstalledAgents } from './installedAgents'
 import { AgentUpdateFailureModal } from './AgentUpdateFailureModal'
@@ -40,6 +39,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
   const [agents, setAgents] = useState<Record<string, AgentSlot>>({})
   const [error, setError] = useState<string | null>(null)
   const [updating, setUpdating] = useState<string | null>(null)
+  const [updatingAll, setUpdatingAll] = useState(false)
   const [failure, setFailure] = useState<Failure | null>(null)
   const { status: installStatus, checking: checkingInstalls } = useInstalledAgents(isGatewayRunning)
   // Shared with the Settings sidebar, which shows the dot; whichever mounts
@@ -50,19 +50,24 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
   // needs no words — the version on the row changes and the button goes away.
   // Failure gets a dialog, because the only useful thing then is the updater's
   // own output, which does not fit under a settings row.
-  const updateAgent = useCallback(async (name: string) => {
+  const runUpdate = useCallback(async (name: string): Promise<Failure | null> => {
     setUpdating(name)
     try {
       const r = unwrap(await window.codey.agents.update(name))
       publishInstalledAgents(r.status)
       publishAgentUpdates(r.updates)
-      if (!r.ok) setFailure({ agent: name, command: r.command, output: r.output })
+      return r.ok ? null : { agent: name, command: r.command, output: r.output }
     } catch (e: any) {
-      setFailure({ agent: name, command: 'the update', output: e?.message ?? String(e) })
+      return { agent: name, command: 'the update', output: e?.message ?? String(e) }
     } finally {
       setUpdating(null)
     }
   }, [])
+
+  const updateAgent = useCallback(async (name: string) => {
+    const f = await runUpdate(name)
+    if (f) setFailure(f)
+  }, [runUpdate])
 
   const availabilityOf = (name: string): Availability =>
     updates?.[name] ?? { updateAvailable: false, unknown: true }
@@ -81,6 +86,27 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
     if (updating === name) return 'Updating…'
     if (a.updateAvailable) return `Update to ${a.latest}`
     return 'Could not check for a newer version — run the updater anyway'
+  }
+
+  // The agents a per-row button would offer to update. Update All runs exactly
+  // those, one after another: two updaters writing to the same shell at once is
+  // not worth the seconds it would save.
+  const updatableAgents = AGENT_NAMES.filter(a => installStatus?.[a]?.installed && offersUpdate(a))
+
+  // One failure does not stop the rest — the remaining agents still get their
+  // turn, and the first updater's output is what the dialog shows afterwards.
+  const updateAll = async () => {
+    setUpdatingAll(true)
+    try {
+      let first: Failure | null = null
+      for (const a of updatableAgents) {
+        const f = await runUpdate(a)
+        if (f && !first) first = f
+      }
+      if (first) setFailure(first)
+    } finally {
+      setUpdatingAll(false)
+    }
   }
 
   const reload = useCallback(async () => {
@@ -128,15 +154,45 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
       )}
 
       <Section first title="Installed agents" description="CLI availability, thinking effort, and environment for each coding agent." right={
-        <button
-          onClick={() => { void refreshInstalledAgents(true); void refreshAgentUpdates(true) }}
-          style={{ ...textButtonStyle, opacity: checkingInstalls ? 0.65 : 1 }}
-          disabled={checkingInstalls}
-          title="Re-check what is installed, and whether a newer version has been published"
-        >
-          <UIIcon name="refresh" size={13} />
-          {checkingInstalls ? 'Checking…' : 'Recheck'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={() => { void refreshInstalledAgents(true); void refreshAgentUpdates(true) }}
+            style={iconButtonStyle({ disabled: checkingInstalls })}
+            disabled={checkingInstalls}
+            aria-label="Recheck agents"
+            title="Re-check what is installed, and whether a newer version has been published"
+          >
+            <span style={{
+              display: 'grid',
+              animation: checkingInstalls ? 'codey-agent-update-spin 1s linear infinite' : undefined,
+            }}>
+              <UIIcon name="refresh" size={14} />
+            </span>
+          </button>
+          {/* Same download icon as the per-agent button, because it does the
+              same thing — just to every agent that is offering an update. */}
+          <button
+            onClick={() => { void updateAll() }}
+            style={iconButtonStyle({
+              accent: updatableAgents.some(a => availabilityOf(a).updateAvailable),
+              disabled: updatingAll || updating !== null || updatableAgents.length === 0,
+            })}
+            disabled={updatingAll || updating !== null || updatableAgents.length === 0}
+            aria-label="Update all agents"
+            title={
+              updatingAll ? `Updating ${updating ?? 'agents'}…`
+                : updatableAgents.length === 0 ? 'Every installed agent is up to date'
+                  : `Update all: ${updatableAgents.join(', ')}`
+            }
+          >
+            <span style={{
+              display: 'grid',
+              animation: updatingAll ? 'codey-agent-update-spin 1s linear infinite' : undefined,
+            }}>
+              <UIIcon name={updatingAll ? 'refresh' : 'download-all'} size={14} />
+            </span>
+          </button>
+        </div>
       } />
       {AGENT_NAMES.map(a => {
         const status = installStatus?.[a]
