@@ -6205,7 +6205,7 @@ Example: /model gpt-4.1 write a Python script`;
         ? `\n\n[Codey chat workspace]\nThis chat uses the shared checkout. Work there; do not create a worktree on your own initiative. Only when the user explicitly asks for one, choose a short semantic lower-kebab name with no slash, then run \`git worktree add -b <name> ${JSON.stringify(path.join(agentWorktreeParent, '<name>'))} HEAD\` and perform all subsequent work in that new directory. Create it only as a direct child of ${JSON.stringify(agentWorktreeParent)} so Codey can bind and display it.`
         : '\n\n[Codey chat workspace]\nThis chat already has a user-managed worktree. Continue using the selected checkout; do not create another worktree.';
     const browserSurface = origin?.surface === 'chrome-companion'
-      || /(?:\b(?:google\s+)?chrome\b|谷歌浏览器|chrome\s*(?:插件|扩展))/iu.test(userText)
+      || /(?:\b(?:google\s+)?chrome\b|\u8c37\u6b4c\u6d4f\u89c8\u5668|chrome\s*(?:\u63d2\u4ef6|\u6269\u5c55))/iu.test(userText)
       ? 'chrome-companion' as const
       : undefined;
     const browserSurfaceInstruction = browserSurface === 'chrome-companion'
