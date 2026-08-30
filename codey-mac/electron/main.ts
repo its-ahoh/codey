@@ -2984,7 +2984,7 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('git:prStatus', async (_e, workingDir: string, url?: string) =>
+  ipcMain.handle('git:prStatus', async (_e, workingDir: string, url?: string, ownsCheckout?: boolean) =>
     wrap(async () => {
       if (!workingDir) throw new Error('A working directory is required')
       const { execFile } = await import('child_process')
@@ -3020,7 +3020,7 @@ app.whenReady().then(async () => {
       // chat's PR, start the next branch in the same checkout, and the old
       // (merged) PR would keep answering forever. When the pinned PR's head is
       // not the branch we're on, ask again for this branch's own PR.
-      if (shouldRediscoverPr({ pinnedHeadBranch: view.headRefName, currentBranch })) {
+      if (shouldRediscoverPr({ pinnedHeadBranch: view.headRefName, currentBranch, ownsCheckout })) {
         try { view = await view$() } catch { /* no PR for this branch; keep the pinned one */ }
       }
       const sameBranch = !!view.headRefName && currentBranch === view.headRefName

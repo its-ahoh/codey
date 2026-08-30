@@ -4,12 +4,18 @@ export type DeliveryState = 'pr-open' | 'merged' | 'merged-with-changes' | 'clos
  *  different branch, that PR no longer describes the chat's work and its state
  *  (typically `merged`) would stick forever — re-resolve from the branch we're
  *  actually on. `HEAD` (detached) and an unknown head branch are not evidence
- *  of drift, so they keep the pinned PR. */
+ *  of drift, so they keep the pinned PR.
+ *
+ *  Only the owner of a checkout may re-resolve. In a shared checkout the branch
+ *  is global: another chat switching branches would otherwise hand this chat
+ *  that other branch's PR, so a chat that opened #367 starts claiming #370. */
 export function shouldRediscoverPr(input: {
   pinnedHeadBranch?: string
   currentBranch?: string
+  ownsCheckout?: boolean
 }): boolean {
-  const { pinnedHeadBranch, currentBranch } = input
+  const { pinnedHeadBranch, currentBranch, ownsCheckout } = input
+  if (!ownsCheckout) return false
   if (!pinnedHeadBranch || !currentBranch || currentBranch === 'HEAD') return false
   return pinnedHeadBranch !== currentBranch
 }

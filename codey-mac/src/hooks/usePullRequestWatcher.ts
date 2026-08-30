@@ -16,12 +16,19 @@ export function chatsWithTrackedPr(chats: Chat[]): Chat[] {
 }
 
 /** Whether this chat's PR is worth a `gh` call right now. An open PR always is
- *  — that's the merge we're watching for. A terminal one only is when the
- *  checkout has moved off the branch that PR belongs to, which means the badge
- *  is describing finished work and needs to be re-resolved for the new branch. */
-export function needsPrRefresh(pullRequest: PullRequest | undefined, branch: string | undefined): boolean {
+ *  — that's the merge we're watching for. A terminal one only is when the chat
+ *  owns its checkout and that checkout has moved off the branch the PR belongs
+ *  to, which means the badge is describing finished work and needs to be
+ *  re-resolved for the new branch. A shared checkout's branch belongs to
+ *  whichever chat moved it last, so drift there is not this chat's news. */
+export function needsPrRefresh(
+  pullRequest: PullRequest | undefined,
+  branch: string | undefined,
+  ownsCheckout = false,
+): boolean {
   if (!pullRequest?.url) return false
   if (pullRequest.state === 'pr-open') return true
+  if (!ownsCheckout) return false
   return !!branch && branch !== 'HEAD' && !!pullRequest.headBranch && branch !== pullRequest.headBranch
 }
 
@@ -87,9 +94,10 @@ export function usePullRequestWatcher(): void {
         // Local git first: it's cheap, and it tells us whether a terminal-state
         // PR still describes this chat's branch before we pay for a gh call.
         const branch = await currentBranch(workingDir)
-        if (!needsPrRefresh(chat.pullRequest, branch)) continue
+        const ownsCheckout = chat.executionMode === 'isolated-worktree'
+        if (!needsPrRefresh(chat.pullRequest, branch, ownsCheckout)) continue
         try {
-          const result = await window.codey.git.prStatus(workingDir, chat.pullRequest!.url)
+          const result = await window.codey.git.prStatus(workingDir, chat.pullRequest!.url, ownsCheckout)
           const current = chatsRef.current[chat.id]?.pullRequest
           if (result.ok && current && prStatusChanged(current, result.data)) {
             await setPullRequest(chat.id, result.data)
