@@ -96,10 +96,5 @@
     "apiKeyRef": "voice-main",
     "apiModel": "whisper-1",
     "localModel": "openai_whisper-large-v3-turbo"
-  },
-  "plugins": {
-    "browser": {
-      "enabled": false
-    }
   }
 }
