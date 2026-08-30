@@ -1235,6 +1235,25 @@ export const ChatTab: React.FC<Props> = ({
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
   }, [refreshPullRequestStatus])
+
+  // An agent that opens the PR itself (`gh pr create` in a shell step) leaves
+  // no trace the other triggers watch, so the badge used to stay blank until
+  // the window lost and regained focus. Re-check the moment a run settles.
+  const wasRunningRef = useRef(false)
+  useEffect(() => {
+    const running = !!flight
+    if (wasRunningRef.current && !running) void refreshPullRequestStatus()
+    wasRunningRef.current = running
+  }, [!!flight]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Same blind spot for a PR opened outside Codey (github.com, another
+  // terminal). One quiet poll per minute, only while the chat is on screen.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshPullRequestStatus()
+    }, 60_000)
+    return () => clearInterval(timer)
+  }, [refreshPullRequestStatus])
   // Derived from the gitStatus useGitStatus already fetches — no extra IPC round-trip.
   // PR-able: on a non-default branch with commits the default branch doesn't have
   // (ahead is null when there's no remote default ref — fall back to branch check only).
