@@ -3045,7 +3045,6 @@ export const ChatTab: React.FC<Props> = ({
               ref={fileInputRef}
               type="file"
               multiple
-              accept="image/*,text/*,.json,.ts,.tsx,.js,.jsx,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.css,.html,.md,.yaml,.yml,.toml,.xml,.sh,.bash,.zsh,.log,.csv,.sql"
               style={{ display: 'none' }}
               onChange={handleFilePick}
             />
