@@ -1,7 +1,6 @@
 {
   "gateway": {
-    "port": 3000,
-    "defaultAgent": "claude-code"
+    "port": 3000
   },
   "channels": {
     "telegram": {
@@ -47,15 +46,6 @@
       ]
     }
   },
-  "profiles": [
-    {
-      "name": "default",
-      "anthropic": { "apiKey": "", "baseUrl": "" },
-      "openai": { "apiKey": "", "baseUrl": "" },
-      "google": { "apiKey": "" }
-    }
-  ],
-  "activeProfile": "default",
   "context": {
     "ttlMinutes": 60
   },
@@ -96,10 +86,5 @@
     "apiKeyRef": "voice-main",
     "apiModel": "whisper-1",
     "localModel": "openai_whisper-large-v3-turbo"
-  },
-  "plugins": {
-    "browser": {
-      "enabled": false
-    }
   }
 }

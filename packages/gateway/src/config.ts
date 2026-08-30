@@ -30,10 +30,9 @@ export interface GatewayConfigJson {
     imessage?: { enabled: boolean; allowedSenders?: string[]; pollIntervalMs?: number };
   };
   /**
-   * Reserved per-agent settings slot. Currently empty — enablement is derived
-   * from membership in `fallback.order`, and per-agent default model lives on
-   * those fallback entries. Kept in the schema for forward compatibility so
-   * future per-agent options (custom env vars, timeouts, …) have a home.
+   * Per-agent settings. Holds the agent's default reasoning effort; enablement
+   * is derived from membership in `fallback.order`, and per-agent default
+   * model lives on those fallback entries.
    */
   agents: {
     'claude-code'?: AgentSlot;
@@ -95,8 +94,6 @@ export interface GatewayConfigJson {
     enabled?: boolean;
     /** Let Codey record entries by itself from interactions. Default true. */
     autoExtract?: boolean;
-    /** Cap on auto-recorded entries kept per store. */
-    maxAutoMemories?: number;
   };
   /**
    * One shared knowledge base that every agent reads. Codey keeps the text in
@@ -147,9 +144,6 @@ export interface GatewayConfigJson {
     converseHotkey?: string;
     language: string;
     injection: 'paste' | 'ax';
-    /** Legacy compatibility field. The primary hotkey always dictates and
-     *  converseHotkey always talks to the selected Chat. */
-    mode?: 'inject' | 'converse';
     /** Transcription backend: hosted API or on-device WhisperKit. */
     provider: 'api' | 'local';
     /** Base URL of an OpenAI-compatible transcription endpoint (e.g. https://api.openai.com/v1). */
