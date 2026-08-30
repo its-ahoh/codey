@@ -7,6 +7,39 @@
 /** One indexed workspace path, as returned by the `workspace:files` IPC. */
 export type MentionFile = { path: string; name: string; isDir: boolean }
 
+/**
+ * What a menu row refers to. Files are paths in the workspace; the other three
+ * are capabilities the user already has installed, referenced by a namespaced
+ * token (`skill:browser`) so one flat matcher can rank them all.
+ */
+export type MentionKind = 'file' | 'skill' | 'plugin' | 'mcp'
+
+/**
+ * A row in the "@" menu. `path` is the match key and the text inserted after
+ * the "@" — for resources it is `<kind>:<name>`, which never collides with a
+ * workspace-relative path because those never start with a bare `kind:`.
+ */
+export type MentionEntry = MentionFile & {
+  /** Absent means 'file', so the existing file index needs no rewriting. */
+  kind?: MentionKind
+  /** One-line detail shown on the right of the row (a skill description...). */
+  detail?: string
+}
+
+/** The namespace prefixes, in the order the menu groups them. */
+export const RESOURCE_KINDS: Exclude<MentionKind, 'file'>[] = ['skill', 'plugin', 'mcp']
+
+/** Build a menu row for an installed capability. */
+export function resourceEntry(kind: Exclude<MentionKind, 'file'>, name: string, detail = ''): MentionEntry {
+  return { path: `${kind}:${name}`, name, isDir: false, kind, detail }
+}
+
+/** The kind a resolved token belongs to, or 'file'. */
+export function mentionKindOf(path: string): MentionKind {
+  for (const kind of RESOURCE_KINDS) if (path.startsWith(`${kind}:`)) return kind
+  return 'file'
+}
+
 export type ActiveMention = {
   /** Index of the "@" in the input. */
   start: number
@@ -81,7 +114,7 @@ function subsequenceIndex(haystack: string, needle: string): number {
  * Ordering intent: exact name > name prefix > name substring > path substring >
  * scattered subsequence, with shallower and shorter paths breaking ties.
  */
-export function scoreEntry(entry: MentionFile, query: string): number | null {
+export function scoreEntry(entry: MentionEntry, query: string): number | null {
   if (!query) return 0
   const q = query.toLowerCase()
   const name = entry.name.toLowerCase()
@@ -101,8 +134,8 @@ export function scoreEntry(entry: MentionFile, query: string): number | null {
 }
 
 /** Best `limit` entries for `query`, already ordered for display. */
-export function filterEntries(entries: MentionFile[], query: string, limit = 12): MentionFile[] {
-  const scored: Array<{ entry: MentionFile; score: number }> = []
+export function filterEntries(entries: MentionEntry[], query: string, limit = 12): MentionEntry[] {
+  const scored: Array<{ entry: MentionEntry; score: number }> = []
   for (const entry of entries) {
     const score = scoreEntry(entry, query)
     if (score === null) continue
@@ -139,4 +172,47 @@ export function splitMentionSegments(text: string, isKnownPath: (path: string) =
 
   if (plainFrom < text.length) segments.push({ text: text.slice(plainFrom), isMention: false })
   return segments
+}
+
+/** Every resolved token in `text` that names a capability, in order, deduped. */
+export function findResourceMentions(
+  text: string,
+  resolve: (path: string) => MentionEntry | undefined,
+): MentionEntry[] {
+  const found: MentionEntry[] = []
+  const seen = new Set<string>()
+
+  MENTION_RE.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = MENTION_RE.exec(text)) !== null) {
+    const raw = match[2].startsWith('"') ? match[2].slice(1, -1) : match[2]
+    const path = raw.endsWith('/') ? raw.slice(0, -1) : raw
+    if (!path || seen.has(path)) continue
+    const entry = resolve(path)
+    if (!entry || !entry.kind || entry.kind === 'file') continue
+    seen.add(path)
+    found.push(entry)
+  }
+  return found
+}
+
+const KIND_LABEL: Record<Exclude<MentionKind, 'file'>, string> = {
+  skill: 'skill',
+  plugin: 'plugin',
+  mcp: 'MCP server',
+}
+
+/**
+ * Append a short block naming the referenced capabilities. Agents do not know
+ * what `@skill:foo` means on its own, so the message carries the name and the
+ * one-line description with it. Nothing is enabled or configured — this is a
+ * hint in the prompt, and an agent is free to ignore it.
+ */
+export function appendMentionContext(text: string, entries: MentionEntry[]): string {
+  if (entries.length === 0) return text
+  const lines = entries.map(e => {
+    const label = KIND_LABEL[(e.kind ?? 'skill') as Exclude<MentionKind, 'file'>]
+    return `- ${label} "${e.name}"${e.detail ? `: ${e.detail}` : ''}`
+  })
+  return `${text.trimEnd()}\n\n[Referenced by the user — use these if they fit the task]\n${lines.join('\n')}`
 }

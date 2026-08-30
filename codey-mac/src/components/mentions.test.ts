@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { applyMention, filterEntries, findActiveMention, scoreEntry, splitMentionSegments } from './mentions'
+import {
+  appendMentionContext, applyMention, filterEntries, findActiveMention, findResourceMentions,
+  mentionKindOf, resourceEntry, scoreEntry, splitMentionSegments,
+} from './mentions'
 
 /** Mirror of the main-process index shape: files plus their ancestor dirs. */
 const toEntries = (paths: string[]) => {
@@ -196,5 +199,61 @@ describe('filterEntries', () => {
 
   it('supports a path fragment containing a slash', () => {
     expect(filterEntries(entries, 'components/chatl')[0].path).toBe('src/components/ChatListPanel.tsx')
+  })
+})
+
+describe('resource mentions', () => {
+  const skill = resourceEntry('skill', 'browser', 'Use when a task needs the live web')
+  const plugin = resourceEntry('plugin', 'chrome-companion', 'Drive the real Chrome')
+  const mcp = resourceEntry('mcp', 'figma', 'remote')
+  const resources = [skill, plugin, mcp]
+
+  it('namespaces the token so it cannot collide with a path', () => {
+    expect(skill.path).toBe('skill:browser')
+    expect(mentionKindOf('skill:browser')).toBe('skill')
+    expect(mentionKindOf('src/app.ts')).toBe('file')
+  })
+
+  it('ranks a resource by its bare name', () => {
+    expect(filterEntries(resources, 'browser')[0]).toBe(skill)
+  })
+
+  it('lists every resource of a kind when the prefix is typed', () => {
+    const files = toEntries(['src/skillet.ts'])
+    const matches = filterEntries([...files, ...resources], 'skill:')
+    expect(matches[0]).toBe(skill)
+  })
+
+  it('inserts a resource token with a trailing space', () => {
+    const mention = { start: 0, end: 4, query: 'bro' }
+    expect(applyMention('@bro', mention, skill.path)).toEqual({ text: '@skill:browser ', caret: 15 })
+  })
+
+  it('highlights a resolved resource token', () => {
+    const known = new Set(resources.map(r => r.path))
+    expect(splitMentionSegments('use @skill:browser now', p => known.has(p))).toEqual([
+      { text: 'use ', isMention: false },
+      { text: '@skill:browser', isMention: true },
+      { text: ' now', isMention: false },
+    ])
+  })
+
+  it('collects resource mentions in order, deduped, ignoring files', () => {
+    const byPath = new Map(resources.map(r => [r.path, r]))
+    byPath.set('src/app.ts', { path: 'src/app.ts', name: 'app.ts', isDir: false })
+    const found = findResourceMentions('@skill:browser @src/app.ts @mcp:figma @skill:browser', p => byPath.get(p))
+    expect(found.map(f => f.path)).toEqual(['skill:browser', 'mcp:figma'])
+  })
+
+  it('appends a hint block naming the referenced capabilities', () => {
+    expect(appendMentionContext('do the thing @skill:browser', [skill])).toBe(
+      'do the thing @skill:browser\n\n[Referenced by the user — use these if they fit the task]\n'
+      + '- skill "browser": Use when a task needs the live web',
+    )
+  })
+
+  it('labels an MCP server readably and leaves plain text untouched', () => {
+    expect(appendMentionContext('hi', [mcp])).toContain('- MCP server "figma": remote')
+    expect(appendMentionContext('hi', [])).toBe('hi')
   })
 })
