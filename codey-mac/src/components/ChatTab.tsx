@@ -32,9 +32,12 @@ import { getDraft, setDraft, subscribeDrafts } from './chatDrafts'
 import { isBottomTerminalOpen, setBottomTerminalOpen as rememberBottomTerminalOpen } from './terminalVisibility'
 import { AGENT_API_TYPE, AGENT_NAMES, ApiType, modelFitsApiType } from './modelApiType'
 import { useInstalledAgents } from './installedAgents'
-import { applyMention, filterEntries, findActiveMention, splitMentionSegments } from './mentions'
+import {
+  appendMentionContext, applyMention, filterEntries, findActiveMention, findResourceMentions,
+  resourceEntry, splitMentionSegments,
+} from './mentions'
 import { ChatFindBar } from './ChatFindBar'
-import type { ActiveMention, MentionFile } from './mentions'
+import type { ActiveMention, MentionEntry, MentionFile } from './mentions'
 import { clampFloatingLeft, floatingViewportRight } from './floatingLayer'
 import { useGitStatus } from '../hooks/useGitStatus'
 import { BranchPicker } from './BranchPicker'
@@ -944,6 +947,9 @@ export const ChatTab: React.FC<Props> = ({
   // "@" file mentions: the workspace index, the token the caret is inside, and
   // the highlighted row in the menu.
   const [fileIndex, setFileIndex] = useState<MentionFile[]>([])
+  // Installed skills/plugins/MCP servers, offered by the same "@" menu under a
+  // `skill:` / `plugin:` / `mcp:` prefix.
+  const [resourceIndex, setResourceIndex] = useState<MentionEntry[]>([])
   const [mention, setMention] = useState<ActiveMention | null>(null)
   const [mentionIdx, setMentionIdx] = useState(0)
   const [workers, setWorkers] = useState<WorkerDto[]>([])
@@ -1626,6 +1632,55 @@ export const ChatTab: React.FC<Props> = ({
     return () => { stale = true }
   }, [mention !== null, workingDir]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Skills/plugins/MCP servers, loaded on the same lazy trigger as the file
+  // index. All three lists are small and already cached in the main process,
+  // so one fetch per opened mention is cheap.
+  useEffect(() => {
+    if (!mention) return
+    let stale = false
+    void (async () => {
+      const [skills, plugins, mcp, agentMcp] = await Promise.all([
+        window.codey.skills.list(effectiveAgent, workingDir ?? undefined),
+        window.codey.plugins.list(),
+        window.codey.mcp.list(),
+        window.codey.mcp.listAgent(),
+      ])
+      if (stale) return
+      const entries: MentionEntry[] = []
+      if (skills.ok) {
+        for (const skill of skills.data.skills) {
+          if (!skill.enabled) continue
+          entries.push(resourceEntry('skill', skill.qualifiedName || skill.name, skill.description))
+        }
+      }
+      if (plugins.ok) {
+        for (const plugin of plugins.data) {
+          if (plugin.state !== 'installed') continue
+          entries.push(resourceEntry('plugin', plugin.id, plugin.description))
+        }
+      }
+      // A server the user thinks of by name may be configured in Codey or
+      // straight in the agent; both are offered, Codey's wins on a name clash.
+      const seenMcp = new Set<string>()
+      if (mcp.ok) {
+        for (const server of mcp.data) {
+          if (!server.enabled || seenMcp.has(server.name)) continue
+          seenMcp.add(server.name)
+          entries.push(resourceEntry('mcp', server.name, server.url ?? server.command ?? server.transport))
+        }
+      }
+      if (agentMcp.ok) {
+        for (const server of agentMcp.data) {
+          if (!server.enabled || seenMcp.has(server.name)) continue
+          seenMcp.add(server.name)
+          entries.push(resourceEntry('mcp', server.name, `${server.agent} · ${server.url ?? server.command ?? server.transport}`))
+        }
+      }
+      setResourceIndex(entries)
+    })()
+    return () => { stale = true }
+  }, [mention !== null, effectiveAgent, workingDir]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // A chat can be rebound to a different worktree while mounted; the old
   // repo's paths must not linger in the menu.
   useEffect(() => { setFileIndex([]) }, [workingDir])
@@ -1633,8 +1688,8 @@ export const ChatTab: React.FC<Props> = ({
   // Scoring touches every indexed entry, so keep it tied to the query rather
   // than to render count — this component re-renders on every streamed token.
   const mentionMatches = React.useMemo(
-    () => (mention ? filterEntries(fileIndex, mention.query) : []),
-    [mention?.query, fileIndex], // eslint-disable-line react-hooks/exhaustive-deps
+    () => (mention ? filterEntries([...resourceIndex, ...fileIndex], mention.query) : []),
+    [mention?.query, fileIndex, resourceIndex], // eslint-disable-line react-hooks/exhaustive-deps
   )
   const showMentionMenu = mentionMatches.length > 0
   useEffect(() => { setMentionIdx(0) }, [mention?.query, mention?.start])
@@ -1654,13 +1709,17 @@ export const ChatTab: React.FC<Props> = ({
   // caret event, so close the menu whenever the composer empties out.
   useEffect(() => { if (!input) setMention(null) }, [input])
 
-  const knownPaths = React.useMemo(() => new Set(fileIndex.map(e => e.path)), [fileIndex])
+  const mentionByPath = React.useMemo(
+    () => new Map<string, MentionEntry>([...fileIndex, ...resourceIndex].map(e => [e.path, e])),
+    [fileIndex, resourceIndex],
+  )
+  const knownPaths = React.useMemo(() => new Set(mentionByPath.keys()), [mentionByPath])
   const inputSegments = React.useMemo(
     () => splitMentionSegments(input, p => knownPaths.has(p)),
     [input, knownPaths],
   )
 
-  const chooseMention = (entry: MentionFile) => {
+  const chooseMention = (entry: MentionEntry) => {
     if (!mention) return
     const next = applyMention(input, mention, entry.path, entry.isDir)
     setInputHistoryIndex(null)
@@ -1835,12 +1894,16 @@ export const ChatTab: React.FC<Props> = ({
       return
     }
 
-    const text = input
+    // "@skill:x" means nothing to an agent on its own, so the referenced
+    // capabilities are spelled out at the end of the prompt. Nothing is
+    // enabled or configured — it is a hint the agent may ignore.
+    const typed = input
+    const text = appendMentionContext(typed, findResourceMentions(typed, p => mentionByPath.get(p)))
     const dictated = dictatedPendingRef.current
     dictatedPendingRef.current = []
     // Fire-and-forget: a dictionary update must never delay or fail the send.
     for (const spoken of dictated) {
-      void window.codey.voice.learnVocabulary(spoken, text)
+      void window.codey.voice.learnVocabulary(spoken, typed)
         .then(res => {
           if (!res.ok || res.data.learned.length === 0) return
           setLearnedWords(prev => [...prev, ...res.data.learned])
@@ -2784,10 +2847,13 @@ export const ChatTab: React.FC<Props> = ({
                 onMouseEnter={() => setMentionIdx(i)}
               >
                 <span style={styles.mentionIcon}>
-                  {entry.isDir ? <FolderIcon color={C.fg3} size={13} /> : <FileIcon color={C.fg3} size={13} />}
+                  {entry.kind === 'skill' ? <UIIcon name="sparkle" size={13} color={C.fg3} />
+                    : entry.kind === 'plugin' ? <UIIcon name="tools" size={13} color={C.fg3} />
+                    : entry.kind === 'mcp' ? <UIIcon name="server" size={13} color={C.fg3} />
+                    : entry.isDir ? <FolderIcon color={C.fg3} size={13} /> : <FileIcon color={C.fg3} size={13} />}
                 </span>
                 <span style={styles.slashCmdName}>{entry.name}{entry.isDir ? '/' : ''}</span>
-                <span style={styles.slashCmdDesc}>{entry.path}</span>
+                <span style={styles.slashCmdDesc}>{entry.detail || entry.path}</span>
               </div>
             ))}
           </div>
