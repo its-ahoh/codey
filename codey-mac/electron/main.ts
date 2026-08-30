@@ -2045,7 +2045,7 @@ app.whenReady().then(async () => {
         `${request.text}${pageContext}`,
         () => { /* global listener mirrors events */ },
         request.attachments,
-        { surface: 'chrome-companion' },
+        { browserTarget: 'chrome' },
       )
       return { chatId: chat.id, response: result.response }
     },

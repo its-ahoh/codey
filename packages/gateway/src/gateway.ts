@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, BrowserTarget, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -272,7 +272,7 @@ export class Codey {
     signal?: AbortSignal;
     workingDir?: string;
     browserChatId?: string;
-    browserSurface?: 'chrome-companion';
+    browserTarget?: BrowserTarget;
     interactive?: boolean;
     skipPermissions?: boolean;
   }): Promise<{ response: AgentResponse; usedResume: boolean }> {
@@ -292,7 +292,7 @@ export class Codey {
       context: { workingDir: opts.workingDir ?? this.workingDir },
       browserTools: true,
       browserChatId: opts.browserChatId,
-      browserSurface: opts.browserSurface,
+      browserTarget: opts.browserTarget ?? 'codey-browser',
       onStream: opts.onStream,
       onThinking: opts.onThinking,
       onStatus: opts.onStatus,
@@ -2482,6 +2482,7 @@ export class Codey {
       onStream: onStream ? (text: string) => { streamed.active = true; onStream(text); } : undefined,
       context: { workingDir: this.workingDir },
       browserTools: true,
+      browserTarget: 'codey-browser',
       resumeSessionId: p.resumeSessionId,
       newSessionId: p.newSessionId,
     });
@@ -3709,6 +3710,7 @@ Example: /model gpt-4.1 write a Python script`;
           model: this.getDefaultModelConfig(agent),
           context: { workingDir: this.workingDir },
           browserTools: true,
+          browserTarget: 'codey-browser',
         })
       )
     );
@@ -4952,7 +4954,7 @@ Example: /model gpt-4.1 write a Python script`;
     opts: { forceAll?: boolean; routingTask?: string } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
-    browserSurface?: 'chrome-companion',
+    browserTarget: BrowserTarget = 'codey-browser',
   ): Promise<{ response: string; tokens?: number; choices?: string[]; thinkingByStep?: Record<number, string>; teamTurnId?: string }> {
     if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
@@ -4994,7 +4996,7 @@ Example: /model gpt-4.1 write a Python script`;
       const { response } = await this.runWorkerStep({
         conversationId: teamConv,
         browserChatId: chatId,
-        browserSurface,
+        browserTarget,
         workerName,
         task: prompt,
         blackboard,
@@ -5125,7 +5127,7 @@ Example: /model gpt-4.1 write a Python script`;
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
-          browserSurface,
+          browserTarget,
           onStream: (text: string) => workerMsgs.onStream(text, workerName),
           onThinking: (text: string) => workerMsgs.onThinking(text, workerStep.get(workerName) ?? 0, workerName),
           onStatus: (update: any) => {
@@ -5748,6 +5750,7 @@ Example: /model gpt-4.1 write a Python script`;
       model,
       context: { workingDir: this.workingDir },
       browserTools: true,
+      browserTarget: 'codey-browser',
       onStream,
       onStatus,
       resumeSessionId: p.resumeSessionId,
@@ -5959,7 +5962,7 @@ Example: /model gpt-4.1 write a Python script`;
       channel?: ChannelType;
       channelUserId?: string;
       skillInvoke?: SkillInvoke;
-      surface?: 'chrome-companion';
+      browserTarget?: BrowserTarget;
     },
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     let chat = this.chatManager.get(chatId);
@@ -6204,16 +6207,10 @@ Example: /model gpt-4.1 write a Python script`;
       : agentWorktreeParent
         ? `\n\n[Codey chat workspace]\nThis chat uses the shared checkout. Work there; do not create a worktree on your own initiative. Only when the user explicitly asks for one, choose a short semantic lower-kebab name with no slash, then run \`git worktree add -b <name> ${JSON.stringify(path.join(agentWorktreeParent, '<name>'))} HEAD\` and perform all subsequent work in that new directory. Create it only as a direct child of ${JSON.stringify(agentWorktreeParent)} so Codey can bind and display it.`
         : '\n\n[Codey chat workspace]\nThis chat already has a user-managed worktree. Continue using the selected checkout; do not create another worktree.';
-    const browserSurface = origin?.surface === 'chrome-companion'
-      || /(?:\b(?:google\s+)?chrome\b|\u8c37\u6b4c\u6d4f\u89c8\u5668|chrome\s*(?:\u63d2\u4ef6|\u6269\u5c55))/iu.test(userText)
-      ? 'chrome-companion' as const
-      : undefined;
-    const browserSurfaceInstruction = browserSurface === 'chrome-companion'
-      ? `\n\n[Browser surface routing]\n${origin?.surface === 'chrome-companion'
-          ? 'This turn originated in Codey\'s Chrome Side Panel.'
-          : 'The user explicitly selected Google Chrome in this turn.'}
-For browser work, use the chrome-companion skill and the user's real Chrome tab/session. Do not use or substitute Codey's embedded Browser for this turn.`
-      : '';
+    // The UI chooses a browser capability explicitly. Ordinary Codey chat
+    // uses the embedded Browser; Chrome's Side Panel supplies `chrome`.
+    // Core enforces this choice by exposing only the corresponding token.
+    const browserTarget: BrowserTarget = origin?.browserTarget ?? 'codey-browser';
     if (warmAnchor) {
       // Resume the agent's own session. If other agents produced messages
       // while it was inactive, replay only that unseen gap before the new turn.
@@ -6231,7 +6228,7 @@ For browser work, use the chrome-companion skill and the user's real Chrome tab/
         newSessionId = randomUUID();
       }
     }
-    prompt += chatWorkspaceInstruction + browserSurfaceInstruction;
+    prompt += chatWorkspaceInstruction;
 
     // Solo advisor: when enabled (and not a team), tell the agent how to escalate.
     if (chat.soloAdvisor && chat.selection.type !== 'team') {
@@ -6407,7 +6404,7 @@ For browser work, use the chrome-companion skill and the user's real Chrome tab/
         }
         const team: TeamConfig = wsTeam ?? fallbackTeam;
         this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasParallel=${!!team.parallel} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
-        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model, browserSurface);
+        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model, browserTarget);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
@@ -6422,7 +6419,7 @@ For browser work, use the chrome-companion skill and the user's real Chrome tab/
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
-          browserSurface,
+          browserTarget,
           skipPermissions: this.getSkipPermissions(),
           onStream,
           onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
@@ -6440,7 +6437,7 @@ For browser work, use the chrome-companion skill and the user's real Chrome tab/
           resumeSessionId = undefined;
           newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
           prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments, CHAT_CONTEXT_WINDOW,
-            this.historyDelivery(chatId)) + chatWorkspaceInstruction + browserSurfaceInstruction;
+            this.historyDelivery(chatId)) + chatWorkspaceInstruction;
           // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
           // the one that carried it (still exactly once per prompt build).
           if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);
@@ -6452,7 +6449,7 @@ For browser work, use the chrome-companion skill and the user's real Chrome tab/
             context: { workingDir },
             browserTools: true,
             browserChatId: chatId,
-            browserSurface,
+            browserTarget,
             skipPermissions: this.getSkipPermissions(),
             onStream,
             onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
@@ -6488,7 +6485,7 @@ For browser work, use the chrome-companion skill and the user's real Chrome tab/
             reason: ask.reason,
             guidance,
           };
-          const followup = selPrefix + buildSoloAdvisorFollowupPrompt(followupInput) + browserSurfaceInstruction;
+          const followup = selPrefix + buildSoloAdvisorFollowupPrompt(followupInput);
           // Intentionally no resumeSessionId/newSessionId — each re-run bootstraps
           // fresh (the prior attempt + guidance are inlined in the followup prompt)
           // so this works uniformly across all agent types, not just claude-code.
@@ -6501,7 +6498,7 @@ For browser work, use the chrome-companion skill and the user's real Chrome tab/
             context: { workingDir },
             browserTools: true,
             browserChatId: chatId,
-            browserSurface,
+            browserTarget,
             skipPermissions: this.getSkipPermissions(),
             onStream,
             onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),

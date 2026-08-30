@@ -40,10 +40,10 @@ export function addCodeyBrowserTools(
   const chromeToken = env.CODEY_CHROME_COMPANION_TOKEN;
   const runtime = env.CODEY_BROWSER_RUNTIME;
   const cli = env.CODEY_BROWSER_CLI;
-  // A turn typed in Chrome's Side Panel has an unambiguous browser target.
-  // Do not hand that turn the embedded Browser token as a competing option.
-  const browserReady = request.browserSurface !== 'chrome-companion' && skillActive && !!token;
-  const chromeReady = chromeCompanionActive && !!chromeToken;
+  // Browser selection is a capability boundary, not a prompt hint. Supplying
+  // only the chosen token makes it impossible for the other browser to win.
+  const browserReady = request.browserTarget === 'codey-browser' && skillActive && !!token;
+  const chromeReady = request.browserTarget === 'chrome' && chromeCompanionActive && !!chromeToken;
   if ((!browserReady && !chromeReady) || !socket || !runtime || !cli) return request;
   if (request.browserTools !== true || !request.context?.workingDir || request.allowedTools) {
     return request;
