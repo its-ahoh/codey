@@ -49,7 +49,6 @@ const formatBytes = (n: number): string => {
 
 const MAX_SIZE = 10 * 1024 * 1024 // 10MB
 const MAX_ATTACHMENTS = 10
-const ACCEPT = 'image/*,text/*,.json,.ts,.tsx,.js,.jsx,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.css,.html,.md,.yaml,.yml,.toml,.xml,.sh,.bash,.zsh,.log,.csv,.sql'
 
 export const QuickQuestionView: React.FC<Props> = ({ chatId, inputRef }) => {
   const { getThread, ask, stop } = useQuickQuestion()
@@ -225,7 +224,6 @@ export const QuickQuestionView: React.FC<Props> = ({ chatId, inputRef }) => {
             ref={fileInputRef}
             type="file"
             multiple
-            accept={ACCEPT}
             style={{ display: 'none' }}
             onChange={handleFilePick}
           />
