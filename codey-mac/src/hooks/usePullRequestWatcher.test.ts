@@ -30,15 +30,19 @@ describe('needsPrRefresh', () => {
     expect(needsPrRefresh(pr({ state: 'merged', headBranch: 'feature' }), 'feature')).toBe(false)
   })
 
-  it('re-checks a merged PR once the checkout moved to another branch', () => {
-    expect(needsPrRefresh(pr({ state: 'merged', headBranch: 'shipped' }), 'next-thing')).toBe(true)
+  it('re-checks a merged PR once a chat-owned checkout moved to another branch', () => {
+    expect(needsPrRefresh(pr({ state: 'merged', headBranch: 'shipped' }), 'next-thing', true)).toBe(true)
+  })
+
+  it('leaves a terminal PR alone in a shared checkout, whoever moved the branch', () => {
+    expect(needsPrRefresh(pr({ state: 'merged', headBranch: 'shipped' }), 'next-thing')).toBe(false)
   })
 
   it('leaves a terminal PR alone when the branch is unknown or detached', () => {
     const merged = pr({ state: 'merged', headBranch: 'shipped' })
-    expect(needsPrRefresh(merged, undefined)).toBe(false)
-    expect(needsPrRefresh(merged, 'HEAD')).toBe(false)
-    expect(needsPrRefresh(pr({ state: 'merged' }), 'next-thing')).toBe(false)
+    expect(needsPrRefresh(merged, undefined, true)).toBe(false)
+    expect(needsPrRefresh(merged, 'HEAD', true)).toBe(false)
+    expect(needsPrRefresh(pr({ state: 'merged' }), 'next-thing', true)).toBe(false)
   })
 
   it('ignores chats with no PR', () => {

@@ -252,7 +252,8 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.invoke('git:worktreeAdd', workingDir, args),
     createPr: (workingDir: string, input: { title: string; body?: string }) =>
       ipcRenderer.invoke('git:createPr', workingDir, input),
-    prStatus: (workingDir: string, url?: string) => ipcRenderer.invoke('git:prStatus', workingDir, url),
+    prStatus: (workingDir: string, url?: string, ownsCheckout?: boolean) =>
+      ipcRenderer.invoke('git:prStatus', workingDir, url, ownsCheckout),
     watch: (workingDir: string) => ipcRenderer.invoke('git:watch', workingDir),
     unwatch: (workingDir: string) => ipcRenderer.invoke('git:unwatch', workingDir),
     onChanged: (handler: (ev: { workingDir: string }) => void) => {
