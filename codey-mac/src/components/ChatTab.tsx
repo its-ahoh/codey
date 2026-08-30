@@ -2441,7 +2441,9 @@ export const ChatTab: React.FC<Props> = ({
                 // The rail is always present, transparent when unselected, so
                 // selecting a turn never shifts the text column sideways.
                 borderLeft: `${TURN_RAIL_WIDTH}px solid ${isSelected ? C.accent : 'transparent'}`,
-                borderRadius: 10,
+                // Square corners: the highlight reads as a marked-up block of a
+                // document, not a chat bubble. Only the user's message is a bubble.
+                borderRadius: 0,
                 background: isSelected ? C.accentDim : 'transparent',
                 // Same treatment the rest of the app gives an active card
                 // (teamStepCardActive, teamRoundTableMemberActive): a tint plus a
