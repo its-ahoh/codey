@@ -8,18 +8,15 @@ import { BrowserProfiles } from './BrowserProfiles'
 import { ChromeCompanionSettings } from './ChromeCompanionSettings'
 import type { PluginInfo, PluginInstallResult, PluginUpdateCheck } from '../codey-api'
 
-/** Codey refused to touch a skill of this name it did not write. The user
- *  decides; nothing is replaced or deleted until they say so. */
 type Pending = { action: 'install' | 'uninstall'; dir: string }
-
-/** Plugins whose card carries its own settings surface. Browser owns session
- *  profiles; Chrome Companion owns the real-Chrome extension connection. */
 const SETTINGS_PLUGINS = new Set<string>(['browser', 'chrome-companion'])
 
-/** Toggle which plugin's settings page is open: clicking the same plugin again
- *  closes it, clicking another opens it. */
 export function toggleSettingsId(current: string | null, id: string): string | null {
   return current === id ? null : id
+}
+
+export function showsDetails(openId: string | null, id: string, hasPending: boolean): boolean {
+  return hasPending || openId === id
 }
 
 export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
@@ -27,22 +24,18 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  // What the last install did, kept per plugin: which copy landed, and where.
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [outcome, setOutcome] = useState<Record<string, PluginInstallResult>>({})
   const [pending, setPending] = useState<Record<string, Pending>>({})
-  // Whether the published skill moved since this copy was installed. `null`
-  // means nothing could be checked — the repo was unreachable, so no claim.
   const [update, setUpdate] = useState<Record<string, PluginUpdateCheck>>({})
-  // Which plugin's settings page is open (only plugins in SETTINGS_PLUGINS).
-  const [settingsFor, setSettingsFor] = useState<string | null>(null)
+
   const filteredPlugins = useMemo(
-    () => plugins.filter(plugin => matchesToolSearch(searchQuery, plugin.name, plugin.description)),
+    () => plugins.filter(plugin => matchesToolSearch(searchQuery, plugin.name, `${plugin.tagline} ${plugin.description}`)),
     [plugins, searchQuery],
   )
+  const selected = plugins.find(plugin => plugin.id === selectedId) ?? null
 
   const checkForUpdate = useCallback(async (plugin: PluginInfo) => {
-    // Hide any stale result while re-checking. If the check cannot complete,
-    // we do not know that an update exists and should not offer the action.
     setUpdate(prev => {
       const next = { ...prev }
       delete next[plugin.id]
@@ -52,7 +45,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
       const result = unwrap(await window.codey.plugins.check(plugin.id))
       setUpdate(prev => ({ ...prev, [plugin.id]: result }))
     } catch {
-      // Offline or refused: say nothing rather than claim there is no update.
+      // An offline check is unknown, not evidence that the plugin is current.
     }
   }, [])
 
@@ -65,8 +58,8 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
       for (const plugin of listed) {
         if (plugin.id === 'browser' && plugin.state !== 'absent') void checkForUpdate(plugin)
       }
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
+    } catch (caught: any) {
+      setError(caught?.message ?? String(caught))
     } finally {
       setLoading(false)
     }
@@ -74,7 +67,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
 
   useEffect(() => { void reload() }, [reload])
 
-  const forget = (id: string, from: Record<string, any>) => {
+  const forget = <T,>(id: string, from: Record<string, T>): Record<string, T> => {
     const next = { ...from }
     delete next[id]
     return next
@@ -88,6 +81,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
         const result = unwrap(await window.codey.plugins.install(plugin.id, force))
         if (!result.installed) {
           setPending(prev => ({ ...prev, [plugin.id]: { action, dir: result.dir } }))
+          setSelectedId(plugin.id)
           return
         }
         setOutcome(prev => ({ ...prev, [plugin.id]: result }))
@@ -95,27 +89,32 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
         const result = unwrap(await window.codey.plugins.uninstall(plugin.id, force))
         if (!result.removed && result.conflict) {
           setPending(prev => ({ ...prev, [plugin.id]: { action, dir: plugin.dir } }))
+          setSelectedId(plugin.id)
           return
         }
         setOutcome(prev => forget(plugin.id, prev))
       }
       setPending(prev => forget(plugin.id, prev))
       await reload()
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
+    } catch (caught: any) {
+      setError(caught?.message ?? String(caught))
     } finally {
       setBusy(null)
     }
   }
 
-  const setChromeEnabled = async (plugin: PluginInfo, enabled: boolean) => {
+  const setEnabled = async (plugin: PluginInfo, enabled: boolean) => {
+    if (plugin.state === 'absent') {
+      if (enabled) await act(plugin, 'install')
+      return
+    }
     setBusy(plugin.id)
     setError(null)
     try {
       unwrap(await window.codey.plugins.setEnabled(plugin.id, enabled))
       await reload()
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
+    } catch (caught: any) {
+      setError(caught?.message ?? String(caught))
     } finally {
       setBusy(null)
     }
@@ -123,150 +122,78 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
 
   if (loading && plugins.length === 0) return <div style={styles.note}>Loading plugins…</div>
 
+  if (selected) {
+    return (
+      <PluginDetails
+        plugin={selected}
+        working={busy === selected.id}
+        last={outcome[selected.id]}
+        ask={pending[selected.id]}
+        update={update[selected.id]}
+        error={error}
+        onBack={() => setSelectedId(null)}
+        onEnabled={enabled => { if (busy !== selected.id) void setEnabled(selected, enabled) }}
+        onInstall={() => { if (busy !== selected.id) void act(selected, 'install') }}
+        onUninstall={() => { if (busy !== selected.id) void act(selected, 'uninstall') }}
+        onCancelPending={() => setPending(prev => forget(selected.id, prev))}
+        onConfirmPending={() => {
+          const ask = pending[selected.id]
+          if (ask && busy !== selected.id) void act(selected, ask.action, true)
+        }}
+      />
+    )
+  }
+
   return (
-    <div>
+    <div style={styles.root}>
       <div style={styles.intro}>
-        Plugins give agents extra capabilities. Browser installs its published skill;
-        Chrome Companion is built into Codey and can be enabled with its switch.
-        Changes apply to the next agent run.
+        Plugins give agents extra capabilities. Codey Browser uses Codey’s own window;
+        Chrome uses the browser already open on your Mac.
       </div>
       {error && <div style={styles.errorBanner}>{error}</div>}
-      {filteredPlugins.map(plugin => {
-        const installed = plugin.state !== 'absent'
-        const enabled = plugin.state === 'installed'
-        const bundled = plugin.id === 'chrome-companion'
-        const working = busy === plugin.id
-        const last = outcome[plugin.id]
-        const ask = pending[plugin.id]
-        const hasSettings = SETTINGS_PLUGINS.has(plugin.id) && (bundled || installed)
-        const settingsOpen = settingsFor === plugin.id
-        return (
-          <div key={plugin.id} style={{ ...styles.pluginWrap, ...(bundled ? styles.bundledWrap : styles.optionalWrap) }}>
-            <div style={{ ...styles.card, ...(settingsOpen ? styles.cardWithSettings : null) }}>
-              <div style={styles.cardIcon}><PluginLogo id={plugin.id} size={34} /></div>
-              <div style={styles.cardBody}>
-                <div style={styles.cardName}>
-                  {plugin.name}
-                  <span style={bundled ? styles.builtInBadge : styles.optionalBadge}>
-                    {bundled ? 'Built-in' : 'Optional install'}
+      <div style={styles.list}>
+        {filteredPlugins.map((plugin, index) => {
+          const working = busy === plugin.id
+          const enabled = plugin.state === 'installed'
+          return (
+            <div
+              key={plugin.id}
+              style={{ ...styles.row, ...(index > 0 ? styles.rowBorder : null) }}
+            >
+              <button
+                type="button"
+                aria-label={`Open ${plugin.name} details`}
+                onClick={() => setSelectedId(plugin.id)}
+                style={styles.rowOpen}
+              >
+                <span style={styles.rowIcon}><PluginLogo id={plugin.id} size={34} /></span>
+                <span style={styles.rowCopy}>
+                  <span style={styles.rowTitleLine}>
+                    <span style={styles.rowName}>{plugin.name}</span>
+                    {update[plugin.id]?.needsUpdate === true && <span style={styles.updateBadge}>Update</span>}
                   </span>
-                  {bundled ? (
-                    <span style={enabled ? styles.badge : styles.badgeMuted}>
-                      {enabled ? 'Enabled' : 'Off'}
-                    </span>
-                  ) : installed && (
-                    <span style={plugin.state === 'disabled' ? styles.badgeMuted : styles.badge}>
-                      {plugin.state === 'disabled' ? 'Off in Skills' : 'Installed'}
-                    </span>
-                  )}
-                </div>
-                <div style={styles.cardDesc}>{plugin.description}</div>
-                {bundled ? null : installed ? (
-                  <div style={styles.cardHint}>
-                    {plugin.state === 'disabled'
-                      ? 'Switched off in Skills, so no agent loads it. Turn it back on there.'
-                      : `Listed in Skills as "codey:${plugin.id}".`}
-                    {update[plugin.id]?.needsUpdate === true && (
-                      <div style={styles.updateHint}>
-                        {update[plugin.id]?.recorded === 'bundled'
-                          ? 'This copy came with the app, installed while the repository was '
-                            + 'unreachable — Update to pull the published one.'
-                          : 'The published skill has moved since this copy was installed — '
-                            + 'Update to get it.'}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div style={styles.cardHint}>
-                    Downloads from <span style={styles.path}>{plugin.sourceUrl}</span>
-                  </div>
-                )}
-                {!bundled && last?.installed && last.source === 'bundled' && (
-                  <div style={styles.cardWarn}>
-                    Could not reach the skills repository, so Codey installed the copy it
-                    ships with. {last.reason}
-                  </div>
-                )}
-                {ask && (
-                  <div style={styles.cardWarn}>
-                    A skill named “{plugin.id}” is already at <span style={styles.path}>{ask.dir}</span>,
-                    and Codey did not write it.{' '}
-                    {ask.action === 'install'
-                      ? 'Installing replaces it.'
-                      : 'Uninstalling deletes it.'} There is no undo.
-                  </div>
-                )}
+                  <span style={styles.rowTagline}>{plugin.tagline}</span>
+                </span>
+              </button>
+              <div style={working ? styles.toggleBusy : styles.rowToggle}>
+                <Toggle
+                  on={enabled}
+                  onChange={next => { if (!working) void setEnabled(plugin, next) }}
+                  label={`Enable ${plugin.name}`}
+                />
               </div>
-              <div style={styles.cardActions}>
-                {hasSettings && (
-                  <button
-                    onClick={() => setSettingsFor(current => toggleSettingsId(current, plugin.id))}
-                    disabled={working}
-                    aria-expanded={settingsOpen}
-                    style={pluginActionButton(settingsOpen ? 'active' : 'neutral')}
-                    title={plugin.id === 'browser' ? 'Browser settings — session profiles' : 'Chrome Companion settings'}
-                  >
-                    <UIIcon name="settings" size={13} />
-                    {settingsOpen ? 'Hide' : plugin.id === 'browser' ? 'Profiles' : 'Setup'}
-                  </button>
-                )}
-                {bundled ? (
-                  <div style={working ? styles.toggleBusy : undefined} title={enabled ? 'Disable Chrome Companion for agents' : 'Enable Chrome Companion for agents'}>
-                    <Toggle
-                      on={enabled}
-                      onChange={next => { if (!working) void setChromeEnabled(plugin, next) }}
-                      label="Enable Chrome Companion"
-                    />
-                  </div>
-                ) : ask ? (
-                  <>
-                    <button
-                      onClick={() => setPending(prev => forget(plugin.id, prev))}
-                      disabled={working}
-                      style={pillButton('ghost')}
-                    >
-                      Keep mine
-                    </button>
-                    <button
-                      onClick={() => { if (!working) void act(plugin, ask.action, true) }}
-                      disabled={working}
-                      style={pillButton('danger')}
-                    >
-                      {ask.action === 'install' ? 'Replace it' : 'Delete it'}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {installed && update[plugin.id]?.needsUpdate === true && (
-                      <button
-                        onClick={() => { if (!working) void act(plugin, 'install') }}
-                        disabled={working}
-                        style={pillButton('primary')}
-                        title="A newer published version is available — update now"
-                      >
-                        Update
-                      </button>
-                    )}
-                    <button
-                      onClick={() => { if (!working) void act(plugin, installed ? 'uninstall' : 'install') }}
-                      disabled={working}
-                      style={installed ? pluginActionButton('danger') : pillButton('primary')}
-                    >
-                      {installed && <UIIcon name="trash" size={13} />}
-                      {working ? (installed ? 'Working…' : 'Installing…') : installed ? 'Uninstall' : 'Install'}
-                    </button>
-                  </>
-                )}
-              </div>
+              <button
+                type="button"
+                aria-label={`Open ${plugin.name} details`}
+                onClick={() => setSelectedId(plugin.id)}
+                style={styles.rowChevron}
+              >
+                <UIIcon name="chevron" size={15} />
+              </button>
             </div>
-            {settingsOpen && (
-              <div style={styles.settingsPanel} aria-label={`${plugin.name} settings`}>
-                {plugin.id === 'browser' ? <BrowserProfiles /> : <ChromeCompanionSettings />}
-              </div>
-            )}
-          </div>
-        )
-      })}
+          )
+        })}
+      </div>
       {plugins.length > 0 && filteredPlugins.length === 0 && (
         <div style={styles.emptySearch}>No plugins match that name or description.</div>
       )}
@@ -274,61 +201,227 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
   )
 }
 
+type DetailProps = {
+  plugin: PluginInfo
+  working: boolean
+  last?: PluginInstallResult
+  ask?: Pending
+  update?: PluginUpdateCheck
+  error: string | null
+  onBack: () => void
+  onEnabled: (enabled: boolean) => void
+  onInstall: () => void
+  onUninstall: () => void
+  onCancelPending: () => void
+  onConfirmPending: () => void
+}
+
+const PluginDetails: React.FC<DetailProps> = ({
+  plugin, working, last, ask, update, error, onBack, onEnabled, onInstall,
+  onUninstall, onCancelPending, onConfirmPending,
+}) => {
+  const installed = plugin.state !== 'absent'
+  const enabled = plugin.state === 'installed'
+  const bundled = plugin.id === 'chrome-companion'
+  const hasSettings = SETTINGS_PLUGINS.has(plugin.id) && (bundled || installed)
+
+  return (
+    <div style={styles.detailRoot}>
+      <button type="button" onClick={onBack} style={styles.backButton}>
+        <span style={styles.backGlyph}><UIIcon name="chevron" size={14} /></span>
+        Plugins
+      </button>
+
+      <div style={styles.hero}>
+        <div style={styles.heroIcon}><PluginLogo id={plugin.id} size={46} /></div>
+        <div style={styles.heroCopy}>
+          <div style={styles.heroName}>{plugin.name}</div>
+          <div style={styles.heroTagline}>{plugin.tagline}</div>
+        </div>
+        <div style={working ? styles.toggleBusy : undefined}>
+          <Toggle on={enabled} onChange={onEnabled} label={`Enable ${plugin.name}`} />
+        </div>
+      </div>
+
+      {error && <div style={styles.errorBanner}>{error}</div>}
+
+      <DetailSection title="About">
+        <div style={styles.detailDescription}>{plugin.description}</div>
+        <div style={styles.metaRow}>
+          <span style={styles.metaLabel}>Type</span>
+          <span>{bundled ? 'Built-in plugin' : 'Optional plugin'}</span>
+        </div>
+        <div style={styles.metaRow}>
+          <span style={styles.metaLabel}>Status</span>
+          <span style={enabled ? styles.statusOn : styles.statusMuted}>
+            {enabled ? 'Enabled' : installed ? 'Disabled' : 'Not installed'}
+          </span>
+        </div>
+      </DetailSection>
+
+      <DetailSection title="Settings" icon="settings">
+        {hasSettings ? (
+          plugin.id === 'browser' ? <BrowserProfiles /> : <ChromeCompanionSettings />
+        ) : (
+          <div style={styles.settingsEmpty}>
+            Install and enable this plugin to configure browser profiles.
+          </div>
+        )}
+      </DetailSection>
+
+      <DetailSection title="Installation">
+        <div style={styles.metaRow}>
+          <span style={styles.metaLabel}>Skill</span>
+          <span style={styles.path}>codey:{plugin.id}</span>
+        </div>
+        {!bundled && (
+          <div style={styles.metaRow}>
+            <span style={styles.metaLabel}>{installed ? 'Location' : 'Source'}</span>
+            <span style={styles.path}>{installed ? plugin.dir : plugin.sourceUrl}</span>
+          </div>
+        )}
+        {update?.needsUpdate === true && (
+          <div style={styles.updateNotice}>A newer published version is available.</div>
+        )}
+        {last?.installed && last.source === 'bundled' && (
+          <div style={styles.warningBox}>
+            Codey could not reach the skills repository, so it installed the bundled copy. {last.reason}
+          </div>
+        )}
+        {ask && (
+          <div style={styles.warningBox}>
+            A skill named “{plugin.id}” already exists at <span style={styles.path}>{ask.dir}</span>,
+            and Codey did not write it. {ask.action === 'install' ? 'Replacing' : 'Deleting'} it cannot be undone.
+            <div style={styles.confirmActions}>
+              <button type="button" onClick={onCancelPending} disabled={working} style={pillButton('ghost')}>Keep mine</button>
+              <button type="button" onClick={onConfirmPending} disabled={working} style={pillButton('danger')}>
+                {ask.action === 'install' ? 'Replace it' : 'Delete it'}
+              </button>
+            </div>
+          </div>
+        )}
+        {!bundled && !ask && (
+          <div style={styles.manageActions}>
+            {installed && update?.needsUpdate === true && (
+              <button type="button" onClick={onInstall} disabled={working} style={pillButton('primary')}>Update</button>
+            )}
+            <button
+              type="button"
+              onClick={installed ? onUninstall : onInstall}
+              disabled={working}
+              style={installed ? detailDangerButton : pillButton('primary')}
+            >
+              {working ? 'Working…' : installed ? 'Uninstall plugin' : 'Install plugin'}
+            </button>
+          </div>
+        )}
+        {bundled && (
+          <div style={styles.bundledNote}>This plugin ships with Codey. The switch disables its agent access without removing the Chrome extension or changing Chrome.</div>
+        )}
+      </DetailSection>
+    </div>
+  )
+}
+
+const DetailSection: React.FC<{ title: string; icon?: 'settings'; children: React.ReactNode }> = ({ title, icon, children }) => (
+  <section style={styles.section}>
+    <div style={styles.sectionTitle}>
+      {icon && <UIIcon name={icon} size={14} />}
+      {title}
+    </div>
+    <div style={styles.sectionBody}>{children}</div>
+  </section>
+)
+
+const detailDangerButton: React.CSSProperties = {
+  ...pillButton('danger'), display: 'inline-flex', alignItems: 'center', gap: 6,
+  border: `1px solid ${C.dangerBorder}`,
+}
+
 const styles: Record<string, React.CSSProperties> = {
+  root: { maxWidth: 820, margin: '0 auto' },
   note: { color: C.fg3, fontSize: 12, padding: 8 },
-  intro: { color: C.fg2, fontSize: 12, marginBottom: 14 },
+  intro: { color: C.fg3, fontSize: 11.5, lineHeight: 1.5, margin: '0 12px 10px' },
   errorBanner: {
     background: C.dangerBg, color: C.dangerFg, border: `1px solid ${C.dangerBorder}`,
     padding: '9px 11px', borderRadius: 9, marginBottom: 14, fontSize: 12,
   },
-  pluginWrap: {
-    marginBottom: 10, border: `1px solid ${C.border}`, borderRadius: 12,
-    background: C.surface2, overflow: 'hidden',
+  list: { borderTop: `1px solid ${C.border}` },
+  row: {
+    display: 'flex', alignItems: 'center', gap: 10, minHeight: 66, padding: '8px 8px 8px 12px',
+    background: 'transparent',
   },
-  bundledWrap: { borderLeft: `3px solid ${C.accent}` },
-  optionalWrap: { borderLeft: `3px solid ${C.border2}` },
-  card: {
-    display: 'flex', alignItems: 'center', gap: 12, padding: '15px 16px',
-    background: C.surface2,
+  rowBorder: { borderTop: `1px solid ${C.border}` },
+  rowOpen: {
+    display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0, padding: 0,
+    border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
   },
-  cardWithSettings: { paddingBottom: 14 },
-  settingsPanel: {
-    padding: '12px', borderTop: `1px solid ${C.border}`, background: C.surface,
+  rowIcon: {
+    width: 42, height: 42, flexShrink: 0, display: 'grid', placeItems: 'center',
+    borderRadius: 10, background: C.surface2, border: `1px solid ${C.border}`,
   },
-  cardIcon: { width: 34, height: 34, flexShrink: 0 },
-  cardBody: { flex: 1, minWidth: 0 },
-  cardName: { color: C.fg, fontSize: 13, fontWeight: 700, marginBottom: 3 },
-  cardDesc: { color: C.fg3, fontSize: 11.5, lineHeight: 1.45 },
-  cardHint: { color: C.fg2, fontSize: 11, lineHeight: 1.45, marginTop: 5 },
-  updateHint: { color: C.accent, fontSize: 11, lineHeight: 1.45, marginTop: 4 },
-  cardWarn: { color: C.fg2, fontSize: 11, lineHeight: 1.45, marginTop: 5, opacity: 0.9 },
-  path: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 10.5, color: C.fg3 },
-  badge: {
-    marginLeft: 8, padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 650,
-    background: C.accent + '22', color: C.accent, verticalAlign: 'middle',
+  rowCopy: { display: 'block', flex: 1, minWidth: 0 },
+  rowTitleLine: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 },
+  rowName: { color: C.fg, fontSize: 13.5, lineHeight: 1.35, fontWeight: 700 },
+  rowTagline: {
+    display: 'block',
+    color: C.fg3, fontSize: 11.5, lineHeight: 1.45, marginTop: 2,
+    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
   },
-  badgeMuted: {
-    marginLeft: 8, padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 650,
-    background: C.surface3, color: C.fg3, verticalAlign: 'middle',
+  rowToggle: { flexShrink: 0 },
+  rowChevron: {
+    width: 26, height: 30, display: 'inline-grid', placeItems: 'center', flexShrink: 0,
+    color: C.fg3, opacity: 0.7, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0,
   },
-  builtInBadge: {
-    marginLeft: 8, padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 650,
-    background: C.accentDim, color: C.accent, verticalAlign: 'middle',
+  toggleBusy: { opacity: 0.45, pointerEvents: 'none', flexShrink: 0 },
+  updateBadge: {
+    padding: '1px 6px', borderRadius: 999, fontSize: 9.5, fontWeight: 700,
+    background: C.accentDim, color: C.accent,
   },
-  optionalBadge: {
-    marginLeft: 8, padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 650,
-    background: C.surface3, color: C.fg2, verticalAlign: 'middle',
-  },
-  cardActions: { display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 },
-  toggleBusy: { opacity: 0.5, pointerEvents: 'none' },
   emptySearch: { color: C.fg3, fontSize: 12, textAlign: 'center', padding: '30px 16px' },
-}
 
-function pluginActionButton(variant: 'neutral' | 'active' | 'danger'): React.CSSProperties {
-  return {
-    ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-    minWidth: 94, background: variant === 'active' ? C.accentDim : C.surface,
-    border: `1px solid ${variant === 'danger' ? C.dangerBorder : variant === 'active' ? C.accent : C.border2}`,
-    color: variant === 'danger' ? C.dangerFg : variant === 'active' ? C.accent : C.fg2,
-  }
+  detailRoot: { maxWidth: 820, margin: '0 auto', paddingBottom: 12 },
+  backButton: {
+    display: 'inline-flex', alignItems: 'center', gap: 4, border: 'none', background: 'transparent',
+    color: C.fg2, cursor: 'pointer', padding: '4px 2px', marginBottom: 14, fontSize: 12,
+  },
+  backGlyph: { display: 'inline-flex', transform: 'rotate(180deg)' },
+  hero: { display: 'flex', alignItems: 'center', gap: 13, padding: '2px 2px 18px' },
+  heroIcon: {
+    width: 56, height: 56, display: 'grid', placeItems: 'center', flexShrink: 0,
+    borderRadius: 13, background: C.surface2, border: `1px solid ${C.border}`,
+  },
+  heroCopy: { flex: 1, minWidth: 0 },
+  heroName: { color: C.fg, fontSize: 19, lineHeight: 1.3, fontWeight: 750 },
+  heroTagline: { color: C.fg3, fontSize: 12, lineHeight: 1.45, marginTop: 3 },
+  section: { borderTop: `1px solid ${C.border}`, padding: '18px 2px 4px' },
+  sectionTitle: {
+    display: 'flex', alignItems: 'center', gap: 7, color: C.fg, fontSize: 13,
+    fontWeight: 720, marginBottom: 11,
+  },
+  sectionBody: { color: C.fg2, fontSize: 11.5 },
+  detailDescription: { color: C.fg2, fontSize: 12, lineHeight: 1.55, marginBottom: 12, maxWidth: 690 },
+  metaRow: {
+    display: 'flex', alignItems: 'baseline', gap: 14, padding: '6px 0',
+    borderTop: `1px solid ${C.border}`, lineHeight: 1.4,
+  },
+  metaLabel: { width: 72, flexShrink: 0, color: C.fg3 },
+  statusOn: { color: C.green, fontWeight: 650 },
+  statusMuted: { color: C.fg3, fontWeight: 650 },
+  path: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 10.5,
+    color: C.fg3, overflowWrap: 'anywhere',
+  },
+  settingsEmpty: {
+    padding: '14px', borderRadius: 9, border: `1px dashed ${C.border2}`,
+    color: C.fg3, background: C.surface,
+  },
+  updateNotice: { marginTop: 10, color: C.accent, fontWeight: 650 },
+  warningBox: {
+    marginTop: 10, padding: '10px 11px', borderRadius: 9, color: C.fg2,
+    background: C.warningBg, border: `1px solid ${C.warningFg}55`, lineHeight: 1.5,
+  },
+  confirmActions: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 },
+  manageActions: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 },
+  bundledNote: { color: C.fg3, lineHeight: 1.5, marginTop: 8 },
 }

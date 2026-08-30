@@ -52,6 +52,8 @@ export interface SkillsListResult {
 export interface PluginInfo {
   id: string
   name: string
+  /** One line that says which browser this is, shown on the collapsed card. */
+  tagline: string
   description: string
   /** Read from disk: a plugin is installed as an ordinary skill, and the
    *  Skills tab can disable ('disabled') or delete ('absent') it from there. */

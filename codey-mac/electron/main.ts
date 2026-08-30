@@ -263,6 +263,9 @@ function createWindow() {
       // is behind another app. Throttling can stall MediaRecorder chunks and
       // make the stop hotkey close the capsule without producing audio.
       backgroundThrottling: false,
+      // Chromium's built-in PDF viewer is a "plugin"; without this an attached
+      // PDF previews as a blank frame instead of its pages.
+      plugins: true,
     }
   })
 
@@ -3844,14 +3847,23 @@ app.whenReady().then(async () => {
     })
   )
 
-  // Chrome Companion ships with Codey. Its switch enables or disables the
-  // bundled agent instructions without downloading, updating, or deleting the
-  // extension and without touching the user's Chrome session.
+  // Plugin switches are reversible. Chrome Companion owns a bundled-skill
+  // helper; downloaded plugins use the same SKILL.md <-> SKILL.md.disabled
+  // move as the Skills screen. Installing an absent optional plugin remains a
+  // separate operation handled by plugins:install.
   ipcMain.handle('plugins:setEnabled', async (_e, id: string, enabled: boolean) =>
     wrap(async () => {
-      if (id !== 'chrome-companion') throw new Error(`Plugin ${id} does not use an enable switch`)
+      if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
       if (typeof enabled !== 'boolean') throw new Error('Invalid enabled flag')
-      await setChromeCompanionSkillEnabled(enabled)
+      if (id === 'chrome-companion') {
+        await setChromeCompanionSkillEnabled(enabled)
+      } else {
+        const plugin = browserSkillStatus()
+        if (plugin.state === 'absent') throw new Error(`Plugin ${id} is not installed`)
+        const fsMod = await import('fs')
+        const pathMod = await import('path')
+        setSkillEnabled(fsMod, pathMod, plugin.dir, enabled)
+      }
       await syncCodeyGlobalSkills()
       return listPlugins(pluginId => pluginId === 'browser' ? browserSkillStatus() : chromeCompanionSkillStatus())
         .find(plugin => plugin.id === id)!
