@@ -5,6 +5,7 @@ import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { Markdown } from './Markdown'
+import { FilePathCwd } from './FilePathLink'
 import { PairingModal } from './PairingModal'
 import { AttachmentPreview } from './AttachmentPreview'
 import { consumePendingPairing } from './pendingPairing'
@@ -2195,6 +2196,8 @@ export const ChatTab: React.FC<Props> = ({
   }, [panelTeamName])
 
   return (
+    // Paths written in this chat's messages resolve against its working dir.
+    <FilePathCwd.Provider value={workingDir ?? null}>
     <div ref={outerRef} style={styles.outer}>
       <div
         style={styles.container}
@@ -3336,6 +3339,7 @@ export const ChatTab: React.FC<Props> = ({
         )
       })()}
     </div>
+    </FilePathCwd.Provider>
   )
 }
 

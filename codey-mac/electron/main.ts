@@ -20,6 +20,7 @@ import { isKnownPlugin, listPlugins } from './plugins'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import { scanAgentMcpServers, type AgentMcpServer, type McpAgentKey } from './agent-mcp-scan'
 import { deriveDeliveryState, shouldRediscoverPr } from './delivery-status'
+import { locateRefPath } from './file-ref'
 import type { ScannedSkill } from './skills'
 import { AGENT_MEMORY, scanProjectMemory, scanUserMemory } from './memory'
 import { legacySharedFilePath, renderSharedBody, sharedMemoryTargets, syncSharedMemory } from './shared-memory'
@@ -3252,6 +3253,42 @@ app.whenReady().then(async () => {
       await new Promise<void>((resolve, reject) => {
         execFile('open', ['-a', appPath, target], (error) => error ? reject(error) : resolve())
       })
+    })
+  )
+
+  // A path mentioned in a chat message. `locate` tells the renderer whether the
+  // reference is real (only then is it styled as a link); `open` hands the
+  // resolved path to the preferred editor, or to Finder for a directory or a
+  // reveal.
+  ipcMain.handle('fileRef:locate', async (_e, target: string, cwd: string | null) =>
+    wrap(async () => locateRefPath(target, cwd))
+  )
+
+  ipcMain.handle('fileRef:open', async (
+    _e,
+    target: string,
+    cwd: string | null,
+    options: { editorId?: string; reveal?: boolean } = {},
+  ) =>
+    wrap(async () => {
+      const located = await locateRefPath(target, cwd)
+      if (!located.absPath || !located.exists) throw new Error('Path is unavailable')
+      if (options.reveal) { shell.showItemInFolder(located.absPath); return }
+      if (!located.isDirectory && options.editorId) {
+        const editor = supportedEditors.find(candidate => candidate.id === options.editorId)
+        const appPath = editor ? await findEditorApp(editor) : null
+        if (appPath) {
+          const { execFile } = await import('child_process')
+          await new Promise<void>((resolve, reject) => {
+            execFile('open', ['-a', appPath, located.absPath!], (error) => error ? reject(error) : resolve())
+          })
+          return
+        }
+      }
+      // No editor (or a directory): let the OS decide — Finder for a folder,
+      // the default app for a file.
+      const error = await shell.openPath(located.absPath)
+      if (error) throw new Error(error)
     })
   )
 

@@ -27,6 +27,11 @@ contextBridge.exposeInMainWorld('codey', {
     list: () => ipcRenderer.invoke('editors:list'),
     open: (editorId: string, path: string) => ipcRenderer.invoke('editors:open', editorId, path),
   },
+  fileRef: {
+    locate: (path: string, cwd: string | null) => ipcRenderer.invoke('fileRef:locate', path, cwd),
+    open: (path: string, cwd: string | null, options?: { editorId?: string; reveal?: boolean }) =>
+      ipcRenderer.invoke('fileRef:open', path, cwd, options ?? {}),
+  },
   globalTeams: {
     get: () => ipcRenderer.invoke('globalTeams:get'),
     set: (teams: Record<string, unknown>) => ipcRenderer.invoke('globalTeams:set', teams),
