@@ -14,9 +14,11 @@ const status = (over: Partial<BrowserSkillStatus> = {}): BrowserSkillStatus => (
 describe('plugin registry', () => {
   it('registers Browser and Chrome Companion as independent plugins', () => {
     expect(PLUGINS.map(p => p.id)).toEqual(['browser', 'chrome-companion'])
-    expect(PLUGINS[0].name).toBe('Browser')
-    expect(PLUGINS[1].name).toBe('Chrome Companion')
+    expect(PLUGINS[0].name).toBe('Codey Browser')
+    expect(PLUGINS[1].name).toBe('Chrome')
     expect(PLUGINS[0].description.length).toBeGreaterThan(10)
+    // The two are easy to confuse, so each card leads with a one-line tagline.
+    expect(PLUGINS.every(p => p.tagline.length > 10)).toBe(true)
   })
 
   it('reports the state the skill is actually in on disk', () => {

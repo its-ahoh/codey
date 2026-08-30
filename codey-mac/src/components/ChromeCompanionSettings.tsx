@@ -138,5 +138,5 @@ const styles: Record<string, React.CSSProperties> = {
   noticeCopy: { flex: 1, minWidth: 0, color: C.fg3, fontSize: 10.5 },
   navigate: { display: 'flex', alignItems: 'flex-end', gap: 8 },
   inputLabel: { display: 'flex', flex: 1, minWidth: 0, flexDirection: 'column', gap: 4, color: C.fg2, fontSize: 10 },
-  input: { flex: 1, width: '100%', minWidth: 0, height: 38, boxSizing: 'border-box', padding: '0 12px', borderRadius: 8, border: `1px solid ${C.border2}`, background: C.surface2, color: C.fg, outline: 'none', fontSize: 12.5 },
+  input: { flexShrink: 0, width: '100%', minWidth: 0, height: 38, boxSizing: 'border-box', padding: '0 12px', borderRadius: 8, border: `1px solid ${C.border2}`, background: C.surface2, color: C.fg, outline: 'none', fontSize: 12.5 },
 }

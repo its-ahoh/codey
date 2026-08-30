@@ -10,14 +10,18 @@ import type { BrowserSkillStatus } from '@codey/core'
 export interface PluginInfo extends BrowserSkillStatus {
   id: 'browser' | 'chrome-companion'
   name: string
+  /** One line that says which browser this is. The two plugins are easy to
+   *  confuse, so the card leads with this rather than the full description. */
+  tagline: string
   description: string
 }
 
 /** Static registry of Codey plugins. */
-export const PLUGINS: Array<Pick<PluginInfo, 'id' | 'name' | 'description'>> = [
+export const PLUGINS: Array<Pick<PluginInfo, 'id' | 'name' | 'tagline' | 'description'>> = [
   {
     id: 'browser',
-    name: 'Browser',
+    name: 'Codey Browser',
+    tagline: 'Codey’s own browser window — its own profiles and logins.',
     description:
       'Let agents see and control the in-app Codey Browser. Works with every agent '
       + 'Codey runs. Browsing stays view-only by default; actions that change page '
@@ -25,7 +29,8 @@ export const PLUGINS: Array<Pick<PluginInfo, 'id' | 'name' | 'description'>> = [
   },
   {
     id: 'chrome-companion',
-    name: 'Chrome Companion',
+    name: 'Chrome',
+    tagline: 'The real Chrome on your Mac — its open tabs and signed-in session.',
     description:
       'Let agents work through your real Google Chrome tabs and existing signed-in session. '
       + 'The companion extension connects locally and is independent from the in-app Browser plugin.',
