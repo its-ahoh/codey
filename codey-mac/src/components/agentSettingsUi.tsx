@@ -43,13 +43,6 @@ export const iconButtonStyle = (opts: { accent?: boolean; danger?: boolean; disa
   opacity: opts.disabled ? 0.45 : 1,
 })
 
-/** Text button for the one place a label is needed — the page-level Recheck. */
-export const textButtonStyle: React.CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 9px', fontSize: 12,
-  background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`,
-  borderRadius: 7, cursor: 'pointer',
-}
-
 /**
  * Whether the gateway will find this agent's CLI: probe in flight, installed,
  * or missing. The installed pill carries the resolved path as its tooltip, so

@@ -4,7 +4,7 @@ export type IconName =
   | 'activity' | 'add' | 'alert' | 'archive' | 'bell' | 'book' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
   | 'clock' | 'code' | 'copy' | 'edit' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
   | 'waveform' | 'git-branch' | 'git-merge' | 'pull-request' | 'globe' | 'match-case' | 'overview' | 'refresh' | 'search' | 'server' | 'settings' | 'sparkle' | 'split' | 'terminal' | 'tools' | 'trash' | 'users' | 'workspace'
-  | 'telegram' | 'discord' | 'imessage' | 'undo' | 'download'
+  | 'telegram' | 'discord' | 'imessage' | 'undo' | 'download' | 'download-all'
 
 interface Props {
   name: IconName
@@ -34,6 +34,8 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     // Arrow into a tray: the update glyph everywhere, and unmistakable next to
     // a version number even at 14px.
     download: <><path {...common} d="M12 4v10" /><path {...common} d="M8 11l4 4 4-4" /><path {...common} d="M5 19h14" /></>,
+    // `download` with a second arrow: the same action, aimed at every agent.
+    'download-all': <><path {...common} d="M8 4v8" /><path {...common} d="M5 9.5l3 3 3-3" /><path {...common} d="M16 4v8" /><path {...common} d="M13 9.5l3 3 3-3" /><path {...common} d="M5 19h14" /></>,
     disclosure: <path fill="currentColor" stroke="none" d="M9 6.5L16 12l-7 5.5z" />,
     code: <><path {...common} d="M8 9l-3 3 3 3M16 9l3 3-3 3M14 6l-4 12" /></>,
     copy: <><rect {...common} x="9" y="9" width="11" height="11" rx="2" /><path {...common} d="M5 15V5a2 2 0 012-2h10" /></>,

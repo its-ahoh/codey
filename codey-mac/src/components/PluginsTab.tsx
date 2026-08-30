@@ -311,7 +311,7 @@ const PluginDetails: React.FC<DetailProps> = ({
               disabled={working}
               style={installed ? detailDangerButton : pillButton('primary')}
             >
-              {working ? 'Working…' : installed ? 'Uninstall plugin' : 'Install plugin'}
+              {working ? 'Working…' : installed ? 'Uninstall' : 'Install plugin'}
             </button>
           </div>
         )}
