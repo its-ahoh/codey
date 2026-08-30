@@ -29,8 +29,6 @@ interface VoiceCfg {
   localModel: string
   realtimeUrl: string
   realtimeModel: string
-  /** Legacy setting kept for config compatibility. The two hotkeys now have fixed destinations. */
-  mode: 'inject' | 'converse'
   /** Preferred spellings, handed to the recognizer as a prompt hint. */
   vocabulary: string[]
   /** Add words to the dictionary from corrections made in a Codey chat before sending. */
@@ -83,7 +81,6 @@ const VOICE_DEFAULT: VoiceCfg = {
   localModel: 'openai_whisper-large-v3_turbo_954MB',
   realtimeUrl: 'wss://api.openai.com/v1/realtime?intent=transcription',
   realtimeModel: 'gpt-4o-mini-transcribe',
-  mode: 'inject',
   vocabulary: [],
   vocabularyAutoLearn: true,
   polish: { enabled: false, model: '', timeoutMs: 10000, extraInstructions: '' },
@@ -347,9 +344,6 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         enabled: dictationEnabled || conversationEnabled,
         dictationEnabled,
         conversationEnabled,
-        // Dictation and talk-to-chat now have separate triggers. Migrate old
-        // configs so the primary hotkey always keeps its dictation meaning.
-        mode: 'inject',
         vocabulary,
         // Same one-level-deeper merge as tts, and for the same reason: a
         // config written before this section existed must not blank it out.
@@ -416,7 +410,6 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
     const next = {
       ...patched,
       enabled: patched.dictationEnabled || patched.conversationEnabled,
-      mode: 'inject' as const,
     }
     setVoice(next)
     try {

@@ -393,7 +393,6 @@ export interface SharedMemorySettings {
 export interface MemorySettings {
   enabled?: boolean;
   autoExtract?: boolean;
-  maxAutoMemories?: number;
 }
 
 // Gateway configuration
