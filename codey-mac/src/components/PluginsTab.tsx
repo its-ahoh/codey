@@ -341,7 +341,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.dangerBg, color: C.dangerFg, border: `1px solid ${C.dangerBorder}`,
     padding: '9px 11px', borderRadius: 9, marginBottom: 14, fontSize: 12,
   },
-  list: { borderTop: `1px solid ${C.border}` },
+  list: { borderTop: '1px solid transparent' },
   row: {
     display: 'flex', alignItems: 'center', gap: 10, minHeight: 66, padding: '8px 8px 8px 12px',
     background: 'transparent',
