@@ -263,6 +263,9 @@ function createWindow() {
       // is behind another app. Throttling can stall MediaRecorder chunks and
       // make the stop hotkey close the capsule without producing audio.
       backgroundThrottling: false,
+      // Chromium's built-in PDF viewer is a "plugin"; without this an attached
+      // PDF previews as a blank frame instead of its pages.
+      plugins: true,
     }
   })
 

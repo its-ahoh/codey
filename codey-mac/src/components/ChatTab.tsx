@@ -6,6 +6,7 @@ import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { Markdown } from './Markdown'
 import { PairingModal } from './PairingModal'
+import { AttachmentPreview } from './AttachmentPreview'
 import { consumePendingPairing } from './pendingPairing'
 import { ChatContextPanel } from './ChatContextPanel'
 import type { ContextPanelTab } from './ChatContextPanel'
@@ -967,6 +968,8 @@ export const ChatTab: React.FC<Props> = ({
   const [advisorConfig, setAdvisorConfig] = useState<{ agent?: string; model?: string }>({})
   const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>(() => getDraft(chatId).attachments)
   const [isDragging, setIsDragging] = useState(false)
+  // The attachment the user clicked, shown in a full preview overlay.
+  const [previewAttachment, setPreviewAttachment] = useState<FileAttachment | null>(null)
   const [slashCommands, setSlashCommands] = useState<Array<{ name: string; description: string; source: 'agent' | 'gateway' | 'skill' }>>([])
   const [slashIdx, setSlashIdx] = useState(0)
   const slashMenuRef = useRef<HTMLDivElement>(null)
@@ -2615,7 +2618,7 @@ export const ChatTab: React.FC<Props> = ({
                   <div style={styles.attachmentsContainer}>
                     {msg.attachments.map(att => {
                       const isImage = att.mimeType.startsWith('image/')
-                      const open = () => window.codey?.openPath?.(att.path)
+                      const open = () => setPreviewAttachment(att)
                       if (isImage) {
                         return (
                           <img
@@ -2932,20 +2935,30 @@ export const ChatTab: React.FC<Props> = ({
                 const isImage = att.mimeType.startsWith('image/')
                 if (isImage) {
                   return (
-                    <div key={att.id} style={styles.pendingImageWrap} title={`${att.name} · ${formatBytes(att.size)}`}>
+                    <div
+                      key={att.id}
+                      style={styles.pendingImageWrap}
+                      title={`${att.name} · ${formatBytes(att.size)}`}
+                      onClick={() => setPreviewAttachment(att)}
+                    >
                       <img src={assetUrl(att.path)} alt={att.name} style={styles.pendingImage} />
-                      <button onClick={() => removeAttachment(att.id)} style={styles.pendingRemoveBtn} aria-label="Remove">×</button>
+                      <button onClick={e => { e.stopPropagation(); removeAttachment(att.id) }} style={styles.pendingRemoveBtn} aria-label="Remove">×</button>
                     </div>
                   )
                 }
                 return (
-                  <div key={att.id} style={styles.pendingFileChip} title={`${att.name} · ${formatBytes(att.size)}`}>
+                  <div
+                    key={att.id}
+                    style={styles.pendingFileChip}
+                    title={`${att.name} · ${formatBytes(att.size)}`}
+                    onClick={() => setPreviewAttachment(att)}
+                  >
                     <div style={styles.pendingFileIcon}><FileIcon color={C.fg2} size={16} /></div>
                     <div style={styles.pendingFileMeta}>
                       <span style={styles.pendingFileName}>{att.name}</span>
                       <span style={styles.pendingFileSize}>{formatBytes(att.size)}</span>
                     </div>
-                    <button onClick={() => removeAttachment(att.id)} style={styles.pendingFileRemoveBtn} aria-label="Remove">×</button>
+                    <button onClick={e => { e.stopPropagation(); removeAttachment(att.id) }} style={styles.pendingFileRemoveBtn} aria-label="Remove">×</button>
                   </div>
                 )
               })}
@@ -3148,6 +3161,12 @@ export const ChatTab: React.FC<Props> = ({
           </div>
         </div>
       </div>
+      {previewAttachment && (
+        <AttachmentPreview
+          attachment={previewAttachment}
+          onClose={() => setPreviewAttachment(null)}
+        />
+      )}
       {pairingModal && (
         <PairingModal
           channel={pairingModal}
@@ -3568,6 +3587,7 @@ const styles: Record<string, React.CSSProperties> = {
   pendingImageWrap: {
     position: 'relative' as const, width: 56, height: 56,
     borderRadius: 8, overflow: 'hidden', border: `1px solid ${C.border2}`,
+    cursor: 'pointer' as const,
   },
   pendingImage: {
     width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block',
@@ -3583,6 +3603,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', gap: 8,
     background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 8,
     padding: '6px 6px 6px 10px', height: 56, boxSizing: 'border-box' as const,
+    cursor: 'pointer' as const,
   },
   pendingFileIcon: {
     width: 32, height: 32, borderRadius: 6, background: C.surface3,
