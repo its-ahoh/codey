@@ -114,7 +114,7 @@ const ToolButton: React.FC<{
 
 const styles: Record<string, React.CSSProperties> = {
   root: {
-    position: 'relative', height: '100%', minWidth: 320, flexShrink: 0,
+    position: 'relative', height: '100%', minWidth: 0, flexShrink: 0,
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
     background: C.surface, borderLeft: `1px solid ${C.border2}`,
   },

@@ -48,6 +48,7 @@ import cursorLogo from '../assets/editors/cursor.svg'
 import xcodeLogo from '../assets/editors/xcode.svg'
 import type { BrowserLoginWaitEvent } from '../codey-api'
 import { WorkspaceDock, type WorkspaceDockTool } from './WorkspaceDock'
+import { resolveWorkspaceDockLayout } from './workspaceDockLayout'
 import { TerminalPanel } from './TerminalPanel'
 import { splitWhiteboardMarkers, type WhiteboardMarker } from './teamWhiteboardFormat'
 import { groupTeamMessagesByMember, type TeamMemberMessageGroup } from './teamRunModel'
@@ -901,6 +902,7 @@ export const ChatTab: React.FC<Props> = ({
   rightPanelMode, onRightPanelModeChange, rightPanelWidth, onRightPanelResize,
   browserLoginWait, onConfirmBrowserLogin, onDismissBrowserLogin,
 }) => {
+  const outerRef = useRef<HTMLDivElement>(null)
   const { state, createChat, sendMessage, removeQueuedMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
@@ -1417,10 +1419,23 @@ export const ChatTab: React.FC<Props> = ({
   // the user resizes Codey down — at small widths the middle column was
   // collapsing to ~200px and wrapping CJK characters one per line.
   const [windowWidth, setWindowWidth] = useState<number>(() => window.innerWidth)
+  // Start closed rather than borrowing the full window width for one frame.
+  // A native BrowserView can otherwise flash across the sidebar before the
+  // first ResizeObserver measurement arrives.
+  const [containerWidth, setContainerWidth] = useState(0)
   useEffect(() => {
     const onResize = () => setWindowWidth(window.innerWidth)
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
+  }, [])
+  useLayoutEffect(() => {
+    const outer = outerRef.current
+    if (!outer) return
+    const updateWidth = () => setContainerWidth(Math.round(outer.getBoundingClientRect().width))
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(outer)
+    updateWidth()
+    return () => observer.disconnect()
   }, [])
   useEffect(() => {
     setFollowLatest(true)
@@ -2082,7 +2097,7 @@ export const ChatTab: React.FC<Props> = ({
   }, [panelTeamName])
 
   return (
-    <div style={styles.outer}>
+    <div ref={outerRef} style={styles.outer}>
       <div
         style={styles.container}
         onDragEnter={handleDragEnter}
@@ -3120,18 +3135,11 @@ export const ChatTab: React.FC<Props> = ({
       )}
       </div>
       {/* Overview, Terminal, and Browser share this single right panel. On a
-          narrow window it overlays the chat so the conversation remains usable. */}
+          narrow chat area it overlays the conversation, but remains bounded by
+          this component so the native BrowserView cannot cover the app sidebar. */}
       {(() => {
-        const CHAT_LIST_W = windowWidth < 600 ? 180 : 240
-        const MIN_MIDDLE = 360
-
         if (panelOpen && resolvedRightPanelMode) {
-          const MIN_PANEL = 320
-          const available = windowWidth - CHAT_LIST_W - MIN_MIDDLE
-          const overlay = available < MIN_PANEL
-          const effectiveWidth = overlay
-            ? Math.min(rightPanelWidth, Math.max(MIN_PANEL, windowWidth - 72))
-            : Math.min(rightPanelWidth, available)
+          const { overlay, width: effectiveWidth } = resolveWorkspaceDockLayout(containerWidth, rightPanelWidth)
           const overview = (
             <ChatContextPanel
               chat={chat}
