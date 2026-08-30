@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { chatOwnedPrUrl } from './chatPrUrl'
 import type { ChatMessage, ChatSelection, FileAttachment, TeamRunSummary } from '../types'
 import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
@@ -1224,29 +1225,29 @@ export const ChatTab: React.FC<Props> = ({
   const { status: gitStatus, refresh: refreshGit } = useGitStatus(workingDir)
   const [showPrModal, setShowPrModal] = useState(false)
   // Only an isolated worktree belongs to this chat. In a shared checkout the
-  // branch is global, so "whatever PR the current branch has" is somebody
-  // else's work — we may only adopt a branch's PR right after this chat's own
-  // run, or when the PR url is handed to us explicitly.
+  // branch is global — "whatever PR the current branch has" is whoever moved
+  // that branch last, so the chat has to prove which PR is its own instead.
   const ownsCheckout = chat?.executionMode === 'isolated-worktree'
-  const refreshPullRequestStatus = useCallback(async (
-    opts: { url?: string; discover?: boolean } = {},
-  ) => {
-    const url = opts.url || chat?.pullRequest?.url
+  // Evidence beats the pin: a chat that once adopted the wrong PR (or opened a
+  // second one) corrects itself from its own transcript.
+  const ownedPrUrl = useMemo(() => (ownsCheckout ? undefined : chatOwnedPrUrl(chat)), [ownsCheckout, chat])
+  const refreshPullRequestStatus = useCallback(async (opts: { url?: string } = {}) => {
+    const url = opts.url || ownedPrUrl || chat?.pullRequest?.url
     if (!workingDir) return
     const branch = gitStatus?.branch
-    const discover = (opts.discover ?? false) || ownsCheckout
-    const canDiscover = discover
+    // Resolving a PR from the branch is only honest when the branch is ours.
+    const canDiscover = ownsCheckout
       && !!branch && branch !== 'HEAD' && branch !== (gitStatus?.defaultBranch ?? 'main')
     if (!url && !canDiscover) return
     try {
-      const result = await window.codey.git.prStatus(workingDir, url, discover)
+      const result = await window.codey.git.prStatus(workingDir, url, ownsCheckout)
       if (result.ok) await setPullRequest(chatId, result.data)
     } catch { /* PR status is best effort */ }
-  }, [workingDir, chatId, chat?.pullRequest?.url, ownsCheckout, gitStatus?.branch, gitStatus?.defaultBranch])
+  }, [workingDir, chatId, ownedPrUrl, chat?.pullRequest?.url, ownsCheckout, gitStatus?.branch, gitStatus?.defaultBranch])
 
   useEffect(() => {
     void refreshPullRequestStatus()
-  }, [chat?.id, chat?.pullRequest?.url, workingDir, gitStatus?.branch])
+  }, [chat?.id, chat?.pullRequest?.url, ownedPrUrl, workingDir, gitStatus?.branch])
 
   useEffect(() => {
     const onFocus = () => void refreshPullRequestStatus()
@@ -1257,13 +1258,11 @@ export const ChatTab: React.FC<Props> = ({
   // An agent that opens the PR itself (`gh pr create` in a shell step) leaves
   // no trace the other triggers watch, so the badge used to stay blank until
   // the window lost and regained focus. Re-check the moment a run settles —
-  // and this is also the one moment a shared-checkout chat may claim the
-  // current branch's PR: it just ran, so the branch it sits on is the branch
-  // it worked on.
+  // by then the reply carrying the PR url has landed.
   const wasRunningRef = useRef(false)
   useEffect(() => {
     const running = !!flight
-    if (wasRunningRef.current && !running) void refreshPullRequestStatus({ discover: true })
+    if (wasRunningRef.current && !running) void refreshPullRequestStatus()
     wasRunningRef.current = running
   }, [!!flight]) // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -150,8 +150,15 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
             .filter(item => workingDir === item.path || workingDir.startsWith(`${item.path}/`))
             .sort((a, b) => b.path.length - a.path.length)[0]
         : undefined
+      // A shared checkout's live branch is whoever moved it last, not this
+      // chat's work — when we know the branch its PR went to, that is the
+      // truthful answer to "what branch is this chat on?".
+      const live = status.ok && status.data ? status.data.branch : undefined
+      const owned = chat.executionMode === 'isolated-worktree'
+        ? live
+        : chat.pullRequest?.headBranch || live
       return {
-        branch: status.ok && status.data ? status.data.branch : chat.pullRequest?.headBranch,
+        branch: owned || chat.pullRequest?.headBranch,
         worktree: registered?.path || chat.chatWorkspace?.worktreePath || chat.workingDirOverride || info.workingDir,
       }
     } catch {
