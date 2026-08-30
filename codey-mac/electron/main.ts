@@ -1000,9 +1000,14 @@ async function bootInProcessCore() {
     try {
       const [fsMod, osMod, pathMod] = await Promise.all([import('fs'), import('os'), import('path')])
       removeLegacyManagedSkills(fsMod, pathMod, osMod.homedir(), CODEY_SKILL_DISCOVERY_SUBDIRS)
-      if (coreConfigManager.isPluginEnabled('browser') && browserSkillStatus().state === 'absent') {
-        await installBrowserSkill()
-        await syncCodeyGlobalSkills()
+      if (coreConfigManager.isPluginEnabled('browser')) {
+        if (browserSkillStatus().state === 'absent') {
+          await installBrowserSkill()
+          await syncCodeyGlobalSkills()
+        }
+        // The skill on disk is now the only source of truth. Drop the flag so a
+        // later uninstall stays uninstalled instead of being undone at startup.
+        coreConfigManager.clearLegacyPluginFlags()
       }
 
     } catch { /* best-effort: the Plugins tab can install it by hand */ }

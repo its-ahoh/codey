@@ -756,6 +756,16 @@ export class ConfigManager extends EventEmitter {
     return this.config.plugins?.[name]?.enabled === true;
   }
 
+  /** Forget the legacy opt-in once it has been carried over. `update()` merges
+   *  and so can never drop a key; the migration needs the flag gone from disk,
+   *  or "install it for them once" quietly becomes "reinstall it every launch"
+   *  and a deliberate uninstall cannot stick. */
+  clearLegacyPluginFlags(): void {
+    if (this.config.plugins === undefined) return;
+    delete this.config.plugins;
+    this.save();
+  }
+
   // ── External MCP servers ───────────────────────────────────────────
   /** Add or replace one external MCP server entry. Saves and emits change. */
   setExternalMcpServer(name: string, cfg: ExternalMcpServerConfig): void {

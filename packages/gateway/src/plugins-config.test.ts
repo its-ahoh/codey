@@ -45,3 +45,35 @@ describe('plugins config', () => {
     expect(mgr.isPluginEnabled('browser')).toBe(true);
   });
 });
+
+describe('clearing the legacy plugin opt-in', () => {
+  let dir: string;
+  let file: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-plugins-clear-'));
+    file = path.join(dir, 'gateway.json');
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('removes the flag from disk so the migration runs only once', () => {
+    fs.writeFileSync(file, JSON.stringify({ plugins: { browser: { enabled: true } } }));
+    const mgr = new ConfigManager(file);
+    expect(mgr.isPluginEnabled('browser')).toBe(true);
+
+    mgr.clearLegacyPluginFlags();
+
+    expect(mgr.isPluginEnabled('browser')).toBe(false);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).plugins).toBeUndefined();
+    expect(new ConfigManager(file).isPluginEnabled('browser')).toBe(false);
+  });
+
+  it('is a no-op when the flag was never there', () => {
+    const mgr = new ConfigManager(file);
+    mgr.clearLegacyPluginFlags();
+    expect(mgr.isPluginEnabled('browser')).toBe(false);
+  });
+});
