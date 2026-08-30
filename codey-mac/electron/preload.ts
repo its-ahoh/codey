@@ -465,6 +465,7 @@ contextBridge.exposeInMainWorld('codey', {
     snapshot: () => ipcRenderer.invoke('chromeCompanion:snapshot'),
     exportSession: (name: string) => ipcRenderer.invoke('chromeCompanion:exportSession', name),
     navigate: (url: string) => ipcRenderer.invoke('chromeCompanion:navigate', url),
+    setAccent: (hex: string) => ipcRenderer.invoke('chromeCompanion:setAccent', hex),
     showExtensionFolder: () => ipcRenderer.invoke('chromeCompanion:showExtensionFolder'),
     onStatus: (handler: (state: any) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, state: any) => handler(state)

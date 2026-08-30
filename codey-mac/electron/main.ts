@@ -2429,6 +2429,10 @@ app.whenReady().then(async () => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
     return chromeCompanion.navigate(String(url || ''))
   }))
+  ipcMain.handle('chromeCompanion:setAccent', (event, hex: string) => browserCall(event, () => {
+    chromeCompanion?.setAccent(String(hex || ''))
+    return { ok: true }
+  }))
   ipcMain.handle('chromeCompanion:showExtensionFolder', event => browserCall(event, async () => {
     const extensionPath = chromeCompanionExtensionPath()
     const fsMod = await import('fs')
