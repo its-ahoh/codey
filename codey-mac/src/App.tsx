@@ -23,6 +23,7 @@ import {
   getStoredThemeMode,
   getStoredPalette,
   resolveEffectiveTheme,
+  syncAccentToChrome,
   paletteThemeCss,
 } from './theme'
 
@@ -256,6 +257,7 @@ const Shell: React.FC = () => {
     const onChange = () => {
       if (getStoredThemeMode() === 'system') {
         document.documentElement.dataset.theme = resolveEffectiveTheme('system')
+        syncAccentToChrome()
       }
     }
     mql.addEventListener('change', onChange)

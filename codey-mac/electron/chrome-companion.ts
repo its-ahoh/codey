@@ -127,6 +127,10 @@ type PersistedPairing = {
   pairedAt: number
 }
 
+/** Fallback accent (Classic palette blue) until the renderer reports its theme. */
+const DEFAULT_ACCENT = '#3377d5'
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/
+
 function safeJson(value: string): unknown {
   try { return JSON.parse(value) } catch { throw new Error('Request body must be valid JSON') }
 }
@@ -150,6 +154,9 @@ export class ChromeCompanionBridge {
   private pairedAt: number | null = null
   private lastSeenAt: number | null = null
   private queue: PendingCommand[] = []
+  // The Mac app's current accent color, mirrored to the extension so the
+  // controlled-tab highlight matches whatever palette the user picked.
+  private accent = DEFAULT_ACCENT
   private pending = new Map<string, PendingCommand>()
   private uploadedAttachments = new Map<string, { chatId: string; attachment: ChromeCompanionAttachment }>()
 
@@ -189,6 +196,14 @@ export class ChromeCompanionBridge {
 
   private emitStatus(): void {
     this.onStatus?.(this.status())
+  }
+
+  /**
+   * Mirror the renderer's accent color. Picked up by the extension on its next
+   * poll, so switching palettes recolors the controlled tab without a reload.
+   */
+  setAccent(hex: string): void {
+    this.accent = HEX_COLOR.test(hex) ? hex.toLowerCase() : DEFAULT_ACCENT
   }
 
   status(): ChromeCompanionStatus {
@@ -393,8 +408,8 @@ export class ChromeCompanionBridge {
       if (request.method === 'POST' && url.pathname === '/v1/poll') {
         const command = this.queue.shift()
         this.reply(request, response, 200, command
-          ? { ok: true, command: { id: command.id, command: command.command, input: command.input } }
-          : { ok: true, command: null })
+          ? { ok: true, accent: this.accent, command: { id: command.id, command: command.command, input: command.input } }
+          : { ok: true, accent: this.accent, command: null })
         return
       }
       if (request.method === 'POST' && url.pathname === '/v1/result') {

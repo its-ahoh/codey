@@ -603,6 +603,7 @@ declare global {
         snapshot: () => Promise<IpcResult<ChromePageSnapshot>>
         exportSession: (name: string) => Promise<IpcResult<{ profile: BrowserProfileSummary; tab: ChromeTabInfo }>>
         navigate: (url: string) => Promise<IpcResult<ChromeTabInfo>>
+        setAccent: (hex: string) => Promise<IpcResult<{ ok: true }>>
         showExtensionFolder: () => Promise<IpcResult<string>>
         onStatus: (handler: (state: ChromeCompanionStatus) => void) => () => void
       }

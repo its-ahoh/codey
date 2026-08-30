@@ -319,6 +319,7 @@ export function applyTheme(mode: ThemeMode): EffectiveTheme {
   const effective = resolveEffectiveTheme(mode)
   document.documentElement.dataset.theme = effective
   try { localStorage.setItem(STORAGE_KEY, mode) } catch {}
+  syncAccentToChrome()
   return effective
 }
 
@@ -360,6 +361,21 @@ export function getStoredPalette(): PaletteName {
 export function applyPalette(name: PaletteName): void {
   document.documentElement.dataset.palette = name
   try { localStorage.setItem(PALETTE_KEY, name) } catch {}
+  syncAccentToChrome()
+}
+
+/** The accent hex actually in effect right now (palette x light/dark). */
+export function currentAccent(): string {
+  const definition = PALETTES[getStoredPalette()]
+  return definition[resolveEffectiveTheme(getStoredThemeMode())].accent
+}
+
+/**
+ * Mirror the accent to the Chrome companion bridge. The extension picks it up
+ * on its next poll and recolors the controlled-tab highlight — no reload.
+ */
+export function syncAccentToChrome(): void {
+  try { void window.codey?.chromeCompanion?.setAccent(currentAccent()) } catch {}
 }
 
 export function usePaletteName(): [PaletteName, (n: PaletteName) => void] {

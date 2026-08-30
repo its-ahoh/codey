@@ -92,6 +92,25 @@ describe('ChromeCompanionBridge', () => {
     expect(response.status).toBe(403)
   })
 
+  it('reports the accent color on every poll and rejects junk values', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    const poll = async () => {
+      const response = await fetch(`${endpoint}/v1/poll`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      return await response.json() as { accent: string }
+    }
+
+    expect((await poll()).accent).toBe('#3377d5')
+    bridge.setAccent('#2BE69B')
+    expect((await poll()).accent).toBe('#2be69b')
+    bridge.setAccent('javascript:alert(1)')
+    expect((await poll()).accent).toBe('#3377d5')
+  })
+
   it('round-trips a command through the extension protocol', async () => {
     const { bridge, endpoint } = await setup()
     const token = await connect(endpoint)
