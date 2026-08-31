@@ -36,6 +36,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   const [detail, setDetail] = useState<Detail | null>(null)
   const [trail, setTrail] = useState<TimelineRow[]>([])
   const [openSteps, setOpenSteps] = useState<number | null>(null)
+  const [hovered, setHovered] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const filteredPlaybooks = useMemo(
@@ -74,7 +75,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   }, [expanded])
 
   const renderCurrentVersion = () => detail && (
-    <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 12, paddingTop: 12 }}>
+    <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <span style={{ color: C.fg, fontSize: 13, fontWeight: 650 }}>Current version</span>
         <span style={{ color: C.accent, background: C.accentDim, borderRadius: 5, padding: '2px 6px', fontSize: 11, fontWeight: 650 }}>
@@ -162,37 +163,50 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   const renderCard = (s: Summary) => {
     const actions = playbookActions(s)
     const isExpanded = expanded === rowKey(s)
+    const isHovered = hovered === rowKey(s)
     return (
-      <div key={rowKey(s)} style={{ ...cardStyle, opacity: s.archived ? 0.72 : 1 }}>
+      <div
+        key={rowKey(s)}
+        onMouseEnter={() => setHovered(rowKey(s))}
+        onMouseLeave={() => setHovered(null)}
+        style={{
+          ...cardStyle,
+          opacity: s.archived ? 0.72 : 1,
+          borderColor: isExpanded ? C.accent : isHovered ? C.border2 : C.border,
+          boxShadow: isExpanded
+            ? `0 0 0 3px ${C.accentDim}, 0 10px 28px rgba(0,0,0,0.10)`
+            : isHovered ? '0 8px 22px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.03)',
+          transform: isHovered && !isExpanded ? 'translateY(-1px)' : 'none',
+        }}
+      >
         <div
           onClick={() => void toggleExpand(s)}
-          style={{ cursor: 'pointer' }}
+          style={{ cursor: 'pointer', padding: '17px 18px 15px' }}
           title={isExpanded ? 'Hide playbook details' : 'Show playbook details'}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <span style={{ color: C.fg, fontSize: 15, fontWeight: 650, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {s.name}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <span style={playbookIconStyle}>
+              <UIIcon name={s.promotedToSkill ? 'sparkle' : 'book'} size={17} strokeWidth={2} />
             </span>
-            <span style={{ color: C.fg3, fontSize: 12, flexShrink: 0 }}>v{s.version}</span>
-            {s.archived && (
-              <span style={{
-                fontSize: 10, fontWeight: 650, letterSpacing: 0.3,
-                padding: '2px 6px', borderRadius: 4, flexShrink: 0,
-                background: C.surface3, color: C.fg3,
-              }}>
-                Archived
-              </span>
-            )}
-            {s.promotedToSkill && (
-              <span style={{
-                fontSize: 10, fontWeight: 650, letterSpacing: 0.3,
-                padding: '2px 6px', borderRadius: 4, flexShrink: 0,
-                background: C.accentDim, color: C.accent,
-              }}>
-                Skill
-              </span>
-            )}
-            <span style={{ flex: 1 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, minHeight: 24 }}>
+                <span style={{ color: C.fg, fontSize: 15, fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {s.name}
+                </span>
+                <span style={versionBadgeStyle}>v{s.version}</span>
+                {s.archived && <span style={neutralBadgeStyle}>Archived</span>}
+                {s.promotedToSkill && <span style={accentBadgeStyle}><UIIcon name="sparkle" size={10} />Skill</span>}
+              </div>
+              {s.description && (
+                <div style={{
+                  color: C.fg2, fontSize: 13, lineHeight: '1.55', marginTop: 5,
+                  display: isExpanded ? 'block' : '-webkit-box', WebkitLineClamp: isExpanded ? undefined : 2,
+                  WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                }}>
+                  {s.description}
+                </div>
+              )}
+            </div>
             <button
               type="button"
               aria-label={isExpanded ? 'Collapse playbook details' : 'Expand playbook details'}
@@ -205,21 +219,25 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
               </span>
             </button>
           </div>
-          {s.description && (
-            <div style={{ color: C.fg2, fontSize: 13, lineHeight: '1.55', marginBottom: 8 }}>
-              {s.description}
-            </div>
-          )}
-          <div style={{ color: C.fg3, fontSize: 12, display: 'flex', gap: 14 }}>
-            <span title="Workspace this playbook belongs to" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              <UIIcon name="folder" size={11} />{s.workspace}
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, marginTop: 13, marginLeft: 48 }}>
+            <span title="Workspace this playbook belongs to" style={metaChipStyle}>
+              <UIIcon name="folder" size={12} />{s.workspace}
             </span>
-            <span>used {s.useCount}×</span>
-            <span>last {relativeTime(s.lastUsedAt, Date.now())}</span>
-            <span title="Clean runs / corrections" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><UIIcon name="check" size={12} />{s.successSignals.cleanRuns}<UIIcon name="close" size={11} />{s.successSignals.corrections}</span>
+            <span title="Times used" style={metaChipStyle}><UIIcon name="play" size={11} />{s.useCount} uses</span>
+            <span title="Last used" style={metaChipStyle}><UIIcon name="clock" size={12} />{relativeTime(s.lastUsedAt, Date.now())}</span>
+            <span title="Clean runs" style={{ ...metaChipStyle, color: C.green }}><UIIcon name="check" size={12} />{s.successSignals.cleanRuns} clean</span>
+            {s.successSignals.corrections > 0 && (
+              <span title="Corrections" style={{ ...metaChipStyle, color: C.red }}><UIIcon name="refresh" size={11} />{s.successSignals.corrections} corrected</span>
+            )}
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, marginTop: 14 }}>
+        {isExpanded && (
+          <div style={expandedContentStyle}>
+            {renderCurrentVersion()}
+            {renderTimeline()}
+          </div>
+        )}
+        <div style={actionBarStyle}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {actions.promote && (
               <button onClick={() => void promote(s)} style={pillButton('primary')}>Turn into skill</button>
@@ -240,12 +258,6 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
             )}
           </div>
         </div>
-        {isExpanded && (
-          <>
-            {renderCurrentVersion()}
-            {renderTimeline()}
-          </>
-        )}
       </div>
     )
   }
@@ -302,8 +314,46 @@ const DetailSection: React.FC<{ label: string; content: string; code?: boolean }
 const cardStyle: React.CSSProperties = {
   background: C.surface,
   border: `1px solid ${C.border}`,
-  borderRadius: 10,
-  padding: '16px 18px',
+  borderRadius: 14,
+  overflow: 'hidden',
+  transition: 'border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease',
+}
+
+const playbookIconStyle: React.CSSProperties = {
+  width: 36, height: 36, borderRadius: 10, display: 'grid', placeItems: 'center',
+  flexShrink: 0, color: C.accent, background: C.accentDim,
+  boxShadow: `inset 0 0 0 1px ${C.accentDim}`,
+}
+
+const versionBadgeStyle: React.CSSProperties = {
+  color: C.fg3, background: C.surface3, borderRadius: 5,
+  padding: '2px 6px', fontSize: 10, fontWeight: 700, flexShrink: 0,
+}
+
+const neutralBadgeStyle: React.CSSProperties = {
+  ...versionBadgeStyle, letterSpacing: 0.25,
+}
+
+const accentBadgeStyle: React.CSSProperties = {
+  ...versionBadgeStyle, display: 'inline-flex', alignItems: 'center', gap: 3,
+  background: C.accentDim, color: C.accent, letterSpacing: 0.25,
+}
+
+const metaChipStyle: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0,
+  padding: '4px 7px', borderRadius: 6, background: C.surface2,
+  color: C.fg3, fontSize: 11, lineHeight: 1, whiteSpace: 'nowrap',
+}
+
+const expandedContentStyle: React.CSSProperties = {
+  padding: '15px 18px 17px', borderTop: `1px solid ${C.border}`,
+  background: C.surface2,
+}
+
+const actionBarStyle: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+  padding: '11px 14px', borderTop: `1px solid ${C.border}`,
+  background: C.surface, minHeight: 36,
 }
 
 const expandButtonStyle: React.CSSProperties = {
