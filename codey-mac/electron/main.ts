@@ -2362,6 +2362,23 @@ app.whenReady().then(async () => {
     browserCall(event, () => browserController.saveProfile(String(name || ''))))
   ipcMain.handle('browser:profiles:activate', (event, name: string) =>
     browserCall(event, () => browserController.activateProfile(String(name || ''))))
+  // The Sync button in the browser toolbar: pull the login Chrome holds for the
+  // page Codey Browser is showing into the profile that is enabled here. It is
+  // scoped to that one site, so a profile carrying several logins keeps the
+  // rest, and it names the URL rather than using Chrome's front tab - the user
+  // is looking at the signed-out page here, not over there.
+  ipcMain.handle('browser:profiles:syncFromChrome', (event, url: string) => browserCall(event, async () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    if (!chromeCompanion.status().connected) throw new Error('Connect the Codey extension in Chrome first')
+    const target = String(url || '')
+    const name = browserController.activeProfileName()
+    if (!name) throw new Error('Enable a browser profile first - there is nothing to sync into')
+    const session = await chromeCompanion.exportSessionForUrl(target)
+    await browserController.resyncProfile(name, {
+      json: JSON.stringify({ cookies: session.cookies, origins: session.origins }),
+    }, session.url)
+    return { profileName: name, origin: session.origin, cookieCount: session.cookies.length }
+  }))
   ipcMain.handle('browser:profiles:setAvatar', (event, name: string, avatar: string) =>
     browserCall(event, () => browserController.setProfileAvatar(String(name || ''), String(avatar || ''))))
   ipcMain.handle('browser:profiles:delete', (event, name: string) =>

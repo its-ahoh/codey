@@ -509,6 +509,7 @@ contextBridge.exposeInMainWorld('codey', {
       delete: (name: string) => ipcRenderer.invoke('browser:profiles:delete', name),
       import: () => ipcRenderer.invoke('browser:profiles:import'),
       export: (name: string) => ipcRenderer.invoke('browser:profiles:export', name),
+      syncFromChrome: (url: string) => ipcRenderer.invoke('browser:profiles:syncFromChrome', url),
     },
     extensions: {
       list: () => ipcRenderer.invoke('browser:extensions:list'),
