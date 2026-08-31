@@ -51,7 +51,12 @@ The browser can save and restore named sessions ("profiles") - the cookies and
 per-site storage that keep a site signed in - so you can switch identity for a
 task or carry a session to another machine.
 
-- `profile list` - names of saved profiles plus which one is active
+The user can have several profiles in use at once, so the browser may be
+carrying more than one login (a work identity and a personal one, say).
+Enabling and disabling profiles is theirs to do - you can see the set, and you
+can borrow one for a command, but you cannot change which ones they keep on.
+
+- `profile list` - saved profiles, with every one currently in use flagged
 - `profile save <name>` - snapshot the current session into a named profile
 - `profile import <path> [name]` - import a session file (a Codey profile or
   a Playwright storageState JSON) and activate it in one step
@@ -60,12 +65,18 @@ task or carry a session to another machine.
 - `profile delete <name>` - remove a saved profile
 
 To run a command under a specific profile, put `--profile <name>` before the
-command - the profile is activated first if it is not already (an identity
-switch, so the user is asked to approve it):
+command. That command then runs under that profile and nothing else, so a task
+meant for one identity cannot reach for another's cookies. It is an identity
+switch, so the user is asked to approve it, and the switch happens as part of
+the command itself - another agent working in the same browser cannot slip its
+own profile in between:
 
 ```
 ELECTRON_RUN_AS_NODE=1 "$CODEY_BROWSER_RUNTIME" "$CODEY_BROWSER_CLI" --profile work open-view "https://github.com"
 ```
+
+Note this leaves that profile in use afterwards: it does not put back whatever
+set was enabled before. Say so if that matters to the user.
 
 `state` reports the active profile. Activating a profile replaces the
 session's cookies with the profile's (an identity switch, so the previous
