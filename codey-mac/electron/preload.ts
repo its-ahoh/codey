@@ -470,6 +470,8 @@ contextBridge.exposeInMainWorld('codey', {
     activeTab: () => ipcRenderer.invoke('chromeCompanion:activeTab'),
     snapshot: () => ipcRenderer.invoke('chromeCompanion:snapshot'),
     exportSession: (name: string) => ipcRenderer.invoke('chromeCompanion:exportSession', name),
+    listSessionSites: () => ipcRenderer.invoke('chromeCompanion:listSessionSites'),
+    importSites: (name: string, sites: string[]) => ipcRenderer.invoke('chromeCompanion:importSites', name, sites),
     resyncSession: (name: string) => ipcRenderer.invoke('chromeCompanion:resyncSession', name),
     navigate: (url: string) => ipcRenderer.invoke('chromeCompanion:navigate', url),
     setAccent: (hex: string) => ipcRenderer.invoke('chromeCompanion:setAccent', hex),

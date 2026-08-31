@@ -2482,6 +2482,45 @@ app.whenReady().then(async () => {
     if (!profile) throw new Error('Chrome session was imported but its Codey Browser profile could not be found')
     return { profile, tab: sessionState.tab }
   }))
+  // Picking sites instead of copying the whole cookie jar. Listing is a read,
+  // so it is cheap to call before the user has committed to anything.
+  ipcMain.handle('chromeCompanion:listSessionSites', event => browserCall(event, () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    return chromeCompanion.listSessionSites()
+  }))
+  // Copy exactly the sites the user ticked into a new profile. The list is
+  // shown back one last time in a confirmation, because a login copied out of
+  // Chrome cannot be un-copied - it is on disk from then on.
+  ipcMain.handle('chromeCompanion:importSites', (event, name: string, sites: string[]) => browserCall(event, async () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    const requested = String(name || '').trim()
+    assertProfileName(requested)
+    if (browserController.listProfiles().some(profile => profile.name === requested)) {
+      throw new Error(`A Codey Browser profile named "${requested}" already exists — choose another name`)
+    }
+    const picked = (Array.isArray(sites) ? sites : [])
+      .map(site => String(site || '').trim())
+      .filter(Boolean)
+      .slice(0, 500)
+    if (picked.length === 0) throw new Error('Pick at least one site to copy')
+    const sessionState = await chromeCompanion.exportSessionForSites(picked)
+    const preview = sessionState.sites.slice(0, 12).join(', ')
+    const confirmed = await dialog.showMessageBox(mainWindow ?? (undefined as any), {
+      type: 'warning',
+      buttons: ['Copy logins', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Copy ${sessionState.cookies.length} cookies from ${sessionState.sites.length} site(s) into "${requested}"?`,
+      detail: `${preview}${sessionState.sites.length > 12 ? `, and ${sessionState.sites.length - 12} more` : ''}\n\nThese logins will be written to Codey's profile store on this Mac and used by the Codey Browser. Nothing in Chrome changes.`,
+    })
+    if (confirmed.response !== 0) return { imported: false, profile: null, cookieCount: 0, sites: [] }
+    await browserController.importProfile(requested, {
+      json: JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins }),
+    }, true, null)
+    const profile = browserController.listProfiles().find(item => item.name === requested)
+    if (!profile) throw new Error('Chrome sessions were imported but the Codey Browser profile could not be found')
+    return { imported: true, profile, cookieCount: sessionState.cookies.length, sites: sessionState.sites }
+  }))
   // The counterpart to exportSession: the profile must already exist, and only
   // the current site's part of it is replaced, so a login renewed in Chrome can
   // be refreshed without the profile's other sites being lost.

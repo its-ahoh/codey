@@ -261,6 +261,15 @@ export interface ChromeTabInfo {
   favIconUrl?: string
 }
 
+/** One site the paired Chrome profile holds cookies for. `openTabs` decides
+ *  whether its localStorage can come along - it can only be read from a page
+ *  that is actually open. */
+export interface ChromeSessionSite {
+  site: string
+  cookieCount: number
+  openTabs: number
+}
+
 export interface ChromePageSnapshot {
   tab: ChromeTabInfo
   text: string
@@ -616,6 +625,13 @@ declare global {
         activeTab: () => Promise<IpcResult<ChromeTabInfo>>
         snapshot: () => Promise<IpcResult<ChromePageSnapshot>>
         exportSession: (name: string) => Promise<IpcResult<{ profile: BrowserProfileSummary; tab: ChromeTabInfo }>>
+        listSessionSites: () => Promise<IpcResult<{ sites: ChromeSessionSite[] }>>
+        importSites: (name: string, sites: string[]) => Promise<IpcResult<{
+          imported: boolean
+          profile: BrowserProfileSummary | null
+          cookieCount: number
+          sites: string[]
+        }>>
         resyncSession: (name: string) => Promise<IpcResult<{ profile: BrowserProfileSummary; tab: ChromeTabInfo }>>
         navigate: (url: string) => Promise<IpcResult<ChromeTabInfo>>
         setAccent: (hex: string) => Promise<IpcResult<{ ok: true }>>
