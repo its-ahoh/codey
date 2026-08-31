@@ -142,7 +142,23 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
 
   return (
     <div style={pageStyle}>
-      <style>{'@keyframes codey-agent-update-spin { to { transform: rotate(360deg) } }'}</style>
+      {/* Two motions, deliberately different: the re-check spins, the updater
+          drops its arrows into the tray one after the other, so a glance at
+          the header says which of the two buttons is busy. */}
+      <style>{`
+        @keyframes codey-agent-update-spin { to { transform: rotate(360deg) } }
+        @keyframes codey-agent-update-fall {
+          0%   { transform: translateY(-3px); opacity: 0 }
+          25%  { opacity: 1 }
+          70%  { transform: translateY(5px); opacity: 1 }
+          100% { transform: translateY(5px); opacity: 0 }
+        }
+        .codey-updating .codey-fall-a,
+        .codey-updating .codey-fall-b {
+          animation: codey-agent-update-fall 1.1s ease-in infinite;
+        }
+        .codey-updating .codey-fall-b { animation-delay: 0.28s }
+      `}</style>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
       {failure && (
         <AgentUpdateFailureModal
@@ -155,6 +171,28 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
 
       <Section first title="Installed agents" description="CLI availability, thinking effort, and environment for each coding agent." right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Same download icon as the per-agent button, because it does the
+              same thing — just to every agent that is offering an update. */}
+          <button
+            onClick={() => { void updateAll() }}
+            style={iconButtonStyle({
+              // Busy is not the same as unavailable: while the run is on, the
+              // button stays lit so the falling arrows are actually visible.
+              accent: updatingAll || updatableAgents.some(a => availabilityOf(a).updateAvailable),
+              disabled: !updatingAll && (updating !== null || updatableAgents.length === 0),
+            })}
+            disabled={updatingAll || updating !== null || updatableAgents.length === 0}
+            aria-label="Update all agents"
+            title={
+              updatingAll ? `Updating ${updating ?? 'agents'}…`
+                : updatableAgents.length === 0 ? 'Every installed agent is up to date'
+                  : `Update all: ${updatableAgents.join(', ')}`
+            }
+          >
+            <span style={{ display: 'grid' }} className={updatingAll ? 'codey-updating' : undefined}>
+              <UIIcon name="download-all" size={14} />
+            </span>
+          </button>
           <button
             onClick={() => { void refreshInstalledAgents(true); void refreshAgentUpdates(true) }}
             style={iconButtonStyle({ disabled: checkingInstalls })}
@@ -167,29 +205,6 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
               animation: checkingInstalls ? 'codey-agent-update-spin 1s linear infinite' : undefined,
             }}>
               <UIIcon name="refresh" size={14} />
-            </span>
-          </button>
-          {/* Same download icon as the per-agent button, because it does the
-              same thing — just to every agent that is offering an update. */}
-          <button
-            onClick={() => { void updateAll() }}
-            style={iconButtonStyle({
-              accent: updatableAgents.some(a => availabilityOf(a).updateAvailable),
-              disabled: updatingAll || updating !== null || updatableAgents.length === 0,
-            })}
-            disabled={updatingAll || updating !== null || updatableAgents.length === 0}
-            aria-label="Update all agents"
-            title={
-              updatingAll ? `Updating ${updating ?? 'agents'}…`
-                : updatableAgents.length === 0 ? 'Every installed agent is up to date'
-                  : `Update all: ${updatableAgents.join(', ')}`
-            }
-          >
-            <span style={{
-              display: 'grid',
-              animation: updatingAll ? 'codey-agent-update-spin 1s linear infinite' : undefined,
-            }}>
-              <UIIcon name={updatingAll ? 'refresh' : 'download-all'} size={14} />
             </span>
           </button>
         </div>

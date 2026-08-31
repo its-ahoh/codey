@@ -35,7 +35,13 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     // a version number even at 14px.
     download: <><path {...common} d="M12 4v10" /><path {...common} d="M8 11l4 4 4-4" /><path {...common} d="M5 19h14" /></>,
     // `download` with a second arrow: the same action, aimed at every agent.
-    'download-all': <><path {...common} d="M8 4v8" /><path {...common} d="M5 9.5l3 3 3-3" /><path {...common} d="M16 4v8" /><path {...common} d="M13 9.5l3 3 3-3" /><path {...common} d="M5 19h14" /></>,
+    // The two arrows are grouped and class-named so a caller can make them
+    // fall into the tray while the updater runs (see `codey-fall-*`).
+    'download-all': <>
+      <g className="codey-fall-a"><path {...common} d="M8 4v8" /><path {...common} d="M5 9.5l3 3 3-3" /></g>
+      <g className="codey-fall-b"><path {...common} d="M16 4v8" /><path {...common} d="M13 9.5l3 3 3-3" /></g>
+      <path {...common} d="M5 19h14" />
+    </>,
     disclosure: <path fill="currentColor" stroke="none" d="M9 6.5L16 12l-7 5.5z" />,
     code: <><path {...common} d="M8 9l-3 3 3 3M16 9l3 3-3 3M14 6l-4 12" /></>,
     copy: <><rect {...common} x="9" y="9" width="11" height="11" rx="2" /><path {...common} d="M5 15V5a2 2 0 012-2h10" /></>,
