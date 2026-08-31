@@ -154,9 +154,13 @@ export interface BrowserPageContext {
   }
 }
 
+export type BrowserControlSurface = 'browser' | 'chrome'
+export type BrowserControlLevel = 'write' | 'full'
+export type BrowserControlGrant = 'none' | BrowserControlLevel
+
 export interface BrowserControlPermissionState {
-  approved: boolean
-  pending: { command: string; url: string } | null
+  granted: Record<BrowserControlSurface, BrowserControlGrant>
+  pending: { command: string; url: string; surface: BrowserControlSurface; level: BrowserControlLevel } | null
 }
 
 export type BrowserSitePermission = 'camera' | 'microphone' | 'geolocation' | 'notifications'
@@ -654,9 +658,9 @@ declare global {
         }
         controlPermission: {
           get: () => Promise<IpcResult<BrowserControlPermissionState>>
-          approve: () => Promise<IpcResult<BrowserControlPermissionState>>
+          approve: (level?: BrowserControlLevel) => Promise<IpcResult<BrowserControlPermissionState>>
           deny: () => Promise<IpcResult<BrowserControlPermissionState>>
-          revoke: () => Promise<IpcResult<BrowserControlPermissionState>>
+          revoke: (surface?: BrowserControlSurface) => Promise<IpcResult<BrowserControlPermissionState>>
         }
         sitePermission: {
           get: () => Promise<IpcResult<BrowserSitePermissionState>>

@@ -6,6 +6,7 @@ import {
   ACTIVE_PROFILE_FILE,
   assertProfileName,
   BrowserProfileStore,
+  availableProfileName,
   deriveProfileNameFromFile,
   parseProfileData,
   parseProfileJsonText,
@@ -193,6 +194,25 @@ describe('BrowserProfileStore', () => {
       expect(summary).toMatchObject({ cookieCount: 0, originCount: 0 })
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('availableProfileName', () => {
+  it('names a handoff after the site, without the www', () => {
+    expect(availableProfileName('www.github.com', [])).toBe('github.com')
+    expect(availableProfileName('mail.google.com', [])).toBe('mail.google.com')
+  })
+
+  it('takes the next free suffix instead of failing on a collision', () => {
+    expect(availableProfileName('github.com', ['github.com'])).toBe('github.com-2')
+    expect(availableProfileName('github.com', ['github.com', 'github.com-2'])).toBe('github.com-3')
+  })
+
+  it('always returns a name the profile store will accept', () => {
+    for (const host of ['', '...', 'exa mple.com', '-weird-', 'a'.repeat(200)]) {
+      const name = availableProfileName(host, [])
+      expect(() => assertProfileName(name)).not.toThrow()
     }
   })
 })

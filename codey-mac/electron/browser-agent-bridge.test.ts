@@ -113,6 +113,10 @@ describe('BrowserAgentBridge', () => {
         text: 'Signed in through Chrome', links: [], forms: [],
       })),
       navigate: vi.fn(async (url: string) => ({ id: 9, windowId: 2, title: 'Chrome', url })),
+      act: vi.fn(async (action: string, ref: string) => ({
+        tab: { id: 9, windowId: 2, title: 'Chrome account', url: 'https://example.com/account' },
+        element: { tag: 'button', text: `${action} ${ref}` },
+      })),
     }
     const bridge = new BrowserAgentBridge(controller, onOpen, requestControl, event => loginEvents.push(event), 5, companion)
     const info = await bridge.start()
@@ -142,13 +146,32 @@ describe('BrowserAgentBridge', () => {
       expect(chromeOpened.body.url).toBe('https://github.com')
       expect(companion.navigate).toHaveBeenCalledWith('https://github.com')
 
+      // Acting on the real Chrome page asks about Chrome's URL, not the
+      // embedded browser's, so the approval prompt names the page being changed.
+      const chromeClicked = await call(info, 'POST', '/chrome/click', { ref: 'e4' }, info.chromeToken)
+      expect(chromeClicked.status).toBe(200)
+      expect(companion.act).toHaveBeenCalledWith('click', 'e4', undefined)
+      expect(requestControl).toHaveBeenLastCalledWith({
+        command: 'chrome click', url: 'https://example.com/account', surface: 'chrome', level: 'write',
+      })
+
+      const chromeFilled = await call(info, 'POST', '/chrome/fill', { ref: 'e5', value: 'hello' }, info.chromeToken)
+      expect(chromeFilled.status).toBe(200)
+      expect(companion.act).toHaveBeenLastCalledWith('fill', 'e5', 'hello')
+
+      // A denied action must never reach Chrome.
+      requestControl.mockResolvedValueOnce(false)
+      const chromeDenied = await call(info, 'POST', '/chrome/click', { ref: 'e6' }, info.chromeToken)
+      expect(chromeDenied.status).toBeGreaterThanOrEqual(400)
+      expect(companion.act).not.toHaveBeenCalledWith('click', 'e6', undefined)
+
       const snapshot = await call(info, 'GET', '/snapshot')
       expect(snapshot.body.elements[0]).toMatchObject({ ref: 'e1', label: 'Post' })
 
       const clicked = await call(info, 'POST', '/click', { ref: 'e1' })
       expect(clicked.status).toBe(200)
       expect(controller.click).toHaveBeenCalledWith('e1')
-      expect(requestControl).toHaveBeenCalledWith({ command: 'click', url: state.url })
+      expect(requestControl).toHaveBeenCalledWith({ command: 'click', url: state.url, surface: 'browser', level: 'write' })
 
       const controlCallsAfterButton = requestControl.mock.calls.length
       const followed = await call(info, 'POST', '/click', { ref: 'e2' })
@@ -190,7 +213,7 @@ describe('BrowserAgentBridge', () => {
       expect(imported.status).toBe(200)
       expect(controller.importProfile).toHaveBeenCalledWith('gh', { json: '{"cookies":[]}' }, true)
       // Import activates by default, so it goes through the user approval gate.
-      expect(requestControl).toHaveBeenCalledWith({ command: 'activate-profile', url: state.url })
+      expect(requestControl).toHaveBeenCalledWith({ command: 'activate-profile', url: state.url, surface: 'browser', level: 'full' })
 
       const activated = await call(info, 'POST', '/profile/activate', { name: 'work' })
       expect(activated.status).toBe(200)
@@ -266,7 +289,7 @@ describe('BrowserAgentBridge', () => {
       expect(JSON.parse(profileCli.stdout).text).toBe('Hello from the page')
       expect(controller.activateProfile).toHaveBeenLastCalledWith('cli')
       // Switching identity mid-command needs the same approval as an explicit activate.
-      expect(requestControl).toHaveBeenLastCalledWith({ command: 'activate-profile', url: state.url })
+      expect(requestControl).toHaveBeenLastCalledWith({ command: 'activate-profile', url: state.url, surface: 'browser', level: 'full' })
 
       const profileListCli = await execFileAsync(process.execPath, [cli, 'profile', 'list'], {
         env: {

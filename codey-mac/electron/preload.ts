@@ -521,9 +521,9 @@ contextBridge.exposeInMainWorld('codey', {
     },
     controlPermission: {
       get: () => ipcRenderer.invoke('browser:controlPermission:get'),
-      approve: () => ipcRenderer.invoke('browser:controlPermission:approve'),
+      approve: (level?: 'write' | 'full') => ipcRenderer.invoke('browser:controlPermission:approve', level ?? 'write'),
       deny: () => ipcRenderer.invoke('browser:controlPermission:deny'),
-      revoke: () => ipcRenderer.invoke('browser:controlPermission:revoke'),
+      revoke: (surface?: 'browser' | 'chrome') => ipcRenderer.invoke('browser:controlPermission:revoke', surface),
     },
     sitePermission: {
       get: () => ipcRenderer.invoke('browser:sitePermission:get'),

@@ -22,10 +22,33 @@ Chrome Companion extension. Every command is one shell call:
 ELECTRON_RUN_AS_NODE=1 "$CODEY_BROWSER_RUNTIME" "$CODEY_BROWSER_CLI" chrome <command> [args]
 ```
 
+### Reading
+
 - `chrome status` checks whether the extension is connected.
 - `chrome tab` reads the active Chrome tab title and URL.
 - `chrome view` reads the active Chrome page text, links, and form summary.
+  Every link and control comes back with a `ref` like `e3` - that is how you
+  address it below.
 - `chrome open <url>` navigates the active Chrome tab.
+
+### Acting
+
+Always run `chrome view` first to get fresh refs; every `view` renumbers them,
+and a stale ref is rejected rather than applied to the wrong element.
+
+- `chrome click <ref>` clicks an element
+- `chrome fill <ref> <text>` types into a field
+- `chrome select <ref> <value>` picks a dropdown option
+- `chrome check <ref> [false]` ticks a checkbox (`false` unticks it)
+- `chrome press <key> <ref>` sends a key; `press Enter <ref>` submits the
+  element's form the way a real Enter would
+
+Reading is free. Every action above changes the user's real page, so it needs
+**write** access and Codey pauses for their approval first. Approval for Chrome
+is separate from Codey's own Browser - granting one never grants the other. If
+they deny it, stop; do not route around the decision. Never claim an action
+succeeded unless the command returned success - each action reports back the
+element it touched and the resulting URL.
 
 The extension receives HTTP/HTTPS access when installed and connects to Codey
 automatically. If it is not connected, direct the user to the Chrome Companion

@@ -113,6 +113,25 @@ export function deriveProfileNameFromFile(filePath: string): string {
   }
 }
 
+/** Pick a profile name for a one-click handoff of `hostname`'s session. The
+ *  user never typed this name, so a collision must not be an error - the next
+ *  free suffix is taken instead. */
+export function availableProfileName(hostname: string, taken: readonly string[]): string {
+  const base = String(hostname || '')
+    .replace(/^www\./i, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/^[.\-]+|[.\-]+$/g, '')
+    .replace(/-+/g, '-')
+    .slice(0, 56) || 'chrome'
+  const used = new Set(taken)
+  if (!used.has(base)) return base
+  for (let suffix = 2; suffix < 1000; suffix += 1) {
+    const candidate = `${base}-${suffix}`
+    if (!used.has(candidate)) return candidate
+  }
+  throw new Error(`Too many saved profiles for ${base} - delete some in Codey Browser settings`)
+}
+
 export function profileFileName(name: string): string {
   assertProfileName(name)
   return `${name}.json`

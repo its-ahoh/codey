@@ -38,7 +38,7 @@ const EMPTY_STATE: BrowserState = {
   error: null,
 }
 
-const VIEW_ONLY: BrowserControlPermissionState = { approved: false, pending: null }
+const VIEW_ONLY: BrowserControlPermissionState = { granted: { browser: 'none', chrome: 'none' }, pending: null }
 const NO_SITE_PERMISSION: BrowserSitePermissionState = { pending: null, savedSiteCount: 0 }
 
 type BrowserSettingsSection = 'extensions' | 'profiles'
@@ -608,17 +608,26 @@ export const BrowserPanel: React.FC<Props> = ({
           <button type="button" style={styles.menuButton} disabled={!state.url || activeSettingsSection !== null} onClick={() => { setBrowserMenuOpen(false); if (state.url && !activeSettingsSection) void window.codey.openExternal(state.url) }}>
             <span aria-hidden="true">↗</span> Open externally
           </button>
-          <button
-            type="button"
-            style={{ ...styles.menuButton, ...(controlPermission.approved ? styles.menuButtonWarning : null) }}
-            onClick={() => {
-              setBrowserMenuOpen(false)
-              if (controlPermission.approved) void updateControlPermission(window.codey.browser.controlPermission.revoke)
-            }}
-          >
-            <span aria-hidden="true">{controlPermission.approved ? '●' : '○'}</span>
-            {controlPermission.approved ? 'Revoke agent control' : 'Agent access: view only'}
-          </button>
+          {(['browser', 'chrome'] as const).map(surface => {
+            const grant = controlPermission.granted[surface]
+            const label = surface === 'browser' ? 'this browser' : 'Chrome'
+            return (
+              <button
+                key={surface}
+                type="button"
+                style={{ ...styles.menuButton, ...(grant !== 'none' ? styles.menuButtonWarning : null) }}
+                onClick={() => {
+                  setBrowserMenuOpen(false)
+                  if (grant !== 'none') void updateControlPermission(() => window.codey.browser.controlPermission.revoke(surface))
+                }}
+              >
+                <span aria-hidden="true">{grant === 'none' ? '○' : '●'}</span>
+                {grant === 'none'
+                  ? `Agent access to ${label}: view only`
+                  : `Revoke ${grant === 'full' ? 'full' : 'write'} access to ${label}`}
+              </button>
+            )
+          })}
           <button type="button" style={{ ...styles.menuButton, color: C.red }} onClick={() => { setBrowserMenuOpen(false); setResetConfirmation(true) }}>
             <UIIcon name="trash" size={13} /> Clear data & sign out
           </button>
@@ -837,14 +846,22 @@ export const BrowserPanel: React.FC<Props> = ({
         </div>
       )}
 
-      {controlPermission.pending && !controlPermission.approved && (
+      {controlPermission.pending && (
         <div style={styles.permissionPrompt} role="alertdialog" aria-label="Agent browser control permission">
           <div style={styles.permissionPromptIcon}><UIIcon name="bot" size={18} /></div>
           <div style={styles.permissionPromptText}>
-            <div style={styles.permissionPromptTitle}>Allow the agent to control this browser?</div>
+            <div style={styles.permissionPromptTitle}>
+              {controlPermission.pending.surface === 'chrome'
+                ? 'Allow the agent to act in your Chrome?'
+                : 'Allow the agent to control this browser?'}
+            </div>
             <div style={styles.permissionPromptCopy}>
               The agent wants to <strong>{controlPermission.pending.command}</strong>{pendingDomain ? ` on ${pendingDomain}` : ''}.
-              Full control allows clicking, typing, submitting forms, sending posts, and acting through your signed-in accounts.
+              {' '}Write access allows clicking, typing, submitting forms and acting through your signed-in accounts.
+              Full access also allows deleting saved profiles and replacing the live session.
+              {controlPermission.pending.surface === 'chrome'
+                ? ' This applies to your real Chrome only, not Codey\u2019s browser.'
+                : ' This applies to Codey\u2019s browser only, not your real Chrome.'}
             </div>
           </div>
           <button
@@ -852,11 +869,18 @@ export const BrowserPanel: React.FC<Props> = ({
             style={styles.denyButton}
             onClick={() => void updateControlPermission(window.codey.browser.controlPermission.deny)}
           >Not now</button>
+          {controlPermission.pending.level === 'write' && (
+            <button
+              type="button"
+              style={styles.approveButton}
+              onClick={() => void updateControlPermission(() => window.codey.browser.controlPermission.approve('write'))}
+            >Allow write</button>
+          )}
           <button
             type="button"
             style={styles.approveButton}
-            onClick={() => void updateControlPermission(window.codey.browser.controlPermission.approve)}
-          >Allow full control</button>
+            onClick={() => void updateControlPermission(() => window.codey.browser.controlPermission.approve('full'))}
+          >Allow full access</button>
         </div>
       )}
 

@@ -32,9 +32,17 @@ export interface ChromeTabInfo {
 export interface ChromePageSnapshot {
   tab: ChromeTabInfo
   text: string
-  links: Array<{ text: string; href: string }>
-  forms: Array<{ tag: string; type: string; name: string; placeholder: string }>
+  links: Array<{ ref: string; text: string; href: string }>
+  forms: Array<{ ref: string; tag: string; type: string; name: string; placeholder: string; label: string }>
 }
+
+/** What a page action touched, so a caller never has to assume it landed. */
+export interface ChromePageAction {
+  tab: ChromeTabInfo
+  element: { tag: string; text: string }
+}
+
+export type ChromePageActionName = 'click' | 'fill' | 'select' | 'check' | 'press'
 
 export interface ChromeSessionExport {
   tab: ChromeTabInfo
@@ -100,6 +108,21 @@ export interface ChromeCompanionFeatures {
   prepareChat: (input: { page?: ChromeCompanionChatRequest['page']; agent?: string | null; model?: string | null }) => Promise<ChromeCompanionChatSummary>
   upload: (chatId: string, name: string, mimeType: string, data: Buffer) => Promise<ChromeCompanionAttachment>
   transcribe: (mimeType: string, data: Buffer) => Promise<{ text: string }>
+  /**
+   * Copy the current Chrome tab's signed-in session into a Codey Browser
+   * profile. Without a name Codey picks a free one derived from the site, so
+   * the one-click path never fails merely because the obvious name is taken;
+   * a name the user typed is used as-is and collides loudly.
+   */
+  handoffSession: (name?: string) => Promise<ChromeSessionHandoff>
+  /** The name the handoff would use for `hostname` if the user just accepts it. */
+  suggestProfileName: (hostname: string) => Promise<{ name: string }>
+}
+
+export interface ChromeSessionHandoff {
+  profileName: string
+  origin: string
+  cookieCount: number
 }
 
 export interface ChromeCompanionChatHistory {
@@ -281,6 +304,22 @@ export class ChromeCompanionBridge {
     return await this.command<ChromeSessionExport>('exportSession', {})
   }
 
+  /**
+   * Act on an element the last `snapshot` stamped with `ref`. Refs are
+   * renumbered by every snapshot, so a stale one is rejected by the extension
+   * rather than applied to whatever element inherited the number.
+   */
+  async act(action: ChromePageActionName, ref: string, value?: string): Promise<ChromePageAction> {
+    if (!/^e\d+$/.test(ref)) throw new Error(`Invalid element ref: ${ref || '(empty)'}. Run "chrome view" first.`)
+    if ((action === 'fill' || action === 'select' || action === 'press') && value === undefined) {
+      throw new Error(`Chrome ${action} needs a value`)
+    }
+    const input: Record<string, unknown> = { ref }
+    if (action === 'check') input.value = value !== 'false'
+    else if (value !== undefined) input.value = value
+    return await this.command<ChromePageAction>(action, input)
+  }
+
   async navigate(url: string): Promise<ChromeTabInfo> {
     let parsed: URL
     try { parsed = new URL(url) } catch { throw new Error('Enter a valid http(s) URL') }
@@ -455,6 +494,20 @@ export class ChromeCompanionBridge {
         const result = await this.onChat({ chatId, text, page, agent, model, attachments })
         for (const id of attachmentIds) this.uploadedAttachments.delete(id)
         this.reply(request, response, 200, { ok: true, ...result })
+        return
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/session/handoff/name') {
+        if (!this.features) throw new Error('Session handoff is unavailable')
+        const input = await this.body(request)
+        const hostname = typeof input.hostname === 'string' ? input.hostname.slice(0, 300) : ''
+        this.reply(request, response, 200, { ok: true, ...await this.features.suggestProfileName(hostname) })
+        return
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/session/handoff') {
+        if (!this.features) throw new Error('Session handoff is unavailable')
+        const input = await this.body(request)
+        const name = typeof input.name === 'string' ? input.name.trim() : ''
+        this.reply(request, response, 200, { ok: true, ...await this.features.handoffSession(name || undefined) })
         return
       }
       if (request.method === 'GET' && url.pathname === '/v1/chats') {

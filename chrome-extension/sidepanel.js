@@ -9,6 +9,11 @@ const sendNode = document.querySelector('#send')
 const includePageNode = document.querySelector('#include-page')
 const pageContextNode = document.querySelector('#page-context')
 const pageTitleNode = document.querySelector('#page-title')
+const handoffNode = document.querySelector('#handoff')
+const handoffFormNode = document.querySelector('#handoff-form')
+const handoffNameNode = document.querySelector('#handoff-name')
+const handoffSaveNode = document.querySelector('#handoff-save')
+const handoffCancelNode = document.querySelector('#handoff-cancel')
 const chatSelectNode = document.querySelector('#chat-select')
 const agentSelectNode = document.querySelector('#agent-select')
 const modelSelectNode = document.querySelector('#model-select')
@@ -517,6 +522,79 @@ function typingNode() {
   return node
 }
 
+// Copying the current site's signed-in session into a Codey Browser profile.
+// Codey does the export and the import; the panel only reports the outcome,
+// and it reports it on the button itself so nothing is added to the chat.
+let handoffResetTimer = null
+let handoffPageUrl = null
+
+// The name is asked for rather than assumed, but the field arrives prefilled
+// with a name Codey has already checked is free, so accepting the default is
+// still a single extra keystroke.
+async function openHandoffForm() {
+  if (!activePage || handoffNode.disabled) return
+  if (handoffResetTimer) clearTimeout(handoffResetTimer)
+  handoffNode.disabled = true
+  handoffNode.textContent = 'Naming\u2026'
+  let suggestion = ''
+  try {
+    const hostname = new URL(activePage.url).hostname
+    suggestion = (await codeyApi('/v1/session/handoff/name', { method: 'POST', body: { hostname } })).name
+  } catch (error) {
+    handoffNode.disabled = false
+    handoffNode.textContent = 'Handoff failed'
+    handoffNode.title = error instanceof Error ? error.message : String(error)
+    handoffResetTimer = setTimeout(resetHandoffButton, 6000)
+    return
+  }
+  handoffNode.textContent = 'Hand off login'
+  handoffFormNode.hidden = false
+  handoffNameNode.value = suggestion
+  handoffNameNode.focus()
+  handoffNameNode.select()
+}
+
+function closeHandoffForm() {
+  handoffFormNode.hidden = true
+  handoffNameNode.value = ''
+  handoffSaveNode.disabled = false
+  handoffNode.disabled = false
+}
+
+async function handOffSession() {
+  const name = handoffNameNode.value.trim()
+  if (!name) {
+    handoffNameNode.focus()
+    return
+  }
+  handoffSaveNode.disabled = true
+  handoffSaveNode.textContent = 'Saving\u2026'
+  try {
+    const result = await codeyApi('/v1/session/handoff', { method: 'POST', body: { name } })
+    closeHandoffForm()
+    handoffNode.textContent = `Saved as ${result.profileName}`
+    handoffNode.title = `${result.cookieCount} cookies from ${result.origin} are now in the Codey Browser profile "${result.profileName}"`
+    handoffResetTimer = setTimeout(resetHandoffButton, 6000)
+  } catch (error) {
+    // The form stays open on failure so a rejected name can just be retyped.
+    handoffSaveNode.disabled = false
+    handoffNode.textContent = 'Handoff failed'
+    handoffNode.title = error instanceof Error ? error.message : String(error)
+    handoffNameNode.focus()
+    handoffNameNode.select()
+  } finally {
+    handoffSaveNode.textContent = 'Save'
+  }
+}
+
+function resetHandoffButton() {
+  if (handoffResetTimer) clearTimeout(handoffResetTimer)
+  handoffResetTimer = null
+  closeHandoffForm()
+  handoffNode.textContent = 'Hand off login'
+  handoffNode.title = "Copy this site's signed-in session into a Codey Browser profile"
+}
+
 async function refreshActivePage() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   activePage = tab && /^https?:\/\//i.test(tab.url || '')
@@ -525,6 +603,11 @@ async function refreshActivePage() {
   pageContextNode.hidden = !activePage
   pageTitleNode.textContent = activePage ? activePage.title : ''
   pageContextNode.title = activePage?.url || ''
+  // A result from the previous site would be misleading here.
+  if (activePage?.url !== handoffPageUrl) {
+    handoffPageUrl = activePage?.url || null
+    resetHandoffButton()
+  }
 }
 
 async function ensurePreparedChat() {
@@ -738,6 +821,10 @@ inputNode.addEventListener('input', () => {
   inputNode.style.height = `${Math.max(42, Math.min(inputNode.scrollHeight, 140))}px`
 })
 settingsToggleNode.addEventListener('click', () => { if (!busy) toggleSettings() })
+handoffNode.addEventListener('click', () => { void openHandoffForm() })
+handoffFormNode.addEventListener('submit', event => { event.preventDefault(); void handOffSession() })
+handoffCancelNode.addEventListener('click', () => resetHandoffButton())
+handoffNameNode.addEventListener('keydown', event => { if (event.key === 'Escape') resetHandoffButton() })
 chatSelectNode.addEventListener('change', () => {
   if (!busy) void selectChat(chatSelectNode.value)
 })

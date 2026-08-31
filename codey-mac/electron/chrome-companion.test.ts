@@ -172,6 +172,106 @@ describe('ChromeCompanionBridge', () => {
     await expect(bridge.navigate('file:///etc/passwd')).rejects.toThrow('Only http(s)')
   })
 
+  it('rejects a page action whose ref did not come from a snapshot', async () => {
+    const { bridge, endpoint } = await setup()
+    await connect(endpoint)
+    await expect(bridge.act('click', 'button.submit')).rejects.toThrow('Invalid element ref')
+    await expect(bridge.act('click', '')).rejects.toThrow('Invalid element ref')
+    await expect(bridge.act('fill', 'e2')).rejects.toThrow('needs a value')
+  })
+
+  it('round-trips a click through the extension protocol', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    const clicked = bridge.act('click', 'e4')
+
+    const poll = await fetch(`${endpoint}/v1/poll`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    const work = await poll.json() as { command: { id: string; command: string; input: { ref: string } } }
+    expect(work.command.command).toBe('click')
+    expect(work.command.input).toEqual({ ref: 'e4' })
+
+    const outcome = {
+      tab: { id: 7, windowId: 3, title: 'Sent', url: 'https://example.com/done' },
+      element: { tag: 'button', text: 'Send' },
+    }
+    await fetch(`${endpoint}/v1/result`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: work.command.id, ok: true, data: outcome }),
+    })
+    await expect(clicked).resolves.toEqual(outcome)
+  })
+
+  it('sends check as a boolean so "false" unticks instead of ticking', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    void bridge.act('check', 'e9', 'false').catch(() => undefined)
+
+    const poll = await fetch(`${endpoint}/v1/poll`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    const work = await poll.json() as { command: { input: { ref: string; value: boolean } } }
+    expect(work.command.input).toEqual({ ref: 'e9', value: false })
+  })
+
+  it('hands the current site\'s session to Codey from the side panel', async () => {
+    const handoffs: Array<string | undefined> = []
+    const features = {
+      options: async () => ({
+        agents: [], models: [], defaultAgent: null, defaultModel: null, defaultModels: {}, chat: null,
+      }),
+      updateSettings: async () => undefined,
+      prepareChat: async () => ({
+        id: 'chat-1', title: 'Chat', workspaceName: 'w', updatedAt: 1, messageCount: 0,
+      }),
+      upload: async () => ({ id: 'a', name: 'n', mimeType: 'text/plain', size: 0, path: '/tmp/n' }),
+      transcribe: async () => ({ text: '' }),
+      handoffSession: async (name?: string) => {
+        handoffs.push(name)
+        return { profileName: name || 'example.com-2', origin: 'https://example.com', cookieCount: 4 }
+      },
+      suggestProfileName: async (hostname: string) => ({ name: `${hostname}-free` }),
+    } as unknown as ChromeCompanionFeatures
+    const { endpoint } = await setup(undefined, undefined, undefined, features)
+    const token = await connect(endpoint)
+
+    // Unauthenticated callers must not be able to lift a session.
+    const anonymous = await fetch(`${endpoint}/v1/session/handoff`, { method: 'POST' })
+    expect(anonymous.status).toBe(401)
+    expect(handoffs).toHaveLength(0)
+
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+
+    // The panel prefills its field with a name Codey says is free.
+    const suggested = await fetch(`${endpoint}/v1/session/handoff/name`, {
+      method: 'POST', headers, body: JSON.stringify({ hostname: 'example.com' }),
+    })
+    await expect(suggested.json()).resolves.toEqual({ ok: true, name: 'example.com-free' })
+
+    // A name the user typed is passed through untouched.
+    const named = await fetch(`${endpoint}/v1/session/handoff`, {
+      method: 'POST', headers, body: JSON.stringify({ name: '  my-github  ' }),
+    })
+    expect(named.status).toBe(200)
+    await expect(named.json()).resolves.toEqual({
+      ok: true, profileName: 'my-github', origin: 'https://example.com', cookieCount: 4,
+    })
+
+    // An omitted or blank name means "you pick one".
+    const auto = await fetch(`${endpoint}/v1/session/handoff`, {
+      method: 'POST', headers, body: JSON.stringify({ name: '   ' }),
+    })
+    await expect(auto.json()).resolves.toMatchObject({ profileName: 'example.com-2' })
+
+    expect(handoffs).toEqual(['my-github', undefined])
+  })
+
   it('routes authenticated side-panel chat through Codey', async () => {
     const received: ChromeCompanionChatRequest[] = []
     const { endpoint } = await setup(async request => {
@@ -221,6 +321,8 @@ describe('ChromeCompanionBridge', () => {
         id: 'attachment-1', name, mimeType, size: data.length, path: '/safe/upload.txt',
       }),
       transcribe: async (_mimeType, data) => ({ text: `heard ${data.length} bytes` }),
+      handoffSession: async () => ({ profileName: 'example.com', origin: 'https://example.com', cookieCount: 3 }),
+      suggestProfileName: async hostname => ({ name: hostname }),
     }
     const { endpoint } = await setup(
       async request => { received.push(request); return { chatId: 'chat-2', response: 'Attached' } },

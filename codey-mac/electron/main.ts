@@ -31,7 +31,7 @@ import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
-import { assertProfileName, deriveProfileNameFromFile } from './browser-profiles'
+import { assertProfileName, availableProfileName, deriveProfileNameFromFile } from './browser-profiles'
 import { BrowserControlPermissionGate } from './browser-control-permission'
 import { BrowserSitePermissionManager } from './browser-site-permissions'
 import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLabel, type BrowserPasskeyPickerRequest } from './browser-webauthn'
@@ -2168,6 +2168,31 @@ app.whenReady().then(async () => {
         fsMod.writeFileSync(filePath, data)
         return { id: cryptoMod.randomUUID(), name, path: filePath, mimeType, size: data.length }
       },
+      suggestProfileName: async hostname => ({
+        name: availableProfileName(hostname, browserController.listProfiles().map(profile => profile.name)),
+      }),
+      handoffSession: async requested => {
+        if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+        const sessionState = await chromeCompanion.exportSession()
+        const tabUrl = new URL(sessionState.tab.url)
+        const taken = browserController.listProfiles().map(profile => profile.name)
+        let name: string
+        if (requested) {
+          // The user typed this name, so a collision is a real mistake worth
+          // reporting rather than something to silently rename around.
+          assertProfileName(requested)
+          if (taken.includes(requested)) {
+            throw new Error(`A Codey Browser profile named "${requested}" already exists - choose another name`)
+          }
+          name = requested
+        } else {
+          name = availableProfileName(tabUrl.hostname, taken)
+        }
+        await browserController.importProfile(name, {
+          json: JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins }),
+        }, true, sessionState.tab.url)
+        return { profileName: name, origin: tabUrl.origin, cookieCount: sessionState.cookies.length }
+      },
       transcribe: async (mimeType, data) => {
         if (!coreConfigManager) throw new Error('Codey configuration is unavailable')
         const voice = coreConfigManager.getResolvedVoiceConfig()
@@ -2476,19 +2501,19 @@ app.whenReady().then(async () => {
     return { installed: true as const, dir }
   }))
   ipcMain.handle('browser:controlPermission:get', event => browserCall(event, () =>
-    browserControlPermission?.getState() ?? { approved: false, pending: null }
+    browserControlPermission?.getState() ?? { granted: { browser: 'none', chrome: 'none' }, pending: null }
   ))
-  ipcMain.handle('browser:controlPermission:approve', event => browserCall(event, () => {
+  ipcMain.handle('browser:controlPermission:approve', (event, level: 'write' | 'full') => browserCall(event, () => {
     if (!browserControlPermission) throw new Error('Browser control permission is unavailable')
-    return browserControlPermission.approve()
+    return browserControlPermission.approve(level === 'full' ? 'full' : 'write')
   }))
   ipcMain.handle('browser:controlPermission:deny', event => browserCall(event, () => {
     if (!browserControlPermission) throw new Error('Browser control permission is unavailable')
     return browserControlPermission.deny()
   }))
-  ipcMain.handle('browser:controlPermission:revoke', event => browserCall(event, () => {
+  ipcMain.handle('browser:controlPermission:revoke', (event, surface?: 'browser' | 'chrome') => browserCall(event, () => {
     if (!browserControlPermission) throw new Error('Browser control permission is unavailable')
-    return browserControlPermission.revoke()
+    return browserControlPermission.revoke(surface === 'browser' || surface === 'chrome' ? surface : undefined)
   }))
   ipcMain.handle('browser:sitePermission:get', event => browserCall(event, () =>
     browserSitePermissions?.getState() ?? { pending: null, savedSiteCount: 0 }
