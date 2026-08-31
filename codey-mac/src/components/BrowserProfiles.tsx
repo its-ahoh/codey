@@ -26,6 +26,7 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [synced, setSynced] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   // True once the user tried to save with an empty name. Greying the button
   // out hid what was missing, so say it and mark the field instead.
@@ -52,13 +53,12 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
     }
   }, [])
 
-  const activeCount = profiles.filter(profile => profile.active).length
-
   useEffect(() => { void refresh() }, [refresh])
 
   const run = async (action: () => Promise<IpcLike>) => {
     setBusy(true)
     setError(null)
+    setSynced(null)
     try {
       const result = await action()
       if (!result.ok) setError(result.error ?? 'Something went wrong')
@@ -109,6 +109,12 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
         <div style={{
           background: C.red + '22', color: C.red, padding: '8px 10px', borderRadius: 8, fontSize: compact ? 11 : 12,
         }}>{error}</div>
+      )}
+
+      {synced && !error && (
+        <div style={{
+          background: C.green + '22', color: C.green, padding: '8px 10px', borderRadius: 8, fontSize: compact ? 11 : 12,
+        }}>{synced}. Chrome was not changed.</div>
       )}
 
       <div style={compact ? styles.compactComposer : styles.composer}>
@@ -199,9 +205,8 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               {meta(profile) || (profile.sourceUrl ? 'saved session' : 'empty profile')}
             </div>
           </div>
-          {/* Several profiles can be on at once, so this turns one on or off
-              rather than switching to it. "Only" is the identity switch, and it
-              is offered whenever it would actually change something. */}
+          {/* Several profiles can be on at once, so a profile is simply in use
+              or not. There is nothing to switch between. */}
           <button
             type="button"
             disabled={busy}
@@ -215,15 +220,22 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
           >
             {profile.active ? 'In use' : 'Use'}
           </button>
-          {!(profile.active && activeCount === 1) && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void run(() => window.codey.browser.profiles.activate(profile.name))}
-              style={buttonStyle(compact)}
-              title={`Use only ${profile.name}, turning every other profile off`}
-            >Only</button>
-          )}
+          {/* Logins expire. Refreshing the whole profile from Chrome is one
+              click here, and works whether or not it is currently in use. */}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void run(async () => {
+              const result = await window.codey.browser.profiles.syncProfile(profile.name)
+              if (result.ok) {
+                setSynced(`\u201c${profile.name}\u201d refreshed: ${result.data.cookieCount} cookies from ${result.data.siteCount} site${result.data.siteCount === 1 ? '' : 's'}`)
+              }
+              return result
+            })}
+            style={buttonStyle(compact)}
+            title={`Refresh every login in ${profile.name} from Chrome`}
+            aria-label={`Refresh ${profile.name} from Chrome`}
+          ><UIIcon name="refresh" size={12} /></button>
           <button
             type="button"
             disabled={busy}

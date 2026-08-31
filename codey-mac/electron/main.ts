@@ -2374,6 +2374,25 @@ app.whenReady().then(async () => {
   // It is scoped to that one site, so a profile carrying several logins keeps
   // the rest, and it names the URL rather than using Chrome's front tab - the
   // user is looking at the signed-out page here, not over there.
+  // A profile's own Sync button: refresh every site that profile holds from
+  // Chrome in one go. Named explicitly, so it works for a profile that is not
+  // even enabled - a saved identity can be brought up to date before it is
+  // switched on.
+  ipcMain.handle('browser:profiles:syncProfile', (event, name: string) => browserCall(event, async () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    if (!chromeCompanion.status().connected) throw new Error('Connect the Codey extension in Chrome first')
+    const requested = String(name || '').trim()
+    assertProfileName(requested)
+    const sites = browserController.profileSites(requested)
+    if (sites.length === 0) throw new Error(`"${requested}" holds no logins yet - there is nothing to refresh`)
+    const session = await chromeCompanion.exportSessionForSites(sites)
+    await browserController.resyncProfileSites(requested, {
+      json: JSON.stringify({ cookies: session.cookies, origins: session.origins }),
+    }, session.sites)
+    const profile = browserController.listProfiles().find(item => item.name === requested)
+    if (!profile) throw new Error(`"${requested}" was refreshed but could not be read back`)
+    return { profile, siteCount: session.sites.length, cookieCount: session.cookies.length }
+  }))
   ipcMain.handle('browser:profiles:syncFromChrome', (event, url: string) => browserCall(event, async () => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
     if (!chromeCompanion.status().connected) throw new Error('Connect the Codey extension in Chrome first')
@@ -2542,24 +2561,6 @@ app.whenReady().then(async () => {
     const profile = browserController.listProfiles().find(item => item.name === requested)
     if (!profile) throw new Error('Chrome sessions were imported but the Codey Browser profile could not be found')
     return { imported: true, profile, cookieCount: sessionState.cookies.length, sites: sessionState.sites }
-  }))
-  // The counterpart to exportSession: the profile must already exist, and only
-  // the current site's part of it is replaced, so a login renewed in Chrome can
-  // be refreshed without the profile's other sites being lost.
-  ipcMain.handle('chromeCompanion:resyncSession', (event, name: string) => browserCall(event, async () => {
-    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
-    const requested = String(name || '').trim()
-    assertProfileName(requested)
-    if (!browserController.listProfiles().some(profile => profile.name === requested)) {
-      throw new Error(`No Codey Browser profile named "${requested}" \u2014 create one first`)
-    }
-    const sessionState = await chromeCompanion.exportSession()
-    await browserController.resyncProfile(requested, {
-      json: JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins }),
-    }, sessionState.tab.url)
-    const profile = browserController.listProfiles().find(item => item.name === requested)
-    if (!profile) throw new Error('Chrome session was re-synced but its Codey Browser profile could not be found')
-    return { profile, tab: sessionState.tab }
   }))
   ipcMain.handle('chromeCompanion:navigate', (event, url: string) => browserCall(event, () => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')

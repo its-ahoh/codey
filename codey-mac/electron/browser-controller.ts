@@ -15,6 +15,7 @@ import {
   conflictingCookie,
   cookieMatchesUrl,
   mergeProfileData,
+  mergeProfileSites,
   parseProfileJsonText,
   readProfileJson,
   type BrowserProfile,
@@ -1030,6 +1031,35 @@ export class BrowserController {
     const existing = this.profiles().read(name)
     const merged = mergeProfileData(existing, parseProfileJsonText(source.json), scopeUrl)
     const profile = this.profiles().write(name, merged, existing.sourceUrl ?? scopeUrl)
+    if (this.profiles().activeNames().includes(name)) await this.applyLiveProfiles()
+    return profile
+  }
+
+  /** The registrable domains a profile holds cookies for - what a refresh of
+   *  the whole profile has to ask Chrome about. */
+  profileSites(name: string): string[] {
+    assertProfileName(name)
+    const seen = new Set<string>()
+    for (const cookie of this.profiles().read(name).cookies) {
+      const domain = cookie.domain.replace(/^\./, '').toLowerCase()
+      if (domain) seen.add(domain)
+    }
+    return [...seen]
+  }
+
+  /** Refresh every site a profile holds from a fresh multi-site export, so one
+   *  click brings a whole saved identity back up to date. Only the sites the
+   *  export covers are replaced; anything the profile holds from elsewhere
+   *  survives. Refreshing an enabled profile re-applies the live session too. */
+  async resyncProfileSites(
+    name: string,
+    source: { json: string },
+    sites: readonly string[],
+  ): Promise<BrowserProfile> {
+    assertProfileName(name)
+    const existing = this.profiles().read(name)
+    const merged = mergeProfileSites(existing, parseProfileJsonText(source.json), sites)
+    const profile = this.profiles().write(name, merged, existing.sourceUrl)
     if (this.profiles().activeNames().includes(name)) await this.applyLiveProfiles()
     return profile
   }

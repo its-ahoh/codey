@@ -603,6 +603,48 @@ describe('BrowserController profiles', () => {
     }
   })
 
+  it('refreshes a whole profile from a multi-site export, in use or not', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller, cookiesSet } = makeFixture(dir)
+      const store = new BrowserProfileStore(dir)
+      const cookie = (domain: string, value: string) => ({
+        name: 'session', value, domain, path: '/', expires: -1,
+        httpOnly: true, secure: true, sameSite: 'lax' as const,
+      })
+      store.write('work', {
+        cookies: [cookie('github.com', 'old'), cookie('jira.example.com', 'keep')],
+        origins: [],
+      }, null)
+
+      // Every domain the profile holds is what a refresh has to ask about.
+      expect(controller.profileSites('work').sort()).toEqual(['github.com', 'jira.example.com'])
+
+      // Chrome answered for github.com only; the other site must survive.
+      const refreshed = await controller.resyncProfileSites('work', {
+        json: JSON.stringify({ cookies: [cookie('github.com', 'fresh')], origins: [] }),
+      }, ['github.com'])
+      expect(refreshed.cookies.map(entry => [entry.domain, entry.value])).toEqual([
+        ['jira.example.com', 'keep'],
+        ['github.com', 'fresh'],
+      ])
+
+      // A profile that is not enabled is refreshed on disk without touching
+      // the live session.
+      expect(cookiesSet).not.toHaveBeenCalled()
+
+      // Once it is in use, refreshing re-applies it.
+      await controller.enableProfile('work')
+      cookiesSet.mockClear()
+      await controller.resyncProfileSites('work', {
+        json: JSON.stringify({ cookies: [cookie('github.com', 'newer')], origins: [] }),
+      }, ['github.com'])
+      expect(cookiesSet.mock.calls.map(call => (call as any[])[0].value).sort()).toEqual(['keep', 'newer'])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('rejects unsafe profile names', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
     try {

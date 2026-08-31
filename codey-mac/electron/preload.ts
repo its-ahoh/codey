@@ -472,7 +472,6 @@ contextBridge.exposeInMainWorld('codey', {
     exportSession: (name: string) => ipcRenderer.invoke('chromeCompanion:exportSession', name),
     listSessionSites: () => ipcRenderer.invoke('chromeCompanion:listSessionSites'),
     importSites: (name: string, sites: string[]) => ipcRenderer.invoke('chromeCompanion:importSites', name, sites),
-    resyncSession: (name: string) => ipcRenderer.invoke('chromeCompanion:resyncSession', name),
     navigate: (url: string) => ipcRenderer.invoke('chromeCompanion:navigate', url),
     setAccent: (hex: string) => ipcRenderer.invoke('chromeCompanion:setAccent', hex),
     showExtensionFolder: () => ipcRenderer.invoke('chromeCompanion:showExtensionFolder'),
@@ -514,6 +513,7 @@ contextBridge.exposeInMainWorld('codey', {
       import: () => ipcRenderer.invoke('browser:profiles:import'),
       export: (name: string) => ipcRenderer.invoke('browser:profiles:export', name),
       syncFromChrome: (url: string) => ipcRenderer.invoke('browser:profiles:syncFromChrome', url),
+      syncProfile: (name: string) => ipcRenderer.invoke('browser:profiles:syncProfile', name),
     },
     extensions: {
       list: () => ipcRenderer.invoke('browser:extensions:list'),
