@@ -22,11 +22,12 @@ localStorage into a named Codey Browser profile. This requires Chrome's
 and does not export passwords, page contents, form fields, history, or data
 from unrelated sites.
 
-Installation from the Codey Mac app: use **Open chrome://extensions** and
-**Reveal folder & copy path** on the Plugins settings page. The app stages a
-copy of this directory at `~/Library/Application Support/Codey/chrome-extension`,
-because Chrome's picker cannot descend into the `Codey.app` bundle where the
-shipped copy lives.
+Installation from the Codey Mac app: on the Plugins settings page, click
+**Choose folder & install**, pick somewhere you can find again, then use
+**Open chrome://extensions** and load the installed folder unpacked. Codey
+copies this directory there and refreshes it on every launch, so the installed
+copy tracks Codey's releases. The copy is needed because Chrome's picker cannot
+descend into the `Codey.app` bundle where the shipped extension lives.
 
 Development installation from this repository:
 

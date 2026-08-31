@@ -474,6 +474,7 @@ contextBridge.exposeInMainWorld('codey', {
     setAccent: (hex: string) => ipcRenderer.invoke('chromeCompanion:setAccent', hex),
     showExtensionFolder: () => ipcRenderer.invoke('chromeCompanion:showExtensionFolder'),
     openExtensionsPage: () => ipcRenderer.invoke('chromeCompanion:openExtensionsPage'),
+    installExtensionTo: () => ipcRenderer.invoke('chromeCompanion:installExtensionTo'),
     onStatus: (handler: (state: any) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, state: any) => handler(state)
       ipcRenderer.on('chromeCompanion:status', listener)

@@ -23,7 +23,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
   const [error, setError] = useState<string | null>(null)
   const [profileName, setProfileName] = useState('chrome-session')
   const [exported, setExported] = useState<string | null>(null)
-  const [copiedPath, setCopiedPath] = useState<string | null>(null)
+  const [installedPath, setInstalledPath] = useState<string | null>(null)
 
   const useResult = <T,>(result: { ok: true; data: T } | { ok: false; error: string }): T | null => {
     if (!result.ok) { setError(result.error); return null }
@@ -69,21 +69,25 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
           <div style={styles.title}>Install the Chrome extension</div>
           <div style={styles.copy}>Installation is one-time, and there is nothing to configure afterwards — the extension finds Codey and pairs itself within about 30 seconds, as long as Codey stays running. Clicking the Codey avatar in Chrome then opens its chat Side Panel.</div>
           <ol style={styles.steps}>
-            <li>Open Chrome’s <code style={styles.code}>chrome://extensions</code> page with the button below. (Chrome blocks links to its own pages, so it has to be opened this way.)</li>
-            <li>Turn on <strong>Developer mode</strong>, then click <strong>Load unpacked</strong>.</li>
-            <li>Click the second button below: it reveals the folder in Finder and copies its path. In Chrome’s picker, press <strong>⌘⇧G</strong>, paste, and press Return — or just drag the revealed folder onto the extensions page.</li>
+            <li>Pick a folder to install into. Codey copies the extension there and keeps it up to date with each Codey release.</li>
+            <li>Open Chrome’s <code style={styles.code}>chrome://extensions</code> page and turn on <strong>Developer mode</strong>. (Chrome blocks links to its own pages, so it has to be opened by the button.)</li>
+            <li>Click <strong>Load unpacked</strong> and choose the folder from step 1. Its path is already on the clipboard — press <strong>⌘⇧G</strong> and paste, or drag the revealed folder onto the extensions page.</li>
           </ol>
           <div style={{ ...styles.actions, ...(compact ? styles.stack : null) }}>
             <button style={styles.primary} disabled={busy} onClick={() => void run(async () => {
+              const result = useResult(await window.codey.chromeCompanion.installExtensionTo())
+              if (result?.installed) setInstalledPath(result.dir)
+            })}>Choose folder &amp; install</button>
+            <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
               useResult(await window.codey.chromeCompanion.openExtensionsPage())
             })}>Open chrome://extensions</button>
             <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
               const path = useResult(await window.codey.chromeCompanion.showExtensionFolder())
-              if (path) setCopiedPath(path)
+              if (path) setInstalledPath(path)
             })}>Reveal folder &amp; copy path</button>
           </div>
-          {copiedPath && (
-            <div style={styles.success}>Path copied. Paste it into Chrome’s picker with ⌘⇧G: <code style={styles.code}>{copiedPath}</code></div>
+          {installedPath && (
+            <div style={styles.success}>Installed, and the path is on the clipboard. Select this folder in Chrome’s <strong>Load unpacked</strong> picker: <code style={styles.code}>{installedPath}</code></div>
           )}
         </div>
       )}
