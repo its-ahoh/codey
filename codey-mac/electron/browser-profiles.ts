@@ -63,7 +63,9 @@ export interface BrowserProfileSummary {
   sourceUrl: string | null
 }
 
-/** The dot-file that records which profile is enabled. */
+/** The dot-file that records which profiles are enabled, one name per line.
+ *  It used to hold a single name; that reads back as a one-profile set, so an
+ *  existing install keeps its browser signed in across the upgrade. */
 export const ACTIVE_PROFILE_FILE = '.active'
 
 export const BROWSER_PROFILE_AVATARS = [
@@ -267,6 +269,22 @@ export function mergeProfileData(
   }
 }
 
+/** The first cookie two profiles both hold with different values, or null when
+ *  they can safely be enabled together. Same key and same value is not a
+ *  conflict - honouring either one gives the same live session. */
+export function conflictingCookie(
+  left: BrowserProfileData,
+  right: BrowserProfileData,
+): BrowserProfileCookie | null {
+  const key = (cookie: BrowserProfileCookie) => `${cookie.domain}\u0000${cookie.path}\u0000${cookie.name}`
+  const held = new Map(left.cookies.map(cookie => [key(cookie), cookie]))
+  for (const cookie of right.cookies) {
+    const other = held.get(key(cookie))
+    if (other && other.value !== cookie.value) return cookie
+  }
+  return null
+}
+
 /** File store for profiles. One \`.json\` per profile plus a dot-file that
  *  records which profile is enabled. */
 export class BrowserProfileStore {
@@ -280,9 +298,9 @@ export class BrowserProfileStore {
     return path.join(this.dir, ACTIVE_PROFILE_FILE)
   }
 
-  /** All profiles in the store, sorted by name, with the active one flagged. */
+  /** All profiles in the store, sorted by name, with the enabled ones flagged. */
   list(): BrowserProfileSummary[] {
-    const active = this.active()
+    const active = this.activeNames()
     let names: string[] = []
     try {
       names = fs.readdirSync(this.dir)
@@ -294,7 +312,7 @@ export class BrowserProfileStore {
     return names.sort().map(name => this.summary(name, active))
   }
 
-  private summary(name: string, activeName: string | null): BrowserProfileSummary {
+  private summary(name: string, activeNames: readonly string[]): BrowserProfileSummary {
     let profile: BrowserProfile | null = null
     try {
       profile = this.read(name)
@@ -308,7 +326,7 @@ export class BrowserProfileStore {
       updatedAt: profile?.updatedAt ?? 0,
       cookieCount: profile?.cookies.length ?? 0,
       originCount: profile?.origins.length ?? 0,
-      active: activeName === name,
+      active: activeNames.includes(name),
       sourceUrl: profile?.sourceUrl ?? null,
     }
   }
@@ -370,7 +388,7 @@ export class BrowserProfileStore {
     const file = this.file(name)
     fs.writeFileSync(file, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 })
     try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
-    return this.summary(name, this.active())
+    return this.summary(name, this.activeNames())
   }
 
   remove(name: string): void {
@@ -382,24 +400,42 @@ export class BrowserProfileStore {
     }
   }
 
-  /** Name of the enabled profile, or null when none is enabled. */
-  active(): string | null {
+  /** Names of the enabled profiles, in the order they were enabled. */
+  activeNames(): string[] {
+    let text: string
     try {
-      const name = fs.readFileSync(this.activeFile(), 'utf8').trim()
-      assertProfileName(name)
-      return name
+      text = fs.readFileSync(this.activeFile(), 'utf8')
     } catch {
-      return null
+      return []
     }
+    const names: string[] = []
+    for (const line of text.split('\n')) {
+      const name = line.trim()
+      if (!name || names.includes(name)) continue
+      try {
+        assertProfileName(name)
+      } catch {
+        continue
+      }
+      names.push(name)
+    }
+    return names
   }
 
-  setActive(name: string | null): void {
-    if (name === null) {
+  /** First enabled profile, or null. Kept for the callers that only ever
+   *  needed one name (the agent bridge's status lines). */
+  active(): string | null {
+    return this.activeNames()[0] ?? null
+  }
+
+  setActive(names: string | string[] | null): void {
+    const list = names === null ? [] : (Array.isArray(names) ? names : [names])
+    if (list.length === 0) {
       try { fs.unlinkSync(this.activeFile()) } catch { /* already absent */ }
       return
     }
-    assertProfileName(name)
+    for (const name of list) assertProfileName(name)
     fs.mkdirSync(this.dir, { recursive: true })
-    fs.writeFileSync(this.activeFile(), name, { encoding: 'utf8', mode: 0o600 })
+    fs.writeFileSync(this.activeFile(), `${list.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 })
   }
 }

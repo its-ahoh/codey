@@ -2356,23 +2356,45 @@ app.whenReady().then(async () => {
   // and Settings) manages through the same controller the agents use.
   ipcMain.handle('browser:profiles:list', event => browserCall(event, () => ({
     active: browserController.activeProfileName(),
+    activeNames: browserController.activeProfileNames(),
     profiles: browserController.listProfiles(),
   })))
   ipcMain.handle('browser:profiles:save', (event, name: string) =>
     browserCall(event, () => browserController.saveProfile(String(name || ''))))
   ipcMain.handle('browser:profiles:activate', (event, name: string) =>
     browserCall(event, () => browserController.activateProfile(String(name || ''))))
+  // Enabling adds a profile to the live session instead of replacing it, so the
+  // browser can hold several logins at once.
+  ipcMain.handle('browser:profiles:enable', (event, name: string) =>
+    browserCall(event, () => browserController.enableProfile(String(name || ''))))
+  ipcMain.handle('browser:profiles:disable', (event, name: string) =>
+    browserCall(event, () => browserController.disableProfile(String(name || ''))))
   // The Sync button in the browser toolbar: pull the login Chrome holds for the
-  // page Codey Browser is showing into the profile that is enabled here. It is
-  // scoped to that one site, so a profile carrying several logins keeps the
-  // rest, and it names the URL rather than using Chrome's front tab - the user
-  // is looking at the signed-out page here, not over there.
+  // page Codey Browser is showing into the profile that already owns this site.
+  // It is scoped to that one site, so a profile carrying several logins keeps
+  // the rest, and it names the URL rather than using Chrome's front tab - the
+  // user is looking at the signed-out page here, not over there.
   ipcMain.handle('browser:profiles:syncFromChrome', (event, url: string) => browserCall(event, async () => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
     if (!chromeCompanion.status().connected) throw new Error('Connect the Codey extension in Chrome first')
     const target = String(url || '')
-    const name = browserController.activeProfileName()
-    if (!name) throw new Error('Enable a browser profile first - there is nothing to sync into')
+    const enabled = browserController.activeProfileNames()
+    if (enabled.length === 0) throw new Error('Enable a browser profile first - there is nothing to sync into')
+    // With several profiles on, "the active profile" is not a single answer.
+    // The one that already holds this site is the one going stale, so prefer
+    // it; say so rather than guessing when that does not pin it down.
+    const owners = browserController.profilesForUrl(target).filter(name => enabled.includes(name))
+    let name: string
+    if (owners.length === 1) name = owners[0]
+    else if (owners.length > 1) {
+      throw new Error(`${owners.join(' and ')} both hold this site - turn all but one off, then sync`)
+    } else if (enabled.length === 1) name = enabled[0]
+    else {
+      throw new Error(
+        `None of the ${enabled.length} profiles in use hold this site yet. `
+        + 'Leave only the one it belongs in enabled, then sync.',
+      )
+    }
     const session = await chromeCompanion.exportSessionForUrl(target)
     await browserController.resyncProfile(name, {
       json: JSON.stringify({ cookies: session.cookies, origins: session.origins }),

@@ -3,6 +3,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { describe, expect, it, vi } from 'vitest'
 import { BROWSER_PARTITION, BrowserController, isSafeBrowserNavigationUrl, normalizeBrowserUrl, sanitizeBounds } from './browser-controller'
+import { BrowserProfileStore } from './browser-profiles'
 
 describe('normalizeBrowserUrl', () => {
   it('adds HTTPS to ordinary hosts', () => {
@@ -503,6 +504,100 @@ describe('BrowserController profiles', () => {
       const stored = JSON.parse(fs.readFileSync(path.join(dir, 'work.json'), 'utf8'))
       expect(stored.name).toBe('work')
       expect(controller.listProfiles()[0]).toMatchObject({ name: 'work', cookieCount: 1, originCount: 1, active: false })
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps several profiles enabled at once and unions their cookies', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller, cookiesSet } = makeFixture(dir)
+      const store = new BrowserProfileStore(dir)
+      store.write('gh', {
+        cookies: [{ name: 'gh', value: '1', domain: 'github.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'lax' }],
+        origins: [],
+      }, null)
+      store.write('jira', {
+        cookies: [{ name: 'jira', value: '2', domain: 'jira.example.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'lax' }],
+        origins: [],
+      }, null)
+
+      await controller.enableProfile('gh')
+      await controller.enableProfile('jira')
+      expect(controller.activeProfileNames()).toEqual(['gh', 'jira'])
+      expect(controller.listProfiles().filter(profile => profile.active).map(profile => profile.name)).toEqual(['gh', 'jira'])
+
+      // The last apply carries both logins, not just the one just enabled.
+      const applied = cookiesSet.mock.calls.map(call => (call as any[])[0].name)
+      expect(applied).toContain('gh')
+      expect(applied).toContain('jira')
+
+      // Turning one off rebuilds the session from what is left.
+      cookiesSet.mockClear()
+      await controller.disableProfile('gh')
+      expect(controller.activeProfileNames()).toEqual(['jira'])
+      expect(cookiesSet.mock.calls.map(call => (call as any[])[0].name)).toEqual(['jira'])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses to enable two profiles that disagree about the same cookie', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller } = makeFixture(dir)
+      const store = new BrowserProfileStore(dir)
+      const cookie = (value: string) => ({
+        cookies: [{ name: 'session', value, domain: 'github.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'lax' as const }],
+        origins: [],
+      })
+      store.write('work', cookie('work-token'), null)
+      store.write('personal', cookie('personal-token'), null)
+
+      await controller.enableProfile('work')
+      // One value would silently win, so this is refused and named instead.
+      await expect(controller.enableProfile('personal')).rejects.toThrow(/session cookie for github\.com/)
+      expect(controller.activeProfileNames()).toEqual(['work'])
+
+      // Switching outright is still allowed - that is an identity change.
+      await controller.activateProfile('personal')
+      expect(controller.activeProfileNames()).toEqual(['personal'])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses to save the combined session over one of the enabled profiles', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller } = makeFixture(dir)
+      const store = new BrowserProfileStore(dir)
+      store.write('gh', { cookies: [], origins: [] }, null)
+      store.write('jira', { cookies: [], origins: [] }, null)
+      await controller.enableProfile('gh')
+      await controller.enableProfile('jira')
+
+      await expect(controller.saveProfile('gh')).rejects.toThrow(/would pull jira into it/)
+      // A new name is honest about being everything the browser now carries.
+      await expect(controller.saveProfile('combined')).resolves.toMatchObject({ name: 'combined' })
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves the other profiles enabled when one is deleted', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller } = makeFixture(dir)
+      const store = new BrowserProfileStore(dir)
+      store.write('gh', { cookies: [], origins: [] }, null)
+      store.write('jira', { cookies: [], origins: [] }, null)
+      await controller.enableProfile('gh')
+      await controller.enableProfile('jira')
+
+      await controller.deleteProfile('gh')
+      expect(controller.activeProfileNames()).toEqual(['jira'])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

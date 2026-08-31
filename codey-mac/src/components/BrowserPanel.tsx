@@ -293,11 +293,31 @@ export const BrowserPanel: React.FC<Props> = ({
 
   useEffect(() => { void refreshProfiles() }, [])
 
+  // Several profiles can be on at once, so the menu toggles rather than picks.
+  // The menu stays open: turning on a working set is usually more than one
+  // click, and closing after each would make that tedious.
+  const toggleProfile = async (name: string, enabled: boolean) => {
+    setProfileBusy(true)
+    try {
+      const result = enabled
+        ? await window.codey.browser.profiles.disable(name)
+        : await window.codey.browser.profiles.enable(name)
+      if (!result.ok) setLocalError(result.error)
+      else setLocalError(null)
+      await refreshProfiles()
+    } finally {
+      setProfileBusy(false)
+    }
+  }
+
+  // "Only this one" is still worth one click: it is the identity switch, and
+  // it is the way out of a set that has grown confusing.
   const activateProfile = async (name: string) => {
     setProfileBusy(true)
     try {
       const result = await window.codey.browser.profiles.activate(name)
       if (!result.ok) setLocalError(result.error)
+      else setLocalError(null)
       await refreshProfiles()
     } finally {
       setProfileBusy(false)
@@ -351,7 +371,11 @@ export const BrowserPanel: React.FC<Props> = ({
 
   const displayedError = localError ?? state.error
   const secure = state.url.startsWith('https://')
+  const enabledProfiles = profiles.filter(profile => profile.active)
   const currentProfile = profiles.find(profile => profile.name === activeProfile)
+  const profileLabel = enabledProfiles.length === 0
+    ? 'No profile'
+    : enabledProfiles.length === 1 ? enabledProfiles[0].name : `${enabledProfiles.length} profiles`
 
   const usePageInChat = async () => {
     if (!chatId) return
@@ -561,7 +585,9 @@ export const BrowserPanel: React.FC<Props> = ({
           ref={profileButtonRef}
           type="button"
           style={{ ...styles.profileButton, ...(profileMenuOpen ? styles.profileButtonActive : null) }}
-          title={activeProfile ? `Browser profile: ${activeProfile} — click to switch` : 'No browser profile active — click to pick one'}
+          title={enabledProfiles.length > 0
+            ? `Browser profiles in use: ${enabledProfiles.map(profile => profile.name).join(', ')} — click to change`
+            : 'No browser profile active — click to pick one'}
           aria-label="Browser profile"
           aria-haspopup="menu"
           aria-expanded={profileMenuOpen}
@@ -573,7 +599,7 @@ export const BrowserPanel: React.FC<Props> = ({
           }}
         >
           <span aria-hidden="true" style={styles.profileAvatarSmall}>{browserProfileAvatar(currentProfile)}</span>
-          {panelWidth >= 640 && <span style={styles.profileButtonLabel}>{activeProfile ?? 'No profile'}</span>}
+          {panelWidth >= 640 && <span style={styles.profileButtonLabel}>{profileLabel}</span>}
         </button>
         <button
           type="button"
@@ -612,25 +638,40 @@ export const BrowserPanel: React.FC<Props> = ({
 
       {profileMenuOpen && (
         <div ref={profileMenuRef} style={styles.profileMenu} role="menu" aria-label="Browser profiles">
-          <div style={styles.profileMenuHeading}>Active profile</div>
+          <div style={styles.profileMenuHeading}>Profiles in use</div>
           {profiles.length === 0 && (
             <div style={styles.profileMenuEmpty}>No profiles saved yet.</div>
           )}
           {profiles.map(profile => (
-            <button
-              key={profile.name}
-              type="button"
-              role="menuitemradio"
-              aria-checked={profile.active}
-              disabled={profileBusy || profile.active}
-              style={{ ...styles.menuButton, ...(profile.active ? styles.profileMenuItemActive : null) }}
-              onClick={() => void activateProfile(profile.name)}
-            >
-              <span aria-hidden="true" style={styles.profileMenuAvatar}>{browserProfileAvatar(profile)}</span>
-              <span style={styles.profileMenuName}>{profile.name}</span>
-              <span aria-hidden="true" style={styles.profileMenuCheck}>{profile.active ? '✓' : ''}</span>
-            </button>
+            <div key={profile.name} style={styles.profileMenuRow}>
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={profile.active}
+                disabled={profileBusy}
+                style={{ ...styles.menuButton, flex: 1, ...(profile.active ? styles.profileMenuItemActive : null) }}
+                onClick={() => void toggleProfile(profile.name, profile.active)}
+              >
+                <span aria-hidden="true" style={styles.profileMenuAvatar}>{browserProfileAvatar(profile)}</span>
+                <span style={styles.profileMenuName}>{profile.name}</span>
+                <span aria-hidden="true" style={styles.profileMenuCheck}>{profile.active ? '✓' : ''}</span>
+              </button>
+              {!(profile.active && enabledProfiles.length === 1) && (
+                <button
+                  type="button"
+                  style={styles.profileMenuOnly}
+                  disabled={profileBusy}
+                  title={`Use only ${profile.name}, turning the others off`}
+                  onClick={() => void activateProfile(profile.name)}
+                >Only</button>
+              )}
+            </div>
           ))}
+          {enabledProfiles.length > 1 && (
+            <div style={styles.profileMenuNote}>
+              The browser is carrying all {enabledProfiles.length} logins at once.
+            </div>
+          )}
           <div style={styles.profileMenuDivider} />
           <button type="button" style={styles.menuButton} onClick={() => { setProfileMenuOpen(false); openProfiles() }}>
             <UIIcon name="settings" size={13} /> Manage profiles…
@@ -1091,6 +1132,9 @@ const styles: Record<string, React.CSSProperties> = {
   profileMenuCheck: { width: 12, flexShrink: 0, textAlign: 'center' },
   profileMenuAvatar: { width: 20, flexShrink: 0, textAlign: 'center', fontSize: 15 },
   profileMenuName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  profileMenuRow: { display: 'flex', alignItems: 'center', gap: 2 },
+  profileMenuOnly: { flexShrink: 0, marginRight: 4, padding: '3px 7px', border: 'none', borderRadius: 6, background: 'transparent', color: C.fg3, cursor: 'pointer', fontSize: 10 },
+  profileMenuNote: { padding: '4px 10px 6px', color: C.fg3, fontSize: 10, lineHeight: 1.4 },
   profileMenuDivider: { height: 1, margin: '4px 0', background: C.border },
   contextButton: { height: 31, padding: '0 10px', border: `1px solid ${C.accent}66`, borderRadius: 7, display: 'flex', alignItems: 'center', gap: 6, background: C.accentDim, color: C.accent, cursor: 'pointer', fontSize: 11, fontWeight: 650, whiteSpace: 'nowrap' },
   permissionBadge: { height: 28, padding: '0 8px', borderRadius: 7, display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: 10, fontWeight: 650, whiteSpace: 'nowrap' },

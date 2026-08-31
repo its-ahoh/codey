@@ -21,7 +21,7 @@ function formatWhen(timestamp: number): string {
  *  session file, activate, export and delete profiles through the main
  *  process's `window.codey.browser.profiles` bridge. */
 export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
-  const [active, setActive] = useState<string | null>(null)
+  // Derived from the list itself, so it cannot disagree with the rows shown.
   const [profiles, setProfiles] = useState<BrowserProfileSummary[]>([])
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
@@ -42,7 +42,6 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
     try {
       const result = await window.codey.browser.profiles.list()
       if (result.ok) {
-        setActive(result.data.active)
         setProfiles(result.data.profiles)
         setError(null)
       } else {
@@ -52,6 +51,8 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
       setError(caught instanceof Error ? caught.message : String(caught))
     }
   }, [])
+
+  const activeCount = profiles.filter(profile => profile.active).length
 
   useEffect(() => { void refresh() }, [refresh])
 
@@ -191,22 +192,38 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
                 <span style={{
                   background: C.green + '22', color: C.green, borderRadius: 999, padding: '1px 7px',
                   fontSize: compact ? 10 : 11, fontWeight: 600,
-                }}>ACTIVE</span>
+                }}>IN USE</span>
               )}
             </div>
             <div style={{ color: C.fg3, fontSize: compact ? 10 : 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={title(profile)}>
               {meta(profile) || (profile.sourceUrl ? 'saved session' : 'empty profile')}
             </div>
           </div>
+          {/* Several profiles can be on at once, so this turns one on or off
+              rather than switching to it. "Only" is the identity switch, and it
+              is offered whenever it would actually change something. */}
           <button
             type="button"
-            disabled={busy || profile.active}
-            onClick={() => void run(() => window.codey.browser.profiles.activate(profile.name))}
+            disabled={busy}
+            onClick={() => void run(() => profile.active
+              ? window.codey.browser.profiles.disable(profile.name)
+              : window.codey.browser.profiles.enable(profile.name))}
             style={profile.active ? activeBadgeStyle(compact) : buttonStyle(compact)}
-            title={profile.active ? 'This profile is active' : 'Switch the live session to this profile'}
+            title={profile.active
+              ? 'This profile\u2019s logins are in use \u2014 click to turn it off'
+              : 'Add this profile\u2019s logins to the live session'}
           >
-            {profile.active ? 'Active' : 'Activate'}
+            {profile.active ? 'In use' : 'Use'}
           </button>
+          {!(profile.active && activeCount === 1) && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void run(() => window.codey.browser.profiles.activate(profile.name))}
+              style={buttonStyle(compact)}
+              title={`Use only ${profile.name}, turning every other profile off`}
+            >Only</button>
+          )}
           <button
             type="button"
             disabled={busy}
