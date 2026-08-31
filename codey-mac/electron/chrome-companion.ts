@@ -19,6 +19,12 @@ export interface ChromeCompanionStatus {
   clientName: string | null
   pairedAt: number | null
   lastSeenAt: number | null
+  /** Version of the extension Chrome is actually running, once it has polled. */
+  clientVersion: string | null
+  /** Version Codey has staged on disk for it. */
+  expectedVersion: string | null
+  /** Chrome is running an older build than the one already staged on disk. */
+  updateAvailable: boolean
 }
 
 export interface ChromeTabInfo {
@@ -32,9 +38,17 @@ export interface ChromeTabInfo {
 export interface ChromePageSnapshot {
   tab: ChromeTabInfo
   text: string
-  links: Array<{ text: string; href: string }>
-  forms: Array<{ tag: string; type: string; name: string; placeholder: string }>
+  links: Array<{ ref: string; text: string; href: string }>
+  forms: Array<{ ref: string; tag: string; type: string; name: string; placeholder: string; label: string }>
 }
+
+/** What a page action touched, so a caller never has to assume it landed. */
+export interface ChromePageAction {
+  tab: ChromeTabInfo
+  element: { tag: string; text: string }
+}
+
+export type ChromePageActionName = 'click' | 'fill' | 'select' | 'check' | 'press'
 
 export interface ChromeSessionExport {
   tab: ChromeTabInfo
@@ -100,6 +114,27 @@ export interface ChromeCompanionFeatures {
   prepareChat: (input: { page?: ChromeCompanionChatRequest['page']; agent?: string | null; model?: string | null }) => Promise<ChromeCompanionChatSummary>
   upload: (chatId: string, name: string, mimeType: string, data: Buffer) => Promise<ChromeCompanionAttachment>
   transcribe: (mimeType: string, data: Buffer) => Promise<{ text: string }>
+  /**
+   * Copy the current Chrome tab's signed-in session into a Codey Browser
+   * profile. Without a name Codey picks a free one derived from the site, so
+   * the one-click path never fails merely because the obvious name is taken;
+   * a name the user typed is used as-is and collides loudly.
+   */
+  handoffSession: (name?: string, resync?: boolean) => Promise<ChromeSessionHandoff>
+  /**
+   * The name the handoff would use for `hostname` if the user just accepts it,
+   * plus the profiles that already hold this site's session - those are the
+   * ones a re-sync would refresh rather than a handoff create.
+   */
+  suggestProfileName: (hostname: string) => Promise<{ name: string; existing: string[] }>
+}
+
+export interface ChromeSessionHandoff {
+  profileName: string
+  origin: string
+  cookieCount: number
+  /** True when an existing profile was refreshed instead of one being created. */
+  resynced: boolean
 }
 
 export interface ChromeCompanionChatHistory {
@@ -157,6 +192,8 @@ export class ChromeCompanionBridge {
   // The Mac app's current accent color, mirrored to the extension so the
   // controlled-tab highlight matches whatever palette the user picked.
   private accent = DEFAULT_ACCENT
+  private clientVersion: string | null = null
+  private expectedVersion: string | null = null
   private pending = new Map<string, PendingCommand>()
   private uploadedAttachments = new Map<string, { chatId: string; attachment: ChromeCompanionAttachment }>()
 
@@ -214,10 +251,23 @@ export class ChromeCompanionBridge {
       clientName: this.clientName,
       pairedAt: this.pairedAt,
       lastSeenAt: this.lastSeenAt,
+      clientVersion: this.clientVersion,
+      expectedVersion: this.expectedVersion,
+      updateAvailable: !!this.clientVersion && !!this.expectedVersion && this.clientVersion !== this.expectedVersion,
     }
   }
 
+  /** The extension version Codey has staged on disk, so a Chrome still running
+   *  an older build can be told to reload rather than failing cryptically. */
+  setExpectedVersion(version: string | null): void {
+    const next = version && version.trim() ? version.trim().slice(0, 40) : null
+    if (next === this.expectedVersion) return
+    this.expectedVersion = next
+    this.emitStatus()
+  }
+
   disconnect(): ChromeCompanionStatus {
+    this.clientVersion = null
     this.token = null
     this.clientName = null
     this.pairedAt = null
@@ -281,11 +331,38 @@ export class ChromeCompanionBridge {
     return await this.command<ChromeSessionExport>('exportSession', {})
   }
 
+  /**
+   * Act on an element the last `snapshot` stamped with `ref`. Refs are
+   * renumbered by every snapshot, so a stale one is rejected by the extension
+   * rather than applied to whatever element inherited the number.
+   */
+  async act(action: ChromePageActionName, ref: string, value?: string): Promise<ChromePageAction> {
+    if (!/^e\d+$/.test(ref)) throw new Error(`Invalid element ref: ${ref || '(empty)'}. Run "chrome view" first.`)
+    if ((action === 'fill' || action === 'select' || action === 'press') && value === undefined) {
+      throw new Error(`Chrome ${action} needs a value`)
+    }
+    const input: Record<string, unknown> = { ref }
+    if (action === 'check') input.value = value !== 'false'
+    else if (value !== undefined) input.value = value
+    return await this.command<ChromePageAction>(action, input)
+  }
+
   async navigate(url: string): Promise<ChromeTabInfo> {
     let parsed: URL
     try { parsed = new URL(url) } catch { throw new Error('Enter a valid http(s) URL') }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('Only http(s) URLs are allowed')
     return await this.command<ChromeTabInfo>('navigate', { url: parsed.toString() })
+  }
+
+  /** An extension too old to know a command reports it as unsupported, which
+   *  reads like a Codey bug. Say what actually needs to happen instead. */
+  private explain(error: string): string {
+    if (!error) return 'Chrome command failed'
+    if (!/Unsupported Codey command/i.test(error)) return error
+    const versions = this.clientVersion && this.expectedVersion
+      ? ` Chrome is running ${this.clientVersion}; ${this.expectedVersion} is already installed on disk.`
+      : ''
+    return `Reload the Codey extension at chrome://extensions to finish updating it.${versions}`
   }
 
   private async command<T>(command: string, input: unknown): Promise<T> {
@@ -406,10 +483,17 @@ export class ChromeCompanionBridge {
       }
       this.touch()
       if (request.method === 'POST' && url.pathname === '/v1/poll') {
+        const input = await this.body(request)
+        const reported = typeof input.version === 'string' ? input.version.trim().slice(0, 40) : ''
+        if (reported && reported !== this.clientVersion) {
+          this.clientVersion = reported
+          this.emitStatus()
+        }
         const command = this.queue.shift()
+        const base = { ok: true, accent: this.accent, expectedVersion: this.expectedVersion }
         this.reply(request, response, 200, command
-          ? { ok: true, accent: this.accent, command: { id: command.id, command: command.command, input: command.input } }
-          : { ok: true, accent: this.accent, command: null })
+          ? { ...base, command: { id: command.id, command: command.command, input: command.input } }
+          : { ...base, command: null })
         return
       }
       if (request.method === 'POST' && url.pathname === '/v1/result') {
@@ -423,7 +507,7 @@ export class ChromeCompanionBridge {
         clearTimeout(command.timer)
         this.pending.delete(id)
         if (input.ok === true) command.resolve(input.data)
-        else command.reject(new Error(typeof input.error === 'string' ? input.error : 'Chrome command failed'))
+        else command.reject(new Error(this.explain(typeof input.error === 'string' ? input.error : '')))
         this.reply(request, response, 200, { ok: true })
         return
       }
@@ -455,6 +539,24 @@ export class ChromeCompanionBridge {
         const result = await this.onChat({ chatId, text, page, agent, model, attachments })
         for (const id of attachmentIds) this.uploadedAttachments.delete(id)
         this.reply(request, response, 200, { ok: true, ...result })
+        return
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/session/handoff/name') {
+        if (!this.features) throw new Error('Session handoff is unavailable')
+        const input = await this.body(request)
+        const hostname = typeof input.hostname === 'string' ? input.hostname.slice(0, 300) : ''
+        this.reply(request, response, 200, { ok: true, ...await this.features.suggestProfileName(hostname) })
+        return
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/session/handoff') {
+        if (!this.features) throw new Error('Session handoff is unavailable')
+        const input = await this.body(request)
+        const name = typeof input.name === 'string' ? input.name.trim() : ''
+        const resync = input.resync === true
+        // A refresh has to say which profile it refreshes; there is no
+        // sensible default for "overwrite one of these".
+        if (resync && !name) throw new Error('Choose which profile to re-sync')
+        this.reply(request, response, 200, { ok: true, ...await this.features.handoffSession(name || undefined, resync) })
         return
       }
       if (request.method === 'GET' && url.pathname === '/v1/chats') {

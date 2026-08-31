@@ -154,9 +154,13 @@ export interface BrowserPageContext {
   }
 }
 
+export type BrowserControlSurface = 'browser' | 'chrome'
+export type BrowserControlLevel = 'write' | 'full'
+export type BrowserControlGrant = 'none' | BrowserControlLevel
+
 export interface BrowserControlPermissionState {
-  approved: boolean
-  pending: { command: string; url: string } | null
+  granted: Record<BrowserControlSurface, BrowserControlGrant>
+  pending: { command: string; url: string; surface: BrowserControlSurface; level: BrowserControlLevel } | null
 }
 
 export type BrowserSitePermission = 'camera' | 'microphone' | 'geolocation' | 'notifications'
@@ -244,6 +248,9 @@ export interface ChromeCompanionStatus {
   clientName: string | null
   pairedAt: number | null
   lastSeenAt: number | null
+  clientVersion: string | null
+  expectedVersion: string | null
+  updateAvailable: boolean
 }
 
 export interface ChromeTabInfo {
@@ -609,6 +616,7 @@ declare global {
         activeTab: () => Promise<IpcResult<ChromeTabInfo>>
         snapshot: () => Promise<IpcResult<ChromePageSnapshot>>
         exportSession: (name: string) => Promise<IpcResult<{ profile: BrowserProfileSummary; tab: ChromeTabInfo }>>
+        resyncSession: (name: string) => Promise<IpcResult<{ profile: BrowserProfileSummary; tab: ChromeTabInfo }>>
         navigate: (url: string) => Promise<IpcResult<ChromeTabInfo>>
         setAccent: (hex: string) => Promise<IpcResult<{ ok: true }>>
         showExtensionFolder: () => Promise<IpcResult<string>>
@@ -654,9 +662,9 @@ declare global {
         }
         controlPermission: {
           get: () => Promise<IpcResult<BrowserControlPermissionState>>
-          approve: () => Promise<IpcResult<BrowserControlPermissionState>>
+          approve: (level?: BrowserControlLevel) => Promise<IpcResult<BrowserControlPermissionState>>
           deny: () => Promise<IpcResult<BrowserControlPermissionState>>
-          revoke: () => Promise<IpcResult<BrowserControlPermissionState>>
+          revoke: (surface?: BrowserControlSurface) => Promise<IpcResult<BrowserControlPermissionState>>
         }
         sitePermission: {
           get: () => Promise<IpcResult<BrowserSitePermissionState>>

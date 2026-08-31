@@ -9,6 +9,17 @@ const sendNode = document.querySelector('#send')
 const includePageNode = document.querySelector('#include-page')
 const pageContextNode = document.querySelector('#page-context')
 const pageTitleNode = document.querySelector('#page-title')
+const handoffNode = document.querySelector('#handoff')
+const updateNoticeNode = document.querySelector('#update-notice')
+const updateCopyNode = document.querySelector('#update-copy')
+const updateOpenNode = document.querySelector('#update-open')
+const handoffFormNode = document.querySelector('#handoff-form')
+const handoffNameNode = document.querySelector('#handoff-name')
+const handoffSaveNode = document.querySelector('#handoff-save')
+const handoffCancelNode = document.querySelector('#handoff-cancel')
+const handoffResyncNode = document.querySelector('#handoff-resync')
+const handoffResyncNameNode = document.querySelector('#handoff-resync-name')
+const handoffResyncSaveNode = document.querySelector('#handoff-resync-save')
 const chatSelectNode = document.querySelector('#chat-select')
 const agentSelectNode = document.querySelector('#agent-select')
 const modelSelectNode = document.querySelector('#model-select')
@@ -517,6 +528,136 @@ function typingNode() {
   return node
 }
 
+// Codey refreshes the extension's files on its own launch, but Chrome keeps
+// running the build it loaded until the extension is reloaded. The service
+// worker records the mismatch while polling; surfacing it here is the only
+// thing that tells the user their Codey is newer than their Chrome extension.
+async function refreshUpdateNotice() {
+  const { updateAvailable } = await chrome.storage.local.get({ updateAvailable: '' })
+  updateNoticeNode.hidden = !updateAvailable
+  updateCopyNode.textContent = updateAvailable
+    ? `Codey ${updateAvailable} is installed. Reload the extension to use it.`
+    : ''
+}
+
+// Reloading from here re-reads the files Codey already staged, so the user
+// never has to find chrome://extensions themselves.
+function reloadExtension() {
+  updateOpenNode.disabled = true
+  chrome.runtime.reload()
+}
+
+// Copying the current site's signed-in session into a Codey Browser profile.
+// Codey does the export and the import; the panel only reports the outcome,
+// and it reports it on the button itself so nothing is added to the chat.
+let handoffResetTimer = null
+let handoffPageUrl = null
+
+// The name is asked for rather than assumed, but the field arrives prefilled
+// with a name Codey has already checked is free, so accepting the default is
+// still a single extra keystroke.
+async function openHandoffForm() {
+  if (!activePage || handoffNode.disabled) return
+  if (handoffResetTimer) clearTimeout(handoffResetTimer)
+  handoffNode.disabled = true
+  handoffNode.textContent = 'Naming\u2026'
+  let suggestion = ''
+  let existing = []
+  try {
+    const hostname = new URL(activePage.url).hostname
+    const named = await codeyApi('/v1/session/handoff/name', { method: 'POST', body: { hostname } })
+    suggestion = named.name
+    existing = Array.isArray(named.existing) ? named.existing : []
+  } catch (error) {
+    handoffNode.disabled = false
+    handoffNode.textContent = 'Handoff failed'
+    handoffNode.title = error instanceof Error ? error.message : String(error)
+    handoffResetTimer = setTimeout(resetHandoffButton, 6000)
+    return
+  }
+  handoffNode.textContent = 'Hand off login'
+  handoffFormNode.hidden = false
+  handoffNameNode.value = suggestion
+  // A profile that already holds this site is almost always what the user
+  // means when they come back after signing in again, so it is offered next
+  // to the create field instead of making them delete and redo the handoff.
+  handoffResyncNameNode.replaceChildren(...existing.map(name => {
+    const option = document.createElement('option')
+    option.value = name
+    option.textContent = name
+    return option
+  }))
+  handoffResyncNode.hidden = existing.length === 0
+  handoffNameNode.focus()
+  handoffNameNode.select()
+}
+
+function closeHandoffForm() {
+  handoffFormNode.hidden = true
+  handoffNameNode.value = ''
+  handoffSaveNode.disabled = false
+  handoffResyncNode.hidden = true
+  handoffResyncSaveNode.disabled = false
+  handoffResyncSaveNode.textContent = 'Re-sync'
+  handoffResyncNameNode.replaceChildren()
+  handoffNode.disabled = false
+}
+
+async function handOffSession() {
+  const name = handoffNameNode.value.trim()
+  if (!name) {
+    handoffNameNode.focus()
+    return
+  }
+  handoffSaveNode.disabled = true
+  handoffSaveNode.textContent = 'Saving\u2026'
+  try {
+    const result = await codeyApi('/v1/session/handoff', { method: 'POST', body: { name } })
+    closeHandoffForm()
+    handoffNode.textContent = `Saved as ${result.profileName}`
+    handoffNode.title = `${result.cookieCount} cookies from ${result.origin} are now in the Codey Browser profile "${result.profileName}"`
+    handoffResetTimer = setTimeout(resetHandoffButton, 6000)
+  } catch (error) {
+    // The form stays open on failure so a rejected name can just be retyped.
+    handoffSaveNode.disabled = false
+    handoffNode.textContent = 'Handoff failed'
+    handoffNode.title = error instanceof Error ? error.message : String(error)
+    handoffNameNode.focus()
+    handoffNameNode.select()
+  } finally {
+    handoffSaveNode.textContent = 'Save'
+  }
+}
+
+// Refreshing an existing profile rather than creating one: same export, but
+// only this site's part of the saved profile is replaced.
+async function resyncSession() {
+  const name = handoffResyncNameNode.value
+  if (!name) return
+  handoffResyncSaveNode.disabled = true
+  handoffResyncSaveNode.textContent = 'Syncing\u2026'
+  try {
+    const result = await codeyApi('/v1/session/handoff', { method: 'POST', body: { name, resync: true } })
+    closeHandoffForm()
+    handoffNode.textContent = `Re-synced ${result.profileName}`
+    handoffNode.title = `${result.cookieCount} cookies from ${result.origin} replaced this site's login in the Codey Browser profile "${result.profileName}"`
+    handoffResetTimer = setTimeout(resetHandoffButton, 6000)
+  } catch (error) {
+    handoffResyncSaveNode.disabled = false
+    handoffResyncSaveNode.textContent = 'Re-sync'
+    handoffNode.textContent = 'Re-sync failed'
+    handoffNode.title = error instanceof Error ? error.message : String(error)
+  }
+}
+
+function resetHandoffButton() {
+  if (handoffResetTimer) clearTimeout(handoffResetTimer)
+  handoffResetTimer = null
+  closeHandoffForm()
+  handoffNode.textContent = 'Hand off login'
+  handoffNode.title = "Copy this site's signed-in session into a Codey Browser profile"
+}
+
 async function refreshActivePage() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   activePage = tab && /^https?:\/\//i.test(tab.url || '')
@@ -525,6 +666,11 @@ async function refreshActivePage() {
   pageContextNode.hidden = !activePage
   pageTitleNode.textContent = activePage ? activePage.title : ''
   pageContextNode.title = activePage?.url || ''
+  // A result from the previous site would be misleading here.
+  if (activePage?.url !== handoffPageUrl) {
+    handoffPageUrl = activePage?.url || null
+    resetHandoffButton()
+  }
 }
 
 async function ensurePreparedChat() {
@@ -738,6 +884,16 @@ inputNode.addEventListener('input', () => {
   inputNode.style.height = `${Math.max(42, Math.min(inputNode.scrollHeight, 140))}px`
 })
 settingsToggleNode.addEventListener('click', () => { if (!busy) toggleSettings() })
+updateOpenNode.addEventListener('click', reloadExtension)
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.updateAvailable) void refreshUpdateNotice()
+})
+void refreshUpdateNotice()
+handoffNode.addEventListener('click', () => { void openHandoffForm() })
+handoffFormNode.addEventListener('submit', event => { event.preventDefault(); void handOffSession() })
+handoffCancelNode.addEventListener('click', () => resetHandoffButton())
+handoffResyncSaveNode.addEventListener('click', () => { void resyncSession() })
+handoffNameNode.addEventListener('keydown', event => { if (event.key === 'Escape') resetHandoffButton() })
 chatSelectNode.addEventListener('change', () => {
   if (!busy) void selectChat(chatSelectNode.value)
 })

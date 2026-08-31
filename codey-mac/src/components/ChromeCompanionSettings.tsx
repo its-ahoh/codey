@@ -9,6 +9,9 @@ const EMPTY: ChromeCompanionStatus = {
   clientName: null,
   pairedAt: null,
   lastSeenAt: null,
+  clientVersion: null,
+  expectedVersion: null,
+  updateAvailable: false,
 }
 
 export function shouldShowChromeInstallInstructions(
@@ -23,6 +26,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
   const [error, setError] = useState<string | null>(null)
   const [profileName, setProfileName] = useState('chrome-session')
   const [exported, setExported] = useState<string | null>(null)
+  const [resynced, setResynced] = useState<string | null>(null)
   const [installedPath, setInstalledPath] = useState<string | null>(null)
 
   const useResult = <T,>(result: { ok: true; data: T } | { ok: false; error: string }): T | null => {
@@ -61,6 +65,19 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
             const next = useResult(await window.codey.chromeCompanion.status())
             if (next) setStatus(next)
           })}>Check again</button>
+        </div>
+      )}
+
+      {status.updateAvailable && (
+        <div style={styles.noticeRow}>
+          <span style={{ ...styles.dot, background: C.warningFg }} />
+          <span style={styles.noticeCopy}>
+            Codey installed extension {status.expectedVersion}, but Chrome is still running {status.clientVersion}.
+            Chrome only picks up a new build when it restarts or you reload the extension.
+          </span>
+          <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
+            useResult(await window.codey.chromeCompanion.openExtensionsPage())
+          })}>Open extensions</button>
         </div>
       )}
 
@@ -108,7 +125,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
               <input
                 style={styles.input}
                 value={profileName}
-                onChange={event => { setProfileName(event.target.value); setExported(null) }}
+                onChange={event => { setProfileName(event.target.value); setExported(null); setResynced(null) }}
                 placeholder="chrome-session"
                 aria-label="New Codey Browser profile name"
                 spellCheck={false}
@@ -118,11 +135,28 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
               const next = useResult(await window.codey.chromeCompanion.exportSession(profileName.trim()))
               if (next) {
                 setExported(next.profile.name)
+                setResynced(null)
               }
             })}>Create &amp; activate profile</button>
           </div>
           {exported && (
             <div style={styles.success}>“{exported}” is now the active Codey Browser profile. Chrome was not changed.</div>
+          )}
+          {/* Logins expire, and a profile copied months ago is worth refreshing
+              rather than recreating - recreating would lose the profile's other
+              sites and its place in the switcher. */}
+          <div style={styles.actions}>
+            <span style={styles.copy}>Signed in again in Chrome? Refresh a profile you already have instead.</span>
+            <button style={styles.secondary} disabled={busy || !status.connected || !profileName.trim()} onClick={() => void run(async () => {
+              const next = useResult(await window.codey.chromeCompanion.resyncSession(profileName.trim()))
+              if (next) {
+                setResynced(next.profile.name)
+                setExported(null)
+              }
+            })}>Re-sync existing profile</button>
+          </div>
+          {resynced && (
+            <div style={styles.success}>“{resynced}” now carries this site’s current Chrome login. Its other saved sites were left alone.</div>
           )}
         </div>
       )}

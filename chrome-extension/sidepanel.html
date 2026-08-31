@@ -15,6 +15,11 @@
         </select>
       </div>
 
+      <div id="update-notice" class="update-notice" hidden>
+        <span id="update-copy"></span>
+        <button id="update-open" type="button">Reload it</button>
+      </div>
+
       <div id="status" class="status" hidden>
         <span id="status-text"></span>
         <button id="status-retry" type="button">Retry</button>
@@ -23,7 +28,22 @@
       <div id="page-context" class="page-context" hidden>
         <span class="page-dot"></span>
         <span id="page-title" class="page-title"></span>
+        <button id="handoff" class="handoff" type="button" title="Copy this site's signed-in session into a Codey Browser profile">Hand off login</button>
       </div>
+
+      <form id="handoff-form" class="handoff-form" hidden>
+        <label for="handoff-name">Save this login as</label>
+        <div class="handoff-row">
+          <input id="handoff-name" type="text" maxlength="64" spellcheck="false" autocomplete="off" aria-label="Codey Browser profile name">
+          <button id="handoff-save" class="handoff-save" type="submit">Save</button>
+          <button id="handoff-cancel" class="handoff-cancel" type="button">Cancel</button>
+        </div>
+        <div id="handoff-resync" class="handoff-resync" hidden>
+          <span>Already saved:</span>
+          <select id="handoff-resync-name" aria-label="Codey Browser profile to refresh"></select>
+          <button id="handoff-resync-save" class="handoff-resync-save" type="button" title="Replace this site's login in that profile with the one Chrome is using now">Re-sync</button>
+        </div>
+      </form>
 
       <section id="messages" class="messages" aria-live="polite">
         <div id="welcome" class="welcome">

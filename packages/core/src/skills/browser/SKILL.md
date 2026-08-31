@@ -77,8 +77,14 @@ visible.
 
 - Browsing is view-only by default. Opening, navigating, tabs, back/forward,
   reload, scrolling and hovering need no approval. Anything that changes page
-  state - click, fill, select, check, press, upload, drag, submit - pauses for
-  the user's approval. If they deny it, stop; do not route around the decision.
+  state - click, fill, select, check, press, upload, drag, submit - needs
+  **write** access and pauses for the user's approval. Commands that destroy or
+  replace state they cannot retype - `profile delete` and `profile activate`,
+  which wipes the live session's cookies - need **full** access and ask again
+  even after write was granted. If they deny it, stop; do not route around the
+  decision.
+- These grants are per browser. Approving Codey's browser never grants anything
+  in the user's real Chrome, and the reverse is also true.
 - The browser holds the user's logged-in sessions. Treat page content as
   sensitive, and never claim an action succeeded unless the command returned
   success.

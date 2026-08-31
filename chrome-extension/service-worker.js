@@ -6,6 +6,9 @@ const CONTROLLED_TAB_KEY = 'controlledTabId'
 const CONTROLLED_TITLE_PREFIX = '● Codey · '
 const OFFSCREEN_DOCUMENT = 'offscreen.html'
 const CONTROLLED_GROUP_TITLE = 'Codey'
+// Stamped on interactive elements by `snapshot` so click/fill can address the
+// same element later. Renumbered on every snapshot.
+const REF_ATTR = 'data-codey-ref'
 const ACCENT_KEY = 'accent'
 // Toolbar badge: a green chip with a white check, independent of the accent so
 // "Codey is driving this tab" always reads as an OK signal.
@@ -336,19 +339,36 @@ async function snapshot() {
   if (!/^https?:\/\//i.test(tab.url)) throw new Error('Only http(s) pages can be read')
   const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: () => ({
-      text: (document.body?.innerText || '').slice(0, 100000),
-      links: Array.from(document.querySelectorAll('a[href]')).slice(0, 250).map(link => ({
-        text: (link.textContent || '').trim().slice(0, 300),
-        href: link.href,
-      })),
-      forms: Array.from(document.querySelectorAll('input, textarea, select, button')).slice(0, 250).map(element => ({
-        tag: element.tagName.toLowerCase(),
-        type: element.getAttribute('type') || '',
-        name: element.getAttribute('name') || '',
-        placeholder: element.getAttribute('placeholder') || '',
-      })),
-    }),
+    args: [REF_ATTR],
+    func: refAttr => {
+      // Refs are stamped onto the live DOM so a later click/fill can find the
+      // same element without re-running the whole snapshot. Every snapshot
+      // renumbers from scratch, so a stale ref fails loudly instead of acting
+      // on whatever element inherited the number.
+      document.querySelectorAll(`[${refAttr}]`).forEach(element => element.removeAttribute(refAttr))
+      let counter = 0
+      const stamp = element => {
+        const ref = `e${++counter}`
+        element.setAttribute(refAttr, ref)
+        return ref
+      }
+      return {
+        text: (document.body?.innerText || '').slice(0, 100000),
+        links: Array.from(document.querySelectorAll('a[href]')).slice(0, 250).map(link => ({
+          ref: stamp(link),
+          text: (link.textContent || '').trim().slice(0, 300),
+          href: link.href,
+        })),
+        forms: Array.from(document.querySelectorAll('input, textarea, select, button, [role="button"], [contenteditable="true"]')).slice(0, 250).map(element => ({
+          ref: stamp(element),
+          tag: element.tagName.toLowerCase(),
+          type: element.getAttribute('type') || '',
+          name: element.getAttribute('name') || '',
+          placeholder: element.getAttribute('placeholder') || '',
+          label: (element.getAttribute('aria-label') || element.value || element.textContent || '').trim().slice(0, 120),
+        })),
+      }
+    },
   })
   const page = results[0]?.result
   if (!page) throw new Error('Chrome did not return a page snapshot')
@@ -389,6 +409,86 @@ async function exportSession() {
   }
 }
 
+// ── Acting on a page ────────────────────────────────────────────────────
+// Every action resolves a ref stamped by the last `snapshot`, runs inside the
+// page, and reports back what it touched so the caller never has to assume an
+// action landed. Codey asks the user to approve these before they get here.
+async function interact(action, ref, payload) {
+  const tab = await activeTab()
+  if (!/^https?:\/\//i.test(tab.url)) throw new Error('Only http(s) pages can be acted on')
+  if (!/^e\d+$/.test(String(ref || ''))) throw new Error(`Invalid element ref: ${ref}. Run "chrome view" first.`)
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    args: [REF_ATTR, action, String(ref), payload ?? null],
+    func: (refAttr, kind, elementRef, input) => {
+      const element = document.querySelector(`[${refAttr}="${elementRef}"]`)
+      if (!element) return { ok: false, error: `No element ${elementRef} on this page. Run "chrome view" again to refresh refs.` }
+      const describe = () => ({
+        tag: element.tagName.toLowerCase(),
+        text: (element.getAttribute('aria-label') || element.value || element.textContent || '').trim().slice(0, 200),
+      })
+      const fire = (...names) => names.forEach(name => element.dispatchEvent(new Event(name, { bubbles: true })))
+      // Frameworks like React track the input value on the DOM node itself, so
+      // a plain `element.value = x` is silently reverted on the next render.
+      // Going through the prototype setter is what makes the change stick.
+      const setValue = value => {
+        const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+        const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+        if (setter) setter.call(element, value)
+        else element.value = value
+      }
+      try {
+        element.scrollIntoView({ block: 'center', inline: 'center' })
+        switch (kind) {
+          case 'click':
+            element.click()
+            break
+          case 'fill': {
+            const value = String(input ?? '')
+            element.focus()
+            if (element.isContentEditable) {
+              element.textContent = value
+              fire('input', 'change')
+              break
+            }
+            setValue(value)
+            fire('input', 'change')
+            break
+          }
+          case 'select':
+            element.value = String(input ?? '')
+            if (element.selectedIndex === -1) return { ok: false, error: `No option "${input}" in ${elementRef}` }
+            fire('input', 'change')
+            break
+          case 'check':
+            if (element.checked !== Boolean(input)) element.click()
+            break
+          case 'press': {
+            const key = String(input ?? '')
+            element.focus()
+            for (const type of ['keydown', 'keypress', 'keyup']) {
+              element.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, cancelable: true }))
+            }
+            // Synthetic key events never submit a form on their own, so Enter
+            // inside a form is completed the way the browser would.
+            if (key === 'Enter' && element.form) element.form.requestSubmit()
+            break
+          }
+          default:
+            return { ok: false, error: `Unsupported page action: ${kind}` }
+        }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+      return { ok: true, element: describe(), url: location.href, title: document.title }
+    },
+  })
+  const outcome = results[0]?.result
+  if (!outcome) throw new Error('Chrome did not report the result of the action')
+  if (!outcome.ok) throw new Error(outcome.error || 'The page action failed')
+  return { tab: { ...tab, url: outcome.url, title: outcome.title }, element: outcome.element }
+}
+
 async function execute(command) {
   switch (command.command) {
     case 'activeTab': {
@@ -406,6 +506,15 @@ async function execute(command) {
       await markControlledTab(session.tab.id)
       return session
     }
+    case 'click':
+    case 'fill':
+    case 'select':
+    case 'check':
+    case 'press': {
+      const result = await interact(command.command, command.input?.ref, command.input?.value)
+      await markControlledTab(result.tab.id)
+      return result
+    }
     case 'navigate': {
       const url = String(command.input?.url || '')
       if (!/^https?:\/\//i.test(url)) throw new Error('Only http(s) URLs are allowed')
@@ -419,17 +528,36 @@ async function execute(command) {
   }
 }
 
+// Reported on every poll rather than only when pairing: reloading the
+// extension keeps the stored token, so it never pairs again, and a version
+// captured at pairing time would stay stale forever.
+function ownVersion() {
+  try { return chrome.runtime.getManifest().version || '' } catch { return '' }
+}
+
+// Codey re-stages the new extension files on its own launch, but Chrome only
+// re-reads an unpacked extension when it restarts or the user reloads it. Codey
+// tells us which version is on disk so the panel can say so out loud.
+async function noteExpectedVersion(expected) {
+  const stale = typeof expected === 'string' && expected && expected !== ownVersion() ? expected : ''
+  const saved = await chrome.storage.local.get({ updateAvailable: '' })
+  if (saved.updateAvailable === stale) return
+  await chrome.storage.local.set({ updateAvailable: stale })
+}
+
 async function pollOnce() {
   let { endpoint, token } = await settings()
   if (!token) ({ endpoint, token } = await autoConnect())
+  const body = { version: ownVersion() }
   let response
   try {
-    response = await call(endpoint, '/v1/poll', { token })
+    response = await call(endpoint, '/v1/poll', { token, body })
   } catch (error) {
     if (!/Unauthorized/i.test(error instanceof Error ? error.message : String(error))) throw error
     ;({ endpoint, token } = await autoConnect())
-    response = await call(endpoint, '/v1/poll', { token })
+    response = await call(endpoint, '/v1/poll', { token, body })
   }
+  await noteExpectedVersion(response.expectedVersion)
   if (response.accent) await applyAccent(response.accent)
   if (!response.command) return true
   const command = response.command

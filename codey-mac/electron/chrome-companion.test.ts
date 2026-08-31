@@ -166,10 +166,174 @@ describe('ChromeCompanionBridge', () => {
     await expect(exported).resolves.toEqual(session)
   })
 
+  it('notices Chrome is running an older extension than the one on disk', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    bridge.setExpectedVersion('0.10.0')
+
+    const poll = (version?: string) => fetch(`${endpoint}/v1/poll`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(version === undefined ? {} : { version }),
+    }).then(response => response.json() as Promise<{ expectedVersion: string | null }>)
+
+    // Chrome is still running the build it loaded before Codey updated.
+    await expect(poll('0.9.2')).resolves.toMatchObject({ expectedVersion: '0.10.0' })
+    expect(bridge.status()).toMatchObject({
+      clientVersion: '0.9.2', expectedVersion: '0.10.0', updateAvailable: true,
+    })
+
+    // After the user reloads it, the warning has to clear itself.
+    await poll('0.10.0')
+    expect(bridge.status().updateAvailable).toBe(false)
+  })
+
+  it('explains an unsupported command as an extension that needs reloading', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    bridge.setExpectedVersion('0.10.0')
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    await fetch(`${endpoint}/v1/poll`, { method: 'POST', headers, body: JSON.stringify({ version: '0.9.2' }) })
+
+    // Captured as a value: the rejection lands while the poll below is still
+    // in flight, and an unhandled one would fail the suite.
+    const clicked = bridge.act('click', 'e1').catch((error: Error) => error)
+    const work = await fetch(`${endpoint}/v1/poll`, { method: 'POST', headers, body: '{}' })
+      .then(response => response.json() as Promise<{ command: { id: string } }>)
+    await fetch(`${endpoint}/v1/result`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ id: work.command.id, ok: false, error: 'Unsupported Codey command: click' }),
+    })
+
+    // The raw message reads like a Codey bug; the user needs the actual fix.
+    const failure = await clicked
+    expect(String(failure)).toMatch(/Reload the Codey extension/)
+    expect(String(failure)).toMatch(/0\.9\.2/)
+  })
+
   it('validates navigation before it reaches Chrome', async () => {
     const { bridge, endpoint } = await setup()
     await connect(endpoint)
     await expect(bridge.navigate('file:///etc/passwd')).rejects.toThrow('Only http(s)')
+  })
+
+  it('rejects a page action whose ref did not come from a snapshot', async () => {
+    const { bridge, endpoint } = await setup()
+    await connect(endpoint)
+    await expect(bridge.act('click', 'button.submit')).rejects.toThrow('Invalid element ref')
+    await expect(bridge.act('click', '')).rejects.toThrow('Invalid element ref')
+    await expect(bridge.act('fill', 'e2')).rejects.toThrow('needs a value')
+  })
+
+  it('round-trips a click through the extension protocol', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    const clicked = bridge.act('click', 'e4')
+
+    const poll = await fetch(`${endpoint}/v1/poll`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    const work = await poll.json() as { command: { id: string; command: string; input: { ref: string } } }
+    expect(work.command.command).toBe('click')
+    expect(work.command.input).toEqual({ ref: 'e4' })
+
+    const outcome = {
+      tab: { id: 7, windowId: 3, title: 'Sent', url: 'https://example.com/done' },
+      element: { tag: 'button', text: 'Send' },
+    }
+    await fetch(`${endpoint}/v1/result`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: work.command.id, ok: true, data: outcome }),
+    })
+    await expect(clicked).resolves.toEqual(outcome)
+  })
+
+  it('sends check as a boolean so "false" unticks instead of ticking', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    void bridge.act('check', 'e9', 'false').catch(() => undefined)
+
+    const poll = await fetch(`${endpoint}/v1/poll`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    const work = await poll.json() as { command: { input: { ref: string; value: boolean } } }
+    expect(work.command.input).toEqual({ ref: 'e9', value: false })
+  })
+
+  it('hands the current site\'s session to Codey from the side panel', async () => {
+    const handoffs: Array<string | undefined> = []
+    const resyncs: boolean[] = []
+    const features = {
+      options: async () => ({
+        agents: [], models: [], defaultAgent: null, defaultModel: null, defaultModels: {}, chat: null,
+      }),
+      updateSettings: async () => undefined,
+      prepareChat: async () => ({
+        id: 'chat-1', title: 'Chat', workspaceName: 'w', updatedAt: 1, messageCount: 0,
+      }),
+      upload: async () => ({ id: 'a', name: 'n', mimeType: 'text/plain', size: 0, path: '/tmp/n' }),
+      transcribe: async () => ({ text: '' }),
+      handoffSession: async (name?: string, resync?: boolean) => {
+        handoffs.push(name)
+        resyncs.push(resync === true)
+        return { profileName: name || 'example.com-2', origin: 'https://example.com', cookieCount: 4, resynced: resync === true }
+      },
+      suggestProfileName: async (hostname: string) => ({ name: `${hostname}-free`, existing: [`${hostname}-saved`] }),
+    } as unknown as ChromeCompanionFeatures
+    const { endpoint } = await setup(undefined, undefined, undefined, features)
+    const token = await connect(endpoint)
+
+    // Unauthenticated callers must not be able to lift a session.
+    const anonymous = await fetch(`${endpoint}/v1/session/handoff`, { method: 'POST' })
+    expect(anonymous.status).toBe(401)
+    expect(handoffs).toHaveLength(0)
+
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+
+    // The panel prefills its field with a name Codey says is free.
+    const suggested = await fetch(`${endpoint}/v1/session/handoff/name`, {
+      method: 'POST', headers, body: JSON.stringify({ hostname: 'example.com' }),
+    })
+    await expect(suggested.json()).resolves.toEqual({
+      ok: true, name: 'example.com-free', existing: ['example.com-saved'],
+    })
+
+    // A name the user typed is passed through untouched.
+    const named = await fetch(`${endpoint}/v1/session/handoff`, {
+      method: 'POST', headers, body: JSON.stringify({ name: '  my-github  ' }),
+    })
+    expect(named.status).toBe(200)
+    await expect(named.json()).resolves.toEqual({
+      ok: true, profileName: 'my-github', origin: 'https://example.com', cookieCount: 4, resynced: false,
+    })
+
+    // An omitted or blank name means "you pick one".
+    const auto = await fetch(`${endpoint}/v1/session/handoff`, {
+      method: 'POST', headers, body: JSON.stringify({ name: '   ' }),
+    })
+    await expect(auto.json()).resolves.toMatchObject({ profileName: 'example.com-2' })
+
+    // Refreshing an existing profile goes down the same route with a flag.
+    const refreshed = await fetch(`${endpoint}/v1/session/handoff`, {
+      method: 'POST', headers, body: JSON.stringify({ name: 'my-github', resync: true }),
+    })
+    await expect(refreshed.json()).resolves.toMatchObject({ profileName: 'my-github', resynced: true })
+
+    // "Refresh whichever" is not a thing - there would be no way to guess which.
+    const nameless = await fetch(`${endpoint}/v1/session/handoff`, {
+      method: 'POST', headers, body: JSON.stringify({ resync: true }),
+    })
+    expect(nameless.status).toBe(400)
+    await expect(nameless.json()).resolves.toMatchObject({ error: 'Choose which profile to re-sync' })
+
+    expect(handoffs).toEqual(['my-github', undefined, 'my-github'])
+    expect(resyncs).toEqual([false, false, true])
   })
 
   it('routes authenticated side-panel chat through Codey', async () => {
@@ -221,6 +385,8 @@ describe('ChromeCompanionBridge', () => {
         id: 'attachment-1', name, mimeType, size: data.length, path: '/safe/upload.txt',
       }),
       transcribe: async (_mimeType, data) => ({ text: `heard ${data.length} bytes` }),
+      handoffSession: async () => ({ profileName: 'example.com', origin: 'https://example.com', cookieCount: 3, resynced: false }),
+      suggestProfileName: async hostname => ({ name: hostname, existing: [] }),
     }
     const { endpoint } = await setup(
       async request => { received.push(request); return { chatId: 'chat-2', response: 'Attached' } },

@@ -6,6 +6,9 @@ import {
   ACTIVE_PROFILE_FILE,
   assertProfileName,
   BrowserProfileStore,
+  availableProfileName,
+  cookieMatchesUrl,
+  mergeProfileData,
   deriveProfileNameFromFile,
   parseProfileData,
   parseProfileJsonText,
@@ -194,5 +197,91 @@ describe('BrowserProfileStore', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('availableProfileName', () => {
+  it('names a handoff after the site, without the www', () => {
+    expect(availableProfileName('www.github.com', [])).toBe('github.com')
+    expect(availableProfileName('mail.google.com', [])).toBe('mail.google.com')
+  })
+
+  it('takes the next free suffix instead of failing on a collision', () => {
+    expect(availableProfileName('github.com', ['github.com'])).toBe('github.com-2')
+    expect(availableProfileName('github.com', ['github.com', 'github.com-2'])).toBe('github.com-3')
+  })
+
+  it('always returns a name the profile store will accept', () => {
+    for (const host of ['', '...', 'exa mple.com', '-weird-', 'a'.repeat(200)]) {
+      const name = availableProfileName(host, [])
+      expect(() => assertProfileName(name)).not.toThrow()
+    }
+  })
+})
+
+const cookie = (over: Partial<Parameters<typeof cookieMatchesUrl>[0]> = {}) => ({
+  name: 'session',
+  value: 'abc',
+  domain: 'example.com',
+  path: '/',
+  expires: -1,
+  httpOnly: true,
+  secure: true,
+  sameSite: 'lax' as const,
+  ...over,
+})
+
+describe('cookieMatchesUrl', () => {
+  it('matches a domain cookie on its subdomains but not a host-only one', () => {
+    const url = new URL('https://app.example.com/')
+    expect(cookieMatchesUrl(cookie(), url)).toBe(true)
+    expect(cookieMatchesUrl(cookie({ hostOnly: true }), url)).toBe(false)
+    expect(cookieMatchesUrl(cookie({ hostOnly: true, domain: 'app.example.com' }), url)).toBe(true)
+  })
+
+  it('does not match a lookalike host that merely ends the same way', () => {
+    expect(cookieMatchesUrl(cookie(), new URL('https://notexample.com/'))).toBe(false)
+  })
+
+  it('respects the secure flag and path scope', () => {
+    expect(cookieMatchesUrl(cookie(), new URL('http://example.com/'))).toBe(false)
+    expect(cookieMatchesUrl(cookie({ secure: false }), new URL('http://example.com/'))).toBe(true)
+    const scoped = cookie({ path: '/app' })
+    expect(cookieMatchesUrl(scoped, new URL('https://example.com/app/inbox'))).toBe(true)
+    expect(cookieMatchesUrl(scoped, new URL('https://example.com/apple'))).toBe(false)
+  })
+})
+
+describe('mergeProfileData', () => {
+  const existing = {
+    cookies: [
+      cookie({ name: 'session', value: 'stale' }),
+      cookie({ name: 'dropped', value: 'gone' }),
+      cookie({ name: 'other-site', domain: 'gitlab.com' }),
+    ],
+    origins: [
+      { origin: 'https://example.com', localStorage: [{ name: 'token', value: 'stale' }] },
+      { origin: 'https://gitlab.com', localStorage: [{ name: 'token', value: 'keep' }] },
+    ],
+  }
+  const incoming = {
+    cookies: [cookie({ name: 'session', value: 'fresh' })],
+    origins: [{ origin: 'https://example.com', localStorage: [{ name: 'token', value: 'fresh' }] }],
+  }
+
+  it('replaces the refreshed site and leaves the profile\'s other sites alone', () => {
+    const merged = mergeProfileData(existing, incoming, 'https://example.com/')
+    expect(merged.cookies.map(entry => [entry.domain, entry.name, entry.value])).toEqual([
+      ['gitlab.com', 'other-site', 'abc'],
+      ['example.com', 'session', 'fresh'],
+    ])
+    expect(merged.origins).toEqual([
+      { origin: 'https://gitlab.com', localStorage: [{ name: 'token', value: 'keep' }] },
+      { origin: 'https://example.com', localStorage: [{ name: 'token', value: 'fresh' }] },
+    ])
+  })
+
+  it('rejects a scope URL it cannot reason about rather than merging blindly', () => {
+    expect(() => mergeProfileData(existing, incoming, 'not a url')).toThrow(/scope URL/)
   })
 })

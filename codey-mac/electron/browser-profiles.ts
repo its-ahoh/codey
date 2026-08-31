@@ -113,6 +113,25 @@ export function deriveProfileNameFromFile(filePath: string): string {
   }
 }
 
+/** Pick a profile name for a one-click handoff of `hostname`'s session. The
+ *  user never typed this name, so a collision must not be an error - the next
+ *  free suffix is taken instead. */
+export function availableProfileName(hostname: string, taken: readonly string[]): string {
+  const base = String(hostname || '')
+    .replace(/^www\./i, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/^[.\-]+|[.\-]+$/g, '')
+    .replace(/-+/g, '-')
+    .slice(0, 56) || 'chrome'
+  const used = new Set(taken)
+  if (!used.has(base)) return base
+  for (let suffix = 2; suffix < 1000; suffix += 1) {
+    const candidate = `${base}-${suffix}`
+    if (!used.has(candidate)) return candidate
+  }
+  throw new Error(`Too many saved profiles for ${base} - delete some in Codey Browser settings`)
+}
+
 export function profileFileName(name: string): string {
   assertProfileName(name)
   return `${name}.json`
@@ -203,6 +222,48 @@ export function readProfileJson(filePath: string): BrowserProfileData {
     return parseProfileData(JSON.parse(text))
   } catch (error) {
     throw new Error(`Invalid profile file ${filePath}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/** Does `cookie` apply to `url`? This mirrors the scope Chrome answers
+ *  `cookies.getAll({ url })` with, so a profile we already hold can be asked
+ *  which of its cookies a fresh export of that URL would have spoken for. */
+export function cookieMatchesUrl(cookie: BrowserProfileCookie, url: URL): boolean {
+  const host = url.hostname.toLowerCase()
+  const domain = cookie.domain.toLowerCase()
+  const domainMatches = cookie.hostOnly ? host === domain : host === domain || host.endsWith(`.${domain}`)
+  if (!domainMatches) return false
+  if (cookie.secure && url.protocol !== 'https:') return false
+  const cookiePath = cookie.path || '/'
+  if (cookiePath === '/') return true
+  const requestPath = url.pathname || '/'
+  if (!requestPath.startsWith(cookiePath)) return false
+  return requestPath.length === cookiePath.length
+    || cookiePath.endsWith('/')
+    || requestPath[cookiePath.length] === '/'
+}
+
+/** Fold a freshly exported session for one URL into a profile that already
+ *  exists. Only what that export can speak for is replaced - cookies in the
+ *  URL's scope, and the localStorage of the origins the export actually
+ *  carried - so a profile holding several sites keeps the others intact.
+ *  Replacing rather than layering also means a cookie the site has since
+ *  dropped disappears here instead of lingering as a stale credential. */
+export function mergeProfileData(
+  existing: BrowserProfileData,
+  incoming: BrowserProfileData,
+  scopeUrl: string,
+): BrowserProfileData {
+  let url: URL
+  try {
+    url = new URL(scopeUrl)
+  } catch {
+    throw new Error(`Invalid session scope URL: ${scopeUrl}`)
+  }
+  const refreshed = new Set(incoming.origins.map(origin => origin.origin))
+  return {
+    cookies: [...existing.cookies.filter(cookie => !cookieMatchesUrl(cookie, url)), ...incoming.cookies],
+    origins: [...existing.origins.filter(origin => !refreshed.has(origin.origin)), ...incoming.origins],
   }
 }
 

@@ -4,8 +4,10 @@ import * as os from 'os'
 import * as path from 'path'
 import { randomBytes } from 'crypto'
 import type { BrowserController, BrowserLoginStatus } from './browser-controller'
-import type { BrowserControlRequest } from './browser-control-permission'
-import type { ChromeCompanionBridge } from './chrome-companion'
+import { levelForCommand, type BrowserControlRequest } from './browser-control-permission'
+import type { ChromeCompanionBridge, ChromePageActionName } from './chrome-companion'
+
+const CHROME_PAGE_ACTIONS: readonly ChromePageActionName[] = ['click', 'fill', 'select', 'check', 'press']
 
 type BridgeController = Pick<
   BrowserController,
@@ -17,7 +19,7 @@ type BridgeController = Pick<
   | 'listProfiles' | 'activeProfileName' | 'saveProfile' | 'importProfile' | 'activateProfile' | 'deleteProfile' | 'exportProfile'
 >
 
-type CompanionController = Pick<ChromeCompanionBridge, 'status' | 'activeTab' | 'snapshot' | 'navigate'>
+type CompanionController = Pick<ChromeCompanionBridge, 'status' | 'activeTab' | 'snapshot' | 'navigate' | 'act'>
 
 export interface BrowserAgentBridgeInfo {
   socketPath: string
@@ -371,6 +373,17 @@ export class BrowserAgentBridge {
         json(res, 200, await this.companion.navigate(String(body.url || '')))
         return
       }
+      // Acting on the real Chrome page. Navigation above only moves the tab;
+      // everything here changes page state, so each one asks the user first.
+      for (const action of CHROME_PAGE_ACTIONS) {
+        if (req.method === 'POST' && route === `/chrome/${action}`) {
+          const body = await readJson(req)
+          const ref = String(body.ref || '')
+          const value = body.value === undefined ? undefined : String(body.value)
+          json(res, 200, await this.controlledChrome(action, () => this.companion!.act(action, ref, value)))
+          return
+        }
+      }
       // ── Profiles ──────────────────────────────────────────────────────
       if (req.method === 'GET' && route === '/profiles') {
         json(res, 200, { active: this.controller.activeProfileName(), profiles: this.controller.listProfiles() })
@@ -437,9 +450,32 @@ export class BrowserAgentBridge {
   }
 
   private async controlled<T>(command: string, operation: () => Promise<T> | T): Promise<T> {
-    const approved = await this.requestControl({ command, url: this.controller.getState().url })
+    const approved = await this.requestControl({
+      command,
+      url: this.controller.getState().url,
+      surface: 'browser',
+      level: levelForCommand(command),
+    })
     if (!approved) throw new BrowserControlDeniedError()
     return await this.exclusive(operation)
+  }
+
+  /**
+   * The Chrome twin of `controlled`. It asks about the real Chrome tab's URL
+   * rather than the embedded browser's, and deliberately skips `exclusive` -
+   * that lock serialises the embedded browser, and Chrome is a separate target.
+   */
+  private async controlledChrome<T>(command: string, operation: () => Promise<T>): Promise<T> {
+    if (!this.companion) throw new Error('Chrome companion is unavailable')
+    const tab = await this.companion.activeTab()
+    const approved = await this.requestControl({
+      command: `chrome ${command}`,
+      url: tab.url,
+      surface: 'chrome',
+      level: levelForCommand(command),
+    })
+    if (!approved) throw new BrowserControlDeniedError()
+    return await operation()
   }
 
   private async startLoginWait(chatId: string, requestedTimeoutMs: number): Promise<BrowserLoginWaitEvent> {

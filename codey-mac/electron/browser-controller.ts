@@ -12,6 +12,8 @@ import type { BrowserSitePermissionDetails, BrowserSitePermissionManager } from 
 import {
   assertProfileName,
   BrowserProfileStore,
+  cookieMatchesUrl,
+  mergeProfileData,
   parseProfileJsonText,
   readProfileJson,
   type BrowserProfile,
@@ -973,6 +975,48 @@ export class BrowserController {
       await this.applyProfileData(profile)
       this.profiles().setActive(name)
     }
+    return profile
+  }
+
+  /** Names of saved profiles that already hold a cookie scoped to `url` -
+   *  the profiles a handoff of that page would be refreshing rather than
+   *  creating. Unreadable profiles are simply not offered. */
+  profilesForUrl(url: string): string[] {
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      return []
+    }
+    const store = this.profiles()
+    return store.list()
+      .filter(summary => {
+        try {
+          return store.read(summary.name).cookies.some(cookie => cookieMatchesUrl(cookie, parsed))
+        } catch {
+          return false
+        }
+      })
+      .map(summary => summary.name)
+  }
+
+  /** Refresh part of a saved profile from a freshly exported session, so a
+   *  login that was renewed elsewhere stops being stale here. The profile must
+   *  already exist - this is the "my Chrome login changed" path, not a second
+   *  way to create one - and only the scope URL's cookies and the exported
+   *  origins' storage are replaced, so other sites saved in the same profile
+   *  survive. Refreshing the enabled profile re-applies it too: the live
+   *  session would otherwise keep serving the cookies it was activated with. */
+  async resyncProfile(
+    name: string,
+    source: { json: string },
+    scopeUrl: string,
+  ): Promise<BrowserProfile> {
+    assertProfileName(name)
+    const existing = this.profiles().read(name)
+    const merged = mergeProfileData(existing, parseProfileJsonText(source.json), scopeUrl)
+    const profile = this.profiles().write(name, merged, existing.sourceUrl ?? scopeUrl)
+    if (this.profiles().active() === name) await this.applyProfileData(profile)
     return profile
   }
 

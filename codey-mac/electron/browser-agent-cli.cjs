@@ -69,7 +69,19 @@ function usage() {
     '  chrome tab                 Read the active real-Chrome tab',
     '  chrome view                Read the active real-Chrome page',
     '  chrome open <url>          Navigate the active real-Chrome tab',
+    '  chrome click <ref>         Click an element in the active real-Chrome tab',
+    '  chrome fill <ref> <text>   Type into a real-Chrome field',
+    '  chrome select <ref> <value>  Pick a real-Chrome dropdown option',
+    '  chrome check <ref> [false] Tick or untick a real-Chrome checkbox',
+    '  chrome press <key> <ref>   Send a key to a real-Chrome element',
   ].join('\n')
+}
+
+function chromeRef(ref) {
+  if (!/^e\d+$/.test(String(ref || ''))) {
+    throw new Error(`Chrome needs an element ref like e3 (got ${ref || 'nothing'}). Run "chrome view" first.`)
+  }
+  return String(ref)
 }
 
 function authHeaders() {
@@ -279,6 +291,19 @@ async function main() {
         const url = rest.slice(1).join(' ').trim()
         if (!url) throw new Error(`Missing Chrome URL\n${usage()}`)
         value = await request('POST', '/chrome/open', { url })
+      } else if (sub === 'click') {
+        value = await request('POST', '/chrome/click', { ref: chromeRef(rest[1]) })
+      } else if (sub === 'fill') {
+        value = await request('POST', '/chrome/fill', { ref: chromeRef(rest[1]), value: rest.slice(2).join(' ') })
+      } else if (sub === 'select') {
+        value = await request('POST', '/chrome/select', { ref: chromeRef(rest[1]), value: rest.slice(2).join(' ') })
+      } else if (sub === 'check') {
+        value = await request('POST', '/chrome/check', { ref: chromeRef(rest[1]), value: rest[2] === 'false' ? 'false' : 'true' })
+      } else if (sub === 'press') {
+        // `press <key> <ref>` mirrors the embedded browser's argument order.
+        const key = rest[1]
+        if (!key) throw new Error(`Missing key to press\n${usage()}`)
+        value = await request('POST', '/chrome/press', { ref: chromeRef(rest[2]), value: key })
       } else {
         throw new Error(`Unknown Chrome command: ${sub || ''}\n${usage()}`)
       }

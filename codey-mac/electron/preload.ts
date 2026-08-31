@@ -470,6 +470,7 @@ contextBridge.exposeInMainWorld('codey', {
     activeTab: () => ipcRenderer.invoke('chromeCompanion:activeTab'),
     snapshot: () => ipcRenderer.invoke('chromeCompanion:snapshot'),
     exportSession: (name: string) => ipcRenderer.invoke('chromeCompanion:exportSession', name),
+    resyncSession: (name: string) => ipcRenderer.invoke('chromeCompanion:resyncSession', name),
     navigate: (url: string) => ipcRenderer.invoke('chromeCompanion:navigate', url),
     setAccent: (hex: string) => ipcRenderer.invoke('chromeCompanion:setAccent', hex),
     showExtensionFolder: () => ipcRenderer.invoke('chromeCompanion:showExtensionFolder'),
@@ -521,9 +522,9 @@ contextBridge.exposeInMainWorld('codey', {
     },
     controlPermission: {
       get: () => ipcRenderer.invoke('browser:controlPermission:get'),
-      approve: () => ipcRenderer.invoke('browser:controlPermission:approve'),
+      approve: (level?: 'write' | 'full') => ipcRenderer.invoke('browser:controlPermission:approve', level ?? 'write'),
       deny: () => ipcRenderer.invoke('browser:controlPermission:deny'),
-      revoke: () => ipcRenderer.invoke('browser:controlPermission:revoke'),
+      revoke: (surface?: 'browser' | 'chrome') => ipcRenderer.invoke('browser:controlPermission:revoke', surface),
     },
     sitePermission: {
       get: () => ipcRenderer.invoke('browser:sitePermission:get'),
