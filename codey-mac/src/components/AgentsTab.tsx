@@ -171,20 +171,6 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
 
       <Section first title="Installed agents" description="CLI availability, thinking effort, and environment for each coding agent." right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button
-            onClick={() => { void refreshInstalledAgents(true); void refreshAgentUpdates(true) }}
-            style={iconButtonStyle({ disabled: checkingInstalls })}
-            disabled={checkingInstalls}
-            aria-label="Recheck agents"
-            title="Re-check what is installed, and whether a newer version has been published"
-          >
-            <span style={{
-              display: 'grid',
-              animation: checkingInstalls ? 'codey-agent-update-spin 1s linear infinite' : undefined,
-            }}>
-              <UIIcon name="refresh" size={14} />
-            </span>
-          </button>
           {/* Same download icon as the per-agent button, because it does the
               same thing — just to every agent that is offering an update. */}
           <button
@@ -205,6 +191,20 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
           >
             <span style={{ display: 'grid' }} className={updatingAll ? 'codey-updating' : undefined}>
               <UIIcon name="download-all" size={14} />
+            </span>
+          </button>
+          <button
+            onClick={() => { void refreshInstalledAgents(true); void refreshAgentUpdates(true) }}
+            style={iconButtonStyle({ disabled: checkingInstalls })}
+            disabled={checkingInstalls}
+            aria-label="Recheck agents"
+            title="Re-check what is installed, and whether a newer version has been published"
+          >
+            <span style={{
+              display: 'grid',
+              animation: checkingInstalls ? 'codey-agent-update-spin 1s linear infinite' : undefined,
+            }}>
+              <UIIcon name="refresh" size={14} />
             </span>
           </button>
         </div>
