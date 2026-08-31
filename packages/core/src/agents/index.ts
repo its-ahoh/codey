@@ -31,19 +31,21 @@ export * from './chrome-companion-skill';
  */
 export function addCodeyBrowserTools(
   request: AgentRequest,
-  skillActive: boolean,
+  browserSkillActive: boolean,
   env: NodeJS.ProcessEnv = process.env,
-  chromeCompanionActive = false,
+  chromeSkillActive = false,
 ): AgentRequest {
   const socket = env.CODEY_BROWSER_SOCKET;
-  const token = env.CODEY_BROWSER_TOKEN;
+  const browserToken = env.CODEY_BROWSER_TOKEN;
   const chromeToken = env.CODEY_CHROME_COMPANION_TOKEN;
   const runtime = env.CODEY_BROWSER_RUNTIME;
   const cli = env.CODEY_BROWSER_CLI;
-  // Browser selection is a capability boundary, not a prompt hint. Supplying
-  // only the chosen token makes it impossible for the other browser to win.
-  const browserReady = request.browserTarget === 'codey-browser' && skillActive && !!token;
-  const chromeReady = request.browserTarget === 'chrome' && chromeCompanionActive && !!chromeToken;
+  // Every installed browser skill is offered on every tool-capable turn, and
+  // the skills' own precedence rules decide which one a request means. The
+  // gate here is installation, not the surface the turn came from. A skill is
+  // useless without its bridge credential, so both must be present.
+  const browserReady = browserSkillActive && !!browserToken;
+  const chromeReady = chromeSkillActive && !!chromeToken;
   if ((!browserReady && !chromeReady) || !socket || !runtime || !cli) return request;
   if (request.browserTools !== true || !request.context?.workingDir || request.allowedTools) {
     return request;
@@ -54,7 +56,7 @@ export function addCodeyBrowserTools(
     extraEnv: {
       ...(request.extraEnv ?? {}),
       CODEY_BROWSER_SOCKET: socket,
-      ...(browserReady ? { CODEY_BROWSER_TOKEN: token } : {}),
+      ...(browserReady ? { CODEY_BROWSER_TOKEN: browserToken } : {}),
       ...(chromeReady ? { CODEY_CHROME_COMPANION_TOKEN: chromeToken } : {}),
       CODEY_BROWSER_CLI: cli,
       CODEY_BROWSER_RUNTIME: runtime,
@@ -159,15 +161,15 @@ export class AgentFactory {
     // Plugins tab, disabling from the Skills tab and deleting the directory by
     // hand are the same fact, and the agent must see whichever the user did
     // last without a restart.
-    let browserActive = false;
-    let chromeCompanionActive = false;
+    let browserSkillActive = false;
+    let chromeSkillActive = false;
     try {
-      browserActive = isBrowserSkillActive();
-      chromeCompanionActive = isChromeCompanionSkillActive();
+      browserSkillActive = isBrowserSkillActive();
+      chromeSkillActive = isChromeCompanionSkillActive();
     } catch {
       // Unreadable home: no skill, so no capability.
     }
-    request = addCodeyBrowserTools(request, browserActive, process.env, chromeCompanionActive);
+    request = addCodeyBrowserTools(request, browserSkillActive, process.env, chromeSkillActive);
     request = addExternalMcpServers(request, this.externalMcpProvider?.());
 
     // `~/.codey/skills` and `<project>/.codey/skills` are Codey's global and

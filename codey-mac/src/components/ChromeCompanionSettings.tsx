@@ -23,6 +23,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
   const [error, setError] = useState<string | null>(null)
   const [profileName, setProfileName] = useState('chrome-session')
   const [exported, setExported] = useState<string | null>(null)
+  const [copiedPath, setCopiedPath] = useState<string | null>(null)
 
   const useResult = <T,>(result: { ok: true; data: T } | { ok: false; error: string }): T | null => {
     if (!result.ok) { setError(result.error); return null }
@@ -66,17 +67,24 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
       {shouldShowChromeInstallInstructions(status) && (
         <div style={styles.card}>
           <div style={styles.title}>Install the Chrome extension</div>
-          <div style={styles.copy}>Installation is one-time. After loading the extension, clicking the Codey avatar in Chrome opens its chat Side Panel; connection happens automatically in the background.</div>
+          <div style={styles.copy}>Installation is one-time, and there is nothing to configure afterwards — the extension finds Codey and pairs itself within about 30 seconds, as long as Codey stays running. Clicking the Codey avatar in Chrome then opens its chat Side Panel.</div>
           <ol style={styles.steps}>
-            <li>Open <code style={styles.code}>chrome://extensions</code> in Google Chrome.</li>
+            <li>Open Chrome’s <code style={styles.code}>chrome://extensions</code> page with the button below. (Chrome blocks links to its own pages, so it has to be opened this way.)</li>
             <li>Turn on <strong>Developer mode</strong>, then click <strong>Load unpacked</strong>.</li>
-            <li>Select the <code style={styles.code}>chrome-extension</code> folder shown by the button below.</li>
+            <li>Click the second button below: it reveals the folder in Finder and copies its path. In Chrome’s picker, press <strong>⌘⇧G</strong>, paste, and press Return — or just drag the revealed folder onto the extensions page.</li>
           </ol>
           <div style={{ ...styles.actions, ...(compact ? styles.stack : null) }}>
             <button style={styles.primary} disabled={busy} onClick={() => void run(async () => {
-              useResult(await window.codey.chromeCompanion.showExtensionFolder())
-            })}>Show chrome-extension folder</button>
+              useResult(await window.codey.chromeCompanion.openExtensionsPage())
+            })}>Open chrome://extensions</button>
+            <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
+              const path = useResult(await window.codey.chromeCompanion.showExtensionFolder())
+              if (path) setCopiedPath(path)
+            })}>Reveal folder &amp; copy path</button>
           </div>
+          {copiedPath && (
+            <div style={styles.success}>Path copied. Paste it into Chrome’s picker with ⌘⇧G: <code style={styles.code}>{copiedPath}</code></div>
+          )}
         </div>
       )}
 

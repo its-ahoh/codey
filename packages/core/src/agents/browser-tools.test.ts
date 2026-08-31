@@ -6,7 +6,6 @@ const base = (): AgentRequest => ({
   prompt: 'do the thing',
   context: { workingDir: '/tmp/work' },
   browserTools: true,
-  browserTarget: 'codey-browser',
 } as AgentRequest);
 
 const env = {
@@ -51,43 +50,35 @@ describe('addCodeyBrowserTools', () => {
   });
 
   it('can expose only the independent Chrome Companion capability', () => {
-    const request = addCodeyBrowserTools({ ...base(), browserTarget: 'chrome' }, false, env, true);
+    const request = addCodeyBrowserTools(base(), false, env, true);
     expect(request.extraEnv).toMatchObject({
       CODEY_CHROME_COMPANION_PLUGIN_ENABLED: '1',
       CODEY_CHROME_COMPANION_TOKEN: env.CODEY_CHROME_COMPANION_TOKEN,
       CODEY_BROWSER_SOCKET: env.CODEY_BROWSER_SOCKET,
     });
     expect(request.extraEnv).not.toHaveProperty('CODEY_BROWSER_PLUGIN_ENABLED');
-  });
-
-  it('exposes only Chrome Companion for turns originating in the Chrome side panel', () => {
-    const request = addCodeyBrowserTools(
-      { ...base(), browserTarget: 'chrome' },
-      true,
-      env,
-      true,
-    );
-    expect(request.extraEnv).toMatchObject({
-      CODEY_CHROME_COMPANION_PLUGIN_ENABLED: '1',
-      CODEY_CHROME_COMPANION_TOKEN: env.CODEY_CHROME_COMPANION_TOKEN,
-    });
-    expect(request.extraEnv).not.toHaveProperty('CODEY_BROWSER_PLUGIN_ENABLED');
     expect(request.extraEnv).not.toHaveProperty('CODEY_BROWSER_TOKEN');
   });
 
-  it('exposes neither browser when the turn target is none', () => {
-    const request = addCodeyBrowserTools(
-      { ...base(), browserTarget: 'none' },
-      true,
-      env,
-      true,
-    );
-    expect(request.extraEnv).toBeUndefined();
+  it('offers both browsers when both plugins are enabled, whatever the surface', () => {
+    const request = addCodeyBrowserTools(base(), true, env, true);
+    expect(request.extraEnv).toMatchObject({
+      CODEY_BROWSER_PLUGIN_ENABLED: '1',
+      CODEY_BROWSER_TOKEN: env.CODEY_BROWSER_TOKEN,
+      CODEY_CHROME_COMPANION_PLUGIN_ENABLED: '1',
+      CODEY_CHROME_COMPANION_TOKEN: env.CODEY_CHROME_COMPANION_TOKEN,
+    });
   });
 
-  it('does not infer a browser target when none was supplied', () => {
-    const { browserTarget: _target, ...request } = base();
-    expect(addCodeyBrowserTools(request as AgentRequest, true, env, true).extraEnv).toBeUndefined();
+  it('exposes neither browser when neither plugin is enabled', () => {
+    expect(addCodeyBrowserTools(base(), false, env, false).extraEnv).toBeUndefined();
+  });
+
+  it('omits the Chrome token when its credential is missing from env', () => {
+    const { CODEY_CHROME_COMPANION_TOKEN: _omitted, ...partial } = env as Record<string, string>;
+    const request = addCodeyBrowserTools(base(), true, partial as NodeJS.ProcessEnv, true);
+    expect(request.extraEnv).toMatchObject({ CODEY_BROWSER_PLUGIN_ENABLED: '1' });
+    expect(request.extraEnv).not.toHaveProperty('CODEY_CHROME_COMPANION_TOKEN');
   });
 
   it('does nothing when the bridge env is missing', () => {
