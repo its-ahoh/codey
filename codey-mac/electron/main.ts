@@ -17,7 +17,7 @@ import { runAgentUpdate, updatePlanFor } from './agent-update'
 import { availability, createLatestVersionsCache, fetchAllLatestVersions } from './agent-latest'
 import { SKILL_FILE, markSkillManagedBy, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
-import { stageChromeExtension } from './chrome-extension-stage'
+import { CHOSEN_FOLDER_NAME, installedExtensionDir, refreshRememberedInstall, rememberInstallDir, stageChromeExtension } from './chrome-extension-stage'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import { scanAgentMcpServers, type AgentMcpServer, type McpAgentKey } from './agent-mcp-scan'
 import { deriveDeliveryState, shouldRediscoverPr } from './delivery-status'
@@ -2451,12 +2451,29 @@ app.whenReady().then(async () => {
     return { ok: true as const }
   }))
   ipcMain.handle('chromeCompanion:showExtensionFolder', event => browserCall(event, async () => {
-    const staged = stageChromeExtension(chromeCompanionExtensionPath(), app.getPath('userData'))
+    const staged = installedExtensionDir(chromeCompanionExtensionPath(), app.getPath('userData'))
     shell.showItemInFolder(join(staged, 'manifest.json'))
     // Chrome's picker has no address bar; the path on the clipboard is what
     // makes Cmd+Shift+G a one-paste step.
     clipboard.writeText(staged)
     return staged
+  }))
+  // Installing where the user chose beats installing where Codey chose: they
+  // can find the folder again, and Chrome's picker opens there by habit.
+  ipcMain.handle('chromeCompanion:installExtensionTo', event => browserCall(event, async () => {
+    const picked = await dialog.showOpenDialog(mainWindow ?? (undefined as any), {
+      title: 'Choose where to install the Codey Chrome extension',
+      message: 'Codey creates a "codey-chrome-extension" folder here.',
+      buttonLabel: 'Install here',
+      defaultPath: app.getPath('documents'),
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (picked.canceled || !picked.filePaths[0]) return { installed: false as const }
+    const dir = stageChromeExtension(chromeCompanionExtensionPath(), picked.filePaths[0], CHOSEN_FOLDER_NAME)
+    rememberInstallDir(app.getPath('userData'), dir)
+    shell.showItemInFolder(join(dir, 'manifest.json'))
+    clipboard.writeText(dir)
+    return { installed: true as const, dir }
   }))
   ipcMain.handle('browser:controlPermission:get', event => browserCall(event, () =>
     browserControlPermission?.getState() ?? { approved: false, pending: null }
@@ -2519,6 +2536,10 @@ app.whenReady().then(async () => {
     sendToRenderer('gateway-log', `[browser] agent bridge failed to start: ${error?.message ?? error}`)
     browserAgentBridge = null
   }
+  // Chrome keeps loading an unpacked extension from the path it was given, so
+  // a copy the user installed themselves has to be refreshed here or it stays
+  // on the version that shipped the day they installed it.
+  refreshRememberedInstall(chromeCompanionExtensionPath(), app.getPath('userData'))
   ipcMain.handle('capture:pickFiles', async () =>
     wrap(async () => {
       capturePickingFiles = true

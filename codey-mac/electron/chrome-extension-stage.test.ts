@@ -2,7 +2,14 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { stageChromeExtension, stagedVersion } from './chrome-extension-stage'
+import {
+  installedExtensionDir,
+  refreshRememberedInstall,
+  rememberedInstallDir,
+  rememberInstallDir,
+  stageChromeExtension,
+  stagedVersion,
+} from './chrome-extension-stage'
 
 const temps: string[] = []
 
@@ -86,5 +93,67 @@ describe('stagedVersion', () => {
     expect(stagedVersion(dir)).toBe(null)
     fs.writeFileSync(path.join(dir, 'manifest.json'), '{ not json')
     expect(stagedVersion(dir)).toBe(null)
+  })
+})
+
+describe('a user-chosen install location', () => {
+  it('is remembered and read back', () => {
+    const userData = temp()
+    expect(rememberedInstallDir(userData)).toBe(null)
+    rememberInstallDir(userData, '/Users/x/Documents/codey-chrome-extension')
+    expect(rememberedInstallDir(userData)).toBe('/Users/x/Documents/codey-chrome-extension')
+  })
+
+  it('installs under the folder name the user will recognise', () => {
+    const target = stageChromeExtension(bundledExtension('1.0.0'), temp(), 'codey-chrome-extension')
+    expect(path.basename(target)).toBe('codey-chrome-extension')
+    expect(fs.existsSync(path.join(target, 'manifest.json'))).toBe(true)
+  })
+
+  it('is refreshed on launch when Codey ships a newer extension', () => {
+    const userData = temp()
+    const chosen = stageChromeExtension(bundledExtension('1.0.0'), temp(), 'codey-chrome-extension')
+    rememberInstallDir(userData, chosen)
+    expect(refreshRememberedInstall(bundledExtension('1.1.0'), userData)).toBe(chosen)
+    expect(stagedVersion(chosen)).toBe('1.1.0')
+  })
+
+  it('is left untouched when it already matches', () => {
+    const userData = temp()
+    const source = bundledExtension('1.0.0')
+    const chosen = stageChromeExtension(source, temp(), 'codey-chrome-extension')
+    rememberInstallDir(userData, chosen)
+    const before = fs.statSync(path.join(chosen, 'manifest.json')).mtimeMs
+    refreshRememberedInstall(source, userData)
+    expect(fs.statSync(path.join(chosen, 'manifest.json')).mtimeMs).toBe(before)
+  })
+
+  it('does nothing when nothing was ever chosen', () => {
+    expect(refreshRememberedInstall(bundledExtension('1.0.0'), temp())).toBe(null)
+  })
+
+  it('does not recreate a tree under a parent that is gone', () => {
+    const userData = temp()
+    const parent = temp()
+    const chosen = stageChromeExtension(bundledExtension('1.0.0'), parent, 'codey-chrome-extension')
+    rememberInstallDir(userData, chosen)
+    fs.rmSync(parent, { force: true, recursive: true })
+    expect(refreshRememberedInstall(bundledExtension('1.1.0'), userData)).toBe(null)
+    expect(fs.existsSync(parent)).toBe(false)
+  })
+
+  it('is the folder Chrome should be pointed at once chosen', () => {
+    const userData = temp()
+    const chosen = stageChromeExtension(bundledExtension('1.0.0'), temp(), 'codey-chrome-extension')
+    rememberInstallDir(userData, chosen)
+    expect(installedExtensionDir(bundledExtension('1.0.0'), userData)).toBe(chosen)
+  })
+
+  it('falls back to the default staging copy when the chosen one is gone', () => {
+    const userData = temp()
+    rememberInstallDir(userData, path.join(temp(), 'deleted-by-the-user'))
+    const dir = installedExtensionDir(bundledExtension('1.0.0'), userData)
+    expect(dir).toBe(path.join(userData, 'chrome-extension'))
+    expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true)
   })
 })
