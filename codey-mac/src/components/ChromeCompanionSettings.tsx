@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import type { ChromeCompanionStatus } from '../codey-api'
+import type { ChromeCompanionStatus, ChromeSessionSite } from '../codey-api'
 import { C } from '../theme'
 
 const EMPTY: ChromeCompanionStatus = {
@@ -28,6 +28,11 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
   const [exported, setExported] = useState<string | null>(null)
   const [resynced, setResynced] = useState<string | null>(null)
   const [installedPath, setInstalledPath] = useState<string | null>(null)
+  const [sites, setSites] = useState<ChromeSessionSite[] | null>(null)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [siteFilter, setSiteFilter] = useState('')
+  const [bulkName, setBulkName] = useState('chrome-logins')
+  const [bulkResult, setBulkResult] = useState<{ name: string; cookieCount: number; siteCount: number } | null>(null)
 
   const useResult = <T,>(result: { ok: true; data: T } | { ok: false; error: string }): T | null => {
     if (!result.ok) { setError(result.error); return null }
@@ -161,6 +166,98 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
         </div>
       )}
 
+      {/* Copying one site at a time is fine for one login and tedious for a
+          working set. The alternative is not "copy everything" - that would put
+          banking and mail into a file on disk to save a few clicks - so the
+          sites are listed and the user ticks what Codey may have. */}
+      {status.connected && (
+        <div style={styles.card}>
+          <div>
+            <div style={styles.title}>Pick which Chrome logins to copy</div>
+            <div style={styles.copy}>List every site this Chrome profile is signed in to, then choose the ones the Codey Browser may use.</div>
+          </div>
+          {!sites && (
+            <div style={styles.actions}>
+              <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
+                const next = useResult(await window.codey.chromeCompanion.listSessionSites())
+                if (next) {
+                  setSites(next.sites)
+                  setPicked(new Set())
+                  setBulkResult(null)
+                }
+              })}>List Chrome’s signed-in sites</button>
+              <span style={styles.copy}>Nothing is copied until you pick sites and confirm.</span>
+            </div>
+          )}
+          {sites && (
+            <>
+              <div style={styles.impact}>
+                <strong>Cookies are copied for every site you tick.</strong>
+                <span>Site storage (localStorage) can only be read from a page that is open in Chrome right now, so a site with no open tab is copied by its cookies alone — enough for most logins, but not all. Nothing in Chrome is changed.</span>
+              </div>
+              <input
+                style={styles.input}
+                value={siteFilter}
+                onChange={event => setSiteFilter(event.target.value)}
+                placeholder="Filter sites"
+                aria-label="Filter Chrome sites"
+                spellCheck={false}
+              />
+              <div style={styles.siteList}>
+                {sites.length === 0 && <div style={styles.copy}>Chrome has no cookies to copy.</div>}
+                {sites
+                  .filter(entry => entry.site.includes(siteFilter.trim().toLowerCase()))
+                  .map(entry => (
+                    <label key={entry.site} style={styles.siteRow}>
+                      <input
+                        type="checkbox"
+                        checked={picked.has(entry.site)}
+                        onChange={event => setPicked(current => {
+                          const next = new Set(current)
+                          if (event.target.checked) next.add(entry.site)
+                          else next.delete(entry.site)
+                          return next
+                        })}
+                      />
+                      <span style={styles.siteName}>{entry.site}</span>
+                      <span style={styles.siteMeta}>
+                        {entry.cookieCount} cookie{entry.cookieCount === 1 ? '' : 's'}
+                        {entry.openTabs > 0 ? ' · open' : ''}
+                      </span>
+                    </label>
+                  ))}
+              </div>
+              <div style={{ ...styles.navigate, ...(compact ? styles.stack : null) }}>
+                <label style={styles.inputLabel}>
+                  New profile name
+                  <input
+                    style={styles.input}
+                    value={bulkName}
+                    onChange={event => { setBulkName(event.target.value); setBulkResult(null) }}
+                    placeholder="chrome-logins"
+                    aria-label="New Codey Browser profile name for the picked sites"
+                    spellCheck={false}
+                  />
+                </label>
+                <button style={styles.primary} disabled={busy || picked.size === 0 || !bulkName.trim()} onClick={() => void run(async () => {
+                  const next = useResult(await window.codey.chromeCompanion.importSites(bulkName.trim(), [...picked]))
+                  if (next?.imported && next.profile) {
+                    setBulkResult({ name: next.profile.name, cookieCount: next.cookieCount, siteCount: next.sites.length })
+                    setSites(null)
+                    setPicked(new Set())
+                  }
+                })}>Copy {picked.size || ''} site{picked.size === 1 ? '' : 's'} into a profile</button>
+              </div>
+            </>
+          )}
+          {bulkResult && (
+            <div style={styles.success}>
+              “{bulkResult.name}” is now the active Codey Browser profile, carrying {bulkResult.cookieCount} cookies from {bulkResult.siteCount} site{bulkResult.siteCount === 1 ? '' : 's'}. Chrome was not changed.
+            </div>
+          )}
+        </div>
+      )}
+
     </div>
   )
 }
@@ -183,6 +280,10 @@ const styles: Record<string, React.CSSProperties> = {
   noticeRow: { display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 8, background: C.surface, border: `1px solid ${C.border}` },
   noticeCopy: { flex: 1, minWidth: 0, color: C.fg3, fontSize: 10.5 },
   navigate: { display: 'flex', alignItems: 'flex-end', gap: 8 },
+  siteList: { display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 220, overflowY: 'auto', padding: 4, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2 },
+  siteRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', borderRadius: 6, color: C.fg2, fontSize: 11, cursor: 'pointer' },
+  siteName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  siteMeta: { flexShrink: 0, color: C.fg3, fontSize: 10 },
   inputLabel: { display: 'flex', flex: 1, minWidth: 0, flexDirection: 'column', gap: 4, color: C.fg2, fontSize: 10 },
   input: { flexShrink: 0, width: '100%', minWidth: 0, height: 38, boxSizing: 'border-box', padding: '0 12px', borderRadius: 8, border: `1px solid ${C.border2}`, background: C.surface2, color: C.fg, outline: 'none', fontSize: 12.5 },
 }

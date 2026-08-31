@@ -79,6 +79,24 @@ export interface ChromeUrlSessionExport {
   origins: ChromeSessionExport['origins']
 }
 
+/** One site this Chrome profile holds cookies for, as offered to the user to
+ *  pick from. `openTabs` is how many tabs are on it right now, which decides
+ *  whether its localStorage can come along at all. */
+export interface ChromeSessionSite {
+  site: string
+  cookieCount: number
+  openTabs: number
+}
+
+/** A session exported for the sites the user ticked, rather than for the tab
+ *  in front. `origins` is best-effort: localStorage can only be read from a
+ *  page that is open, so a site with no tab contributes cookies only. */
+export interface ChromeSitesSessionExport {
+  sites: string[]
+  cookies: ChromeSessionExport['cookies']
+  origins: ChromeSessionExport['origins']
+}
+
 export interface ChromeCompanionChatRequest {
   chatId?: string | null
   text: string
@@ -344,6 +362,16 @@ export class ChromeCompanionBridge {
   /** The session Chrome holds for `url`, whether or not a tab is open on it. */
   async exportSessionForUrl(url: string): Promise<ChromeUrlSessionExport> {
     return await this.command<ChromeUrlSessionExport>('exportSessionForUrl', { url })
+  }
+
+  /** Every site this Chrome profile has cookies for, most first. */
+  async listSessionSites(): Promise<{ sites: ChromeSessionSite[] }> {
+    return await this.command<{ sites: ChromeSessionSite[] }>('listSessionSites', {})
+  }
+
+  /** The session Chrome holds for exactly the sites named, nothing else. */
+  async exportSessionForSites(sites: string[]): Promise<ChromeSitesSessionExport> {
+    return await this.command<ChromeSitesSessionExport>('exportSessionForSites', { sites })
   }
 
   /**

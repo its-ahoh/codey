@@ -1,3 +1,6 @@
+// `siteOfHost`: kept in its own file so it can be tested without Chrome.
+importScripts('site-grouping.js')
+
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:49321'
 const ENDPOINT_COUNT = 10
 const EXTENSION_ID = 'nkfblackdfiplaekehijkgimhmlhlfib'
@@ -467,6 +470,79 @@ async function exportSessionForUrl(rawUrl) {
   }
 }
 
+/**
+ * Every site this Chrome profile holds a login-shaped cookie for, so Codey can
+ * show the user a list to pick from instead of copying the whole cookie jar.
+ * Counts come from the cookie store, and `openTabs` says whether localStorage
+ * would come along - it can only be read from a page that is actually open.
+ */
+async function listSessionSites() {
+  const cookies = await chrome.cookies.getAll({})
+  const sites = new Map()
+  for (const cookie of cookies) {
+    const site = siteOfHost(cookie.domain)
+    if (!site) continue
+    const entry = sites.get(site) || { site, cookieCount: 0, openTabs: 0 }
+    entry.cookieCount += 1
+    sites.set(site, entry)
+  }
+  const tabs = await chrome.tabs.query({})
+  for (const tab of tabs) {
+    if (!/^https?:\/\//i.test(tab.url || '')) continue
+    try {
+      const entry = sites.get(siteOfHost(new URL(tab.url).hostname))
+      if (entry) entry.openTabs += 1
+    } catch { /* a URL Chrome accepted but we cannot parse is not a site */ }
+  }
+  // Most cookies first: that is roughly "most signed in", and it puts the
+  // sites a user actually recognises at the top of a long list.
+  return { sites: [...sites.values()].sort((a, b) => b.cookieCount - a.cookieCount || a.site.localeCompare(b.site)) }
+}
+
+/**
+ * Export only the sites the user ticked. Cookies come from the cookie store, so
+ * nothing has to be open; localStorage is read from whatever tabs happen to be
+ * on those sites and skipped otherwise, because reading it means running in the
+ * page and opening tabs behind the user's back is the worse trade.
+ */
+async function exportSessionForSites(requested) {
+  const wanted = new Set((Array.isArray(requested) ? requested : [])
+    .map(site => siteOfHost(site))
+    .filter(Boolean))
+  if (wanted.size === 0) throw new Error('Pick at least one site to copy')
+  const cookies = (await chrome.cookies.getAll({}))
+    .filter(cookie => wanted.has(siteOfHost(cookie.domain)))
+  if (cookies.length === 0) throw new Error('Chrome has no cookies for the sites you picked')
+  const origins = []
+  const seen = new Set()
+  for (const tab of await chrome.tabs.query({})) {
+    if (typeof tab.id !== 'number' || !/^https?:\/\//i.test(tab.url || '')) continue
+    let origin
+    try {
+      const parsed = new URL(tab.url)
+      if (!wanted.has(siteOfHost(parsed.hostname)) || seen.has(parsed.origin)) continue
+      origin = parsed.origin
+    } catch {
+      continue
+    }
+    seen.add(origin)
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => Array.from({ length: localStorage.length }, (_, index) => {
+          const name = localStorage.key(index)
+          return name === null ? null : { name, value: localStorage.getItem(name) || '' }
+        }).filter(Boolean),
+      })
+      const items = results[0]?.result
+      if (items && items.length > 0) origins.push({ origin, localStorage: items })
+    } catch {
+      // A tab that refuses injection costs us its storage, not its cookies.
+    }
+  }
+  return { sites: [...wanted], cookies: cookies.map(toExportedCookie), origins }
+}
+
 // ── Acting on a page ────────────────────────────────────────────────────
 // Every action resolves a ref stamped by the last `snapshot`, runs inside the
 // page, and reports back what it touched so the caller never has to assume an
@@ -564,9 +640,13 @@ async function execute(command) {
       await markControlledTab(session.tab.id)
       return session
     }
-    // No tab is touched, so there is nothing to mark as controlled.
+    // None of these act on a page, so no tab is marked as controlled.
     case 'exportSessionForUrl':
       return await exportSessionForUrl(command.input?.url)
+    case 'listSessionSites':
+      return await listSessionSites()
+    case 'exportSessionForSites':
+      return await exportSessionForSites(command.input?.sites)
     case 'click':
     case 'fill':
     case 'select':

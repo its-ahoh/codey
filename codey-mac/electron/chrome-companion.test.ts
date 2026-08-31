@@ -199,6 +199,39 @@ describe('ChromeCompanionBridge', () => {
     await expect(exported).resolves.toEqual(session)
   })
 
+  it('lists Chrome\'s signed-in sites and exports only the ones picked', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    const poll = () => fetch(`${endpoint}/v1/poll`, { method: 'POST', headers, body: '{}' })
+      .then(response => response.json() as Promise<{ command: { id: string; command: string; input: unknown } }>)
+    const answer = (id: string, data: unknown) => fetch(`${endpoint}/v1/result`, {
+      method: 'POST', headers, body: JSON.stringify({ id, ok: true, data }),
+    })
+
+    const listing = bridge.listSessionSites()
+    const listWork = await poll()
+    expect(listWork.command.command).toBe('listSessionSites')
+    const sites = { sites: [{ site: 'github.com', cookieCount: 12, openTabs: 1 }] }
+    await answer(listWork.command.id, sites)
+    await expect(listing).resolves.toEqual(sites)
+
+    const exported = bridge.exportSessionForSites(['github.com'])
+    const exportWork = await poll()
+    expect(exportWork.command.command).toBe('exportSessionForSites')
+    expect(exportWork.command.input).toEqual({ sites: ['github.com'] })
+    const session = {
+      sites: ['github.com'],
+      cookies: [{
+        name: 'session', value: 'secret', domain: 'github.com', path: '/', expires: -1,
+        httpOnly: true, secure: true, sameSite: 'lax' as const,
+      }],
+      origins: [],
+    }
+    await answer(exportWork.command.id, session)
+    await expect(exported).resolves.toEqual(session)
+  })
+
   it('notices Chrome is running an older extension than the one on disk', async () => {
     const { bridge, endpoint } = await setup()
     const token = await connect(endpoint)
