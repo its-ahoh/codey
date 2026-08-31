@@ -7,6 +7,7 @@ import {
   assertProfileName,
   BrowserProfileStore,
   availableProfileName,
+  conflictingCookie,
   cookieMatchesUrl,
   mergeProfileData,
   deriveProfileNameFromFile,
@@ -155,16 +156,48 @@ describe('BrowserProfileStore', () => {
     }
   })
 
-  it('tracks the active profile in a dot-file', () => {
+  it('tracks the enabled profiles in a dot-file, one per line', () => {
     const { dir, store } = makeStore()
     try {
+      expect(store.activeNames()).toEqual([])
       expect(store.active()).toBeNull()
       store.setActive('work')
+      expect(store.activeNames()).toEqual(['work'])
       expect(store.active()).toBe('work')
-      expect(fs.readFileSync(path.join(dir, ACTIVE_PROFILE_FILE), 'utf8')).toBe('work')
+      expect(fs.readFileSync(path.join(dir, ACTIVE_PROFILE_FILE), 'utf8')).toBe('work\n')
+
+      // Several at once, in the order they were enabled.
+      store.setActive(['work', 'personal'])
+      expect(store.activeNames()).toEqual(['work', 'personal'])
+      expect(store.active()).toBe('work')
+
       store.setActive(null)
-      expect(store.active()).toBeNull()
+      expect(store.activeNames()).toEqual([])
       expect(fs.existsSync(path.join(dir, ACTIVE_PROFILE_FILE))).toBe(false)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads a pre-upgrade single-name file as one enabled profile', () => {
+    const { dir, store } = makeStore()
+    try {
+      // The old format had no trailing newline; an install must not come back
+      // signed out just because the file grew a list.
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, ACTIVE_PROFILE_FILE), 'work')
+      expect(store.activeNames()).toEqual(['work'])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores blank, duplicate and unusable names in the dot-file', () => {
+    const { dir, store } = makeStore()
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, ACTIVE_PROFILE_FILE), 'work\n\nwork\n../escape\npersonal\n')
+      expect(store.activeNames()).toEqual(['work', 'personal'])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -179,6 +212,10 @@ describe('BrowserProfileStore', () => {
       const summaries = store.list()
       expect(summaries.find(profile => profile.name === 'b')?.active).toBe(true)
       expect(summaries.find(profile => profile.name === 'a')?.active).toBe(false)
+
+      // Both flagged once both are enabled.
+      store.setActive(['a', 'b'])
+      expect(store.list().filter(profile => profile.active).map(profile => profile.name)).toEqual(['a', 'b'])
     } finally {
       // store() dir cleanup handled by each test's own dir; nothing to do.
     }
@@ -283,5 +320,36 @@ describe('mergeProfileData', () => {
 
   it('rejects a scope URL it cannot reason about rather than merging blindly', () => {
     expect(() => mergeProfileData(existing, incoming, 'not a url')).toThrow(/scope URL/)
+  })
+})
+
+describe('conflictingCookie', () => {
+  const withValue = (value: string) => ({
+    cookies: [{
+      name: 'session', value, domain: 'github.com', path: '/', expires: -1,
+      httpOnly: true, secure: true, sameSite: 'lax' as const,
+    }],
+    origins: [],
+  })
+
+  it('finds the cookie two profiles disagree about', () => {
+    const clash = conflictingCookie(withValue('work'), withValue('personal'))
+    expect(clash).toMatchObject({ name: 'session', domain: 'github.com' })
+  })
+
+  it('is not a conflict when both hold the same value', () => {
+    expect(conflictingCookie(withValue('same'), withValue('same'))).toBeNull()
+  })
+
+  it('is not a conflict when the cookies are for different scopes', () => {
+    const other = {
+      cookies: [{
+        name: 'session', value: 'x', domain: 'gitlab.com', path: '/', expires: -1,
+        httpOnly: true, secure: true, sameSite: 'lax' as const,
+      }],
+      origins: [],
+    }
+    expect(conflictingCookie(withValue('work'), other)).toBeNull()
+    expect(conflictingCookie({ cookies: [], origins: [] }, withValue('work'))).toBeNull()
   })
 })

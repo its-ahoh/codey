@@ -12,6 +12,7 @@ import type { BrowserSitePermissionDetails, BrowserSitePermissionManager } from 
 import {
   assertProfileName,
   BrowserProfileStore,
+  conflictingCookie,
   cookieMatchesUrl,
   mergeProfileData,
   parseProfileJsonText,
@@ -949,9 +950,22 @@ export class BrowserController {
 
   /** Snapshot the live session (cookies + reachable per-site storage) into a
    *  named profile. Saving does not activate the profile — call activateProfile
-   *  (or import with activate) to switch the browser to it. */
+   *  (or import with activate) to switch the browser to it.
+   *
+   *  With several profiles enabled the live session is their union, so writing
+   *  it back over one of them would quietly swallow the others. Saving to a new
+   *  name is still fine: that snapshot is honestly everything the browser
+   *  currently carries. */
   async saveProfile(name: string): Promise<BrowserProfile> {
     assertProfileName(name)
+    const enabled = this.profiles().activeNames()
+    if (enabled.length > 1 && enabled.includes(name)) {
+      throw new Error(
+        `${enabled.length} profiles are enabled, so the live session is their combined logins. `
+        + `Saving it over "${name}" would pull ${enabled.filter(entry => entry !== name).join(', ')} into it. `
+        + 'Save to a new name, or leave only that profile enabled first.',
+      )
+    }
     const data = await this.captureProfileData()
     const sourceUrl = this.view?.webContents.getURL() || null
     return this.profiles().write(name, data, sourceUrl)
@@ -1016,45 +1030,138 @@ export class BrowserController {
     const existing = this.profiles().read(name)
     const merged = mergeProfileData(existing, parseProfileJsonText(source.json), scopeUrl)
     const profile = this.profiles().write(name, merged, existing.sourceUrl ?? scopeUrl)
-    if (this.profiles().active() === name) await this.applyProfileData(profile)
+    if (this.profiles().activeNames().includes(name)) await this.applyLiveProfiles()
     return profile
   }
 
-  /** Switch the live session to a saved profile: the session's cookies are
-   *  replaced with the profile's and its site storage is applied best-effort.
-   *  Activating a profile that is already enabled is a no-op — the live
-   *  session already carries that snapshot. */
+  /** Names of every enabled profile, in the order they were enabled. */
+  activeProfileNames(): string[] {
+    return this.profiles().activeNames()
+  }
+
+  /** Switch the live session to a single saved profile, replacing whatever was
+   *  enabled. This is the identity switch: leftovers from the profiles that
+   *  were enabled cannot leak into the new one. Use `enableProfile` to add a
+   *  profile alongside the ones already on. */
   async activateProfile(name: string): Promise<BrowserProfileSummary> {
     assertProfileName(name)
-    if (this.profiles().active() === name) {
+    const enabled = this.profiles().activeNames()
+    if (enabled.length === 1 && enabled[0] === name) {
       const current = this.profiles().list().find(profile => profile.name === name)
       if (current) return current
       throw new Error(`Profile ${name} is enabled but missing on disk`)
     }
+    this.profiles().read(name)
+    await this.setEnabledProfiles([name])
+    return this.summaryOf(name)
+  }
+
+  /** Turn a profile on alongside the ones already enabled, so a browser can
+   *  hold several logins at once (a GitHub profile and a Jira one, say). The
+   *  live session becomes the union of every enabled profile.
+   *
+   *  Two profiles that carry the same cookie cannot both be honoured - one
+   *  value would silently win - so an overlap is refused and named instead. */
+  async enableProfile(name: string): Promise<BrowserProfileSummary> {
+    assertProfileName(name)
+    const enabled = this.profiles().activeNames()
+    if (enabled.includes(name)) return this.summaryOf(name)
+    const incoming = this.profiles().read(name)
+    for (const other of enabled) {
+      let held: BrowserProfile
+      try {
+        held = this.profiles().read(other)
+      } catch {
+        continue
+      }
+      const clash = conflictingCookie(held, incoming)
+      if (clash) {
+        throw new Error(
+          `"${name}" and "${other}" both hold a different ${clash.name} cookie for ${clash.domain}. `
+          + `Turn "${other}" off first, or switch to "${name}" instead of adding it.`,
+        )
+      }
+    }
+    await this.setEnabledProfiles([...enabled, name])
+    return this.summaryOf(name)
+  }
+
+  /** Turn one profile off and leave the rest enabled. The live session is
+   *  rebuilt from what remains rather than having cookies picked out of it, so
+   *  nothing of the disabled profile can survive by accident. */
+  async disableProfile(name: string): Promise<BrowserProfileSummary> {
+    assertProfileName(name)
+    const enabled = this.profiles().activeNames()
+    if (!enabled.includes(name)) return this.summaryOf(name)
+    await this.setEnabledProfiles(enabled.filter(entry => entry !== name))
+    return this.summaryOf(name)
+  }
+
+  private summaryOf(name: string): BrowserProfileSummary {
+    const summary = this.profiles().list().find(entry => entry.name === name)
+    if (summary) return summary
     const profile = this.profiles().read(name)
-    await this.applyProfileData(profile)
-    this.profiles().setActive(name)
-    return this.profiles().list().find(summary => summary.name === name) ?? {
+    return {
       name,
       avatar: profile.avatar ?? null,
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
       cookieCount: profile.cookies.length,
       originCount: profile.origins.length,
-      active: true,
+      active: this.profiles().activeNames().includes(name),
       sourceUrl: profile.sourceUrl,
     }
+  }
+
+  /** Record the enabled set and make the live session match it. */
+  private async setEnabledProfiles(names: string[]): Promise<void> {
+    this.profiles().setActive(names)
+    await this.applyLiveProfiles()
+  }
+
+  /** Rebuild the live session from every enabled profile. Always a full
+   *  replace, so disabling a profile really removes it and re-syncing one
+   *  cannot leave a stale copy of itself behind. */
+  private async applyLiveProfiles(): Promise<void> {
+    const names = this.profiles().activeNames()
+    const cookies: BrowserProfileCookie[] = []
+    const origins: BrowserProfileStorageOrigin[] = []
+    let sourceUrl: string | null = null
+    let createdAt = Date.now()
+    for (const name of names) {
+      let profile: BrowserProfile
+      try {
+        profile = this.profiles().read(name)
+      } catch {
+        continue
+      }
+      cookies.push(...profile.cookies)
+      origins.push(...profile.origins)
+      sourceUrl = sourceUrl ?? profile.sourceUrl
+      createdAt = Math.min(createdAt, profile.createdAt || createdAt)
+    }
+    await this.applyProfileData({
+      name: names.join('+'),
+      cookies,
+      origins,
+      avatar: null,
+      createdAt,
+      updatedAt: Date.now(),
+      sourceUrl,
+    })
   }
 
   setProfileAvatar(name: string, avatar: string): BrowserProfileSummary {
     return this.profiles().setAvatar(name, avatar)
   }
 
-  /** Remove a saved profile. Deleting the enabled profile disables it. */
+  /** Remove a saved profile. Deleting an enabled profile turns it off and
+   *  rebuilds the live session from whichever profiles are still on. */
   async deleteProfile(name: string): Promise<{ deleted: boolean }> {
     assertProfileName(name)
+    const enabled = this.profiles().activeNames()
     this.profiles().remove(name)
-    if (this.profiles().active() === name) this.profiles().setActive(null)
+    if (enabled.includes(name)) await this.setEnabledProfiles(enabled.filter(entry => entry !== name))
     return { deleted: true }
   }
 

@@ -505,6 +505,8 @@ contextBridge.exposeInMainWorld('codey', {
       list: () => ipcRenderer.invoke('browser:profiles:list'),
       save: (name: string) => ipcRenderer.invoke('browser:profiles:save', name),
       activate: (name: string) => ipcRenderer.invoke('browser:profiles:activate', name),
+      enable: (name: string) => ipcRenderer.invoke('browser:profiles:enable', name),
+      disable: (name: string) => ipcRenderer.invoke('browser:profiles:disable', name),
       setAvatar: (name: string, avatar: string) => ipcRenderer.invoke('browser:profiles:setAvatar', name, avatar),
       delete: (name: string) => ipcRenderer.invoke('browser:profiles:delete', name),
       import: () => ipcRenderer.invoke('browser:profiles:import'),
