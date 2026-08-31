@@ -649,6 +649,7 @@ declare global {
           delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>
           import: () => Promise<IpcResult<{ imported: boolean; profile: BrowserProfileSummary | null }>>
           export: (name: string) => Promise<IpcResult<{ exported: boolean; path: string | null }>>
+          syncFromChrome: (url: string) => Promise<IpcResult<{ profileName: string; origin: string; cookieCount: number }>>
         }
         extensions: {
           list: () => Promise<IpcResult<BrowserExtensionEntry[]>>

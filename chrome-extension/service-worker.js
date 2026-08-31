@@ -392,20 +392,78 @@ async function exportSession() {
   const storage = results[0]?.result
   return {
     tab,
-    cookies: cookies.map(cookie => ({
-      name: cookie.name,
-      value: cookie.value,
-      domain: cookie.domain.replace(/^\./, ''),
-      path: cookie.path || '/',
-      expires: typeof cookie.expirationDate === 'number' ? cookie.expirationDate : -1,
-      httpOnly: cookie.httpOnly === true,
-      secure: cookie.secure === true,
-      sameSite: cookie.sameSite || 'unspecified',
-      ...(cookie.hostOnly ? { hostOnly: true } : {}),
-    })),
+    cookies: cookies.map(toExportedCookie),
     origins: storage?.origin
       ? [{ origin: storage.origin, localStorage: storage.localStorage || [] }]
       : [],
+  }
+}
+
+/** Chrome's cookie shape in the profile format Codey stores. */
+function toExportedCookie(cookie) {
+  return {
+    name: cookie.name,
+    value: cookie.value,
+    domain: cookie.domain.replace(/^\./, ''),
+    path: cookie.path || '/',
+    expires: typeof cookie.expirationDate === 'number' ? cookie.expirationDate : -1,
+    httpOnly: cookie.httpOnly === true,
+    secure: cookie.secure === true,
+    sameSite: cookie.sameSite || 'unspecified',
+    ...(cookie.hostOnly ? { hostOnly: true } : {}),
+  }
+}
+
+/**
+ * Export the session for a URL Codey names, rather than for whatever tab
+ * happens to be in front. This is what the Codey Browser's Sync button asks
+ * for: the user is looking at a signed-out page there and wants this Chrome
+ * profile's login for that same site.
+ *
+ * Cookies come straight from the cookie store, so no tab has to be open.
+ * localStorage cannot be read without running in the page, so it is taken
+ * from a tab already on that origin when there is one and skipped otherwise -
+ * cookies alone carry the login for nearly every site, and opening a tab
+ * behind the user's back to read storage would be a worse trade.
+ */
+async function exportSessionForUrl(rawUrl) {
+  let target
+  try {
+    target = new URL(String(rawUrl || ''))
+  } catch {
+    throw new Error(`Invalid URL: ${rawUrl}`)
+  }
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+    throw new Error('Only http(s) site sessions can be exported')
+  }
+  const cookies = await chrome.cookies.getAll({ url: target.toString() })
+  if (cookies.length === 0) throw new Error(`Chrome has no cookies for ${target.hostname}`)
+  let origins = []
+  const tabs = await chrome.tabs.query({ url: `${target.origin}/*` })
+  const open = tabs.find(tab => typeof tab.id === 'number')
+  if (open) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: open.id },
+        func: () => ({
+          origin: location.origin,
+          localStorage: Array.from({ length: localStorage.length }, (_, index) => {
+            const name = localStorage.key(index)
+            return name === null ? null : { name, value: localStorage.getItem(name) || '' }
+          }).filter(Boolean),
+        }),
+      })
+      const storage = results[0]?.result
+      if (storage?.origin) origins = [{ origin: storage.origin, localStorage: storage.localStorage || [] }]
+    } catch {
+      // A tab that refuses injection just costs us its storage, not the login.
+    }
+  }
+  return {
+    url: target.toString(),
+    origin: target.origin,
+    cookies: cookies.map(toExportedCookie),
+    origins,
   }
 }
 
@@ -506,6 +564,9 @@ async function execute(command) {
       await markControlledTab(session.tab.id)
       return session
     }
+    // No tab is touched, so there is nothing to mark as controlled.
+    case 'exportSessionForUrl':
+      return await exportSessionForUrl(command.input?.url)
     case 'click':
     case 'fill':
     case 'select':

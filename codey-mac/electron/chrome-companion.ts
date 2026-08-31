@@ -69,6 +69,16 @@ export interface ChromeSessionExport {
   }>
 }
 
+/** A session exported for a URL Codey named, rather than for the tab in front.
+ *  There may be no tab open on it at all, so `origins` is best-effort: without
+ *  a page to run in, localStorage cannot be read. */
+export interface ChromeUrlSessionExport {
+  url: string
+  origin: string
+  cookies: ChromeSessionExport['cookies']
+  origins: ChromeSessionExport['origins']
+}
+
 export interface ChromeCompanionChatRequest {
   chatId?: string | null
   text: string
@@ -329,6 +339,11 @@ export class ChromeCompanionBridge {
 
   async exportSession(): Promise<ChromeSessionExport> {
     return await this.command<ChromeSessionExport>('exportSession', {})
+  }
+
+  /** The session Chrome holds for `url`, whether or not a tab is open on it. */
+  async exportSessionForUrl(url: string): Promise<ChromeUrlSessionExport> {
+    return await this.command<ChromeUrlSessionExport>('exportSessionForUrl', { url })
   }
 
   /**

@@ -103,6 +103,8 @@ export const BrowserPanel: React.FC<Props> = ({
   const [profiles, setProfiles] = useState<BrowserProfileSummary[]>([])
   const [activeProfile, setActiveProfile] = useState<string | null>(null)
   const [profileBusy, setProfileBusy] = useState(false)
+  const [syncBusy, setSyncBusy] = useState(false)
+  const [syncNote, setSyncNote] = useState<string | null>(null)
   const [panelWidth, setPanelWidth] = useState(900)
 
   const browserCovered = browserMenuOpen || profileMenuOpen || activeSettingsSection !== null
@@ -302,6 +304,35 @@ export const BrowserPanel: React.FC<Props> = ({
       setProfileMenuOpen(false)
     }
   }
+
+  // Pull this site's login out of the user's real Chrome and into the profile
+  // that is enabled here, without leaving the page. Scoped to this one site, so
+  // a profile carrying several logins keeps the rest. The page is reloaded
+  // afterwards because a signed-out page does not re-check its cookies.
+  const syncProfileFromChrome = async () => {
+    if (!state.url || syncBusy) return
+    setSyncBusy(true)
+    setSyncNote(null)
+    try {
+      const result = await window.codey.browser.profiles.syncFromChrome(state.url)
+      if (!result.ok) {
+        setLocalError(result.error)
+        return
+      }
+      setLocalError(null)
+      setSyncNote(`Synced ${result.data.cookieCount} cookies for ${result.data.origin} into "${result.data.profileName}"`)
+      await refreshProfiles()
+      await run(() => window.codey.browser.reload())
+    } finally {
+      setSyncBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!syncNote) return
+    const timer = setTimeout(() => setSyncNote(null), 6000)
+    return () => clearTimeout(timer)
+  }, [syncNote])
 
   const navigate = async () => {
     const next = useResult(await window.codey.browser.navigate(address))
@@ -544,6 +575,16 @@ export const BrowserPanel: React.FC<Props> = ({
           <span aria-hidden="true" style={styles.profileAvatarSmall}>{browserProfileAvatar(currentProfile)}</span>
           {panelWidth >= 640 && <span style={styles.profileButtonLabel}>{activeProfile ?? 'No profile'}</span>}
         </button>
+        <button
+          type="button"
+          style={{ ...styles.iconButton, ...(syncBusy ? styles.iconButtonActive : null) }}
+          title={activeProfile
+            ? `Sync this site's Chrome login into "${activeProfile}"`
+            : 'Enable a browser profile first, then sync this site\u2019s Chrome login into it'}
+          aria-label="Sync this site's login from Chrome"
+          disabled={syncBusy || !state.url || !activeProfile || activeSettingsSection !== null}
+          onClick={() => void syncProfileFromChrome()}
+        ><UIIcon name="refresh" size={14} /></button>
         <button
           type="button"
           style={{ ...styles.contextButton, opacity: chatId && state.url && !activeSettingsSection ? 1 : 0.5 }}
@@ -964,6 +1005,13 @@ export const BrowserPanel: React.FC<Props> = ({
         </div>
       )}
 
+      {syncNote && !displayedError && (
+        <div style={styles.syncBar} role="status">
+          <span>{syncNote}</span>
+          <button type="button" onClick={() => setSyncNote(null)} style={styles.dismissError}>Dismiss</button>
+        </div>
+      )}
+
       {displayedError && (
         <div style={styles.errorBar} role="status">
           <span>{displayedError}</span>
@@ -1105,6 +1153,7 @@ const styles: Record<string, React.CSSProperties> = {
   extensionWarning: { color: C.warningFg, fontSize: 9.5, lineHeight: 1.35, marginTop: 3 },
   extensionPath: { color: C.fg3, fontSize: 9.5, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   extensionError: { color: C.red, fontSize: 9.5, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  syncBar: { minHeight: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '5px 12px', background: `${C.green}18`, color: C.green, borderBottom: `1px solid ${C.green}55`, fontSize: 11 },
   errorBar: { minHeight: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '5px 12px', background: `${C.red}18`, color: C.red, borderBottom: `1px solid ${C.red}55`, fontSize: 11 },
   downloadBar: { minHeight: 30, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '5px 12px', background: `${C.green}12`, color: C.green, borderBottom: `1px solid ${C.green}44`, fontSize: 11 },
   downloadName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },

@@ -166,6 +166,39 @@ describe('ChromeCompanionBridge', () => {
     await expect(exported).resolves.toEqual(session)
   })
 
+  it('exports the session for a URL Codey names, not the tab in front', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    const exported = bridge.exportSessionForUrl('https://example.com/inbox')
+
+    const poll = await fetch(`${endpoint}/v1/poll`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    const work = await poll.json() as { command: { id: string; command: string; input: { url: string } } }
+    expect(work.command.command).toBe('exportSessionForUrl')
+    expect(work.command.input).toEqual({ url: 'https://example.com/inbox' })
+
+    // No tab has to be open on the site, so the export carries no tab at all.
+    const session = {
+      url: 'https://example.com/inbox',
+      origin: 'https://example.com',
+      cookies: [{
+        name: 'session', value: 'secret', domain: 'example.com', path: '/', expires: -1,
+        httpOnly: true, secure: true, sameSite: 'lax' as const,
+      }],
+      origins: [],
+    }
+    await fetch(`${endpoint}/v1/result`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: work.command.id, ok: true, data: session }),
+    })
+
+    await expect(exported).resolves.toEqual(session)
+  })
+
   it('notices Chrome is running an older extension than the one on disk', async () => {
     const { bridge, endpoint } = await setup()
     const token = await connect(endpoint)
