@@ -120,15 +120,21 @@ export interface ChromeCompanionFeatures {
    * the one-click path never fails merely because the obvious name is taken;
    * a name the user typed is used as-is and collides loudly.
    */
-  handoffSession: (name?: string) => Promise<ChromeSessionHandoff>
-  /** The name the handoff would use for `hostname` if the user just accepts it. */
-  suggestProfileName: (hostname: string) => Promise<{ name: string }>
+  handoffSession: (name?: string, resync?: boolean) => Promise<ChromeSessionHandoff>
+  /**
+   * The name the handoff would use for `hostname` if the user just accepts it,
+   * plus the profiles that already hold this site's session - those are the
+   * ones a re-sync would refresh rather than a handoff create.
+   */
+  suggestProfileName: (hostname: string) => Promise<{ name: string; existing: string[] }>
 }
 
 export interface ChromeSessionHandoff {
   profileName: string
   origin: string
   cookieCount: number
+  /** True when an existing profile was refreshed instead of one being created. */
+  resynced: boolean
 }
 
 export interface ChromeCompanionChatHistory {
@@ -546,7 +552,11 @@ export class ChromeCompanionBridge {
         if (!this.features) throw new Error('Session handoff is unavailable')
         const input = await this.body(request)
         const name = typeof input.name === 'string' ? input.name.trim() : ''
-        this.reply(request, response, 200, { ok: true, ...await this.features.handoffSession(name || undefined) })
+        const resync = input.resync === true
+        // A refresh has to say which profile it refreshes; there is no
+        // sensible default for "overwrite one of these".
+        if (resync && !name) throw new Error('Choose which profile to re-sync')
+        this.reply(request, response, 200, { ok: true, ...await this.features.handoffSession(name || undefined, resync) })
         return
       }
       if (request.method === 'GET' && url.pathname === '/v1/chats') {

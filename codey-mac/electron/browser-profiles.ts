@@ -225,6 +225,48 @@ export function readProfileJson(filePath: string): BrowserProfileData {
   }
 }
 
+/** Does `cookie` apply to `url`? This mirrors the scope Chrome answers
+ *  `cookies.getAll({ url })` with, so a profile we already hold can be asked
+ *  which of its cookies a fresh export of that URL would have spoken for. */
+export function cookieMatchesUrl(cookie: BrowserProfileCookie, url: URL): boolean {
+  const host = url.hostname.toLowerCase()
+  const domain = cookie.domain.toLowerCase()
+  const domainMatches = cookie.hostOnly ? host === domain : host === domain || host.endsWith(`.${domain}`)
+  if (!domainMatches) return false
+  if (cookie.secure && url.protocol !== 'https:') return false
+  const cookiePath = cookie.path || '/'
+  if (cookiePath === '/') return true
+  const requestPath = url.pathname || '/'
+  if (!requestPath.startsWith(cookiePath)) return false
+  return requestPath.length === cookiePath.length
+    || cookiePath.endsWith('/')
+    || requestPath[cookiePath.length] === '/'
+}
+
+/** Fold a freshly exported session for one URL into a profile that already
+ *  exists. Only what that export can speak for is replaced - cookies in the
+ *  URL's scope, and the localStorage of the origins the export actually
+ *  carried - so a profile holding several sites keeps the others intact.
+ *  Replacing rather than layering also means a cookie the site has since
+ *  dropped disappears here instead of lingering as a stale credential. */
+export function mergeProfileData(
+  existing: BrowserProfileData,
+  incoming: BrowserProfileData,
+  scopeUrl: string,
+): BrowserProfileData {
+  let url: URL
+  try {
+    url = new URL(scopeUrl)
+  } catch {
+    throw new Error(`Invalid session scope URL: ${scopeUrl}`)
+  }
+  const refreshed = new Set(incoming.origins.map(origin => origin.origin))
+  return {
+    cookies: [...existing.cookies.filter(cookie => !cookieMatchesUrl(cookie, url)), ...incoming.cookies],
+    origins: [...existing.origins.filter(origin => !refreshed.has(origin.origin)), ...incoming.origins],
+  }
+}
+
 /** File store for profiles. One \`.json\` per profile plus a dot-file that
  *  records which profile is enabled. */
 export class BrowserProfileStore {

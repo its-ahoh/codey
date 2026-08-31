@@ -17,6 +17,9 @@ const handoffFormNode = document.querySelector('#handoff-form')
 const handoffNameNode = document.querySelector('#handoff-name')
 const handoffSaveNode = document.querySelector('#handoff-save')
 const handoffCancelNode = document.querySelector('#handoff-cancel')
+const handoffResyncNode = document.querySelector('#handoff-resync')
+const handoffResyncNameNode = document.querySelector('#handoff-resync-name')
+const handoffResyncSaveNode = document.querySelector('#handoff-resync-save')
 const chatSelectNode = document.querySelector('#chat-select')
 const agentSelectNode = document.querySelector('#agent-select')
 const modelSelectNode = document.querySelector('#model-select')
@@ -559,9 +562,12 @@ async function openHandoffForm() {
   handoffNode.disabled = true
   handoffNode.textContent = 'Naming\u2026'
   let suggestion = ''
+  let existing = []
   try {
     const hostname = new URL(activePage.url).hostname
-    suggestion = (await codeyApi('/v1/session/handoff/name', { method: 'POST', body: { hostname } })).name
+    const named = await codeyApi('/v1/session/handoff/name', { method: 'POST', body: { hostname } })
+    suggestion = named.name
+    existing = Array.isArray(named.existing) ? named.existing : []
   } catch (error) {
     handoffNode.disabled = false
     handoffNode.textContent = 'Handoff failed'
@@ -572,6 +578,16 @@ async function openHandoffForm() {
   handoffNode.textContent = 'Hand off login'
   handoffFormNode.hidden = false
   handoffNameNode.value = suggestion
+  // A profile that already holds this site is almost always what the user
+  // means when they come back after signing in again, so it is offered next
+  // to the create field instead of making them delete and redo the handoff.
+  handoffResyncNameNode.replaceChildren(...existing.map(name => {
+    const option = document.createElement('option')
+    option.value = name
+    option.textContent = name
+    return option
+  }))
+  handoffResyncNode.hidden = existing.length === 0
   handoffNameNode.focus()
   handoffNameNode.select()
 }
@@ -580,6 +596,10 @@ function closeHandoffForm() {
   handoffFormNode.hidden = true
   handoffNameNode.value = ''
   handoffSaveNode.disabled = false
+  handoffResyncNode.hidden = true
+  handoffResyncSaveNode.disabled = false
+  handoffResyncSaveNode.textContent = 'Re-sync'
+  handoffResyncNameNode.replaceChildren()
   handoffNode.disabled = false
 }
 
@@ -606,6 +626,27 @@ async function handOffSession() {
     handoffNameNode.select()
   } finally {
     handoffSaveNode.textContent = 'Save'
+  }
+}
+
+// Refreshing an existing profile rather than creating one: same export, but
+// only this site's part of the saved profile is replaced.
+async function resyncSession() {
+  const name = handoffResyncNameNode.value
+  if (!name) return
+  handoffResyncSaveNode.disabled = true
+  handoffResyncSaveNode.textContent = 'Syncing\u2026'
+  try {
+    const result = await codeyApi('/v1/session/handoff', { method: 'POST', body: { name, resync: true } })
+    closeHandoffForm()
+    handoffNode.textContent = `Re-synced ${result.profileName}`
+    handoffNode.title = `${result.cookieCount} cookies from ${result.origin} replaced this site's login in the Codey Browser profile "${result.profileName}"`
+    handoffResetTimer = setTimeout(resetHandoffButton, 6000)
+  } catch (error) {
+    handoffResyncSaveNode.disabled = false
+    handoffResyncSaveNode.textContent = 'Re-sync'
+    handoffNode.textContent = 'Re-sync failed'
+    handoffNode.title = error instanceof Error ? error.message : String(error)
   }
 }
 
@@ -851,6 +892,7 @@ void refreshUpdateNotice()
 handoffNode.addEventListener('click', () => { void openHandoffForm() })
 handoffFormNode.addEventListener('submit', event => { event.preventDefault(); void handOffSession() })
 handoffCancelNode.addEventListener('click', () => resetHandoffButton())
+handoffResyncSaveNode.addEventListener('click', () => { void resyncSession() })
 handoffNameNode.addEventListener('keydown', event => { if (event.key === 'Escape') resetHandoffButton() })
 chatSelectNode.addEventListener('change', () => {
   if (!busy) void selectChat(chatSelectNode.value)

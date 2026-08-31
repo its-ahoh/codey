@@ -2170,12 +2170,25 @@ app.whenReady().then(async () => {
       },
       suggestProfileName: async hostname => ({
         name: availableProfileName(hostname, browserController.listProfiles().map(profile => profile.name)),
+        existing: browserController.profilesForUrl(`https://${hostname}/`),
       }),
-      handoffSession: async requested => {
+      handoffSession: async (requested, resync) => {
         if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
         const sessionState = await chromeCompanion.exportSession()
         const tabUrl = new URL(sessionState.tab.url)
+        const json = JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins })
         const taken = browserController.listProfiles().map(profile => profile.name)
+        if (resync) {
+          // Refreshing is the one path where an existing name is required
+          // rather than rejected: the point is to overwrite that login.
+          if (!requested) throw new Error('Choose which profile to re-sync')
+          assertProfileName(requested)
+          if (!taken.includes(requested)) {
+            throw new Error(`No Codey Browser profile named "${requested}" to re-sync - hand the login off instead`)
+          }
+          await browserController.resyncProfile(requested, { json }, sessionState.tab.url)
+          return { profileName: requested, origin: tabUrl.origin, cookieCount: sessionState.cookies.length, resynced: true }
+        }
         let name: string
         if (requested) {
           // The user typed this name, so a collision is a real mistake worth
@@ -2188,10 +2201,8 @@ app.whenReady().then(async () => {
         } else {
           name = availableProfileName(tabUrl.hostname, taken)
         }
-        await browserController.importProfile(name, {
-          json: JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins }),
-        }, true, sessionState.tab.url)
-        return { profileName: name, origin: tabUrl.origin, cookieCount: sessionState.cookies.length }
+        await browserController.importProfile(name, { json }, true, sessionState.tab.url)
+        return { profileName: name, origin: tabUrl.origin, cookieCount: sessionState.cookies.length, resynced: false }
       },
       transcribe: async (mimeType, data) => {
         if (!coreConfigManager) throw new Error('Codey configuration is unavailable')
@@ -2452,6 +2463,24 @@ app.whenReady().then(async () => {
     }, true, sessionState.tab.url)
     const profile = browserController.listProfiles().find(item => item.name === requested)
     if (!profile) throw new Error('Chrome session was imported but its Codey Browser profile could not be found')
+    return { profile, tab: sessionState.tab }
+  }))
+  // The counterpart to exportSession: the profile must already exist, and only
+  // the current site's part of it is replaced, so a login renewed in Chrome can
+  // be refreshed without the profile's other sites being lost.
+  ipcMain.handle('chromeCompanion:resyncSession', (event, name: string) => browserCall(event, async () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    const requested = String(name || '').trim()
+    assertProfileName(requested)
+    if (!browserController.listProfiles().some(profile => profile.name === requested)) {
+      throw new Error(`No Codey Browser profile named "${requested}" \u2014 create one first`)
+    }
+    const sessionState = await chromeCompanion.exportSession()
+    await browserController.resyncProfile(requested, {
+      json: JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins }),
+    }, sessionState.tab.url)
+    const profile = browserController.listProfiles().find(item => item.name === requested)
+    if (!profile) throw new Error('Chrome session was re-synced but its Codey Browser profile could not be found')
     return { profile, tab: sessionState.tab }
   }))
   ipcMain.handle('chromeCompanion:navigate', (event, url: string) => browserCall(event, () => {

@@ -268,6 +268,7 @@ describe('ChromeCompanionBridge', () => {
 
   it('hands the current site\'s session to Codey from the side panel', async () => {
     const handoffs: Array<string | undefined> = []
+    const resyncs: boolean[] = []
     const features = {
       options: async () => ({
         agents: [], models: [], defaultAgent: null, defaultModel: null, defaultModels: {}, chat: null,
@@ -278,11 +279,12 @@ describe('ChromeCompanionBridge', () => {
       }),
       upload: async () => ({ id: 'a', name: 'n', mimeType: 'text/plain', size: 0, path: '/tmp/n' }),
       transcribe: async () => ({ text: '' }),
-      handoffSession: async (name?: string) => {
+      handoffSession: async (name?: string, resync?: boolean) => {
         handoffs.push(name)
-        return { profileName: name || 'example.com-2', origin: 'https://example.com', cookieCount: 4 }
+        resyncs.push(resync === true)
+        return { profileName: name || 'example.com-2', origin: 'https://example.com', cookieCount: 4, resynced: resync === true }
       },
-      suggestProfileName: async (hostname: string) => ({ name: `${hostname}-free` }),
+      suggestProfileName: async (hostname: string) => ({ name: `${hostname}-free`, existing: [`${hostname}-saved`] }),
     } as unknown as ChromeCompanionFeatures
     const { endpoint } = await setup(undefined, undefined, undefined, features)
     const token = await connect(endpoint)
@@ -298,7 +300,9 @@ describe('ChromeCompanionBridge', () => {
     const suggested = await fetch(`${endpoint}/v1/session/handoff/name`, {
       method: 'POST', headers, body: JSON.stringify({ hostname: 'example.com' }),
     })
-    await expect(suggested.json()).resolves.toEqual({ ok: true, name: 'example.com-free' })
+    await expect(suggested.json()).resolves.toEqual({
+      ok: true, name: 'example.com-free', existing: ['example.com-saved'],
+    })
 
     // A name the user typed is passed through untouched.
     const named = await fetch(`${endpoint}/v1/session/handoff`, {
@@ -306,7 +310,7 @@ describe('ChromeCompanionBridge', () => {
     })
     expect(named.status).toBe(200)
     await expect(named.json()).resolves.toEqual({
-      ok: true, profileName: 'my-github', origin: 'https://example.com', cookieCount: 4,
+      ok: true, profileName: 'my-github', origin: 'https://example.com', cookieCount: 4, resynced: false,
     })
 
     // An omitted or blank name means "you pick one".
@@ -315,7 +319,21 @@ describe('ChromeCompanionBridge', () => {
     })
     await expect(auto.json()).resolves.toMatchObject({ profileName: 'example.com-2' })
 
-    expect(handoffs).toEqual(['my-github', undefined])
+    // Refreshing an existing profile goes down the same route with a flag.
+    const refreshed = await fetch(`${endpoint}/v1/session/handoff`, {
+      method: 'POST', headers, body: JSON.stringify({ name: 'my-github', resync: true }),
+    })
+    await expect(refreshed.json()).resolves.toMatchObject({ profileName: 'my-github', resynced: true })
+
+    // "Refresh whichever" is not a thing - there would be no way to guess which.
+    const nameless = await fetch(`${endpoint}/v1/session/handoff`, {
+      method: 'POST', headers, body: JSON.stringify({ resync: true }),
+    })
+    expect(nameless.status).toBe(400)
+    await expect(nameless.json()).resolves.toMatchObject({ error: 'Choose which profile to re-sync' })
+
+    expect(handoffs).toEqual(['my-github', undefined, 'my-github'])
+    expect(resyncs).toEqual([false, false, true])
   })
 
   it('routes authenticated side-panel chat through Codey', async () => {
@@ -367,8 +385,8 @@ describe('ChromeCompanionBridge', () => {
         id: 'attachment-1', name, mimeType, size: data.length, path: '/safe/upload.txt',
       }),
       transcribe: async (_mimeType, data) => ({ text: `heard ${data.length} bytes` }),
-      handoffSession: async () => ({ profileName: 'example.com', origin: 'https://example.com', cookieCount: 3 }),
-      suggestProfileName: async hostname => ({ name: hostname }),
+      handoffSession: async () => ({ profileName: 'example.com', origin: 'https://example.com', cookieCount: 3, resynced: false }),
+      suggestProfileName: async hostname => ({ name: hostname, existing: [] }),
     }
     const { endpoint } = await setup(
       async request => { received.push(request); return { chatId: 'chat-2', response: 'Attached' } },
