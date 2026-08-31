@@ -612,6 +612,7 @@ declare global {
         navigate: (url: string) => Promise<IpcResult<ChromeTabInfo>>
         setAccent: (hex: string) => Promise<IpcResult<{ ok: true }>>
         showExtensionFolder: () => Promise<IpcResult<string>>
+        openExtensionsPage: () => Promise<IpcResult<{ ok: true }>>
         onStatus: (handler: (state: ChromeCompanionStatus) => void) => () => void
       }
       browser: {

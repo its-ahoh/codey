@@ -17,6 +17,7 @@ import { runAgentUpdate, updatePlanFor } from './agent-update'
 import { availability, createLatestVersionsCache, fetchAllLatestVersions } from './agent-latest'
 import { SKILL_FILE, markSkillManagedBy, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
+import { stageChromeExtension } from './chrome-extension-stage'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import { scanAgentMcpServers, type AgentMcpServer, type McpAgentKey } from './agent-mcp-scan'
 import { deriveDeliveryState, shouldRediscoverPr } from './delivery-status'
@@ -2049,7 +2050,6 @@ app.whenReady().then(async () => {
         `${request.text}${pageContext}`,
         () => { /* global listener mirrors events */ },
         request.attachments,
-        { browserTarget: 'chrome' },
       )
       return { chatId: chat.id, response: result.response }
     },
@@ -2437,12 +2437,26 @@ app.whenReady().then(async () => {
     chromeCompanion?.setAccent(String(hex || ''))
     return { ok: true }
   }))
+  // `chrome://` URLs cannot be linked to from any page or opened through
+  // LaunchServices, so the only way to put a user on the extensions page is to
+  // hand the URL to Chrome itself on the command line.
+  ipcMain.handle('chromeCompanion:openExtensionsPage', event => browserCall(event, async () => {
+    const { execFile } = await import('child_process')
+    await new Promise<void>((resolve, reject) => {
+      execFile('/usr/bin/open', ['-a', 'Google Chrome', 'chrome://extensions'], { timeout: 8000 }, error => {
+        if (error) reject(new Error('Google Chrome could not be opened. Install Chrome, then try again.'))
+        else resolve()
+      })
+    })
+    return { ok: true as const }
+  }))
   ipcMain.handle('chromeCompanion:showExtensionFolder', event => browserCall(event, async () => {
-    const extensionPath = chromeCompanionExtensionPath()
-    const fsMod = await import('fs')
-    if (!fsMod.existsSync(extensionPath)) throw new Error('The Chrome companion extension is missing from this build')
-    shell.showItemInFolder(join(extensionPath, 'manifest.json'))
-    return extensionPath
+    const staged = stageChromeExtension(chromeCompanionExtensionPath(), app.getPath('userData'))
+    shell.showItemInFolder(join(staged, 'manifest.json'))
+    // Chrome's picker has no address bar; the path on the clipboard is what
+    // makes Cmd+Shift+G a one-paste step.
+    clipboard.writeText(staged)
+    return staged
   }))
   ipcMain.handle('browser:controlPermission:get', event => browserCall(event, () =>
     browserControlPermission?.getState() ?? { approved: false, pending: null }

@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, BrowserTarget, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -272,7 +272,6 @@ export class Codey {
     signal?: AbortSignal;
     workingDir?: string;
     browserChatId?: string;
-    browserTarget?: BrowserTarget;
     interactive?: boolean;
     skipPermissions?: boolean;
   }): Promise<{ response: AgentResponse; usedResume: boolean }> {
@@ -292,7 +291,6 @@ export class Codey {
       context: { workingDir: opts.workingDir ?? this.workingDir },
       browserTools: true,
       browserChatId: opts.browserChatId,
-      browserTarget: opts.browserTarget ?? 'codey-browser',
       onStream: opts.onStream,
       onThinking: opts.onThinking,
       onStatus: opts.onStatus,
@@ -2482,7 +2480,6 @@ export class Codey {
       onStream: onStream ? (text: string) => { streamed.active = true; onStream(text); } : undefined,
       context: { workingDir: this.workingDir },
       browserTools: true,
-      browserTarget: 'codey-browser',
       resumeSessionId: p.resumeSessionId,
       newSessionId: p.newSessionId,
     });
@@ -3710,8 +3707,7 @@ Example: /model gpt-4.1 write a Python script`;
           model: this.getDefaultModelConfig(agent),
           context: { workingDir: this.workingDir },
           browserTools: true,
-          browserTarget: 'codey-browser',
-        })
+            })
       )
     );
 
@@ -4954,7 +4950,6 @@ Example: /model gpt-4.1 write a Python script`;
     opts: { forceAll?: boolean; routingTask?: string } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
-    browserTarget: BrowserTarget = 'codey-browser',
   ): Promise<{ response: string; tokens?: number; choices?: string[]; thinkingByStep?: Record<number, string>; teamTurnId?: string }> {
     if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
@@ -4996,7 +4991,6 @@ Example: /model gpt-4.1 write a Python script`;
       const { response } = await this.runWorkerStep({
         conversationId: teamConv,
         browserChatId: chatId,
-        browserTarget,
         workerName,
         task: prompt,
         blackboard,
@@ -5127,8 +5121,7 @@ Example: /model gpt-4.1 write a Python script`;
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
-          browserTarget,
-          onStream: (text: string) => workerMsgs.onStream(text, workerName),
+            onStream: (text: string) => workerMsgs.onStream(text, workerName),
           onThinking: (text: string) => workerMsgs.onThinking(text, workerStep.get(workerName) ?? 0, workerName),
           onStatus: (update: any) => {
             // Route per-worker tool events through workerMsgs for parallel mode,
@@ -5750,7 +5743,6 @@ Example: /model gpt-4.1 write a Python script`;
       model,
       context: { workingDir: this.workingDir },
       browserTools: true,
-      browserTarget: 'codey-browser',
       onStream,
       onStatus,
       resumeSessionId: p.resumeSessionId,
@@ -5962,7 +5954,6 @@ Example: /model gpt-4.1 write a Python script`;
       channel?: ChannelType;
       channelUserId?: string;
       skillInvoke?: SkillInvoke;
-      browserTarget?: BrowserTarget;
     },
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     let chat = this.chatManager.get(chatId);
@@ -6207,10 +6198,6 @@ Example: /model gpt-4.1 write a Python script`;
       : agentWorktreeParent
         ? `\n\n[Codey chat workspace]\nThis chat uses the shared checkout. Work there; do not create a worktree on your own initiative. Only when the user explicitly asks for one, choose a short semantic lower-kebab name with no slash, then run \`git worktree add -b <name> ${JSON.stringify(path.join(agentWorktreeParent, '<name>'))} HEAD\` and perform all subsequent work in that new directory. Create it only as a direct child of ${JSON.stringify(agentWorktreeParent)} so Codey can bind and display it.`
         : '\n\n[Codey chat workspace]\nThis chat already has a user-managed worktree. Continue using the selected checkout; do not create another worktree.';
-    // The UI chooses a browser capability explicitly. Ordinary Codey chat
-    // uses the embedded Browser; Chrome's Side Panel supplies `chrome`.
-    // Core enforces this choice by exposing only the corresponding token.
-    const browserTarget: BrowserTarget = origin?.browserTarget ?? 'codey-browser';
     if (warmAnchor) {
       // Resume the agent's own session. If other agents produced messages
       // while it was inactive, replay only that unseen gap before the new turn.
@@ -6404,7 +6391,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
         const team: TeamConfig = wsTeam ?? fallbackTeam;
         this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasParallel=${!!team.parallel} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
-        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model, browserTarget);
+        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
@@ -6419,8 +6406,7 @@ Example: /model gpt-4.1 write a Python script`;
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
-          browserTarget,
-          skipPermissions: this.getSkipPermissions(),
+            skipPermissions: this.getSkipPermissions(),
           onStream,
           onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
           onStatus,
@@ -6449,8 +6435,7 @@ Example: /model gpt-4.1 write a Python script`;
             context: { workingDir },
             browserTools: true,
             browserChatId: chatId,
-            browserTarget,
-            skipPermissions: this.getSkipPermissions(),
+                skipPermissions: this.getSkipPermissions(),
             onStream,
             onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
             onStatus,
@@ -6498,8 +6483,7 @@ Example: /model gpt-4.1 write a Python script`;
             context: { workingDir },
             browserTools: true,
             browserChatId: chatId,
-            browserTarget,
-            skipPermissions: this.getSkipPermissions(),
+                skipPermissions: this.getSkipPermissions(),
             onStream,
             onThinking: (text: string) => sink({ type: 'thinking', chatId, token: text }),
             onStatus,
