@@ -645,6 +645,32 @@ describe('BrowserController profiles', () => {
     }
   })
 
+  it('describes what a profile holds without handing over its secrets', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller } = makeFixture(dir)
+      new BrowserProfileStore(dir).write('work', {
+        cookies: [{
+          name: 'session', value: 'SUPER-SECRET', domain: 'github.com', path: '/', expires: -1,
+          httpOnly: true, secure: true, sameSite: 'lax' as const,
+        }],
+        origins: [{ origin: 'https://github.com', localStorage: [{ name: 'token', value: 'ALSO-SECRET' }] }],
+      }, 'https://github.com/')
+
+      const contents = controller.profileContents('work')
+      expect(contents).toMatchObject({ name: 'work', sourceUrl: 'https://github.com/' })
+      expect(contents.sites).toEqual([{
+        domain: 'github.com',
+        cookieCount: 1,
+        cookieNames: ['session'],
+        storage: [{ origin: 'https://github.com', keys: 1 }],
+      }])
+      expect(JSON.stringify(contents)).not.toContain('SECRET')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('rejects unsafe profile names', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
     try {

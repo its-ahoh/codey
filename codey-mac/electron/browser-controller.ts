@@ -17,10 +17,12 @@ import {
   mergeProfileData,
   mergeProfileSites,
   parseProfileJsonText,
+  summarizeProfileSites,
   readProfileJson,
   type BrowserProfile,
   type BrowserProfileCookie,
   type BrowserProfileData,
+  type BrowserProfileSiteSummary,
   type BrowserProfileStorageOrigin,
   type BrowserProfileSummary,
 } from './browser-profiles'
@@ -1033,6 +1035,25 @@ export class BrowserController {
     const profile = this.profiles().write(name, merged, existing.sourceUrl ?? scopeUrl)
     if (this.profiles().activeNames().includes(name)) await this.applyLiveProfiles()
     return profile
+  }
+
+  /** What a saved profile actually holds, site by site, so it can be looked at
+   *  before it is trusted or refreshed. Values are left behind on purpose -
+   *  the caller wants to know which logins are in there, not what they are. */
+  profileContents(name: string): {
+    name: string
+    updatedAt: number
+    sourceUrl: string | null
+    sites: BrowserProfileSiteSummary[]
+  } {
+    assertProfileName(name)
+    const profile = this.profiles().read(name)
+    return {
+      name,
+      updatedAt: profile.updatedAt,
+      sourceUrl: profile.sourceUrl,
+      sites: summarizeProfileSites(profile),
+    }
   }
 
   /** The registrable domains a profile holds cookies for - what a refresh of

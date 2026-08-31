@@ -12,6 +12,7 @@ import {
   mergeProfileData,
   mergeProfileSites,
   siteCoversHost,
+  summarizeProfileSites,
   deriveProfileNameFromFile,
   parseProfileData,
   parseProfileJsonText,
@@ -396,5 +397,48 @@ describe('siteCoversHost / mergeProfileSites', () => {
   it('leaves a profile untouched when the refresh covered nothing', () => {
     const existing = { cookies: [cookie('gitlab.com', 'keep')], origins: [] }
     expect(mergeProfileSites(existing, { cookies: [], origins: [] }, [])).toEqual(existing)
+  })
+})
+
+describe('summarizeProfileSites', () => {
+  const data = {
+    cookies: [
+      { name: 'session', value: 'SECRET-A', domain: 'github.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'lax' as const },
+      { name: 'csrf', value: 'SECRET-B', domain: '.github.com', path: '/', expires: -1, httpOnly: false, secure: true, sameSite: 'lax' as const },
+      { name: 'sid', value: 'SECRET-C', domain: 'jira.example.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'lax' as const },
+    ],
+    origins: [
+      { origin: 'https://github.com', localStorage: [{ name: 'token', value: 'SECRET-D' }, { name: 'theme', value: 'dark' }] },
+    ],
+  }
+
+  it('groups by domain, most cookies first, folding the leading dot away', () => {
+    const sites = summarizeProfileSites(data)
+    expect(sites.map(site => [site.domain, site.cookieCount])).toEqual([
+      ['github.com', 2],
+      ['jira.example.com', 1],
+    ])
+    expect(sites[0].cookieNames).toEqual(['session', 'csrf'])
+    expect(sites[0].storage).toEqual([{ origin: 'https://github.com', keys: 2 }])
+  })
+
+  it('never carries a single value out of the profile', () => {
+    // This is the whole point of the summary: it says which logins are in
+    // there, never what they are. A regression here leaks credentials into a
+    // window that has no use for them.
+    const serialized = JSON.stringify(summarizeProfileSites(data))
+    for (const secret of ['SECRET-A', 'SECRET-B', 'SECRET-C', 'SECRET-D', 'dark']) {
+      expect(serialized).not.toContain(secret)
+    }
+  })
+
+  it('lists an origin that has storage but no cookies', () => {
+    const sites = summarizeProfileSites({
+      cookies: [],
+      origins: [{ origin: 'https://app.example.com', localStorage: [{ name: 'token', value: 'x' }] }],
+    })
+    expect(sites).toEqual([
+      { domain: 'app.example.com', cookieCount: 0, cookieNames: [], storage: [{ origin: 'https://app.example.com', keys: 1 }] },
+    ])
   })
 })

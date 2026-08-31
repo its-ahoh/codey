@@ -322,6 +322,48 @@ export function mergeProfileSites(
   }
 }
 
+/** What one site inside a profile holds, described without the secrets. Cookie
+ *  and localStorage *values* are deliberately absent: the point is to let
+ *  someone see which logins a profile carries, not to hand the logins to a
+ *  window that has no use for them. Names are kept - they are what tells a
+ *  session cookie apart from a theme preference at a glance. */
+export interface BrowserProfileSiteSummary {
+  domain: string
+  cookieCount: number
+  cookieNames: string[]
+  storage: Array<{ origin: string; keys: number }>
+}
+
+/** Describe a profile site by site, most cookies first. */
+export function summarizeProfileSites(data: BrowserProfileData): BrowserProfileSiteSummary[] {
+  const rows = new Map<string, BrowserProfileSiteSummary>()
+  const rowFor = (host: string): BrowserProfileSiteSummary => {
+    const domain = host.replace(/^\./, '').toLowerCase()
+    let row = rows.get(domain)
+    if (!row) {
+      row = { domain, cookieCount: 0, cookieNames: [], storage: [] }
+      rows.set(domain, row)
+    }
+    return row
+  }
+  for (const cookie of data.cookies) {
+    const row = rowFor(cookie.domain)
+    row.cookieCount += 1
+    if (!row.cookieNames.includes(cookie.name)) row.cookieNames.push(cookie.name)
+  }
+  for (const origin of data.origins) {
+    let host = origin.origin
+    try {
+      host = new URL(origin.origin).hostname
+    } catch {
+      // An origin we cannot parse still deserves a row under its own text.
+    }
+    rowFor(host).storage.push({ origin: origin.origin, keys: origin.localStorage.length })
+  }
+  return [...rows.values()].sort((left, right) =>
+    right.cookieCount - left.cookieCount || left.domain.localeCompare(right.domain))
+}
+
 /** File store for profiles. One \`.json\` per profile plus a dot-file that
  *  records which profile is enabled. */
 export class BrowserProfileStore {
