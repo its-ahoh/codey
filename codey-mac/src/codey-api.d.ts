@@ -248,6 +248,9 @@ export interface ChromeCompanionStatus {
   clientName: string | null
   pairedAt: number | null
   lastSeenAt: number | null
+  clientVersion: string | null
+  expectedVersion: string | null
+  updateAvailable: boolean
 }
 
 export interface ChromeTabInfo {

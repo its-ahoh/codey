@@ -149,3 +149,8 @@ textarea::placeholder { color: var(--muted); }
 .send { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; background: var(--accent); color: var(--on-accent); cursor: pointer; }
 .send:hover { filter: brightness(1.06); }
 .send:disabled { opacity: .4; cursor: default; filter: none; }
+
+.update-notice { flex: none; margin: 8px 12px 0; padding: 7px 9px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--warning-border, var(--border-2)); border-radius: 8px; background: var(--warning-bg, var(--surface-2)); color: var(--fg); font-size: 11.5px; }
+.update-notice[hidden] { display: none; }
+.update-notice span { flex: 1 1 auto; }
+.update-notice button { flex: none; padding: 3px 8px; border: 1px solid var(--border-2); border-radius: 999px; background: var(--surface); color: var(--fg); font: inherit; font-size: 11px; cursor: pointer; }

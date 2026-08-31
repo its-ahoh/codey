@@ -106,6 +106,7 @@ describe('BrowserAgentBridge', () => {
       status: vi.fn(() => ({
         endpoint: 'http://127.0.0.1:49321', paired: true, connected: true,
         clientName: 'Test Chrome', pairedAt: 1, lastSeenAt: 2,
+        clientVersion: '0.10.0', expectedVersion: '0.10.0', updateAvailable: false,
       })),
       activeTab: vi.fn(async () => ({ id: 9, windowId: 2, title: 'Chrome account', url: 'https://example.com/account' })),
       snapshot: vi.fn(async () => ({

@@ -19,6 +19,12 @@ export interface ChromeCompanionStatus {
   clientName: string | null
   pairedAt: number | null
   lastSeenAt: number | null
+  /** Version of the extension Chrome is actually running, once it has polled. */
+  clientVersion: string | null
+  /** Version Codey has staged on disk for it. */
+  expectedVersion: string | null
+  /** Chrome is running an older build than the one already staged on disk. */
+  updateAvailable: boolean
 }
 
 export interface ChromeTabInfo {
@@ -180,6 +186,8 @@ export class ChromeCompanionBridge {
   // The Mac app's current accent color, mirrored to the extension so the
   // controlled-tab highlight matches whatever palette the user picked.
   private accent = DEFAULT_ACCENT
+  private clientVersion: string | null = null
+  private expectedVersion: string | null = null
   private pending = new Map<string, PendingCommand>()
   private uploadedAttachments = new Map<string, { chatId: string; attachment: ChromeCompanionAttachment }>()
 
@@ -237,10 +245,23 @@ export class ChromeCompanionBridge {
       clientName: this.clientName,
       pairedAt: this.pairedAt,
       lastSeenAt: this.lastSeenAt,
+      clientVersion: this.clientVersion,
+      expectedVersion: this.expectedVersion,
+      updateAvailable: !!this.clientVersion && !!this.expectedVersion && this.clientVersion !== this.expectedVersion,
     }
   }
 
+  /** The extension version Codey has staged on disk, so a Chrome still running
+   *  an older build can be told to reload rather than failing cryptically. */
+  setExpectedVersion(version: string | null): void {
+    const next = version && version.trim() ? version.trim().slice(0, 40) : null
+    if (next === this.expectedVersion) return
+    this.expectedVersion = next
+    this.emitStatus()
+  }
+
   disconnect(): ChromeCompanionStatus {
+    this.clientVersion = null
     this.token = null
     this.clientName = null
     this.pairedAt = null
@@ -325,6 +346,17 @@ export class ChromeCompanionBridge {
     try { parsed = new URL(url) } catch { throw new Error('Enter a valid http(s) URL') }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('Only http(s) URLs are allowed')
     return await this.command<ChromeTabInfo>('navigate', { url: parsed.toString() })
+  }
+
+  /** An extension too old to know a command reports it as unsupported, which
+   *  reads like a Codey bug. Say what actually needs to happen instead. */
+  private explain(error: string): string {
+    if (!error) return 'Chrome command failed'
+    if (!/Unsupported Codey command/i.test(error)) return error
+    const versions = this.clientVersion && this.expectedVersion
+      ? ` Chrome is running ${this.clientVersion}; ${this.expectedVersion} is already installed on disk.`
+      : ''
+    return `Reload the Codey extension at chrome://extensions to finish updating it.${versions}`
   }
 
   private async command<T>(command: string, input: unknown): Promise<T> {
@@ -445,10 +477,17 @@ export class ChromeCompanionBridge {
       }
       this.touch()
       if (request.method === 'POST' && url.pathname === '/v1/poll') {
+        const input = await this.body(request)
+        const reported = typeof input.version === 'string' ? input.version.trim().slice(0, 40) : ''
+        if (reported && reported !== this.clientVersion) {
+          this.clientVersion = reported
+          this.emitStatus()
+        }
         const command = this.queue.shift()
+        const base = { ok: true, accent: this.accent, expectedVersion: this.expectedVersion }
         this.reply(request, response, 200, command
-          ? { ok: true, accent: this.accent, command: { id: command.id, command: command.command, input: command.input } }
-          : { ok: true, accent: this.accent, command: null })
+          ? { ...base, command: { id: command.id, command: command.command, input: command.input } }
+          : { ...base, command: null })
         return
       }
       if (request.method === 'POST' && url.pathname === '/v1/result') {
@@ -462,7 +501,7 @@ export class ChromeCompanionBridge {
         clearTimeout(command.timer)
         this.pending.delete(id)
         if (input.ok === true) command.resolve(input.data)
-        else command.reject(new Error(typeof input.error === 'string' ? input.error : 'Chrome command failed'))
+        else command.reject(new Error(this.explain(typeof input.error === 'string' ? input.error : '')))
         this.reply(request, response, 200, { ok: true })
         return
       }

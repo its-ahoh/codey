@@ -17,7 +17,7 @@ import { runAgentUpdate, updatePlanFor } from './agent-update'
 import { availability, createLatestVersionsCache, fetchAllLatestVersions } from './agent-latest'
 import { SKILL_FILE, markSkillManagedBy, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
-import { CHOSEN_FOLDER_NAME, installedExtensionDir, refreshRememberedInstall, rememberInstallDir, stageChromeExtension } from './chrome-extension-stage'
+import { CHOSEN_FOLDER_NAME, installedExtensionDir, refreshRememberedInstall, rememberInstallDir, stageChromeExtension, stagedVersion } from './chrome-extension-stage'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import { scanAgentMcpServers, type AgentMcpServer, type McpAgentKey } from './agent-mcp-scan'
 import { deriveDeliveryState, shouldRediscoverPr } from './delivery-status'
@@ -2565,6 +2565,11 @@ app.whenReady().then(async () => {
   // a copy the user installed themselves has to be refreshed here or it stays
   // on the version that shipped the day they installed it.
   refreshRememberedInstall(chromeCompanionExtensionPath(), app.getPath('userData'))
+  // Refreshing the files is only half of an update - Chrome re-reads an
+  // unpacked extension only when it restarts or the user reloads it. Telling
+  // the bridge which version is on disk lets it say so instead of letting new
+  // commands fail as "unsupported".
+  chromeCompanion?.setExpectedVersion(stagedVersion(chromeCompanionExtensionPath()))
   ipcMain.handle('capture:pickFiles', async () =>
     wrap(async () => {
       capturePickingFiles = true

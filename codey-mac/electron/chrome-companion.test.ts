@@ -166,6 +166,52 @@ describe('ChromeCompanionBridge', () => {
     await expect(exported).resolves.toEqual(session)
   })
 
+  it('notices Chrome is running an older extension than the one on disk', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    bridge.setExpectedVersion('0.10.0')
+
+    const poll = (version?: string) => fetch(`${endpoint}/v1/poll`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(version === undefined ? {} : { version }),
+    }).then(response => response.json() as Promise<{ expectedVersion: string | null }>)
+
+    // Chrome is still running the build it loaded before Codey updated.
+    await expect(poll('0.9.2')).resolves.toMatchObject({ expectedVersion: '0.10.0' })
+    expect(bridge.status()).toMatchObject({
+      clientVersion: '0.9.2', expectedVersion: '0.10.0', updateAvailable: true,
+    })
+
+    // After the user reloads it, the warning has to clear itself.
+    await poll('0.10.0')
+    expect(bridge.status().updateAvailable).toBe(false)
+  })
+
+  it('explains an unsupported command as an extension that needs reloading', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    bridge.setExpectedVersion('0.10.0')
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    await fetch(`${endpoint}/v1/poll`, { method: 'POST', headers, body: JSON.stringify({ version: '0.9.2' }) })
+
+    // Captured as a value: the rejection lands while the poll below is still
+    // in flight, and an unhandled one would fail the suite.
+    const clicked = bridge.act('click', 'e1').catch((error: Error) => error)
+    const work = await fetch(`${endpoint}/v1/poll`, { method: 'POST', headers, body: '{}' })
+      .then(response => response.json() as Promise<{ command: { id: string } }>)
+    await fetch(`${endpoint}/v1/result`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ id: work.command.id, ok: false, error: 'Unsupported Codey command: click' }),
+    })
+
+    // The raw message reads like a Codey bug; the user needs the actual fix.
+    const failure = await clicked
+    expect(String(failure)).toMatch(/Reload the Codey extension/)
+    expect(String(failure)).toMatch(/0\.9\.2/)
+  })
+
   it('validates navigation before it reaches Chrome', async () => {
     const { bridge, endpoint } = await setup()
     await connect(endpoint)

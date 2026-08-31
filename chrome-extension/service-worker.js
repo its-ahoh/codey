@@ -528,17 +528,36 @@ async function execute(command) {
   }
 }
 
+// Reported on every poll rather than only when pairing: reloading the
+// extension keeps the stored token, so it never pairs again, and a version
+// captured at pairing time would stay stale forever.
+function ownVersion() {
+  try { return chrome.runtime.getManifest().version || '' } catch { return '' }
+}
+
+// Codey re-stages the new extension files on its own launch, but Chrome only
+// re-reads an unpacked extension when it restarts or the user reloads it. Codey
+// tells us which version is on disk so the panel can say so out loud.
+async function noteExpectedVersion(expected) {
+  const stale = typeof expected === 'string' && expected && expected !== ownVersion() ? expected : ''
+  const saved = await chrome.storage.local.get({ updateAvailable: '' })
+  if (saved.updateAvailable === stale) return
+  await chrome.storage.local.set({ updateAvailable: stale })
+}
+
 async function pollOnce() {
   let { endpoint, token } = await settings()
   if (!token) ({ endpoint, token } = await autoConnect())
+  const body = { version: ownVersion() }
   let response
   try {
-    response = await call(endpoint, '/v1/poll', { token })
+    response = await call(endpoint, '/v1/poll', { token, body })
   } catch (error) {
     if (!/Unauthorized/i.test(error instanceof Error ? error.message : String(error))) throw error
     ;({ endpoint, token } = await autoConnect())
-    response = await call(endpoint, '/v1/poll', { token })
+    response = await call(endpoint, '/v1/poll', { token, body })
   }
+  await noteExpectedVersion(response.expectedVersion)
   if (response.accent) await applyAccent(response.accent)
   if (!response.command) return true
   const command = response.command

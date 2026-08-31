@@ -10,6 +10,9 @@ const includePageNode = document.querySelector('#include-page')
 const pageContextNode = document.querySelector('#page-context')
 const pageTitleNode = document.querySelector('#page-title')
 const handoffNode = document.querySelector('#handoff')
+const updateNoticeNode = document.querySelector('#update-notice')
+const updateCopyNode = document.querySelector('#update-copy')
+const updateOpenNode = document.querySelector('#update-open')
 const handoffFormNode = document.querySelector('#handoff-form')
 const handoffNameNode = document.querySelector('#handoff-name')
 const handoffSaveNode = document.querySelector('#handoff-save')
@@ -522,6 +525,25 @@ function typingNode() {
   return node
 }
 
+// Codey refreshes the extension's files on its own launch, but Chrome keeps
+// running the build it loaded until the extension is reloaded. The service
+// worker records the mismatch while polling; surfacing it here is the only
+// thing that tells the user their Codey is newer than their Chrome extension.
+async function refreshUpdateNotice() {
+  const { updateAvailable } = await chrome.storage.local.get({ updateAvailable: '' })
+  updateNoticeNode.hidden = !updateAvailable
+  updateCopyNode.textContent = updateAvailable
+    ? `Codey ${updateAvailable} is installed. Reload the extension to use it.`
+    : ''
+}
+
+// Reloading from here re-reads the files Codey already staged, so the user
+// never has to find chrome://extensions themselves.
+function reloadExtension() {
+  updateOpenNode.disabled = true
+  chrome.runtime.reload()
+}
+
 // Copying the current site's signed-in session into a Codey Browser profile.
 // Codey does the export and the import; the panel only reports the outcome,
 // and it reports it on the button itself so nothing is added to the chat.
@@ -821,6 +843,11 @@ inputNode.addEventListener('input', () => {
   inputNode.style.height = `${Math.max(42, Math.min(inputNode.scrollHeight, 140))}px`
 })
 settingsToggleNode.addEventListener('click', () => { if (!busy) toggleSettings() })
+updateOpenNode.addEventListener('click', reloadExtension)
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.updateAvailable) void refreshUpdateNotice()
+})
+void refreshUpdateNotice()
 handoffNode.addEventListener('click', () => { void openHandoffForm() })
 handoffFormNode.addEventListener('submit', event => { event.preventDefault(); void handOffSession() })
 handoffCancelNode.addEventListener('click', () => resetHandoffButton())
