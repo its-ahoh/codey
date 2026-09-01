@@ -12,6 +12,9 @@ const source = fs.readFileSync(
   path.join(__dirname, '..', '..', 'chrome-extension', 'site-grouping.js'),
   'utf8',
 )
+// In Chrome the service worker importScripts the vendored tldts bundle before
+// this file; the test injects the same package as the same global.
+;(globalThis as any).tldts = require('tldts')
 const siteOfHost = new Function(`${source}; return siteOfHost`)() as (host: string) => string
 type VisitPlan = Array<{ site: string; url: string }>
 const storageVisitPlan = new Function(`${source}; return storageVisitPlan`)() as (
@@ -49,6 +52,17 @@ describe('siteOfHost', () => {
       expect(typeof siteOfHost(input)).toBe('string')
     }
     expect(siteOfHost('localhost')).toBe('localhost')
+    expect(siteOfHost('127.0.0.1')).toBe('127.0.0.1')
+  })
+
+  it('keeps tenants on shared-hosting suffixes apart', () => {
+    // Ticking one tenant must not drag a stranger's cookies along: on these
+    // suffixes each subdomain is a different owner, and the real PSL (private
+    // section included) is what knows that.
+    expect(siteOfHost('alice.github.io')).toBe('alice.github.io')
+    expect(siteOfHost('alice.github.io')).not.toBe(siteOfHost('bob.github.io'))
+    expect(siteOfHost('tenant-a.appspot.com')).not.toBe(siteOfHost('tenant-b.appspot.com'))
+    expect(siteOfHost('mine.pages.dev')).not.toBe(siteOfHost('theirs.pages.dev'))
   })
 })
 
