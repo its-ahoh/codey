@@ -8,6 +8,7 @@ import {
   BrowserProfileStore,
   availableProfileName,
   conflictingCookie,
+  conflictingStorageKey,
   cookieMatchesUrl,
   mergeProfileData,
   mergeProfileSites,
@@ -16,6 +17,7 @@ import {
   deriveProfileNameFromFile,
   parseProfileData,
   parseProfileJsonText,
+  profileConflict,
   profileFileName,
   readProfileJson,
 } from './browser-profiles'
@@ -354,6 +356,37 @@ describe('conflictingCookie', () => {
     }
     expect(conflictingCookie(withValue('work'), other)).toBeNull()
     expect(conflictingCookie({ cookies: [], origins: [] }, withValue('work'))).toBeNull()
+  })
+})
+
+describe('conflictingStorageKey / profileConflict', () => {
+  const withToken = (value: string, origin = 'https://app.example.com') => ({
+    cookies: [],
+    origins: [{ origin, localStorage: [{ name: 'token', value }] }],
+  })
+
+  it('finds the storage key two profiles disagree about', () => {
+    expect(conflictingStorageKey(withToken('work'), withToken('personal')))
+      .toEqual({ origin: 'https://app.example.com', key: 'token' })
+  })
+
+  it('is not a conflict when the value or the origin differs harmlessly', () => {
+    expect(conflictingStorageKey(withToken('same'), withToken('same'))).toBeNull()
+    expect(conflictingStorageKey(withToken('work'), withToken('personal', 'https://other.example.com'))).toBeNull()
+    expect(conflictingStorageKey({ cookies: [], origins: [] }, withToken('work'))).toBeNull()
+  })
+
+  it('profileConflict names cookie clashes first, then storage clashes', () => {
+    const cookie = (value: string) => ({
+      cookies: [{
+        name: 'session', value, domain: 'github.com', path: '/', expires: -1,
+        httpOnly: true, secure: true, sameSite: 'lax' as const,
+      }],
+      origins: [],
+    })
+    expect(profileConflict(cookie('a'), cookie('b'))).toMatch(/session cookie for github\.com/)
+    expect(profileConflict(withToken('a'), withToken('b'))).toMatch(/site storage \(token\) for https:\/\/app\.example\.com/)
+    expect(profileConflict(cookie('same'), cookie('same'))).toBeNull()
   })
 })
 

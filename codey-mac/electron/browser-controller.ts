@@ -12,11 +12,11 @@ import type { BrowserSitePermissionDetails, BrowserSitePermissionManager } from 
 import {
   assertProfileName,
   BrowserProfileStore,
-  conflictingCookie,
   cookieMatchesUrl,
   mergeProfileData,
   mergeProfileSites,
   parseProfileJsonText,
+  profileConflict,
   summarizeProfileSites,
   readProfileJson,
   type BrowserProfile,
@@ -1032,9 +1032,36 @@ export class BrowserController {
     assertProfileName(name)
     const existing = this.profiles().read(name)
     const merged = mergeProfileData(existing, parseProfileJsonText(source.json), scopeUrl)
+    this.assertRefreshFitsEnabledSet(name, merged)
     const profile = this.profiles().write(name, merged, existing.sourceUrl ?? scopeUrl)
     if (this.profiles().activeNames().includes(name)) await this.applyLiveProfiles()
     return profile
+  }
+
+  /** Refuse a refresh that would make an enabled profile clash with another
+   *  enabled one. Enabling checks overlaps, but a re-sync can change a profile
+   *  that is already live — without re-checking, the fresh value would silently
+   *  fight the other profile's over the same cookie or storage key. Checked
+   *  before anything is written, so a refused refresh changes nothing. */
+  private assertRefreshFitsEnabledSet(name: string, next: BrowserProfileData): void {
+    const enabled = this.profiles().activeNames()
+    if (!enabled.includes(name)) return
+    for (const other of enabled) {
+      if (other === name) continue
+      let held: BrowserProfile
+      try {
+        held = this.profiles().read(other)
+      } catch {
+        continue
+      }
+      const clash = profileConflict(held, next)
+      if (clash) {
+        throw new Error(
+          `Refreshing "${name}" would give it ${clash}, which enabled profile "${other}" also holds. `
+          + `Turn "${other}" off first, then re-sync.`,
+        )
+      }
+    }
   }
 
   /** What a saved profile actually holds, site by site, so it can be looked at
@@ -1056,14 +1083,22 @@ export class BrowserController {
     }
   }
 
-  /** The registrable domains a profile holds cookies for - what a refresh of
-   *  the whole profile has to ask Chrome about. */
+  /** The domains a profile holds logins for - what a refresh of the whole
+   *  profile has to ask Chrome about. Storage origins count too: a SPA that
+   *  keeps its token in localStorage may have no cookie here at all, and a
+   *  refresh that skipped it would claim the profile "holds no logins". */
   profileSites(name: string): string[] {
     assertProfileName(name)
+    const profile = this.profiles().read(name)
     const seen = new Set<string>()
-    for (const cookie of this.profiles().read(name).cookies) {
+    for (const cookie of profile.cookies) {
       const domain = cookie.domain.replace(/^\./, '').toLowerCase()
       if (domain) seen.add(domain)
+    }
+    for (const origin of profile.origins) {
+      try {
+        seen.add(new URL(origin.origin).hostname.toLowerCase())
+      } catch { /* an unparseable origin has no host to refresh */ }
     }
     return [...seen]
   }
@@ -1080,6 +1115,7 @@ export class BrowserController {
     assertProfileName(name)
     const existing = this.profiles().read(name)
     const merged = mergeProfileSites(existing, parseProfileJsonText(source.json), sites)
+    this.assertRefreshFitsEnabledSet(name, merged)
     const profile = this.profiles().write(name, merged, existing.sourceUrl)
     if (this.profiles().activeNames().includes(name)) await this.applyLiveProfiles()
     return profile
@@ -1125,10 +1161,10 @@ export class BrowserController {
       } catch {
         continue
       }
-      const clash = conflictingCookie(held, incoming)
+      const clash = profileConflict(held, incoming)
       if (clash) {
         throw new Error(
-          `"${name}" and "${other}" both hold a different ${clash.name} cookie for ${clash.domain}. `
+          `"${name}" and "${other}" both hold ${clash}. `
           + `Turn "${other}" off first, or switch to "${name}" instead of adding it.`,
         )
       }
@@ -1315,6 +1351,12 @@ export class BrowserController {
       const url = `https://${domain.replace(/^\./, '')}${cookie.path || '/'}`
       try { await browserSession.cookies.remove(url, cookie.name) } catch { /* best-effort */ }
     }
+    // Cookies are removed one by one above, but localStorage has to be wiped
+    // wholesale: a profile only lists the keys it holds, so the token an old
+    // profile left behind would survive any per-key replacement.
+    try {
+      await browserSession.clearStorageData({ storages: ['localstorage'] })
+    } catch { /* session unavailable — cookies were the load-bearing part */ }
     for (const cookie of profile.cookies) {
       try {
         const url = `https://${cookie.domain}${cookie.path || '/'}`
@@ -1322,7 +1364,9 @@ export class BrowserController {
           url,
           name: cookie.name,
           value: cookie.value,
-          domain: cookie.domain,
+          // A host-only cookie is created by *omitting* domain; passing it
+          // would widen the cookie to every subdomain the site never gave it.
+          ...(cookie.hostOnly ? {} : { domain: cookie.domain }),
           path: cookie.path || '/',
           secure: cookie.secure,
           httpOnly: cookie.httpOnly,
@@ -1379,6 +1423,10 @@ export class BrowserController {
   private localStorageApplyScript(items: Array<{ name: string; value: string }>): string {
     return `(() => {
       const items = ${JSON.stringify(items)}
+      // Replace, don't layer: a page already open keeps its in-memory copy of
+      // whatever storage the previous identity wrote, and a key the profile
+      // has dropped must not survive the switch.
+      try { localStorage.clear() } catch { /* private mode */ }
       for (const item of items) {
         try { localStorage.setItem(item.name, item.value) } catch { /* quota or private mode */ }
       }

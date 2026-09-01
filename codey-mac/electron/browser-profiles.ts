@@ -285,6 +285,42 @@ export function conflictingCookie(
   return null
 }
 
+/** The first localStorage key two profiles both hold for the same origin with
+ *  different values, or null. Cookies are not the only place a login lives, so
+ *  the "one value would silently win" rule has to cover storage too. */
+export function conflictingStorageKey(
+  left: BrowserProfileData,
+  right: BrowserProfileData,
+): { origin: string; key: string } | null {
+  const held = new Map<string, string>()
+  for (const origin of left.origins) {
+    for (const item of origin.localStorage) {
+      held.set(`${origin.origin} ${item.name}`, item.value)
+    }
+  }
+  for (const origin of right.origins) {
+    for (const item of origin.localStorage) {
+      const other = held.get(`${origin.origin} ${item.name}`)
+      if (other !== undefined && other !== item.value) return { origin: origin.origin, key: item.name }
+    }
+  }
+  return null
+}
+
+/** Why two profiles cannot be live at the same time, or null when they can.
+ *  One shared check so enabling, re-syncing and importing all refuse the same
+ *  overlaps instead of each path missing a different one. */
+export function profileConflict(
+  left: BrowserProfileData,
+  right: BrowserProfileData,
+): string | null {
+  const cookie = conflictingCookie(left, right)
+  if (cookie) return `a different ${cookie.name} cookie for ${cookie.domain}`
+  const storage = conflictingStorageKey(left, right)
+  if (storage) return `different site storage (${storage.key}) for ${storage.origin}`
+  return null
+}
+
 /** Does `site` (a registrable domain, as Chrome grouped it) cover `host`?
  *  Used to decide which of a profile's cookies a refresh of that site speaks
  *  for, without needing the public-suffix guesswork on this side: the sites
