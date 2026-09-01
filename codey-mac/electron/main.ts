@@ -2550,14 +2550,22 @@ app.whenReady().then(async () => {
     if (picked.length === 0) throw new Error('Pick at least one site to copy')
     const sessionState = await chromeCompanion.exportSessionForSites(picked)
     const preview = sessionState.sites.slice(0, 12).join(', ')
-    const confirmed = await dialog.showMessageBox(mainWindow ?? (undefined as any), {
+    // Parented to a window that is actually on screen. A modal attached to a
+    // hidden or destroyed window never shows, and the copy then looks like a
+    // button that did nothing.
+    const parent = BrowserWindow.getFocusedWindow()
+      ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
+    const options: Electron.MessageBoxOptions = {
       type: 'warning',
       buttons: ['Copy logins', 'Cancel'],
       defaultId: 1,
       cancelId: 1,
       message: `Copy ${sessionState.cookies.length} cookies from ${sessionState.sites.length} site(s) into "${requested}"?`,
       detail: `${preview}${sessionState.sites.length > 12 ? `, and ${sessionState.sites.length - 12} more` : ''}\n\nThese logins will be written to Codey's profile store on this Mac and used by the Codey Browser. Nothing in Chrome changes.`,
-    })
+    }
+    const confirmed = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options)
     if (confirmed.response !== 0) return { imported: false, profile: null, cookieCount: 0, sites: [] }
     await browserController.importProfile(requested, {
       json: JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins }),

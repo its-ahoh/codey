@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { ChromeCompanionStatus, ChromeSessionSite } from '../codey-api'
 import { C } from '../theme'
 
@@ -20,10 +20,30 @@ export function shouldShowChromeInstallInstructions(
   return !status.paired
 }
 
+/** A failure is shown by the button that caused it, not once at the top of the
+ *  page: the picker sits at the bottom of a long scroll, and a banner rendered
+ *  above the fold reads as the button having done nothing at all. */
+export function errorBelongsTo(error: { at: string } | null, section: string): boolean {
+  return !!error && error.at === section
+}
+
+/** What the "list Chrome's sites" button says. Chrome answers through an
+ *  extension that is only awake in bursts, so the wait is visible rather than
+ *  silent, and a list already on screen can be asked for again. */
+export function listButtonLabel(busyAt: string | null, hasList: boolean): string {
+  if (busyAt === 'sites') return 'Asking Chrome…'
+  return hasList ? 'List again' : 'List Chrome’s signed-in sites'
+}
+
 export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const [status, setStatus] = useState(EMPTY)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // Which action is running, and which action an error came from. A single
+  // banner at the top of the page is invisible to someone who scrolled down to
+  // press a button near the bottom, and a Chrome command can take seconds to
+  // come back, so both are reported next to the button that caused them.
+  const [busyAt, setBusyAt] = useState<string | null>(null)
+  const [error, setError] = useState<{ at: string; message: string } | null>(null)
+  const busy = busyAt !== null
   const [profileName, setProfileName] = useState('chrome-session')
   const [exported, setExported] = useState<string | null>(null)
   const [installedPath, setInstalledPath] = useState<string | null>(null)
@@ -33,8 +53,10 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
   const [bulkName, setBulkName] = useState('chrome-logins')
   const [bulkResult, setBulkResult] = useState<{ name: string; cookieCount: number; siteCount: number } | null>(null)
 
+  const section = useRef('status')
+
   const unwrapResult = <T,>(result: { ok: true; data: T } | { ok: false; error: string }): T | null => {
-    if (!result.ok) { setError(result.error); return null }
+    if (!result.ok) { setError({ at: section.current, message: result.error }); return null }
     setError(null)
     return result.data
   }
@@ -50,22 +72,26 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
     return () => { cancelled = true; off() }
   }, [])
 
-  const run = async (operation: () => Promise<void>) => {
-    setBusy(true)
+  const run = async (at: string, operation: () => Promise<void>) => {
+    section.current = at
+    setBusyAt(at)
     setError(null)
     try { await operation() }
-    catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) }
-    finally { setBusy(false) }
+    catch (caught) { setError({ at, message: caught instanceof Error ? caught.message : String(caught) }) }
+    finally { setBusyAt(null) }
   }
+
+  const failure = (at: string) =>
+    errorBelongsTo(error, at) ? <div style={styles.error}>{error?.message}</div> : null
 
   return (
     <div style={styles.root}>
-      {error && <div style={styles.error}>{error}</div>}
+      {failure('status')}
       {status.paired && !status.connected && (
         <div style={styles.noticeRow}>
           <span style={{ ...styles.dot, background: C.warningFg }} />
           <span style={styles.noticeCopy}>Chrome is temporarily unavailable. Open Chrome or reload the extension.</span>
-          <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
+          <button style={styles.secondary} disabled={busy} onClick={() => void run('status', async () => {
             const next = unwrapResult(await window.codey.chromeCompanion.status())
             if (next) setStatus(next)
           })}>Check again</button>
@@ -79,7 +105,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
             Codey installed extension {status.expectedVersion}, but Chrome is still running {status.clientVersion}.
             Chrome only picks up a new build when it restarts or you reload the extension.
           </span>
-          <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
+          <button style={styles.secondary} disabled={busy} onClick={() => void run('status', async () => {
             unwrapResult(await window.codey.chromeCompanion.openExtensionsPage())
           })}>Open extensions</button>
         </div>
@@ -95,18 +121,19 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
             <li>Click <strong>Load unpacked</strong> and choose the folder from step 1. Its path is already on the clipboard — press <strong>⌘⇧G</strong> and paste, or drag the revealed folder onto the extensions page.</li>
           </ol>
           <div style={{ ...styles.actions, ...(compact ? styles.stack : null) }}>
-            <button style={styles.primary} disabled={busy} onClick={() => void run(async () => {
+            <button style={styles.primary} disabled={busy} onClick={() => void run('install', async () => {
               const result = unwrapResult(await window.codey.chromeCompanion.installExtensionTo())
               if (result?.installed) setInstalledPath(result.dir)
             })}>Choose folder &amp; install</button>
-            <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
+            <button style={styles.secondary} disabled={busy} onClick={() => void run('install', async () => {
               unwrapResult(await window.codey.chromeCompanion.openExtensionsPage())
             })}>Open chrome://extensions</button>
-            <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
+            <button style={styles.secondary} disabled={busy} onClick={() => void run('install', async () => {
               const path = unwrapResult(await window.codey.chromeCompanion.showExtensionFolder())
               if (path) setInstalledPath(path)
             })}>Reveal folder &amp; copy path</button>
           </div>
+          {failure('install')}
           {installedPath && (
             <div style={styles.success}>Installed, and the path is on the clipboard. Select this folder in Chrome’s <strong>Load unpacked</strong> picker: <code style={styles.code}>{installedPath}</code></div>
           )}
@@ -135,11 +162,12 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
                 spellCheck={false}
               />
             </label>
-            <button style={styles.primary} disabled={busy || !status.connected || !profileName.trim()} onClick={() => void run(async () => {
+            <button style={styles.primary} disabled={busy || !status.connected || !profileName.trim()} onClick={() => void run('export', async () => {
               const next = unwrapResult(await window.codey.chromeCompanion.exportSession(profileName.trim()))
               if (next) setExported(next.profile.name)
-            })}>Create &amp; activate profile</button>
+            })}>{busyAt === 'export' ? 'Asking Chrome…' : 'Create & activate profile'}</button>
           </div>
+          {failure('export')}
           {exported && (
             <div style={styles.success}>“{exported}” is now the active Codey Browser profile. Chrome was not changed.</div>
           )}
@@ -162,19 +190,26 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
             <div style={styles.title}>Pick which Chrome logins to copy</div>
             <div style={styles.copy}>List every site this Chrome profile is signed in to, then choose the ones the Codey Browser may use.</div>
           </div>
-          {!sites && (
-            <div style={styles.actions}>
-              <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
-                const next = unwrapResult(await window.codey.chromeCompanion.listSessionSites())
-                if (next) {
-                  setSites(next.sites)
-                  setPicked(new Set())
-                  setBulkResult(null)
-                }
-              })}>List Chrome’s signed-in sites</button>
-              <span style={styles.copy}>Nothing is copied until you pick sites and confirm.</span>
-            </div>
+          <div style={styles.actions}>
+            <button style={styles.secondary} disabled={busy} onClick={() => void run('sites', async () => {
+              const next = unwrapResult(await window.codey.chromeCompanion.listSessionSites())
+              if (next) {
+                setSites(next.sites)
+                setPicked(new Set())
+                setBulkResult(null)
+              }
+            })}>
+              {listButtonLabel(busyAt, sites !== null)}
+            </button>
+            {!sites && <span style={styles.copy}>Nothing is copied until you pick sites and confirm.</span>}
+          </div>
+          {/* Chrome answers through its extension, which is only awake in
+              bursts, so this can take seconds. Saying so is the difference
+              between "working" and "the button is broken". */}
+          {busyAt === 'sites' && (
+            <div style={styles.copy}>Waiting for Chrome to answer. If the extension is asleep this takes a few seconds.</div>
           )}
+          {failure('sites')}
           {sites && (
             <>
               <div style={styles.impact}>
@@ -225,17 +260,18 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
                     spellCheck={false}
                   />
                 </label>
-                <button style={styles.primary} disabled={busy || picked.size === 0 || !bulkName.trim()} onClick={() => void run(async () => {
+                <button style={styles.primary} disabled={busy || picked.size === 0 || !bulkName.trim()} onClick={() => void run('import', async () => {
                   const next = unwrapResult(await window.codey.chromeCompanion.importSites(bulkName.trim(), [...picked]))
                   if (next?.imported && next.profile) {
                     setBulkResult({ name: next.profile.name, cookieCount: next.cookieCount, siteCount: next.sites.length })
                     setSites(null)
                     setPicked(new Set())
                   }
-                })}>Copy {picked.size || ''} site{picked.size === 1 ? '' : 's'} into a profile</button>
+                })}>{busyAt === 'import' ? 'Asking Chrome…' : `Copy ${picked.size || ''} site${picked.size === 1 ? '' : 's'} into a profile`}</button>
               </div>
             </>
           )}
+          {failure('import')}
           {bulkResult && (
             <div style={styles.success}>
               “{bulkResult.name}” is now the active Codey Browser profile, carrying {bulkResult.cookieCount} cookies from {bulkResult.siteCount} site{bulkResult.siteCount === 1 ? '' : 's'}. Chrome was not changed.
