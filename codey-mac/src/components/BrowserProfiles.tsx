@@ -3,6 +3,7 @@ import { C } from '../theme'
 import { UIIcon } from './UIIcons'
 import type { BrowserProfileSiteSummary, BrowserProfileSummary } from '../codey-api'
 import { BROWSER_PROFILE_AVATARS, browserProfileAvatar } from './browserProfileAvatars'
+import { Toggle } from './settingsAtoms'
 
 type BrowserProfileContents = {
   name: string
@@ -244,21 +245,21 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
                 {meta(profile) || (profile.sourceUrl ? 'saved session' : 'empty profile')}
               </button>
             </div>
-            {/* Several profiles can be on at once, so a profile is simply in use
-                or not. There is nothing to switch between. */}
-            <button
-              type="button"
+            {/* Several profiles can be on at once, so a profile is simply on
+                or off - there is nothing to switch between. A switch says that
+                by its shape, where a button labelled "Use"/"In use" made the
+                reader work out whether the word was a state or a command. */}
+            <Toggle
+              on={profile.active}
               disabled={busy}
-              onClick={() => void run(() => profile.active
-                ? window.codey.browser.profiles.disable(profile.name)
-                : window.codey.browser.profiles.enable(profile.name))}
-              style={profile.active ? activeBadgeStyle(compact) : buttonStyle(compact)}
+              onChange={next => void run(() => next
+                ? window.codey.browser.profiles.enable(profile.name)
+                : window.codey.browser.profiles.disable(profile.name))}
+              label={`Use ${profile.name}\u2019s logins`}
               title={profile.active
-                ? 'This profile\u2019s logins are in use \u2014 click to turn it off'
-                : 'Add this profile\u2019s logins to the live session'}
-            >
-              {profile.active ? 'In use' : 'Use'}
-            </button>
+                ? `${profile.name}\u2019s logins are in use \u2014 switch off to stop using them`
+                : `Switch on to add ${profile.name}\u2019s logins to the live session`}
+            />
             {/* Logins expire. Refreshing the whole profile from Chrome is one
                 click here, and works whether or not it is currently in use. */}
             <button
@@ -339,13 +340,6 @@ function buttonStyle(compact: boolean): React.CSSProperties {
     background: C.surface, border: `1px solid ${C.border}`, color: C.fg,
     borderRadius: 8, padding: compact ? '4px 8px' : '7px 12px',
     fontSize: compact ? 11 : 12, cursor: 'pointer',
-  }
-}
-
-function activeBadgeStyle(compact: boolean): React.CSSProperties {
-  return {
-    whiteSpace: 'nowrap', background: 'transparent', border: 'none',
-    color: C.green, fontSize: compact ? 11 : 12, fontWeight: 600, padding: '4px 8px', cursor: 'default',
   }
 }
 
