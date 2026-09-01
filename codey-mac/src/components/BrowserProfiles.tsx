@@ -223,15 +223,10 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               )}
             </div>
             <div style={{ flex: 1, minWidth: compact ? 180 : 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: C.fg, fontSize: compact ? 12 : 13, fontWeight: 600 }}>{profile.name}</span>
-                {profile.active && (
-                  <span style={{
-                    background: C.green + '22', color: C.green, borderRadius: 999, padding: '1px 7px',
-                    fontSize: compact ? 10 : 11, fontWeight: 600,
-                  }}>IN USE</span>
-                )}
-              </div>
+              {/* No "IN USE" pill next to the name: the toggle on this same
+                  row already says "In use" in the same green, so the pill was
+                  the same word twice with nothing extra to tell. */}
+              <div style={{ color: C.fg, fontSize: compact ? 12 : 13, fontWeight: 600 }}>{profile.name}</div>
               <button
                 type="button"
                 onClick={() => void toggleContents(profile.name)}
