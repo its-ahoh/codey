@@ -561,3 +561,62 @@ describe('ChromeCompanionBridge', () => {
     expect(requested).toEqual(['chat-1'])
   })
 })
+
+/**
+ * Mutual pairing. Any local process can squat on a loopback port, so the
+ * extension must prove it holds the staged secret before it gets a token, and
+ * Codey must prove the same before the extension trusts the token it got.
+ */
+describe('ChromeCompanionBridge pairing proof', () => {
+  const SECRET = 'test-pairing-secret-0123456789abcdef'
+  const hmac = (message: string) =>
+    require('crypto').createHmac('sha256', SECRET).update(message).digest('hex')
+
+  async function setupWithSecret() {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chrome-companion-'))
+    directories.push(directory)
+    const bridge = new ChromeCompanionBridge(
+      path.join(directory, 'pairing.json'), 0, undefined,
+      undefined, undefined, undefined, undefined,
+      () => SECRET,
+    )
+    bridges.push(bridge)
+    const status = await bridge.start()
+    return { bridge, endpoint: status.endpoint! }
+  }
+
+  function connectRaw(endpoint: string, body: Record<string, unknown>) {
+    return fetch(`${endpoint}/v1/connect`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: `chrome-extension://${CHROME_COMPANION_EXTENSION_ID}`,
+        'X-Codey-Extension-Id': CHROME_COMPANION_EXTENSION_ID,
+      },
+      body: JSON.stringify(body),
+    })
+  }
+
+  it('pairs a client that proves the secret, and proves itself back', async () => {
+    const { bridge, endpoint } = await setupWithSecret()
+    const nonce = 'nonce-1'
+    const response = await connectRaw(endpoint, {
+      clientName: 'Test Chrome',
+      nonce,
+      proof: hmac(`codey-client:${nonce}`),
+    })
+    expect(response.status).toBe(200)
+    const value = await response.json() as { token: string; serverProof: string }
+    expect(value.serverProof).toBe(hmac(`codey-server:${nonce}:${value.token}`))
+    expect(bridge.status().paired).toBe(true)
+  })
+
+  it('refuses a client with no proof or a wrong proof', async () => {
+    const { bridge, endpoint } = await setupWithSecret()
+    expect((await connectRaw(endpoint, { clientName: 'Legacy' })).status).toBe(403)
+    expect((await connectRaw(endpoint, {
+      clientName: 'Impostor', nonce: 'n', proof: 'not-the-hmac',
+    })).status).toBe(403)
+    expect(bridge.status().paired).toBe(false)
+  })
+})

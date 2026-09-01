@@ -237,6 +237,11 @@ export class ChromeCompanionBridge {
     private readonly onListChats?: () => Promise<ChromeCompanionChatSummary[]>,
     private readonly onChatHistory?: (chatId: string) => Promise<ChromeCompanionChatHistory>,
     private readonly features?: ChromeCompanionFeatures,
+    /** The pairing secret Codey staged into the extension's folder. When set,
+     *  /v1/connect becomes mutual: the extension must prove it holds the
+     *  secret, and the reply carries Codey's own proof so the extension can
+     *  tell Codey apart from any other process squatting on the port. */
+    private readonly pairingSecret?: () => string | null,
   ) {
     this.loadPairing()
   }
@@ -517,6 +522,19 @@ export class ChromeCompanionBridge {
           return
         }
         const input = await this.body(request)
+        const secret = this.pairingSecret?.() ?? null
+        const nonce = typeof input.nonce === 'string' ? input.nonce.slice(0, 100) : ''
+        if (secret) {
+          const proof = typeof input.proof === 'string' ? input.proof : ''
+          const expected = crypto.createHmac('sha256', secret).update(`codey-client:${nonce}`).digest('hex')
+          if (!nonce || !timingSafeEqual(proof, expected)) {
+            this.reply(request, response, 403, {
+              ok: false,
+              error: 'This extension holds no valid pairing secret. Reinstall it from Codey’s Chrome settings, then reload it at chrome://extensions.',
+            })
+            return
+          }
+        }
         this.token = crypto.randomBytes(32).toString('base64url')
         this.rejectAll(new Error('Chrome companion was paired again'))
         this.clientName = typeof input.clientName === 'string' && input.clientName.trim()
@@ -526,7 +544,13 @@ export class ChromeCompanionBridge {
         this.lastSeenAt = Date.now()
         this.persistPairing()
         this.emitStatus()
-        this.reply(request, response, 200, { ok: true, token: this.token })
+        this.reply(request, response, 200, {
+          ok: true,
+          token: this.token,
+          ...(secret
+            ? { serverProof: crypto.createHmac('sha256', secret).update(`codey-server:${nonce}:${this.token}`).digest('hex') }
+            : {}),
+        })
         return
       }
       if (!this.authorize(request)) {
