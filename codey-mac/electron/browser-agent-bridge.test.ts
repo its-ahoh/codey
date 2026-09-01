@@ -15,6 +15,7 @@ function call(
   route: string,
   body?: unknown,
   token = info.token,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : JSON.stringify(body)
@@ -24,6 +25,7 @@ function call(
       method,
       headers: {
         Authorization: `Bearer ${token}`,
+        ...extraHeaders,
         ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
       },
     }, res => {
@@ -91,6 +93,7 @@ describe('BrowserAgentBridge', () => {
       submit: vi.fn(async ref => ({ ok: true as const, url: state.url, message: `Submitted ${ref}` })),
       listProfiles: vi.fn(() => []),
       activeProfileName: vi.fn(() => null),
+      activeProfileNames: vi.fn((): string[] => []),
       saveProfile: vi.fn(async name => ({ name, cookies: [], origins: [], createdAt: 1, updatedAt: 1, sourceUrl: null })),
       importProfile: vi.fn(async name => ({ name, cookies: [], origins: [], createdAt: 1, updatedAt: 1, sourceUrl: null })),
       activateProfile: vi.fn(async name => ({
@@ -320,6 +323,59 @@ describe('BrowserAgentBridge', () => {
       } finally {
         try { fs.unlinkSync(screenshotPath) } catch { /* already removed */ }
       }
+    } finally {
+      await bridge.stop()
+    }
+  })
+
+  it('runs each --profile command under the profile it asked for, even when another agent switches', async () => {
+    // Two agents, two identities, one browser. The switch and the command have
+    // to be the same turn. If the switch happens up front instead, a second
+    // agent's switch lands while the first is still queued, and the first then
+    // silently acts as the wrong person.
+    let enabled: string[] = []
+    const observed: string[] = []
+    const release: Array<() => void> = []
+    const controller = {
+      getState: vi.fn(() => ({ url: 'https://example.com/' })),
+      activeProfileName: vi.fn(() => enabled[0] ?? null),
+      activeProfileNames: vi.fn(() => enabled),
+      activateProfile: vi.fn(async (name: string) => {
+        enabled = [name]
+        return { name, active: true, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null }
+      }),
+      // Parks until the test releases it, so commands really do pile up behind
+      // one another the way two busy agents would make them.
+      getPageContext: vi.fn(async () => {
+        observed.push(enabled.join(','))
+        await new Promise<void>(resolve => release.push(resolve))
+        return { url: 'https://example.com/', title: 'Page', description: '', text: '', performance: {} }
+      }),
+    }
+    const bridge = new BrowserAgentBridge(controller as any, vi.fn(), async () => true, vi.fn(), 5)
+    const info = await bridge.start()
+    const settle = async () => { for (let i = 0; i < 5; i += 1) await new Promise(resolve => setImmediate(resolve)) }
+    try {
+      // Something else already holds the browser, so the two profile requests
+      // below have to wait - which is exactly when the identity can drift.
+      const blocker = call(info, 'GET', '/view')
+      await settle()
+
+      const personal = call(info, 'GET', '/view', undefined, info.token, { 'X-Codey-Profile': 'personal' })
+      await settle()
+      const work = call(info, 'GET', '/view', undefined, info.token, { 'X-Codey-Profile': 'work' })
+      await settle()
+
+      for (let attempt = 0; attempt < 60 && observed.length < 3; attempt += 1) {
+        while (release.length > 0) release.shift()!()
+        await settle()
+      }
+      while (release.length > 0) release.shift()!()
+      await Promise.all([blocker, personal, work])
+
+      // The blocker ran with no profile; each of the other two saw its own,
+      // never the other agent's and never both at once.
+      expect(observed).toEqual(['', 'personal', 'work'])
     } finally {
       await bridge.stop()
     }

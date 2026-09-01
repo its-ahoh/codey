@@ -3,6 +3,7 @@ import * as http from 'http'
 import * as os from 'os'
 import * as path from 'path'
 import { randomBytes } from 'crypto'
+import { AsyncLocalStorage } from 'async_hooks'
 import type { BrowserController, BrowserLoginStatus } from './browser-controller'
 import { levelForCommand, type BrowserControlRequest } from './browser-control-permission'
 import type { ChromeCompanionBridge, ChromePageActionName } from './chrome-companion'
@@ -16,7 +17,7 @@ type BridgeController = Pick<
   | 'waitFor' | 'upload' | 'listDownloads' | 'waitForDownload' | 'submit'
   | 'getLoginStatus'
   | 'getState' | 'back' | 'forward' | 'reload' | 'listTabs' | 'newTab' | 'switchTab' | 'closeTab'
-  | 'listProfiles' | 'activeProfileName' | 'saveProfile' | 'importProfile' | 'activateProfile' | 'deleteProfile' | 'exportProfile'
+  | 'listProfiles' | 'activeProfileName' | 'activeProfileNames' | 'saveProfile' | 'importProfile' | 'activateProfile' | 'deleteProfile' | 'exportProfile'
 >
 
 type CompanionController = Pick<ChromeCompanionBridge, 'status' | 'activeTab' | 'snapshot' | 'navigate' | 'act'>
@@ -79,6 +80,9 @@ export class BrowserAgentBridge {
   private server: http.Server | null = null
   private info: BrowserAgentBridgeInfo | null = null
   private operationTail: Promise<void> = Promise.resolve()
+  // The profile a `--profile` request asked for, carried through that request's
+  // async context so `exclusive` can pin it without every route having to know.
+  private readonly profileScope = new AsyncLocalStorage<{ name: string; held: boolean }>()
   private loginWatches = new Map<string, LoginWatch>()
   private loginWatchSequence = 0
 
@@ -144,19 +148,37 @@ export class BrowserAgentBridge {
     }
     try {
       // An agent can target a specific browser profile by passing
-      // `--profile <name>` to the CLI, which forwards it here. The profile is
-      // activated first, so the command below operates under that identity —
-      // and because that is the same identity switch as `/profile/activate`,
-      // it goes through the same user approval gate.
+      // `--profile <name>` to the CLI, which forwards it here. The command then
+      // runs under that identity alone - and because that is the same identity
+      // switch as `/profile/activate`, it goes through the same approval gate.
+      //
+      // Asking and switching are deliberately split. The prompt can sit
+      // unanswered for as long as the user takes, so holding the browser while
+      // it does would stall every other agent; the switch itself happens inside
+      // the same lock acquisition as the command (see `exclusive`), so no other
+      // agent can change the identity in between. Without that, two agents
+      // could each switch and then both run under whichever switched last.
       const requestedProfile = typeof req.headers['x-codey-profile'] === 'string'
         ? (req.headers['x-codey-profile'] as string).trim()
         : ''
       const isProfileRoute = route === '/profiles' || route.startsWith('/profile/')
       if (requestedProfile && !isProfileRoute) {
-        const active = this.controller.activeProfileName()
-        if (active !== requestedProfile) {
-          await this.controlled('activate-profile', () => this.controller.activateProfile(requestedProfile))
+        if (!this.profileIsExactly(requestedProfile)) {
+          const approved = await this.requestControl({
+            command: 'activate-profile',
+            url: this.controller.getState().url,
+            surface: 'browser',
+            level: levelForCommand('activate-profile'),
+          })
+          if (!approved) throw new BrowserControlDeniedError()
         }
+        this.profileScope.enterWith({ name: requestedProfile, held: false })
+        // The long-polling routes (`/wait`, `/wait-login`, `/wait-download`)
+        // deliberately run outside the lock so one agent's wait cannot block
+        // the rest, which means they cannot pin the identity themselves. Taking
+        // one empty turn puts it in place for them up front. For every other
+        // route this is a no-op: they re-check under their own turn anyway.
+        await this.exclusive(() => undefined)
       }
       if (req.method === 'POST' && route === '/open') {
         const body = await readJson(req)
@@ -443,8 +465,36 @@ export class BrowserAgentBridge {
     }
   }
 
+  /** Is the browser carrying exactly this profile and nothing else? Several
+   *  profiles can be enabled at once, so "one of them is the right one" is not
+   *  good enough for a command that asked to run as a single identity. */
+  private profileIsExactly(name: string): boolean {
+    const enabled = this.controller.activeProfileNames()
+    return enabled.length === 1 && enabled[0] === name
+  }
+
+  /** Run `operation` as the browser's only in-flight operation. When the
+   *  request named a profile, the switch to it happens inside the same turn, so
+   *  a command can never end up running under an identity another agent
+   *  switched to while this one was queued. */
   private async exclusive<T>(operation: () => Promise<T> | T): Promise<T> {
-    const result = this.operationTail.then(operation, operation)
+    const scope = this.profileScope.getStore()
+    // Already inside this request's turn (a route that locks twice, or
+    // `controlled` locking around an operation): re-queueing would deadlock.
+    if (scope?.held) return await operation()
+    const run = async (): Promise<T> => {
+      if (!scope) return await operation()
+      scope.held = true
+      try {
+        // Re-checked here rather than before the queue: another agent may have
+        // switched the browser while this request waited its turn.
+        if (!this.profileIsExactly(scope.name)) await this.controller.activateProfile(scope.name)
+        return await operation()
+      } finally {
+        scope.held = false
+      }
+    }
+    const result = this.operationTail.then(run, run)
     this.operationTail = result.then(() => undefined, () => undefined)
     return await result
   }
