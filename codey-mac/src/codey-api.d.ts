@@ -632,7 +632,6 @@ declare global {
           cookieCount: number
           sites: string[]
         }>>
-        resyncSession: (name: string) => Promise<IpcResult<{ profile: BrowserProfileSummary; tab: ChromeTabInfo }>>
         navigate: (url: string) => Promise<IpcResult<ChromeTabInfo>>
         setAccent: (hex: string) => Promise<IpcResult<{ ok: true }>>
         showExtensionFolder: () => Promise<IpcResult<string>>
@@ -668,6 +667,11 @@ declare global {
           import: () => Promise<IpcResult<{ imported: boolean; profile: BrowserProfileSummary | null }>>
           export: (name: string) => Promise<IpcResult<{ exported: boolean; path: string | null }>>
           syncFromChrome: (url: string) => Promise<IpcResult<{ profileName: string; origin: string; cookieCount: number }>>
+          syncProfile: (name: string) => Promise<IpcResult<{
+            profile: BrowserProfileSummary
+            siteCount: number
+            cookieCount: number
+          }>>
         }
         extensions: {
           list: () => Promise<IpcResult<BrowserExtensionEntry[]>>

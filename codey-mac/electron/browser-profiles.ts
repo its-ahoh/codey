@@ -285,6 +285,43 @@ export function conflictingCookie(
   return null
 }
 
+/** Does `site` (a registrable domain, as Chrome grouped it) cover `host`?
+ *  Used to decide which of a profile's cookies a refresh of that site speaks
+ *  for, without needing the public-suffix guesswork on this side: the sites
+ *  come back from the extension already folded. */
+export function siteCoversHost(site: string, host: string): boolean {
+  const left = site.replace(/^\./, '').toLowerCase()
+  const right = host.replace(/^\./, '').toLowerCase()
+  return !!left && (right === left || right.endsWith(`.${left}`))
+}
+
+/** Fold a fresh multi-site export into a profile. Only the sites the export
+ *  covers are replaced - everything else the profile holds is left alone, so
+ *  refreshing what Chrome knows about cannot delete a login that came from
+ *  somewhere else. Replacing rather than layering means a cookie the site has
+ *  dropped disappears instead of lingering as a stale credential. */
+export function mergeProfileSites(
+  existing: BrowserProfileData,
+  incoming: BrowserProfileData,
+  sites: readonly string[],
+): BrowserProfileData {
+  const covers = (host: string) => sites.some(site => siteCoversHost(site, host));
+  const originHost = (origin: string) => {
+    try {
+      return new URL(origin).hostname
+    } catch {
+      return ''
+    }
+  }
+  return {
+    cookies: [...existing.cookies.filter(cookie => !covers(cookie.domain)), ...incoming.cookies],
+    origins: [
+      ...existing.origins.filter(origin => !covers(originHost(origin.origin))),
+      ...incoming.origins,
+    ],
+  }
+}
+
 /** File store for profiles. One \`.json\` per profile plus a dot-file that
  *  records which profile is enabled. */
 export class BrowserProfileStore {

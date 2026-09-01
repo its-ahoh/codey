@@ -310,18 +310,23 @@ export const BrowserPanel: React.FC<Props> = ({
     }
   }
 
-  // "Only this one" is still worth one click: it is the identity switch, and
-  // it is the way out of a set that has grown confusing.
-  const activateProfile = async (name: string) => {
+  // Refresh one profile's saved logins from Chrome, whether or not it is in
+  // use. The menu stays open: this is maintenance, not a choice.
+  const syncProfile = async (name: string) => {
     setProfileBusy(true)
+    setSyncNote(null)
     try {
-      const result = await window.codey.browser.profiles.activate(name)
-      if (!result.ok) setLocalError(result.error)
-      else setLocalError(null)
+      const result = await window.codey.browser.profiles.syncProfile(name)
+      if (!result.ok) {
+        setLocalError(result.error)
+        return
+      }
+      setLocalError(null)
+      setSyncNote(`Refreshed “${name}”: ${result.data.cookieCount} cookies from ${result.data.siteCount} site${result.data.siteCount === 1 ? '' : 's'}`)
       await refreshProfiles()
+      await run(() => window.codey.browser.reload())
     } finally {
       setProfileBusy(false)
-      setProfileMenuOpen(false)
     }
   }
 
@@ -656,15 +661,14 @@ export const BrowserPanel: React.FC<Props> = ({
                 <span style={styles.profileMenuName}>{profile.name}</span>
                 <span aria-hidden="true" style={styles.profileMenuCheck}>{profile.active ? '✓' : ''}</span>
               </button>
-              {!(profile.active && enabledProfiles.length === 1) && (
-                <button
-                  type="button"
-                  style={styles.profileMenuOnly}
-                  disabled={profileBusy}
-                  title={`Use only ${profile.name}, turning the others off`}
-                  onClick={() => void activateProfile(profile.name)}
-                >Only</button>
-              )}
+              <button
+                type="button"
+                style={styles.profileMenuSync}
+                disabled={profileBusy}
+                title={`Refresh every login in ${profile.name} from Chrome`}
+                aria-label={`Refresh ${profile.name} from Chrome`}
+                onClick={() => void syncProfile(profile.name)}
+              ><UIIcon name="refresh" size={12} /></button>
             </div>
           ))}
           {enabledProfiles.length > 1 && (
@@ -1133,7 +1137,7 @@ const styles: Record<string, React.CSSProperties> = {
   profileMenuAvatar: { width: 20, flexShrink: 0, textAlign: 'center', fontSize: 15 },
   profileMenuName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   profileMenuRow: { display: 'flex', alignItems: 'center', gap: 2 },
-  profileMenuOnly: { flexShrink: 0, marginRight: 4, padding: '3px 7px', border: 'none', borderRadius: 6, background: 'transparent', color: C.fg3, cursor: 'pointer', fontSize: 10 },
+  profileMenuSync: { flexShrink: 0, display: 'flex', alignItems: 'center', marginRight: 4, padding: '3px 6px', border: 'none', borderRadius: 6, background: 'transparent', color: C.fg3, cursor: 'pointer' },
   profileMenuNote: { padding: '4px 10px 6px', color: C.fg3, fontSize: 10, lineHeight: 1.4 },
   profileMenuDivider: { height: 1, margin: '4px 0', background: C.border },
   contextButton: { height: 31, padding: '0 10px', border: `1px solid ${C.accent}66`, borderRadius: 7, display: 'flex', alignItems: 'center', gap: 6, background: C.accentDim, color: C.accent, cursor: 'pointer', fontSize: 11, fontWeight: 650, whiteSpace: 'nowrap' },

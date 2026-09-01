@@ -10,6 +10,8 @@ import {
   conflictingCookie,
   cookieMatchesUrl,
   mergeProfileData,
+  mergeProfileSites,
+  siteCoversHost,
   deriveProfileNameFromFile,
   parseProfileData,
   parseProfileJsonText,
@@ -351,5 +353,48 @@ describe('conflictingCookie', () => {
     }
     expect(conflictingCookie(withValue('work'), other)).toBeNull()
     expect(conflictingCookie({ cookies: [], origins: [] }, withValue('work'))).toBeNull()
+  })
+})
+
+describe('siteCoversHost / mergeProfileSites', () => {
+  it('covers a site and its subdomains, and nothing that merely ends alike', () => {
+    expect(siteCoversHost('github.com', 'github.com')).toBe(true)
+    expect(siteCoversHost('github.com', 'api.github.com')).toBe(true)
+    expect(siteCoversHost('github.com', '.github.com')).toBe(true)
+    expect(siteCoversHost('github.com', 'notgithub.com')).toBe(false)
+    expect(siteCoversHost('', 'github.com')).toBe(false)
+  })
+
+  const cookie = (domain: string, value: string) => ({
+    name: 'session', value, domain, path: '/', expires: -1,
+    httpOnly: true, secure: true, sameSite: 'lax' as const,
+  })
+
+  it('replaces only the sites the refresh covers', () => {
+    const existing = {
+      cookies: [cookie('github.com', 'old'), cookie('api.github.com', 'old'), cookie('gitlab.com', 'keep')],
+      origins: [
+        { origin: 'https://github.com', localStorage: [{ name: 'token', value: 'old' }] },
+        { origin: 'https://gitlab.com', localStorage: [{ name: 'token', value: 'keep' }] },
+      ],
+    }
+    const incoming = {
+      cookies: [cookie('github.com', 'fresh')],
+      origins: [{ origin: 'https://github.com', localStorage: [{ name: 'token', value: 'fresh' }] }],
+    }
+    const merged = mergeProfileSites(existing, incoming, ['github.com'])
+    expect(merged.cookies.map(entry => [entry.domain, entry.value])).toEqual([
+      ['gitlab.com', 'keep'],
+      ['github.com', 'fresh'],
+    ])
+    expect(merged.origins).toEqual([
+      { origin: 'https://gitlab.com', localStorage: [{ name: 'token', value: 'keep' }] },
+      { origin: 'https://github.com', localStorage: [{ name: 'token', value: 'fresh' }] },
+    ])
+  })
+
+  it('leaves a profile untouched when the refresh covered nothing', () => {
+    const existing = { cookies: [cookie('gitlab.com', 'keep')], origins: [] }
+    expect(mergeProfileSites(existing, { cookies: [], origins: [] }, [])).toEqual(existing)
   })
 })

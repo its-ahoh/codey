@@ -26,7 +26,6 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
   const [error, setError] = useState<string | null>(null)
   const [profileName, setProfileName] = useState('chrome-session')
   const [exported, setExported] = useState<string | null>(null)
-  const [resynced, setResynced] = useState<string | null>(null)
   const [installedPath, setInstalledPath] = useState<string | null>(null)
   const [sites, setSites] = useState<ChromeSessionSite[] | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
@@ -130,7 +129,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
               <input
                 style={styles.input}
                 value={profileName}
-                onChange={event => { setProfileName(event.target.value); setExported(null); setResynced(null) }}
+                onChange={event => { setProfileName(event.target.value); setExported(null) }}
                 placeholder="chrome-session"
                 aria-label="New Codey Browser profile name"
                 spellCheck={false}
@@ -138,31 +137,18 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
             </label>
             <button style={styles.primary} disabled={busy || !status.connected || !profileName.trim()} onClick={() => void run(async () => {
               const next = useResult(await window.codey.chromeCompanion.exportSession(profileName.trim()))
-              if (next) {
-                setExported(next.profile.name)
-                setResynced(null)
-              }
+              if (next) setExported(next.profile.name)
             })}>Create &amp; activate profile</button>
           </div>
           {exported && (
             <div style={styles.success}>“{exported}” is now the active Codey Browser profile. Chrome was not changed.</div>
           )}
-          {/* Logins expire, and a profile copied months ago is worth refreshing
-              rather than recreating - recreating would lose the profile's other
-              sites and its place in the switcher. */}
-          <div style={styles.actions}>
-            <span style={styles.copy}>Signed in again in Chrome? Refresh a profile you already have instead.</span>
-            <button style={styles.secondary} disabled={busy || !status.connected || !profileName.trim()} onClick={() => void run(async () => {
-              const next = useResult(await window.codey.chromeCompanion.resyncSession(profileName.trim()))
-              if (next) {
-                setResynced(next.profile.name)
-                setExported(null)
-              }
-            })}>Re-sync existing profile</button>
+          {/* Keeping a profile up to date belongs with the profile, not here:
+              refreshing is one button per profile in the Codey Browser. This
+              page only creates them. */}
+          <div style={styles.copy}>
+            Already have a profile for this login? Refresh it from the Codey Browser — every profile has its own refresh button.
           </div>
-          {resynced && (
-            <div style={styles.success}>“{resynced}” now carries this site’s current Chrome login. Its other saved sites were left alone.</div>
-          )}
         </div>
       )}
 
