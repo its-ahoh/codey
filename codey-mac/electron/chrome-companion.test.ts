@@ -166,37 +166,37 @@ describe('ChromeCompanionBridge', () => {
     await expect(exported).resolves.toEqual(session)
   })
 
-  it('exports the session for a URL Codey names, not the tab in front', async () => {
+  it('carries the auto-sync watch list on polls and routes change reports back', async () => {
     const { bridge, endpoint } = await setup()
     const token = await connect(endpoint)
-    const exported = bridge.exportSessionForUrl('https://example.com/inbox')
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    const poll = () => fetch(`${endpoint}/v1/poll`, { method: 'POST', headers, body: '{}' })
+      .then(response => response.json() as Promise<{ watchDomains: string[] | null }>)
 
-    const poll = await fetch(`${endpoint}/v1/poll`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: '{}',
+    // Off (no hooks): explicit null, so the extension can drop a stale list.
+    await expect(poll()).resolves.toMatchObject({ watchDomains: null })
+
+    const reported: string[][] = []
+    bridge.setAutoSync({
+      watchDomains: () => ['github.com', 'jira.example.com'],
+      onSessionChanged: domains => reported.push(domains),
     })
-    const work = await poll.json() as { command: { id: string; command: string; input: { url: string } } }
-    expect(work.command.command).toBe('exportSessionForUrl')
-    expect(work.command.input).toEqual({ url: 'https://example.com/inbox' })
+    await expect(poll()).resolves.toMatchObject({ watchDomains: ['github.com', 'jira.example.com'] })
 
-    // No tab has to be open on the site, so the export carries no tab at all.
-    const session = {
-      url: 'https://example.com/inbox',
-      origin: 'https://example.com',
-      cookies: [{
-        name: 'session', value: 'secret', domain: 'example.com', path: '/', expires: -1,
-        httpOnly: true, secure: true, sameSite: 'lax' as const,
-      }],
-      origins: [],
-    }
-    await fetch(`${endpoint}/v1/result`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: work.command.id, ok: true, data: session }),
+    // The report names domains only - never cookie values - and junk entries
+    // are dropped before they reach the app.
+    const changed = await fetch(`${endpoint}/v1/session/changed`, {
+      method: 'POST', headers, body: JSON.stringify({ domains: ['.GitHub.com', '', 42, 'jira.example.com'] }),
     })
+    expect(changed.status).toBe(200)
+    expect(reported).toEqual([['.github.com', 'jira.example.com']])
 
-    await expect(exported).resolves.toEqual(session)
+    // Unauthenticated callers cannot spoof change reports.
+    const anonymous = await fetch(`${endpoint}/v1/session/changed`, {
+      method: 'POST', body: JSON.stringify({ domains: ['github.com'] }),
+    })
+    expect(anonymous.status).toBe(401)
+    expect(reported).toHaveLength(1)
   })
 
   it('lists Chrome\'s signed-in sites and exports only the ones picked', async () => {
@@ -353,7 +353,6 @@ describe('ChromeCompanionBridge', () => {
 
   it('hands the current site\'s session to Codey from the side panel', async () => {
     const handoffs: Array<string | undefined> = []
-    const resyncs: boolean[] = []
     const features = {
       options: async () => ({
         agents: [], models: [], defaultAgent: null, defaultModel: null, defaultModels: {}, chat: null,
@@ -364,10 +363,9 @@ describe('ChromeCompanionBridge', () => {
       }),
       upload: async () => ({ id: 'a', name: 'n', mimeType: 'text/plain', size: 0, path: '/tmp/n' }),
       transcribe: async () => ({ text: '' }),
-      handoffSession: async (name?: string, resync?: boolean) => {
+      handoffSession: async (name?: string) => {
         handoffs.push(name)
-        resyncs.push(resync === true)
-        return { profileName: name || 'example.com-2', origin: 'https://example.com', cookieCount: 4, resynced: resync === true }
+        return { profileName: name || 'example.com-2', origin: 'https://example.com', cookieCount: 4 }
       },
       suggestProfileName: async (hostname: string) => ({ name: `${hostname}-free`, existing: [`${hostname}-saved`] }),
     } as unknown as ChromeCompanionFeatures
@@ -395,7 +393,7 @@ describe('ChromeCompanionBridge', () => {
     })
     expect(named.status).toBe(200)
     await expect(named.json()).resolves.toEqual({
-      ok: true, profileName: 'my-github', origin: 'https://example.com', cookieCount: 4, resynced: false,
+      ok: true, profileName: 'my-github', origin: 'https://example.com', cookieCount: 4,
     })
 
     // An omitted or blank name means "you pick one".
@@ -404,21 +402,7 @@ describe('ChromeCompanionBridge', () => {
     })
     await expect(auto.json()).resolves.toMatchObject({ profileName: 'example.com-2' })
 
-    // Refreshing an existing profile goes down the same route with a flag.
-    const refreshed = await fetch(`${endpoint}/v1/session/handoff`, {
-      method: 'POST', headers, body: JSON.stringify({ name: 'my-github', resync: true }),
-    })
-    await expect(refreshed.json()).resolves.toMatchObject({ profileName: 'my-github', resynced: true })
-
-    // "Refresh whichever" is not a thing - there would be no way to guess which.
-    const nameless = await fetch(`${endpoint}/v1/session/handoff`, {
-      method: 'POST', headers, body: JSON.stringify({ resync: true }),
-    })
-    expect(nameless.status).toBe(400)
-    await expect(nameless.json()).resolves.toMatchObject({ error: 'Choose which profile to re-sync' })
-
-    expect(handoffs).toEqual(['my-github', undefined, 'my-github'])
-    expect(resyncs).toEqual([false, false, true])
+    expect(handoffs).toEqual(['my-github', undefined])
   })
 
   it('routes authenticated side-panel chat through Codey', async () => {

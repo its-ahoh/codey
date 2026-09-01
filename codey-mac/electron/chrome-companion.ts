@@ -73,16 +73,6 @@ export interface ChromeSessionExport {
   }>
 }
 
-/** A session exported for a URL Codey named, rather than for the tab in front.
- *  There may be no tab open on it at all, so `origins` is best-effort: without
- *  a page to run in, localStorage cannot be read. */
-export interface ChromeUrlSessionExport {
-  url: string
-  origin: string
-  cookies: ChromeSessionExport['cookies']
-  origins: ChromeSessionExport['origins']
-}
-
 /** One site this Chrome profile holds cookies for, as offered to the user to
  *  pick from. `openTabs` is how many tabs are on it right now, which decides
  *  whether its localStorage can come along at all. */
@@ -152,11 +142,11 @@ export interface ChromeCompanionFeatures {
    * the one-click path never fails merely because the obvious name is taken;
    * a name the user typed is used as-is and collides loudly.
    */
-  handoffSession: (name?: string, resync?: boolean) => Promise<ChromeSessionHandoff>
+  handoffSession: (name?: string) => Promise<ChromeSessionHandoff>
   /**
    * The name the handoff would use for `hostname` if the user just accepts it,
-   * plus the profiles that already hold this site's session - those are the
-   * ones a re-sync would refresh rather than a handoff create.
+   * plus the profiles that already hold this site's session - the side panel
+   * points at those instead of quietly creating a near-duplicate.
    */
   suggestProfileName: (hostname: string) => Promise<{ name: string; existing: string[] }>
 }
@@ -165,8 +155,16 @@ export interface ChromeSessionHandoff {
   profileName: string
   origin: string
   cookieCount: number
-  /** True when an existing profile was refreshed instead of one being created. */
-  resynced: boolean
+}
+
+/** Hooks for keeping copied logins fresh without a click. `watchDomains` says
+ *  which cookie domains the extension should report changes for (null while
+ *  the feature is off), and `onSessionChanged` receives the domains a change
+ *  burst actually touched. Notification only - no cookie values travel this
+ *  way; Codey pulls a fresh export through the normal command channel. */
+export interface ChromeAutoSyncHooks {
+  watchDomains: () => string[] | null
+  onSessionChanged: (domains: string[]) => void
 }
 
 export interface ChromeCompanionChatHistory {
@@ -228,6 +226,7 @@ export class ChromeCompanionBridge {
   private expectedVersion: string | null = null
   private pending = new Map<string, PendingCommand>()
   private uploadedAttachments = new Map<string, { chatId: string; attachment: ChromeCompanionAttachment }>()
+  private autoSync: ChromeAutoSyncHooks | null = null
 
   constructor(
     private readonly stateFile: string,
@@ -368,9 +367,10 @@ export class ChromeCompanionBridge {
     return await this.command<ChromeSessionExport>('exportSession', {})
   }
 
-  /** The session Chrome holds for `url`, whether or not a tab is open on it. */
-  async exportSessionForUrl(url: string): Promise<ChromeUrlSessionExport> {
-    return await this.command<ChromeUrlSessionExport>('exportSessionForUrl', { url })
+  /** Turn change-driven syncing on (or off with null). Takes effect on the
+   *  extension's next poll - the watch list rides the poll response. */
+  setAutoSync(hooks: ChromeAutoSyncHooks | null): void {
+    this.autoSync = hooks
   }
 
   /** Every site this Chrome profile has cookies for, most first. */
@@ -571,10 +571,28 @@ export class ChromeCompanionBridge {
           this.emitStatus()
         }
         const command = this.queue.shift()
-        const base = { ok: true, accent: this.accent, expectedVersion: this.expectedVersion }
+        const watchDomains = this.autoSync?.watchDomains() ?? null
+        const base = {
+          ok: true,
+          accent: this.accent,
+          expectedVersion: this.expectedVersion,
+          // null (not absent) when auto-sync is off, so the extension can drop
+          // a stale watch list instead of reporting changes forever.
+          watchDomains: watchDomains ? watchDomains.slice(0, 500) : null,
+        }
         this.reply(request, response, 200, command
           ? { ...base, command: { id: command.id, command: command.command, input: command.input } }
           : { ...base, command: null })
+        return
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/session/changed') {
+        const input = await this.body(request)
+        const domains = (Array.isArray(input.domains) ? input.domains : [])
+          .filter((domain): domain is string => typeof domain === 'string' && !!domain.trim())
+          .map(domain => domain.trim().toLowerCase().slice(0, 300))
+          .slice(0, 200)
+        if (domains.length > 0) this.autoSync?.onSessionChanged(domains)
+        this.reply(request, response, 200, { ok: true })
         return
       }
       if (request.method === 'POST' && url.pathname === '/v1/result') {
@@ -633,11 +651,7 @@ export class ChromeCompanionBridge {
         if (!this.features) throw new Error('Session handoff is unavailable')
         const input = await this.body(request)
         const name = typeof input.name === 'string' ? input.name.trim() : ''
-        const resync = input.resync === true
-        // A refresh has to say which profile it refreshes; there is no
-        // sensible default for "overwrite one of these".
-        if (resync && !name) throw new Error('Choose which profile to re-sync')
-        this.reply(request, response, 200, { ok: true, ...await this.features.handoffSession(name || undefined, resync) })
+        this.reply(request, response, 200, { ok: true, ...await this.features.handoffSession(name || undefined) })
         return
       }
       if (request.method === 'GET' && url.pathname === '/v1/chats') {

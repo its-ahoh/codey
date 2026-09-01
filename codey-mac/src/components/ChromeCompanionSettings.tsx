@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { ChromeCompanionStatus, ChromeSessionSite } from '../codey-api'
 import { C } from '../theme'
+import { Toggle } from './settingsAtoms'
 
 const EMPTY: ChromeCompanionStatus = {
   endpoint: null,
@@ -44,9 +45,9 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
   const [busyAt, setBusyAt] = useState<string | null>(null)
   const [error, setError] = useState<{ at: string; message: string } | null>(null)
   const busy = busyAt !== null
-  const [profileName, setProfileName] = useState('chrome-session')
-  const [exported, setExported] = useState<string | null>(null)
   const [installedPath, setInstalledPath] = useState<string | null>(null)
+  const [autoSync, setAutoSync] = useState(false)
+  const [autoSyncBusy, setAutoSyncBusy] = useState(false)
   const [sites, setSites] = useState<ChromeSessionSite[] | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [siteFilter, setSiteFilter] = useState('')
@@ -73,6 +74,14 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
       if (next) setStatus(next)
     })
     return () => { cancelled = true; off() }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void window.codey.chromeCompanion.autoSync?.get().then(result => {
+      if (!cancelled && result.ok) setAutoSync(result.data.enabled)
+    })
+    return () => { cancelled = true }
   }, [])
 
   const run = async (at: string, operation: () => Promise<void>) => {
@@ -143,43 +152,37 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
         </div>
       )}
 
+      {/* One creation path here, not two: the picker below covers a single
+          site (tick one) as well as a working set, and creating from "the
+          current Chrome tab" already lives in Chrome's own side panel, where
+          the user can see which tab that is. */}
       {status.connected && (
         <div style={styles.card}>
-          <div>
-            <div style={styles.title}>Create a Codey Browser profile</div>
-            <div style={styles.copy}>Use the login from Chrome’s currently active site inside the separate Codey Browser.</div>
+          <div style={styles.toggleRow}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={styles.title}>Keep copied logins in sync with Chrome</div>
+              <div style={styles.copy}>
+                When a login your profiles hold changes in Chrome, the affected profiles refresh themselves.
+                Chrome only reports <em>which site</em> changed — Codey then pulls a fresh copy the same way the manual refresh button does.
+              </div>
+            </div>
+            <Toggle
+              on={autoSync}
+              disabled={busy || autoSyncBusy}
+              onChange={next => void (async () => {
+                setAutoSyncBusy(true)
+                section.current = 'autosync'
+                try {
+                  const value = unwrapResult(await window.codey.chromeCompanion.autoSync.set(next))
+                  if (value) setAutoSync(value.enabled)
+                } finally {
+                  setAutoSyncBusy(false)
+                }
+              })()}
+              label="Keep copied logins in sync with Chrome"
+            />
           </div>
-          <div style={styles.impact}>
-            <strong>This creates a new named profile and activates it immediately.</strong>
-            <span>It copies only that site’s cookies and localStorage. Codey Browser switches its live session to the new profile; your other saved profiles remain available. Nothing in Chrome is changed.</span>
-          </div>
-          <div style={{ ...styles.navigate, ...(compact ? styles.stack : null) }}>
-            <label style={styles.inputLabel}>
-              New profile name
-              <input
-                style={styles.input}
-                value={profileName}
-                onChange={event => { setProfileName(event.target.value); setExported(null) }}
-                placeholder="chrome-session"
-                aria-label="New Codey Browser profile name"
-                spellCheck={false}
-              />
-            </label>
-            <button style={styles.primary} disabled={busy || !status.connected || !profileName.trim()} onClick={() => void run('export', async () => {
-              const next = unwrapResult(await window.codey.chromeCompanion.exportSession(profileName.trim()))
-              if (next) setExported(next.profile.name)
-            })}>{busyAt === 'export' ? 'Asking Chrome…' : 'Create & activate profile'}</button>
-          </div>
-          {failure('export')}
-          {exported && (
-            <div style={styles.success}>“{exported}” is now the active Codey Browser profile. Chrome was not changed.</div>
-          )}
-          {/* Keeping a profile up to date belongs with the profile, not here:
-              refreshing is one button per profile in the Codey Browser. This
-              page only creates them. */}
-          <div style={styles.copy}>
-            Already have a profile for this login? Refresh it from the Codey Browser — every profile has its own refresh button.
-          </div>
+          {failure('autosync')}
         </div>
       )}
 
@@ -304,6 +307,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
 const styles: Record<string, React.CSSProperties> = {
   root: { display: 'flex', flexDirection: 'column', gap: 10 },
   card: { display: 'flex', flexDirection: 'column', gap: 9, padding: 12, borderRadius: 10, background: C.surface, border: `1px solid ${C.border}` },
+  toggleRow: { display: 'flex', alignItems: 'flex-start', gap: 12 },
   dot: { width: 8, height: 8, flexShrink: 0, borderRadius: '50%' },
   title: { color: C.fg, fontSize: 12.5, fontWeight: 750 },
   copy: { color: C.fg3, fontSize: 10.5, lineHeight: 1.45, marginTop: 3 },

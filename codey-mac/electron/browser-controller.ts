@@ -13,7 +13,6 @@ import {
   assertProfileName,
   BrowserProfileStore,
   cookieMatchesUrl,
-  mergeProfileData,
   mergeProfileSites,
   parseProfileJsonText,
   profileConflict,
@@ -1015,27 +1014,6 @@ export class BrowserController {
         }
       })
       .map(summary => summary.name)
-  }
-
-  /** Refresh part of a saved profile from a freshly exported session, so a
-   *  login that was renewed elsewhere stops being stale here. The profile must
-   *  already exist - this is the "my Chrome login changed" path, not a second
-   *  way to create one - and only the scope URL's cookies and the exported
-   *  origins' storage are replaced, so other sites saved in the same profile
-   *  survive. Refreshing the enabled profile re-applies it too: the live
-   *  session would otherwise keep serving the cookies it was activated with. */
-  async resyncProfile(
-    name: string,
-    source: { json: string },
-    scopeUrl: string,
-  ): Promise<BrowserProfile> {
-    assertProfileName(name)
-    const existing = this.profiles().read(name)
-    const merged = mergeProfileData(existing, parseProfileJsonText(source.json), scopeUrl)
-    this.assertRefreshFitsEnabledSet(name, merged)
-    const profile = this.profiles().write(name, merged, existing.sourceUrl ?? scopeUrl)
-    if (this.profiles().activeNames().includes(name)) await this.applyLiveProfiles()
-    return profile
   }
 
   /** Refuse a refresh that would make an enabled profile clash with another

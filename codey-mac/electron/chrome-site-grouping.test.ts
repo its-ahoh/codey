@@ -16,6 +16,7 @@ const source = fs.readFileSync(
 // this file; the test injects the same package as the same global.
 ;(globalThis as any).tldts = require('tldts')
 const siteOfHost = new Function(`${source}; return siteOfHost`)() as (host: string) => string
+const domainsTouch = new Function(`${source}; return domainsTouch`)() as (a: string, b: string) => boolean
 type VisitPlan = Array<{ site: string; url: string }>
 const storageVisitPlan = new Function(`${source}; return storageVisitPlan`)() as (
   wanted: string[],
@@ -63,6 +64,26 @@ describe('siteOfHost', () => {
     expect(siteOfHost('alice.github.io')).not.toBe(siteOfHost('bob.github.io'))
     expect(siteOfHost('tenant-a.appspot.com')).not.toBe(siteOfHost('tenant-b.appspot.com'))
     expect(siteOfHost('mine.pages.dev')).not.toBe(siteOfHost('theirs.pages.dev'))
+  })
+})
+
+/**
+ * `domainsTouch` decides whether a changed cookie belongs to a watched domain,
+ * so auto-sync reports the right changes and stays quiet about the rest.
+ */
+describe('domainsTouch', () => {
+  it('matches exact hosts and subdomains in either direction', () => {
+    expect(domainsTouch('github.com', 'github.com')).toBe(true)
+    expect(domainsTouch('api.github.com', 'github.com')).toBe(true)
+    expect(domainsTouch('github.com', 'api.github.com')).toBe(true)
+    expect(domainsTouch('.GitHub.com', 'api.github.com')).toBe(true)
+  })
+
+  it('does not match lookalike or unrelated domains', () => {
+    expect(domainsTouch('evilgithub.com', 'github.com')).toBe(false)
+    expect(domainsTouch('github.com.evil.example', 'github.com')).toBe(false)
+    expect(domainsTouch('gitlab.com', 'github.com')).toBe(false)
+    expect(domainsTouch('', 'github.com')).toBe(false)
   })
 })
 

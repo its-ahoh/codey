@@ -10,7 +10,6 @@ import {
   conflictingCookie,
   conflictingStorageKey,
   cookieMatchesUrl,
-  mergeProfileData,
   mergeProfileSites,
   siteCoversHost,
   summarizeProfileSites,
@@ -291,40 +290,6 @@ describe('cookieMatchesUrl', () => {
     const scoped = cookie({ path: '/app' })
     expect(cookieMatchesUrl(scoped, new URL('https://example.com/app/inbox'))).toBe(true)
     expect(cookieMatchesUrl(scoped, new URL('https://example.com/apple'))).toBe(false)
-  })
-})
-
-describe('mergeProfileData', () => {
-  const existing = {
-    cookies: [
-      cookie({ name: 'session', value: 'stale' }),
-      cookie({ name: 'dropped', value: 'gone' }),
-      cookie({ name: 'other-site', domain: 'gitlab.com' }),
-    ],
-    origins: [
-      { origin: 'https://example.com', localStorage: [{ name: 'token', value: 'stale' }] },
-      { origin: 'https://gitlab.com', localStorage: [{ name: 'token', value: 'keep' }] },
-    ],
-  }
-  const incoming = {
-    cookies: [cookie({ name: 'session', value: 'fresh' })],
-    origins: [{ origin: 'https://example.com', localStorage: [{ name: 'token', value: 'fresh' }] }],
-  }
-
-  it('replaces the refreshed site and leaves the profile\'s other sites alone', () => {
-    const merged = mergeProfileData(existing, incoming, 'https://example.com/')
-    expect(merged.cookies.map(entry => [entry.domain, entry.name, entry.value])).toEqual([
-      ['gitlab.com', 'other-site', 'abc'],
-      ['example.com', 'session', 'fresh'],
-    ])
-    expect(merged.origins).toEqual([
-      { origin: 'https://gitlab.com', localStorage: [{ name: 'token', value: 'keep' }] },
-      { origin: 'https://example.com', localStorage: [{ name: 'token', value: 'fresh' }] },
-    ])
-  })
-
-  it('rejects a scope URL it cannot reason about rather than merging blindly', () => {
-    expect(() => mergeProfileData(existing, incoming, 'not a url')).toThrow(/scope URL/)
   })
 })
 

@@ -461,49 +461,6 @@ function toExportedCookie(cookie) {
 }
 
 /**
- * Export the session for a URL Codey names, rather than for whatever tab
- * happens to be in front. This is what the Codey Browser's Sync button asks
- * for: the user is looking at a signed-out page there and wants this Chrome
- * profile's login for that same site.
- *
- * Cookies come straight from the cookie store, so no tab has to be open.
- * localStorage cannot be read without running in the page, so it is taken
- * from a tab already on that origin when there is one and skipped otherwise -
- * cookies alone carry the login for nearly every site, and opening a tab
- * behind the user's back to read storage would be a worse trade.
- */
-async function exportSessionForUrl(rawUrl) {
-  let target
-  try {
-    target = new URL(String(rawUrl || ''))
-  } catch {
-    throw new Error(`Invalid URL: ${rawUrl}`)
-  }
-  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-    throw new Error('Only http(s) site sessions can be exported')
-  }
-  const cookies = await chrome.cookies.getAll({ url: target.toString() })
-  if (cookies.length === 0) throw new Error(`Chrome has no cookies for ${target.hostname}`)
-  let origins = []
-  const tabs = await chrome.tabs.query({ url: `${target.origin}/*` })
-  const open = tabs.find(tab => typeof tab.id === 'number')
-  if (open) {
-    try {
-      const storage = await readTabStorage(open.id)
-      if (storage?.origin) origins = [{ origin: storage.origin, localStorage: storage.localStorage || [] }]
-    } catch {
-      // A tab that refuses injection just costs us its storage, not the login.
-    }
-  }
-  return {
-    url: target.toString(),
-    origin: target.origin,
-    cookies: cookies.map(toExportedCookie),
-    origins,
-  }
-}
-
-/**
  * Every site this Chrome profile holds a login-shaped cookie for, so Codey can
  * show the user a list to pick from instead of copying the whole cookie jar.
  * Counts come from the cookie store, and `openTabs` says whether localStorage
@@ -746,8 +703,6 @@ async function execute(command) {
       return session
     }
     // None of these act on a page, so no tab is marked as controlled.
-    case 'exportSessionForUrl':
-      return await exportSessionForUrl(command.input?.url)
     case 'listSessionSites':
       return await listSessionSites()
     case 'exportSessionForSites':
@@ -791,6 +746,53 @@ async function noteExpectedVersion(expected) {
   await chrome.storage.local.set({ updateAvailable: stale })
 }
 
+// ── Auto-sync ───────────────────────────────────────────────────────────
+// Codey's poll response names the cookie domains its saved profiles hold.
+// When one of them changes here, Codey is told *which domain* changed and
+// nothing else - it then pulls a fresh export through the normal command
+// channel. No cookie values ride this path.
+let watchDomains = []
+let changedDomains = new Set()
+let changedFlushTimer = null
+
+async function noteWatchDomains(domains) {
+  const next = Array.isArray(domains) ? domains.filter(entry => typeof entry === 'string' && entry) : []
+  watchDomains = next
+  const saved = await chrome.storage.local.get({ watchDomains: [] })
+  if (JSON.stringify(saved.watchDomains) !== JSON.stringify(next)) {
+    await chrome.storage.local.set({ watchDomains: next })
+  }
+}
+
+async function reportChangedDomains() {
+  const domains = [...changedDomains]
+  changedDomains.clear()
+  if (domains.length === 0) return
+  const { endpoint, token } = await settings()
+  if (!token) return
+  await call(endpoint, '/v1/session/changed', { token, body: { domains } })
+}
+
+chrome.cookies.onChanged.addListener(({ cookie }) => {
+  const host = String(cookie?.domain || '').replace(/^\./, '').toLowerCase()
+  if (!host) return
+  runSafely(async () => {
+    // The worker may have restarted since the last poll delivered the list.
+    if (watchDomains.length === 0) {
+      const saved = await chrome.storage.local.get({ watchDomains: [] })
+      watchDomains = Array.isArray(saved.watchDomains) ? saved.watchDomains : []
+    }
+    if (!watchDomains.some(domain => domainsTouch(host, domain))) return
+    changedDomains.add(host)
+    // A login flow sets a burst of cookies; report the burst once.
+    if (changedFlushTimer) clearTimeout(changedFlushTimer)
+    changedFlushTimer = setTimeout(() => {
+      changedFlushTimer = null
+      runSafely(reportChangedDomains)
+    }, 2000)
+  })
+})
+
 async function pollOnce() {
   let { endpoint, token } = await settings()
   if (!token) ({ endpoint, token } = await autoConnect())
@@ -805,6 +807,7 @@ async function pollOnce() {
   }
   await noteExpectedVersion(response.expectedVersion)
   if (response.accent) await applyAccent(response.accent)
+  if (response.watchDomains !== undefined) await noteWatchDomains(response.watchDomains)
   if (!response.command) return true
   const command = response.command
   try {

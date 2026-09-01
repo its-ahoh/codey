@@ -39,6 +39,19 @@ function siteOfHost(host) {
   return fallbackSiteOfHost(labels)
 }
 
+/**
+ * Do two cookie domains speak for overlapping hosts? Used by auto-sync to
+ * decide whether a changed cookie belongs to a watched domain. Suffix matching
+ * runs in both directions because either side may be the broader one: a watch
+ * on `github.com` covers a change at `api.github.com`, and a watch on
+ * `api.github.com` still cares when a `.github.com` domain cookie changes.
+ */
+function domainsTouch(left, right) {
+  const a = String(left || '').replace(/^\./, '').toLowerCase()
+  const b = String(right || '').replace(/^\./, '').toLowerCase()
+  return !!a && !!b && (a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`))
+}
+
 // Opening at most this many pages for one copy. Each one is a real navigation
 // in the user's Chrome, so the ceiling is low on purpose - and the command has
 // to come back inside Codey's timeout.

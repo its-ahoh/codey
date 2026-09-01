@@ -245,30 +245,6 @@ export function cookieMatchesUrl(cookie: BrowserProfileCookie, url: URL): boolea
     || requestPath[cookiePath.length] === '/'
 }
 
-/** Fold a freshly exported session for one URL into a profile that already
- *  exists. Only what that export can speak for is replaced - cookies in the
- *  URL's scope, and the localStorage of the origins the export actually
- *  carried - so a profile holding several sites keeps the others intact.
- *  Replacing rather than layering also means a cookie the site has since
- *  dropped disappears here instead of lingering as a stale credential. */
-export function mergeProfileData(
-  existing: BrowserProfileData,
-  incoming: BrowserProfileData,
-  scopeUrl: string,
-): BrowserProfileData {
-  let url: URL
-  try {
-    url = new URL(scopeUrl)
-  } catch {
-    throw new Error(`Invalid session scope URL: ${scopeUrl}`)
-  }
-  const refreshed = new Set(incoming.origins.map(origin => origin.origin))
-  return {
-    cookies: [...existing.cookies.filter(cookie => !cookieMatchesUrl(cookie, url)), ...incoming.cookies],
-    origins: [...existing.origins.filter(origin => !refreshed.has(origin.origin)), ...incoming.origins],
-  }
-}
-
 /** The first cookie two profiles both hold with different values, or null when
  *  they can safely be enabled together. Same key and same value is not a
  *  conflict - honouring either one gives the same live session. */

@@ -634,8 +634,11 @@ declare global {
         disconnect: () => Promise<IpcResult<ChromeCompanionStatus>>
         activeTab: () => Promise<IpcResult<ChromeTabInfo>>
         snapshot: () => Promise<IpcResult<ChromePageSnapshot>>
-        exportSession: (name: string) => Promise<IpcResult<{ profile: BrowserProfileSummary; tab: ChromeTabInfo }>>
         listSessionSites: () => Promise<IpcResult<{ sites: ChromeSessionSite[] }>>
+        autoSync: {
+          get: () => Promise<IpcResult<{ enabled: boolean }>>
+          set: (enabled: boolean) => Promise<IpcResult<{ enabled: boolean }>>
+        }
         importSites: (name: string, sites: string[], openMissing?: boolean) => Promise<IpcResult<{
           imported: boolean
           profile: BrowserProfileSummary | null
@@ -676,7 +679,6 @@ declare global {
           delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>
           import: () => Promise<IpcResult<{ imported: boolean; profile: BrowserProfileSummary | null }>>
           export: (name: string) => Promise<IpcResult<{ exported: boolean; path: string | null }>>
-          syncFromChrome: (url: string) => Promise<IpcResult<{ profileName: string; origin: string; cookieCount: number }>>
           syncProfile: (name: string) => Promise<IpcResult<{
             profile: BrowserProfileSummary
             siteCount: number
