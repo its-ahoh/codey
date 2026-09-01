@@ -2536,7 +2536,7 @@ app.whenReady().then(async () => {
   // Copy exactly the sites the user ticked into a new profile. The list is
   // shown back one last time in a confirmation, because a login copied out of
   // Chrome cannot be un-copied - it is on disk from then on.
-  ipcMain.handle('chromeCompanion:importSites', (event, name: string, sites: string[]) => browserCall(event, async () => {
+  ipcMain.handle('chromeCompanion:importSites', (event, name: string, sites: string[], openMissing?: boolean) => browserCall(event, async () => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
     const requested = String(name || '').trim()
     assertProfileName(requested)
@@ -2548,7 +2548,7 @@ app.whenReady().then(async () => {
       .filter(Boolean)
       .slice(0, 500)
     if (picked.length === 0) throw new Error('Pick at least one site to copy')
-    const sessionState = await chromeCompanion.exportSessionForSites(picked)
+    const sessionState = await chromeCompanion.exportSessionForSites(picked, openMissing === true)
     const preview = sessionState.sites.slice(0, 12).join(', ')
     // Parented to a window that is actually on screen. A modal attached to a
     // hidden or destroyed window never shows, and the copy then looks like a

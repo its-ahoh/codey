@@ -23,3 +23,54 @@ function siteOfHost(host) {
   const take = last.length === 2 && MULTI_LABEL_SUFFIXES.has(secondLast) ? 3 : 2
   return labels.slice(-take).join('.')
 }
+
+// Opening at most this many pages for one copy. Each one is a real navigation
+// in the user's Chrome, so the ceiling is low on purpose - and the command has
+// to come back inside Codey's timeout.
+const STORAGE_VISIT_LIMIT = 8
+
+/**
+ * Which picked sites still have no site storage, and the URL to open to get it.
+ *
+ * Cookies come out of the cookie store without anything being open, but
+ * localStorage can only be read by running inside the page, so a site with no
+ * tab open is copied by its cookies alone. When the user opts in, this decides
+ * the shortest list of pages worth opening: sites already covered by an open
+ * tab are skipped, and each remaining site is visited on the host that carries
+ * the most of its cookies - `www.notion.so` rather than `notion.so`, because
+ * the two are different origins and only one of them holds the login.
+ *
+ * Chrome-API-free so it can be tested without a browser.
+ */
+function storageVisitPlan(wantedSites, cookieHosts, capturedOrigins, limit = STORAGE_VISIT_LIMIT) {
+  const covered = new Set()
+  for (const origin of capturedOrigins || []) {
+    try { covered.add(siteOfHost(new URL(origin).hostname)) } catch { /* not an origin we can place */ }
+  }
+  const hostsBySite = new Map()
+  for (const raw of cookieHosts || []) {
+    const host = String(raw || '').replace(/^\./, '').toLowerCase()
+    const site = siteOfHost(host)
+    if (!host || !site) continue
+    const counts = hostsBySite.get(site) || new Map()
+    counts.set(host, (counts.get(host) || 0) + 1)
+    hostsBySite.set(site, counts)
+  }
+  const plan = []
+  for (const site of wantedSites || []) {
+    if (plan.length >= limit) break
+    if (covered.has(site) || !hostsBySite.has(site)) continue
+    let host = site
+    let best = -1
+    for (const [candidate, count] of hostsBySite.get(site)) {
+      // Most cookies wins; the shorter host breaks a tie, being the more
+      // canonical of two hosts that look equally used.
+      if (count > best || (count === best && candidate.length < host.length)) {
+        host = candidate
+        best = count
+      }
+    }
+    plan.push({ site, url: `https://${host}/` })
+  }
+  return plan
+}

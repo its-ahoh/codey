@@ -52,6 +52,9 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
   const [siteFilter, setSiteFilter] = useState('')
   const [bulkName, setBulkName] = useState('chrome-logins')
   const [bulkResult, setBulkResult] = useState<{ name: string; cookieCount: number; siteCount: number } | null>(null)
+  // Off by default: reading a site's storage means Chrome actually opening it,
+  // and quietly loading eight pages is not something a copy should assume.
+  const [openMissing, setOpenMissing] = useState(false)
 
   const section = useRef('status')
 
@@ -216,6 +219,20 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
                 <strong>Cookies are copied for every site you tick.</strong>
                 <span>Site storage (localStorage) can only be read from a page that is open in Chrome right now, so a site with no open tab is copied by its cookies alone — enough for most logins, but not all. Nothing in Chrome is changed.</span>
               </div>
+              <label style={styles.optIn}>
+                <input
+                  type="checkbox"
+                  checked={openMissing}
+                  onChange={event => setOpenMissing(event.target.checked)}
+                  style={{ marginTop: 2 }}
+                />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  Also open the picked sites in Chrome to read their storage
+                  <div style={styles.copy}>
+                    A tab opens and closes for each site that is not already open — up to eight, and the sites are contacted for real. Turn this on for a login that cookies alone do not carry.
+                  </div>
+                </span>
+              </label>
               <input
                 style={styles.input}
                 value={siteFilter}
@@ -261,13 +278,13 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
                   />
                 </label>
                 <button style={styles.primary} disabled={busy || picked.size === 0 || !bulkName.trim()} onClick={() => void run('import', async () => {
-                  const next = unwrapResult(await window.codey.chromeCompanion.importSites(bulkName.trim(), [...picked]))
+                  const next = unwrapResult(await window.codey.chromeCompanion.importSites(bulkName.trim(), [...picked], openMissing))
                   if (next?.imported && next.profile) {
                     setBulkResult({ name: next.profile.name, cookieCount: next.cookieCount, siteCount: next.sites.length })
                     setSites(null)
                     setPicked(new Set())
                   }
-                })}>{busyAt === 'import' ? 'Asking Chrome…' : `Copy ${picked.size || ''} site${picked.size === 1 ? '' : 's'} into a profile`}</button>
+                })}>{busyAt === 'import' ? (openMissing ? 'Opening sites in Chrome…' : 'Asking Chrome…') : `Copy ${picked.size || ''} site${picked.size === 1 ? '' : 's'} into a profile`}</button>
               </div>
             </>
           )}
@@ -303,6 +320,7 @@ const styles: Record<string, React.CSSProperties> = {
   noticeCopy: { flex: 1, minWidth: 0, color: C.fg3, fontSize: 10.5 },
   navigate: { display: 'flex', alignItems: 'flex-end', gap: 8 },
   siteList: { display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 220, overflowY: 'auto', padding: 4, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface2 },
+  optIn: { display: 'flex', alignItems: 'flex-start', gap: 8, padding: '2px 2px', color: C.fg2, fontSize: 11, cursor: 'pointer' },
   siteRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', borderRadius: 6, color: C.fg2, fontSize: 11, cursor: 'pointer' },
   siteName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   siteMeta: { flexShrink: 0, color: C.fg3, fontSize: 10 },

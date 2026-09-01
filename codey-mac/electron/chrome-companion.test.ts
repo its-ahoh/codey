@@ -219,7 +219,9 @@ describe('ChromeCompanionBridge', () => {
     const exported = bridge.exportSessionForSites(['github.com'])
     const exportWork = await poll()
     expect(exportWork.command.command).toBe('exportSessionForSites')
-    expect(exportWork.command.input).toEqual({ sites: ['github.com'] })
+    // Opening pages in the user's Chrome is opt-in, so the default must travel
+    // as an explicit "no" rather than as an absent field the worker guesses at.
+    expect(exportWork.command.input).toEqual({ sites: ['github.com'], openMissing: false })
     const session = {
       sites: ['github.com'],
       cookies: [{
@@ -229,6 +231,23 @@ describe('ChromeCompanionBridge', () => {
       origins: [],
     }
     await answer(exportWork.command.id, session)
+    await expect(exported).resolves.toEqual(session)
+  })
+
+  it('carries the opt-in to open sites for their storage', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+
+    const exported = bridge.exportSessionForSites(['notion.so'], true)
+    const work = await fetch(`${endpoint}/v1/poll`, { method: 'POST', headers, body: '{}' })
+      .then(response => response.json() as Promise<{ command: { id: string; input: unknown } }>)
+    expect(work.command.input).toEqual({ sites: ['notion.so'], openMissing: true })
+
+    const session = { sites: ['notion.so'], cookies: [], origins: [{ origin: 'https://www.notion.so', localStorage: [{ name: 'token', value: 'x' }] }] }
+    await fetch(`${endpoint}/v1/result`, {
+      method: 'POST', headers, body: JSON.stringify({ id: work.command.id, ok: true, data: session }),
+    })
     await expect(exported).resolves.toEqual(session)
   })
 

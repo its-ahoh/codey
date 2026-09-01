@@ -636,7 +636,7 @@ declare global {
         snapshot: () => Promise<IpcResult<ChromePageSnapshot>>
         exportSession: (name: string) => Promise<IpcResult<{ profile: BrowserProfileSummary; tab: ChromeTabInfo }>>
         listSessionSites: () => Promise<IpcResult<{ sites: ChromeSessionSite[] }>>
-        importSites: (name: string, sites: string[]) => Promise<IpcResult<{
+        importSites: (name: string, sites: string[], openMissing?: boolean) => Promise<IpcResult<{
           imported: boolean
           profile: BrowserProfileSummary | null
           cookieCount: number

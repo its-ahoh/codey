@@ -7,6 +7,10 @@ const DEFAULT_PORT = 49321
 const PORT_SCAN_SIZE = 10
 const CONNECTED_TTL_MS = 45_000
 const COMMAND_TIMEOUT_MS = 20_000
+// Opening pages just to read their storage is the one command that legitimately
+// takes longer than a round trip: it waits on real navigations in the user's
+// Chrome. The extension caps its own pass below this.
+const STORAGE_VISIT_TIMEOUT_MS = 45_000
 const MAX_BODY_BYTES = 15 * 1024 * 1024
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 export const CHROME_COMPANION_EXTENSION_ID = 'nkfblackdfiplaekehijkgimhmlhlfib'
@@ -369,9 +373,19 @@ export class ChromeCompanionBridge {
     return await this.command<{ sites: ChromeSessionSite[] }>('listSessionSites', {})
   }
 
-  /** The session Chrome holds for exactly the sites named, nothing else. */
-  async exportSessionForSites(sites: string[]): Promise<ChromeSitesSessionExport> {
-    return await this.command<ChromeSitesSessionExport>('exportSessionForSites', { sites })
+  /**
+   * The session Chrome holds for exactly the sites named, nothing else.
+   *
+   * `openMissing` is the user's opt-in to Chrome briefly opening the picked
+   * sites that have no tab, which is the only way to reach their localStorage.
+   * It costs real navigations, so it is never assumed.
+   */
+  async exportSessionForSites(sites: string[], openMissing = false): Promise<ChromeSitesSessionExport> {
+    return await this.command<ChromeSitesSessionExport>(
+      'exportSessionForSites',
+      { sites, openMissing },
+      openMissing ? STORAGE_VISIT_TIMEOUT_MS : COMMAND_TIMEOUT_MS,
+    )
   }
 
   /**
@@ -408,7 +422,7 @@ export class ChromeCompanionBridge {
     return `Reload the Codey extension at chrome://extensions to finish updating it.${versions}`
   }
 
-  private async command<T>(command: string, input: unknown): Promise<T> {
+  private async command<T>(command: string, input: unknown, timeoutMs = COMMAND_TIMEOUT_MS): Promise<T> {
     if (!this.token) throw new Error('Install the Chrome companion and keep Codey running')
     if (!this.status().connected) throw new Error('Chrome companion is paired but not connected')
     return await new Promise<T>((resolve, reject) => {
@@ -423,7 +437,7 @@ export class ChromeCompanionBridge {
           this.pending.delete(id)
           this.queue = this.queue.filter(entry => entry.id !== id)
           reject(new Error(`Chrome command timed out: ${command}`))
-        }, COMMAND_TIMEOUT_MS),
+        }, timeoutMs),
       }
       this.queue.push(item)
       this.pending.set(id, item)

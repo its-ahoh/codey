@@ -9,6 +9,9 @@ const CONTROLLED_TAB_KEY = 'controlledTabId'
 const CONTROLLED_TITLE_PREFIX = '● Codey · '
 const OFFSCREEN_DOCUMENT = 'offscreen.html'
 const CONTROLLED_GROUP_TITLE = 'Codey'
+// How long one opt-in "open the missing sites" pass may take in total. Kept
+// under the bridge's own timeout for that command so Codey hears an answer.
+const STORAGE_VISIT_BUDGET_MS = 25_000
 // Stamped on interactive elements by `snapshot` so click/fill can address the
 // same element later. Renumbered on every snapshot.
 const REF_ATTR = 'data-codey-ref'
@@ -446,17 +449,7 @@ async function exportSessionForUrl(rawUrl) {
   const open = tabs.find(tab => typeof tab.id === 'number')
   if (open) {
     try {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId: open.id },
-        func: () => ({
-          origin: location.origin,
-          localStorage: Array.from({ length: localStorage.length }, (_, index) => {
-            const name = localStorage.key(index)
-            return name === null ? null : { name, value: localStorage.getItem(name) || '' }
-          }).filter(Boolean),
-        }),
-      })
-      const storage = results[0]?.result
+      const storage = await readTabStorage(open.id)
       if (storage?.origin) origins = [{ origin: storage.origin, localStorage: storage.localStorage || [] }]
     } catch {
       // A tab that refuses injection just costs us its storage, not the login.
@@ -499,13 +492,73 @@ async function listSessionSites() {
   return { sites: [...sites.values()].sort((a, b) => b.cookieCount - a.cookieCount || a.site.localeCompare(b.site)) }
 }
 
+/** Read one tab's localStorage. Storage can only be reached by running inside
+ *  the page, so every path that wants it ends up here. */
+async function readTabStorage(tabId) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => ({
+      origin: location.origin,
+      localStorage: Array.from({ length: localStorage.length }, (_, index) => {
+        const name = localStorage.key(index)
+        return name === null ? null : { name, value: localStorage.getItem(name) || '' }
+      }).filter(Boolean),
+    }),
+  })
+  return results[0]?.result ?? null
+}
+
+/** Resolve once a tab has finished loading, or reject at the deadline. */
+function whenTabLoaded(tabId, deadline) {
+  return new Promise((resolve, reject) => {
+    let timer = null
+    const finish = settle => {
+      chrome.tabs.onUpdated.removeListener(listener)
+      if (timer !== null) clearTimeout(timer)
+      settle()
+    }
+    const listener = (id, info) => { if (id === tabId && info.status === 'complete') finish(resolve) }
+    chrome.tabs.onUpdated.addListener(listener)
+    timer = setTimeout(() => finish(() => reject(new Error('Timed out loading the page'))),
+      Math.max(0, deadline - Date.now()))
+    // A page that finished before the listener was attached would never fire.
+    chrome.tabs.get(tabId)
+      .then(tab => { if (tab.status === 'complete') finish(resolve) })
+      .catch(() => { /* the poll below is only a shortcut; the listener still stands */ })
+  })
+}
+
+/**
+ * Open a page in the background purely to read its storage, then close it.
+ *
+ * This is the part the user has to opt into: it is a real navigation in their
+ * own Chrome - a tab appears in the strip, the site is contacted, and anything
+ * the page does on load happens. Failure is not fatal; the site still travels
+ * with its cookies.
+ */
+async function visitForStorage(url, deadline) {
+  let tab = null
+  try {
+    tab = await chrome.tabs.create({ url, active: false })
+    await whenTabLoaded(tab.id, deadline)
+    return await readTabStorage(tab.id)
+  } catch {
+    return null
+  } finally {
+    if (tab?.id !== undefined) {
+      try { await chrome.tabs.remove(tab.id) } catch { /* the user may have closed it already */ }
+    }
+  }
+}
+
 /**
  * Export only the sites the user ticked. Cookies come from the cookie store, so
  * nothing has to be open; localStorage is read from whatever tabs happen to be
- * on those sites and skipped otherwise, because reading it means running in the
- * page and opening tabs behind the user's back is the worse trade.
+ * on those sites. When `openMissing` is set the user has agreed to pay for the
+ * rest by having the remaining sites opened in the background and closed again,
+ * which is the only way to reach storage for a site with no tab.
  */
-async function exportSessionForSites(requested) {
+async function exportSessionForSites(requested, openMissing = false) {
   const wanted = new Set((Array.isArray(requested) ? requested : [])
     .map(site => siteOfHost(site))
     .filter(Boolean))
@@ -527,17 +580,22 @@ async function exportSessionForSites(requested) {
     }
     seen.add(origin)
     try {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => Array.from({ length: localStorage.length }, (_, index) => {
-          const name = localStorage.key(index)
-          return name === null ? null : { name, value: localStorage.getItem(name) || '' }
-        }).filter(Boolean),
-      })
-      const items = results[0]?.result
-      if (items && items.length > 0) origins.push({ origin, localStorage: items })
+      const storage = await readTabStorage(tab.id)
+      if (storage?.localStorage?.length > 0) origins.push({ origin, localStorage: storage.localStorage })
     } catch {
       // A tab that refuses injection costs us its storage, not its cookies.
+    }
+  }
+  if (openMissing) {
+    // One shared deadline rather than one per site: the whole command still has
+    // to answer Codey before it gives up, however many pages were planned.
+    const deadline = Date.now() + STORAGE_VISIT_BUDGET_MS
+    const plan = storageVisitPlan([...wanted], cookies.map(cookie => cookie.domain), [...seen])
+    const visited = await Promise.all(plan.map(entry => visitForStorage(entry.url, deadline)))
+    for (const storage of visited) {
+      if (!storage?.origin || !(storage.localStorage?.length > 0) || seen.has(storage.origin)) continue
+      seen.add(storage.origin)
+      origins.push({ origin: storage.origin, localStorage: storage.localStorage })
     }
   }
   return { sites: [...wanted], cookies: cookies.map(toExportedCookie), origins }
@@ -646,7 +704,7 @@ async function execute(command) {
     case 'listSessionSites':
       return await listSessionSites()
     case 'exportSessionForSites':
-      return await exportSessionForSites(command.input?.sites)
+      return await exportSessionForSites(command.input?.sites, command.input?.openMissing === true)
     case 'click':
     case 'fill':
     case 'select':

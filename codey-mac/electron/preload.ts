@@ -471,7 +471,7 @@ contextBridge.exposeInMainWorld('codey', {
     snapshot: () => ipcRenderer.invoke('chromeCompanion:snapshot'),
     exportSession: (name: string) => ipcRenderer.invoke('chromeCompanion:exportSession', name),
     listSessionSites: () => ipcRenderer.invoke('chromeCompanion:listSessionSites'),
-    importSites: (name: string, sites: string[]) => ipcRenderer.invoke('chromeCompanion:importSites', name, sites),
+    importSites: (name: string, sites: string[], openMissing?: boolean) => ipcRenderer.invoke('chromeCompanion:importSites', name, sites, openMissing === true),
     navigate: (url: string) => ipcRenderer.invoke('chromeCompanion:navigate', url),
     setAccent: (hex: string) => ipcRenderer.invoke('chromeCompanion:setAccent', hex),
     showExtensionFolder: () => ipcRenderer.invoke('chromeCompanion:showExtensionFolder'),
