@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Codey",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1+DxZ4LtqCNXKrmvuwl2d6perIWziIQWgkBVn5RbieIAF7g8knl39m3UOq/BZuSHp2VS1CQtk1EfwTzK0pnjdzikr00O+7iee4lVf8oduovxxi83CzRsZxzEreb3Jht3qfZcw3P94FwYk4wZM3YoRGJF99fWJQy/ybMvmIFSeFAHn9/3m56Xe5j0vCPSkmST1zLVuypW2DB23KojXxx4cKd9i+qcKnvfCEFwydjHRDpL4eUqk1nTU/NDlu3p0Fy5XQhvC6s98JBXXBEtD31l6oUq+wE1ap3yi1l3aK4I07bgWSdJSokwMZOJz22owdzaYra/c8loiVnx4efajwNbWwIDAQAB",
   "description": "Securely connects your existing Chrome tabs and signed-in sites to Codey.",
   "permissions": ["alarms", "cookies", "offscreen", "scripting", "sidePanel", "storage", "tabGroups", "tabs"],

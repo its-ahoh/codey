@@ -1,5 +1,6 @@
 // `siteOfHost`: kept in its own file so it can be tested without Chrome.
-importScripts('site-grouping.js')
+// It needs the real Public Suffix List (tldts) loaded first.
+importScripts('vendor/tldts.min.js', 'site-grouping.js')
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:49321'
 const ENDPOINT_COUNT = 10
@@ -141,21 +142,60 @@ async function call(endpoint, path, options = {}) {
   return value
 }
 
+/** The pairing secret Codey wrote into this extension's folder when it staged
+ *  it. Shared only between Codey and these files on disk, it is what lets the
+ *  two ends recognise each other instead of trusting whoever owns the port. */
+async function pairingSecret() {
+  try {
+    const response = await fetch(chrome.runtime.getURL('pairing.json'))
+    const value = await response.json()
+    return typeof value.secret === 'string' && value.secret ? value.secret : null
+  } catch {
+    return null
+  }
+}
+
+async function hmacHex(secret, message) {
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message))
+  return Array.from(new Uint8Array(signature), byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Find Codey and pair with it - mutually. Anything can listen on a loopback
+ * port, so "it answered /v1/connect" proves nothing: both sides must show they
+ * hold the pairing secret Codey staged next to this file. The extension sends
+ * a proof over a fresh nonce, and only accepts a token accompanied by the
+ * server's own proof over that nonce and token. A listener without the secret
+ * gets no cookies and issues no commands.
+ */
 async function autoConnect() {
   const current = await settings()
+  const secret = await pairingSecret()
   const endpoints = [current.endpoint, ...Array.from({ length: ENDPOINT_COUNT }, (_, index) => `http://127.0.0.1:${49321 + index}`)]
   for (const endpoint of [...new Set(endpoints)]) {
     try {
+      const clientName = `Chrome ${navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1] || ''}`.trim()
+      const nonce = crypto.randomUUID()
       const value = await call(endpoint, '/v1/connect', {
         extensionIdentity: true,
         discovery: true,
-        body: { clientName: `Chrome ${navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1] || ''}`.trim() },
+        body: secret
+          ? { clientName, nonce, proof: await hmacHex(secret, `codey-client:${nonce}`) }
+          : { clientName },
       })
+      if (secret) {
+        const expected = await hmacHex(secret, `codey-server:${nonce}:${value.token}`)
+        if (value.serverProof !== expected) throw new Error('The endpoint could not prove it is Codey')
+      }
       await chrome.storage.local.set({ endpoint, token: value.token, lastError: '' })
       return { endpoint, token: value.token }
     } catch { /* Codey may be on the next port in the local discovery range. */ }
   }
-  throw new Error('Codey is not running or the Chrome Companion bridge is unavailable')
+  throw new Error(secret
+    ? 'Codey is not running or the Chrome Companion bridge is unavailable'
+    : 'This copy of the extension has no pairing secret - reinstall it from Codey’s Chrome settings')
 }
 
 function rgbOf(hex) {
@@ -586,6 +626,7 @@ async function exportSessionForSites(requested, openMissing = false) {
       // A tab that refuses injection costs us its storage, not its cookies.
     }
   }
+  let finalCookies = cookies
   if (openMissing) {
     // One shared deadline rather than one per site: the whole command still has
     // to answer Codey before it gives up, however many pages were planned.
@@ -597,8 +638,14 @@ async function exportSessionForSites(requested, openMissing = false) {
       seen.add(storage.origin)
       origins.push({ origin: storage.origin, localStorage: storage.localStorage })
     }
+    // Those visits were real navigations, and sites rotate session cookies on
+    // load. Re-read the jar so the export carries what the sites hold *now*,
+    // not the snapshot from before the pages ran.
+    finalCookies = (await chrome.cookies.getAll({}))
+      .filter(cookie => wanted.has(siteOfHost(cookie.domain)))
+    if (finalCookies.length === 0) finalCookies = cookies
   }
-  return { sites: [...wanted], cookies: cookies.map(toExportedCookie), origins }
+  return { sites: [...wanted], cookies: finalCookies.map(toExportedCookie), origins }
 }
 
 // ── Acting on a page ────────────────────────────────────────────────────

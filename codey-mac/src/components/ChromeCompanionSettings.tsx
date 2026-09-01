@@ -217,7 +217,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
             <>
               <div style={styles.impact}>
                 <strong>Cookies are copied for every site you tick.</strong>
-                <span>Site storage (localStorage) can only be read from a page that is open in Chrome right now, so a site with no open tab is copied by its cookies alone — enough for most logins, but not all. Nothing in Chrome is changed.</span>
+                <span>Site storage (localStorage) can only be read from a page that is open in Chrome right now, so a site with no open tab is copied by its cookies alone — enough for most logins, but not all. Reading alone changes nothing in Chrome; the option below is different.</span>
               </div>
               <label style={styles.optIn}>
                 <input
@@ -229,7 +229,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
                 <span style={{ flex: 1, minWidth: 0 }}>
                   Also open the picked sites in Chrome to read their storage
                   <div style={styles.copy}>
-                    A tab opens and closes for each site that is not already open — up to eight, and the sites are contacted for real. Turn this on for a login that cookies alone do not carry.
+                    A tab opens and closes for each site that is not already open — up to eight, and the sites are contacted for real, which can refresh cookies, write storage, and touch your browsing history. Turn this on for a login that cookies alone do not carry.
                   </div>
                 </span>
               </label>
@@ -291,7 +291,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
           {failure('import')}
           {bulkResult && (
             <div style={styles.success}>
-              “{bulkResult.name}” is now the active Codey Browser profile, carrying {bulkResult.cookieCount} cookies from {bulkResult.siteCount} site{bulkResult.siteCount === 1 ? '' : 's'}. Chrome was not changed.
+              “{bulkResult.name}” is now the active Codey Browser profile, carrying {bulkResult.cookieCount} cookies from {bulkResult.siteCount} site{bulkResult.siteCount === 1 ? '' : 's'}. Your Chrome logins stay signed in.
             </div>
           )}
         </div>
