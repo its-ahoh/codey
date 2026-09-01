@@ -1,8 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import { UIIcon } from './UIIcons'
-import type { BrowserProfileSummary } from '../codey-api'
+import type { BrowserProfileSiteSummary, BrowserProfileSummary } from '../codey-api'
 import { BROWSER_PROFILE_AVATARS, browserProfileAvatar } from './browserProfileAvatars'
+
+type BrowserProfileContents = {
+  name: string
+  updatedAt: number
+  sourceUrl: string | null
+  sites: BrowserProfileSiteSummary[]
+}
 
 type IpcLike = { ok: boolean; error?: string }
 
@@ -27,6 +34,8 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [synced, setSynced] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [contents, setContents] = useState<Record<string, BrowserProfileContents>>({})
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   // True once the user tried to save with an empty name. Greying the button
   // out hid what was missing, so say it and mark the field instead.
@@ -66,8 +75,29 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setBusy(false)
+      setContents({})
+      if (expanded) void toggleContentsAgain(expanded)
       void refresh()
     }
+  }
+
+  // Read on demand rather than with the list: a profile's contents are only
+  // interesting when someone asks, and the list is refreshed constantly.
+  const toggleContents = async (name: string) => {
+    if (expanded === name) {
+      setExpanded(null)
+      return
+    }
+    setExpanded(name)
+    const result = await window.codey.browser.profiles.contents(name)
+    if (result.ok) setContents(current => ({ ...current, [name]: result.data }))
+    else setError(result.error)
+  }
+
+  // Re-read after a change, without the toggle's open/close behaviour.
+  const toggleContentsAgain = async (name: string) => {
+    const result = await window.codey.browser.profiles.contents(name)
+    if (result.ok) setContents(current => ({ ...current, [name]: result.data }))
   }
 
   const saveCurrent = () => {
@@ -160,108 +190,147 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
 
       {profiles.map(profile => (
         <div key={profile.name} style={{
-          display: 'flex', alignItems: 'center', flexWrap: compact ? 'wrap' : 'nowrap', gap: 8,
+          display: 'flex', flexDirection: 'column', gap: 8,
           background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: compact ? '10px' : '9px 11px',
         }}>
-          <div style={styles.avatarControl}>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => setAvatarPicker(current => current === profile.name ? null : profile.name)}
-              style={{ ...styles.avatarButton, ...(profile.active ? styles.avatarButtonActive : null) }}
-              title={`Choose an avatar for ${profile.name}`}
-              aria-label={`Choose an avatar for ${profile.name}`}
-              aria-expanded={avatarPicker === profile.name}
-            >{browserProfileAvatar(profile)}</button>
-            {avatarPicker === profile.name && (
-              <div style={styles.avatarPicker} role="menu" aria-label={`Avatars for ${profile.name}`}>
-                {BROWSER_PROFILE_AVATARS.map(avatar => (
-                  <button
-                    key={avatar}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={profile.avatar === avatar}
-                    style={{ ...styles.avatarOption, ...(browserProfileAvatar(profile) === avatar ? styles.avatarOptionActive : null) }}
-                    onClick={() => {
-                      setAvatarPicker(null)
-                      void run(() => window.codey.browser.profiles.setAvatar(profile.name, avatar))
-                    }}
-                  >{avatar}</button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div style={{ flex: 1, minWidth: compact ? 180 : 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ color: C.fg, fontSize: compact ? 12 : 13, fontWeight: 600 }}>{profile.name}</span>
-              {profile.active && (
-                <span style={{
-                  background: C.green + '22', color: C.green, borderRadius: 999, padding: '1px 7px',
-                  fontSize: compact ? 10 : 11, fontWeight: 600,
-                }}>IN USE</span>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: compact ? 'wrap' : 'nowrap', gap: 8 }}>
+            <div style={styles.avatarControl}>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setAvatarPicker(current => current === profile.name ? null : profile.name)}
+                style={{ ...styles.avatarButton, ...(profile.active ? styles.avatarButtonActive : null) }}
+                title={`Choose an avatar for ${profile.name}`}
+                aria-label={`Choose an avatar for ${profile.name}`}
+                aria-expanded={avatarPicker === profile.name}
+              >{browserProfileAvatar(profile)}</button>
+              {avatarPicker === profile.name && (
+                <div style={styles.avatarPicker} role="menu" aria-label={`Avatars for ${profile.name}`}>
+                  {BROWSER_PROFILE_AVATARS.map(avatar => (
+                    <button
+                      key={avatar}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={profile.avatar === avatar}
+                      style={{ ...styles.avatarOption, ...(browserProfileAvatar(profile) === avatar ? styles.avatarOptionActive : null) }}
+                      onClick={() => {
+                        setAvatarPicker(null)
+                        void run(() => window.codey.browser.profiles.setAvatar(profile.name, avatar))
+                      }}
+                    >{avatar}</button>
+                  ))}
+                </div>
               )}
             </div>
-            <div style={{ color: C.fg3, fontSize: compact ? 10 : 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={title(profile)}>
-              {meta(profile) || (profile.sourceUrl ? 'saved session' : 'empty profile')}
+            <div style={{ flex: 1, minWidth: compact ? 180 : 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: C.fg, fontSize: compact ? 12 : 13, fontWeight: 600 }}>{profile.name}</span>
+                {profile.active && (
+                  <span style={{
+                    background: C.green + '22', color: C.green, borderRadius: 999, padding: '1px 7px',
+                    fontSize: compact ? 10 : 11, fontWeight: 600,
+                  }}>IN USE</span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => void toggleContents(profile.name)}
+                aria-expanded={expanded === profile.name}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 4, padding: 0, border: 'none', background: 'none',
+                  color: C.fg3, fontSize: compact ? 10 : 11, cursor: 'pointer', textAlign: 'left',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}
+                title={`${title(profile)} — click to see which sites it holds`}
+              >
+                <span style={{ transform: expanded === profile.name ? 'rotate(90deg)' : 'none', display: 'inline-flex' }}>
+                  <UIIcon name="disclosure" size={9} />
+                </span>
+                {meta(profile) || (profile.sourceUrl ? 'saved session' : 'empty profile')}
+              </button>
             </div>
-          </div>
-          {/* Several profiles can be on at once, so a profile is simply in use
-              or not. There is nothing to switch between. */}
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void run(() => profile.active
-              ? window.codey.browser.profiles.disable(profile.name)
-              : window.codey.browser.profiles.enable(profile.name))}
-            style={profile.active ? activeBadgeStyle(compact) : buttonStyle(compact)}
-            title={profile.active
-              ? 'This profile\u2019s logins are in use \u2014 click to turn it off'
-              : 'Add this profile\u2019s logins to the live session'}
-          >
-            {profile.active ? 'In use' : 'Use'}
-          </button>
-          {/* Logins expire. Refreshing the whole profile from Chrome is one
-              click here, and works whether or not it is currently in use. */}
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void run(async () => {
-              const result = await window.codey.browser.profiles.syncProfile(profile.name)
-              if (result.ok) {
-                setSynced(`\u201c${profile.name}\u201d refreshed: ${result.data.cookieCount} cookies from ${result.data.siteCount} site${result.data.siteCount === 1 ? '' : 's'}`)
-              }
-              return result
-            })}
-            style={buttonStyle(compact)}
-            title={`Refresh every login in ${profile.name} from Chrome`}
-            aria-label={`Refresh ${profile.name} from Chrome`}
-          ><UIIcon name="refresh" size={12} /></button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void run(() => window.codey.browser.profiles.export(profile.name))}
-            style={buttonStyle(compact)}
-            title="Write this profile to a shareable JSON file"
-          ><UIIcon name="copy" size={12} /></button>
-          {confirmDelete === profile.name ? (
+            {/* Several profiles can be on at once, so a profile is simply in use
+                or not. There is nothing to switch between. */}
             <button
               type="button"
               disabled={busy}
-              onClick={() => { setConfirmDelete(null); void run(() => window.codey.browser.profiles.delete(profile.name)) }}
-              style={{ ...buttonStyle(compact), background: C.red, borderColor: C.red, color: '#fff' }}
-              title="Click again to confirm"
-            >Confirm</button>
-          ) : (
+              onClick={() => void run(() => profile.active
+                ? window.codey.browser.profiles.disable(profile.name)
+                : window.codey.browser.profiles.enable(profile.name))}
+              style={profile.active ? activeBadgeStyle(compact) : buttonStyle(compact)}
+              title={profile.active
+                ? 'This profile\u2019s logins are in use \u2014 click to turn it off'
+                : 'Add this profile\u2019s logins to the live session'}
+            >
+              {profile.active ? 'In use' : 'Use'}
+            </button>
+            {/* Logins expire. Refreshing the whole profile from Chrome is one
+                click here, and works whether or not it is currently in use. */}
             <button
               type="button"
               disabled={busy}
-              onClick={() => {
-                setConfirmDelete(profile.name)
-                setTimeout(() => setConfirmDelete(current => current === profile.name ? null : current), 3000)
-              }}
+              onClick={() => void run(async () => {
+                const result = await window.codey.browser.profiles.syncProfile(profile.name)
+                if (result.ok) {
+                  setSynced(`\u201c${profile.name}\u201d refreshed: ${result.data.cookieCount} cookies from ${result.data.siteCount} site${result.data.siteCount === 1 ? '' : 's'}`)
+                }
+                return result
+              })}
               style={buttonStyle(compact)}
-              title="Delete this profile"
-            ><UIIcon name="trash" size={12} /></button>
+              title={`Refresh every login in ${profile.name} from Chrome`}
+              aria-label={`Refresh ${profile.name} from Chrome`}
+            ><UIIcon name="refresh" size={12} /></button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void run(() => window.codey.browser.profiles.export(profile.name))}
+              style={buttonStyle(compact)}
+              title="Write this profile to a shareable JSON file"
+            ><UIIcon name="copy" size={12} /></button>
+            {confirmDelete === profile.name ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => { setConfirmDelete(null); void run(() => window.codey.browser.profiles.delete(profile.name)) }}
+                style={{ ...buttonStyle(compact), background: C.red, borderColor: C.red, color: '#fff' }}
+                title="Click again to confirm"
+              >Confirm</button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmDelete(profile.name)
+                  setTimeout(() => setConfirmDelete(current => current === profile.name ? null : current), 3000)
+                }}
+                style={buttonStyle(compact)}
+                title="Delete this profile"
+              ><UIIcon name="trash" size={12} /></button>
+            )}
+          </div>
+
+          {/* What this profile actually holds. Worth being able to look at
+              before trusting it with a task - and before handing it to an
+              agent - without ever putting the values on screen. */}
+          {expanded === profile.name && (
+            <div style={styles.contents}>
+              {!contents[profile.name] && <div style={styles.contentsEmpty}>Reading…</div>}
+              {contents[profile.name]?.sites.length === 0 && (
+                <div style={styles.contentsEmpty}>This profile holds no cookies or site storage.</div>
+              )}
+              {contents[profile.name]?.sites.map(site => (
+                <div key={site.domain} style={styles.contentsRow}>
+                  <span style={styles.contentsDomain} title={site.domain}>{site.domain}</span>
+                  <span style={styles.contentsMeta} title={site.cookieNames.join(', ')}>
+                    {site.cookieCount} cookie{site.cookieCount === 1 ? '' : 's'}
+                    {site.storage.length > 0 && ` · ${site.storage.reduce((total, entry) => total + entry.keys, 0)} storage keys`}
+                  </span>
+                </div>
+              ))}
+              {contents[profile.name] && (
+                <div style={styles.contentsNote}>Cookie names are shown on hover. Their values stay in Codey and are never displayed.</div>
+              )}
+            </div>
           )}
         </div>
       ))}
@@ -286,6 +355,12 @@ function activeBadgeStyle(compact: boolean): React.CSSProperties {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  contents: { display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 200, overflowY: 'auto', padding: '5px 6px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
+  contentsRow: { display: 'flex', alignItems: 'baseline', gap: 8, padding: '2px 4px' },
+  contentsDomain: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.fg2, fontSize: 11 },
+  contentsMeta: { flexShrink: 0, color: C.fg3, fontSize: 10 },
+  contentsEmpty: { color: C.fg3, fontSize: 11, padding: '4px 4px' },
+  contentsNote: { marginTop: 4, paddingTop: 5, borderTop: `1px solid ${C.border}`, color: C.fg3, fontSize: 10, lineHeight: 1.4 },
   avatarControl: { position: 'relative', flexShrink: 0 },
   avatarButton: { width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, cursor: 'pointer', fontSize: 18 },
   avatarButtonActive: { borderColor: C.green, background: `${C.green}14` },

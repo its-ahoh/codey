@@ -2374,6 +2374,10 @@ app.whenReady().then(async () => {
   // It is scoped to that one site, so a profile carrying several logins keeps
   // the rest, and it names the URL rather than using Chrome's front tab - the
   // user is looking at the signed-out page here, not over there.
+  // What a profile holds, for the disclosure in Settings > Profiles. Cookie and
+  // storage values never come back - the window has no use for them.
+  ipcMain.handle('browser:profiles:contents', (event, name: string) =>
+    browserCall(event, () => browserController.profileContents(String(name || ''))))
   // A profile's own Sync button: refresh every site that profile holds from
   // Chrome in one go. Named explicitly, so it works for a profile that is not
   // even enabled - a saved identity can be brought up to date before it is

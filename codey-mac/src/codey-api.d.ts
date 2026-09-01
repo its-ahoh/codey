@@ -264,6 +264,16 @@ export interface ChromeTabInfo {
 /** One site the paired Chrome profile holds cookies for. `openTabs` decides
  *  whether its localStorage can come along - it can only be read from a page
  *  that is actually open. */
+/** What one site inside a saved profile holds. Cookie and storage *values* are
+ *  deliberately absent - this describes which logins a profile carries, not
+ *  what they are. */
+export interface BrowserProfileSiteSummary {
+  domain: string
+  cookieCount: number
+  cookieNames: string[]
+  storage: Array<{ origin: string; keys: number }>
+}
+
 export interface ChromeSessionSite {
   site: string
   cookieCount: number
@@ -671,6 +681,12 @@ declare global {
             profile: BrowserProfileSummary
             siteCount: number
             cookieCount: number
+          }>>
+          contents: (name: string) => Promise<IpcResult<{
+            name: string
+            updatedAt: number
+            sourceUrl: string | null
+            sites: BrowserProfileSiteSummary[]
           }>>
         }
         extensions: {
