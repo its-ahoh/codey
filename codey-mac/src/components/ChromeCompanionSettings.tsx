@@ -213,7 +213,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
               bursts, so this can take seconds. Saying so is the difference
               between "working" and "the button is broken". */}
           {busyAt === 'sites' && (
-            <div style={styles.copy}>Waiting for Chrome to answer. If the extension is asleep this takes a few seconds.</div>
+            <div style={styles.copy}>Waiting for Chrome to answer. Chrome’s extension sleeps when idle, so the first request after a while can take up to half a minute to wake it.</div>
           )}
           {failure('sites')}
           {sites && (

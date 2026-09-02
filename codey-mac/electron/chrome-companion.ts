@@ -6,11 +6,16 @@ import * as path from 'path'
 const DEFAULT_PORT = 49321
 const PORT_SCAN_SIZE = 10
 const CONNECTED_TTL_MS = 45_000
-const COMMAND_TIMEOUT_MS = 20_000
+// The extension's service worker only guarantees a poll within its 30s alarm
+// cycle when it has gone idle, so a command issued to a sleeping worker can sit
+// unclaimed for most of that cycle before it is even seen. A 20s ceiling used
+// to time out those cold-start commands ("List sites" did nothing); the ceiling
+// has to clear one whole alarm cycle plus a round trip.
+const COMMAND_TIMEOUT_MS = 40_000
 // Opening pages just to read their storage is the one command that legitimately
 // takes longer than a round trip: it waits on real navigations in the user's
 // Chrome. The extension caps its own pass below this.
-const STORAGE_VISIT_TIMEOUT_MS = 45_000
+const STORAGE_VISIT_TIMEOUT_MS = 60_000
 const MAX_BODY_BYTES = 15 * 1024 * 1024
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 export const CHROME_COMPANION_EXTENSION_ID = 'nkfblackdfiplaekehijkgimhmlhlfib'

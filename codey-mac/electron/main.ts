@@ -2404,30 +2404,58 @@ app.whenReady().then(async () => {
     return !!a && !!b && (a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`))
   }
   const pendingAutoSyncDomains = new Set<string>()
-  const autoSyncInFlight = new Set<string>()
+  let autoSyncBusy = false
   let autoSyncTimer: NodeJS.Timeout | null = null
   const runAutoSync = async () => {
+    if (autoSyncBusy) return
     const changed = [...pendingAutoSyncDomains]
     pendingAutoSyncDomains.clear()
-    const affected = browserController.listProfiles()
-      .map(profile => profile.name)
-      .filter(name => {
-        if (autoSyncInFlight.has(name)) return false
+    if (changed.length === 0 || !chromeCompanion?.status().connected) return
+
+    // Chrome exposes only one identity per site, so a site that lives in more
+    // than one profile is ambiguous - refreshing "work" from Chrome while you
+    // are signed in there as "personal" would overwrite work's login. So each
+    // changed site is refreshed only when exactly one profile owns it, and only
+    // that site is touched (not the profile's other, unrelated logins).
+    const targets = new Map<string, Set<string>>()  // profile -> its changed sites
+    for (const domain of changed) {
+      const owners = browserController.listProfiles()
+        .map(profile => profile.name)
+        .filter(name => {
+          try { return browserController.profileSites(name).some(site => domainsTouch(site, domain)) }
+          catch { return false }
+        })
+      if (owners.length !== 1) {
+        if (owners.length > 1) {
+          sendToRenderer('gateway-log', `[browser] auto-sync skipped ${domain}: held by ${owners.join(', ')} - refresh the right one by hand`)
+        }
+        continue
+      }
+      const set = targets.get(owners[0]) ?? new Set<string>()
+      set.add(domain)
+      targets.set(owners[0], set)
+    }
+    if (targets.size === 0) return
+
+    autoSyncBusy = true
+    try {
+      for (const [name, sites] of targets) {
         try {
-          return browserController.profileSites(name)
-            .some(site => changed.some(domain => domainsTouch(site, domain)))
-        } catch { return false }
-      })
-    for (const name of affected) {
-      autoSyncInFlight.add(name)
-      try {
-        await refreshProfileFromChrome(name)
-      } catch (error) {
-        // A refused refresh (a conflict with another enabled profile, say) is
-        // a log line, not a crash - the next manual sync will surface it.
-        sendToRenderer('gateway-log', `[browser] auto-sync of profile "${name}" failed: ${error instanceof Error ? error.message : String(error)}`)
-      } finally {
-        autoSyncInFlight.delete(name)
+          const session = await chromeCompanion.exportSessionForSites([...sites])
+          await browserController.resyncProfileSites(name, {
+            json: JSON.stringify({ cookies: session.cookies, origins: session.origins }),
+          }, session.sites)
+        } catch (error) {
+          // A refused refresh (a conflict with another enabled profile, say) is
+          // a log line, not a crash - the next manual sync will surface it.
+          sendToRenderer('gateway-log', `[browser] auto-sync of "${name}" failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+    } finally {
+      autoSyncBusy = false
+      // Anything that changed while a refresh was running gets its own pass.
+      if (pendingAutoSyncDomains.size > 0 && !autoSyncTimer) {
+        autoSyncTimer = setTimeout(() => { autoSyncTimer = null; void runAutoSync() }, 1500)
       }
     }
   }
