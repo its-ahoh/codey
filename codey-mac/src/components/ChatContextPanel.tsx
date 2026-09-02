@@ -1,5 +1,5 @@
 import React from 'react'
-import type { Chat, ChatMessage } from '../types'
+import type { WriteDiff, Chat, ChatMessage } from '../types'
 import { C } from '../theme'
 import { parseTeamMessage } from './teamMessageFormat'
 import { CombinedDiffView, normalizeTool } from './toolFormat'
@@ -497,16 +497,24 @@ const extractReads = (chat: Chat): Array<{ path: string; msgId: string }> => {
  * so without this the panel reports no activity on a run that changed the
  * working tree. Git supplies the diff for these paths afterwards.
  */
+type InferredWrite = { path: string; msgId: string; command: string; diffs: WriteDiff[] }
+
 const extractShellWrites = (
   chat: Chat,
   workingDir?: string,
-): Array<{ path: string; msgId: string; command: string }> => {
-  const out: Array<{ path: string; msgId: string; command: string }> = []
-  const seen = new Set<string>()
-  const add = (path: string, msgId: string, command: string) => {
-    if (!path || seen.has(path)) return
-    seen.add(path)
-    out.push({ path, msgId, command })
+): InferredWrite[] => {
+  const out: InferredWrite[] = []
+  // One entry per file per turn, so a file written in two turns shows under
+  // both when the panel is filtered to a turn.
+  const byKey = new Map<string, InferredWrite>()
+  const add = (path: string, msgId: string, command: string, diffs: WriteDiff[] = []) => {
+    if (!path) return
+    const key = `${msgId}\0${path}`
+    const existing = byKey.get(key)
+    if (existing) { existing.diffs.push(...diffs); return }
+    const entry = { path, msgId, command, diffs: [...diffs] }
+    byKey.set(key, entry)
+    out.push(entry)
   }
   for (const m of chat.messages) {
     if (m.role !== 'assistant') continue
@@ -520,7 +528,11 @@ const extractShellWrites = (
       // no diff text. Git supplies the diff, the same as for a shell write.
       if (tc.tool?.toLowerCase() === 'file_change') {
         if (tc.type === 'tool_end') {
-          for (const path of parseFileChangeOutput(tc.output, workingDir)) add(path, m.id, '')
+          const diffs = tc.writeDiffs ?? []
+          for (const path of parseFileChangeOutput(tc.output, workingDir)) {
+            add(path, m.id, '', diffs.filter(d => d.path === path))
+          }
+          for (const d of diffs) add(d.path, m.id, '', [d])
         }
         continue
       }
@@ -536,7 +548,8 @@ const extractShellWrites = (
           add(path, m.id, lastCommand)
         }
       } else if (tc.type === 'tool_end') {
-        for (const path of tc.writes ?? []) add(path, m.id, lastCommand)
+        const diffs = tc.writeDiffs ?? []
+        for (const path of tc.writes ?? []) add(path, m.id, lastCommand, diffs.filter(d => d.path === path))
       }
     }
   }
@@ -847,7 +860,7 @@ const FileChangesView: React.FC<{
   // the working tree against HEAD (or against nothing for a new file).
   type GitDiff = { added: number; removed: number; patch: string; isNew: boolean }
   const [gitDiffs, setGitDiffs] = React.useState<Record<string, GitDiff>>({})
-  const shellPathsKey = shellWrites.map(w => w.path).join('\n')
+  const shellPathsKey = Array.from(new Set(shellWrites.map(w => w.path))).join('\n')
   React.useEffect(() => {
     if (!workingDir || !shellPathsKey) return
     let stale = false
@@ -896,6 +909,19 @@ const FileChangesView: React.FC<{
     return out
   }, [visible])
 
+  // Recorded diffs of the visible writes, per file, in the order they landed.
+  // Only used when the panel is filtered to one turn; see touches below.
+  const turnDiffsByPath = React.useMemo(() => {
+    const map = new Map<string, WriteDiff[]>()
+    if (filter !== 'turn') return map
+    for (const w of visibleShellWrites) {
+      if (w.diffs.length === 0) continue
+      if (!map.has(w.path)) map.set(w.path, [])
+      map.get(w.path)!.push(...w.diffs)
+    }
+    return map
+  }, [filter, visibleShellWrites])
+
   const touches = React.useMemo(() => {
     const map = new Map<string, FileTouch>()
     for (const [path, info] of fileInfo) {
@@ -905,6 +931,17 @@ const FileChangesView: React.FC<{
     // inferred changes and reads never override it.
     for (const w of visibleShellWrites) {
       if (map.has(w.path)) continue
+      // Filtered to a turn, the recorded per-call diffs are that turn's own
+      // change. Otherwise git's working tree against HEAD is the net change.
+      const turn = turnDiffsByPath.get(w.path)
+      if (turn && turn.length > 0) {
+        map.set(w.path, {
+          kind: 'change',
+          added: turn.reduce((n, d) => n + d.added, 0),
+          removed: turn.reduce((n, d) => n + d.removed, 0),
+        })
+        continue
+      }
       const git = gitDiffs[w.path]
       // Only mark the file as changed once Git has supplied real line counts.
       // This avoids replacing useful +/− data with an implementation label.
@@ -912,7 +949,7 @@ const FileChangesView: React.FC<{
     }
     for (const r of visibleReads) if (!map.has(r.path)) map.set(r.path, { kind: 'read' })
     return map
-  }, [fileInfo, visibleShellWrites, visibleReads, gitDiffs])
+  }, [fileInfo, visibleShellWrites, visibleReads, gitDiffs, turnDiffsByPath])
 
   const tree = React.useMemo(
     () => buildFileTree({ workingDir, entries, touches }),
@@ -1052,16 +1089,20 @@ const FileChangesView: React.FC<{
       )}
 
       {openPath && (() => {
-        const openGit = openTouch?.kind === 'change' ? gitDiffs[openPath] : undefined
+        const openTurnDiffs = openTouch?.kind === 'change' ? turnDiffsByPath.get(openPath) : undefined
+        const openGit = openTouch?.kind === 'change' && !openTurnDiffs?.length ? gitDiffs[openPath] : undefined
         const hunks = openInfo
           ? openInfo.folded.map(c => ({
               oldText: c.oldText,
               newText: c.newText,
               startLine: locateStartLine(openContent, c.oldText, c.newText),
             }))
-          : openGit
-            ? parseUnifiedPatch(openGit.patch)
-            : []
+          : openTurnDiffs?.length
+            ? openTurnDiffs.flatMap(d => (d.patch ? parseUnifiedPatch(d.patch) : []))
+            : openGit
+              ? parseUnifiedPatch(openGit.patch)
+              : []
+        const turnDiffsTruncated = openTurnDiffs?.some(d => d.truncated) ?? false
         const counts = openTouch && openTouch.kind !== 'read'
           ? { added: openTouch.added ?? 0, removed: openTouch.removed ?? 0 }
           : null
@@ -1100,8 +1141,13 @@ const FileChangesView: React.FC<{
                   dataUrl={fileImage?.path === openPath ? fileImage.dataUrl : undefined}
                   filePath={openPath}
                 />
-              ) : openInfo || openGit ? (
+              ) : openInfo || openGit || openTurnDiffs?.length ? (
                 <>
+                  {turnDiffsTruncated && (
+                    <div style={fcStyles.noNetChange}>
+                      Part of this turn's change was too large to keep; the counts above are complete.
+                    </div>
+                  )}
                   {hunks.length > 0 && (
                     <CombinedDiffView
                       hunks={hunks}
@@ -1110,7 +1156,7 @@ const FileChangesView: React.FC<{
                       search={{ query, exact: exactMatch, idPrefix: openPath, activeId: activeMatchId, onMatches: handleMatches }}
                     />
                   )}
-                  {hunks.length === 0 && (openInfo?.patches.length ?? 0) === 0 && (
+                  {hunks.length === 0 && !turnDiffsTruncated && (openInfo?.patches.length ?? 0) === 0 && (
                     <div style={fcStyles.noNetChange}>
                       Edits cancelled out — the file matches its original text.
                     </div>

@@ -30,7 +30,8 @@ import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
-import { ShellWriteTracker, isShellTool, shellCommandText, defaultGitRunner, defaultStatRunner } from './shell-write-tracker';
+import { ShellWriteTracker, isShellTool, shellCommandText, defaultGitRunner, defaultStatRunner, isFileChangeTool, fileChangePaths } from './shell-write-tracker';
+import { WriteDiffRecorder, priorBlobs } from './write-diff-recorder';
 import { CHAT_CONTEXT_WINDOW, buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
@@ -4978,6 +4979,7 @@ Example: /model gpt-4.1 write a Python script`;
     // workers run one after another; the parallel path below shares a directory
     // between concurrent workers, where no sample can say which one wrote what.
     const teamWriteTracker = new ShellWriteTracker(workingDir, defaultGitRunner, defaultStatRunner);
+    const teamDiffRecorder = new WriteDiffRecorder(workingDir, defaultGitRunner, priorBlobs(chat.messages));
     let teamStatusChain: Promise<void> = Promise.resolve();
 
     const runOneWorker = async (
@@ -5016,10 +5018,14 @@ Example: /model gpt-4.1 write a Python script`;
               if (isShellTool(parsed.tool)) await teamWriteTracker.noteStart(shellCommandText(parsed.input));
               workerMsgs.onTool({ type: 'tool_start', tool: parsed.tool, message: parsed.message ?? '', input: parsed.input });
             } else if (parsed?.type === 'tool_end') {
-              const writes = isShellTool(parsed.tool) ? await teamWriteTracker.noteEnd() : [];
+              const writes = isShellTool(parsed.tool)
+                ? await teamWriteTracker.noteEnd()
+                : isFileChangeTool(parsed.tool) ? fileChangePaths(parsed.output, workingDir) : [];
+              const writeDiffs = writes.length ? await teamDiffRecorder.record(writes) : [];
               workerMsgs.onTool({
                 type: 'tool_end', tool: parsed.tool, message: parsed.message ?? '', output: parsed.output,
                 ...(writes.length ? { writes } : {}),
+                ...(writeDiffs.length ? { writeDiffs } : {}),
               });
             }
           }).catch(() => { /* a status update must never break the run */ });
@@ -6282,6 +6288,10 @@ Example: /model gpt-4.1 write a Python script`;
     // the client in the order the agent produced them, so every update runs
     // through one chain rather than racing.
     const writeTracker = new ShellWriteTracker(workingDir, defaultGitRunner, defaultStatRunner);
+    // Each write is also diffed against the file as its last write left it, so
+    // the Files panel can show this turn's change rather than everything
+    // since the last commit.
+    const diffRecorder = new WriteDiffRecorder(workingDir, defaultGitRunner, priorBlobs(afterUser.messages));
     let statusChain: Promise<void> = Promise.resolve();
     const onStatus = (update: any) => {
       let parsed: any;
@@ -6292,9 +6302,12 @@ Example: /model gpt-4.1 write a Python script`;
         if (parsed.type === 'tool_start' && isShellTool(parsed.tool)) {
           await writeTracker.noteStart(shellCommandText(parsed.input));
         }
-        const writes = parsed.type === 'tool_end' && isShellTool(parsed.tool)
-          ? await writeTracker.noteEnd()
-          : [];
+        const writes = parsed.type !== 'tool_end'
+          ? []
+          : isShellTool(parsed.tool)
+            ? await writeTracker.noteEnd()
+            : isFileChangeTool(parsed.tool) ? fileChangePaths(parsed.output, workingDir) : [];
+        const writeDiffs = writes.length ? await diffRecorder.record(writes) : [];
         if (isPersistableToolCall(parsed.type)) {
           toolCalls.push({
             id: randomUUID(),
@@ -6304,6 +6317,7 @@ Example: /model gpt-4.1 write a Python script`;
             input: parsed.input,
             output: parsed.output,
             ...(writes.length ? { writes } : {}),
+            ...(writeDiffs.length ? { writeDiffs } : {}),
           });
         }
         if (parsed.type === 'checklist' && parsed.checklist?.length) {
@@ -6311,7 +6325,7 @@ Example: /model gpt-4.1 write a Python script`;
           // sees the list without waiting for the agent's next revision.
           this.chatManager.setChecklist(chatId, parsed.checklist);
         }
-        const event = chatStreamEventForStatus(chatId, parsed, writes);
+        const event = chatStreamEventForStatus(chatId, parsed, writes, writeDiffs);
         if (event) sink(event);
       }).catch(() => { /* a status update must never break the turn */ });
     };

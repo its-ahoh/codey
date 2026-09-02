@@ -1,4 +1,4 @@
-import { Chat, ChatMessage, ChecklistItem, CodingAgent, FileAttachment, TaskBrief, TeamRunSummary, ToolCallEntry, TranscriptSlice, renderSliceSection } from '@codey/core';
+import { Chat, ChatMessage, ChecklistItem, CodingAgent, FileAttachment, TaskBrief, TeamRunSummary, ToolCallEntry, TranscriptSlice, renderSliceSection, WriteDiff } from '@codey/core';
 
 export const MAX_CONCURRENT_AGENTS = 4;
 export const CHAT_CONTEXT_WINDOW = 40;
@@ -44,7 +44,7 @@ export const SOLO_ADVISOR_INSTRUCTION =
 export type ChatStreamEvent =
   | { type: 'queued'; chatId: string; position: number }
   | { type: 'tool_start'; chatId: string; tool?: string; message: string; input?: Record<string, unknown>; messageId?: string; step?: number }
-  | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string; messageId?: string; step?: number; writes?: string[] }
+  | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string; messageId?: string; step?: number; writes?: string[]; writeDiffs?: WriteDiff[] }
   | { type: 'info'; chatId: string; message: string; skillNotice?: boolean }
   // The agent's own task list, restated in full. Consumers replace whatever
   // they were showing; the list is authoritative, not incremental.
