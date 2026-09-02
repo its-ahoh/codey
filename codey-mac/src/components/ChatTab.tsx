@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { chatOwnedPrUrl } from './chatPrUrl'
-import type { ChatMessage, ChatSelection, FileAttachment, TeamRunSummary } from '../types'
+import type { Chat, ChatMessage, ChatSelection, FileAttachment, TeamRunSummary } from '../types'
 import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
@@ -903,14 +903,25 @@ const TeamRunGroup: React.FC<{
 // rounding error don't break the follow.
 const BOTTOM_STICK_PX = 24
 
-export const ChatTab: React.FC<Props> = ({
+export const ChatTab: React.FC<Props> = (props) => {
+  const { state } = useChats()
+  const chat = state.chats[props.chatId]
+  // The guard lives out here, above any hook that depends on the chat, so the
+  // body below always runs the same hooks in the same order. Keeping it inside
+  // ChatTabView would put an early return above ~20 hooks and break the rules
+  // of hooks the moment a chat is removed while mounted.
+  if (!chat) return null
+  return <ChatTabView {...props} chat={chat} />
+}
+
+const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   chatId, isGatewayRunning, coreFailed,
   rightPanelMode, onRightPanelModeChange, rightPanelWidth, onRightPanelResize,
   browserLoginWait, onConfirmBrowserLogin, onDismissBrowserLogin,
+  chat,
 }) => {
   const outerRef = useRef<HTMLDivElement>(null)
   const { state, createChat, sendMessage, removeQueuedMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
-  const chat = state.chats[chatId]
   const flight = state.inFlight[chatId]
   const queuedMessages = state.queuedMessages[chatId] ?? []
 
@@ -1524,17 +1535,6 @@ export const ChatTab: React.FC<Props> = ({
     return () => window.removeEventListener('pendingPairing', handler)
   }, [drainPendingPairing])
 
-  // FIXME(hooks): the `if (!chat) return null` guard below sits *above* ~20
-  // more hooks, so a null -> non-null transition changes hook order — exactly
-  // what rules-of-hooks forbids. It does not bite today because App.tsx only
-  // renders <ChatTab> when the chat exists (and keys it by id, remounting on
-  // switch), so `chat` is never null while mounted. The real fix is to hoist
-  // the remaining hooks above the guard, which is invasive in a file this
-  // size; tracked separately. Disabled here rather than repo-wide so the rule
-  // keeps protecting every other component.
-  /* eslint-disable react-hooks/rules-of-hooks */
-  if (!chat) return null
-
   const latestAssistantId: string | null = (() => {
     for (let i = chat.messages.length - 1; i >= 0; i--) {
       if (chat.messages[i].role === 'assistant') return chat.messages[i].id
@@ -1563,11 +1563,10 @@ export const ChatTab: React.FC<Props> = ({
   // card stays off narrow windows; its compact global control always fits.
   const SIDECAR_W = 264
   const sidecarFits = windowWidth >= 720
-  const hasAssistantMsg = (chat?.messages ?? []).some(m => m.role === 'assistant')
+  const hasAssistantMsg = chat.messages.some(m => m.role === 'assistant')
   const sidecarVisible = statusPanelEnabled
     && !panelOpen
     && (statusSidecarHidden || sidecarFits)
-    && !!chat
     && hasAssistantMsg
 
   const setGlobalStatusSidecarHidden = (hidden: boolean) => {
@@ -1580,13 +1579,12 @@ export const ChatTab: React.FC<Props> = ({
   // instead of the Status tab being open. One brief, two views. Waits for the
   // turn to settle (!turnActive) so we never regenerate mid-stream, and skips
   // when a generation is already running to avoid double-firing with the panel.
-   
   useEffect(() => {
-    if (!sidecarVisible || turnActive || taskBriefLoading || !chat) return
+    if (!sidecarVisible || turnActive || taskBriefLoading) return
     if (!isTaskBriefStale(chat)) return
     setTaskBriefLoading(true)
     generateTaskBrief(chat.id).finally(() => setTaskBriefLoading(false))
-  }, [sidecarVisible, turnActive, chatId, chat?.messages.length, chat?.taskBrief?.generatedAt])
+  }, [sidecarVisible, turnActive, chatId, chat.messages.length, chat.taskBrief?.generatedAt])
 
   const selectionValue: string = chat.selection.type === 'worker'
     ? `worker:${chat.selection.name}`
