@@ -5,7 +5,7 @@
   "engines": {
     "node": ">=22.12.0"
   },
-  "description": "Codey \u2014 a multi-agent workbench and control plane for coding agents (Claude Code, Codex, OpenCode, pi): per-project workspaces, worker teams, parallel runs, and access from a macOS app, Telegram/Discord/iMessage, or voice.",
+  "description": "Codey — a multi-agent workbench and control plane for coding agents (Claude Code, Codex, OpenCode, pi): per-project workspaces, worker teams, parallel runs, and access from a macOS app, Telegram/Discord/iMessage, or voice.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -18,7 +18,11 @@
   "scripts": {
     "build": "npm run build -ws --if-present",
     "test": "npm run test -ws --if-present",
-    "lint": "node scripts/check-non-english.mjs",
+    "typecheck": "npm run typecheck -ws --if-present",
+    "lint": "node scripts/check-non-english.mjs && eslint .",
+    "lint:text": "node scripts/check-non-english.mjs",
+    "lint:fix": "eslint . --fix",
+    "verify": "npm run lint && npm run typecheck && npm run test",
     "build:core": "npm run build -w @codey/core",
     "build:gateway": "npm run build -w @codey/gateway",
     "dev": "npm run dev -w @codey/gateway",
@@ -35,8 +39,12 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "electron": "41.10.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^17.12.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.69.0"
   },
   "keywords": [
     "claude-code",

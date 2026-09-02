@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc && node scripts/copy-skills.mjs",
     "watch": "node scripts/copy-skills.mjs && tsc --watch",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {

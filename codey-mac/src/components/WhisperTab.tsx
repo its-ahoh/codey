@@ -394,6 +394,10 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
     warmModel(m)
   }, [voice.provider, voice.localModel, downloaded, warmed, dlState.active, warmState.active, isDownloaded, isWarmed, warmModel, warmFailed])
 
+  const handleHotkeyRecordingChange = useCallback((active: boolean) => {
+    void window.codey.voice.setHotkeyCaptureActive(active)
+  }, [])
+
   if (!isGatewayRunning) {
     return (
       <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
@@ -437,10 +441,6 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
     setVocabDraft(next)
     commitVocabulary(next)
   }
-
-  const handleHotkeyRecordingChange = useCallback((active: boolean) => {
-    void window.codey.voice.setHotkeyCaptureActive(active)
-  }, [])
 
   const renderVoiceKeyField = (
     label: string,

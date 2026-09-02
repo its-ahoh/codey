@@ -33,7 +33,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
   const [bulkName, setBulkName] = useState('chrome-logins')
   const [bulkResult, setBulkResult] = useState<{ name: string; cookieCount: number; siteCount: number } | null>(null)
 
-  const useResult = <T,>(result: { ok: true; data: T } | { ok: false; error: string }): T | null => {
+  const unwrapResult = <T,>(result: { ok: true; data: T } | { ok: false; error: string }): T | null => {
     if (!result.ok) { setError(result.error); return null }
     setError(null)
     return result.data
@@ -44,7 +44,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
     const off = window.codey.chromeCompanion.onStatus(next => { if (!cancelled) setStatus(next) })
     void window.codey.chromeCompanion.status().then(result => {
       if (cancelled) return
-      const next = useResult(result)
+      const next = unwrapResult(result)
       if (next) setStatus(next)
     })
     return () => { cancelled = true; off() }
@@ -66,7 +66,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
           <span style={{ ...styles.dot, background: C.warningFg }} />
           <span style={styles.noticeCopy}>Chrome is temporarily unavailable. Open Chrome or reload the extension.</span>
           <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
-            const next = useResult(await window.codey.chromeCompanion.status())
+            const next = unwrapResult(await window.codey.chromeCompanion.status())
             if (next) setStatus(next)
           })}>Check again</button>
         </div>
@@ -80,7 +80,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
             Chrome only picks up a new build when it restarts or you reload the extension.
           </span>
           <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
-            useResult(await window.codey.chromeCompanion.openExtensionsPage())
+            unwrapResult(await window.codey.chromeCompanion.openExtensionsPage())
           })}>Open extensions</button>
         </div>
       )}
@@ -96,14 +96,14 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
           </ol>
           <div style={{ ...styles.actions, ...(compact ? styles.stack : null) }}>
             <button style={styles.primary} disabled={busy} onClick={() => void run(async () => {
-              const result = useResult(await window.codey.chromeCompanion.installExtensionTo())
+              const result = unwrapResult(await window.codey.chromeCompanion.installExtensionTo())
               if (result?.installed) setInstalledPath(result.dir)
             })}>Choose folder &amp; install</button>
             <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
-              useResult(await window.codey.chromeCompanion.openExtensionsPage())
+              unwrapResult(await window.codey.chromeCompanion.openExtensionsPage())
             })}>Open chrome://extensions</button>
             <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
-              const path = useResult(await window.codey.chromeCompanion.showExtensionFolder())
+              const path = unwrapResult(await window.codey.chromeCompanion.showExtensionFolder())
               if (path) setInstalledPath(path)
             })}>Reveal folder &amp; copy path</button>
           </div>
@@ -136,7 +136,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
               />
             </label>
             <button style={styles.primary} disabled={busy || !status.connected || !profileName.trim()} onClick={() => void run(async () => {
-              const next = useResult(await window.codey.chromeCompanion.exportSession(profileName.trim()))
+              const next = unwrapResult(await window.codey.chromeCompanion.exportSession(profileName.trim()))
               if (next) setExported(next.profile.name)
             })}>Create &amp; activate profile</button>
           </div>
@@ -165,7 +165,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
           {!sites && (
             <div style={styles.actions}>
               <button style={styles.secondary} disabled={busy} onClick={() => void run(async () => {
-                const next = useResult(await window.codey.chromeCompanion.listSessionSites())
+                const next = unwrapResult(await window.codey.chromeCompanion.listSessionSites())
                 if (next) {
                   setSites(next.sites)
                   setPicked(new Set())
@@ -226,7 +226,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
                   />
                 </label>
                 <button style={styles.primary} disabled={busy || picked.size === 0 || !bulkName.trim()} onClick={() => void run(async () => {
-                  const next = useResult(await window.codey.chromeCompanion.importSites(bulkName.trim(), [...picked]))
+                  const next = unwrapResult(await window.codey.chromeCompanion.importSites(bulkName.trim(), [...picked]))
                   if (next?.imported && next.profile) {
                     setBulkResult({ name: next.profile.name, cookieCount: next.cookieCount, siteCount: next.sites.length })
                     setSites(null)

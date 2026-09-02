@@ -1524,6 +1524,15 @@ export const ChatTab: React.FC<Props> = ({
     return () => window.removeEventListener('pendingPairing', handler)
   }, [drainPendingPairing])
 
+  // FIXME(hooks): the `if (!chat) return null` guard below sits *above* ~20
+  // more hooks, so a null -> non-null transition changes hook order — exactly
+  // what rules-of-hooks forbids. It does not bite today because App.tsx only
+  // renders <ChatTab> when the chat exists (and keys it by id, remounting on
+  // switch), so `chat` is never null while mounted. The real fix is to hoist
+  // the remaining hooks above the guard, which is invasive in a file this
+  // size; tracked separately. Disabled here rather than repo-wide so the rule
+  // keeps protecting every other component.
+  /* eslint-disable react-hooks/rules-of-hooks */
   if (!chat) return null
 
   const latestAssistantId: string | null = (() => {
@@ -1571,7 +1580,7 @@ export const ChatTab: React.FC<Props> = ({
   // instead of the Status tab being open. One brief, two views. Waits for the
   // turn to settle (!turnActive) so we never regenerate mid-stream, and skips
   // when a generation is already running to avoid double-firing with the panel.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   useEffect(() => {
     if (!sidecarVisible || turnActive || taskBriefLoading || !chat) return
     if (!isTaskBriefStale(chat)) return

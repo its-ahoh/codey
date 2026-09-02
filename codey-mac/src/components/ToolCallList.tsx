@@ -64,7 +64,7 @@ export const ToolCallList: React.FC<{ toolCalls: ToolCallEntry[]; emptyHint?: st
         const hasDetail = !!r.input || !!r.output
         const toggle = () => setExpanded(prev => {
           const next = new Set(prev)
-          next.has(r.id) ? next.delete(r.id) : next.add(r.id)
+          if (next.has(r.id)) next.delete(r.id); else next.add(r.id)
           return next
         })
         return (

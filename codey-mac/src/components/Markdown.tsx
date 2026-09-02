@@ -213,7 +213,7 @@ function preserveLineBreaks(src: string): string {
       out.push(line)
       continue
     }
-    out.push(/  $/.test(line) ? line : line + '  ')
+    out.push(/ {2}$/.test(line) ? line : line + '  ')
   }
   return out.join('\n')
 }

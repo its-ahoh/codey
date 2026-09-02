@@ -26,6 +26,7 @@
     "notarize:mac": "node build/notarize-dist.js",
     "dist:mac": "node build/dist-mac.js",
     "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
