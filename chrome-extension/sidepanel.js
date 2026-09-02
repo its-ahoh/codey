@@ -18,6 +18,7 @@ const handoffNameNode = document.querySelector('#handoff-name')
 const handoffSaveNode = document.querySelector('#handoff-save')
 const handoffCancelNode = document.querySelector('#handoff-cancel')
 const handoffExistingNode = document.querySelector('#handoff-existing')
+const profileInfoNode = document.querySelector('#profile-info')
 const chatSelectNode = document.querySelector('#chat-select')
 const agentSelectNode = document.querySelector('#agent-select')
 const modelSelectNode = document.querySelector('#model-select')
@@ -630,6 +631,33 @@ function resetHandoffButton() {
   handoffNode.title = "Copy this site's signed-in session into a Codey Browser profile"
 }
 
+// One quiet line about the Codey Browser's identity: which profiles are in
+// use, and where the current site's login lives over there. Names and flags
+// only - the data comes straight from Codey, so no extension round trip and
+// nothing to wake. Failure (Codey closed, not yet paired) just hides the line.
+async function refreshProfileInfo() {
+  let hostname = ''
+  try { hostname = activePage ? new URL(activePage.url).hostname : '' } catch { /* no site, global info only */ }
+  try {
+    const result = await codeyApi('/v1/profiles', { method: 'POST', body: hostname ? { hostname } : {} })
+    const profiles = Array.isArray(result.profiles) ? result.profiles : []
+    const inUse = profiles.filter(profile => profile.active).map(profile => profile.name)
+    const holders = profiles.filter(profile => profile.holdsSite)
+    const parts = [inUse.length === 0
+      ? 'Codey Browser: no profile in use'
+      : `Codey Browser: using ${inUse.join(' + ')}`]
+    if (holders.length > 0) {
+      parts.push(`this site is saved in ${holders.map(profile =>
+        `${profile.name}${profile.autoSync ? ' (auto-syncs)' : ''}`).join(', ')}`)
+    }
+    profileInfoNode.textContent = parts.join(' · ')
+    profileInfoNode.hidden = false
+  } catch {
+    profileInfoNode.hidden = true
+    profileInfoNode.textContent = ''
+  }
+}
+
 async function refreshActivePage() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   activePage = tab && /^https?:\/\//i.test(tab.url || '')
@@ -643,6 +671,7 @@ async function refreshActivePage() {
     handoffPageUrl = activePage?.url || null
     resetHandoffButton()
   }
+  void refreshProfileInfo()
 }
 
 async function ensurePreparedChat() {

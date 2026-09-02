@@ -154,6 +154,14 @@ export interface ChromeCompanionFeatures {
    * points at those instead of quietly creating a near-duplicate.
    */
   suggestProfileName: (hostname: string) => Promise<{ name: string; existing: string[] }>
+  /**
+   * What the Codey Browser's profiles look like right now, for the side
+   * panel's one-line status: which are in use, which mirror Chrome, and which
+   * hold `hostname`. Names and flags only - never session contents.
+   */
+  profilesOverview: (hostname?: string) => Promise<{
+    profiles: Array<{ name: string; active: boolean; autoSync: boolean; holdsSite: boolean }>
+  }>
 }
 
 export interface ChromeSessionHandoff {
@@ -643,6 +651,13 @@ export class ChromeCompanionBridge {
         const result = await this.onChat({ chatId, text, page, agent, model, attachments })
         for (const id of attachmentIds) this.uploadedAttachments.delete(id)
         this.reply(request, response, 200, { ok: true, ...result })
+        return
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/profiles') {
+        if (!this.features) throw new Error('Browser profiles are unavailable')
+        const input = await this.body(request)
+        const hostname = typeof input.hostname === 'string' ? input.hostname.slice(0, 300) : ''
+        this.reply(request, response, 200, { ok: true, ...await this.features.profilesOverview(hostname || undefined) })
         return
       }
       if (request.method === 'POST' && url.pathname === '/v1/session/handoff/name') {

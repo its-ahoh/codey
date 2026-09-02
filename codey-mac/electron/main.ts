@@ -2172,6 +2172,17 @@ app.whenReady().then(async () => {
         name: availableProfileName(hostname, browserController.listProfiles().map(profile => profile.name)),
         existing: browserController.profilesForUrl(`https://${hostname}/`),
       }),
+      profilesOverview: async hostname => {
+        const holds = new Set(hostname ? browserController.profilesForUrl(`https://${hostname}/`) : [])
+        return {
+          profiles: browserController.listProfiles().map(profile => ({
+            name: profile.name,
+            active: profile.active,
+            autoSync: profile.autoSync,
+            holdsSite: holds.has(profile.name),
+          })),
+        }
+      },
       handoffSession: async requested => {
         if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
         const sessionState = await chromeCompanion.exportSession()

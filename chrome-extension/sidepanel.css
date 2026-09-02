@@ -76,6 +76,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .handoff-row button.handoff-save { border-color: transparent; background: var(--accent); color: var(--on-accent); }
 .handoff-row button:disabled { opacity: 0.55; cursor: default; }
 .handoff-existing { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border); font-size: 11px; color: var(--fg-3, #888); line-height: 1.4; }
+.profile-info { padding: 4px 14px 0; font-size: 11px; color: var(--fg-3, #888); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-info[hidden] { display: none; }
 .handoff-existing[hidden] { display: none; }
 .handoff-resync button:disabled { opacity: 0.55; cursor: default; }
 

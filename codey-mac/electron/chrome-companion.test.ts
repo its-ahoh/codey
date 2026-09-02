@@ -351,6 +351,43 @@ describe('ChromeCompanionBridge', () => {
     expect(work.command.input).toEqual({ ref: 'e9', value: false })
   })
 
+  it('describes the Codey Browser profiles for the side panel status line', async () => {
+    const asked: Array<string | undefined> = []
+    const features = {
+      profilesOverview: async (hostname?: string) => {
+        asked.push(hostname)
+        return {
+          profiles: [
+            { name: 'personal', active: true, autoSync: false, holdsSite: false },
+            { name: 'work', active: true, autoSync: true, holdsSite: hostname === 'github.com' },
+          ],
+        }
+      },
+    } as unknown as ChromeCompanionFeatures
+    const { endpoint } = await setup(undefined, undefined, undefined, features)
+    const token = await connect(endpoint)
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+
+    // Unauthenticated callers learn nothing about the user's profiles.
+    expect((await fetch(`${endpoint}/v1/profiles`, { method: 'POST' })).status).toBe(401)
+    expect(asked).toHaveLength(0)
+
+    const overview = await fetch(`${endpoint}/v1/profiles`, {
+      method: 'POST', headers, body: JSON.stringify({ hostname: 'github.com' }),
+    })
+    await expect(overview.json()).resolves.toMatchObject({
+      ok: true,
+      profiles: [
+        { name: 'personal', active: true, autoSync: false, holdsSite: false },
+        { name: 'work', active: true, autoSync: true, holdsSite: true },
+      ],
+    })
+
+    // Without a site in front, the global half still answers.
+    await fetch(`${endpoint}/v1/profiles`, { method: 'POST', headers, body: '{}' })
+    expect(asked).toEqual(['github.com', undefined])
+  })
+
   it('hands the current site\'s session to Codey from the side panel', async () => {
     const handoffs: Array<string | undefined> = []
     const features = {
@@ -454,8 +491,9 @@ describe('ChromeCompanionBridge', () => {
         id: 'attachment-1', name, mimeType, size: data.length, path: '/safe/upload.txt',
       }),
       transcribe: async (_mimeType, data) => ({ text: `heard ${data.length} bytes` }),
-      handoffSession: async () => ({ profileName: 'example.com', origin: 'https://example.com', cookieCount: 3, resynced: false }),
+      handoffSession: async () => ({ profileName: 'example.com', origin: 'https://example.com', cookieCount: 3 }),
       suggestProfileName: async hostname => ({ name: hostname, existing: [] }),
+      profilesOverview: async () => ({ profiles: [] }),
     }
     const { endpoint } = await setup(
       async request => { received.push(request); return { chatId: 'chat-2', response: 'Attached' } },
