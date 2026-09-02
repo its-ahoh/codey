@@ -533,6 +533,8 @@ declare global {
       }
       git: {
         status: (workingDir: string) => Promise<IpcResult<{ branch: string; dirty: number } | null>>
+        /** Working-tree diff against HEAD for each absolute path; new files diff against nothing. Missing entries are unchanged or unreadable. */
+        fileDiffs: (workingDir: string, paths: string[]) => Promise<IpcResult<Record<string, { added: number; removed: number; patch: string; isNew: boolean }>>>
         branches: (workingDir: string) => Promise<IpcResult<{ current: string; local: string[]; remote: string[] }>>
         checkout: (workingDir: string, name: string, opts?: { create?: boolean; track?: boolean }) => Promise<IpcResult<{ ok: boolean; error?: string; reason?: 'dirty' }>>
         stash: (workingDir: string, message?: string) => Promise<IpcResult<{ ok: boolean; error?: string }>>
@@ -729,6 +731,7 @@ declare global {
       openPath: (path: string) => Promise<string>
       revealInFolder: (path: string) => Promise<boolean>
       readTextFile: (path: string) => Promise<string | null>
+      readImageFile: (path: string) => Promise<string | null>
       onLog: (handler: (msg: string) => void) => () => void
     }
   }

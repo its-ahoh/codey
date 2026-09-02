@@ -188,3 +188,28 @@ export const parseShellWriteTargets = (command: string): string[] => {
 
   return out
 }
+
+/**
+ * Paths a codex `file_change` item touched. Codex reports its own edits as a
+ * `file_change` item whose output is a list of `{ path, kind }` — no diff
+ * text, only the fact that each path was added, updated, or deleted. The
+ * gateway stores that list as a JSON string on the tool_end entry. Relative
+ * paths are resolved against the working directory.
+ */
+export const parseFileChangeOutput = (output: unknown, workingDir?: string): string[] => {
+  let list: unknown = output
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list) } catch { return [] }
+  }
+  if (!Array.isArray(list)) return []
+  const out: string[] = []
+  for (const item of list) {
+    const raw = typeof item === 'string' ? item : (item as { path?: unknown } | null)?.path
+    if (typeof raw !== 'string' || !raw) continue
+    const path = raw.startsWith('/') || !workingDir
+      ? raw
+      : `${workingDir.replace(/\/$/, '')}/${raw.replace(/^\.\//, '')}`
+    if (!out.includes(path)) out.push(path)
+  }
+  return out
+}

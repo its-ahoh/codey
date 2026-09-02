@@ -246,6 +246,7 @@ contextBridge.exposeInMainWorld('codey', {
   },
   git: {
     status: (workingDir: string) => ipcRenderer.invoke('git:status', workingDir),
+    fileDiffs: (workingDir: string, paths: string[]) => ipcRenderer.invoke('git:fileDiffs', workingDir, paths),
     branches: (workingDir: string) => ipcRenderer.invoke('git:branches', workingDir),
     checkout: (workingDir: string, name: string, opts?: { create?: boolean; track?: boolean }) =>
       ipcRenderer.invoke('git:checkout', workingDir, name, opts),
@@ -584,6 +585,7 @@ contextBridge.exposeInMainWorld('codey', {
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
   revealInFolder: (path: string) => ipcRenderer.invoke('shell:showItemInFolder', path),
   readTextFile: (path: string) => ipcRenderer.invoke('file:readText', path),
+  readImageFile: (path: string) => ipcRenderer.invoke('file:readImage', path),
   onLog: (handler: (msg: string) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, msg: string) => handler(msg)
     ipcRenderer.on('gateway-log', listener)

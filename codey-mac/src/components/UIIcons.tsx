@@ -2,7 +2,7 @@ import React from 'react'
 
 export type IconName =
   | 'activity' | 'add' | 'alert' | 'archive' | 'bell' | 'book' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
-  | 'clock' | 'code' | 'copy' | 'edit' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
+  | 'clock' | 'code' | 'copy' | 'edit' | 'file' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
   | 'waveform' | 'git-branch' | 'git-merge' | 'pull-request' | 'globe' | 'match-case' | 'overview' | 'refresh' | 'search' | 'server' | 'settings' | 'sparkle' | 'split' | 'terminal' | 'tools' | 'trash' | 'users' | 'workspace'
   | 'telegram' | 'discord' | 'imessage' | 'undo' | 'download' | 'download-all'
 
@@ -47,6 +47,7 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     copy: <><rect {...common} x="9" y="9" width="11" height="11" rx="2" /><path {...common} d="M5 15V5a2 2 0 012-2h10" /></>,
     edit: <><path {...common} d="M4 20h4l10.5-10.5a2.12 2.12 0 00-3-3L5 17v3z" /><path {...common} d="M13.5 6.5l4 4" /></>,
     folder: <path {...common} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />,
+    file: <><path {...common} d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z" /><path {...common} d="M14 3v5h5" /></>,
     'folder-open': <><path {...common} d="M3 18V7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v1" /><path {...common} d="M3.2 19h15.2a2 2 0 001.94-1.51l1.25-5A2 2 0 0019.65 10H8l-2 3H3" /></>,
     'git-branch': <><circle {...common} cx="6" cy="5" r="2" /><circle {...common} cx="6" cy="19" r="2" /><circle {...common} cx="18" cy="7" r="2" /><path {...common} d="M6 7v10M8 13h3a7 7 0 007-4" /></>,
     // GitHub-style branch topology makes PR delivery states recognizable even
