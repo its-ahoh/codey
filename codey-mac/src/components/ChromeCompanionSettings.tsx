@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { ChromeCompanionStatus, ChromeSessionSite } from '../codey-api'
 import { C } from '../theme'
-import { Toggle } from './settingsAtoms'
 
 const EMPTY: ChromeCompanionStatus = {
   endpoint: null,
@@ -46,8 +45,6 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
   const [error, setError] = useState<{ at: string; message: string } | null>(null)
   const busy = busyAt !== null
   const [installedPath, setInstalledPath] = useState<string | null>(null)
-  const [autoSync, setAutoSync] = useState(false)
-  const [autoSyncBusy, setAutoSyncBusy] = useState(false)
   const [sites, setSites] = useState<ChromeSessionSite[] | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [siteFilter, setSiteFilter] = useState('')
@@ -76,13 +73,6 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
     return () => { cancelled = true; off() }
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    void window.codey.chromeCompanion.autoSync?.get().then(result => {
-      if (!cancelled && result.ok) setAutoSync(result.data.enabled)
-    })
-    return () => { cancelled = true }
-  }, [])
 
   const run = async (at: string, operation: () => Promise<void>) => {
     section.current = at
@@ -155,36 +145,10 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
       {/* One creation path here, not two: the picker below covers a single
           site (tick one) as well as a working set, and creating from "the
           current Chrome tab" already lives in Chrome's own side panel, where
-          the user can see which tab that is. */}
-      {status.connected && (
-        <div style={styles.card}>
-          <div style={styles.toggleRow}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={styles.title}>Keep copied logins in sync with Chrome</div>
-              <div style={styles.copy}>
-                When a login your profiles hold changes in Chrome, the affected profiles refresh themselves.
-                Chrome only reports <em>which site</em> changed — Codey then pulls a fresh copy the same way the manual refresh button does.
-              </div>
-            </div>
-            <Toggle
-              on={autoSync}
-              disabled={busy || autoSyncBusy}
-              onChange={next => void (async () => {
-                setAutoSyncBusy(true)
-                section.current = 'autosync'
-                try {
-                  const value = unwrapResult(await window.codey.chromeCompanion.autoSync.set(next))
-                  if (value) setAutoSync(value.enabled)
-                } finally {
-                  setAutoSyncBusy(false)
-                }
-              })()}
-              label="Keep copied logins in sync with Chrome"
-            />
-          </div>
-          {failure('autosync')}
-        </div>
-      )}
+          the user can see which tab that is. Keeping a copy fresh lives with
+          the profile itself - each one has a sync switch in the Codey
+          Browser's Profiles page - because "mirrors Chrome" is a property of
+          a profile, not of this app. */}
 
       {/* Copying one site at a time is fine for one login and tedious for a
           working set. The alternative is not "copy everything" - that would put
@@ -194,7 +158,7 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
         <div style={styles.card}>
           <div>
             <div style={styles.title}>Pick which Chrome logins to copy</div>
-            <div style={styles.copy}>List every site this Chrome profile is signed in to, then choose the ones the Codey Browser may use.</div>
+            <div style={styles.copy}>List every site this Chrome profile is signed in to, then choose the ones the Codey Browser may use. To keep a copy fresh afterwards, use its refresh button or sync switch in the Codey Browser’s Profiles page.</div>
           </div>
           <div style={styles.actions}>
             <button style={styles.secondary} disabled={busy} onClick={() => void run('sites', async () => {
@@ -307,7 +271,6 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
 const styles: Record<string, React.CSSProperties> = {
   root: { display: 'flex', flexDirection: 'column', gap: 10 },
   card: { display: 'flex', flexDirection: 'column', gap: 9, padding: 12, borderRadius: 10, background: C.surface, border: `1px solid ${C.border}` },
-  toggleRow: { display: 'flex', alignItems: 'flex-start', gap: 12 },
   dot: { width: 8, height: 8, flexShrink: 0, borderRadius: '50%' },
   title: { color: C.fg, fontSize: 12.5, fontWeight: 750 },
   copy: { color: C.fg3, fontSize: 10.5, lineHeight: 1.45, marginTop: 3 },

@@ -470,10 +470,6 @@ contextBridge.exposeInMainWorld('codey', {
     activeTab: () => ipcRenderer.invoke('chromeCompanion:activeTab'),
     snapshot: () => ipcRenderer.invoke('chromeCompanion:snapshot'),
     listSessionSites: () => ipcRenderer.invoke('chromeCompanion:listSessionSites'),
-    autoSync: {
-      get: () => ipcRenderer.invoke('chromeCompanion:autoSync:get'),
-      set: (enabled: boolean) => ipcRenderer.invoke('chromeCompanion:autoSync:set', enabled === true),
-    },
     importSites: (name: string, sites: string[], openMissing?: boolean) => ipcRenderer.invoke('chromeCompanion:importSites', name, sites, openMissing === true),
     navigate: (url: string) => ipcRenderer.invoke('chromeCompanion:navigate', url),
     setAccent: (hex: string) => ipcRenderer.invoke('chromeCompanion:setAccent', hex),
@@ -516,6 +512,7 @@ contextBridge.exposeInMainWorld('codey', {
       import: () => ipcRenderer.invoke('browser:profiles:import'),
       export: (name: string) => ipcRenderer.invoke('browser:profiles:export', name),
       syncProfile: (name: string) => ipcRenderer.invoke('browser:profiles:syncProfile', name),
+      setAutoSync: (name: string, enabled: boolean) => ipcRenderer.invoke('browser:profiles:setAutoSync', name, enabled === true),
       contents: (name: string) => ipcRenderer.invoke('browser:profiles:contents', name),
     },
     extensions: {

@@ -160,6 +160,25 @@ describe('BrowserProfileStore', () => {
     }
   })
 
+  it('keeps the per-profile auto-sync switch across re-saves', () => {
+    const { dir, store } = makeStore()
+    try {
+      store.write('work', { cookies: [], origins: [] }, null)
+      expect(store.list()[0].autoSync).toBe(false)
+
+      expect(store.setAutoSync('work', true).autoSync).toBe(true)
+      // A refresh rewrites the profile's data; the switch must survive it,
+      // or auto-sync would turn itself off on its own first run.
+      store.write('work', { cookies: [], origins: [] }, null)
+      expect(store.read('work').autoSync).toBe(true)
+
+      expect(store.setAutoSync('work', false).autoSync).toBe(false)
+      expect(store.read('work').autoSync).toBe(false)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('tracks the enabled profiles in a dot-file, one per line', () => {
     const { dir, store } = makeStore()
     try {

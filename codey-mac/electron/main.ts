@@ -2392,12 +2392,11 @@ app.whenReady().then(async () => {
 
   // Auto-sync: Chrome reports which cookie domains changed (never the values),
   // and the profiles holding those domains refresh themselves through the same
-  // pull path the Sync button uses. Off by default and persisted per install.
-  const autoSyncFile = join(app.getPath('userData'), 'chrome-companion-autosync.json')
-  let chromeAutoSync = (() => {
-    try { return JSON.parse(require('fs').readFileSync(autoSyncFile, 'utf8')).enabled === true }
-    catch { return false }
-  })()
+  // pull path the Sync button uses. The switch lives on each profile - "this
+  // profile mirrors Chrome" is a property of the profile, not of the app - so
+  // a personal/work pair sharing a site can sync exactly one of the two.
+  const autoSyncProfileNames = () =>
+    browserController.listProfiles().filter(profile => profile.autoSync).map(profile => profile.name)
   const domainsTouch = (left: string, right: string): boolean => {
     const a = left.replace(/^\./, '').toLowerCase()
     const b = right.replace(/^\./, '').toLowerCase()
@@ -2413,21 +2412,22 @@ app.whenReady().then(async () => {
     if (changed.length === 0 || !chromeCompanion?.status().connected) return
 
     // Chrome exposes only one identity per site, so a site that lives in more
-    // than one profile is ambiguous - refreshing "work" from Chrome while you
-    // are signed in there as "personal" would overwrite work's login. So each
-    // changed site is refreshed only when exactly one profile owns it, and only
-    // that site is touched (not the profile's other, unrelated logins).
+    // than one syncing profile is ambiguous - refreshing "work" from Chrome
+    // while you are signed in there as "personal" would overwrite work's
+    // login. Each changed site is refreshed only when exactly one profile
+    // with the sync switch on owns it, and only that site is touched (not the
+    // profile's other, unrelated logins). Profiles with the switch off are
+    // never written to, and never block the one that has it on.
     const targets = new Map<string, Set<string>>()  // profile -> its changed sites
     for (const domain of changed) {
-      const owners = browserController.listProfiles()
-        .map(profile => profile.name)
+      const owners = autoSyncProfileNames()
         .filter(name => {
           try { return browserController.profileSites(name).some(site => domainsTouch(site, domain)) }
           catch { return false }
         })
       if (owners.length !== 1) {
         if (owners.length > 1) {
-          sendToRenderer('gateway-log', `[browser] auto-sync skipped ${domain}: held by ${owners.join(', ')} - refresh the right one by hand`)
+          sendToRenderer('gateway-log', `[browser] auto-sync skipped ${domain}: ${owners.join(' and ')} both sync it - leave the switch on for only one`)
         }
         continue
       }
@@ -2461,10 +2461,11 @@ app.whenReady().then(async () => {
   }
   chromeCompanion?.setAutoSync({
     watchDomains: () => {
-      if (!chromeAutoSync) return null
+      const syncing = autoSyncProfileNames()
+      if (syncing.length === 0) return null
       const domains = new Set<string>()
-      for (const profile of browserController.listProfiles()) {
-        try { for (const site of browserController.profileSites(profile.name)) domains.add(site) }
+      for (const name of syncing) {
+        try { for (const site of browserController.profileSites(name)) domains.add(site) }
         catch { /* an unreadable profile just is not watched */ }
       }
       return [...domains]
@@ -2477,12 +2478,8 @@ app.whenReady().then(async () => {
       autoSyncTimer = setTimeout(() => { autoSyncTimer = null; void runAutoSync() }, 1500)
     },
   })
-  ipcMain.handle('chromeCompanion:autoSync:get', event => browserCall(event, () => ({ enabled: chromeAutoSync })))
-  ipcMain.handle('chromeCompanion:autoSync:set', (event, enabled: boolean) => browserCall(event, () => {
-    chromeAutoSync = enabled === true
-    require('fs').writeFileSync(autoSyncFile, JSON.stringify({ enabled: chromeAutoSync }), 'utf8')
-    return { enabled: chromeAutoSync }
-  }))
+  ipcMain.handle('browser:profiles:setAutoSync', (event, name: string, enabled: boolean) =>
+    browserCall(event, () => browserController.setProfileAutoSync(String(name || ''), enabled === true)))
   ipcMain.handle('browser:profiles:setAvatar', (event, name: string, avatar: string) =>
     browserCall(event, () => browserController.setProfileAvatar(String(name || ''), String(avatar || ''))))
   ipcMain.handle('browser:profiles:delete', (event, name: string) =>

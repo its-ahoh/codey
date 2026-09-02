@@ -46,6 +46,9 @@ export interface BrowserProfile extends BrowserProfileData {
   name: string
   /** User-selected visual marker shown in the browser profile switcher. */
   avatar?: string | null
+  /** This profile mirrors Chrome: when one of its sites' logins changes
+   *  there, the profile refreshes itself. Off unless the user turned it on. */
+  autoSync?: boolean
   createdAt: number
   updatedAt: number
   /** The page that was showing when the profile was saved; null for imports. */
@@ -55,6 +58,7 @@ export interface BrowserProfile extends BrowserProfileData {
 export interface BrowserProfileSummary {
   name: string
   avatar?: string | null
+  autoSync: boolean
   createdAt: number
   updatedAt: number
   cookieCount: number
@@ -413,6 +417,7 @@ export class BrowserProfileStore {
     return {
       name,
       avatar: profile?.avatar ?? null,
+      autoSync: profile?.autoSync === true,
       createdAt: profile?.createdAt ?? 0,
       updatedAt: profile?.updatedAt ?? 0,
       cookieCount: profile?.cookies.length ?? 0,
@@ -439,6 +444,7 @@ export class BrowserProfileStore {
       avatar: typeof record.avatar === 'string' && (BROWSER_PROFILE_AVATARS as readonly string[]).includes(record.avatar)
         ? record.avatar
         : null,
+      autoSync: record.autoSync === true,
       createdAt: typeof record.createdAt === 'number' ? record.createdAt : 0,
       updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : 0,
       sourceUrl: typeof record.sourceUrl === 'string' ? record.sourceUrl : null,
@@ -459,6 +465,7 @@ export class BrowserProfileStore {
       ...data,
       name,
       avatar: existing?.avatar ?? null,
+      autoSync: existing?.autoSync === true,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       sourceUrl: sourceUrl ?? existing?.sourceUrl ?? null,
@@ -476,6 +483,18 @@ export class BrowserProfileStore {
     assertProfileAvatar(avatar)
     const profile = this.read(name)
     const next: BrowserProfile = { ...profile, avatar }
+    const file = this.file(name)
+    fs.writeFileSync(file, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 })
+    try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
+    return this.summary(name, this.activeNames())
+  }
+
+  /** Turn a profile's "mirror Chrome" flag on or off. Metadata only - the
+   *  saved session is untouched, and the snapshot does not read as newer. */
+  setAutoSync(name: string, enabled: boolean): BrowserProfileSummary {
+    assertProfileName(name)
+    const profile = this.read(name)
+    const next: BrowserProfile = { ...profile, autoSync: enabled === true }
     const file = this.file(name)
     fs.writeFileSync(file, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 })
     try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }

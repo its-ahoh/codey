@@ -123,6 +123,7 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
     if (profile.originCount > 0) bits.push(`${profile.originCount} site${profile.originCount === 1 ? '' : 's'}`)
     const when = formatWhen(profile.updatedAt)
     if (when) bits.push(`updated ${when}`)
+    if (profile.autoSync) bits.push('syncs with Chrome')
     return bits.join(' · ')
   }
 
@@ -309,6 +310,20 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               before trusting it with a task - and before handing it to an
               agent - without ever putting the values on screen. */}
           {expanded === profile.name && (
+            <div style={styles.syncRow}>
+              <span style={styles.syncCopy}>
+                Keep in sync with Chrome — when one of this profile’s logins changes there, it refreshes itself.
+                If two syncing profiles share a site, that site stays manual: Chrome holds one identity per site, so Codey will not guess whose it is.
+              </span>
+              <Toggle
+                on={profile.autoSync}
+                disabled={busy}
+                onChange={next => void run(() => window.codey.browser.profiles.setAutoSync(profile.name, next))}
+                label={`Keep ${profile.name} in sync with Chrome`}
+              />
+            </div>
+          )}
+          {expanded === profile.name && (
             <div style={styles.contents}>
               {!contents[profile.name] && <div style={styles.contentsEmpty}>Reading…</div>}
               {contents[profile.name]?.sites.length === 0 && (
@@ -344,6 +359,8 @@ function buttonStyle(compact: boolean): React.CSSProperties {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  syncRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
+  syncCopy: { flex: 1, minWidth: 0, color: C.fg2, fontSize: 11, lineHeight: 1.45 },
   contents: { display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 200, overflowY: 'auto', padding: '5px 6px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
   contentsRow: { display: 'flex', alignItems: 'baseline', gap: 8, padding: '2px 4px' },
   contentsDomain: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.fg2, fontSize: 11 },

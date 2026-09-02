@@ -198,6 +198,8 @@ export interface BrowserTab {
 export interface BrowserProfileSummary {
   name: string
   avatar: string | null
+  /** This profile keeps itself in sync with Chrome. */
+  autoSync: boolean
   createdAt: number
   updatedAt: number
   cookieCount: number
@@ -635,10 +637,6 @@ declare global {
         activeTab: () => Promise<IpcResult<ChromeTabInfo>>
         snapshot: () => Promise<IpcResult<ChromePageSnapshot>>
         listSessionSites: () => Promise<IpcResult<{ sites: ChromeSessionSite[] }>>
-        autoSync: {
-          get: () => Promise<IpcResult<{ enabled: boolean }>>
-          set: (enabled: boolean) => Promise<IpcResult<{ enabled: boolean }>>
-        }
         importSites: (name: string, sites: string[], openMissing?: boolean) => Promise<IpcResult<{
           imported: boolean
           profile: BrowserProfileSummary | null
@@ -676,6 +674,7 @@ declare global {
           enable: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
           disable: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
           setAvatar: (name: string, avatar: string) => Promise<IpcResult<BrowserProfileSummary>>
+          setAutoSync: (name: string, enabled: boolean) => Promise<IpcResult<BrowserProfileSummary>>
           delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>
           import: () => Promise<IpcResult<{ imported: boolean; profile: BrowserProfileSummary | null }>>
           export: (name: string) => Promise<IpcResult<{ exported: boolean; path: string | null }>>

@@ -1169,6 +1169,7 @@ export class BrowserController {
     return {
       name,
       avatar: profile.avatar ?? null,
+      autoSync: profile.autoSync === true,
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
       cookieCount: profile.cookies.length,
@@ -1218,6 +1219,11 @@ export class BrowserController {
 
   setProfileAvatar(name: string, avatar: string): BrowserProfileSummary {
     return this.profiles().setAvatar(name, avatar)
+  }
+
+  /** Turn "keep this profile in sync with Chrome" on or off for one profile. */
+  setProfileAutoSync(name: string, enabled: boolean): BrowserProfileSummary {
+    return this.profiles().setAutoSync(name, enabled)
   }
 
   /** Remove a saved profile. Deleting an enabled profile turns it off and

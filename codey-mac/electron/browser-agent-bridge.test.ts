@@ -97,7 +97,7 @@ describe('BrowserAgentBridge', () => {
       saveProfile: vi.fn(async name => ({ name, cookies: [], origins: [], createdAt: 1, updatedAt: 1, sourceUrl: null })),
       importProfile: vi.fn(async name => ({ name, cookies: [], origins: [], createdAt: 1, updatedAt: 1, sourceUrl: null })),
       activateProfile: vi.fn(async name => ({
-        name, active: true, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null,
+        name, active: true, autoSync: false, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null,
       })),
       deleteProfile: vi.fn(async () => ({ deleted: true })),
       exportProfile: vi.fn(async () => ({ path: '/tmp/exported.json' })),
@@ -342,7 +342,7 @@ describe('BrowserAgentBridge', () => {
       activeProfileNames: vi.fn(() => enabled),
       activateProfile: vi.fn(async (name: string) => {
         enabled = [name]
-        return { name, active: true, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null }
+        return { name, active: true, autoSync: false, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null }
       }),
       // Parks until the test releases it, so commands really do pile up behind
       // one another the way two busy agents would make them.
