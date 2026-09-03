@@ -472,7 +472,7 @@ export const CombinedDiffView: React.FC<{
   }
 
   return (
-    <div style={diffStyles.wrap}>
+    <div className="file-code-content" style={diffStyles.wrap}>
       <div style={diffStyles.inner}>
         {items.map(item => {
           if (item.kind === 'sep') return <div key={item.key} style={diffStyles.hunkSep} />

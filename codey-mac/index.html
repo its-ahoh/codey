@@ -49,6 +49,11 @@
         padding-right: 26px !important;
       }
       .hljs-comment, .hljs-quote { color: var(--fg3); font-style: italic; }
+      /* Comments in the Files panel should stay readable without competing
+         with the code being inspected. Keep this scoped so chat code blocks
+         retain their existing contrast. */
+      .file-code-content .hljs-comment,
+      .file-code-content .hljs-quote { color: color-mix(in srgb, var(--fg3) 72%, transparent); }
       .hljs-keyword, .hljs-selector-tag, .hljs-section, .hljs-link { color: var(--accent); }
       .hljs-string, .hljs-title, .hljs-name, .hljs-type, .hljs-attribute,
       .hljs-symbol, .hljs-bullet, .hljs-addition { color: var(--green); }

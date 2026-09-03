@@ -20,7 +20,7 @@ export const FileCodeView: React.FC<{ content: string; filePath: string }> = ({ 
   const gutterWidth = Math.max(30, String(lines.length).length * 8 + 12)
 
   return (
-    <div style={styles.wrap}>
+    <div className="file-code-content" style={styles.wrap}>
       <div style={styles.inner}>
         {shown.map((text, i) => {
           const html = highlightedLine(text, language)
