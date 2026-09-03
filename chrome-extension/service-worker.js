@@ -1,5 +1,6 @@
 // `siteOfHost`: kept in its own file so it can be tested without Chrome.
-importScripts('site-grouping.js')
+// It needs the real Public Suffix List (tldts) loaded first.
+importScripts('vendor/tldts.min.js', 'site-grouping.js')
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:49321'
 const ENDPOINT_COUNT = 10
@@ -9,6 +10,9 @@ const CONTROLLED_TAB_KEY = 'controlledTabId'
 const CONTROLLED_TITLE_PREFIX = '● Codey · '
 const OFFSCREEN_DOCUMENT = 'offscreen.html'
 const CONTROLLED_GROUP_TITLE = 'Codey'
+// How long one opt-in "open the missing sites" pass may take in total. Kept
+// under the bridge's own timeout for that command so Codey hears an answer.
+const STORAGE_VISIT_BUDGET_MS = 25_000
 // Stamped on interactive elements by `snapshot` so click/fill can address the
 // same element later. Renumbered on every snapshot.
 const REF_ATTR = 'data-codey-ref'
@@ -138,21 +142,60 @@ async function call(endpoint, path, options = {}) {
   return value
 }
 
+/** The pairing secret Codey wrote into this extension's folder when it staged
+ *  it. Shared only between Codey and these files on disk, it is what lets the
+ *  two ends recognise each other instead of trusting whoever owns the port. */
+async function pairingSecret() {
+  try {
+    const response = await fetch(chrome.runtime.getURL('pairing.json'))
+    const value = await response.json()
+    return typeof value.secret === 'string' && value.secret ? value.secret : null
+  } catch {
+    return null
+  }
+}
+
+async function hmacHex(secret, message) {
+  const key = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message))
+  return Array.from(new Uint8Array(signature), byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Find Codey and pair with it - mutually. Anything can listen on a loopback
+ * port, so "it answered /v1/connect" proves nothing: both sides must show they
+ * hold the pairing secret Codey staged next to this file. The extension sends
+ * a proof over a fresh nonce, and only accepts a token accompanied by the
+ * server's own proof over that nonce and token. A listener without the secret
+ * gets no cookies and issues no commands.
+ */
 async function autoConnect() {
   const current = await settings()
+  const secret = await pairingSecret()
   const endpoints = [current.endpoint, ...Array.from({ length: ENDPOINT_COUNT }, (_, index) => `http://127.0.0.1:${49321 + index}`)]
   for (const endpoint of [...new Set(endpoints)]) {
     try {
+      const clientName = `Chrome ${navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1] || ''}`.trim()
+      const nonce = crypto.randomUUID()
       const value = await call(endpoint, '/v1/connect', {
         extensionIdentity: true,
         discovery: true,
-        body: { clientName: `Chrome ${navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1] || ''}`.trim() },
+        body: secret
+          ? { clientName, nonce, proof: await hmacHex(secret, `codey-client:${nonce}`) }
+          : { clientName },
       })
+      if (secret) {
+        const expected = await hmacHex(secret, `codey-server:${nonce}:${value.token}`)
+        if (value.serverProof !== expected) throw new Error('The endpoint could not prove it is Codey')
+      }
       await chrome.storage.local.set({ endpoint, token: value.token, lastError: '' })
       return { endpoint, token: value.token }
     } catch { /* Codey may be on the next port in the local discovery range. */ }
   }
-  throw new Error('Codey is not running or the Chrome Companion bridge is unavailable')
+  throw new Error(secret
+    ? 'Codey is not running or the Chrome Companion bridge is unavailable'
+    : 'This copy of the extension has no pairing secret - reinstall it from Codey’s Chrome settings')
 }
 
 function rgbOf(hex) {
@@ -418,59 +461,6 @@ function toExportedCookie(cookie) {
 }
 
 /**
- * Export the session for a URL Codey names, rather than for whatever tab
- * happens to be in front. This is what the Codey Browser's Sync button asks
- * for: the user is looking at a signed-out page there and wants this Chrome
- * profile's login for that same site.
- *
- * Cookies come straight from the cookie store, so no tab has to be open.
- * localStorage cannot be read without running in the page, so it is taken
- * from a tab already on that origin when there is one and skipped otherwise -
- * cookies alone carry the login for nearly every site, and opening a tab
- * behind the user's back to read storage would be a worse trade.
- */
-async function exportSessionForUrl(rawUrl) {
-  let target
-  try {
-    target = new URL(String(rawUrl || ''))
-  } catch {
-    throw new Error(`Invalid URL: ${rawUrl}`)
-  }
-  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-    throw new Error('Only http(s) site sessions can be exported')
-  }
-  const cookies = await chrome.cookies.getAll({ url: target.toString() })
-  if (cookies.length === 0) throw new Error(`Chrome has no cookies for ${target.hostname}`)
-  let origins = []
-  const tabs = await chrome.tabs.query({ url: `${target.origin}/*` })
-  const open = tabs.find(tab => typeof tab.id === 'number')
-  if (open) {
-    try {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId: open.id },
-        func: () => ({
-          origin: location.origin,
-          localStorage: Array.from({ length: localStorage.length }, (_, index) => {
-            const name = localStorage.key(index)
-            return name === null ? null : { name, value: localStorage.getItem(name) || '' }
-          }).filter(Boolean),
-        }),
-      })
-      const storage = results[0]?.result
-      if (storage?.origin) origins = [{ origin: storage.origin, localStorage: storage.localStorage || [] }]
-    } catch {
-      // A tab that refuses injection just costs us its storage, not the login.
-    }
-  }
-  return {
-    url: target.toString(),
-    origin: target.origin,
-    cookies: cookies.map(toExportedCookie),
-    origins,
-  }
-}
-
-/**
  * Every site this Chrome profile holds a login-shaped cookie for, so Codey can
  * show the user a list to pick from instead of copying the whole cookie jar.
  * Counts come from the cookie store, and `openTabs` says whether localStorage
@@ -499,13 +489,73 @@ async function listSessionSites() {
   return { sites: [...sites.values()].sort((a, b) => b.cookieCount - a.cookieCount || a.site.localeCompare(b.site)) }
 }
 
+/** Read one tab's localStorage. Storage can only be reached by running inside
+ *  the page, so every path that wants it ends up here. */
+async function readTabStorage(tabId) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => ({
+      origin: location.origin,
+      localStorage: Array.from({ length: localStorage.length }, (_, index) => {
+        const name = localStorage.key(index)
+        return name === null ? null : { name, value: localStorage.getItem(name) || '' }
+      }).filter(Boolean),
+    }),
+  })
+  return results[0]?.result ?? null
+}
+
+/** Resolve once a tab has finished loading, or reject at the deadline. */
+function whenTabLoaded(tabId, deadline) {
+  return new Promise((resolve, reject) => {
+    let timer = null
+    const finish = settle => {
+      chrome.tabs.onUpdated.removeListener(listener)
+      if (timer !== null) clearTimeout(timer)
+      settle()
+    }
+    const listener = (id, info) => { if (id === tabId && info.status === 'complete') finish(resolve) }
+    chrome.tabs.onUpdated.addListener(listener)
+    timer = setTimeout(() => finish(() => reject(new Error('Timed out loading the page'))),
+      Math.max(0, deadline - Date.now()))
+    // A page that finished before the listener was attached would never fire.
+    chrome.tabs.get(tabId)
+      .then(tab => { if (tab.status === 'complete') finish(resolve) })
+      .catch(() => { /* the poll below is only a shortcut; the listener still stands */ })
+  })
+}
+
+/**
+ * Open a page in the background purely to read its storage, then close it.
+ *
+ * This is the part the user has to opt into: it is a real navigation in their
+ * own Chrome - a tab appears in the strip, the site is contacted, and anything
+ * the page does on load happens. Failure is not fatal; the site still travels
+ * with its cookies.
+ */
+async function visitForStorage(url, deadline) {
+  let tab = null
+  try {
+    tab = await chrome.tabs.create({ url, active: false })
+    await whenTabLoaded(tab.id, deadline)
+    return await readTabStorage(tab.id)
+  } catch {
+    return null
+  } finally {
+    if (tab?.id !== undefined) {
+      try { await chrome.tabs.remove(tab.id) } catch { /* the user may have closed it already */ }
+    }
+  }
+}
+
 /**
  * Export only the sites the user ticked. Cookies come from the cookie store, so
  * nothing has to be open; localStorage is read from whatever tabs happen to be
- * on those sites and skipped otherwise, because reading it means running in the
- * page and opening tabs behind the user's back is the worse trade.
+ * on those sites. When `openMissing` is set the user has agreed to pay for the
+ * rest by having the remaining sites opened in the background and closed again,
+ * which is the only way to reach storage for a site with no tab.
  */
-async function exportSessionForSites(requested) {
+async function exportSessionForSites(requested, openMissing = false) {
   const wanted = new Set((Array.isArray(requested) ? requested : [])
     .map(site => siteOfHost(site))
     .filter(Boolean))
@@ -527,20 +577,32 @@ async function exportSessionForSites(requested) {
     }
     seen.add(origin)
     try {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => Array.from({ length: localStorage.length }, (_, index) => {
-          const name = localStorage.key(index)
-          return name === null ? null : { name, value: localStorage.getItem(name) || '' }
-        }).filter(Boolean),
-      })
-      const items = results[0]?.result
-      if (items && items.length > 0) origins.push({ origin, localStorage: items })
+      const storage = await readTabStorage(tab.id)
+      if (storage?.localStorage?.length > 0) origins.push({ origin, localStorage: storage.localStorage })
     } catch {
       // A tab that refuses injection costs us its storage, not its cookies.
     }
   }
-  return { sites: [...wanted], cookies: cookies.map(toExportedCookie), origins }
+  let finalCookies = cookies
+  if (openMissing) {
+    // One shared deadline rather than one per site: the whole command still has
+    // to answer Codey before it gives up, however many pages were planned.
+    const deadline = Date.now() + STORAGE_VISIT_BUDGET_MS
+    const plan = storageVisitPlan([...wanted], cookies.map(cookie => cookie.domain), [...seen])
+    const visited = await Promise.all(plan.map(entry => visitForStorage(entry.url, deadline)))
+    for (const storage of visited) {
+      if (!storage?.origin || !(storage.localStorage?.length > 0) || seen.has(storage.origin)) continue
+      seen.add(storage.origin)
+      origins.push({ origin: storage.origin, localStorage: storage.localStorage })
+    }
+    // Those visits were real navigations, and sites rotate session cookies on
+    // load. Re-read the jar so the export carries what the sites hold *now*,
+    // not the snapshot from before the pages ran.
+    finalCookies = (await chrome.cookies.getAll({}))
+      .filter(cookie => wanted.has(siteOfHost(cookie.domain)))
+    if (finalCookies.length === 0) finalCookies = cookies
+  }
+  return { sites: [...wanted], cookies: finalCookies.map(toExportedCookie), origins }
 }
 
 // ── Acting on a page ────────────────────────────────────────────────────
@@ -641,12 +703,10 @@ async function execute(command) {
       return session
     }
     // None of these act on a page, so no tab is marked as controlled.
-    case 'exportSessionForUrl':
-      return await exportSessionForUrl(command.input?.url)
     case 'listSessionSites':
       return await listSessionSites()
     case 'exportSessionForSites':
-      return await exportSessionForSites(command.input?.sites)
+      return await exportSessionForSites(command.input?.sites, command.input?.openMissing === true)
     case 'click':
     case 'fill':
     case 'select':
@@ -686,6 +746,53 @@ async function noteExpectedVersion(expected) {
   await chrome.storage.local.set({ updateAvailable: stale })
 }
 
+// ── Auto-sync ───────────────────────────────────────────────────────────
+// Codey's poll response names the cookie domains its saved profiles hold.
+// When one of them changes here, Codey is told *which domain* changed and
+// nothing else - it then pulls a fresh export through the normal command
+// channel. No cookie values ride this path.
+let watchDomains = []
+let changedDomains = new Set()
+let changedFlushTimer = null
+
+async function noteWatchDomains(domains) {
+  const next = Array.isArray(domains) ? domains.filter(entry => typeof entry === 'string' && entry) : []
+  watchDomains = next
+  const saved = await chrome.storage.local.get({ watchDomains: [] })
+  if (JSON.stringify(saved.watchDomains) !== JSON.stringify(next)) {
+    await chrome.storage.local.set({ watchDomains: next })
+  }
+}
+
+async function reportChangedDomains() {
+  const domains = [...changedDomains]
+  changedDomains.clear()
+  if (domains.length === 0) return
+  const { endpoint, token } = await settings()
+  if (!token) return
+  await call(endpoint, '/v1/session/changed', { token, body: { domains } })
+}
+
+chrome.cookies.onChanged.addListener(({ cookie }) => {
+  const host = String(cookie?.domain || '').replace(/^\./, '').toLowerCase()
+  if (!host) return
+  runSafely(async () => {
+    // The worker may have restarted since the last poll delivered the list.
+    if (watchDomains.length === 0) {
+      const saved = await chrome.storage.local.get({ watchDomains: [] })
+      watchDomains = Array.isArray(saved.watchDomains) ? saved.watchDomains : []
+    }
+    if (!watchDomains.some(domain => domainsTouch(host, domain))) return
+    changedDomains.add(host)
+    // A login flow sets a burst of cookies; report the burst once.
+    if (changedFlushTimer) clearTimeout(changedFlushTimer)
+    changedFlushTimer = setTimeout(() => {
+      changedFlushTimer = null
+      runSafely(reportChangedDomains)
+    }, 2000)
+  })
+})
+
 async function pollOnce() {
   let { endpoint, token } = await settings()
   if (!token) ({ endpoint, token } = await autoConnect())
@@ -700,6 +807,7 @@ async function pollOnce() {
   }
   await noteExpectedVersion(response.expectedVersion)
   if (response.accent) await applyAccent(response.accent)
+  if (response.watchDomains !== undefined) await noteWatchDomains(response.watchDomains)
   if (!response.command) return true
   const command = response.command
   try {

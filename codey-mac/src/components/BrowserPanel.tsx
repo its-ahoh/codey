@@ -103,7 +103,6 @@ export const BrowserPanel: React.FC<Props> = ({
   const [profiles, setProfiles] = useState<BrowserProfileSummary[]>([])
   const [activeProfile, setActiveProfile] = useState<string | null>(null)
   const [profileBusy, setProfileBusy] = useState(false)
-  const [syncBusy, setSyncBusy] = useState(false)
   const [syncNote, setSyncNote] = useState<string | null>(null)
   const [panelWidth, setPanelWidth] = useState(900)
 
@@ -327,29 +326,6 @@ export const BrowserPanel: React.FC<Props> = ({
       await run(() => window.codey.browser.reload())
     } finally {
       setProfileBusy(false)
-    }
-  }
-
-  // Pull this site's login out of the user's real Chrome and into the profile
-  // that is enabled here, without leaving the page. Scoped to this one site, so
-  // a profile carrying several logins keeps the rest. The page is reloaded
-  // afterwards because a signed-out page does not re-check its cookies.
-  const syncProfileFromChrome = async () => {
-    if (!state.url || syncBusy) return
-    setSyncBusy(true)
-    setSyncNote(null)
-    try {
-      const result = await window.codey.browser.profiles.syncFromChrome(state.url)
-      if (!result.ok) {
-        setLocalError(result.error)
-        return
-      }
-      setLocalError(null)
-      setSyncNote(`Synced ${result.data.cookieCount} cookies for ${result.data.origin} into "${result.data.profileName}"`)
-      await refreshProfiles()
-      await run(() => window.codey.browser.reload())
-    } finally {
-      setSyncBusy(false)
     }
   }
 
@@ -606,16 +582,6 @@ export const BrowserPanel: React.FC<Props> = ({
           <span aria-hidden="true" style={styles.profileAvatarSmall}>{browserProfileAvatar(currentProfile)}</span>
           {panelWidth >= 640 && <span style={styles.profileButtonLabel}>{profileLabel}</span>}
         </button>
-        <button
-          type="button"
-          style={{ ...styles.iconButton, ...(syncBusy ? styles.iconButtonActive : null) }}
-          title={activeProfile
-            ? `Sync this site's Chrome login into "${activeProfile}"`
-            : 'Enable a browser profile first, then sync this site\u2019s Chrome login into it'}
-          aria-label="Sync this site's login from Chrome"
-          disabled={syncBusy || !state.url || !activeProfile || activeSettingsSection !== null}
-          onClick={() => void syncProfileFromChrome()}
-        ><UIIcon name="refresh" size={14} /></button>
         <button
           type="button"
           style={{ ...styles.contextButton, opacity: chatId && state.url && !activeSettingsSection ? 1 : 0.5 }}

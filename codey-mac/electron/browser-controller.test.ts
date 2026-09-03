@@ -461,7 +461,11 @@ describe('BrowserController profiles', () => {
     ])
     const cookiesSet = vi.fn(async () => {})
     const cookiesRemove = vi.fn(async () => {})
-    const session = overrides.session ?? { cookies: { get: cookiesGet, set: cookiesSet, remove: cookiesRemove } }
+    const clearStorage = vi.fn(async () => {})
+    const session = overrides.session ?? {
+      cookies: { get: cookiesGet, set: cookiesSet, remove: cookiesRemove },
+      clearStorageData: clearStorage,
+    }
     const contents = {
       isDestroyed: vi.fn(() => false),
       getURL: vi.fn(() => 'https://example.com/dashboard'),
@@ -485,7 +489,7 @@ describe('BrowserController profiles', () => {
     )
     ;(controller as any).tabs = tabs
     ;(controller as any).view = tabs[0]?.view ?? null
-    return { controller, session, contents, cookiesGet, cookiesSet, cookiesRemove }
+    return { controller, session, contents, cookiesGet, cookiesSet, cookiesRemove, clearStorage }
   }
 
   it('saves the live session into a named profile file', async () => {
@@ -640,6 +644,114 @@ describe('BrowserController profiles', () => {
         json: JSON.stringify({ cookies: [cookie('github.com', 'newer')], origins: [] }),
       }, ['github.com'])
       expect(cookiesSet.mock.calls.map(call => (call as any[])[0].value).sort()).toEqual(['keep', 'newer'])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses to enable two profiles that disagree about the same storage key', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller } = makeFixture(dir)
+      const store = new BrowserProfileStore(dir)
+      // The fixture's open tab is on https://example.com, so applying this
+      // profile's storage rides that tab instead of needing a hidden view.
+      const withToken = (value: string) => ({
+        cookies: [],
+        origins: [{ origin: 'https://example.com', localStorage: [{ name: 'token', value }] }],
+      })
+      store.write('work', withToken('work-token'), null)
+      store.write('personal', withToken('personal-token'), null)
+
+      await controller.enableProfile('work')
+      // Logins live in localStorage too; the "one value would silently win"
+      // rule has to hold there as much as for cookies.
+      await expect(controller.enableProfile('personal')).rejects.toThrow(/site storage \(token\)/)
+      expect(controller.activeProfileNames()).toEqual(['work'])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a refresh that would make an enabled profile clash with another', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller } = makeFixture(dir)
+      const store = new BrowserProfileStore(dir)
+      const cookie = (domain: string, value: string) => ({
+        name: 'session', value, domain, path: '/', expires: -1,
+        httpOnly: true, secure: true, sameSite: 'lax' as const,
+      })
+      store.write('work', { cookies: [cookie('gitlab.com', 'a')], origins: [] }, null)
+      store.write('personal', { cookies: [cookie('github.com', 'personal-token')], origins: [] }, null)
+      await controller.enableProfile('work')
+      await controller.enableProfile('personal')
+
+      // The refresh would give "work" a github session that fights the one
+      // "personal" already has live. Refused, and nothing may be written.
+      await expect(controller.resyncProfileSites('work', {
+        json: JSON.stringify({ cookies: [cookie('github.com', 'work-token')], origins: [] }),
+      }, ['github.com'])).rejects.toThrow(/enabled profile "personal"/)
+      expect(store.read('work').cookies.map(entry => entry.domain)).toEqual(['gitlab.com'])
+
+      // The same refresh of a profile that is not enabled is nobody's business.
+      await controller.disableProfile('work')
+      await expect(controller.resyncProfileSites('work', {
+        json: JSON.stringify({ cookies: [cookie('github.com', 'work-token')], origins: [] }),
+      }, ['github.com'])).resolves.toMatchObject({ name: 'work' })
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('replaces localStorage wholesale and keeps host-only cookies host-only', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller, contents, cookiesSet, clearStorage } = makeFixture(dir)
+      new BrowserProfileStore(dir).write('work', {
+        cookies: [
+          {
+            name: 'host', value: '1', domain: 'example.com', path: '/', expires: -1,
+            httpOnly: true, secure: true, sameSite: 'lax' as const, hostOnly: true,
+          },
+          {
+            name: 'wide', value: '2', domain: 'example.com', path: '/', expires: -1,
+            httpOnly: true, secure: true, sameSite: 'lax' as const,
+          },
+        ],
+        origins: [{ origin: 'https://example.com', localStorage: [{ name: 'token', value: 't' }] }],
+      }, null)
+
+      await controller.activateProfile('work')
+
+      // The token an old identity left in some other origin's storage must not
+      // survive the switch, and a profile only lists the keys it holds - so
+      // the partition is wiped, and each origin is cleared before rewriting.
+      expect(clearStorage).toHaveBeenCalledWith({ storages: ['localstorage'] })
+      const applyScript = contents.executeJavaScript.mock.calls.map(call => (call as any[])[0]).join('\n')
+      expect(applyScript).toContain('localStorage.clear()')
+
+      // Electron creates a host-only cookie by *omitting* domain; passing it
+      // would widen the cookie to subdomains the site never gave it.
+      const set = cookiesSet.mock.calls.map(call => (call as any[])[0])
+      expect(set.find(entry => entry.name === 'host')).not.toHaveProperty('domain')
+      expect(set.find(entry => entry.name === 'wide')).toMatchObject({ domain: 'example.com' })
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('counts storage-only origins among a profile’s sites to refresh', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+    try {
+      const { controller } = makeFixture(dir)
+      new BrowserProfileStore(dir).write('spa', {
+        cookies: [],
+        origins: [{ origin: 'https://app.notion.example', localStorage: [{ name: 'token', value: 't' }] }],
+      }, null)
+      // A SPA login can be storage-only; a refresh that skipped it would claim
+      // the profile "holds no logins".
+      expect(controller.profileSites('spa')).toEqual(['app.notion.example'])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

@@ -75,10 +75,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .handoff-row button { flex: none; padding: 4px 9px; border: 1px solid var(--border-2); border-radius: 6px; background: var(--surface); color: var(--fg); font: inherit; font-size: 11px; cursor: pointer; }
 .handoff-row button.handoff-save { border-color: transparent; background: var(--accent); color: var(--on-accent); }
 .handoff-row button:disabled { opacity: 0.55; cursor: default; }
-.handoff-resync { display: flex; gap: 6px; align-items: center; margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border); font-size: 11px; }
-.handoff-resync[hidden] { display: none; }
-.handoff-resync select { flex: 1 1 auto; min-width: 0; padding: 3px 5px; border: 1px solid var(--border-2); border-radius: 6px; background: var(--surface); color: var(--fg); font: inherit; font-size: 11px; }
-.handoff-resync button { flex: none; padding: 4px 9px; border: 1px solid var(--border-2); border-radius: 6px; background: var(--surface); color: var(--fg); font: inherit; font-size: 11px; cursor: pointer; }
+.handoff-existing { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border); font-size: 11px; color: var(--fg-3, #888); line-height: 1.4; }
+.profile-info { padding: 4px 14px 0; font-size: 11px; color: var(--fg-3, #888); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-info[hidden] { display: none; }
+.handoff-existing[hidden] { display: none; }
 .handoff-resync button:disabled { opacity: 0.55; cursor: default; }
 
 .messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 18px 12px 12px; scrollbar-color: var(--border-2) transparent; }

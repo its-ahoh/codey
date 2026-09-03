@@ -6,7 +6,16 @@ import * as path from 'path'
 const DEFAULT_PORT = 49321
 const PORT_SCAN_SIZE = 10
 const CONNECTED_TTL_MS = 45_000
-const COMMAND_TIMEOUT_MS = 20_000
+// The extension's service worker only guarantees a poll within its 30s alarm
+// cycle when it has gone idle, so a command issued to a sleeping worker can sit
+// unclaimed for most of that cycle before it is even seen. A 20s ceiling used
+// to time out those cold-start commands ("List sites" did nothing); the ceiling
+// has to clear one whole alarm cycle plus a round trip.
+const COMMAND_TIMEOUT_MS = 40_000
+// Opening pages just to read their storage is the one command that legitimately
+// takes longer than a round trip: it waits on real navigations in the user's
+// Chrome. The extension caps its own pass below this.
+const STORAGE_VISIT_TIMEOUT_MS = 60_000
 const MAX_BODY_BYTES = 15 * 1024 * 1024
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 export const CHROME_COMPANION_EXTENSION_ID = 'nkfblackdfiplaekehijkgimhmlhlfib'
@@ -67,16 +76,6 @@ export interface ChromeSessionExport {
     origin: string
     localStorage: Array<{ name: string; value: string }>
   }>
-}
-
-/** A session exported for a URL Codey named, rather than for the tab in front.
- *  There may be no tab open on it at all, so `origins` is best-effort: without
- *  a page to run in, localStorage cannot be read. */
-export interface ChromeUrlSessionExport {
-  url: string
-  origin: string
-  cookies: ChromeSessionExport['cookies']
-  origins: ChromeSessionExport['origins']
 }
 
 /** One site this Chrome profile holds cookies for, as offered to the user to
@@ -148,21 +147,37 @@ export interface ChromeCompanionFeatures {
    * the one-click path never fails merely because the obvious name is taken;
    * a name the user typed is used as-is and collides loudly.
    */
-  handoffSession: (name?: string, resync?: boolean) => Promise<ChromeSessionHandoff>
+  handoffSession: (name?: string) => Promise<ChromeSessionHandoff>
   /**
    * The name the handoff would use for `hostname` if the user just accepts it,
-   * plus the profiles that already hold this site's session - those are the
-   * ones a re-sync would refresh rather than a handoff create.
+   * plus the profiles that already hold this site's session - the side panel
+   * points at those instead of quietly creating a near-duplicate.
    */
   suggestProfileName: (hostname: string) => Promise<{ name: string; existing: string[] }>
+  /**
+   * What the Codey Browser's profiles look like right now, for the side
+   * panel's one-line status: which are in use, which mirror Chrome, and which
+   * hold `hostname`. Names and flags only - never session contents.
+   */
+  profilesOverview: (hostname?: string) => Promise<{
+    profiles: Array<{ name: string; active: boolean; autoSync: boolean; holdsSite: boolean }>
+  }>
 }
 
 export interface ChromeSessionHandoff {
   profileName: string
   origin: string
   cookieCount: number
-  /** True when an existing profile was refreshed instead of one being created. */
-  resynced: boolean
+}
+
+/** Hooks for keeping copied logins fresh without a click. `watchDomains` says
+ *  which cookie domains the extension should report changes for (null while
+ *  the feature is off), and `onSessionChanged` receives the domains a change
+ *  burst actually touched. Notification only - no cookie values travel this
+ *  way; Codey pulls a fresh export through the normal command channel. */
+export interface ChromeAutoSyncHooks {
+  watchDomains: () => string[] | null
+  onSessionChanged: (domains: string[]) => void
 }
 
 export interface ChromeCompanionChatHistory {
@@ -224,6 +239,7 @@ export class ChromeCompanionBridge {
   private expectedVersion: string | null = null
   private pending = new Map<string, PendingCommand>()
   private uploadedAttachments = new Map<string, { chatId: string; attachment: ChromeCompanionAttachment }>()
+  private autoSync: ChromeAutoSyncHooks | null = null
 
   constructor(
     private readonly stateFile: string,
@@ -233,6 +249,11 @@ export class ChromeCompanionBridge {
     private readonly onListChats?: () => Promise<ChromeCompanionChatSummary[]>,
     private readonly onChatHistory?: (chatId: string) => Promise<ChromeCompanionChatHistory>,
     private readonly features?: ChromeCompanionFeatures,
+    /** The pairing secret Codey staged into the extension's folder. When set,
+     *  /v1/connect becomes mutual: the extension must prove it holds the
+     *  secret, and the reply carries Codey's own proof so the extension can
+     *  tell Codey apart from any other process squatting on the port. */
+    private readonly pairingSecret?: () => string | null,
   ) {
     this.loadPairing()
   }
@@ -359,9 +380,10 @@ export class ChromeCompanionBridge {
     return await this.command<ChromeSessionExport>('exportSession', {})
   }
 
-  /** The session Chrome holds for `url`, whether or not a tab is open on it. */
-  async exportSessionForUrl(url: string): Promise<ChromeUrlSessionExport> {
-    return await this.command<ChromeUrlSessionExport>('exportSessionForUrl', { url })
+  /** Turn change-driven syncing on (or off with null). Takes effect on the
+   *  extension's next poll - the watch list rides the poll response. */
+  setAutoSync(hooks: ChromeAutoSyncHooks | null): void {
+    this.autoSync = hooks
   }
 
   /** Every site this Chrome profile has cookies for, most first. */
@@ -369,9 +391,19 @@ export class ChromeCompanionBridge {
     return await this.command<{ sites: ChromeSessionSite[] }>('listSessionSites', {})
   }
 
-  /** The session Chrome holds for exactly the sites named, nothing else. */
-  async exportSessionForSites(sites: string[]): Promise<ChromeSitesSessionExport> {
-    return await this.command<ChromeSitesSessionExport>('exportSessionForSites', { sites })
+  /**
+   * The session Chrome holds for exactly the sites named, nothing else.
+   *
+   * `openMissing` is the user's opt-in to Chrome briefly opening the picked
+   * sites that have no tab, which is the only way to reach their localStorage.
+   * It costs real navigations, so it is never assumed.
+   */
+  async exportSessionForSites(sites: string[], openMissing = false): Promise<ChromeSitesSessionExport> {
+    return await this.command<ChromeSitesSessionExport>(
+      'exportSessionForSites',
+      { sites, openMissing },
+      openMissing ? STORAGE_VISIT_TIMEOUT_MS : COMMAND_TIMEOUT_MS,
+    )
   }
 
   /**
@@ -408,7 +440,7 @@ export class ChromeCompanionBridge {
     return `Reload the Codey extension at chrome://extensions to finish updating it.${versions}`
   }
 
-  private async command<T>(command: string, input: unknown): Promise<T> {
+  private async command<T>(command: string, input: unknown, timeoutMs = COMMAND_TIMEOUT_MS): Promise<T> {
     if (!this.token) throw new Error('Install the Chrome companion and keep Codey running')
     if (!this.status().connected) throw new Error('Chrome companion is paired but not connected')
     return await new Promise<T>((resolve, reject) => {
@@ -423,7 +455,7 @@ export class ChromeCompanionBridge {
           this.pending.delete(id)
           this.queue = this.queue.filter(entry => entry.id !== id)
           reject(new Error(`Chrome command timed out: ${command}`))
-        }, COMMAND_TIMEOUT_MS),
+        }, timeoutMs),
       }
       this.queue.push(item)
       this.pending.set(id, item)
@@ -503,6 +535,19 @@ export class ChromeCompanionBridge {
           return
         }
         const input = await this.body(request)
+        const secret = this.pairingSecret?.() ?? null
+        const nonce = typeof input.nonce === 'string' ? input.nonce.slice(0, 100) : ''
+        if (secret) {
+          const proof = typeof input.proof === 'string' ? input.proof : ''
+          const expected = crypto.createHmac('sha256', secret).update(`codey-client:${nonce}`).digest('hex')
+          if (!nonce || !timingSafeEqual(proof, expected)) {
+            this.reply(request, response, 403, {
+              ok: false,
+              error: 'This extension holds no valid pairing secret. Reinstall it from Codey’s Chrome settings, then reload it at chrome://extensions.',
+            })
+            return
+          }
+        }
         this.token = crypto.randomBytes(32).toString('base64url')
         this.rejectAll(new Error('Chrome companion was paired again'))
         this.clientName = typeof input.clientName === 'string' && input.clientName.trim()
@@ -512,7 +557,13 @@ export class ChromeCompanionBridge {
         this.lastSeenAt = Date.now()
         this.persistPairing()
         this.emitStatus()
-        this.reply(request, response, 200, { ok: true, token: this.token })
+        this.reply(request, response, 200, {
+          ok: true,
+          token: this.token,
+          ...(secret
+            ? { serverProof: crypto.createHmac('sha256', secret).update(`codey-server:${nonce}:${this.token}`).digest('hex') }
+            : {}),
+        })
         return
       }
       if (!this.authorize(request)) {
@@ -533,10 +584,28 @@ export class ChromeCompanionBridge {
           this.emitStatus()
         }
         const command = this.queue.shift()
-        const base = { ok: true, accent: this.accent, expectedVersion: this.expectedVersion }
+        const watchDomains = this.autoSync?.watchDomains() ?? null
+        const base = {
+          ok: true,
+          accent: this.accent,
+          expectedVersion: this.expectedVersion,
+          // null (not absent) when auto-sync is off, so the extension can drop
+          // a stale watch list instead of reporting changes forever.
+          watchDomains: watchDomains ? watchDomains.slice(0, 500) : null,
+        }
         this.reply(request, response, 200, command
           ? { ...base, command: { id: command.id, command: command.command, input: command.input } }
           : { ...base, command: null })
+        return
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/session/changed') {
+        const input = await this.body(request)
+        const domains = (Array.isArray(input.domains) ? input.domains : [])
+          .filter((domain): domain is string => typeof domain === 'string' && !!domain.trim())
+          .map(domain => domain.trim().toLowerCase().slice(0, 300))
+          .slice(0, 200)
+        if (domains.length > 0) this.autoSync?.onSessionChanged(domains)
+        this.reply(request, response, 200, { ok: true })
         return
       }
       if (request.method === 'POST' && url.pathname === '/v1/result') {
@@ -584,6 +653,13 @@ export class ChromeCompanionBridge {
         this.reply(request, response, 200, { ok: true, ...result })
         return
       }
+      if (request.method === 'POST' && url.pathname === '/v1/profiles') {
+        if (!this.features) throw new Error('Browser profiles are unavailable')
+        const input = await this.body(request)
+        const hostname = typeof input.hostname === 'string' ? input.hostname.slice(0, 300) : ''
+        this.reply(request, response, 200, { ok: true, ...await this.features.profilesOverview(hostname || undefined) })
+        return
+      }
       if (request.method === 'POST' && url.pathname === '/v1/session/handoff/name') {
         if (!this.features) throw new Error('Session handoff is unavailable')
         const input = await this.body(request)
@@ -595,11 +671,7 @@ export class ChromeCompanionBridge {
         if (!this.features) throw new Error('Session handoff is unavailable')
         const input = await this.body(request)
         const name = typeof input.name === 'string' ? input.name.trim() : ''
-        const resync = input.resync === true
-        // A refresh has to say which profile it refreshes; there is no
-        // sensible default for "overwrite one of these".
-        if (resync && !name) throw new Error('Choose which profile to re-sync')
-        this.reply(request, response, 200, { ok: true, ...await this.features.handoffSession(name || undefined, resync) })
+        this.reply(request, response, 200, { ok: true, ...await this.features.handoffSession(name || undefined) })
         return
       }
       if (request.method === 'GET' && url.pathname === '/v1/chats') {
