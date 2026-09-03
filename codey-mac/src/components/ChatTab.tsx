@@ -1681,14 +1681,23 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     if (!mention) return
     let stale = false
     void (async () => {
-      const [skills, plugins, mcp, agentMcp] = await Promise.all([
+      const [skills, plugins, mcp, agentMcp, workers] = await Promise.all([
         window.codey.skills.list(effectiveAgent, workingDir ?? undefined),
         window.codey.plugins.list(),
         window.codey.mcp.list(),
         window.codey.mcp.listAgent(),
+        window.codey.workers.list(),
       ])
       if (stale) return
       const entries: MentionEntry[] = []
+      // Workers come first: "@alice ..." hands the turn to that worker, and
+      // "@alice @bob ..." forms an ad-hoc team the Advisor dispatches.
+      if (workers.ok) {
+        for (const worker of workers.data) {
+          const role = (worker.personality?.role ?? '').split('\n')[0].trim()
+          entries.push(resourceEntry('worker', worker.name, worker.config?.dispatchHint?.trim() || role))
+        }
+      }
       if (skills.ok) {
         for (const skill of skills.data.skills) {
           if (!skill.enabled) continue
@@ -2891,7 +2900,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 onMouseEnter={() => setMentionIdx(i)}
               >
                 <span style={styles.mentionIcon}>
-                  {entry.kind === 'skill' ? <UIIcon name="sparkle" size={13} color={C.fg3} />
+                  {entry.kind === 'worker' ? <UIIcon name="users" size={13} color={C.fg3} />
+                    : entry.kind === 'skill' ? <UIIcon name="sparkle" size={13} color={C.fg3} />
                     : entry.kind === 'plugin' ? <UIIcon name="tools" size={13} color={C.fg3} />
                     : entry.kind === 'mcp' ? <UIIcon name="server" size={13} color={C.fg3} />
                     : entry.isDir ? <FolderIcon color={C.fg3} size={13} /> : <FileIcon color={C.fg3} size={13} />}

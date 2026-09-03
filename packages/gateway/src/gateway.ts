@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseWorkerMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -4330,7 +4330,11 @@ Example: /model gpt-4.1 write a Python script`;
       emitter.beginWorker?.({ step: nextResumeStep, worker });
       emitter.endWorker?.('failed', { failureReason: reason });
     };
-    const team = this.workspaceManager.getTeam(pending.teamName);
+    // An ad-hoc team built from @mentions has no registry entry; its member
+    // list travels with the pending state instead.
+    const adHocMembers = 'members' in pending && pending.members?.length ? pending.members : undefined;
+    const team: TeamConfig | undefined = this.workspaceManager.getTeam(pending.teamName)
+      ?? (adHocMembers ? { members: adHocMembers, dispatch: pending.mode === 'auto' ? 'auto' : 'all' } : undefined);
     if (!team) {
       recordResumeFailure('Team', `Team "${pending.teamName}" no longer exists`);
       await emitter.notify(`Team \`${pending.teamName}\` no longer exists; the paused run was dropped.`);
@@ -4636,6 +4640,7 @@ Example: /model gpt-4.1 write a Python script`;
         const pending: PendingTeamState = {
           mode: 'sequential',
           teamName,
+          members,
           task,
           teamTurnId: opts.teamTurnId || '',
           memberIndex: i,
@@ -5269,6 +5274,7 @@ Example: /model gpt-4.1 write a Python script`;
         this.persistPendingTeam(chatId, {
           mode: 'auto',
           teamName,
+          members: team.members,
           task: prompt,
           teamTurnId,
           history: p.history,
@@ -6013,6 +6019,26 @@ Example: /model gpt-4.1 write a Python script`;
       this.chatManager.clearLastAskedOptions(chatId);
     }
 
+    // "@worker" mentions route the turn to those workers. One mention runs that
+    // worker alone; several form an ad-hoc `auto` team the Advisor dispatches,
+    // honouring any split the user wrote into the message. Not parsed on slash
+    // turns, paused-team answers, or chats already bound to a named team. The
+    // user message is persisted as typed; only the task the workers see has
+    // the mentions reduced to bare names.
+    let adHocTeam: { name: string; team: TeamConfig } | undefined;
+    if (!isSlashTurn && !pendingTeam && chat.selection.type !== 'team') {
+      const wm = this.workspaceManager.getWorkerManager();
+      const mentions = parseWorkerMentions(userText, n => wm.hasWorker(n));
+      if (mentions.workers.length > 0) {
+        userText = mentions.task;
+        adHocTeam = {
+          name: mentions.workers.join('+'),
+          team: { members: mentions.workers, dispatch: mentions.workers.length > 1 ? 'auto' : 'all' },
+        };
+      }
+    }
+    const isTeamTurn = chat.selection.type === 'team' || adHocTeam !== undefined;
+
     // Persisted alongside the assistant message at completion. Declared here
     // so the sink wrapper can capture 'info' events into it (see below).
     const toolCalls: ToolCallEntry[] = [];
@@ -6186,7 +6212,7 @@ Example: /model gpt-4.1 write a Python script`;
     // block. Team mode always uses the legacy bootstrap path (no session
     // resume) because team dispatch builds worker prompts internally.
     const selPrefix = assistantPrefixForSelection(chat);
-    const canResume = chat.selection.type !== 'team';
+    const canResume = !isTeamTurn;
     const warmAnchor = canResume
       ? this.chatManager.getSessionAnchor(chatId, agent, model?.model)
       : undefined;
@@ -6224,7 +6250,7 @@ Example: /model gpt-4.1 write a Python script`;
     prompt += chatWorkspaceInstruction;
 
     // Solo advisor: when enabled (and not a team), tell the agent how to escalate.
-    if (chat.soloAdvisor && chat.selection.type !== 'team') {
+    if (chat.soloAdvisor && !isTeamTurn) {
       prompt = prompt + '\n\n' + SOLO_ADVISOR_INSTRUCTION;
     }
 
@@ -6238,7 +6264,7 @@ Example: /model gpt-4.1 write a Python script`;
     } else if (skillsCfg?.enabled && skillsCfg.autoApply
         // Unattended automation runs execute a frozen brief — never auto-apply skills.
         && chat.kind !== 'automation'
-        && chat.selection.type !== 'team' && !isSlashTurn) {
+        && !isTeamTurn && !isSlashTurn) {
       // Skills are per-workspace: match against the CHAT's workspace store
       // (mirrors how workingDir/teams above come from chat.workspaceName).
       const chatSkillStore = await this.resolveSkillStore(chat.workspaceName);
@@ -6369,6 +6395,20 @@ Example: /model gpt-4.1 write a Python script`;
         const emitter = new ChatEmitter(sink, chatId, workerMsgs);
         output = await this.resumeTeamFromAnswer(chatId, `chat-${chatId}`, pendingTeam, userText, emitter);
         teamChoices = emitter.choices;
+      } else if (adHocTeam) {
+        const { name: teamName, team } = adHocTeam;
+        const teamPrompt = prompt + '\n\n[Addressed workers]\n'
+          + `The user addressed these workers directly: ${team.members.join(', ')}. `
+          + 'If the message assigns work to specific workers, follow that assignment. Otherwise decide who does what.';
+        sink({ type: 'info', chatId, message: team.members.length > 1
+          ? `Ad-hoc team from mentions: ${team.members.join(', ')} (Advisor dispatches)`
+          : `Routing to worker ${team.members[0]}` });
+        const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model);
+        output = r.response;
+        tokens = r.tokens;
+        teamChoices = r.choices;
+        teamThinkingByStep = r.thinkingByStep;
+        teamTurnId = r.teamTurnId;
       } else if (chat.selection.type === 'team') {
         // Resolve the team from the chat's workspace.json (read above), not from
         // the active workspace, so a chat in workspace B uses B's team config

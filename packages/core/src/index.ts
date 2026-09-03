@@ -17,6 +17,7 @@ export * from './errors';
 export * from './context';
 export * from './transcript-slice';
 export * from './advisor';
+export * from './worker-mentions';
 export * from './advisor-personality';
 export * from './solo-advisor';
 export * from './aide';

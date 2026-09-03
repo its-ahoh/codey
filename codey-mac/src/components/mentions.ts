@@ -8,11 +8,13 @@
 export type MentionFile = { path: string; name: string; isDir: boolean }
 
 /**
- * What a menu row refers to. Files are paths in the workspace; the other three
- * are capabilities the user already has installed, referenced by a namespaced
- * token (`skill:browser`) so one flat matcher can rank them all.
+ * What a menu row refers to. Files are paths in the workspace; the others are
+ * capabilities the user already has installed, referenced by a namespaced
+ * token (`skill:browser`) so one flat matcher can rank them all. A `worker`
+ * mention is different in effect: the gateway routes the turn to that worker
+ * (several form an ad-hoc team), so it is never appended as a prompt hint.
  */
-export type MentionKind = 'file' | 'skill' | 'plugin' | 'mcp'
+export type MentionKind = 'file' | 'skill' | 'plugin' | 'mcp' | 'worker'
 
 /**
  * A row in the "@" menu. `path` is the match key and the text inserted after
@@ -27,7 +29,7 @@ export type MentionEntry = MentionFile & {
 }
 
 /** The namespace prefixes, in the order the menu groups them. */
-export const RESOURCE_KINDS: Exclude<MentionKind, 'file'>[] = ['skill', 'plugin', 'mcp']
+export const RESOURCE_KINDS: Exclude<MentionKind, 'file'>[] = ['worker', 'skill', 'plugin', 'mcp']
 
 /** Build a menu row for an installed capability. */
 export function resourceEntry(kind: Exclude<MentionKind, 'file'>, name: string, detail = ''): MentionEntry {
@@ -200,6 +202,7 @@ const KIND_LABEL: Record<Exclude<MentionKind, 'file'>, string> = {
   skill: 'skill',
   plugin: 'plugin',
   mcp: 'MCP server',
+  worker: 'worker',
 }
 
 /**
@@ -209,8 +212,10 @@ const KIND_LABEL: Record<Exclude<MentionKind, 'file'>, string> = {
  * hint in the prompt, and an agent is free to ignore it.
  */
 export function appendMentionContext(text: string, entries: MentionEntry[]): string {
-  if (entries.length === 0) return text
-  const lines = entries.map(e => {
+  // Workers are routing, not hints: the gateway reads `@worker:x` itself.
+  const hints = entries.filter(e => e.kind !== 'worker')
+  if (hints.length === 0) return text
+  const lines = hints.map(e => {
     const label = KIND_LABEL[(e.kind ?? 'skill') as Exclude<MentionKind, 'file'>]
     return `- ${label} "${e.name}"${e.detail ? `: ${e.detail}` : ''}`
   })
