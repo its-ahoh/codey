@@ -69,6 +69,7 @@ export class CLI {
       case '0':
         this.logger.info('Exiting...');
         process.exit(0);
+        break;
       default:
         this.logger.error('Invalid option');
     }
@@ -198,11 +199,12 @@ export async function handleCommand(args: string[], config: ConfigManager, logge
   switch (command) {
     case 'configure':
     case 'config':
-    case 'cfg':
+    case 'cfg': {
       const cli = new CLI(config, logger);
       await cli.runConfigure();
       cli.close();
       break;
+    }
 
     case 'status':
       config.printConfig();

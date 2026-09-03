@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { apiService } from '../services/api'
 import { useChats } from './useChats'
+import { pollWhileVisible } from './pollWhileVisible'
 import type { Chat } from '../types'
 
 /** How often the watcher re-checks open PRs. Each check shells out to `gh`,
@@ -111,11 +112,14 @@ export function usePullRequestWatcher(): void {
 
   useEffect(() => {
     void sweep()
-    const timer = setInterval(() => void sweep(), PR_POLL_INTERVAL_MS)
+    // `sweep` already no-ops while hidden; pollWhileVisible additionally sweeps
+    // the moment the window is shown, so badges refresh on return instead of
+    // waiting out the rest of the interval.
+    const stopPoll = pollWhileVisible(() => void sweep(), PR_POLL_INTERVAL_MS)
     const onFocus = () => void sweep()
     window.addEventListener('focus', onFocus)
     return () => {
-      clearInterval(timer)
+      stopPoll()
       window.removeEventListener('focus', onFocus)
     }
   }, [sweep])

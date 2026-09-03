@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { pollWhileVisible } from './pollWhileVisible'
 import type { CoreState } from '../../electron/core-state'
 
 export interface GatewayStatus {
@@ -77,8 +78,12 @@ export const useGateway = () => {
       }
     }
     tick()
-    const id = setInterval(tick, 3000)
-    return () => { stopped = true; clearInterval(id) }
+    // Hidden window: no one is reading the gateway badge.
+    const stopPoll = pollWhileVisible(() => void tick(), 3000)
+    return () => {
+      stopped = true
+      stopPoll()
+    }
   }, [])
 
   return {

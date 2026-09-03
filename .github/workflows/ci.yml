@@ -29,7 +29,9 @@ jobs:
       - run: npm ci
 
       # Lint first so style/source violations fail fast, before the heavier
-      # build and test steps.
+      # build and test steps. `npm run lint` runs the non-English source check
+      # and then ESLint; ESLint fails the build on errors only, so the
+      # pre-existing warning backlog does not block CI.
       - name: Lint
         run: npm run lint
 
@@ -44,8 +46,7 @@ jobs:
 
       # Type-check codey-mac without running electron-builder.
       - name: Type-check codey-mac
-        working-directory: codey-mac
-        run: npx tsc --noEmit
+        run: npm run typecheck -w codey-mac
 
       - name: Test core
         run: npm test -w @codey/core

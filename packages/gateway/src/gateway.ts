@@ -5427,7 +5427,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // Remove inline commands from prompt, but preserve the rest
-    let prompt = text
+    const prompt = text
       .replace(/\/agent\s+(claude-code|opencode|codex|pi)\s*/i, '')
       .replace(/\/model\s+\S+\s*/i, '')
       .replace(/^\/(help|status|clear|reset|model|agents|config)\s*/i, '')

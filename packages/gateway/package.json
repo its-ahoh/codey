@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "start": "cd ../.. && node packages/gateway/dist/index.js",
     "dev": "cd ../.. && ts-node packages/gateway/src/index.ts",

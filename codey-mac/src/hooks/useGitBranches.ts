@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { pollWhileVisible } from './pollWhileVisible'
 
 export interface BranchState {
   branch: string
@@ -54,11 +55,14 @@ export function useGitBranches(workingDir: string | undefined, repositoryDir?: s
     const off = window.codey.git.onChanged(ev => { if (watchedDirs.includes(ev.workingDir)) void refresh() })
     const onFocus = () => void refresh()
     window.addEventListener('focus', onFocus)
-    const poll = setInterval(() => void refresh(), 5000)
+    // Each refresh spawns ~7 git subprocesses, so skip it while the window is
+    // hidden; pollWhileVisible catches up on return, and the .git watcher above
+    // still fires on real changes.
+    const stopPoll = pollWhileVisible(() => void refresh(), 5000)
     return () => {
       off()
       window.removeEventListener('focus', onFocus)
-      clearInterval(poll)
+      stopPoll()
       for (const dir of watchedDirs) void window.codey.git.unwatch(dir)
     }
   }, [workingDir, repositoryDir, refresh])
