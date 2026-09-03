@@ -125,9 +125,9 @@ export const formatHeadline = (rawTool: string | undefined, input: Input): strin
 
 // ── Inline diff (line-level LCS) ──────────────────────────────────────────────
 
-type DiffLine = { kind: 'eq' | 'add' | 'del'; text: string }
+export type DiffLine = { kind: 'eq' | 'add' | 'del'; text: string }
 
-const lineDiff = (a: string, b: string): DiffLine[] => {
+export const lineDiff = (a: string, b: string): DiffLine[] => {
   const A = a.split('\n')
   const B = b.split('\n')
   const m = A.length, n = B.length
@@ -264,7 +264,7 @@ export const languageForFilePath = (filePath?: string): string | undefined => {
   return EXTENSION_LANGUAGES[extension]
 }
 
-const highlightedLine = (text: string, language?: string): string | undefined => {
+export const highlightedLine = (text: string, language?: string): string | undefined => {
   if (!text || !language) return undefined
   try { return hljs.highlight(language, text, true).value }
   catch { return undefined }
@@ -472,7 +472,7 @@ export const CombinedDiffView: React.FC<{
   }
 
   return (
-    <div style={diffStyles.wrap}>
+    <div className="file-code-content" style={diffStyles.wrap}>
       <div style={diffStyles.inner}>
         {items.map(item => {
           if (item.kind === 'sep') return <div key={item.key} style={diffStyles.hunkSep} />

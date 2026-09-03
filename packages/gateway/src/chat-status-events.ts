@@ -4,7 +4,7 @@
 // Split out from the gateway's inline handler so the routing — in particular
 // that a checklist is state rather than a tool call — is testable on its own.
 
-import { ChecklistItem } from '@codey/core';
+import { ChecklistItem, WriteDiff } from '@codey/core';
 import { ChatStreamEvent } from './chat-runner';
 
 interface ParsedStatus {
@@ -21,6 +21,8 @@ export function chatStreamEventForStatus(
   parsed: ParsedStatus,
   /** Files a shell command wrote, when the caller sampled them. */
   writes?: string[],
+  /** What the call changed in those files, when the caller recorded it. */
+  writeDiffs?: WriteDiff[],
 ): ChatStreamEvent | null {
   const message = parsed.message ?? '';
   switch (parsed.type) {
@@ -30,6 +32,7 @@ export function chatStreamEventForStatus(
       return {
         type: 'tool_end', chatId, tool: parsed.tool, message, output: parsed.output,
         ...(writes?.length ? { writes } : {}),
+        ...(writeDiffs?.length ? { writeDiffs } : {}),
       };
     case 'checklist':
       // No items means nothing to show; emitting it would blank a panel that

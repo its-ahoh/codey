@@ -1,11 +1,17 @@
 import React from 'react'
-import type { Chat, ChatMessage } from '../types'
+import type { WriteDiff, Chat, ChatMessage } from '../types'
 import { C } from '../theme'
 import { parseTeamMessage } from './teamMessageFormat'
 import { CombinedDiffView, normalizeTool } from './toolFormat'
 import { stepMatchIndex } from './diffSearch'
-import { foldFileChanges } from './foldChanges'
-import { parseShellWriteTargets, shellCommandText } from './shellWrites'
+import { foldFileChanges, type FoldedChange } from './foldChanges'
+import { buildFileTree, countChangedLines, type FileTouch, type TreeNode } from './fileTree'
+import { FileCodeView } from './FileCodeView'
+import { FileImageView } from './FileImageView'
+import { isImageFilePath } from './fileImage'
+import { parseUnifiedPatch } from './unifiedPatch'
+import { parseFileChangeOutput, parseShellWriteTargets, shellCommandText } from './shellWrites'
+import { pickChangeSource, type GitFileDiff } from './changeSource'
 import { ToolCallList } from './ToolCallList'
 import { QuickQuestionView } from './QuickQuestionView'
 import { TaskHud } from './TaskHud'
@@ -486,21 +492,30 @@ const extractReads = (chat: Chat): Array<{ path: string; msgId: string }> => {
 }
 
 /**
- * Files a shell command wrote to. Agents rewrite files with `sed -i`, heredocs,
- * and redirects as often as they use Edit/Write, and those never reach
- * extractChanges — without this the panel reports no activity on a run that
- * changed the working tree. No diff is recoverable, so these are listed by path.
+ * Files changed without a recorded diff. Agents rewrite files with `sed -i`,
+ * heredocs, and redirects as often as they use Edit/Write, and codex reports
+ * every edit as a `file_change` path list; none of those reach extractChanges,
+ * so without this the panel reports no activity on a run that changed the
+ * working tree. Git supplies the diff for these paths afterwards.
  */
+type InferredWrite = { path: string; msgId: string; command: string; diffs: WriteDiff[] }
+
 const extractShellWrites = (
   chat: Chat,
   workingDir?: string,
-): Array<{ path: string; msgId: string; command: string }> => {
-  const out: Array<{ path: string; msgId: string; command: string }> = []
-  const seen = new Set<string>()
-  const add = (path: string, msgId: string, command: string) => {
-    if (!path || seen.has(path)) return
-    seen.add(path)
-    out.push({ path, msgId, command })
+): InferredWrite[] => {
+  const out: InferredWrite[] = []
+  // One entry per file per turn, so a file written in two turns shows under
+  // both when the panel is filtered to a turn.
+  const byKey = new Map<string, InferredWrite>()
+  const add = (path: string, msgId: string, command: string, diffs: WriteDiff[] = []) => {
+    if (!path) return
+    const key = `${msgId}\0${path}`
+    const existing = byKey.get(key)
+    if (existing) { existing.diffs.push(...diffs); return }
+    const entry = { path, msgId, command, diffs: [...diffs] }
+    byKey.set(key, entry)
+    out.push(entry)
   }
   for (const m of chat.messages) {
     if (m.role !== 'assistant') continue
@@ -510,6 +525,18 @@ const extractShellWrites = (
     // one they belong to.
     let lastCommand = ''
     for (const tc of m.toolCalls ?? []) {
+      // Codex reports its own edits as a `file_change` item: a list of paths,
+      // no diff text. Git supplies the diff, the same as for a shell write.
+      if (tc.tool?.toLowerCase() === 'file_change') {
+        if (tc.type === 'tool_end') {
+          const diffs = tc.writeDiffs ?? []
+          for (const path of parseFileChangeOutput(tc.output, workingDir)) {
+            add(path, m.id, '', diffs.filter(d => d.path === path))
+          }
+          for (const d of diffs) add(d.path, m.id, '', [d])
+        }
+        continue
+      }
       if (normalizeTool(tc.tool) !== 'Bash') continue
       if (tc.type === 'tool_start') {
         lastCommand = shellCommandText(tc.input)
@@ -522,7 +549,8 @@ const extractShellWrites = (
           add(path, m.id, lastCommand)
         }
       } else if (tc.type === 'tool_end') {
-        for (const path of tc.writes ?? []) add(path, m.id, lastCommand)
+        const diffs = tc.writeDiffs ?? []
+        for (const path of tc.writes ?? []) add(path, m.id, lastCommand, diffs.filter(d => d.path === path))
       }
     }
   }
@@ -618,6 +646,95 @@ const displayPath = (abs: string, workingDir?: string): string => {
   return abs
 }
 
+/** Added/removed counts of a raw unified patch, by its +/- line markers. */
+const countPatchLines = (patch: string): { added: number; removed: number } => {
+  let added = 0
+  let removed = 0
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue
+    if (line.startsWith('+')) added++
+    else if (line.startsWith('-')) removed++
+  }
+  return { added, removed }
+}
+
+const ChangeCounts: React.FC<{ added: number; removed: number; muted?: boolean }> = ({ added, removed, muted }) => (
+  <span style={{ ...treeStyles.counts, opacity: muted ? 0.7 : 1 }}>
+    {added > 0 && <span style={{ color: C.green }}>+{added}</span>}
+    {added > 0 && removed > 0 && ' '}
+    {removed > 0 && <span style={{ color: C.red }}>−{removed}</span>}
+  </span>
+)
+
+/**
+ * One row of the folder tree, and its children when expanded. Folders default
+ * to open when something inside them changed and closed otherwise; a click
+ * flips that default for the folder.
+ */
+const TreeRows: React.FC<{
+  nodes: TreeNode[]
+  depth: number
+  toggled: Set<string>
+  onToggle: (path: string) => void
+  onOpen: (path: string) => void
+}> = ({ nodes, depth, toggled, onToggle, onOpen }) => (
+  <>
+    {nodes.map(node => {
+      const expanded = node.isDir && node.changed !== toggled.has(node.path)
+      const isNew = !node.isDir && node.touch?.kind !== 'read' && node.removed === 0 && node.added > 0
+      const hasCounts = node.added > 0 || node.removed > 0
+      const badge = node.touch?.kind === 'read'
+        ? <span style={treeStyles.tag} title="Read by the agent">read</span>
+        : hasCounts
+          ? <ChangeCounts added={node.added} removed={node.removed} muted={node.isDir} />
+          : null
+      // Changed names are yellow (modified) or green (all new lines), the way
+      // editors mark a dirty tree, so they read at a glance among grey names.
+      const nameColor = node.changed ? (isNew ? C.green : C.yellow) : C.fg2
+      return (
+        <React.Fragment key={node.path}>
+          <div
+            style={{
+              ...treeStyles.row,
+              paddingLeft: 6 + depth * 14,
+              ...(node.changed ? treeStyles.rowChanged : null),
+            }}
+            title={node.isDir ? node.path : `${node.path}\nClick to open`}
+            onClick={() => (node.isDir ? onToggle(node.path) : onOpen(node.path))}
+          >
+            <span style={treeStyles.chevron}>
+              {node.isDir && (
+                <span style={{ ...fcStyles.chevronIcon, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                  <UIIcon name="disclosure" size={11} />
+                </span>
+              )}
+            </span>
+            <span style={{ ...treeStyles.icon, color: node.changed ? nameColor : C.fg3 }}>
+              <UIIcon name={node.isDir ? (expanded ? 'folder-open' : 'folder') : 'file'} size={13} />
+            </span>
+            <span style={{
+              ...treeStyles.name,
+              color: nameColor,
+              ...(node.changed ? treeStyles.nameChanged : null),
+            }}>{node.name}</span>
+            {node.changed && !node.isDir && <span style={{ ...treeStyles.dot, background: nameColor }} />}
+            {badge}
+          </div>
+          {expanded && (
+            <TreeRows
+              nodes={node.children}
+              depth={depth + 1}
+              toggled={toggled}
+              onToggle={onToggle}
+              onOpen={onOpen}
+            />
+          )}
+        </React.Fragment>
+      )
+    })}
+  </>
+)
+
 const FileChangesView: React.FC<{
   chat: Chat
   workingDir?: string
@@ -628,15 +745,17 @@ const FileChangesView: React.FC<{
   const reads = React.useMemo(() => extractReads(chat), [chat])
   const shellWrites = React.useMemo(() => extractShellWrites(chat, workingDir), [chat, workingDir])
   const [filter, setFilter] = React.useState<'all' | 'turn'>('all')
-  // Files default to expanded; this set tracks the ones the user collapsed.
-  const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set())
+  // The file whose diff or code is shown under the tree.
+  const [openPath, setOpenPath] = React.useState<string | null>(null)
+  // Folders the user flipped away from their default open/closed state.
+  const [toggled, setToggled] = React.useState<Set<string>>(() => new Set())
 
   // ── Search (⌘F) ───────────────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = React.useState(false)
   const [query, setQuery] = React.useState('')
   // Off: case-insensitive. On: only exactly-cased hits count.
   const [exactMatch, setExactMatch] = React.useState(false)
-  // Match ids reported by each file's diff view, in that view's display order.
+  // Match ids reported by the open file's diff view, in display order.
   const [matchesByPath, setMatchesByPath] = React.useState<Record<string, string[]>>({})
   const [activeIndex, setActiveIndex] = React.useState(0)
   const searchInputRef = React.useRef<HTMLInputElement>(null)
@@ -669,6 +788,15 @@ const FileChangesView: React.FC<{
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
+  // Esc with search closed steps back from the open file to the tree.
+  React.useEffect(() => {
+    if (!openPath || searchOpen) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); setOpenPath(null) }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [openPath, searchOpen])
   React.useEffect(() => {
     if (!searchOpen) return
     const input = searchInputRef.current
@@ -677,17 +805,23 @@ const FileChangesView: React.FC<{
     input?.select()
   }, [searchOpen, focusTick])
 
-  // Current on-disk text per file, used to resolve real line numbers for each
-  // edit. Loaded lazily and cached; a path we've already fetched is skipped.
+  // Current on-disk text per file: real line numbers for each edit, and the
+  // full code of files that have no diff. Loaded lazily and cached; the open
+  // file is re-read whenever a new edit lands so the code view stays current.
   const [fileText, setFileText] = React.useState<Record<string, string | null>>({})
+  const [fileImage, setFileImage] = React.useState<{ path: string; dataUrl: string | null } | null>(null)
   const fetchedRef = React.useRef<Set<string>>(new Set())
   React.useEffect(() => {
     let cancelled = false
-    const paths = Array.from(new Set(changes.map(c => c.path)))
-      .filter(p => p && p.startsWith('/') && !fetchedRef.current.has(p))
-    if (paths.length === 0) return
+    const wanted = Array.from(new Set(changes.map(c => c.path)))
+      .filter(p => p && p.startsWith('/') && !isImageFilePath(p) && !fetchedRef.current.has(p))
+    if (openPath && openPath.startsWith('/') && !isImageFilePath(openPath)) {
+      fetchedRef.current.delete(openPath)
+      if (!wanted.includes(openPath)) wanted.push(openPath)
+    }
+    if (wanted.length === 0) return
     ;(async () => {
-      for (const p of paths) {
+      for (const p of wanted) {
         fetchedRef.current.add(p)
         const content = (await window.codey?.readTextFile?.(p)) ?? null
         if (cancelled) return
@@ -695,42 +829,139 @@ const FileChangesView: React.FC<{
       }
     })()
     return () => { cancelled = true }
-  }, [changes])
+  }, [changes, openPath])
+
+  // Images are loaded only when opened. Keeping them out of readTextFile avoids
+  // decoding binary bytes as UTF-8, and the main process caps preview payloads.
+  React.useEffect(() => {
+    if (!openPath || !openPath.startsWith('/') || !isImageFilePath(openPath)) return
+    let cancelled = false
+    setFileImage(null)
+    void window.codey?.readImageFile?.(openPath).then(dataUrl => {
+      if (!cancelled) setFileImage({ path: openPath, dataUrl })
+    }).catch(() => {
+      if (!cancelled) setFileImage({ path: openPath, dataUrl: null })
+    })
+    return () => { cancelled = true }
+  }, [openPath, changes.length, shellWrites.length])
+
+  // Every file and folder in the workspace. The index is cached in the main
+  // process; it is asked again after each new edit so created files appear.
+  const [entries, setEntries] = React.useState<Array<{ path: string; isDir: boolean }>>([])
+  React.useEffect(() => {
+    if (!workingDir) { setEntries([]); return }
+    let stale = false
+    window.codey?.workspaceFiles?.list(workingDir).then(r => {
+      if (!stale && r.ok) setEntries(r.data)
+    }).catch(() => {})
+    return () => { stale = true }
+  }, [workingDir, changes.length, shellWrites.length])
+
+  // Files a shell command wrote have no recorded diff, so git supplies one:
+  // the working tree against HEAD (or against nothing for a new file).
+  const [gitDiffs, setGitDiffs] = React.useState<Record<string, GitFileDiff>>({})
+  const shellPathsKey = Array.from(new Set(shellWrites.map(w => w.path))).join('\n')
+  React.useEffect(() => {
+    if (!workingDir || !shellPathsKey) return
+    let stale = false
+    const paths = shellPathsKey.split('\n')
+    window.codey?.git?.fileDiffs?.(workingDir, paths).then(r => {
+      if (!stale && r.ok) setGitDiffs(r.data)
+    }).catch(() => {})
+    return () => { stale = true }
+  }, [workingDir, shellPathsKey, changes.length])
 
   const visible = filter === 'turn' && selectedTurnId
     ? changes.filter(c => c.msgId === selectedTurnId)
     : changes
-
   const visibleReads = filter === 'turn' && selectedTurnId
     ? reads.filter(r => r.msgId === selectedTurnId)
     : reads
-
   const visibleShellWrites = filter === 'turn' && selectedTurnId
     ? shellWrites.filter(w => w.msgId === selectedTurnId)
     : shellWrites
 
-  // A file with a real diff is always better than a bare path, so shell writes
-  // to a file that Edit/Write also touched are dropped as duplicates.
-  const editedPaths = new Set(visible.map(c => c.path))
-  const shellFiles = visibleShellWrites.filter(w => !editedPaths.has(w.path))
-  const shellPaths = new Set(shellFiles.map(w => w.path))
-  // Reads that aren't already shown in the edits or shell sections
-  const readOnlyFiles = visibleReads.filter(r => !editedPaths.has(r.path) && !shellPaths.has(r.path))
+  // Per file: its edits folded to the net change, plus raw patches and counts.
+  const fileInfo = React.useMemo(() => {
+    const byFile = new Map<string, FileChange[]>()
+    for (const c of visible) {
+      if (!byFile.has(c.path)) byFile.set(c.path, [])
+      byFile.get(c.path)!.push(c)
+    }
+    const out = new Map<string, {
+      group: FileChange[]
+      folded: Array<FoldedChange<FileChange>>
+      patches: FileChange[]
+      added: number
+      removed: number
+    }>()
+    for (const [path, group] of byFile) {
+      const folded = foldFileChanges(group.filter(c => c.tool !== 'Patch'))
+      const patches = group.filter(c => c.tool === 'Patch')
+      const counts = countChangedLines(folded)
+      for (const p of patches) {
+        const pc = countPatchLines(p.patchText ?? '')
+        counts.added += pc.added
+        counts.removed += pc.removed
+      }
+      out.set(path, { group, folded, patches, ...counts })
+    }
+    return out
+  }, [visible])
 
-  if (changes.length === 0 && reads.length === 0 && shellWrites.length === 0) {
-    return <div style={styles.emptyHint}>No file activity in this chat yet.</div>
+  // Recorded diffs of the visible writes, per file, in the order they landed.
+  // pickChangeSource decides when these beat git's working-tree diff.
+  const recordedDiffsByPath = React.useMemo(() => {
+    const map = new Map<string, WriteDiff[]>()
+    for (const w of visibleShellWrites) {
+      if (w.diffs.length === 0) continue
+      if (!map.has(w.path)) map.set(w.path, [])
+      map.get(w.path)!.push(...w.diffs)
+    }
+    return map
+  }, [visibleShellWrites])
+
+  const touches = React.useMemo(() => {
+    const map = new Map<string, FileTouch>()
+    for (const [path, info] of fileInfo) {
+      map.set(path, { kind: 'edit', added: info.added, removed: info.removed, edits: info.group.length })
+    }
+    // A recorded edit is always better than a working-tree-only diff, so
+    // inferred changes and reads never override it.
+    for (const w of visibleShellWrites) {
+      if (map.has(w.path)) continue
+      // Only mark the file as changed once real line counts exist, from the
+      // recorded per-call diffs or from git. A bare path with no counts would
+      // replace useful +/− data with an implementation label.
+      const src = pickChangeSource(filter, recordedDiffsByPath.get(w.path), gitDiffs[w.path])
+      if (src) map.set(w.path, { kind: 'change', added: src.added, removed: src.removed })
+    }
+    for (const r of visibleReads) if (!map.has(r.path)) map.set(r.path, { kind: 'read' })
+    return map
+  }, [fileInfo, visibleShellWrites, visibleReads, gitDiffs, recordedDiffsByPath, filter])
+
+  const tree = React.useMemo(
+    () => buildFileTree({ workingDir, entries, touches }),
+    [workingDir, entries, touches],
+  )
+
+  const changedCount = Array.from(touches.values()).filter(t => t.kind !== 'read').length
+  let totalAdded = 0
+  let totalRemoved = 0
+  for (const t of touches.values()) {
+    if (t.kind === 'read') continue
+    totalAdded += t.added ?? 0
+    totalRemoved += t.removed ?? 0
   }
 
-  // Group changes by file path, preserve first-seen order.
-  const order: string[] = []
-  const byFile = new Map<string, FileChange[]>()
-  for (const c of visible) {
-    if (!byFile.has(c.path)) { byFile.set(c.path, []); order.push(c.path) }
-    byFile.get(c.path)!.push(c)
-  }
+  const toggleDir = (path: string) => setToggled(prev => {
+    const next = new Set(prev)
+    if (next.has(path)) next.delete(path); else next.add(path)
+    return next
+  })
 
-  // Every hit, in on-screen order: files top-to-bottom, lines within each file.
-  const allMatches = order.flatMap(path => matchesByPath[path] ?? [])
+  // Search runs over the open file's diff.
+  const allMatches = openPath ? matchesByPath[openPath] ?? [] : []
   const activeMatchIndex = allMatches.length === 0 ? 0 : Math.min(activeIndex, allMatches.length - 1)
   const activeMatchId = allMatches[activeMatchIndex] ?? null
   const goToMatch = (direction: 1 | -1) => {
@@ -742,6 +973,19 @@ const FileChangesView: React.FC<{
     else if (e.key === 'Escape') { e.preventDefault(); closeSearch() }
   }
 
+  if (tree.root.length === 0 && tree.outside.length === 0) {
+    return (
+      <div style={styles.emptyHint}>
+        {workingDir ? 'No files found in the workspace yet.' : 'No file activity in this chat yet.'}
+      </div>
+    )
+  }
+
+  const openInfo = openPath ? fileInfo.get(openPath) : undefined
+  const openTouch = openPath ? touches.get(openPath) : undefined
+  const openContent = openPath ? fileText[openPath] : undefined
+  const openIsImage = openPath ? isImageFilePath(openPath) : false
+
   return (
     <div>
       {searchOpen && (
@@ -751,7 +995,7 @@ const FileChangesView: React.FC<{
               ref={searchInputRef}
               style={fcStyles.searchInput}
               value={query}
-              placeholder="Search in file changes"
+              placeholder={openInfo ? 'Search in this diff' : 'Open a changed file to search its diff'}
               aria-label="Search in file changes"
               onChange={e => { setQuery(e.target.value); setActiveIndex(0) }}
               onKeyDown={onSearchKeyDown}
@@ -794,7 +1038,7 @@ const FileChangesView: React.FC<{
           <button
             style={{ ...fcStyles.scopeBtn, ...(filter === 'all' ? fcStyles.scopeBtnActive : null) }}
             onClick={() => setFilter('all')}
-          >All ({changes.length + shellWrites.length})</button>
+          >All</button>
           <button
             style={{ ...fcStyles.scopeBtn, ...(filter === 'turn' ? fcStyles.scopeBtnActive : null) }}
             onClick={() => setFilter('turn')}
@@ -803,121 +1047,174 @@ const FileChangesView: React.FC<{
           >This turn</button>
         </div>
         <div style={fcStyles.summary}>
-          {order.length + shellFiles.length + readOnlyFiles.length} file{order.length + shellFiles.length + readOnlyFiles.length === 1 ? '' : 's'}
-          {visible.length > 0 && <> · {visible.length} edit{visible.length === 1 ? '' : 's'}</>}
-          {shellFiles.length > 0 && <> · {shellFiles.length} shell</>}
-          {readOnlyFiles.length > 0 && <> · {readOnlyFiles.length} read</>}
+          {changedCount === 0
+            ? 'No changes'
+            : <>{changedCount} changed{(totalAdded > 0 || totalRemoved > 0) && <> · <ChangeCounts added={totalAdded} removed={totalRemoved} /></>}</>}
         </div>
       </div>
 
-      {visible.length === 0 && shellFiles.length === 0 && readOnlyFiles.length === 0 && (
-        <div style={styles.emptyHint}>No file activity in the selected turn.</div>
+      {!openPath && (
+        <div style={treeStyles.tree}>
+          <TreeRows
+            nodes={tree.root}
+            depth={0}
+            toggled={toggled}
+            onToggle={toggleDir}
+            onOpen={setOpenPath}
+          />
+          {tree.outside.length > 0 && (
+            <>
+              {tree.root.length > 0 && <div style={treeStyles.outsideHeader}>Outside workspace</div>}
+              <TreeRows
+                nodes={tree.outside}
+                depth={0}
+                toggled={toggled}
+                onToggle={toggleDir}
+                onOpen={setOpenPath}
+              />
+            </>
+          )}
+        </div>
       )}
 
-      {order.map(path => {
-        const group = byFile.get(path)!
-        // Edit/Write/Notebook edits to this file collapse into a single
-        // continuous diff showing the file's latest state: repeated edits to one
-        // region fold into one net hunk rather than stacking every intermediate
-        // version. Raw patches keep their own block.
-        const content = fileText[path]
-        const folded = foldFileChanges(group.filter(c => c.tool !== 'Patch'))
-        const patches = group.filter(c => c.tool === 'Patch')
-        // An active search expands every file, so no hit stays hidden.
-        const isCollapsed = collapsed.has(path) && !query
-        const toggle = () => setCollapsed(prev => {
-          const next = new Set(prev)
-          if (next.has(path)) next.delete(path); else next.add(path)
-          return next
-        })
+      {openPath && (() => {
+        const openSource = openTouch?.kind === 'change'
+          ? pickChangeSource(filter, recordedDiffsByPath.get(openPath), gitDiffs[openPath])
+          : null
+        const hunks = openInfo
+          ? openInfo.folded.map(c => ({
+              oldText: c.oldText,
+              newText: c.newText,
+              startLine: locateStartLine(openContent, c.oldText, c.newText),
+            }))
+          : openSource
+            ? openSource.patches.flatMap(p => parseUnifiedPatch(p))
+            : []
+        const turnDiffsTruncated = openSource?.truncated ?? false
+        const counts = openTouch && openTouch.kind !== 'read'
+          ? { added: openTouch.added ?? 0, removed: openTouch.removed ?? 0 }
+          : null
         return (
-          <div key={path} style={fcStyles.fileGroup}>
-            <div style={fcStyles.fileHeader} title={path} onClick={toggle}>
-              <span style={fcStyles.chevron}>
-                <span style={{ ...fcStyles.chevronIcon, transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>
-                  <UIIcon name="disclosure" size={12} />
-                </span>
-              </span>
-              <span style={fcStyles.filePath}>{displayPath(path, workingDir)}</span>
-              <span
-                style={fcStyles.fileCount}
-                title={folded.length < group.length
-                  ? `${group.length} edits folded into ${folded.length} net change${folded.length === 1 ? '' : 's'}`
-                  : undefined}
-              >{group.length} edit{group.length === 1 ? '' : 's'}</span>
-              {path && path.startsWith('/') && (
+          <div style={fcStyles.fileGroup}>
+            <div style={fcStyles.fileHeader} title={openPath}>
+              <button
+                style={treeStyles.backBtn}
+                onClick={() => setOpenPath(null)}
+                title="Back to the file tree (Esc)"
+                aria-label="Back to files"
+              >‹ Files</button>
+              <span style={fcStyles.filePath}>{displayPath(openPath, workingDir)}</span>
+              {counts && (counts.added > 0 || counts.removed > 0) && (
+                <ChangeCounts added={counts.added} removed={counts.removed} />
+              )}
+              {openInfo && (
+                <span
+                  style={fcStyles.fileCount}
+                  title={openInfo.folded.length < openInfo.group.length
+                    ? `${openInfo.group.length} edits folded into ${openInfo.folded.length} net change${openInfo.folded.length === 1 ? '' : 's'}`
+                    : undefined}
+                >{openInfo.group.length} edit{openInfo.group.length === 1 ? '' : 's'}</span>
+              )}
+              {openPath.startsWith('/') && (
                 <button
                   style={fcStyles.iconBtn}
-                  onClick={(e) => { e.stopPropagation(); onReveal(path) }}
+                  onClick={() => onReveal(openPath)}
                   title="Reveal in Finder"
                 >⤴</button>
               )}
             </div>
-            {!isCollapsed && (() => {
-              const diffHunks = folded.map(c => ({
-                oldText: c.oldText,
-                newText: c.newText,
-                startLine: locateStartLine(content, c.oldText, c.newText),
-              }))
-              return (
-                <div style={fcStyles.changeBody}>
-                  {diffHunks.length > 0 && (
+            <div style={fcStyles.changeBody}>
+              {openIsImage ? (
+                <FileImageView
+                  dataUrl={fileImage?.path === openPath ? fileImage.dataUrl : undefined}
+                  filePath={openPath}
+                />
+              ) : openInfo || openSource ? (
+                <>
+                  {turnDiffsTruncated && (
+                    <div style={fcStyles.noNetChange}>
+                      Part of this change was too large to keep; the counts above are complete.
+                    </div>
+                  )}
+                  {hunks.length > 0 && (
                     <CombinedDiffView
-                      hunks={diffHunks}
-                      fileContent={content}
-                      filePath={path}
-                      search={{ query, exact: exactMatch, idPrefix: path, activeId: activeMatchId, onMatches: handleMatches }}
+                      hunks={hunks}
+                      fileContent={openContent}
+                      filePath={openPath}
+                      search={{ query, exact: exactMatch, idPrefix: openPath, activeId: activeMatchId, onMatches: handleMatches }}
                     />
                   )}
-                  {diffHunks.length === 0 && patches.length === 0 && (
+                  {hunks.length === 0 && !turnDiffsTruncated && (openInfo?.patches.length ?? 0) === 0 && (
                     <div style={fcStyles.noNetChange}>
                       Edits cancelled out — the file matches its original text.
                     </div>
                   )}
-                  {patches.map(c => (
+                  {openInfo?.patches.map(c => (
                     <pre key={`${c.msgId}::${c.callId}`} style={fcStyles.patchPre}>
                       {c.patchText || '(empty patch)'}
                     </pre>
                   ))}
-                </div>
-              )
-            })()}
+                </>
+              ) : (
+                <>
+                  {openContent === undefined && <div style={fcStyles.noNetChange}>Loading…</div>}
+                  {openContent === null && (
+                    <div style={fcStyles.noNetChange}>Can't show this file — missing, binary, or over 2 MB.</div>
+                  )}
+                  {typeof openContent === 'string' && <FileCodeView content={openContent} filePath={openPath} />}
+                </>
+              )}
+            </div>
           </div>
         )
-      })}
-
-      {shellFiles.length > 0 && (
-        <div style={fcStyles.readSection}>
-          <div style={fcStyles.readHeader}>Changed by shell command</div>
-          <div style={fcStyles.shellHint}>Written outside Edit/Write — no diff available.</div>
-          {shellFiles.map(w => (
-            <div key={w.path} style={filesStyles.row} title={w.command}>
-              <span style={filesStyles.path}>{displayPath(w.path, workingDir)}</span>
-              {w.path.startsWith('/') && (
-                <button style={filesStyles.iconBtn} onClick={() => onReveal(w.path)} title="Reveal in Finder">⤴</button>
-              )}
-              <button style={filesStyles.iconBtn} onClick={() => navigator.clipboard.writeText(w.path)} title="Copy path">⧉</button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {readOnlyFiles.length > 0 && (
-        <div style={fcStyles.readSection}>
-          <div style={fcStyles.readHeader}>Files read</div>
-          {readOnlyFiles.map(r => (
-            <div key={r.path} style={filesStyles.row} title={r.path}>
-              <span style={filesStyles.path}>{displayPath(r.path, workingDir)}</span>
-              {r.path.startsWith('/') && (
-                <button style={filesStyles.iconBtn} onClick={() => onReveal(r.path)} title="Reveal in Finder">⤴</button>
-              )}
-              <button style={filesStyles.iconBtn} onClick={() => navigator.clipboard.writeText(r.path)} title="Copy path">⧉</button>
-            </div>
-          ))}
-        </div>
-      )}
+      })()}
     </div>
   )
+}
+
+const treeStyles: Record<string, React.CSSProperties> = {
+  tree: {
+    marginBottom: 12, border: `1px solid ${C.border2}`,
+    borderRadius: 8, overflow: 'hidden', background: C.surface2, padding: '4px 0',
+  },
+  row: {
+    display: 'flex', alignItems: 'center', gap: 5,
+    minHeight: 24, paddingRight: 8, cursor: 'pointer', userSelect: 'none',
+    borderLeft: '3px solid transparent',
+  },
+  rowChanged: {
+    background: `color-mix(in srgb, ${C.yellow} 10%, transparent)`,
+    borderLeftColor: C.yellow,
+  },
+  chevron: {
+    color: C.fg2, width: 12, height: 16, flexShrink: 0,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  },
+  icon: { display: 'inline-flex', alignItems: 'center', flexShrink: 0 },
+  name: {
+    flex: 1, minWidth: 0, fontSize: 11.5,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  nameChanged: { fontWeight: 700 },
+  dot: { width: 6, height: 6, borderRadius: 3, flexShrink: 0 },
+  counts: {
+    flexShrink: 0, fontSize: 10.5, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+  },
+  tag: {
+    flexShrink: 0, color: C.fg2, background: C.surface3, border: `1px solid ${C.border2}`,
+    borderRadius: 999, fontSize: 9, fontWeight: 600, padding: '1px 6px',
+    textTransform: 'uppercase', letterSpacing: 0.4,
+  },
+  outsideHeader: {
+    color: C.fg3, fontSize: 10, fontWeight: 650, textTransform: 'uppercase', letterSpacing: 0.5,
+    padding: '8px 8px 2px', borderTop: `1px solid ${C.border}`, marginTop: 4,
+  },
+  backBtn: {
+    background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 6,
+    color: C.accent, fontSize: 11, fontWeight: 650, padding: '2px 8px', cursor: 'pointer', flexShrink: 0,
+  },
 }
 
 const fcStyles: Record<string, React.CSSProperties> = {
@@ -1006,7 +1303,6 @@ const fcStyles: Record<string, React.CSSProperties> = {
     marginTop: 14, padding: '10px', background: C.surface2,
     border: `1px solid ${C.border}`, borderRadius: 8,
   },
-  shellHint: { color: C.fg3, fontSize: 10, fontStyle: 'italic', marginBottom: 6 },
   readHeader: { color: C.fg2, fontSize: 10, fontWeight: 650, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 6 },
   changeBody: { padding: 9, background: C.bg, display: 'flex', flexDirection: 'column', gap: 7 },
   noNetChange: { color: C.fg3, fontSize: 11, fontStyle: 'italic' },

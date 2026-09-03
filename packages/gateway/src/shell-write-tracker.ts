@@ -224,3 +224,27 @@ export const defaultStatRunner: StatRunner = async (absPath) => {
     return null;
   }
 };
+
+/** Codex reports its own edits as a `file_change` item. */
+export const isFileChangeTool = (tool?: string): boolean => tool?.toLowerCase() === 'file_change';
+
+/**
+ * Absolute paths a codex `file_change` item touched. Its output is a list of
+ * `{ path, kind }`, as an array from the adapter or as the JSON string the
+ * tool tracker turns it into. Relative paths resolve against `workingDir`.
+ */
+export const fileChangePaths = (output: unknown, workingDir: string): string[] => {
+  let list: unknown = output;
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list); } catch { return []; }
+  }
+  if (!Array.isArray(list)) return [];
+  const out: string[] = [];
+  for (const item of list) {
+    const raw = typeof item === 'string' ? item : (item as { path?: unknown } | null)?.path;
+    if (typeof raw !== 'string' || !raw) continue;
+    const abs = raw.startsWith('/') ? raw : `${workingDir.replace(/\/$/, '')}/${raw.replace(/^\.\//, '')}`;
+    if (!out.includes(abs)) out.push(abs);
+  }
+  return out;
+};

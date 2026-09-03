@@ -38,6 +38,8 @@ import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLa
 import { BrowserExtensionManager } from './browser-extensions'
 import { ChromeCompanionBridge } from './chrome-companion'
 import { deriveEntries, parseGitFileList, walkDirectory, MAX_ENTRIES, type FileEntry } from './workspace-files'
+import { parseNumstat } from './git-file-diff'
+import { isBinaryBuffer } from './binary-detect'
 import * as pty from 'node-pty'
 
 protocol.registerSchemesAsPrivileged([
@@ -2974,6 +2976,52 @@ app.whenReady().then(async () => {
   // Live git branch watching: one fs.watch per workingDir, ref-counted by renderer subscriptions.
   const gitWatchers = new Map<string, { watchers: import('fs').FSWatcher[]; count: number; timer: NodeJS.Timeout | null }>()
 
+  // Working-tree diff of specific files against HEAD, for files the agent
+  // changed through a shell command (sed -i, heredocs, scripts) where no
+  // Edit/Write diff was ever recorded. Untracked files diff against nothing so
+  // a brand-new file still gets a patch and a line count.
+  ipcMain.handle('git:fileDiffs', async (_e, workingDir: string, paths: string[]) =>
+    wrap(async () => {
+      const out: Record<string, { added: number; removed: number; patch: string; isNew: boolean }> = {}
+      if (!workingDir || typeof workingDir !== 'string' || !Array.isArray(paths)) return out
+      const { execFile } = await import('child_process')
+      const run = (args: string[], okCodes: number[] = [0]) => new Promise<string>((resolve, reject) => {
+        execFile('git', args, { cwd: workingDir, timeout: 4000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+          // `git diff` exits 1 when there are differences under --exit-code and
+          // for --no-index; both are answers, not failures.
+          const code = (err as { code?: number } | null)?.code
+          if (err && !(typeof code === 'number' && okCodes.includes(code))) reject(err)
+          else resolve(stdout)
+        })
+      })
+      const wanted = paths.filter(p => typeof p === 'string' && p.startsWith('/')).slice(0, 200)
+      if (wanted.length === 0) return out
+      try {
+        const numstat = parseNumstat(await run(['diff', 'HEAD', '--numstat', '-z', '--', ...wanted]))
+        const untracked = new Set(
+          (await run(['ls-files', '--others', '--exclude-standard', '--full-name', '-z', '--', ...wanted]))
+            .split('\0').filter(Boolean),
+        )
+        const root = (await run(['rev-parse', '--show-toplevel'])).trim()
+        for (const abs of wanted) {
+          const rel = abs.startsWith(root + '/') ? abs.slice(root.length + 1) : abs
+          if (untracked.has(rel)) {
+            const patch = await run(['diff', '--no-index', '--', '/dev/null', abs], [0, 1])
+            const added = patch.split('\n').filter(l => l.startsWith('+') && !l.startsWith('+++')).length
+            out[abs] = { added, removed: 0, patch, isNew: true }
+            continue
+          }
+          const counts = numstat.get(rel)
+          if (!counts) continue
+          const patch = await run(['diff', 'HEAD', '--', abs])
+          out[abs] = { ...counts, patch, isNew: false }
+        }
+      } catch {
+        // Not a repo, git missing, or HEAD absent: nothing to report.
+      }
+      return out
+    }))
+
   ipcMain.handle('git:status', async (_e, workingDir: string) =>
     wrap(async () => {
       if (!workingDir || typeof workingDir !== 'string') return null
@@ -5318,7 +5366,33 @@ ipcMain.handle('file:readText', async (_event, p: string): Promise<string | null
     const fs = require('fs') as typeof import('fs')
     const stat = await fs.promises.stat(p)
     if (!stat.isFile() || stat.size > 2 * 1024 * 1024) return null
-    return await fs.promises.readFile(p, 'utf-8')
+    const buf = await fs.promises.readFile(p)
+    if (isBinaryBuffer(buf)) return null
+    return buf.toString('utf-8')
+  } catch {
+    return null
+  }
+})
+
+// Read supported workspace images for the Files panel. A data URL keeps local
+// filesystem access behind the isolated preload bridge; the cap prevents a
+// large image from being copied through IPC into renderer memory.
+ipcMain.handle('file:readImage', async (_event, p: string): Promise<string | null> => {
+  if (typeof p !== 'string' || !p) return null
+  const mimeByExtension: Record<string, string> = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+    '.ico': 'image/x-icon', '.avif': 'image/avif', '.svg': 'image/svg+xml',
+  }
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const mime = mimeByExtension[path.extname(p).toLowerCase()]
+    if (!mime) return null
+    const stat = await fs.promises.stat(p)
+    if (!stat.isFile() || stat.size > 25 * 1024 * 1024) return null
+    const data = await fs.promises.readFile(p)
+    return `data:${mime};base64,${data.toString('base64')}`
   } catch {
     return null
   }

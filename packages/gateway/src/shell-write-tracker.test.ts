@@ -4,6 +4,7 @@ import {
   parsePorcelainPaths,
   changedBetween,
   mentionedPaths,
+  fileChangePaths,
   type GitRunner,
   type StatRunner,
   type Snapshot,
@@ -176,5 +177,19 @@ describe('ShellWriteTracker', () => {
     // Second command must not re-report a.ts, which it did not touch.
     await tracker.noteStart('touch b.ts');
     expect(await tracker.noteEnd()).toEqual(['/repo/b.ts']);
+  });
+});
+
+describe('fileChangePaths', () => {
+  it('reads the array the codex adapter emits and the string the tracker stores', () => {
+    const list = [{ path: '/repo/a.ts', kind: 'update' }, { path: 'b.ts', kind: 'add' }];
+    expect(fileChangePaths(list, '/repo')).toEqual(['/repo/a.ts', '/repo/b.ts']);
+    expect(fileChangePaths(JSON.stringify(list), '/repo/')).toEqual(['/repo/a.ts', '/repo/b.ts']);
+  });
+
+  it('returns nothing for junk', () => {
+    expect(fileChangePaths('nope', '/repo')).toEqual([]);
+    expect(fileChangePaths(undefined, '/repo')).toEqual([]);
+    expect(fileChangePaths([null, 3, {}], '/repo')).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseShellWriteTargets, shellCommandText } from './shellWrites'
+import { parseFileChangeOutput, parseShellWriteTargets, shellCommandText } from './shellWrites'
 
 describe('shellCommandText', () => {
   it('reads a string command', () => {
@@ -94,5 +94,29 @@ describe('parseShellWriteTargets', () => {
   it('finds nothing in read-only commands', () => {
     expect(parseShellWriteTargets('git status')).toEqual([])
     expect(parseShellWriteTargets('grep -rn foo src/ | head -20')).toEqual([])
+  })
+})
+
+describe('parseFileChangeOutput', () => {
+  it('reads the JSON string the gateway stores on a codex file_change tool_end', () => {
+    const output = JSON.stringify([
+      { path: '/repo/src/a.ts', kind: 'update' },
+      { path: '/repo/src/b.ts', kind: 'add' },
+    ])
+    expect(parseFileChangeOutput(output)).toEqual(['/repo/src/a.ts', '/repo/src/b.ts'])
+  })
+
+  it('accepts an already-parsed array', () => {
+    expect(parseFileChangeOutput([{ path: '/repo/x', kind: 'delete' }])).toEqual(['/repo/x'])
+  })
+
+  it('resolves relative paths against the working directory', () => {
+    expect(parseFileChangeOutput([{ path: 'src/a.ts' }, { path: './b.ts' }], '/repo/')).toEqual(['/repo/src/a.ts', '/repo/b.ts'])
+  })
+
+  it('drops duplicates and junk', () => {
+    expect(parseFileChangeOutput([{ path: '/r/a' }, { path: '/r/a' }, { kind: 'add' }, null, 42])).toEqual(['/r/a'])
+    expect(parseFileChangeOutput('not json')).toEqual([])
+    expect(parseFileChangeOutput(undefined)).toEqual([])
   })
 })

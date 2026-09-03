@@ -36,6 +36,26 @@ export interface ToolCallEntry {
    *  Only a shell `tool_end` carries this — a write that happens inside an
    *  interpreter is invisible in the command text itself. */
   writes?: string[];
+  /** What this tool call changed in each file it wrote: the file before the
+   *  call against the file after, as git saw it the moment the call ended.
+   *  Recorded alongside `writes` so a turn's edits can be shown as that
+   *  turn's, not folded into everything since the last commit. */
+  writeDiffs?: WriteDiff[];
+}
+
+/** One file's change from a single tool call. */
+export interface WriteDiff {
+  /** Absolute path. */
+  path: string;
+  added: number;
+  removed: number;
+  /** Unified diff of before against after. Absent when the file is binary or
+   *  the patch was too large to keep (`truncated`). */
+  patch?: string;
+  /** Git blob id of the file after the call. The next write to this path
+   *  diffs against it, so each call is charged only its own change. */
+  blob: string;
+  truncated?: boolean;
 }
 
 export interface TeamRunSummaryEntry {
