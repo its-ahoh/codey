@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useChats } from '../hooks/useChats'
+import { pollWhileVisible } from '../hooks/pollWhileVisible'
 import { apiService } from '../services/api'
 import type { Chat } from '../types'
 import { C } from '../theme'
@@ -102,13 +103,16 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
 
   useEffect(() => {
     refreshWs()
-    const id = setInterval(refreshWs, 5000)
+    // The workspace list only changes through this app, and
+    // `onWorkspacesChanged` fires on every such edit, so a hidden window has
+    // nothing to learn from polling.
+    const stopPoll = pollWhileVisible(refreshWs, 5000)
     // Refresh immediately when a workspace is added/removed/renamed in the
     // Settings overlay, instead of waiting up to 5s for the next poll. A delete
     // also removes that workspace's chats, so reload the chat list too — the
     // sidebar groups are derived from state.chats, not the workspace array.
     const off = onWorkspacesChanged(() => { refreshWs(); refreshChats() })
-    return () => { clearInterval(id); off() }
+    return () => { stopPoll(); off() }
   }, [refreshWs, refreshChats])
 
   useEffect(() => {

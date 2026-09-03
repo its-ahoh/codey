@@ -31,6 +31,8 @@
         <button id="handoff" class="handoff" type="button" title="Copy this site's signed-in session into a Codey Browser profile">Hand off login</button>
       </div>
 
+      <div id="profile-info" class="profile-info" hidden></div>
+
       <form id="handoff-form" class="handoff-form" hidden>
         <label for="handoff-name">Save this login as</label>
         <div class="handoff-row">
@@ -38,11 +40,7 @@
           <button id="handoff-save" class="handoff-save" type="submit">Save</button>
           <button id="handoff-cancel" class="handoff-cancel" type="button">Cancel</button>
         </div>
-        <div id="handoff-resync" class="handoff-resync" hidden>
-          <span>Already saved:</span>
-          <select id="handoff-resync-name" aria-label="Codey Browser profile to refresh"></select>
-          <button id="handoff-resync-save" class="handoff-resync-save" type="button" title="Replace this site's login in that profile with the one Chrome is using now">Re-sync</button>
-        </div>
+        <div id="handoff-existing" class="handoff-existing" hidden></div>
       </form>
 
       <section id="messages" class="messages" aria-live="polite">

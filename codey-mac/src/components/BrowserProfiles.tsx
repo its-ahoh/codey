@@ -3,6 +3,7 @@ import { C } from '../theme'
 import { UIIcon } from './UIIcons'
 import type { BrowserProfileSiteSummary, BrowserProfileSummary } from '../codey-api'
 import { BROWSER_PROFILE_AVATARS, browserProfileAvatar } from './browserProfileAvatars'
+import { Toggle } from './settingsAtoms'
 
 type BrowserProfileContents = {
   name: string
@@ -122,6 +123,7 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
     if (profile.originCount > 0) bits.push(`${profile.originCount} site${profile.originCount === 1 ? '' : 's'}`)
     const when = formatWhen(profile.updatedAt)
     if (when) bits.push(`updated ${when}`)
+    if (profile.autoSync) bits.push('syncs with Chrome')
     return bits.join(' · ')
   }
 
@@ -223,15 +225,10 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               )}
             </div>
             <div style={{ flex: 1, minWidth: compact ? 180 : 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: C.fg, fontSize: compact ? 12 : 13, fontWeight: 600 }}>{profile.name}</span>
-                {profile.active && (
-                  <span style={{
-                    background: C.green + '22', color: C.green, borderRadius: 999, padding: '1px 7px',
-                    fontSize: compact ? 10 : 11, fontWeight: 600,
-                  }}>IN USE</span>
-                )}
-              </div>
+              {/* No "IN USE" pill next to the name: the toggle on this same
+                  row already says "In use" in the same green, so the pill was
+                  the same word twice with nothing extra to tell. */}
+              <div style={{ color: C.fg, fontSize: compact ? 12 : 13, fontWeight: 600 }}>{profile.name}</div>
               <button
                 type="button"
                 onClick={() => void toggleContents(profile.name)}
@@ -249,21 +246,21 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
                 {meta(profile) || (profile.sourceUrl ? 'saved session' : 'empty profile')}
               </button>
             </div>
-            {/* Several profiles can be on at once, so a profile is simply in use
-                or not. There is nothing to switch between. */}
-            <button
-              type="button"
+            {/* Several profiles can be on at once, so a profile is simply on
+                or off - there is nothing to switch between. A switch says that
+                by its shape, where a button labelled "Use"/"In use" made the
+                reader work out whether the word was a state or a command. */}
+            <Toggle
+              on={profile.active}
               disabled={busy}
-              onClick={() => void run(() => profile.active
-                ? window.codey.browser.profiles.disable(profile.name)
-                : window.codey.browser.profiles.enable(profile.name))}
-              style={profile.active ? activeBadgeStyle(compact) : buttonStyle(compact)}
+              onChange={next => void run(() => next
+                ? window.codey.browser.profiles.enable(profile.name)
+                : window.codey.browser.profiles.disable(profile.name))}
+              label={`Use ${profile.name}\u2019s logins`}
               title={profile.active
-                ? 'This profile\u2019s logins are in use \u2014 click to turn it off'
-                : 'Add this profile\u2019s logins to the live session'}
-            >
-              {profile.active ? 'In use' : 'Use'}
-            </button>
+                ? `${profile.name}\u2019s logins are in use \u2014 switch off to stop using them`
+                : `Switch on to add ${profile.name}\u2019s logins to the live session`}
+            />
             {/* Logins expire. Refreshing the whole profile from Chrome is one
                 click here, and works whether or not it is currently in use. */}
             <button
@@ -313,6 +310,20 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               before trusting it with a task - and before handing it to an
               agent - without ever putting the values on screen. */}
           {expanded === profile.name && (
+            <div style={styles.syncRow}>
+              <span style={styles.syncCopy}>
+                Keep in sync with Chrome — when one of this profile’s logins changes there, it refreshes itself.
+                If two syncing profiles share a site, that site stays manual: Chrome holds one identity per site, so Codey will not guess whose it is.
+              </span>
+              <Toggle
+                on={profile.autoSync}
+                disabled={busy}
+                onChange={next => void run(() => window.codey.browser.profiles.setAutoSync(profile.name, next))}
+                label={`Keep ${profile.name} in sync with Chrome`}
+              />
+            </div>
+          )}
+          {expanded === profile.name && (
             <div style={styles.contents}>
               {!contents[profile.name] && <div style={styles.contentsEmpty}>Reading…</div>}
               {contents[profile.name]?.sites.length === 0 && (
@@ -347,14 +358,9 @@ function buttonStyle(compact: boolean): React.CSSProperties {
   }
 }
 
-function activeBadgeStyle(compact: boolean): React.CSSProperties {
-  return {
-    whiteSpace: 'nowrap', background: 'transparent', border: 'none',
-    color: C.green, fontSize: compact ? 11 : 12, fontWeight: 600, padding: '4px 8px', cursor: 'default',
-  }
-}
-
 const styles: Record<string, React.CSSProperties> = {
+  syncRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
+  syncCopy: { flex: 1, minWidth: 0, color: C.fg2, fontSize: 11, lineHeight: 1.45 },
   contents: { display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 200, overflowY: 'auto', padding: '5px 6px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
   contentsRow: { display: 'flex', alignItems: 'baseline', gap: 8, padding: '2px 4px' },
   contentsDomain: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.fg2, fontSize: 11 },

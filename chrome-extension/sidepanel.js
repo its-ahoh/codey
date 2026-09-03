@@ -17,9 +17,8 @@ const handoffFormNode = document.querySelector('#handoff-form')
 const handoffNameNode = document.querySelector('#handoff-name')
 const handoffSaveNode = document.querySelector('#handoff-save')
 const handoffCancelNode = document.querySelector('#handoff-cancel')
-const handoffResyncNode = document.querySelector('#handoff-resync')
-const handoffResyncNameNode = document.querySelector('#handoff-resync-name')
-const handoffResyncSaveNode = document.querySelector('#handoff-resync-save')
+const handoffExistingNode = document.querySelector('#handoff-existing')
+const profileInfoNode = document.querySelector('#profile-info')
 const chatSelectNode = document.querySelector('#chat-select')
 const agentSelectNode = document.querySelector('#agent-select')
 const modelSelectNode = document.querySelector('#model-select')
@@ -578,16 +577,13 @@ async function openHandoffForm() {
   handoffNode.textContent = 'Hand off login'
   handoffFormNode.hidden = false
   handoffNameNode.value = suggestion
-  // A profile that already holds this site is almost always what the user
-  // means when they come back after signing in again, so it is offered next
-  // to the create field instead of making them delete and redo the handoff.
-  handoffResyncNameNode.replaceChildren(...existing.map(name => {
-    const option = document.createElement('option')
-    option.value = name
-    option.textContent = name
-    return option
-  }))
-  handoffResyncNode.hidden = existing.length === 0
+  // If a profile already holds this site, say so - refreshing it happens in
+  // the Codey Browser (its Sync button, or auto-sync), not from here. The
+  // side panel only creates.
+  handoffExistingNode.textContent = existing.length > 0
+    ? `Already saved in ${existing.join(', ')} - refresh it from the Codey Browser instead of saving a copy.`
+    : ''
+  handoffExistingNode.hidden = existing.length === 0
   handoffNameNode.focus()
   handoffNameNode.select()
 }
@@ -596,10 +592,8 @@ function closeHandoffForm() {
   handoffFormNode.hidden = true
   handoffNameNode.value = ''
   handoffSaveNode.disabled = false
-  handoffResyncNode.hidden = true
-  handoffResyncSaveNode.disabled = false
-  handoffResyncSaveNode.textContent = 'Re-sync'
-  handoffResyncNameNode.replaceChildren()
+  handoffExistingNode.hidden = true
+  handoffExistingNode.textContent = ''
   handoffNode.disabled = false
 }
 
@@ -629,33 +623,39 @@ async function handOffSession() {
   }
 }
 
-// Refreshing an existing profile rather than creating one: same export, but
-// only this site's part of the saved profile is replaced.
-async function resyncSession() {
-  const name = handoffResyncNameNode.value
-  if (!name) return
-  handoffResyncSaveNode.disabled = true
-  handoffResyncSaveNode.textContent = 'Syncing\u2026'
-  try {
-    const result = await codeyApi('/v1/session/handoff', { method: 'POST', body: { name, resync: true } })
-    closeHandoffForm()
-    handoffNode.textContent = `Re-synced ${result.profileName}`
-    handoffNode.title = `${result.cookieCount} cookies from ${result.origin} replaced this site's login in the Codey Browser profile "${result.profileName}"`
-    handoffResetTimer = setTimeout(resetHandoffButton, 6000)
-  } catch (error) {
-    handoffResyncSaveNode.disabled = false
-    handoffResyncSaveNode.textContent = 'Re-sync'
-    handoffNode.textContent = 'Re-sync failed'
-    handoffNode.title = error instanceof Error ? error.message : String(error)
-  }
-}
-
 function resetHandoffButton() {
   if (handoffResetTimer) clearTimeout(handoffResetTimer)
   handoffResetTimer = null
   closeHandoffForm()
   handoffNode.textContent = 'Hand off login'
   handoffNode.title = "Copy this site's signed-in session into a Codey Browser profile"
+}
+
+// One quiet line about the Codey Browser's identity: which profiles are in
+// use, and where the current site's login lives over there. Names and flags
+// only - the data comes straight from Codey, so no extension round trip and
+// nothing to wake. Failure (Codey closed, not yet paired) just hides the line.
+async function refreshProfileInfo() {
+  let hostname = ''
+  try { hostname = activePage ? new URL(activePage.url).hostname : '' } catch { /* no site, global info only */ }
+  try {
+    const result = await codeyApi('/v1/profiles', { method: 'POST', body: hostname ? { hostname } : {} })
+    const profiles = Array.isArray(result.profiles) ? result.profiles : []
+    const inUse = profiles.filter(profile => profile.active).map(profile => profile.name)
+    const holders = profiles.filter(profile => profile.holdsSite)
+    const parts = [inUse.length === 0
+      ? 'Codey Browser: no profile in use'
+      : `Codey Browser: using ${inUse.join(' + ')}`]
+    if (holders.length > 0) {
+      parts.push(`this site is saved in ${holders.map(profile =>
+        `${profile.name}${profile.autoSync ? ' (auto-syncs)' : ''}`).join(', ')}`)
+    }
+    profileInfoNode.textContent = parts.join(' · ')
+    profileInfoNode.hidden = false
+  } catch {
+    profileInfoNode.hidden = true
+    profileInfoNode.textContent = ''
+  }
 }
 
 async function refreshActivePage() {
@@ -671,6 +671,7 @@ async function refreshActivePage() {
     handoffPageUrl = activePage?.url || null
     resetHandoffButton()
   }
+  void refreshProfileInfo()
 }
 
 async function ensurePreparedChat() {
@@ -892,7 +893,6 @@ void refreshUpdateNotice()
 handoffNode.addEventListener('click', () => { void openHandoffForm() })
 handoffFormNode.addEventListener('submit', event => { event.preventDefault(); void handOffSession() })
 handoffCancelNode.addEventListener('click', () => resetHandoffButton())
-handoffResyncSaveNode.addEventListener('click', () => { void resyncSession() })
 handoffNameNode.addEventListener('keydown', event => { if (event.key === 'Escape') resetHandoffButton() })
 chatSelectNode.addEventListener('change', () => {
   if (!busy) void selectChat(chatSelectNode.value)

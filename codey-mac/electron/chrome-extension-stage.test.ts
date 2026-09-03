@@ -3,7 +3,10 @@ import * as os from 'os'
 import * as path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  ensurePairingSecret,
   installedExtensionDir,
+  PAIRING_FILE,
+  PAIRING_SECRET_FILE,
   refreshRememberedInstall,
   rememberedInstallDir,
   rememberInstallDir,
@@ -155,5 +158,53 @@ describe('a user-chosen install location', () => {
     const dir = installedExtensionDir(bundledExtension('1.0.0'), userData)
     expect(dir).toBe(path.join(userData, 'chrome-extension'))
     expect(fs.existsSync(path.join(dir, 'manifest.json'))).toBe(true)
+  })
+})
+
+/**
+ * The pairing secret is what stops any local process that grabbed the loopback
+ * port from posing as Codey: both ends must hold it, so it has to reach every
+ * staged copy of the extension and survive re-staging without changing.
+ */
+describe('pairing secret', () => {
+  it('is minted once, restrictively, and then reused', () => {
+    const userData = temp()
+    const secret = ensurePairingSecret(userData)
+    expect(secret.length).toBeGreaterThanOrEqual(32)
+    expect(ensurePairingSecret(userData)).toBe(secret)
+    const mode = fs.statSync(path.join(userData, PAIRING_SECRET_FILE)).mode & 0o777
+    expect(mode).toBe(0o600)
+  })
+
+  it('is staged next to the manifest and survives a same-version re-stage', () => {
+    const userData = temp()
+    const source = bundledExtension('1.0.0')
+    const secret = ensurePairingSecret(userData)
+    const staged = stageChromeExtension(source, userData, undefined, secret)
+    const read = () => JSON.parse(fs.readFileSync(path.join(staged, PAIRING_FILE), 'utf8')).secret
+    expect(read()).toBe(secret)
+    // A re-stage that skips the copy must still leave the secret in place...
+    stageChromeExtension(source, userData, undefined, secret)
+    expect(read()).toBe(secret)
+    // ...and a version bump rewrites the folder, so the secret is re-added.
+    stageChromeExtension(bundledExtension('1.1.0'), userData, undefined, secret)
+    expect(read()).toBe(secret)
+  })
+
+  it('reaches a remembered install on refresh, even at an unchanged version', () => {
+    const userData = temp()
+    const source = bundledExtension('1.0.0')
+    const chosen = stageChromeExtension(source, temp(), 'codey-chrome-extension')
+    rememberInstallDir(userData, chosen)
+    const secret = ensurePairingSecret(userData)
+    expect(refreshRememberedInstall(source, userData, secret)).toBe(chosen)
+    expect(JSON.parse(fs.readFileSync(path.join(chosen, PAIRING_FILE), 'utf8')).secret).toBe(secret)
+  })
+
+  it('reaches whichever folder installedExtensionDir points Chrome at', () => {
+    const userData = temp()
+    const secret = ensurePairingSecret(userData)
+    const dir = installedExtensionDir(bundledExtension('1.0.0'), userData, secret)
+    expect(JSON.parse(fs.readFileSync(path.join(dir, PAIRING_FILE), 'utf8')).secret).toBe(secret)
   })
 })

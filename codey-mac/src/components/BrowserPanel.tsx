@@ -103,7 +103,6 @@ export const BrowserPanel: React.FC<Props> = ({
   const [profiles, setProfiles] = useState<BrowserProfileSummary[]>([])
   const [activeProfile, setActiveProfile] = useState<string | null>(null)
   const [profileBusy, setProfileBusy] = useState(false)
-  const [syncBusy, setSyncBusy] = useState(false)
   const [syncNote, setSyncNote] = useState<string | null>(null)
   const [panelWidth, setPanelWidth] = useState(900)
 
@@ -121,7 +120,7 @@ export const BrowserPanel: React.FC<Props> = ({
     return () => observer.disconnect()
   }, [])
 
-  const useResult = <T,>(result: { ok: true; data: T } | { ok: false; error: string }): T | undefined => {
+  const unwrapResult = <T,>(result: { ok: true; data: T } | { ok: false; error: string }): T | undefined => {
     if (!result.ok) {
       setLocalError(result.error)
       return undefined
@@ -139,7 +138,7 @@ export const BrowserPanel: React.FC<Props> = ({
       void window.codey.browser.tabs().then(result => { if (result.ok) setTabs(result.data) })
     })
     void window.codey.browser.getState().then(result => {
-      const next = useResult(result)
+      const next = unwrapResult(result)
       if (!cancelled && next) {
         setState(next)
         setAddress(next.url)
@@ -160,7 +159,7 @@ export const BrowserPanel: React.FC<Props> = ({
       if (!cancelled) setSitePermission(next)
     })
     void window.codey.browser.sitePermission.get().then(result => {
-      const next = useResult(result)
+      const next = unwrapResult(result)
       if (!cancelled && next) setSitePermission(next)
     })
     return () => { cancelled = true; off() }
@@ -187,7 +186,7 @@ export const BrowserPanel: React.FC<Props> = ({
       if (!cancelled) setControlPermission(next)
     })
     void window.codey.browser.controlPermission.get().then(result => {
-      const next = useResult(result)
+      const next = unwrapResult(result)
       if (!cancelled && next) setControlPermission(next)
     })
     return () => { cancelled = true; off() }
@@ -206,11 +205,11 @@ export const BrowserPanel: React.FC<Props> = ({
         if (!shownRef.current) {
           shownRef.current = true
           void window.codey.browser.show(bounds).then(result => {
-            const next = useResult(result)
+            const next = unwrapResult(result)
             if (next) setState(next)
           })
         } else {
-          void window.codey.browser.setBounds(bounds).then(useResult)
+          void window.codey.browser.setBounds(bounds).then(unwrapResult)
         }
       })
     }
@@ -238,7 +237,7 @@ export const BrowserPanel: React.FC<Props> = ({
     if (bounds.width === 0 || bounds.height === 0) return
     shownRef.current = true
     void window.codey.browser.show(bounds).then(result => {
-      const next = useResult(result)
+      const next = unwrapResult(result)
       if (next) setState(next)
     })
   }, [browserPageVisible])
@@ -330,29 +329,6 @@ export const BrowserPanel: React.FC<Props> = ({
     }
   }
 
-  // Pull this site's login out of the user's real Chrome and into the profile
-  // that is enabled here, without leaving the page. Scoped to this one site, so
-  // a profile carrying several logins keeps the rest. The page is reloaded
-  // afterwards because a signed-out page does not re-check its cookies.
-  const syncProfileFromChrome = async () => {
-    if (!state.url || syncBusy) return
-    setSyncBusy(true)
-    setSyncNote(null)
-    try {
-      const result = await window.codey.browser.profiles.syncFromChrome(state.url)
-      if (!result.ok) {
-        setLocalError(result.error)
-        return
-      }
-      setLocalError(null)
-      setSyncNote(`Synced ${result.data.cookieCount} cookies for ${result.data.origin} into "${result.data.profileName}"`)
-      await refreshProfiles()
-      await run(() => window.codey.browser.reload())
-    } finally {
-      setSyncBusy(false)
-    }
-  }
-
   useEffect(() => {
     if (!syncNote) return
     const timer = setTimeout(() => setSyncNote(null), 6000)
@@ -360,12 +336,12 @@ export const BrowserPanel: React.FC<Props> = ({
   }, [syncNote])
 
   const navigate = async () => {
-    const next = useResult(await window.codey.browser.navigate(address))
+    const next = unwrapResult(await window.codey.browser.navigate(address))
     if (next) setState(next)
   }
 
   const run = async (operation: () => Promise<{ ok: true; data: BrowserState } | { ok: false; error: string }>) => {
-    const next = useResult(await operation())
+    const next = unwrapResult(await operation())
     if (next) {
       setState(next)
       if (!addressFocusedRef.current) setAddress(next.url)
@@ -382,9 +358,9 @@ export const BrowserPanel: React.FC<Props> = ({
     ? 'No profile'
     : enabledProfiles.length === 1 ? enabledProfiles[0].name : `${enabledProfiles.length} profiles`
 
-  const usePageInChat = async () => {
+  const sendPageToChat = async () => {
     if (!chatId) return
-    const context = useResult(await window.codey.browser.getPageContext())
+    const context = unwrapResult(await window.codey.browser.getPageContext())
     if (!context) return
     appendDraftText(chatId, buildBrowserContextPrompt(context))
     onClose()
@@ -393,21 +369,21 @@ export const BrowserPanel: React.FC<Props> = ({
   const updateControlPermission = async (
     operation: () => Promise<{ ok: true; data: BrowserControlPermissionState } | { ok: false; error: string }>,
   ) => {
-    const next = useResult(await operation())
+    const next = unwrapResult(await operation())
     if (next) setControlPermission(next)
   }
 
   const updateSitePermission = async (
     operation: () => Promise<{ ok: true; data: BrowserSitePermissionState } | { ok: false; error: string }>,
   ) => {
-    const next = useResult(await operation())
+    const next = unwrapResult(await operation())
     if (next) setSitePermission(next)
   }
 
   const resetBrowserSession = async () => {
     setResetBusy(true)
     try {
-      const next = useResult(await window.codey.browser.resetSession())
+      const next = unwrapResult(await window.codey.browser.resetSession())
       if (!next) return
       setState(next)
       setAddress(next.url)
@@ -415,7 +391,7 @@ export const BrowserPanel: React.FC<Props> = ({
       setResetConfirmation(false)
       const host = hostRef.current
       if (host) {
-        const shown = useResult(await window.codey.browser.show(rectToBounds(host.getBoundingClientRect())))
+        const shown = unwrapResult(await window.codey.browser.show(rectToBounds(host.getBoundingClientRect())))
         if (shown) setState(shown)
       }
       const tabResult = await window.codey.browser.tabs()
@@ -435,7 +411,7 @@ export const BrowserPanel: React.FC<Props> = ({
   const openExtensions = async () => {
     openSettingsSection('extensions')
     setExtensionCandidate(null)
-    const next = useResult(await window.codey.browser.extensions.list())
+    const next = unwrapResult(await window.codey.browser.extensions.list())
     if (next) setExtensions(next)
   }
 
@@ -456,7 +432,7 @@ export const BrowserPanel: React.FC<Props> = ({
   const pickExtension = async () => {
     setExtensionBusy(true)
     try {
-      const candidate = useResult(await window.codey.browser.extensions.pick())
+      const candidate = unwrapResult(await window.codey.browser.extensions.pick())
       if (candidate) setExtensionCandidate(candidate)
     } finally {
       setExtensionBusy(false)
@@ -466,7 +442,7 @@ export const BrowserPanel: React.FC<Props> = ({
   const discoverChromeExtensions = async () => {
     setExtensionBusy(true)
     try {
-      const candidates = useResult(await window.codey.browser.extensions.discoverChrome())
+      const candidates = unwrapResult(await window.codey.browser.extensions.discoverChrome())
       if (candidates) {
         setChromeExtensions(candidates)
         setChromeScanComplete(true)
@@ -481,7 +457,7 @@ export const BrowserPanel: React.FC<Props> = ({
     if (!candidate.compatible) return
     setExtensionBusy(true)
     try {
-      const next = useResult(await window.codey.browser.extensions.importFromChrome(candidate.path))
+      const next = unwrapResult(await window.codey.browser.extensions.importFromChrome(candidate.path))
       if (next) {
         setExtensions(next)
         setChromeExtensions(current => current.filter(extension => extension.path !== candidate.path))
@@ -495,7 +471,7 @@ export const BrowserPanel: React.FC<Props> = ({
     if (!extensionCandidate) return
     setExtensionBusy(true)
     try {
-      const next = useResult(await window.codey.browser.extensions.install(extensionCandidate.path))
+      const next = unwrapResult(await window.codey.browser.extensions.install(extensionCandidate.path))
       if (next) {
         setExtensions(next)
         setExtensionCandidate(null)
@@ -510,7 +486,7 @@ export const BrowserPanel: React.FC<Props> = ({
   ) => {
     setExtensionBusy(true)
     try {
-      const next = useResult(await operation())
+      const next = unwrapResult(await operation())
       if (next) setExtensions(next)
     } finally {
       setExtensionBusy(false)
@@ -608,20 +584,10 @@ export const BrowserPanel: React.FC<Props> = ({
         </button>
         <button
           type="button"
-          style={{ ...styles.iconButton, ...(syncBusy ? styles.iconButtonActive : null) }}
-          title={activeProfile
-            ? `Sync this site's Chrome login into "${activeProfile}"`
-            : 'Enable a browser profile first, then sync this site\u2019s Chrome login into it'}
-          aria-label="Sync this site's login from Chrome"
-          disabled={syncBusy || !state.url || !activeProfile || activeSettingsSection !== null}
-          onClick={() => void syncProfileFromChrome()}
-        ><UIIcon name="refresh" size={14} /></button>
-        <button
-          type="button"
           style={{ ...styles.contextButton, opacity: chatId && state.url && !activeSettingsSection ? 1 : 0.5 }}
           title={chatId ? 'Add this page and its performance timing to the current chat' : 'Select a chat first'}
           disabled={!chatId || !state.url || activeSettingsSection !== null}
-          onClick={() => void usePageInChat()}
+          onClick={() => void sendPageToChat()}
         >
           <UIIcon name="sparkle" size={14} />
           {!embedded && <span>Use in chat</span>}

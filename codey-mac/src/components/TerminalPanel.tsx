@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { C } from '../theme'
 import { UIIcon } from './UIIcons'
+import { pollWhileVisible } from '../hooks/pollWhileVisible'
 
 interface Props {
   chatId: string
@@ -512,10 +513,13 @@ const TerminalSessionView: React.FC<{
       })
     }
     refreshTitle()
-    const titleTimer = window.setInterval(refreshTitle, 1500)
+    // Each status call spawns two `ps` processes in the main process to resolve
+    // the foreground command; the title cannot change without the user, so a
+    // hidden window need not pay for it.
+    const stopTitlePoll = pollWhileVisible(refreshTitle, 1500)
 
     return () => {
-      cancelAnimationFrame(frame); window.clearInterval(titleTimer); observer.disconnect(); input.dispose(); titleChange.dispose(); offData(); offExit(); terminal.dispose()
+      cancelAnimationFrame(frame); stopTitlePoll(); observer.disconnect(); input.dispose(); titleChange.dispose(); offData(); offExit(); terminal.dispose()
       terminalRef.current = null
     }
   }, [sessionId, chatId, workingDir, restartToken, onTitle])

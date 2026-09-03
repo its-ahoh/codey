@@ -101,7 +101,7 @@ export const ChatContextPanel: React.FC<Props> = ({
   // With the Status panel switched off the tab disappears; a chat left sitting
   // on it falls back to Tools rather than rendering an empty body.
   const tab: ContextPanelTab = requestedTab === 'task' && !statusPanelEnabled ? 'current' : requestedTab
-  const setTab = (t: ContextPanelTab) => { onTabChange ? onTabChange(t) : setLocalTab(t) }
+  const setTab = (t: ContextPanelTab) => { if (onTabChange) onTabChange(t); else setLocalTab(t) }
 
   React.useEffect(() => { if (tab === 'task') onTaskTabShown() }, [tab])
 
@@ -956,7 +956,7 @@ const FileChangesView: React.FC<{
 
   const toggleDir = (path: string) => setToggled(prev => {
     const next = new Set(prev)
-    next.has(path) ? next.delete(path) : next.add(path)
+    if (next.has(path)) next.delete(path); else next.add(path)
     return next
   })
 

@@ -628,7 +628,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
     const idx = text.indexOf('"questions"');
     if (idx === -1) return null;
     // Walk backwards to find the opening brace
-    let braceStart = text.lastIndexOf('{', idx);
+    const braceStart = text.lastIndexOf('{', idx);
     if (braceStart === -1) return null;
     // Try progressively larger substrings to find valid JSON
     for (let end = text.indexOf('}', idx); end !== -1; end = text.indexOf('}', end + 1)) {

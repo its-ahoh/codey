@@ -166,37 +166,37 @@ describe('ChromeCompanionBridge', () => {
     await expect(exported).resolves.toEqual(session)
   })
 
-  it('exports the session for a URL Codey names, not the tab in front', async () => {
+  it('carries the auto-sync watch list on polls and routes change reports back', async () => {
     const { bridge, endpoint } = await setup()
     const token = await connect(endpoint)
-    const exported = bridge.exportSessionForUrl('https://example.com/inbox')
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    const poll = () => fetch(`${endpoint}/v1/poll`, { method: 'POST', headers, body: '{}' })
+      .then(response => response.json() as Promise<{ watchDomains: string[] | null }>)
 
-    const poll = await fetch(`${endpoint}/v1/poll`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: '{}',
+    // Off (no hooks): explicit null, so the extension can drop a stale list.
+    await expect(poll()).resolves.toMatchObject({ watchDomains: null })
+
+    const reported: string[][] = []
+    bridge.setAutoSync({
+      watchDomains: () => ['github.com', 'jira.example.com'],
+      onSessionChanged: domains => reported.push(domains),
     })
-    const work = await poll.json() as { command: { id: string; command: string; input: { url: string } } }
-    expect(work.command.command).toBe('exportSessionForUrl')
-    expect(work.command.input).toEqual({ url: 'https://example.com/inbox' })
+    await expect(poll()).resolves.toMatchObject({ watchDomains: ['github.com', 'jira.example.com'] })
 
-    // No tab has to be open on the site, so the export carries no tab at all.
-    const session = {
-      url: 'https://example.com/inbox',
-      origin: 'https://example.com',
-      cookies: [{
-        name: 'session', value: 'secret', domain: 'example.com', path: '/', expires: -1,
-        httpOnly: true, secure: true, sameSite: 'lax' as const,
-      }],
-      origins: [],
-    }
-    await fetch(`${endpoint}/v1/result`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: work.command.id, ok: true, data: session }),
+    // The report names domains only - never cookie values - and junk entries
+    // are dropped before they reach the app.
+    const changed = await fetch(`${endpoint}/v1/session/changed`, {
+      method: 'POST', headers, body: JSON.stringify({ domains: ['.GitHub.com', '', 42, 'jira.example.com'] }),
     })
+    expect(changed.status).toBe(200)
+    expect(reported).toEqual([['.github.com', 'jira.example.com']])
 
-    await expect(exported).resolves.toEqual(session)
+    // Unauthenticated callers cannot spoof change reports.
+    const anonymous = await fetch(`${endpoint}/v1/session/changed`, {
+      method: 'POST', body: JSON.stringify({ domains: ['github.com'] }),
+    })
+    expect(anonymous.status).toBe(401)
+    expect(reported).toHaveLength(1)
   })
 
   it('lists Chrome\'s signed-in sites and exports only the ones picked', async () => {
@@ -219,7 +219,9 @@ describe('ChromeCompanionBridge', () => {
     const exported = bridge.exportSessionForSites(['github.com'])
     const exportWork = await poll()
     expect(exportWork.command.command).toBe('exportSessionForSites')
-    expect(exportWork.command.input).toEqual({ sites: ['github.com'] })
+    // Opening pages in the user's Chrome is opt-in, so the default must travel
+    // as an explicit "no" rather than as an absent field the worker guesses at.
+    expect(exportWork.command.input).toEqual({ sites: ['github.com'], openMissing: false })
     const session = {
       sites: ['github.com'],
       cookies: [{
@@ -229,6 +231,23 @@ describe('ChromeCompanionBridge', () => {
       origins: [],
     }
     await answer(exportWork.command.id, session)
+    await expect(exported).resolves.toEqual(session)
+  })
+
+  it('carries the opt-in to open sites for their storage', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+
+    const exported = bridge.exportSessionForSites(['notion.so'], true)
+    const work = await fetch(`${endpoint}/v1/poll`, { method: 'POST', headers, body: '{}' })
+      .then(response => response.json() as Promise<{ command: { id: string; input: unknown } }>)
+    expect(work.command.input).toEqual({ sites: ['notion.so'], openMissing: true })
+
+    const session = { sites: ['notion.so'], cookies: [], origins: [{ origin: 'https://www.notion.so', localStorage: [{ name: 'token', value: 'x' }] }] }
+    await fetch(`${endpoint}/v1/result`, {
+      method: 'POST', headers, body: JSON.stringify({ id: work.command.id, ok: true, data: session }),
+    })
     await expect(exported).resolves.toEqual(session)
   })
 
@@ -332,9 +351,45 @@ describe('ChromeCompanionBridge', () => {
     expect(work.command.input).toEqual({ ref: 'e9', value: false })
   })
 
+  it('describes the Codey Browser profiles for the side panel status line', async () => {
+    const asked: Array<string | undefined> = []
+    const features = {
+      profilesOverview: async (hostname?: string) => {
+        asked.push(hostname)
+        return {
+          profiles: [
+            { name: 'personal', active: true, autoSync: false, holdsSite: false },
+            { name: 'work', active: true, autoSync: true, holdsSite: hostname === 'github.com' },
+          ],
+        }
+      },
+    } as unknown as ChromeCompanionFeatures
+    const { endpoint } = await setup(undefined, undefined, undefined, features)
+    const token = await connect(endpoint)
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+
+    // Unauthenticated callers learn nothing about the user's profiles.
+    expect((await fetch(`${endpoint}/v1/profiles`, { method: 'POST' })).status).toBe(401)
+    expect(asked).toHaveLength(0)
+
+    const overview = await fetch(`${endpoint}/v1/profiles`, {
+      method: 'POST', headers, body: JSON.stringify({ hostname: 'github.com' }),
+    })
+    await expect(overview.json()).resolves.toMatchObject({
+      ok: true,
+      profiles: [
+        { name: 'personal', active: true, autoSync: false, holdsSite: false },
+        { name: 'work', active: true, autoSync: true, holdsSite: true },
+      ],
+    })
+
+    // Without a site in front, the global half still answers.
+    await fetch(`${endpoint}/v1/profiles`, { method: 'POST', headers, body: '{}' })
+    expect(asked).toEqual(['github.com', undefined])
+  })
+
   it('hands the current site\'s session to Codey from the side panel', async () => {
     const handoffs: Array<string | undefined> = []
-    const resyncs: boolean[] = []
     const features = {
       options: async () => ({
         agents: [], models: [], defaultAgent: null, defaultModel: null, defaultModels: {}, chat: null,
@@ -345,10 +400,9 @@ describe('ChromeCompanionBridge', () => {
       }),
       upload: async () => ({ id: 'a', name: 'n', mimeType: 'text/plain', size: 0, path: '/tmp/n' }),
       transcribe: async () => ({ text: '' }),
-      handoffSession: async (name?: string, resync?: boolean) => {
+      handoffSession: async (name?: string) => {
         handoffs.push(name)
-        resyncs.push(resync === true)
-        return { profileName: name || 'example.com-2', origin: 'https://example.com', cookieCount: 4, resynced: resync === true }
+        return { profileName: name || 'example.com-2', origin: 'https://example.com', cookieCount: 4 }
       },
       suggestProfileName: async (hostname: string) => ({ name: `${hostname}-free`, existing: [`${hostname}-saved`] }),
     } as unknown as ChromeCompanionFeatures
@@ -376,7 +430,7 @@ describe('ChromeCompanionBridge', () => {
     })
     expect(named.status).toBe(200)
     await expect(named.json()).resolves.toEqual({
-      ok: true, profileName: 'my-github', origin: 'https://example.com', cookieCount: 4, resynced: false,
+      ok: true, profileName: 'my-github', origin: 'https://example.com', cookieCount: 4,
     })
 
     // An omitted or blank name means "you pick one".
@@ -385,21 +439,7 @@ describe('ChromeCompanionBridge', () => {
     })
     await expect(auto.json()).resolves.toMatchObject({ profileName: 'example.com-2' })
 
-    // Refreshing an existing profile goes down the same route with a flag.
-    const refreshed = await fetch(`${endpoint}/v1/session/handoff`, {
-      method: 'POST', headers, body: JSON.stringify({ name: 'my-github', resync: true }),
-    })
-    await expect(refreshed.json()).resolves.toMatchObject({ profileName: 'my-github', resynced: true })
-
-    // "Refresh whichever" is not a thing - there would be no way to guess which.
-    const nameless = await fetch(`${endpoint}/v1/session/handoff`, {
-      method: 'POST', headers, body: JSON.stringify({ resync: true }),
-    })
-    expect(nameless.status).toBe(400)
-    await expect(nameless.json()).resolves.toMatchObject({ error: 'Choose which profile to re-sync' })
-
-    expect(handoffs).toEqual(['my-github', undefined, 'my-github'])
-    expect(resyncs).toEqual([false, false, true])
+    expect(handoffs).toEqual(['my-github', undefined])
   })
 
   it('routes authenticated side-panel chat through Codey', async () => {
@@ -451,8 +491,9 @@ describe('ChromeCompanionBridge', () => {
         id: 'attachment-1', name, mimeType, size: data.length, path: '/safe/upload.txt',
       }),
       transcribe: async (_mimeType, data) => ({ text: `heard ${data.length} bytes` }),
-      handoffSession: async () => ({ profileName: 'example.com', origin: 'https://example.com', cookieCount: 3, resynced: false }),
+      handoffSession: async () => ({ profileName: 'example.com', origin: 'https://example.com', cookieCount: 3 }),
       suggestProfileName: async hostname => ({ name: hostname, existing: [] }),
+      profilesOverview: async () => ({ profiles: [] }),
     }
     const { endpoint } = await setup(
       async request => { received.push(request); return { chatId: 'chat-2', response: 'Attached' } },
@@ -540,5 +581,64 @@ describe('ChromeCompanionBridge', () => {
       ],
     })
     expect(requested).toEqual(['chat-1'])
+  })
+})
+
+/**
+ * Mutual pairing. Any local process can squat on a loopback port, so the
+ * extension must prove it holds the staged secret before it gets a token, and
+ * Codey must prove the same before the extension trusts the token it got.
+ */
+describe('ChromeCompanionBridge pairing proof', () => {
+  const SECRET = 'test-pairing-secret-0123456789abcdef'
+  const hmac = (message: string) =>
+    require('crypto').createHmac('sha256', SECRET).update(message).digest('hex')
+
+  async function setupWithSecret() {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-chrome-companion-'))
+    directories.push(directory)
+    const bridge = new ChromeCompanionBridge(
+      path.join(directory, 'pairing.json'), 0, undefined,
+      undefined, undefined, undefined, undefined,
+      () => SECRET,
+    )
+    bridges.push(bridge)
+    const status = await bridge.start()
+    return { bridge, endpoint: status.endpoint! }
+  }
+
+  function connectRaw(endpoint: string, body: Record<string, unknown>) {
+    return fetch(`${endpoint}/v1/connect`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: `chrome-extension://${CHROME_COMPANION_EXTENSION_ID}`,
+        'X-Codey-Extension-Id': CHROME_COMPANION_EXTENSION_ID,
+      },
+      body: JSON.stringify(body),
+    })
+  }
+
+  it('pairs a client that proves the secret, and proves itself back', async () => {
+    const { bridge, endpoint } = await setupWithSecret()
+    const nonce = 'nonce-1'
+    const response = await connectRaw(endpoint, {
+      clientName: 'Test Chrome',
+      nonce,
+      proof: hmac(`codey-client:${nonce}`),
+    })
+    expect(response.status).toBe(200)
+    const value = await response.json() as { token: string; serverProof: string }
+    expect(value.serverProof).toBe(hmac(`codey-server:${nonce}:${value.token}`))
+    expect(bridge.status().paired).toBe(true)
+  })
+
+  it('refuses a client with no proof or a wrong proof', async () => {
+    const { bridge, endpoint } = await setupWithSecret()
+    expect((await connectRaw(endpoint, { clientName: 'Legacy' })).status).toBe(403)
+    expect((await connectRaw(endpoint, {
+      clientName: 'Impostor', nonce: 'n', proof: 'not-the-hmac',
+    })).status).toBe(403)
+    expect(bridge.status().paired).toBe(false)
   })
 })

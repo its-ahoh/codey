@@ -175,10 +175,10 @@ function expandCJKRegion(
   before: string[],
   after: string[],
 ): { alias: string; term: string; aliasTokens: number; termTokens: number } | null {
-  let left = [...before]
-  let right = [...after]
-  let del = [...deleted]
-  let ins = [...inserted]
+  const left = [...before]
+  const right = [...after]
+  const del = [...deleted]
+  const ins = [...inserted]
 
   while (del.join('').length < MIN_ALIAS_CHARS || ins.join('').length < MIN_ALIAS_CHARS) {
     const canLeft = isSingleCJKToken(left[left.length - 1] ?? '')

@@ -42,12 +42,28 @@ export function unwrap<T>(r: { ok: true; data: T } | { ok: false; error: string 
   throw new Error(r.error)
 }
 
-export const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void; label?: string }> = ({ on, onChange, label }) => (
-  <div onClick={() => onChange(!on)} role="switch" aria-checked={on} aria-label={label} style={{
+export const Toggle: React.FC<{
+  on: boolean
+  onChange: (v: boolean) => void
+  label?: string
+  /** Greyed out and unclickable while the change it drives is in flight, so a
+   *  second click cannot race the first. */
+  disabled?: boolean
+  title?: string
+}> = ({ on, onChange, label, disabled = false, title }) => (
+  <div
+    onClick={() => { if (!disabled) onChange(!on) }}
+    role="switch"
+    aria-checked={on}
+    aria-label={label}
+    aria-disabled={disabled || undefined}
+    title={title}
+    style={{
     width: 36, height: 20, borderRadius: 10, flexShrink: 0,
     background: on ? C.accent : C.surface3,
     border: `1px solid ${on ? C.accent : C.border2}`,
-    cursor: 'pointer', position: 'relative', transition: 'all 0.2s',
+    cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1,
+    position: 'relative', transition: 'all 0.2s',
   }}>
     <div style={{
       position: 'absolute', top: 1, left: on ? 17 : 1,
