@@ -7,7 +7,7 @@ const makeItems = (count: number): ChatNavigationItem[] => Array.from({ length: 
   id: `message-${index}`,
   title: `Message ${index + 1}`,
   preview: `Preview ${index + 1}`,
-  role: index % 2 === 0 ? 'user' : 'assistant',
+  role: index % 3 === 0 ? 'team' : 'assistant',
 }))
 
 const renderNavigator = (count: number) => renderToStaticMarkup(React.createElement(ChatMessageNavigator, {

@@ -1351,30 +1351,33 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   }, [isGatewayRunning])
   const lastMsg = chat?.messages?.[chat.messages.length - 1]
   const renderItems = useMemo(() => groupMessages(chat?.messages ?? []), [chat?.messages])
-  const navigationItems = useMemo<ChatNavigationItem[]>(() => renderItems.map(item => {
+  // Only Codey's side of the conversation is mapped: user prompts are short and
+  // sit right above their reply, so they would just double the tick count.
+  const navigationItems = useMemo<ChatNavigationItem[]>(() => renderItems.flatMap<ChatNavigationItem>(item => {
     if (item.kind === 'team') {
       const source = [...item.messages].reverse().find(message => message.content.trim())
       const preview = (source?.content || `${item.messages.length} team updates`).replace(/\s+/g, ' ').trim()
-      return {
+      return [{
         id: `team:${item.teamTurnId}`,
         title: item.teamName || 'Team run',
         preview: preview.slice(0, 180),
         role: 'team',
-      }
+      }]
     }
     const msg = item.message
-    const plain = (msg.content || msg.userQuestion?.question || (msg.role === 'assistant' ? 'Agent update' : 'Message'))
+    if (msg.role !== 'assistant') return []
+    const plain = (msg.content || msg.userQuestion?.question || 'Agent update')
       .replace(/```[\s\S]*?```/g, ' Code block ')
       .replace(/[#>*_`~\[\]]/g, '')
       .replace(/\s+/g, ' ')
       .trim()
     const firstSentence = plain.split(/(?<=[.!?\u3002\uFF01\uFF1F])\s+|\n/)[0] || plain
-    return {
+    return [{
       id: msg.id,
       title: firstSentence.slice(0, 48),
       preview: plain.slice(0, 180),
-      role: msg.role === 'user' ? 'user' : 'assistant',
-    }
+      role: 'assistant',
+    }]
   }), [renderItems])
   // Cheap stand-in for "the rendered conversation changed": switching chats,
   // a new message, or a streaming reply growing. Find-in-chat re-scans on it,
