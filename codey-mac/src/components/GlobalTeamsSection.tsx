@@ -11,29 +11,29 @@ import { UIIcon } from './UIIcons'
 // Editor for the global team library stored in gateway.json. Teams defined
 // here are available to every workspace.
 
-type DispatchMode = 'all' | 'auto' | 'parallel'
+type DispatchMode = 'sequential' | 'auto' | 'roundtable'
 interface TeamState { members: string[]; dispatch: DispatchMode; graph?: TeamGraph }
 type TeamsState = Record<string, TeamState>
 
 const DISPATCH: { id: DispatchMode; label: string; desc: string; detail: string; icon: 'activity' | 'sparkle' | 'users' }[] = [
-  { id: 'all', label: 'Sequential', desc: 'Best for ordered handoffs.', detail: 'Workers run in a deliberate order. Each worker receives the work produced before it, and an optional workflow can add branches or loops.', icon: 'activity' },
-  { id: 'auto', label: 'Adaptive', desc: 'Best when the right specialists vary.', detail: 'The Advisor chooses the relevant workers for each task and can send work back for another pass when a revision is needed.', icon: 'sparkle' },
-  { id: 'parallel', label: 'Roundtable', desc: 'Best for multiple perspectives.', detail: 'Workers contribute concurrently while the Advisor moderates the discussion, tracks shared progress, and decides when the team is done.', icon: 'users' },
+  { id: 'sequential', label: 'Sequential', desc: 'Best for ordered handoffs.', detail: 'Workers run in a deliberate order. Each worker receives the work produced before it, and an optional workflow can add branches or loops.', icon: 'activity' },
+  { id: 'auto', label: 'Auto', desc: 'Best when the right specialists vary.', detail: 'The Advisor chooses the relevant workers for each task and can send work back for another pass when a revision is needed.', icon: 'sparkle' },
+  { id: 'roundtable', label: 'Roundtable', desc: 'Best for multiple perspectives.', detail: 'Workers contribute concurrently while the Advisor moderates the discussion, tracks shared progress, and decides when the team is done.', icon: 'users' },
 ]
 
 const labelStyle: CSSProperties = { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: C.fg3, marginBottom: 6 }
 
 function fromRaw(raw: TeamConfigRaw): TeamState {
-  if (Array.isArray(raw)) return { members: raw, dispatch: 'all' }
+  if (Array.isArray(raw)) return { members: raw, dispatch: 'sequential' }
   const d = raw?.dispatch
-  const dispatch: DispatchMode = d === 'auto' ? 'auto' : d === 'parallel' ? 'parallel' : 'all'
+  const dispatch: DispatchMode = d === 'auto' ? 'auto' : d === 'roundtable' ? 'roundtable' : 'sequential'
   return { members: Array.isArray(raw?.members) ? raw.members : [], dispatch, graph: (raw as any)?.graph }
 }
 
 function toRaw(t: TeamState): TeamConfigRaw {
-  if (t.dispatch === 'all' && !t.graph) return t.members
+  if (t.dispatch === 'sequential' && !t.graph) return t.members
   const out: any = { members: t.members, dispatch: t.dispatch }
-  if (t.dispatch === 'all' && t.graph) out.graph = t.graph
+  if (t.dispatch === 'sequential' && t.graph) out.graph = t.graph
   return out
 }
 
@@ -74,7 +74,7 @@ export default function GlobalTeamsSection() {
 
   const addTeam = () => {
     let i = 1; while (teams[`team${i}`]) i++
-    queueSave({ ...teams, [`team${i}`]: { members: [], dispatch: 'all' } })
+    queueSave({ ...teams, [`team${i}`]: { members: [], dispatch: 'sequential' } })
   }
   const renameTeam = (oldName: string, newName: string) => {
     if (!newName || oldName === newName || teams[newName]) return
@@ -143,7 +143,7 @@ export default function GlobalTeamsSection() {
       {error && <div style={styles.error}>{error}</div>}
       {Object.keys(teams).length === 0 && <div style={styles.empty}><span style={styles.emptyIcon}><UIIcon name="users" size={24} /></span><div style={styles.emptyTitle}>Build a specialist team</div><div style={styles.emptyText}>Add workers, choose how they collaborate, then reuse the team in any workspace.</div><button onClick={addTeam} style={{ ...styles.newTeamBtn, marginTop: 15 }}><UIIcon name="add" size={15} />Create a team</button></div>}
       {Object.entries(teams).map(([name, team]) => {
-        const showOrder = team.dispatch === 'all' && !team.graph
+        const showOrder = team.dispatch === 'sequential' && !team.graph
         return (
         <div key={name} style={styles.teamCard}>
           {/* Header: name · member count · delete */}
@@ -243,7 +243,7 @@ export default function GlobalTeamsSection() {
             </div>
 
             {/* Flow (Sequential only) */}
-            {team.dispatch === 'all' && (
+            {team.dispatch === 'sequential' && (
               <div style={styles.workflowRow}>
                 <span style={styles.workflowIcon}><UIIcon name="activity" size={14} /></span>
                 <div style={{ flex: 1, minWidth: 0 }}><span style={styles.workflowTitle}>Workflow</span><span style={styles.workflowSub}> · {team.graph ? `${team.graph.nodes.filter(n => n.type === 'worker').length} steps` : 'Linear order'}</span></div>

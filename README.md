@@ -223,17 +223,17 @@ When prompted, analyze requirements and provide...
 **Team dispatch details:**
 
 - `/team <name> [--all] <task>` — Run a named team. Members run sequentially with carry chain.
-  - Teams default to `dispatch: 'all'` (every member runs).
+  - Teams default to `dispatch: 'sequential'` (every member runs in order).
   - Teams configured with `dispatch: 'auto'` first invoke the built-in Advisor
     that selects the relevant subset. Pass `--all` to bypass it for one call.
   - Optional `dispatchHint` on each worker's `config.json` improves routing accuracy.
   - The Advisor's agent/model is configured under `gateway.json` `advisor.{agent, model}`,
     defaulting to the gateway's default agent/model.
-  - Teams configured with `dispatch: 'parallel'` run as an **Advisor-moderated roundtable**:
+  - Teams configured with `dispatch: 'roundtable'` run as an **Advisor-moderated roundtable**:
     all workers run concurrently as long-lived agent sessions, sharing opinion files in
     `chats/<chatId>/discussion/`. An Advisor loop evaluates progress, maintains a summary,
     and decides when to ask the user, continue, or terminate.
-    Optional settings under `parallel: { maxDurationMs, idleTimeoutMs, advisorPollMs }`.
+    Optional settings under `roundtable: { maxDurationMs, idleTimeoutMs, advisorPollMs }`.
     See [design spec](docs/superpowers/specs/2026-05-24-team-parallel-mode-design.md).
   - A sequential (`all`) team can also carry a **flow graph** — `graph: { entry, maxHops, nodes, edges }`.
     Nodes are workers (plus `start` / `end`); each edge carries a natural-language condition.

@@ -17,6 +17,8 @@ export type PendingTeamState =
       task: string;
       mode: 'sequential';
       teamTurnId: string;
+      /** Set for an ad-hoc team built from @mentions, which has no registry entry to look up on resume. */
+      members?: string[];
       memberIndex: number;
       carry: string;
       askingWorker: string;
@@ -34,6 +36,8 @@ export type PendingTeamState =
       task: string;
       mode: 'auto';
       teamTurnId: string;
+      /** Set for an ad-hoc team built from @mentions, which has no registry entry to look up on resume. */
+      members?: string[];
       history: AdvisorHistoryEntry[];
       lastWorker: string;
       lastOutput: string;

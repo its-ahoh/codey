@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseWorkerMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -22,7 +22,7 @@ import { pruneCodeyTmp } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
-import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS } from '@codey/core';
+import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_ROUNDTABLE_SETTINGS, normalizeDispatchMode } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
 import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, ensureWorktreeContainer, isGitWorkspace, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
@@ -4254,7 +4254,7 @@ Example: /model gpt-4.1 write a Python script`;
     // Sequential/graph teams may answer a simple informational question with
     // one worker. The routing gate fails closed to the full workflow, and
     // `--all` always bypasses it.
-    if (dispatch === 'all' && !opts.forceAll) {
+    if (dispatch === 'sequential' && !opts.forceAll) {
       const fastPath = await this.decideSequentialFastPath(members, task, this.workingDir);
       if (fastPath.route === 'single_worker') {
         await this.sendResponse({
@@ -4268,7 +4268,7 @@ Example: /model gpt-4.1 write a Python script`;
       }
     }
 
-    // dispatch === 'all' OR forceAll: full workflow path
+    // dispatch === 'sequential' OR forceAll: full workflow path
     if (!opts.forceAll && team.graph) {
       await this.runSequentialGraphForChat(message, teamName, team.graph, task, runOneWorker, turnTeamTurnId);
       return;
@@ -4330,7 +4330,11 @@ Example: /model gpt-4.1 write a Python script`;
       emitter.beginWorker?.({ step: nextResumeStep, worker });
       emitter.endWorker?.('failed', { failureReason: reason });
     };
-    const team = this.workspaceManager.getTeam(pending.teamName);
+    // An ad-hoc team built from @mentions has no registry entry; its member
+    // list travels with the pending state instead.
+    const adHocMembers = 'members' in pending && pending.members?.length ? pending.members : undefined;
+    const team: TeamConfig | undefined = this.workspaceManager.getTeam(pending.teamName)
+      ?? (adHocMembers ? { members: adHocMembers, dispatch: pending.mode === 'auto' ? 'auto' : 'sequential' } : undefined);
     if (!team) {
       recordResumeFailure('Team', `Team "${pending.teamName}" no longer exists`);
       await emitter.notify(`Team \`${pending.teamName}\` no longer exists; the paused run was dropped.`);
@@ -4401,13 +4405,10 @@ Example: /model gpt-4.1 write a Python script`;
       }
       const ask = parseAskUser(response.output);
       if (ask) {
+        // Carry the prior state forward (members, task, anchors...) and change
+        // only what this pause changed, so a new field cannot silently drop out.
         this.persistPendingTeam(chatId, {
-          mode: 'sequential',
-          teamName: pending.teamName,
-          task: pending.task,
-          teamTurnId: pending.teamTurnId,
-          memberIndex: pending.memberIndex,
-          carry: pending.carry,
+          ...pending,
           askingWorker: memberName,
           question: ask.question,
           options: ask.options,
@@ -4522,11 +4523,10 @@ Example: /model gpt-4.1 write a Python script`;
       ? [...seededHistory, { worker: pending.askingWorker, summary: turn.summary_of_last }]
       : seededHistory;
     if (ask) {
+      // Same as the sequential re-pause: spread the prior state, override the
+      // fields this step moved.
       this.persistPendingTeam(chatId, {
-        mode: 'auto',
-        teamName: pending.teamName,
-        task: pending.task,
-        teamTurnId: pending.teamTurnId,
+        ...pending,
         history: newHistory,
         lastWorker: turn.next,
         lastOutput: response.output,
@@ -4636,6 +4636,7 @@ Example: /model gpt-4.1 write a Python script`;
         const pending: PendingTeamState = {
           mode: 'sequential',
           teamName,
+          members,
           task,
           teamTurnId: opts.teamTurnId || '',
           memberIndex: i,
@@ -4961,13 +4962,13 @@ Example: /model gpt-4.1 write a Python script`;
 
     const teamTurnId = randomUUID();
     const useAdvisorMode = team.dispatch === 'auto' && !opts.forceAll;
-    const teamMode: 'sequential' | 'graph' | 'auto' | 'parallel' =
+    const teamMode: 'sequential' | 'graph' | 'auto' | 'roundtable' =
       useAdvisorMode
         ? 'auto'
         : (!opts.forceAll && team.graph)
           ? 'graph'
-          : team.dispatch === 'parallel'
-            ? 'parallel'
+          : team.dispatch === 'roundtable'
+            ? 'roundtable'
             : 'sequential';
     const workerMsgs = new WorkerMessageEmitter(
       sink, this.chatManager, chatId,
@@ -5047,7 +5048,7 @@ Example: /model gpt-4.1 write a Python script`;
     // A conservative Advisor gate may route a genuinely simple informational
     // question to one suitable worker; failures and uncertainty fall through
     // to the complete flow. `--all` remains the explicit bypass.
-    if (team.dispatch === 'all' && !opts.forceAll) {
+    if (team.dispatch === 'sequential' && !opts.forceAll) {
       const fastPath = await this.decideSequentialFastPath(team.members, opts.routingTask ?? prompt, workingDir, signal);
       if (fastPath.route === 'single_worker' && !signal?.aborted) {
         const emitter = new ChatEmitter(sink, chatId, workerMsgs);
@@ -5080,8 +5081,8 @@ Example: /model gpt-4.1 write a Python script`;
       return { response: '' };
     }
 
-    this.logger.info(`[parallel-debug] runTeamForChat: dispatch=${team.dispatch} parallel=${JSON.stringify(team.parallel)} members=${team.members.join(',')}`);
-    if (team.dispatch === 'parallel') {
+    this.logger.info(`[parallel-debug] runTeamForChat: dispatch=${team.dispatch} roundtable=${JSON.stringify(team.roundtable)} members=${team.members.join(',')}`);
+    if (team.dispatch === 'roundtable') {
       this.logger.info(`[parallel-debug] entering parallel branch`);
       const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
       // Resume detection: if this chat has a completed/terminated discussion,
@@ -5090,7 +5091,7 @@ Example: /model gpt-4.1 write a Python script`;
       if (chat.discussion && (chat.discussion.status === 'done' || chat.discussion.status === 'terminated')) {
         await initDiscussionDir(workspacesRoot, chat.workspaceName, chat.id, prompt, team.members);
       }
-      if (!team.parallel) {
+      if (!team.roundtable) {
         // defensive — normalizer always populates this for parallel teams
         await sink({ type: 'stream', chatId, token: '⚠️ parallel team is missing settings' });
         return { response: '' };
@@ -5112,7 +5113,7 @@ Example: /model gpt-4.1 write a Python script`;
         teamName: teamName,
         members: team.members,
         topic: prompt,
-        settings: team.parallel,
+        settings: team.roundtable,
         workerRunner: async (req, workerName) => this.runWithFallback(chatAgent ?? this.getDefaultAgent() as CodingAgent, {
           prompt: req.prompt,
           agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
@@ -5269,6 +5270,7 @@ Example: /model gpt-4.1 write a Python script`;
         this.persistPendingTeam(chatId, {
           mode: 'auto',
           teamName,
+          members: team.members,
           task: prompt,
           teamTurnId,
           history: p.history,
@@ -5318,7 +5320,7 @@ Example: /model gpt-4.1 write a Python script`;
       }
     }
 
-    // dispatch === 'all', forceAll, or auto-routing fallback
+    // dispatch === 'sequential', forceAll, or auto-routing fallback
     if (!opts.forceAll && team.graph) {
       const g = await this.runSequentialGraphForChatSink(teamName, team.graph, prompt, sink, chatId, runOneWorker, chatAgent, chatModel, signal, workerMsgs, teamTurnId);
       return { ...g, teamTurnId };
@@ -6013,6 +6015,28 @@ Example: /model gpt-4.1 write a Python script`;
       this.chatManager.clearLastAskedOptions(chatId);
     }
 
+    // "@worker" mentions route the turn to those workers. One mention runs that
+    // worker alone; several form an ad-hoc `auto` team the Advisor dispatches,
+    // honouring any split the user wrote into the message. Not parsed on slash
+    // turns, paused-team answers, or chats already bound to a named team. The
+    // user message is persisted as typed; only the task the workers see has
+    // the mentions reduced to bare names.
+    let adHocTeam: { name: string; team: TeamConfig } | undefined;
+    let historyText: string | undefined;
+    if (!isSlashTurn && !pendingTeam && chat.selection.type !== 'team') {
+      const wm = this.workspaceManager.getWorkerManager();
+      const mentions = parseWorkerMentions(userText, n => wm.hasWorker(n));
+      if (mentions.workers.length > 0) {
+        historyText = userText;
+        userText = mentions.task;
+        adHocTeam = {
+          name: mentions.workers.join('+'),
+          team: { members: mentions.workers, dispatch: mentions.workers.length > 1 ? 'auto' : 'sequential' },
+        };
+      }
+    }
+    const isTeamTurn = chat.selection.type === 'team' || adHocTeam !== undefined;
+
     // Persisted alongside the assistant message at completion. Declared here
     // so the sink wrapper can capture 'info' events into it (see below).
     const toolCalls: ToolCallEntry[] = [];
@@ -6186,7 +6210,7 @@ Example: /model gpt-4.1 write a Python script`;
     // block. Team mode always uses the legacy bootstrap path (no session
     // resume) because team dispatch builds worker prompts internally.
     const selPrefix = assistantPrefixForSelection(chat);
-    const canResume = chat.selection.type !== 'team';
+    const canResume = !isTeamTurn;
     const warmAnchor = canResume
       ? this.chatManager.getSessionAnchor(chatId, agent, model?.model)
       : undefined;
@@ -6224,7 +6248,7 @@ Example: /model gpt-4.1 write a Python script`;
     prompt += chatWorkspaceInstruction;
 
     // Solo advisor: when enabled (and not a team), tell the agent how to escalate.
-    if (chat.soloAdvisor && chat.selection.type !== 'team') {
+    if (chat.soloAdvisor && !isTeamTurn) {
       prompt = prompt + '\n\n' + SOLO_ADVISOR_INSTRUCTION;
     }
 
@@ -6238,7 +6262,7 @@ Example: /model gpt-4.1 write a Python script`;
     } else if (skillsCfg?.enabled && skillsCfg.autoApply
         // Unattended automation runs execute a frozen brief — never auto-apply skills.
         && chat.kind !== 'automation'
-        && chat.selection.type !== 'team' && !isSlashTurn) {
+        && !isTeamTurn && !isSlashTurn) {
       // Skills are per-workspace: match against the CHAT's workspace store
       // (mirrors how workingDir/teams above come from chat.workspaceName).
       const chatSkillStore = await this.resolveSkillStore(chat.workspaceName);
@@ -6257,7 +6281,7 @@ Example: /model gpt-4.1 write a Python script`;
     const userMessage: ChatMessage = {
       id: randomUUID(),
       role: 'user',
-      content: userText,
+      content: historyText ?? userText,
       timestamp: started,
       isComplete: true,
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
@@ -6369,6 +6393,20 @@ Example: /model gpt-4.1 write a Python script`;
         const emitter = new ChatEmitter(sink, chatId, workerMsgs);
         output = await this.resumeTeamFromAnswer(chatId, `chat-${chatId}`, pendingTeam, userText, emitter);
         teamChoices = emitter.choices;
+      } else if (adHocTeam) {
+        const { name: teamName, team } = adHocTeam;
+        const teamPrompt = prompt + '\n\n[Addressed workers]\n'
+          + `The user addressed these workers directly: ${team.members.join(', ')}. `
+          + 'If the message assigns work to specific workers, follow that assignment. Otherwise decide who does what.';
+        sink({ type: 'info', chatId, message: team.members.length > 1
+          ? `Ad-hoc team from mentions: ${team.members.join(', ')} (Advisor dispatches)`
+          : `Routing to worker ${team.members[0]}` });
+        const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model);
+        output = r.response;
+        tokens = r.tokens;
+        teamChoices = r.choices;
+        teamThinkingByStep = r.thinkingByStep;
+        teamTurnId = r.teamTurnId;
       } else if (chat.selection.type === 'team') {
         // Resolve the team from the chat's workspace.json (read above), not from
         // the active workspace, so a chat in workspace B uses B's team config
@@ -6389,22 +6427,22 @@ Example: /model gpt-4.1 write a Python script`;
         // Prefer the active workspace's normalized team (which carries dispatch mode);
         // fall back to building a TeamConfig inline from the chat's raw config.
         const wsTeam = this.workspaceManager.getTeam(teamName);
-        const fallbackDispatch = (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as TeamConfig['dispatch'];
+        const fallbackDispatch: TeamConfig['dispatch'] = normalizeDispatchMode(Array.isArray(rawTeam) ? undefined : rawTeam?.dispatch) ?? 'sequential';
         const fallbackTeam: TeamConfig = { members: rawMembers, dispatch: fallbackDispatch };
-        if (fallbackDispatch === 'parallel') {
-          const rawParallel = (!Array.isArray(rawTeam) && rawTeam?.parallel) || {};
-          fallbackTeam.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...rawParallel };
+        if (fallbackDispatch === 'roundtable') {
+          const rawRoundtable = (!Array.isArray(rawTeam) && rawTeam?.roundtable) || {};
+          fallbackTeam.roundtable = { ...DEFAULT_ROUNDTABLE_SETTINGS, ...rawRoundtable };
         }
         // Carry a Sequential flow graph through the inline fallback too. This path
         // bypasses normalizeTeam, so validate here as well — an invalid graph drops
         // to linear rather than reaching the executor.
-        if (fallbackDispatch === 'all' && !Array.isArray(rawTeam) && rawTeam?.graph) {
+        if (fallbackDispatch === 'sequential' && !Array.isArray(rawTeam) && rawTeam?.graph) {
           const problems = validateGraph(rawTeam.graph, rawMembers);
           if (problems.length === 0) fallbackTeam.graph = rawTeam.graph;
           else this.logger.warn(`[Workspace] Team "${teamName}" fallback flow graph invalid — running linearly: ${problems.join('; ')}`);
         }
         const team: TeamConfig = wsTeam ?? fallbackTeam;
-        this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasParallel=${!!team.parallel} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
+        this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasRoundtable=${!!team.roundtable} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
         const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model);
         output = r.response;
         tokens = r.tokens;

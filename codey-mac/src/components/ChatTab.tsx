@@ -637,7 +637,7 @@ const TeamSpatialStage: React.FC<{
   onToggleRound: (message: ChatMessage) => void
   onSetAllRounds: (expanded: boolean) => void
 }> = ({ mode, groups, rounds, totalRounds, isStreaming, expandedRounds, onToggleRound, onSetAllRounds }) => {
-  const isRoundTable = mode === 'auto' || mode === 'parallel'
+  const isRoundTable = mode === 'auto' || mode === 'roundtable'
   if (groups.length === 0) return null
 
   const stageHeader = (title: string) => (
@@ -654,10 +654,10 @@ const TeamSpatialStage: React.FC<{
     const workingCount = groups.filter(group => group.status === 'running').length
     return (
       <div style={styles.teamSpatialStage}>
-        {stageHeader(`Round table · Round ${totalRounds}`)}
+        {stageHeader(mode === 'roundtable' ? `Roundtable · Round ${totalRounds}` : `Auto team · Step ${totalRounds}`)}
         <div style={styles.teamRoundTableSpace}>
           <div style={styles.teamRoundTableCenter}>
-            <span style={styles.teamRoundTableCenterTitle}>{mode === 'parallel' ? 'Parallel room' : 'Auto team'}</span>
+            <span style={styles.teamRoundTableCenterTitle}>{mode === 'roundtable' ? 'Roundtable' : 'Auto team'}</span>
             <span style={styles.teamRoundTableCenterSub}>{workingCount > 0 ? `${workingCount} working` : `${groups.length} members`}</span>
           </div>
           {groups.map((group, index) => {
@@ -823,10 +823,13 @@ const TeamRunGroup: React.FC<{
   const completedCount = workerMessages.filter(m => m.workerStatus && m.workerStatus !== 'running').length
   const failedCount = workerMessages.filter(m => m.workerStatus === 'failed').length
   const activeCount = workerMessages.filter(m => m.workerStatus === 'running').length
+  // Only the parallel room runs true rounds; auto and sequential teams take
+  // one worker step at a time.
+  const turnWord = item.teamMode === 'roundtable' ? 'round' : 'step'
   const modeLabel = item.teamMode === 'auto'
     ? 'Auto'
-    : item.teamMode === 'parallel'
-      ? 'Parallel'
+    : item.teamMode === 'roundtable'
+      ? 'Roundtable'
       : 'Sequential'
   const toggleRound = (message: ChatMessage) => setRoundExpansion(current => {
     const next = new Map(current)
@@ -845,7 +848,7 @@ const TeamRunGroup: React.FC<{
           <span style={styles.teamModeBadge}>{modeLabel}</span>
         </div>
         <span style={styles.teamGroupProgress}>
-          {memberGroups.length} {memberGroups.length === 1 ? 'member' : 'members'} · {activeCount > 0 && isStreaming ? `${completedCount}/${workerMessages.length} ${workerMessages.length === 1 ? 'round' : 'rounds'}` : failedCount ? `${completedCount}/${workerMessages.length} ${workerMessages.length === 1 ? 'round' : 'rounds'} · ${failedCount} failed` : `${completedCount}/${workerMessages.length} ${workerMessages.length === 1 ? 'round' : 'rounds'}`}
+          {memberGroups.length} {memberGroups.length === 1 ? 'member' : 'members'} · {activeCount > 0 && isStreaming ? `${completedCount}/${workerMessages.length} ${turnWord}${workerMessages.length === 1 ? '' : 's'}` : failedCount ? `${completedCount}/${workerMessages.length} ${turnWord}${workerMessages.length === 1 ? '' : 's'} · ${failedCount} failed` : `${completedCount}/${workerMessages.length} ${turnWord}${workerMessages.length === 1 ? '' : 's'}`}
         </span>
         <div style={styles.teamGroupHeaderActions} onClick={event => event.stopPropagation()}>
           <button
@@ -1708,14 +1711,23 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     if (!mention) return
     let stale = false
     void (async () => {
-      const [skills, plugins, mcp, agentMcp] = await Promise.all([
+      const [skills, plugins, mcp, agentMcp, workers] = await Promise.all([
         window.codey.skills.list(effectiveAgent, workingDir ?? undefined),
         window.codey.plugins.list(),
         window.codey.mcp.list(),
         window.codey.mcp.listAgent(),
+        window.codey.workers.list(),
       ])
       if (stale) return
       const entries: MentionEntry[] = []
+      // Workers come first: "@alice ..." hands the turn to that worker, and
+      // "@alice @bob ..." forms an ad-hoc team the Advisor dispatches.
+      if (workers.ok) {
+        for (const worker of workers.data) {
+          const role = (worker.personality?.role ?? '').split('\n')[0].trim()
+          entries.push(resourceEntry('worker', worker.name, worker.config?.dispatchHint?.trim() || role))
+        }
+      }
       if (skills.ok) {
         for (const skill of skills.data.skills) {
           if (!skill.enabled) continue
@@ -2927,7 +2939,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 onMouseEnter={() => setMentionIdx(i)}
               >
                 <span style={styles.mentionIcon}>
-                  {entry.kind === 'skill' ? <UIIcon name="sparkle" size={13} color={C.fg3} />
+                  {entry.kind === 'worker' ? <UIIcon name="users" size={13} color={C.fg3} />
+                    : entry.kind === 'skill' ? <UIIcon name="sparkle" size={13} color={C.fg3} />
                     : entry.kind === 'plugin' ? <UIIcon name="tools" size={13} color={C.fg3} />
                     : entry.kind === 'mcp' ? <UIIcon name="server" size={13} color={C.fg3} />
                     : entry.isDir ? <FolderIcon color={C.fg3} size={13} /> : <FileIcon color={C.fg3} size={13} />}
