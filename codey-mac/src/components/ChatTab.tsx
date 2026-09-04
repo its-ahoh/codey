@@ -57,7 +57,7 @@ import { WorkspaceDock, type WorkspaceDockTool } from './WorkspaceDock'
 import { resolveWorkspaceDockLayout } from './workspaceDockLayout'
 import { TerminalPanel } from './TerminalPanel'
 import { splitWhiteboardMarkers, type WhiteboardMarker } from './teamWhiteboardFormat'
-import { groupTeamMessagesByMember, type TeamMemberMessageGroup } from './teamRunModel'
+import { groupTeamMessagesByMember, teamFinalAnswer, type TeamMemberMessageGroup } from './teamRunModel'
 import { ToolCallList } from './ToolCallList'
 import { useVoiceTurn } from '../hooks/useVoiceTurn'
 import { VoiceMeter } from './VoiceMeter'
@@ -811,7 +811,8 @@ const TeamRunGroup: React.FC<{
   item: Extract<RenderItem, { kind: 'team' }>
   isStreaming: boolean
 }> = ({ item, isStreaming }) => {
-  const [collapsed, setCollapsed] = React.useState(false)
+  // null = follow the run: open while it works, folded once it has answered.
+  const [userCollapsed, setUserCollapsed] = React.useState<boolean | null>(null)
   const [summaryOpen, setSummaryOpen] = React.useState(false)
   const [whiteboardOpen, setWhiteboardOpen] = React.useState(false)
   const [roundExpansion, setRoundExpansion] = React.useState<Map<string, boolean>>(new Map())
@@ -819,6 +820,12 @@ const TeamRunGroup: React.FC<{
   const memberGroups = groupTeamMessagesByMember(workerMessages)
   const footerMessages = item.messages.filter(m => !m.worker && !!m.content.trim())
   const finalSummary = [...item.messages].reverse().find(message => message.teamSummary)?.teamSummary
+  // Once the run is over the stage is just history: fold it and show the
+  // answer on its own, the way a single-agent turn would read.
+  const finalAnswer = isStreaming ? null : teamFinalAnswer(item.messages, item.teamMode)
+  const collapsed = userCollapsed ?? finalAnswer !== null
+  const setCollapsed = (update: boolean | ((current: boolean) => boolean)) =>
+    setUserCollapsed(typeof update === 'function' ? update(collapsed) : update)
   const completedCount = workerMessages.filter(m => m.workerStatus && m.workerStatus !== 'running').length
   const failedCount = workerMessages.filter(m => m.workerStatus === 'failed').length
   const activeCount = workerMessages.filter(m => m.workerStatus === 'running').length
@@ -839,6 +846,7 @@ const TeamRunGroup: React.FC<{
     setRoundExpansion(new Map(workerMessages.map(message => [message.id, expanded])))
   }
   return (
+    <>
     <div style={styles.teamGroup}>
       <div style={styles.teamGroupHeader} onClick={() => setCollapsed(c => !c)}>
         <span style={{ ...styles.teamStepChevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>▶</span>
@@ -898,6 +906,13 @@ const TeamRunGroup: React.FC<{
         </div>
       )}
     </div>
+    {finalAnswer && (
+      <div style={styles.teamFinalAnswer}>
+        <div style={styles.teamFinalAnswerBy}>{finalAnswer.worker}</div>
+        <Markdown variant="assistant">{finalAnswer.text}</Markdown>
+      </div>
+    )}
+    </>
   )
 }
 
@@ -3895,6 +3910,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   teamStepBody: { marginTop: 4, marginLeft: 17 },
   teamGroup: { border: `1px solid ${C.border}`, borderRadius: 12, margin: '8px 0 14px', overflow: 'hidden', background: C.surface2 },
+  teamFinalAnswer: { margin: '0 0 14px' },
+  teamFinalAnswerBy: { fontSize: 11, color: C.fg3, marginBottom: 4 },
   teamGroupHeader: { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}` },
   teamGroupIdentity: { display: 'flex', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 },
   teamGroupTitle: { fontSize: 13, fontWeight: 700, color: C.fg, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },

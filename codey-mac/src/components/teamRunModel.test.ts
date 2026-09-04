@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveWorkerRuns, groupTeamMessagesByMember } from './teamRunModel'
+import { deriveWorkerRuns, groupTeamMessagesByMember, teamFinalAnswer } from './teamRunModel'
 import type { ChatMessage } from '../types'
 
 const teamTurn = (over: Partial<ChatMessage> = {}): ChatMessage => ({
@@ -191,5 +191,57 @@ describe('nodeStatuses', () => {
     const endId = g.nodes.find(n => n.type === 'end')!.id
     expect(nodeStatuses(g, [run(1, 'pm', 'running')])[endId]).toBe('pending')
     expect(nodeStatuses(g, [run(1, 'pm', 'done')])[endId]).toBe('done')
+  })
+})
+
+describe('teamFinalAnswer', () => {
+  const worker = (over: Partial<ChatMessage>): ChatMessage => ({
+    id: over.id ?? `w-${over.step}`, role: 'assistant', timestamp: 0, isComplete: true,
+    content: '', teamTurnId: 'tt1', ...over,
+  })
+
+  it('returns null while any worker is still running', () => {
+    const msgs = [
+      worker({ step: 1, worker: 'a', workerStatus: 'done', content: 'first' }),
+      worker({ step: 2, worker: 'b', workerStatus: 'running', content: '' }),
+    ]
+    expect(teamFinalAnswer(msgs, 'auto')).toBeNull()
+  })
+
+  it('returns null while a worker is waiting on the user', () => {
+    const msgs = [worker({ step: 1, worker: 'a', workerStatus: 'askedUser', content: 'Which one?' })]
+    expect(teamFinalAnswer(msgs, 'sequential')).toBeNull()
+  })
+
+  it('uses the last finished worker output for auto and sequential, without whiteboard markers', () => {
+    const msgs = [
+      worker({ step: 1, worker: 'a', workerStatus: 'done', content: 'first' }),
+      worker({ step: 2, worker: 'b', workerStatus: 'done', content: 'Final answer.\n\n[FACT]: seen' }),
+      worker({ id: 'footer', workerStatus: undefined, content: '📊 Team **t** results\n\n**a**: first\n\n**b**: Final answer.' }),
+    ]
+    expect(teamFinalAnswer(msgs, 'auto')).toEqual({ worker: 'b', text: 'Final answer.' })
+    expect(teamFinalAnswer(msgs, 'sequential')).toEqual({ worker: 'b', text: 'Final answer.' })
+  })
+
+  it('surfaces a failed last worker as the answer', () => {
+    const msgs = [worker({ step: 1, worker: 'a', workerStatus: 'failed', content: '❌ build broke' })]
+    expect(teamFinalAnswer(msgs, 'auto')).toEqual({ worker: 'a', text: '❌ build broke' })
+  })
+
+  it('uses the Advisor summary for roundtable', () => {
+    const footer = [
+      '🪑 Roundtable: **t**', 'Termination reason: consensus', '',
+      '## Advisor Summary', 'We agree on X.', '',
+      '## Viewpoints', '**a**: yes', '', 'Done.',
+    ].join('\n')
+    const msgs = [
+      worker({ step: 1, worker: 'a', workerStatus: 'done', content: 'yes' }),
+      worker({ id: 'footer', workerStatus: undefined, content: footer }),
+    ]
+    expect(teamFinalAnswer(msgs, 'roundtable')).toEqual({ worker: 'Advisor', text: 'We agree on X.' })
+  })
+
+  it('returns null for an empty run', () => {
+    expect(teamFinalAnswer([], 'auto')).toBeNull()
   })
 })
