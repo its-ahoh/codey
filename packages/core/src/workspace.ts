@@ -15,31 +15,19 @@ const defaultLogger: CoreLogger = {
 
 export type TeamDispatchMode = 'sequential' | 'auto' | 'roundtable';
 
-/** The names the dispatch values went by before the rename; still accepted on read. */
-export type LegacyTeamDispatchMode = 'all' | 'parallel';
-
-const LEGACY_DISPATCH_MODES: Record<LegacyTeamDispatchMode, TeamDispatchMode> = {
-  all: 'sequential',
-  parallel: 'roundtable',
-};
-
-/**
- * Resolve a dispatch value from any config file, current or legacy, to its
- * runtime name. Returns undefined for anything unrecognised.
- */
+/** The dispatch value from a config file, or undefined for anything unrecognised. */
 export function normalizeDispatchMode(raw: unknown): TeamDispatchMode | undefined {
   if (raw === 'sequential' || raw === 'auto' || raw === 'roundtable') return raw;
-  if (raw === 'all' || raw === 'parallel') return LEGACY_DISPATCH_MODES[raw];
   return undefined;
 }
 
-export interface ParallelSettings {
+export interface RoundtableSettings {
   maxDurationMs: number;
   idleTimeoutMs: number;
   advisorPollMs: number;
 }
 
-export const DEFAULT_PARALLEL_SETTINGS: ParallelSettings = {
+export const DEFAULT_ROUNDTABLE_SETTINGS: RoundtableSettings = {
   maxDurationMs: 600_000,
   idleTimeoutMs: 60_000,
   advisorPollMs: 30_000,
@@ -50,8 +38,8 @@ export type TeamConfigRaw =
   | string[]
   | {
       members: string[];
-      dispatch?: TeamDispatchMode | LegacyTeamDispatchMode;
-      parallel?: Partial<ParallelSettings>;
+      dispatch?: TeamDispatchMode;
+      roundtable?: Partial<RoundtableSettings>;
       graph?: TeamGraph;
     };
 
@@ -60,7 +48,7 @@ export interface TeamConfig {
   members: string[];
   dispatch: TeamDispatchMode;
   /** Only populated when dispatch === 'roundtable'. */
-  parallel?: ParallelSettings;
+  roundtable?: RoundtableSettings;
   /** Only honored when dispatch === 'sequential'. */
   graph?: TeamGraph;
 }
@@ -232,7 +220,7 @@ export class WorkspaceManager {
   private normalizeTeam(name: string, raw: TeamConfigRaw): TeamConfig | null {
     let members: string[];
     let dispatch: TeamDispatchMode = 'sequential';
-    let parallel: Partial<ParallelSettings> | undefined;
+    let roundtable: Partial<RoundtableSettings> | undefined;
     let graph: TeamGraph | undefined;
 
     if (Array.isArray(raw)) {
@@ -245,7 +233,7 @@ export class WorkspaceManager {
       } else if (raw.dispatch !== undefined) {
         this.logger.warn(`[Workspace] Team "${name}" has invalid dispatch="${raw.dispatch}" — defaulting to "sequential"`);
       }
-      parallel = raw.parallel;
+      roundtable = raw.roundtable;
       graph = raw.graph;
     } else {
       this.logger.error(`[Workspace] Team "${name}" has invalid shape — skipping`);
@@ -260,13 +248,13 @@ export class WorkspaceManager {
 
     const result: TeamConfig = { members, dispatch };
     if (dispatch === 'roundtable') {
-      const raw = (parallel ?? {}) as Partial<ParallelSettings> & { managerPollMs?: number };
+      const raw = (roundtable ?? {}) as Partial<RoundtableSettings> & { managerPollMs?: number };
       // Back-compat: old `managerPollMs` key maps onto `advisorPollMs`.
       if (raw.managerPollMs !== undefined && raw.advisorPollMs === undefined) {
         raw.advisorPollMs = raw.managerPollMs;
       }
       delete raw.managerPollMs;
-      result.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...raw };
+      result.roundtable = { ...DEFAULT_ROUNDTABLE_SETTINGS, ...raw };
     }
     if (dispatch === 'sequential' && graph) {
       const problems = validateGraph(graph, members);

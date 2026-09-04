@@ -14,7 +14,7 @@ import {
   buildParallelAdvisorPrompt,
   parseParallelAdvisorTurn,
   type ParallelAdvisorTurn,
-  type ParallelSettings,
+  type RoundtableSettings,
   type DiscussionTerminatedReason,
 } from '@codey/core';
 import type { AgentRequest, AgentResponse } from '@codey/core';
@@ -42,7 +42,7 @@ export interface ParallelTeamRunnerOptions {
   teamName: string;
   members: string[];
   topic: string;
-  settings: ParallelSettings;
+  settings: RoundtableSettings;
   workerRunner: (req: AgentRequest, worker: string) => Promise<AgentResponse>;
   advisorRunner: AgentRunner;
   buildWorkerPrompt: (worker: string) => string;

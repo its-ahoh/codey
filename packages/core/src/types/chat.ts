@@ -105,7 +105,7 @@ export interface ChatMessage {
   /** Team name for a worker message (for the group header). */
   teamName?: string;
   /** Dispatch mode of the owning team run. */
-  teamMode?: 'sequential' | 'graph' | 'auto' | 'parallel';
+  teamMode?: 'sequential' | 'graph' | 'auto' | 'roundtable';
   /** 1-based step / run index of this worker within the team run. */
   step?: number;
   /** Worker name that produced this message. */

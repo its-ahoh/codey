@@ -26,8 +26,7 @@ const labelStyle: CSSProperties = { fontSize: 10, textTransform: 'uppercase', le
 function fromRaw(raw: TeamConfigRaw): TeamState {
   if (Array.isArray(raw)) return { members: raw, dispatch: 'sequential' }
   const d = raw?.dispatch
-  // Saved files may still carry the old names (all, parallel); read both.
-  const dispatch: DispatchMode = d === 'auto' ? 'auto' : (d === 'roundtable' || d === 'parallel') ? 'roundtable' : 'sequential'
+  const dispatch: DispatchMode = d === 'auto' ? 'auto' : d === 'roundtable' ? 'roundtable' : 'sequential'
   return { members: Array.isArray(raw?.members) ? raw.members : [], dispatch, graph: (raw as any)?.graph }
 }
 

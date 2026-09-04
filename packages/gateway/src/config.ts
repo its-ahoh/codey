@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
 import { SecretKey, SecretStore, apiKeySecret, channelSecret } from './secret-store';
-import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, isApiType, McpServerSpec, ModelEntry, TeamConfigRaw, normalizeDispatchMode, ThinkingEffort } from '@codey/core';
+import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, isApiType, McpServerSpec, ModelEntry, TeamConfigRaw, ThinkingEffort } from '@codey/core';
 
 // ── Configuration types ─────────────────────────────────────────────
 
@@ -1010,17 +1010,7 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
     out.advisor = { model: raw.planner.model };
   }
   if (raw.teams && typeof raw.teams === 'object') {
-    // Dispatch values were renamed (all -> sequential, parallel -> roundtable).
-    // Rewrite legacy names here so the next save writes the current ones.
-    const teams: Record<string, TeamConfigRaw> = {};
-    for (const [name, team] of Object.entries(raw.teams as Record<string, TeamConfigRaw>)) {
-      if (team && !Array.isArray(team) && typeof team === 'object' && team.dispatch !== undefined) {
-        teams[name] = { ...team, dispatch: normalizeDispatchMode(team.dispatch) ?? team.dispatch };
-      } else {
-        teams[name] = team;
-      }
-    }
-    out.teams = teams;
+    out.teams = raw.teams as Record<string, TeamConfigRaw>;
   }
   if (raw.plugins && typeof raw.plugins === 'object') {
     out.plugins = {

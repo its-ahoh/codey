@@ -26,43 +26,15 @@ describe('normalizeDispatchMode', () => {
     expect(normalizeDispatchMode('roundtable')).toBe('roundtable');
   });
 
-  it('maps the pre-rename names onto the new ones', () => {
-    expect(normalizeDispatchMode('all')).toBe('sequential');
-    expect(normalizeDispatchMode('parallel')).toBe('roundtable');
-  });
-
-  it('rejects anything else', () => {
+  it('rejects anything else, including the pre-rename names', () => {
     expect(normalizeDispatchMode('nope')).toBeUndefined();
+    expect(normalizeDispatchMode('all')).toBeUndefined();
+    expect(normalizeDispatchMode('parallel')).toBeUndefined();
     expect(normalizeDispatchMode(undefined)).toBeUndefined();
   });
 });
 
 describe('WorkspaceManager parallel team config', () => {
-  it('reads a saved team that still says dispatch: "parallel" as roundtable', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-legacy-'));
-    const wsDir = path.join(root, 'workspaces');
-    const workersDir = path.join(root, 'workers');
-    fs.mkdirSync(path.join(wsDir, 'demo'), { recursive: true });
-    seedWorkers(workersDir, ['a', 'b']);
-    fs.writeFileSync(
-      path.join(wsDir, 'demo', 'workspace.json'),
-      JSON.stringify({ workingDir: root, teams: ['rt', 'seq'] }),
-    );
-
-    const workers = new WorkerManager(workersDir);
-    await workers.loadWorkers();
-    const ws = new WorkspaceManager(workers, wsDir, undefined, () => ({
-      rt: { members: ['a', 'b'], dispatch: 'parallel' },
-      seq: { members: ['a'], dispatch: 'all' },
-    }));
-    await ws.switchWorkspace('demo');
-
-    expect(ws.getTeam('rt')!.dispatch).toBe('roundtable');
-    expect(ws.getTeam('rt')!.parallel).toBeTruthy();
-    expect(ws.getTeam('seq')!.dispatch).toBe('sequential');
-  });
-
-
   it('normalizes dispatch: "roundtable" with default parallel settings', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-parallel-'));
     const wsDir = path.join(root, 'workspaces');
@@ -84,7 +56,7 @@ describe('WorkspaceManager parallel team config', () => {
     const team = ws.getTeam('rt');
     expect(team).toBeTruthy();
     expect(team!.dispatch).toBe('roundtable');
-    expect(team!.parallel).toEqual({
+    expect(team!.roundtable).toEqual({
       maxDurationMs: 600_000,
       idleTimeoutMs: 60_000,
       advisorPollMs: 30_000,
@@ -108,12 +80,12 @@ describe('WorkspaceManager parallel team config', () => {
       rt: {
         members: ['a'],
         dispatch: 'roundtable',
-        parallel: { maxDurationMs: 1000, idleTimeoutMs: 200, advisorPollMs: 100 },
+        roundtable: { maxDurationMs: 1000, idleTimeoutMs: 200, advisorPollMs: 100 },
       },
     }));
     await ws.switchWorkspace('demo');
 
-    expect(ws.getTeam('rt')!.parallel).toEqual({
+    expect(ws.getTeam('rt')!.roundtable).toEqual({
       maxDurationMs: 1000,
       idleTimeoutMs: 200,
       advisorPollMs: 100,
@@ -139,7 +111,7 @@ describe('WorkspaceManager parallel team config', () => {
     await ws.switchWorkspace('demo');
 
     expect(ws.getTeam('rt')!.dispatch).toBe('sequential');
-    expect(ws.getTeam('rt')!.parallel).toBeUndefined();
+    expect(ws.getTeam('rt')!.roundtable).toBeUndefined();
   });
 });
 

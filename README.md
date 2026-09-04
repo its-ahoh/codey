@@ -233,8 +233,7 @@ When prompted, analyze requirements and provide...
     all workers run concurrently as long-lived agent sessions, sharing opinion files in
     `chats/<chatId>/discussion/`. An Advisor loop evaluates progress, maintains a summary,
     and decides when to ask the user, continue, or terminate.
-    Optional settings under `parallel: { maxDurationMs, idleTimeoutMs, advisorPollMs }`.
-    (The old values `all` and `parallel` are still accepted and mapped to the new names.)
+    Optional settings under `roundtable: { maxDurationMs, idleTimeoutMs, advisorPollMs }`.
     See [design spec](docs/superpowers/specs/2026-05-24-team-parallel-mode-design.md).
   - A sequential (`all`) team can also carry a **flow graph** — `graph: { entry, maxHops, nodes, edges }`.
     Nodes are workers (plus `start` / `end`); each edge carries a natural-language condition.

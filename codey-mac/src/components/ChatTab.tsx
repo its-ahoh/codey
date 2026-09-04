@@ -636,7 +636,7 @@ const TeamSpatialStage: React.FC<{
   onToggleRound: (message: ChatMessage) => void
   onSetAllRounds: (expanded: boolean) => void
 }> = ({ mode, groups, rounds, totalRounds, isStreaming, expandedRounds, onToggleRound, onSetAllRounds }) => {
-  const isRoundTable = mode === 'auto' || mode === 'parallel'
+  const isRoundTable = mode === 'auto' || mode === 'roundtable'
   if (groups.length === 0) return null
 
   const stageHeader = (title: string) => (
@@ -653,10 +653,10 @@ const TeamSpatialStage: React.FC<{
     const workingCount = groups.filter(group => group.status === 'running').length
     return (
       <div style={styles.teamSpatialStage}>
-        {stageHeader(mode === 'parallel' ? `Roundtable · Round ${totalRounds}` : `Auto team · Step ${totalRounds}`)}
+        {stageHeader(mode === 'roundtable' ? `Roundtable · Round ${totalRounds}` : `Auto team · Step ${totalRounds}`)}
         <div style={styles.teamRoundTableSpace}>
           <div style={styles.teamRoundTableCenter}>
-            <span style={styles.teamRoundTableCenterTitle}>{mode === 'parallel' ? 'Roundtable' : 'Auto team'}</span>
+            <span style={styles.teamRoundTableCenterTitle}>{mode === 'roundtable' ? 'Roundtable' : 'Auto team'}</span>
             <span style={styles.teamRoundTableCenterSub}>{workingCount > 0 ? `${workingCount} working` : `${groups.length} members`}</span>
           </div>
           {groups.map((group, index) => {
@@ -824,10 +824,10 @@ const TeamRunGroup: React.FC<{
   const activeCount = workerMessages.filter(m => m.workerStatus === 'running').length
   // Only the parallel room runs true rounds; auto and sequential teams take
   // one worker step at a time.
-  const turnWord = item.teamMode === 'parallel' ? 'round' : 'step'
+  const turnWord = item.teamMode === 'roundtable' ? 'round' : 'step'
   const modeLabel = item.teamMode === 'auto'
     ? 'Auto'
-    : item.teamMode === 'parallel'
+    : item.teamMode === 'roundtable'
       ? 'Roundtable'
       : 'Sequential'
   const toggleRound = (message: ChatMessage) => setRoundExpansion(current => {

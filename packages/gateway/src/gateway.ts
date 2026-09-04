@@ -22,7 +22,7 @@ import { pruneCodeyTmp } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
-import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS, normalizeDispatchMode } from '@codey/core';
+import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_ROUNDTABLE_SETTINGS, normalizeDispatchMode } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
 import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, ensureWorktreeContainer, isGitWorkspace, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
@@ -4962,13 +4962,13 @@ Example: /model gpt-4.1 write a Python script`;
 
     const teamTurnId = randomUUID();
     const useAdvisorMode = team.dispatch === 'auto' && !opts.forceAll;
-    const teamMode: 'sequential' | 'graph' | 'auto' | 'parallel' =
+    const teamMode: 'sequential' | 'graph' | 'auto' | 'roundtable' =
       useAdvisorMode
         ? 'auto'
         : (!opts.forceAll && team.graph)
           ? 'graph'
           : team.dispatch === 'roundtable'
-            ? 'parallel'
+            ? 'roundtable'
             : 'sequential';
     const workerMsgs = new WorkerMessageEmitter(
       sink, this.chatManager, chatId,
@@ -5081,7 +5081,7 @@ Example: /model gpt-4.1 write a Python script`;
       return { response: '' };
     }
 
-    this.logger.info(`[parallel-debug] runTeamForChat: dispatch=${team.dispatch} parallel=${JSON.stringify(team.parallel)} members=${team.members.join(',')}`);
+    this.logger.info(`[parallel-debug] runTeamForChat: dispatch=${team.dispatch} roundtable=${JSON.stringify(team.roundtable)} members=${team.members.join(',')}`);
     if (team.dispatch === 'roundtable') {
       this.logger.info(`[parallel-debug] entering parallel branch`);
       const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
@@ -5091,7 +5091,7 @@ Example: /model gpt-4.1 write a Python script`;
       if (chat.discussion && (chat.discussion.status === 'done' || chat.discussion.status === 'terminated')) {
         await initDiscussionDir(workspacesRoot, chat.workspaceName, chat.id, prompt, team.members);
       }
-      if (!team.parallel) {
+      if (!team.roundtable) {
         // defensive — normalizer always populates this for parallel teams
         await sink({ type: 'stream', chatId, token: '⚠️ parallel team is missing settings' });
         return { response: '' };
@@ -5113,7 +5113,7 @@ Example: /model gpt-4.1 write a Python script`;
         teamName: teamName,
         members: team.members,
         topic: prompt,
-        settings: team.parallel,
+        settings: team.roundtable,
         workerRunner: async (req, workerName) => this.runWithFallback(chatAgent ?? this.getDefaultAgent() as CodingAgent, {
           prompt: req.prompt,
           agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
@@ -6430,8 +6430,8 @@ Example: /model gpt-4.1 write a Python script`;
         const fallbackDispatch: TeamConfig['dispatch'] = normalizeDispatchMode(Array.isArray(rawTeam) ? undefined : rawTeam?.dispatch) ?? 'sequential';
         const fallbackTeam: TeamConfig = { members: rawMembers, dispatch: fallbackDispatch };
         if (fallbackDispatch === 'roundtable') {
-          const rawParallel = (!Array.isArray(rawTeam) && rawTeam?.parallel) || {};
-          fallbackTeam.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...rawParallel };
+          const rawRoundtable = (!Array.isArray(rawTeam) && rawTeam?.roundtable) || {};
+          fallbackTeam.roundtable = { ...DEFAULT_ROUNDTABLE_SETTINGS, ...rawRoundtable };
         }
         // Carry a Sequential flow graph through the inline fallback too. This path
         // bypasses normalizeTeam, so validate here as well — an invalid graph drops
@@ -6442,7 +6442,7 @@ Example: /model gpt-4.1 write a Python script`;
           else this.logger.warn(`[Workspace] Team "${teamName}" fallback flow graph invalid — running linearly: ${problems.join('; ')}`);
         }
         const team: TeamConfig = wsTeam ?? fallbackTeam;
-        this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasParallel=${!!team.parallel} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
+        this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasRoundtable=${!!team.roundtable} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
         const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model);
         output = r.response;
         tokens = r.tokens;
