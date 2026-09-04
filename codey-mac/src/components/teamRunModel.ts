@@ -1,5 +1,6 @@
 import type { ChatMessage, ToolCallEntry } from '../types'
 import { parseTeamMessage } from './teamMessageFormat'
+import { splitWhiteboardMarkers } from './teamWhiteboardFormat'
 import type { TeamGraph, TeamGraphNode, TeamGraphEdge } from '../../../packages/core/src/team-graph'
 
 export type NodeRunStatus = 'pending' | 'running' | 'done' | 'failed' | 'askedUser'
@@ -146,4 +147,34 @@ export function nodeStatuses(graph: TeamGraph, runs: WorkerRun[], askingWorker?:
     // condition nodes: omitted -> neutral default styling
   }
   return out
+}
+
+export interface TeamFinalAnswer {
+  worker: string
+  text: string
+}
+
+const ROUNDTABLE_SUMMARY_RE = /##\s+Advisor Summary\s*\n([\s\S]*?)(?:\n##\s|$)/i
+
+/** The one thing to show once a team run is over: the last worker's output for
+ * auto / sequential / graph, or the Advisor summary for roundtable. Returns
+ * null while any member is still working or waiting on the user, so the
+ * live stage stays visible until the run truly ends. */
+export function teamFinalAnswer(messages: ChatMessage[], mode: ChatMessage['teamMode']): TeamFinalAnswer | null {
+  const workers = messages.filter(m => !!m.worker)
+  if (workers.length === 0) return null
+  if (workers.some(m => m.workerStatus === 'running' || m.workerStatus === 'askedUser')) return null
+
+  if (mode === 'roundtable') {
+    const footer = [...messages].reverse().find(m => !m.worker && /^🪑 Roundtable:/.test(m.content.trim()))
+    if (footer) {
+      const summary = ROUNDTABLE_SUMMARY_RE.exec(footer.content)?.[1]?.trim()
+      if (summary && summary !== '(empty)') return { worker: 'Advisor', text: summary }
+    }
+  }
+
+  const last = [...workers].sort((a, b) => (a.step ?? 0) - (b.step ?? 0)).pop()!
+  const text = splitWhiteboardMarkers(last.content).stripped
+  if (!text) return null
+  return { worker: last.worker!, text }
 }
