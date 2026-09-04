@@ -1350,7 +1350,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
       .replace(/[#>*_`~\[\]]/g, '')
       .replace(/\s+/g, ' ')
       .trim()
-    const firstSentence = plain.split(/(?<=[.!?。！？])\s+|\n/)[0] || plain
+    const firstSentence = plain.split(/(?<=[.!?\u3002\uFF01\uFF1F])\s+|\n/)[0] || plain
     return {
       id: msg.id,
       title: firstSentence.slice(0, 48),
