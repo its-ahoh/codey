@@ -439,7 +439,7 @@ const styles: Record<string, React.CSSProperties> = {
   body: { flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' },
   sidebarShell: { position: 'relative', height: '100%', flexShrink: 0 },
   sidebarResizeHandle: {
-    position: 'absolute', top: 0, right: -3, width: 7, height: '100%', zIndex: 5,
+    position: 'absolute', top: 0, right: -7, width: 14, height: '100%', zIndex: 5,
     cursor: 'col-resize',
   },
   content: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
