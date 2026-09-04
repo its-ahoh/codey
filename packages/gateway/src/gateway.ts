@@ -4405,13 +4405,10 @@ Example: /model gpt-4.1 write a Python script`;
       }
       const ask = parseAskUser(response.output);
       if (ask) {
+        // Carry the prior state forward (members, task, anchors...) and change
+        // only what this pause changed, so a new field cannot silently drop out.
         this.persistPendingTeam(chatId, {
-          mode: 'sequential',
-          teamName: pending.teamName,
-          task: pending.task,
-          teamTurnId: pending.teamTurnId,
-          memberIndex: pending.memberIndex,
-          carry: pending.carry,
+          ...pending,
           askingWorker: memberName,
           question: ask.question,
           options: ask.options,
@@ -4526,11 +4523,10 @@ Example: /model gpt-4.1 write a Python script`;
       ? [...seededHistory, { worker: pending.askingWorker, summary: turn.summary_of_last }]
       : seededHistory;
     if (ask) {
+      // Same as the sequential re-pause: spread the prior state, override the
+      // fields this step moved.
       this.persistPendingTeam(chatId, {
-        mode: 'auto',
-        teamName: pending.teamName,
-        task: pending.task,
-        teamTurnId: pending.teamTurnId,
+        ...pending,
         history: newHistory,
         lastWorker: turn.next,
         lastOutput: response.output,
@@ -6026,10 +6022,12 @@ Example: /model gpt-4.1 write a Python script`;
     // user message is persisted as typed; only the task the workers see has
     // the mentions reduced to bare names.
     let adHocTeam: { name: string; team: TeamConfig } | undefined;
+    let historyText: string | undefined;
     if (!isSlashTurn && !pendingTeam && chat.selection.type !== 'team') {
       const wm = this.workspaceManager.getWorkerManager();
       const mentions = parseWorkerMentions(userText, n => wm.hasWorker(n));
       if (mentions.workers.length > 0) {
+        historyText = userText;
         userText = mentions.task;
         adHocTeam = {
           name: mentions.workers.join('+'),
@@ -6283,7 +6281,7 @@ Example: /model gpt-4.1 write a Python script`;
     const userMessage: ChatMessage = {
       id: randomUUID(),
       role: 'user',
-      content: userText,
+      content: historyText ?? userText,
       timestamp: started,
       isComplete: true,
       attachments: attachments && attachments.length > 0 ? attachments : undefined,

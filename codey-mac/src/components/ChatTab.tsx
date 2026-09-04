@@ -653,7 +653,7 @@ const TeamSpatialStage: React.FC<{
     const workingCount = groups.filter(group => group.status === 'running').length
     return (
       <div style={styles.teamSpatialStage}>
-        {stageHeader(`Round table · Round ${totalRounds}`)}
+        {stageHeader(mode === 'parallel' ? `Round table · Round ${totalRounds}` : `Auto team · Step ${totalRounds}`)}
         <div style={styles.teamRoundTableSpace}>
           <div style={styles.teamRoundTableCenter}>
             <span style={styles.teamRoundTableCenterTitle}>{mode === 'parallel' ? 'Parallel room' : 'Auto team'}</span>
@@ -822,6 +822,9 @@ const TeamRunGroup: React.FC<{
   const completedCount = workerMessages.filter(m => m.workerStatus && m.workerStatus !== 'running').length
   const failedCount = workerMessages.filter(m => m.workerStatus === 'failed').length
   const activeCount = workerMessages.filter(m => m.workerStatus === 'running').length
+  // Only the parallel room runs true rounds; auto and sequential teams take
+  // one worker step at a time.
+  const turnWord = item.teamMode === 'parallel' ? 'round' : 'step'
   const modeLabel = item.teamMode === 'auto'
     ? 'Auto'
     : item.teamMode === 'parallel'
@@ -844,7 +847,7 @@ const TeamRunGroup: React.FC<{
           <span style={styles.teamModeBadge}>{modeLabel}</span>
         </div>
         <span style={styles.teamGroupProgress}>
-          {memberGroups.length} {memberGroups.length === 1 ? 'member' : 'members'} · {activeCount > 0 && isStreaming ? `${completedCount}/${workerMessages.length} ${workerMessages.length === 1 ? 'round' : 'rounds'}` : failedCount ? `${completedCount}/${workerMessages.length} ${workerMessages.length === 1 ? 'round' : 'rounds'} · ${failedCount} failed` : `${completedCount}/${workerMessages.length} ${workerMessages.length === 1 ? 'round' : 'rounds'}`}
+          {memberGroups.length} {memberGroups.length === 1 ? 'member' : 'members'} · {activeCount > 0 && isStreaming ? `${completedCount}/${workerMessages.length} ${turnWord}${workerMessages.length === 1 ? '' : 's'}` : failedCount ? `${completedCount}/${workerMessages.length} ${turnWord}${workerMessages.length === 1 ? '' : 's'} · ${failedCount} failed` : `${completedCount}/${workerMessages.length} ${turnWord}${workerMessages.length === 1 ? '' : 's'}`}
         </span>
         <div style={styles.teamGroupHeaderActions} onClick={event => event.stopPropagation()}>
           <button
