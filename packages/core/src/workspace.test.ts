@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { WorkspaceManager } from './workspace';
+import { WorkspaceManager, normalizeDispatchMode } from './workspace';
 import { WorkerManager } from './workers';
 
 function seedWorkers(workersDir: string, names: string[]) {
@@ -19,8 +19,51 @@ function seedWorkers(workersDir: string, names: string[]) {
   }
 }
 
+describe('normalizeDispatchMode', () => {
+  it('passes current names through', () => {
+    expect(normalizeDispatchMode('sequential')).toBe('sequential');
+    expect(normalizeDispatchMode('auto')).toBe('auto');
+    expect(normalizeDispatchMode('roundtable')).toBe('roundtable');
+  });
+
+  it('maps the pre-rename names onto the new ones', () => {
+    expect(normalizeDispatchMode('all')).toBe('sequential');
+    expect(normalizeDispatchMode('parallel')).toBe('roundtable');
+  });
+
+  it('rejects anything else', () => {
+    expect(normalizeDispatchMode('nope')).toBeUndefined();
+    expect(normalizeDispatchMode(undefined)).toBeUndefined();
+  });
+});
+
 describe('WorkspaceManager parallel team config', () => {
-  it('normalizes dispatch: "parallel" with default parallel settings', async () => {
+  it('reads a saved team that still says dispatch: "parallel" as roundtable', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-legacy-'));
+    const wsDir = path.join(root, 'workspaces');
+    const workersDir = path.join(root, 'workers');
+    fs.mkdirSync(path.join(wsDir, 'demo'), { recursive: true });
+    seedWorkers(workersDir, ['a', 'b']);
+    fs.writeFileSync(
+      path.join(wsDir, 'demo', 'workspace.json'),
+      JSON.stringify({ workingDir: root, teams: ['rt', 'seq'] }),
+    );
+
+    const workers = new WorkerManager(workersDir);
+    await workers.loadWorkers();
+    const ws = new WorkspaceManager(workers, wsDir, undefined, () => ({
+      rt: { members: ['a', 'b'], dispatch: 'parallel' },
+      seq: { members: ['a'], dispatch: 'all' },
+    }));
+    await ws.switchWorkspace('demo');
+
+    expect(ws.getTeam('rt')!.dispatch).toBe('roundtable');
+    expect(ws.getTeam('rt')!.parallel).toBeTruthy();
+    expect(ws.getTeam('seq')!.dispatch).toBe('sequential');
+  });
+
+
+  it('normalizes dispatch: "roundtable" with default parallel settings', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-parallel-'));
     const wsDir = path.join(root, 'workspaces');
     const workersDir = path.join(root, 'workers');
@@ -34,13 +77,13 @@ describe('WorkspaceManager parallel team config', () => {
     const workers = new WorkerManager(workersDir);
     await workers.loadWorkers();
     const ws = new WorkspaceManager(workers, wsDir, undefined, () => ({
-      rt: { members: ['a', 'b'], dispatch: 'parallel' },
+      rt: { members: ['a', 'b'], dispatch: 'roundtable' },
     }));
     await ws.switchWorkspace('demo');
 
     const team = ws.getTeam('rt');
     expect(team).toBeTruthy();
-    expect(team!.dispatch).toBe('parallel');
+    expect(team!.dispatch).toBe('roundtable');
     expect(team!.parallel).toEqual({
       maxDurationMs: 600_000,
       idleTimeoutMs: 60_000,
@@ -64,7 +107,7 @@ describe('WorkspaceManager parallel team config', () => {
     const ws = new WorkspaceManager(workers, wsDir, undefined, () => ({
       rt: {
         members: ['a'],
-        dispatch: 'parallel',
+        dispatch: 'roundtable',
         parallel: { maxDurationMs: 1000, idleTimeoutMs: 200, advisorPollMs: 100 },
       },
     }));
@@ -77,7 +120,7 @@ describe('WorkspaceManager parallel team config', () => {
     });
   });
 
-  it('falls back to "all" for unknown dispatch values', async () => {
+  it('falls back to "sequential" for unknown dispatch values', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-parallel-'));
     const wsDir = path.join(root, 'workspaces');
     const workersDir = path.join(root, 'workers');
@@ -91,11 +134,11 @@ describe('WorkspaceManager parallel team config', () => {
     const workers = new WorkerManager(workersDir);
     await workers.loadWorkers();
     const ws = new WorkspaceManager(workers, wsDir, undefined, () => ({
-      rt: { members: ['a'], dispatch: 'nope' as unknown as 'all' },
+      rt: { members: ['a'], dispatch: 'nope' as unknown as 'sequential' },
     }));
     await ws.switchWorkspace('demo');
 
-    expect(ws.getTeam('rt')!.dispatch).toBe('all');
+    expect(ws.getTeam('rt')!.dispatch).toBe('sequential');
     expect(ws.getTeam('rt')!.parallel).toBeUndefined();
   });
 });
@@ -276,16 +319,16 @@ describe('WorkspaceManager SkillStore', () => {
 
 describe('normalizeTeam graph', () => {
   it('keeps a valid graph on a sequential team', () => {
-    const t = makeWM().norm('t', { members: ['coder'], dispatch: 'all', graph: validGraph });
+    const t = makeWM().norm('t', { members: ['coder'], dispatch: 'sequential', graph: validGraph });
     expect(t.graph).toBeDefined();
     expect(t.graph.entry).toBe('start');
   });
 
   it('drops an invalid graph and stays linear sequential', () => {
     const bad = { ...validGraph, entry: 'ghost' };
-    const t = makeWM().norm('t', { members: ['coder'], dispatch: 'all', graph: bad });
+    const t = makeWM().norm('t', { members: ['coder'], dispatch: 'sequential', graph: bad });
     expect(t.graph).toBeUndefined();
-    expect(t.dispatch).toBe('all');
+    expect(t.dispatch).toBe('sequential');
   });
 
   it('ignores a graph on non-sequential dispatch', () => {

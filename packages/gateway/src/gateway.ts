@@ -22,7 +22,7 @@ import { pruneCodeyTmp } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
-import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS } from '@codey/core';
+import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_PARALLEL_SETTINGS, normalizeDispatchMode } from '@codey/core';
 import { WorkerManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
 import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, ensureWorktreeContainer, isGitWorkspace, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
@@ -4254,7 +4254,7 @@ Example: /model gpt-4.1 write a Python script`;
     // Sequential/graph teams may answer a simple informational question with
     // one worker. The routing gate fails closed to the full workflow, and
     // `--all` always bypasses it.
-    if (dispatch === 'all' && !opts.forceAll) {
+    if (dispatch === 'sequential' && !opts.forceAll) {
       const fastPath = await this.decideSequentialFastPath(members, task, this.workingDir);
       if (fastPath.route === 'single_worker') {
         await this.sendResponse({
@@ -4268,7 +4268,7 @@ Example: /model gpt-4.1 write a Python script`;
       }
     }
 
-    // dispatch === 'all' OR forceAll: full workflow path
+    // dispatch === 'sequential' OR forceAll: full workflow path
     if (!opts.forceAll && team.graph) {
       await this.runSequentialGraphForChat(message, teamName, team.graph, task, runOneWorker, turnTeamTurnId);
       return;
@@ -4334,7 +4334,7 @@ Example: /model gpt-4.1 write a Python script`;
     // list travels with the pending state instead.
     const adHocMembers = 'members' in pending && pending.members?.length ? pending.members : undefined;
     const team: TeamConfig | undefined = this.workspaceManager.getTeam(pending.teamName)
-      ?? (adHocMembers ? { members: adHocMembers, dispatch: pending.mode === 'auto' ? 'auto' : 'all' } : undefined);
+      ?? (adHocMembers ? { members: adHocMembers, dispatch: pending.mode === 'auto' ? 'auto' : 'sequential' } : undefined);
     if (!team) {
       recordResumeFailure('Team', `Team "${pending.teamName}" no longer exists`);
       await emitter.notify(`Team \`${pending.teamName}\` no longer exists; the paused run was dropped.`);
@@ -4967,7 +4967,7 @@ Example: /model gpt-4.1 write a Python script`;
         ? 'auto'
         : (!opts.forceAll && team.graph)
           ? 'graph'
-          : team.dispatch === 'parallel'
+          : team.dispatch === 'roundtable'
             ? 'parallel'
             : 'sequential';
     const workerMsgs = new WorkerMessageEmitter(
@@ -5048,7 +5048,7 @@ Example: /model gpt-4.1 write a Python script`;
     // A conservative Advisor gate may route a genuinely simple informational
     // question to one suitable worker; failures and uncertainty fall through
     // to the complete flow. `--all` remains the explicit bypass.
-    if (team.dispatch === 'all' && !opts.forceAll) {
+    if (team.dispatch === 'sequential' && !opts.forceAll) {
       const fastPath = await this.decideSequentialFastPath(team.members, opts.routingTask ?? prompt, workingDir, signal);
       if (fastPath.route === 'single_worker' && !signal?.aborted) {
         const emitter = new ChatEmitter(sink, chatId, workerMsgs);
@@ -5082,7 +5082,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     this.logger.info(`[parallel-debug] runTeamForChat: dispatch=${team.dispatch} parallel=${JSON.stringify(team.parallel)} members=${team.members.join(',')}`);
-    if (team.dispatch === 'parallel') {
+    if (team.dispatch === 'roundtable') {
       this.logger.info(`[parallel-debug] entering parallel branch`);
       const workspacesRoot = this.workspaceManager.getWorkspacesRoot();
       // Resume detection: if this chat has a completed/terminated discussion,
@@ -5320,7 +5320,7 @@ Example: /model gpt-4.1 write a Python script`;
       }
     }
 
-    // dispatch === 'all', forceAll, or auto-routing fallback
+    // dispatch === 'sequential', forceAll, or auto-routing fallback
     if (!opts.forceAll && team.graph) {
       const g = await this.runSequentialGraphForChatSink(teamName, team.graph, prompt, sink, chatId, runOneWorker, chatAgent, chatModel, signal, workerMsgs, teamTurnId);
       return { ...g, teamTurnId };
@@ -6031,7 +6031,7 @@ Example: /model gpt-4.1 write a Python script`;
         userText = mentions.task;
         adHocTeam = {
           name: mentions.workers.join('+'),
-          team: { members: mentions.workers, dispatch: mentions.workers.length > 1 ? 'auto' : 'all' },
+          team: { members: mentions.workers, dispatch: mentions.workers.length > 1 ? 'auto' : 'sequential' },
         };
       }
     }
@@ -6427,16 +6427,16 @@ Example: /model gpt-4.1 write a Python script`;
         // Prefer the active workspace's normalized team (which carries dispatch mode);
         // fall back to building a TeamConfig inline from the chat's raw config.
         const wsTeam = this.workspaceManager.getTeam(teamName);
-        const fallbackDispatch = (Array.isArray(rawTeam) ? 'all' : (rawTeam?.dispatch ?? 'all')) as TeamConfig['dispatch'];
+        const fallbackDispatch: TeamConfig['dispatch'] = normalizeDispatchMode(Array.isArray(rawTeam) ? undefined : rawTeam?.dispatch) ?? 'sequential';
         const fallbackTeam: TeamConfig = { members: rawMembers, dispatch: fallbackDispatch };
-        if (fallbackDispatch === 'parallel') {
+        if (fallbackDispatch === 'roundtable') {
           const rawParallel = (!Array.isArray(rawTeam) && rawTeam?.parallel) || {};
           fallbackTeam.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...rawParallel };
         }
         // Carry a Sequential flow graph through the inline fallback too. This path
         // bypasses normalizeTeam, so validate here as well — an invalid graph drops
         // to linear rather than reaching the executor.
-        if (fallbackDispatch === 'all' && !Array.isArray(rawTeam) && rawTeam?.graph) {
+        if (fallbackDispatch === 'sequential' && !Array.isArray(rawTeam) && rawTeam?.graph) {
           const problems = validateGraph(rawTeam.graph, rawMembers);
           if (problems.length === 0) fallbackTeam.graph = rawTeam.graph;
           else this.logger.warn(`[Workspace] Team "${teamName}" fallback flow graph invalid — running linearly: ${problems.join('; ')}`);

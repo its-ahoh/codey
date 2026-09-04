@@ -16,6 +16,24 @@ function withTempConfig(initial: any, fn: (cm: ConfigManager, p: string) => void
 }
 
 describe('config normalize', () => {
+  it('rewrites legacy team dispatch names on load', () => {
+    withTempConfig({
+      teams: {
+        seq: { members: ['a'], dispatch: 'all' },
+        rt: { members: ['a', 'b'], dispatch: 'parallel' },
+        plain: ['a'],
+        bad: { members: ['a'], dispatch: 'nope' },
+      },
+    }, cm => {
+      const teams = cm.getTeams() as Record<string, any>;
+      expect(teams.seq.dispatch).toBe('sequential');
+      expect(teams.rt.dispatch).toBe('roundtable');
+      expect(teams.plain).toEqual(['a']);
+      // Unknown values are left for normalizeTeam to warn about.
+      expect(teams.bad.dispatch).toBe('nope');
+    });
+  });
+
   it('strips legacy apiKey/baseUrl from existing ModelEntry rows', () => {
     withTempConfig({
       models: [{ model: 'm1', apiType: 'anthropic', apiKey: 'sk-old', baseUrl: 'https://old' }],

@@ -13,7 +13,25 @@ const defaultLogger: CoreLogger = {
   error: (msg: string) => console.error(msg),
 };
 
-export type TeamDispatchMode = 'all' | 'auto' | 'parallel';
+export type TeamDispatchMode = 'sequential' | 'auto' | 'roundtable';
+
+/** The names the dispatch values went by before the rename; still accepted on read. */
+export type LegacyTeamDispatchMode = 'all' | 'parallel';
+
+const LEGACY_DISPATCH_MODES: Record<LegacyTeamDispatchMode, TeamDispatchMode> = {
+  all: 'sequential',
+  parallel: 'roundtable',
+};
+
+/**
+ * Resolve a dispatch value from any config file, current or legacy, to its
+ * runtime name. Returns undefined for anything unrecognised.
+ */
+export function normalizeDispatchMode(raw: unknown): TeamDispatchMode | undefined {
+  if (raw === 'sequential' || raw === 'auto' || raw === 'roundtable') return raw;
+  if (raw === 'all' || raw === 'parallel') return LEGACY_DISPATCH_MODES[raw];
+  return undefined;
+}
 
 export interface ParallelSettings {
   maxDurationMs: number;
@@ -32,7 +50,7 @@ export type TeamConfigRaw =
   | string[]
   | {
       members: string[];
-      dispatch?: TeamDispatchMode;
+      dispatch?: TeamDispatchMode | LegacyTeamDispatchMode;
       parallel?: Partial<ParallelSettings>;
       graph?: TeamGraph;
     };
@@ -41,9 +59,9 @@ export type TeamConfigRaw =
 export interface TeamConfig {
   members: string[];
   dispatch: TeamDispatchMode;
-  /** Only populated when dispatch === 'parallel'. */
+  /** Only populated when dispatch === 'roundtable'. */
   parallel?: ParallelSettings;
-  /** Only honored when dispatch === 'all' (Sequential). */
+  /** Only honored when dispatch === 'sequential'. */
   graph?: TeamGraph;
 }
 
@@ -213,7 +231,7 @@ export class WorkspaceManager {
 
   private normalizeTeam(name: string, raw: TeamConfigRaw): TeamConfig | null {
     let members: string[];
-    let dispatch: TeamDispatchMode = 'all';
+    let dispatch: TeamDispatchMode = 'sequential';
     let parallel: Partial<ParallelSettings> | undefined;
     let graph: TeamGraph | undefined;
 
@@ -221,10 +239,11 @@ export class WorkspaceManager {
       members = raw;
     } else if (raw && typeof raw === 'object' && Array.isArray(raw.members)) {
       members = raw.members;
-      if (raw.dispatch === 'auto' || raw.dispatch === 'all' || raw.dispatch === 'parallel') {
-        dispatch = raw.dispatch;
+      const resolved = normalizeDispatchMode(raw.dispatch);
+      if (resolved) {
+        dispatch = resolved;
       } else if (raw.dispatch !== undefined) {
-        this.logger.warn(`[Workspace] Team "${name}" has invalid dispatch="${raw.dispatch}" — defaulting to "all"`);
+        this.logger.warn(`[Workspace] Team "${name}" has invalid dispatch="${raw.dispatch}" — defaulting to "sequential"`);
       }
       parallel = raw.parallel;
       graph = raw.graph;
@@ -240,7 +259,7 @@ export class WorkspaceManager {
     }
 
     const result: TeamConfig = { members, dispatch };
-    if (dispatch === 'parallel') {
+    if (dispatch === 'roundtable') {
       const raw = (parallel ?? {}) as Partial<ParallelSettings> & { managerPollMs?: number };
       // Back-compat: old `managerPollMs` key maps onto `advisorPollMs`.
       if (raw.managerPollMs !== undefined && raw.advisorPollMs === undefined) {
@@ -249,7 +268,7 @@ export class WorkspaceManager {
       delete raw.managerPollMs;
       result.parallel = { ...DEFAULT_PARALLEL_SETTINGS, ...raw };
     }
-    if (dispatch === 'all' && graph) {
+    if (dispatch === 'sequential' && graph) {
       const problems = validateGraph(graph, members);
       if (problems.length === 0) {
         result.graph = graph;
