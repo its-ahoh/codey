@@ -32,7 +32,9 @@ const rowFor = (container: HTMLDivElement, id: string): HTMLElement | undefined 
   Array.from(container.querySelectorAll<HTMLElement>('[data-chat-navigation-id]'))
     .find(row => row.dataset.chatNavigationId === id)
 
-const railHeightFor = (count: number) => Math.min(380, Math.max(120, (count - 1) * TICK_PITCH))
+/** Ticks keep a fixed pitch, so a short chat gets a short rail. Only very long
+ * transcripts hit the cap and squeeze closer together. */
+const railHeightFor = (count: number) => Math.min(380, (count - 1) * TICK_PITCH)
 
 /** Tick width for a marker `distance` px away from the pointer: the nearest
  * tick grows to TICK_MAX and neighbours fall off on a bell curve. */
