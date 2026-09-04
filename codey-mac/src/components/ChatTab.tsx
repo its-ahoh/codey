@@ -61,6 +61,7 @@ import { groupTeamMessagesByMember, type TeamMemberMessageGroup } from './teamRu
 import { ToolCallList } from './ToolCallList'
 import { useVoiceTurn } from '../hooks/useVoiceTurn'
 import { VoiceMeter } from './VoiceMeter'
+import { ChatMessageNavigator, type ChatNavigationItem } from './ChatMessageNavigator'
 
 const EDITOR_LOGOS: Partial<Record<string, string>> = {
   vscode: vscodeLogo,
@@ -1331,6 +1332,32 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     })()
   }, [isGatewayRunning])
   const lastMsg = chat?.messages?.[chat.messages.length - 1]
+  const renderItems = useMemo(() => groupMessages(chat?.messages ?? []), [chat?.messages])
+  const navigationItems = useMemo<ChatNavigationItem[]>(() => renderItems.map(item => {
+    if (item.kind === 'team') {
+      const source = [...item.messages].reverse().find(message => message.content.trim())
+      const preview = (source?.content || `${item.messages.length} team updates`).replace(/\s+/g, ' ').trim()
+      return {
+        id: `team:${item.teamTurnId}`,
+        title: item.teamName || 'Team run',
+        preview: preview.slice(0, 180),
+        role: 'team',
+      }
+    }
+    const msg = item.message
+    const plain = (msg.content || msg.userQuestion?.question || (msg.role === 'assistant' ? 'Agent update' : 'Message'))
+      .replace(/```[\s\S]*?```/g, ' Code block ')
+      .replace(/[#>*_`~\[\]]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const firstSentence = plain.split(/(?<=[.!?。！？])\s+|\n/)[0] || plain
+    return {
+      id: msg.id,
+      title: firstSentence.slice(0, 48),
+      preview: plain.slice(0, 180),
+      role: msg.role === 'user' ? 'user' : 'assistant',
+    }
+  }), [renderItems])
   // Cheap stand-in for "the rendered conversation changed": switching chats,
   // a new message, or a streaming reply growing. Find-in-chat re-scans on it,
   // because its highlight ranges point at text nodes React may have replaced.
@@ -2490,24 +2517,26 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         </button>
       </div>
 
-      <div
-        ref={messagesRef}
-        style={{ ...styles.messages, position: 'relative' }}
-        onScroll={updateLatestMessageVisibility}
-      >
-        <ChatFindBar
-          containerRef={messagesRef}
-          revision={findRevision}
-          onNavigate={() => setFollowLatest(false)}
-        />
-        {groupMessages(chat.messages).map((item, idx) => {
+      <div style={styles.transcriptShell}>
+        <div
+          ref={messagesRef}
+          style={{ ...styles.messages, position: 'relative' }}
+          onScroll={updateLatestMessageVisibility}
+        >
+          <ChatFindBar
+            containerRef={messagesRef}
+            revision={findRevision}
+            onNavigate={() => setFollowLatest(false)}
+          />
+          {renderItems.map((item, idx) => {
           if (item.kind === 'team') {
             return (
-              <TeamRunGroup
-                key={item.teamTurnId}
-                item={item}
-                isStreaming={!!flight && item.messages[item.messages.length - 1]?.id === lastMsg?.id}
-              />
+              <div key={item.teamTurnId} data-chat-navigation-id={`team:${item.teamTurnId}`}>
+                <TeamRunGroup
+                  item={item}
+                  isStreaming={!!flight && item.messages[item.messages.length - 1]?.id === lastMsg?.id}
+                />
+              </div>
             )
           }
           const msg = item.message
@@ -2515,7 +2544,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
           const isSelected = !isUser && msg.id === selectedTurnId && overviewOpen
           const isEditing = isUser && editingMsgId === msg.id
           return (
-            <div key={msg.id}
+            <div key={msg.id} data-chat-navigation-id={msg.id}
               onMouseEnter={isUser ? () => setHoveredMsgId(msg.id) : undefined}
               onMouseLeave={isUser ? () => setHoveredMsgId(id => (id === msg.id ? null : id)) : undefined}
               onDoubleClick={isUser ? undefined : () => {
@@ -2841,12 +2870,19 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
               )}
             </div>
           )
-        })}
-        {statusLabel && (
-          <div style={styles.typingRow}>
-            <ShimmerStatus label={statusLabel} />
-          </div>
-        )}
+          })}
+          {statusLabel && (
+            <div style={styles.typingRow}>
+              <ShimmerStatus label={statusLabel} />
+            </div>
+          )}
+        </div>
+        <ChatMessageNavigator
+          containerRef={messagesRef}
+          items={navigationItems}
+          revision={findRevision}
+          onNavigate={() => setFollowLatest(false)}
+        />
       </div>
 
       {orphaned && (
@@ -3437,7 +3473,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   editorOpeningLabel: { color: C.fg2, fontSize: 11, whiteSpace: 'nowrap' },
   editorMenuEmpty: { color: C.fg3, fontSize: 11, lineHeight: 1.4, padding: '8px 9px', maxWidth: 220 },
-  messages: { flex: 1, overflowY: 'auto', padding: '22px max(22px, 5%)', background: C.bg },
+  transcriptShell: { flex: 1, minHeight: 0, position: 'relative', background: C.bg },
+  messages: { height: '100%', overflowY: 'auto', padding: '22px max(22px, 5%)', background: C.bg },
   // The status row is a direct child of `messages`, not of a message row, so it
   // carries the full inset rather than the remainder.
   typingRow: {

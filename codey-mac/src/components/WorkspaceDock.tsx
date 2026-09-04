@@ -119,7 +119,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.surface, borderLeft: `1px solid ${C.border2}`,
   },
   rootOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, zIndex: 35, boxShadow: '-16px 0 36px rgba(0,0,0,0.28)' },
-  resizer: { position: 'absolute', left: -3, top: 0, bottom: 0, width: 7, cursor: 'col-resize', zIndex: 20 },
+  resizer: { position: 'absolute', left: -7, top: 0, bottom: 0, width: 14, cursor: 'col-resize', zIndex: 20 },
   toolbar: {
     minHeight: 43, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4,
     padding: '6px 8px', background: C.sidebarBg, borderBottom: `1px solid ${C.sidebarBorder}`,

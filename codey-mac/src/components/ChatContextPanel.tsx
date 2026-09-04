@@ -1334,7 +1334,7 @@ const styles: Record<string, React.CSSProperties> = {
   rootEmbedded: { borderLeft: 'none' },
   resizer: {
     position: 'absolute',
-    left: -3, top: 0, bottom: 0, width: 6,
+    left: -7, top: 0, bottom: 0, width: 14,
     cursor: 'col-resize',
     zIndex: 5,
   },
