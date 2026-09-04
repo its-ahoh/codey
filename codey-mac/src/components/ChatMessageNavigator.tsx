@@ -2,13 +2,14 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom'
 import { C } from '../theme'
 
-export const CHAT_NAV_MIN_ITEMS = 8
+/** Assistant replies (team runs count once) before the rail appears. */
+export const CHAT_NAV_MIN_ITEMS = 5
 
 export interface ChatNavigationItem {
   id: string
   title: string
   preview: string
-  role: 'user' | 'assistant' | 'team'
+  role: 'assistant' | 'team'
 }
 
 interface Props {
@@ -19,6 +20,8 @@ interface Props {
 }
 
 const RAIL_WIDTH = 22
+/** Vertical distance between neighbouring ticks. */
+const TICK_PITCH = 9
 const RAIL_LEFT = 5
 const TICK_BASE = 7
 const TICK_MAX = 20
@@ -29,7 +32,7 @@ const rowFor = (container: HTMLDivElement, id: string): HTMLElement | undefined 
   Array.from(container.querySelectorAll<HTMLElement>('[data-chat-navigation-id]'))
     .find(row => row.dataset.chatNavigationId === id)
 
-const railHeightFor = (count: number) => Math.min(380, Math.max(120, (count - 1) * 11))
+const railHeightFor = (count: number) => Math.min(380, Math.max(120, (count - 1) * TICK_PITCH))
 
 /** Tick width for a marker `distance` px away from the pointer: the nearest
  * tick grows to TICK_MAX and neighbours fall off on a bell curve. */
@@ -155,7 +158,7 @@ export const ChatMessageNavigator: React.FC<Props> = ({ containerRef, items, rev
       </nav>
       {hovered && createPortal(
         <div style={{ ...styles.previewCard, ...previewPosition() }} role="tooltip">
-          <div style={styles.previewMeta}>{hovered.role === 'user' ? 'You' : hovered.role === 'team' ? 'Team' : 'Codey'}</div>
+          <div style={styles.previewMeta}>{hovered.role === 'team' ? 'Team' : 'Codey'}</div>
           <div style={styles.previewTitle}>{hovered.title}</div>
           {hovered.preview !== hovered.title && (
             <div style={styles.previewBody}>{hovered.preview}</div>
@@ -174,7 +177,7 @@ const styles: Record<string, React.CSSProperties> = {
     transform: 'translateY(-50%)', cursor: 'pointer',
   },
   markerButton: {
-    position: 'absolute', left: 0, width: RAIL_WIDTH, height: 10, padding: 0,
+    position: 'absolute', left: 0, width: RAIL_WIDTH, height: TICK_PITCH, padding: 0,
     border: 'none', background: 'transparent', cursor: 'pointer',
     display: 'flex', justifyContent: 'flex-start', alignItems: 'center',
     transform: 'translateY(-50%)',
