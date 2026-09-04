@@ -347,7 +347,7 @@ export class WorkerManager {
       ? inputs.peerOpinions.map(p => `- ${p.name}'s opinion (read-only): ${p.path}`).join('\n')
       : '(no peers)';
     return [
-      `# Worker: ${worker.name} (Parallel/Roundtable Mode)`,
+      `# Worker: ${worker.name} (Roundtable Mode)`,
       `## Role`,
       worker.personality.role,
       `## Personality`,

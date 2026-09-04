@@ -17,7 +17,7 @@ type TeamsState = Record<string, TeamState>
 
 const DISPATCH: { id: DispatchMode; label: string; desc: string; detail: string; icon: 'activity' | 'sparkle' | 'users' }[] = [
   { id: 'all', label: 'Sequential', desc: 'Best for ordered handoffs.', detail: 'Workers run in a deliberate order. Each worker receives the work produced before it, and an optional workflow can add branches or loops.', icon: 'activity' },
-  { id: 'auto', label: 'Adaptive', desc: 'Best when the right specialists vary.', detail: 'The Advisor chooses the relevant workers for each task and can send work back for another pass when a revision is needed.', icon: 'sparkle' },
+  { id: 'auto', label: 'Auto', desc: 'Best when the right specialists vary.', detail: 'The Advisor chooses the relevant workers for each task and can send work back for another pass when a revision is needed.', icon: 'sparkle' },
   { id: 'parallel', label: 'Roundtable', desc: 'Best for multiple perspectives.', detail: 'Workers contribute concurrently while the Advisor moderates the discussion, tracks shared progress, and decides when the team is done.', icon: 'users' },
 ]
 

@@ -653,10 +653,10 @@ const TeamSpatialStage: React.FC<{
     const workingCount = groups.filter(group => group.status === 'running').length
     return (
       <div style={styles.teamSpatialStage}>
-        {stageHeader(mode === 'parallel' ? `Round table · Round ${totalRounds}` : `Auto team · Step ${totalRounds}`)}
+        {stageHeader(mode === 'parallel' ? `Roundtable · Round ${totalRounds}` : `Auto team · Step ${totalRounds}`)}
         <div style={styles.teamRoundTableSpace}>
           <div style={styles.teamRoundTableCenter}>
-            <span style={styles.teamRoundTableCenterTitle}>{mode === 'parallel' ? 'Parallel room' : 'Auto team'}</span>
+            <span style={styles.teamRoundTableCenterTitle}>{mode === 'parallel' ? 'Roundtable' : 'Auto team'}</span>
             <span style={styles.teamRoundTableCenterSub}>{workingCount > 0 ? `${workingCount} working` : `${groups.length} members`}</span>
           </div>
           {groups.map((group, index) => {
@@ -828,7 +828,7 @@ const TeamRunGroup: React.FC<{
   const modeLabel = item.teamMode === 'auto'
     ? 'Auto'
     : item.teamMode === 'parallel'
-      ? 'Parallel'
+      ? 'Roundtable'
       : 'Sequential'
   const toggleRound = (message: ChatMessage) => setRoundExpansion(current => {
     const next = new Map(current)
