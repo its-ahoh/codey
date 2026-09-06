@@ -586,6 +586,7 @@ contextBridge.exposeInMainWorld('codey', {
   },
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
+  linkPreview: (url: string) => ipcRenderer.invoke('link-preview', url),
   revealInFolder: (path: string) => ipcRenderer.invoke('shell:showItemInFolder', path),
   readTextFile: (path: string) => ipcRenderer.invoke('file:readText', path),
   readImageFile: (path: string) => ipcRenderer.invoke('file:readImage', path),

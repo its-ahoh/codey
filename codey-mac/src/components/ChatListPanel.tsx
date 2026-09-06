@@ -12,11 +12,16 @@ import { UIIcon } from './UIIcons'
 import { moveWorkspace, reconcileWorkspaceOrder } from './workspaceOrder'
 import { ChatHoverCard } from './ChatHoverCard'
 import { buildChatHoverCard } from './chatHoverCardView'
+import { visibleChatCount } from './chatListVisible'
 import { useVoiceTurn } from '../hooks/useVoiceTurn'
 
 /** How long the pointer has to rest on a row before its info card appears —
  *  long enough that sweeping the list to reach the footer stays quiet. */
 const HOVER_CARD_DELAY_MS = 550
+
+/** How many chats a workspace shows before it folds the rest behind
+ *  "Show more" — enough that a busy workspace never buries its neighbours. */
+const CHATS_PER_WORKSPACE = 8
 
 interface Props {
   onOpenSettings: (tab?: string) => void
@@ -68,6 +73,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   const [chatMenu, setChatMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [chatMenuView, setChatMenuView] = useState<'main' | 'connect'>('main')
   const [hoveredChatId, setHoveredChatId] = useState<string | null>(null)
+  const [expandedChatGroups, setExpandedChatGroups] = useState<Record<string, boolean>>({})
   const [hoverCard, setHoverCard] = useState<{
     chatId: string
     top: number
@@ -394,6 +400,8 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
         )}
         {groupNames.map(ws => {
           const collapsed = !!state.collapsedWorkspaces[ws]
+          const shown = visibleChatCount(groups[ws], CHATS_PER_WORKSPACE, !!expandedChatGroups[ws], activeChatId)
+          const hidden = groups[ws].length - shown
           const unreadCount = groups[ws].reduce(
             (count, chat) => count + (state.unreadChats[chat.id] ? 1 : 0),
             0,
@@ -494,7 +502,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                   title={`New chat in "${ws}"`}
                 ><UIIcon name="plus" size={15} /></button>
               </div>
-              {!collapsed && groups[ws].map(chat => {
+              {!collapsed && groups[ws].slice(0, shown).map(chat => {
                 const active = chat.id === activeChatId
                 const flight = state.inFlight[chat.id]
                 const unread = !!state.unreadChats[chat.id]
@@ -609,6 +617,14 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                   </div>
                 )
               })}
+              {!collapsed && (hidden > 0 || expandedChatGroups[ws]) && (
+                <button
+                  style={styles.showMoreBtn}
+                  onClick={() => setExpandedChatGroups(prev => ({ ...prev, [ws]: !prev[ws] }))}
+                >
+                  {hidden > 0 ? `Show ${hidden} more` : 'Show less'}
+                </button>
+              )}
             </div>
           )
         })}
@@ -826,6 +842,12 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', gap: 6,
     padding: '7px 9px', borderRadius: 8, cursor: 'pointer',
     fontSize: 12, color: C.fg2, margin: '2px 2px 2px 20px', border: '1px solid transparent',
+  },
+  showMoreBtn: {
+    display: 'block', width: 'calc(100% - 22px)', textAlign: 'left',
+    padding: '5px 9px', margin: '2px 2px 4px 20px', borderRadius: 8,
+    background: 'transparent', border: '1px solid transparent',
+    color: C.fg3, fontSize: 11, fontWeight: 600, cursor: 'pointer',
   },
   activitySlot: { width: 8, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   titleGroup: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 5 },

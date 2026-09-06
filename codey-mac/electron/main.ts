@@ -23,6 +23,7 @@ import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
 import { scanAgentMcpServers, type AgentMcpServer, type McpAgentKey } from './agent-mcp-scan'
 import { deriveDeliveryState, shouldRediscoverPr } from './delivery-status'
 import { locateRefPath } from './file-ref'
+import { fetchLinkPreview, type LinkPreview } from './link-preview'
 import type { ScannedSkill } from './skills'
 import { AGENT_MEMORY, scanProjectMemory, scanUserMemory } from './memory'
 import { legacySharedFilePath, renderSharedBody, sharedMemoryTargets, syncSharedMemory } from './shared-memory'
@@ -5352,6 +5353,11 @@ ipcMain.handle('open-external', (_event, url: string) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
     shell.openExternal(url)
   }
+})
+
+ipcMain.handle('link-preview', async (_event, url: string): Promise<LinkPreview | null> => {
+  if (typeof url !== 'string' || !url) return null
+  return await fetchLinkPreview(url)
 })
 
 ipcMain.handle('shell:openPath', async (_event, p: string) => {
