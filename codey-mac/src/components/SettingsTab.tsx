@@ -4,6 +4,9 @@ import { C } from '../theme'
 import { fieldStyle, inputStyle, pageStyle, selectStyle, pillButton, Section, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { AGENT_API_TYPE, AGENT_NAMES, ApiType, agentsPinnedTo, missingAllEndpoints, modelFitsApiType } from './modelApiType'
+import { AvatarPicker } from './AvatarPicker'
+import { useBuiltinAvatars } from './useBuiltinAvatars'
+import { builtinAvatar, type BuiltinMember, type MemberAvatar } from '../../../packages/core/src/member-avatars'
 
 interface SettingsTabProps {
   isGatewayRunning: boolean
@@ -310,6 +313,11 @@ const FallbackList: React.FC<{
 export type { InstallStatus } from './installedAgents'
 
 export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) => {
+  const builtinAvatars = useBuiltinAvatars()
+  const setMemberAvatar = async (member: BuiltinMember, next: MemberAvatar) => {
+    const result = await window.codey.builtinAvatars.set(member, next)
+    if (result.ok) window.dispatchEvent(new Event('codey:workers-changed'))
+  }
   const [models, setModels] = useState<ModelEntry[]>([])
   const [fallback, setFallback] = useState<FallbackCfg>({ enabled: true, order: [] })
   const [advisor, setAdvisor] = useState<{ agent: string; model: string }>({ agent: '', model: '' })
@@ -446,6 +454,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
           ))}
         </select>
       </div>
+      <div style={{ marginTop: 8 }}>
+        <AvatarPicker value={builtinAvatar('advisor', builtinAvatars)} onChange={next => setMemberAvatar('advisor', next)} />
+      </div>
 
       <Section title="Aide" description="Background model for summaries, titles, and other lightweight housekeeping."/>
       <div style={{
@@ -483,6 +494,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
             <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
           ))}
         </select>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <AvatarPicker value={builtinAvatar('aide', builtinAvatars)} onChange={next => setMemberAvatar('aide', next)} />
       </div>
 
       <Section title="Models" description="Models available to agents and routing settings." right={

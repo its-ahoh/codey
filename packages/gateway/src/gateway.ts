@@ -6389,6 +6389,10 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
       const messages = this.chatManager.get(chatId)!.messages;
+      // A lone "@worker" mention speaks for itself; the Aide only closes a
+      // real team run (a named team, or an ad-hoc team with several members).
+      const memberCount = new Set(messages.filter(m => m.teamTurnId === activeTeamId && m.worker && !m.builtinMember).map(m => m.worker)).size;
+      if (chat.selection.type !== 'team' && memberCount < 2) return null;
       const message = await publishTeamFinal({
         teamTurnId: activeTeamId, teamName: activeTeamName, messages, context, task: pendingTeam?.task ?? userText,
         reason: reason || teamTermination, stopped, signal: abortController.signal,
