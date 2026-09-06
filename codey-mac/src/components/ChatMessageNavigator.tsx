@@ -160,7 +160,6 @@ export const ChatMessageNavigator: React.FC<Props> = ({ containerRef, items, rev
       </nav>
       {hovered && createPortal(
         <div style={{ ...styles.previewCard, ...previewPosition() }} role="tooltip">
-          <div style={styles.previewMeta}>{hovered.role === 'team' ? 'Team' : 'Codey'}</div>
           <div style={styles.previewTitle}>{hovered.title}</div>
           {hovered.preview !== hovered.title && (
             <div style={styles.previewBody}>{hovered.preview}</div>
@@ -191,7 +190,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg, background: C.surface2, border: `1px solid ${C.border2}`,
     boxShadow: '0 14px 36px rgba(0,0,0,0.34)',
   },
-  previewMeta: { color: C.fg3, fontSize: 10, fontWeight: 650, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 },
   previewTitle: { color: C.fg, fontSize: 14, fontWeight: 700, lineHeight: 1.35 },
   previewBody: {
     color: C.fg2, fontSize: 12, lineHeight: 1.55, marginTop: 7,
