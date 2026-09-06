@@ -1,8 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
 import { apiService, WorkerDto } from '../services/api'
-import { AvatarPicker } from './AvatarPicker'
-import { useBuiltinAvatars } from './useBuiltinAvatars'
-import { builtinAvatar, type BuiltinMember, type MemberAvatar } from '../../../packages/core/src/member-avatars'
 import { WorkerAvatar } from './WorkerAvatar'
 import { avatarShapes, avatarColors, resolveWorkerAvatar } from './workerAvatarModel'
 import { C } from '../theme'
@@ -11,10 +8,9 @@ import { AGENT_API_TYPE, ApiType, modelFitsApiType } from './modelApiType'
 
 interface ModelEntry { apiType: ApiType; model: string }
 
-type Mode = { kind: 'builtin'; member: BuiltinMember } | { kind: 'idle' } | { kind: 'select'; name: string } | { kind: 'create' }
+type Mode = { kind: 'idle' } | { kind: 'select'; name: string } | { kind: 'create' }
 
 export default function WorkersTab() {
-  const builtinAvatars = useBuiltinAvatars()
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   const [mode, setMode] = useState<Mode>({ kind: 'idle' })
   const [loading, setLoading] = useState(false)
@@ -31,11 +27,6 @@ export default function WorkersTab() {
     <div style={{ display: 'flex', height: '100%', background: C.bg, color: C.fg }}>
       <div style={{ width: 240, borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
         <div style={{ overflowY: 'auto', flex: 1 }}>
-          {(['aide', 'advisor'] as const).map(member => <button key={member} onClick={() => setMode({ kind: 'builtin', member })}
-            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: 12, color: C.fg, border: 'none', background: mode.kind === 'builtin' && mode.member === member ? C.surface2 : 'transparent', cursor: 'pointer' }}>
-            <WorkerAvatar name={member} config={builtinAvatar(member, builtinAvatars)} />
-            <strong>{member === 'aide' ? 'Aide' : 'Advisor'}</strong><span style={{ color: C.fg3, fontSize: 10 }}>Built-in</span>
-          </button>)}
           {workers.map(w => (
             <button key={w.name} onClick={() => setMode({ kind: 'select', name: w.name })}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: mode.kind === 'select' && mode.name === w.name ? C.surface2 : 'transparent', border: 'none', color: C.fg, cursor: 'pointer' }}>
@@ -49,7 +40,6 @@ export default function WorkersTab() {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
-        {mode.kind === 'builtin' && <BuiltinAvatarEditor key={mode.member} member={mode.member} initial={builtinAvatar(mode.member, builtinAvatars)} />}
         {mode.kind === 'idle' && <EmptyState />}
         {mode.kind === 'create' && <CreatePanel loading={loading} setLoading={setLoading} onCreated={async (w) => { await reload(); setMode({ kind: 'select', name: w.name }) }} onCancel={() => setMode({ kind: 'idle' })} />}
         {mode.kind === 'select' && selected && <EditorPanel worker={selected} onSaved={reload} onDeleted={async () => { await reload(); setMode({ kind: 'idle' }) }} />}
@@ -239,27 +229,4 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
       </div>
     </div>
   )
-}
-
-function BuiltinAvatarEditor({ member, initial }: { member: BuiltinMember; initial: MemberAvatar }) {
-  const [avatar, setAvatar] = useState(initial)
-  const [message, setMessage] = useState('')
-  const [saving, setSaving] = useState(false)
-  const save = async () => {
-    setSaving(true)
-    try {
-      const result = await window.codey.builtinAvatars.set(member, avatar)
-      if (!result.ok) throw new Error(result.error)
-      window.dispatchEvent(new Event('codey:workers-changed'))
-      setMessage('Saved')
-    } catch (error) { setMessage(String(error)) }
-    finally { setSaving(false) }
-  }
-  return <div style={{ padding: 24 }}>
-    <h3>{member === 'aide' ? 'Aide' : 'Advisor'}</h3>
-    <p>{member === 'aide' ? 'Summarizes recorded team results.' : 'Coordinates the team and decides next steps.'}</p>
-    <AvatarPicker value={avatar} onChange={setAvatar} />
-    <button type="button" disabled={saving} onClick={save} style={{ marginTop: 20 }}>{saving ? 'Saving…' : 'Save'}</button>
-    <p role="status">{message}</p>
-  </div>
 }

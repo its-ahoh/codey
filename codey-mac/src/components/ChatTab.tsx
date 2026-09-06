@@ -17,9 +17,8 @@ import { parseTeamMessage } from './teamMessageFormat'
 import { groupMessages } from './teamGroup'
 import { useBuiltinAvatars } from './useBuiltinAvatars'
 import { MemberReply } from './MemberReply'
-import { ToolCallList } from './ToolCallList'
 import { WorkerAvatar } from './WorkerAvatar'
-import { workerAvatarState, avatarStateLabels, builtinAvatar } from './workerAvatarModel'
+import { workerAvatarState, builtinAvatar } from './workerAvatarModel'
 import { StatusSidecar } from './StatusSidecar'
 import { useStatusPanelEnabled } from './statusPanelPref'
 import { isTaskBriefStale, extractSidecarBrief } from './taskHudView'
@@ -2169,10 +2168,12 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 overflowWrap: 'anywhere', wordBreak: 'break-word',
                 transition: 'border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease',
               }}>
-                {!isUser && msg.worker && <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                {/* The team final answer reads like a plain Codey reply: no
+                    member header. Live state is shown by the footer, so the
+                    header carries only identity. */}
+                {!isUser && msg.worker && !msg.teamFinal && <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
                   <WorkerAvatar name={msg.worker} config={msg.builtinMember ? builtinAvatar(msg.builtinMember, builtinAvatars) : member?.config.avatar} state={memberState} />
                   <strong>{msg.builtinMember === 'aide' ? 'Aide' : msg.builtinMember === 'advisor' ? 'Advisor' : msg.worker}</strong>
-                  <span role="status" style={{ fontSize: 11, color: memberState === 'failed' ? C.red : C.fg3 }}>{msg.teamFinal ? (msg.teamFinal.source === 'fallback' ? 'Execution record summary' : 'Team summary') : avatarStateLabels[memberState]}</span>
                 </div>}
                 {!isUser && (() => {
                   const thinking = msg.thinking?.trim() ?? ''
@@ -2205,10 +2206,6 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 {!isUser && (msg.worker ? memberActive && memberState === 'working' : !!flight && msg === lastMsg) && (
                   <LiveActivity toolCalls={msg.toolCalls} />
                 )}
-                {!isUser && msg.worker && !!msg.toolCalls?.length && <details style={{ margin: '6px 0' }}>
-                  <summary style={{ cursor: 'pointer', color: C.fg3, fontSize: 11 }}>Tool history</summary>
-                  <ToolCallList toolCalls={msg.toolCalls} />
-                </details>}
                 {(msg.content || (!isUser && msg.userQuestion?.question)) && (() => {
                   if (isUser) {
                     if (isEditing) return (
@@ -2504,7 +2501,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 onMouseEnter={() => setMentionIdx(i)}
               >
                 <span style={styles.mentionIcon}>
-                  {entry.kind === 'worker' ? <UIIcon name="users" size={13} color={C.fg3} />
+                  {entry.kind === 'worker' ? <WorkerAvatar name={entry.name} config={workers.find(w => w.name === entry.name)?.config.avatar} size={14} />
                     : entry.kind === 'skill' ? <UIIcon name="sparkle" size={13} color={C.fg3} />
                     : entry.kind === 'plugin' ? <UIIcon name="tools" size={13} color={C.fg3} />
                     : entry.kind === 'mcp' ? <UIIcon name="server" size={13} color={C.fg3} />
