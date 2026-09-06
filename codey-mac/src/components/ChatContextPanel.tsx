@@ -1,7 +1,6 @@
 import React from 'react'
 import type { WriteDiff, Chat, ChatMessage } from '../types'
 import { C } from '../theme'
-import { parseTeamMessage } from './teamMessageFormat'
 import { CombinedDiffView, normalizeTool } from './toolFormat'
 import { stepMatchIndex } from './diffSearch'
 import { foldFileChanges, type FoldedChange } from './foldChanges'
@@ -15,7 +14,6 @@ import { pickChangeSource, type GitFileDiff } from './changeSource'
 import { ToolCallList } from './ToolCallList'
 import { QuickQuestionView } from './QuickQuestionView'
 import { TaskHud } from './TaskHud'
-import TeamRunFlow from './TeamRunFlow'
 import { UIIcon } from './UIIcons'
 
 export type ContextPanelTab = 'current' | 'task' | 'files' | 'qq'
@@ -76,7 +74,6 @@ export const ChatContextPanel: React.FC<Props> = ({
     ? chat.messages.find(m => m.id === selectedTurnId && m.role === 'assistant')
     : undefined
 
-  const [flowOpen, setFlowOpen] = React.useState(false)
 
   // The user message that produced this turn — its attachments are surfaced below.
   const triggeringUserMsg: ChatMessage | undefined = (() => {
@@ -191,14 +188,6 @@ export const ChatContextPanel: React.FC<Props> = ({
               </div>
             </Section>
 
-            {turn && (
-              <TeamFlow
-                turn={turn}
-                isStreaming={isTurnStreaming}
-                onScrollToStep={onScrollToStep}
-                onViewFlow={teamName ? () => setFlowOpen(true) : undefined}
-              />
-            )}
             {turn && <ToolTimeline toolCalls={turn.toolCalls ?? []} />}
             {turn && <FilesTouched toolCalls={turn.toolCalls ?? []} workingDir={workingDir} onReveal={onRevealFile} />}
             {triggeringUserMsg?.attachments && triggeringUserMsg.attachments.length > 0 && (
@@ -213,16 +202,7 @@ export const ChatContextPanel: React.FC<Props> = ({
               </Section>
             )}
             {!turn && <div style={styles.emptyHint}>Send a message to see run context.</div>}
-            {flowOpen && turn && (
-              <TeamRunFlow
-                turn={turn}
-                isStreaming={isTurnStreaming}
-                teamGraph={teamGraph}
-                askingWorker={chat.pendingTeam?.askingWorker}
-                group={turn.teamTurnId ? chat.messages.filter(m => m.teamTurnId === turn.teamTurnId) : undefined}
-                onClose={() => setFlowOpen(false)}
-              />
-            )}
+
           </>
         ) : (
           <FileChangesView
@@ -300,88 +280,6 @@ const filesStyles: Record<string, React.CSSProperties> = {
     background: 'transparent', border: 'none', color: C.fg3,
     cursor: 'pointer', fontSize: 12, padding: '0 4px', flexShrink: 0,
   },
-}
-
-const TeamFlow: React.FC<{
-  turn: ChatMessage
-  isStreaming: boolean
-  onScrollToStep: (messageId: string, stepNum: number) => void
-  /** When set, renders a "View flow ⤢" button that opens the run-flow overlay. */
-  onViewFlow?: () => void
-}> = ({ turn, isStreaming, onScrollToStep, onViewFlow }) => {
-  const parsed = parseTeamMessage(turn.content)
-  // Nothing to show: no steps to list and no overlay to launch.
-  if (!parsed && !onViewFlow) return null
-  const infos = (turn.toolCalls ?? []).filter(tc => tc.type === 'info')
-  // Match info messages to steps by step number prefix ("Step N:" or "Step N/M:")
-  const reasonByStep = new Map<number, string>()
-  for (const info of infos) {
-    const m = info.message.match(/^Step\s+(\d+)/)
-    if (!m) continue
-    reasonByStep.set(parseInt(m[1], 10), info.message)
-  }
-  const steps = parsed?.steps ?? []
-  const lastIdx = steps.length - 1
-  return (
-    <Section title="Team flow">
-      {onViewFlow && (
-        <button
-          onClick={onViewFlow}
-          style={{ fontSize: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 12px', cursor: 'pointer', marginBottom: steps.length ? 8 : 0 }}
-        >
-          View flow ⤢
-        </button>
-      )}
-      <div style={flowStyles.list}>
-        {steps.map((s, i) => {
-          const isRunning = isStreaming && i === lastIdx
-          const status: 'done' | 'running' = isRunning ? 'running' : 'done'
-          const reason = reasonByStep.get(s.step)
-          return (
-            <div
-              key={`${turn.id}::${s.step}`}
-              style={flowStyles.row}
-              onClick={() => onScrollToStep(turn.id, s.step)}
-              title="Click to jump to this step"
-            >
-              <span style={status === 'running' ? flowStyles.dotRunning : flowStyles.dotDone}>
-                {status === 'running' ? '●' : '✓'}
-              </span>
-              <div style={flowStyles.body}>
-                <div style={flowStyles.workerLine}>
-                  <span style={flowStyles.stepNum}>Step {s.step}</span>
-                  <span style={flowStyles.workerName}>{s.worker}</span>
-                </div>
-                {reason && <div style={flowStyles.reason}>{reason.replace(/^Step\s+\d+(?:\/\d+)?:\s*\S+\s*(?:—|—|-)?\s*/, '')}</div>}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </Section>
-  )
-}
-
-const flowStyles: Record<string, React.CSSProperties> = {
-  list: { display: 'flex', flexDirection: 'column', gap: 0, position: 'relative' },
-  row: {
-    display: 'flex', alignItems: 'flex-start', gap: 8,
-    padding: '6px 0', cursor: 'pointer',
-    borderBottom: `1px dashed ${C.border2}`,
-  },
-  dotRunning: {
-    color: C.accent, fontSize: 12, lineHeight: '16px',
-    width: 14, flexShrink: 0, textAlign: 'center' as const,
-  },
-  dotDone: {
-    color: C.green, fontSize: 12, lineHeight: '16px',
-    width: 14, flexShrink: 0, textAlign: 'center' as const,
-  },
-  body: { flex: 1, minWidth: 0 },
-  workerLine: { display: 'flex', alignItems: 'baseline', gap: 6 },
-  stepNum: { fontSize: 10, color: C.fg3, textTransform: 'uppercase' as const, letterSpacing: 0.5 },
-  workerName: { fontSize: 12, color: C.fg, fontWeight: 500 },
-  reason: { fontSize: 11, color: C.fg3, marginTop: 2, lineHeight: 1.4 },
 }
 
 const ToolTimeline: React.FC<{ toolCalls: import('../types').ToolCallEntry[] }> = ({ toolCalls }) => {

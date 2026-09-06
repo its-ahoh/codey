@@ -37,3 +37,5 @@ export * from './voice-commands';
 export * from './voice-ack';
 export * from './voice-polish';
 export * from './voice-converse';
+
+export * from './member-avatars';

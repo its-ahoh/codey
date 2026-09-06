@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { WorkerMessageEmitter } from './worker-message-emitter';
 import type { ChatStreamEvent } from './chat-runner';
 
-function harness() {
+function harness(mode: 'auto' | 'roundtable' = 'auto') {
   const events: ChatStreamEvent[] = [];
   const appended: any[] = [];
   const patched: Array<{ id: string; patch: any }> = [];
@@ -14,12 +14,25 @@ function harness() {
   const newId = () => `id-${++n}`;
   const em = new WorkerMessageEmitter(
     (e) => events.push(e), store, 'chat1',
-    { teamTurnId: 'tt1', teamName: 'team', mode: 'auto' }, newId,
+    { teamTurnId: 'tt1', teamName: 'team', mode }, newId,
   );
   return { em, events, appended, patched };
 }
 
 describe('WorkerMessageEmitter — serial', () => {
+  it('pre-creates pending roster cards and promotes the selected worker in place', () => {
+    const h = harness();
+    h.em.teamStart([{ step: 1, worker: 'pm' }, { step: 2, worker: 'developer' }]);
+    expect(h.appended.map(message => [message.worker, message.workerStatus])).toEqual([
+      ['pm', 'pending'], ['developer', 'pending'],
+    ]);
+
+    const id = h.em.beginWorker({ step: 1, worker: 'pm', reason: 'kickoff' });
+    expect(id).toBe(h.appended[0].id);
+    expect(h.appended).toHaveLength(2);
+    expect(h.patched.at(-1)).toMatchObject({ id, patch: { workerStatus: 'running', advisorReason: 'kickoff' } });
+  });
+
   it('begin appends a running stub and emits worker_start with the same id', () => {
     const h = harness();
     const id = h.em.beginWorker({ step: 1, worker: 'pm', reason: 'kickoff', agent: 'codex', model: 'gpt-5' });
@@ -103,16 +116,17 @@ describe('WorkerMessageEmitter — serial', () => {
 
 describe('WorkerMessageEmitter — parallel', () => {
   it('teamStart pre-creates one stub per worker and emits team_start with their ids', () => {
-    const h = harness();
+    const h = harness('roundtable');
     h.em.teamStart([{ step: 1, worker: 'a' }, { step: 2, worker: 'b' }]);
     expect(h.appended.map(m => m.worker)).toEqual(['a', 'b']);
+    expect(h.appended.every(m => m.workerStatus === 'running')).toBe(true);
     const ev = h.events.find(e => e.type === 'team_start') as any;
     expect(ev.workers.map((w: any) => w.worker)).toEqual(['a', 'b']);
     expect(ev.workers[0].messageId).toBe(h.appended[0].id);
   });
 
   it('routes events to a named worker message (concurrent-safe)', () => {
-    const h = harness();
+    const h = harness('roundtable');
     h.em.teamStart([{ step: 1, worker: 'a' }, { step: 2, worker: 'b' }]);
     const idA = h.appended[0].id, idB = h.appended[1].id;
     h.em.onStream('from-a', 'a');

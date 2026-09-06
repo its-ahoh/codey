@@ -7,6 +7,7 @@ export interface TeamEmitter {
   notify(text: string, choices?: string[]): Promise<void>;
   /** An ephemeral status/orchestration line. NOT recorded in the chat transcript. */
   status(text: string): Promise<void>;
+  termination?(reason: string): void;
   /** Per-worker streamed output token. */
   onStream(token: string): void;
   /** Per-worker streamed thinking token. */
@@ -33,6 +34,7 @@ export class ChatEmitter implements TeamEmitter {
     this.parts.push(text);
     try { this.sink({ type: 'stream', chatId: this.chatId, token: text }); } catch { /* swallow */ }
   }
+  termination(reason: string): void { this.sink({ type: 'team_termination', chatId: this.chatId, reason }); }
   async status(text: string): Promise<void> {
     try { this.sink({ type: 'info', chatId: this.chatId, message: text }); } catch { /* swallow */ }
   }
@@ -53,6 +55,7 @@ export class ChatEmitter implements TeamEmitter {
 
 /** Emits to a channel via the gateway's sendResponse + handler.streamText. */
 export class ChannelEmitter implements TeamEmitter {
+  termination(_reason: string): void { /* Channel status is emitted separately. */ }
   private _choices: string[] | undefined;
   constructor(
     private send: (r: { chatId: string; channel: ChannelType; text: string; choices?: string[] }) => Promise<void>,

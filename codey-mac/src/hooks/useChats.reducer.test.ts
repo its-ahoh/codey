@@ -27,6 +27,25 @@ function baseState(): State {
 }
 
 describe('team reducer routing', () => {
+  it('teamStart exposes the full serial roster as pending and workerStart promotes one card', () => {
+    let s = baseState();
+    s.chats.c1.messages = [{ id: 'asst-x', role: 'assistant', content: '', timestamp: 1, isComplete: false }]
+    s = reducer(s, {
+      type: 'teamStart', chatId: 'c1', teamTurnId: 'tt1', teamName: 'team', mode: 'auto',
+      workers: [
+        { messageId: 'w1', step: 1, worker: 'pm' },
+        { messageId: 'w2', step: 2, worker: 'developer' },
+      ],
+    });
+    expect(s.chats.c1.messages.map(message => [message.worker, message.workerStatus])).toEqual([
+      ['pm', 'pending'], ['developer', 'pending'],
+    ]);
+
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'pm', reason: 'kickoff' });
+    expect(s.chats.c1.messages.find(message => message.id === 'w1')).toMatchObject({ workerStatus: 'running', advisorReason: 'kickoff' });
+    expect(s.chats.c1.messages).toHaveLength(2);
+  });
+
   it('workerStart appends a running worker message with the backend id', () => {
     let s = baseState();
     s.chats.c1.messages = [{ id: 'asst-x', role: 'assistant', content: '', timestamp: 1, isComplete: false }]
@@ -225,3 +244,27 @@ describe('message queue', () => {
     expect(s.queuedMessages.c1).toBeUndefined()
   })
 })
+
+describe('member identity and failure delivery', () => {
+  it('keeps the selected worker identity while streaming and receives terminal failure', () => {
+    let s: State = { ...emptyState(), chats: { c1: makeChat({ selection: { type: 'worker', name: 'alice' } }) } }
+    s = reducer(s, { type: 'startSend', chatId: 'c1', assistantMessageId: 'a', userMessage: { id: 'u2', role: 'user', content: 'go', timestamp: 2 } })
+    expect(s.chats.c1.messages.at(-1)?.worker).toBe('alice')
+    s = reducer(s, { type: 'completeSend', chatId: 'c1', assistantMessageId: 'a', content: 'Could not complete', worker: 'alice', workerStatus: 'failed' })
+    expect(s.chats.c1.messages.at(-1)?.workerStatus).toBe('failed')
+  })
+  it('delivers worker failure details before history is reloaded', () => {
+    let s = baseState()
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 't', messageId: 'a', step: 1, worker: 'alice' })
+    s = reducer(s, { type: 'workerEnd', chatId: 'c1', messageId: 'a', step: 1, status: 'failed', failureReason: 'Missing permission', nextUserAction: { text: 'Grant access' } })
+    expect(s.chats.c1.messages.find(m => m.id === 'a')).toMatchObject({ workerStatus: 'failed', workerFailureReason: 'Missing permission', workerNextUserAction: { text: 'Grant access' } })
+  })
+})
+
+ it('keeps terminal team errors after the generic stub has been removed', () => {
+    let s = baseState()
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 't', messageId: 'a', step: 1, worker: 'alice' })
+    s = reducer(s, { type: 'errorSend', chatId: 'c1', assistantMessageId: 'asst-x', error: 'Team interrupted by an error' })
+    expect(s.chats.c1.messages.at(-1)?.content).toBe('Team interrupted by an error')
+    expect(s.inFlight.c1).toBeUndefined()
+  })

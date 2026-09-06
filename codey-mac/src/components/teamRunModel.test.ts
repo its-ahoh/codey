@@ -122,6 +122,16 @@ describe('groupTeamMessagesByMember', () => {
     expect(groups[1].latest.content).toBe('revision')
     expect(groups[2].status).toBe('running')
   })
+
+  it('keeps roster-only members visible as pending', () => {
+    const groups = groupTeamMessagesByMember([
+      w(1, 'pm', 'running', ''),
+      w(2, 'developer', 'pending', ''),
+    ])
+    expect(groups.map(group => [group.worker, group.status])).toEqual([
+      ['pm', 'running'], ['developer', 'pending'],
+    ])
+  })
 })
 
 describe('toolCallsForStep', () => {
@@ -243,5 +253,13 @@ describe('teamFinalAnswer', () => {
 
   it('returns null for an empty run', () => {
     expect(teamFinalAnswer([], 'auto')).toBeNull()
+  })
+
+  it('ignores unselected pending roster members after a serial run finishes', () => {
+    const msgs = [
+      worker({ step: 1, worker: 'a', workerStatus: 'done', content: 'Final answer.' }),
+      worker({ step: 2, worker: 'b', workerStatus: 'pending', content: '' }),
+    ]
+    expect(teamFinalAnswer(msgs, 'auto')).toEqual({ worker: 'a', text: 'Final answer.' })
   })
 })

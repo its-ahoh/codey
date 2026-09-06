@@ -11,6 +11,7 @@ export interface WorkerPersonality {
 }
 
 export interface WorkerConfig {
+  avatar?: { shape: 'circle' | 'square' | 'triangle' | 'capsule'; color: string };
   codingAgent: CodingAgent;
   model: string;
   tools: string[];

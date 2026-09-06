@@ -28,7 +28,7 @@ function entry(message: ChatMessage, text: string): TeamRunSummaryEntry {
  */
 export function buildTeamRunSummary(messages: ChatMessage[], now: number = Date.now()): TeamRunSummary {
   const workers = messages
-    .filter(message => !!message.worker)
+    .filter(message => !!message.worker && !message.builtinMember)
     .sort((a, b) => (a.step ?? 0) - (b.step ?? 0));
 
   const completed: TeamRunSummaryEntry[] = [];
@@ -54,7 +54,9 @@ export function buildTeamRunSummary(messages: ChatMessage[], now: number = Date.
 /** Return a summary only when at least one worker exists and every worker has
  * a terminal status. This is the gate used before emitting `team_end`. */
 export function finalizeTeamRunSummary(messages: ChatMessage[], now: number = Date.now()): TeamRunSummary | null {
-  const workers = messages.filter(message => !!message.worker);
+  // Pending messages are roster placeholders for members the router did not
+  // select. They should remain visible in the UI without blocking completion.
+  const workers = messages.filter(message => !!message.worker && !message.builtinMember && message.workerStatus !== 'pending');
   if (workers.length === 0) return null;
   if (!workers.every(message => message.workerStatus === 'done' || message.workerStatus === 'failed')) return null;
   return buildTeamRunSummary(messages, now);
