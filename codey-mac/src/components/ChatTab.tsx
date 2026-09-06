@@ -7,6 +7,7 @@ import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { Markdown } from './Markdown'
+import { LinkPreviewCards } from './LinkPreviewCards'
 import { FilePathCwd } from './FilePathLink'
 import { PairingModal } from './PairingModal'
 import { AttachmentPreview } from './AttachmentPreview'
@@ -2250,6 +2251,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   if (!parsed) return (
                     <div>
                       <Markdown variant="assistant" layout="roomy">{text}</Markdown>
+                      {/* Cards wait for the stream to settle — a half-typed
+                          URL would fetch a page the reply never meant. */}
+                      {!isStreaming && <LinkPreviewCards text={text} />}
                     </div>
                   )
                   return (

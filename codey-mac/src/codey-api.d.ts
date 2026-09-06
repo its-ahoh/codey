@@ -9,6 +9,7 @@ import type { CoreState } from '../electron/core-state'
 import type { ScannedSkill } from '../electron/skills'
 import type { SkillUsage, SkillUsageMap } from '../electron/skill-usage'
 import type { MemoryEntry } from '../electron/memory'
+import type { LinkPreview } from '../electron/link-preview'
 import type { CodeyMemoryItem, MemoryStoreScope } from '../electron/codey-memory'
 import type { Automation, AutomationRun, AutomationEvent } from '../../packages/core/src/types/automation'
 import type { AutomationDraft } from '../../packages/core/src/aide-automation'
@@ -16,6 +17,7 @@ import type { ChatStep } from '../../packages/gateway/src/automations/chat'
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
+export type { LinkPreview }
 export type SkillEntry = ScannedSkill
 export type { SkillUsage, SkillUsageMap }
 
@@ -735,6 +737,7 @@ declare global {
       }
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<string>
+      linkPreview: (url: string) => Promise<LinkPreview | null>
       revealInFolder: (path: string) => Promise<boolean>
       readTextFile: (path: string) => Promise<string | null>
       readImageFile: (path: string) => Promise<string | null>
