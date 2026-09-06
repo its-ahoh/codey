@@ -1,0 +1,6 @@
+.worker-avatar-eyes { transform-box: fill-box; transform-origin: center; }
+.worker-avatar--waiting .worker-avatar-eyes { animation: worker-blink 7s ease-in-out infinite; }
+.worker-avatar--working .worker-avatar-pupil { animation: worker-look 3s ease-in-out infinite; }
+@keyframes worker-blink { 0%, 90%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.12); } }
+@keyframes worker-look { 0%, 100% { transform: translateX(-2px); } 50% { transform: translateX(2px); } }
+@media (prefers-reduced-motion: reduce) { .worker-avatar * { animation: none !important; } }

@@ -1,3 +1,4 @@
+import { isMemberAvatar } from '../../packages/core/src/member-avatars'
 import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen, session } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
@@ -4355,6 +4356,13 @@ app.whenReady().then(async () => {
       coreConfigManager.update({ advisor: { agent: agent as any, model } })
     })
   )
+
+  ipcMain.handle('builtin-avatars:get', async () => wrap(async () => coreConfigManager?.get().builtinAvatars ?? {}))
+  ipcMain.handle('builtin-avatars:set', async (_e, member: string, avatar: unknown) => wrap(async () => {
+    if (!coreConfigManager) throw new Error('Config manager not initialized')
+    if ((member !== 'aide' && member !== 'advisor') || !isMemberAvatar(avatar)) throw new Error('Invalid member avatar')
+    coreConfigManager.update({ builtinAvatars: { ...coreConfigManager.get().builtinAvatars, [member]: avatar } })
+  }))
 
   // ── Aide IPC ──────────────────────────────────────────────────────
   // Lightweight global model used for housekeeping tasks (chat summarization,

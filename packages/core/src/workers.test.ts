@@ -59,3 +59,24 @@ describe('WorkerManager.buildParallelWorkerPrompt', () => {
     expect(prompt).toBe('just-the-topic');
   });
 });
+
+describe('worker avatar persistence', () => {
+  it('loads old members and round-trips independent shape and color choices', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'worker-avatar-'));
+    try {
+      seedWorkers(root, ['alice']);
+      const manager = new WorkerManager(root);
+      await manager.loadWorkers();
+      const worker = manager.getWorker('alice')!;
+      expect(worker.config.avatar).toBeUndefined();
+      await manager.saveWorker('alice', worker.personality, {
+        ...worker.config, avatar: { shape: 'triangle', color: '#8CCDB5' },
+      });
+      const reloaded = new WorkerManager(root);
+      await reloaded.loadWorkers();
+      expect(reloaded.getWorker('alice')!.config.avatar).toEqual({ shape: 'triangle', color: '#8CCDB5' });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

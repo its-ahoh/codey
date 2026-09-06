@@ -102,6 +102,10 @@ export interface ChatMessage {
    *  turns and on legacy combined team turns (which use the parseTeamMessage
    *  fallback renderer). */
   teamTurnId?: string;
+  /** Built-in identity, distinct from an editable worker named Advisor. */
+  builtinMember?: 'aide' | 'advisor';
+  /** Authoritative terminal message; never deduplicate by its prose. */
+  teamFinal?: { source: 'aide' | 'fallback'; reason: string; outcome?: 'completed' | 'partial' | 'failed' | 'stopped' | 'empty' };
   /** Team name for a worker message (for the group header). */
   teamName?: string;
   /** Dispatch mode of the owning team run. */
@@ -111,7 +115,7 @@ export interface ChatMessage {
   /** Worker name that produced this message. */
   worker?: string;
   /** Live status of this worker's run. */
-  workerStatus?: 'running' | 'done' | 'failed' | 'askedUser';
+  workerStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser';
   /** Advisor's routing reason, shown as a caption on the bubble. */
   advisorReason?: string;
   /** Structured terminal error captured by the team orchestrator. */

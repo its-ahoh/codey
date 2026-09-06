@@ -46,4 +46,14 @@ describe('buildTeamRunSummary', () => {
     ];
     expect(finalizeTeamRunSummary(messages, 10)?.finalizedAt).toBe(10);
   });
+
+  it('does not let unselected roster placeholders block finalization', () => {
+    const messages = [
+      worker('done', { workerStatus: 'done', content: 'Finished.' }),
+      worker('pending', { step: 2, workerStatus: 'pending' }),
+    ];
+    expect(finalizeTeamRunSummary(messages, 10)?.completed).toEqual([
+      { worker: 'worker', step: 1, text: 'Finished.' },
+    ]);
+  });
 });

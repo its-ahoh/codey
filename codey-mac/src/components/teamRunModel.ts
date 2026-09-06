@@ -161,7 +161,7 @@ const ROUNDTABLE_SUMMARY_RE = /##\s+Advisor Summary\s*\n([\s\S]*?)(?:\n##\s|$)/i
  * null while any member is still working or waiting on the user, so the
  * live stage stays visible until the run truly ends. */
 export function teamFinalAnswer(messages: ChatMessage[], mode: ChatMessage['teamMode']): TeamFinalAnswer | null {
-  const workers = messages.filter(m => !!m.worker)
+  const workers = messages.filter(m => !!m.worker && m.workerStatus !== 'pending')
   if (workers.length === 0) return null
   if (workers.some(m => m.workerStatus === 'running' || m.workerStatus === 'askedUser')) return null
 

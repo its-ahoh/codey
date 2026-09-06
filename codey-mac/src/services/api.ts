@@ -1,10 +1,12 @@
 // IPC proxy — all calls go through window.codey.* (Electron preload)
 
-import type { Chat, ChatSelection, ChecklistItem, TaskBrief, TeamRunSummary } from '../types'
+import type { ChatMessage, Chat, ChatSelection, ChecklistItem, TaskBrief, TeamRunSummary } from '../types'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 
 // Inline ChatStreamEvent to avoid cross-package import
 export type ChatStreamEvent =
+  | { type: 'team_final'; chatId: string; message: ChatMessage }
+  | { type: 'team_termination'; chatId: string; reason: string }
   | { type: 'queued'; chatId: string; position: number }
   | { type: 'tool_start'; chatId: string; tool?: string; message: string; input?: Record<string, unknown>; messageId?: string; step?: number }
   | { type: 'tool_end'; chatId: string; tool?: string; message: string; output?: string; messageId?: string; step?: number; writes?: string[] }
@@ -14,10 +16,10 @@ export type ChatStreamEvent =
   | { type: 'thinking'; chatId: string; token: string; step?: number; messageId?: string }
   | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string }> }
   | { type: 'worker_start'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; reason?: string }
-  | { type: 'worker_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number }
+  | { type: 'worker_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number; failureReason?: string; nextUserAction?: { text: string; options?: string[] } }
   | { type: 'team_end'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
   | { type: 'workspace_ready'; chatId: string }
-  | { type: 'done'; chatId: string; response: string; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string; reason?: string }; teamTurnId?: string }
+  | { type: 'done'; chatId: string; response: string; worker?: string; workerStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string; reason?: string }; teamTurnId?: string }
   | { type: 'stopped'; chatId: string; userMessageId: string; text: string }
   | { type: 'error'; chatId: string; message: string }
   | { type: 'permission_denials'; chatId: string; denials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> };
@@ -25,7 +27,7 @@ export type ChatStreamEvent =
 export type QQStreamEvent =
   | { type: 'stream'; chatId: string; token: string }
   | { type: 'tool'; chatId: string; message: string; tool?: string }
-  | { type: 'done'; chatId: string; response: string; tokens?: number; durationSec?: number }
+  | { type: 'done'; chatId: string; response: string; worker?: string; workerStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number }
   | { type: 'stopped'; chatId: string }
   | { type: 'error'; chatId: string; message: string };
 
@@ -36,7 +38,7 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 
 // Type aliases for the shapes returned by core
 export interface WorkerPersonality { role: string; soul: string; instructions: string }
-export interface WorkerConfig { codingAgent: 'claude-code' | 'opencode' | 'codex' | 'pi'; model: string; tools: string[]; effort?: string; dispatchHint?: string }
+export interface WorkerConfig { avatar?: import('../components/workerAvatarModel').WorkerAvatarConfig; codingAgent: 'claude-code' | 'opencode' | 'codex' | 'pi'; model: string; tools: string[]; effort?: string; dispatchHint?: string }
 export interface WorkerDto {
   name: string
   personality: WorkerPersonality

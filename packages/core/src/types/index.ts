@@ -388,6 +388,7 @@ export interface MemorySettings {
 
 // Gateway configuration
 export interface GatewayConfig {
+  builtinAvatars?: Partial<Record<import('../member-avatars').BuiltinMember, import('../member-avatars').MemberAvatar>>;
   port: number;
   channels: ChannelConfig;
   defaultAgent: CodingAgent;

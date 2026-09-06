@@ -1,14 +1,20 @@
 import { useEffect, useState, useCallback } from 'react'
 import { apiService, WorkerDto } from '../services/api'
+import { AvatarPicker } from './AvatarPicker'
+import { useBuiltinAvatars } from './useBuiltinAvatars'
+import { builtinAvatar, type BuiltinMember, type MemberAvatar } from '../../../packages/core/src/member-avatars'
+import { WorkerAvatar } from './WorkerAvatar'
+import { avatarShapes, avatarColors, resolveWorkerAvatar } from './workerAvatarModel'
 import { C } from '../theme'
 
 import { AGENT_API_TYPE, ApiType, modelFitsApiType } from './modelApiType'
 
 interface ModelEntry { apiType: ApiType; model: string }
 
-type Mode = { kind: 'idle' } | { kind: 'select'; name: string } | { kind: 'create' }
+type Mode = { kind: 'builtin'; member: BuiltinMember } | { kind: 'idle' } | { kind: 'select'; name: string } | { kind: 'create' }
 
 export default function WorkersTab() {
+  const builtinAvatars = useBuiltinAvatars()
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   const [mode, setMode] = useState<Mode>({ kind: 'idle' })
   const [loading, setLoading] = useState(false)
@@ -25,10 +31,15 @@ export default function WorkersTab() {
     <div style={{ display: 'flex', height: '100%', background: C.bg, color: C.fg }}>
       <div style={{ width: 240, borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
         <div style={{ overflowY: 'auto', flex: 1 }}>
+          {(['aide', 'advisor'] as const).map(member => <button key={member} onClick={() => setMode({ kind: 'builtin', member })}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: 12, color: C.fg, border: 'none', background: mode.kind === 'builtin' && mode.member === member ? C.surface2 : 'transparent', cursor: 'pointer' }}>
+            <WorkerAvatar name={member} config={builtinAvatar(member, builtinAvatars)} />
+            <strong>{member === 'aide' ? 'Aide' : 'Advisor'}</strong><span style={{ color: C.fg3, fontSize: 10 }}>Built-in</span>
+          </button>)}
           {workers.map(w => (
             <button key={w.name} onClick={() => setMode({ kind: 'select', name: w.name })}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: mode.kind === 'select' && mode.name === w.name ? C.surface2 : 'transparent', border: 'none', color: C.fg, cursor: 'pointer' }}>
-              <div style={{ fontWeight: 600 }}>{w.name}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><WorkerAvatar name={w.name} config={w.config.avatar} /><strong>{w.name}</strong></div>
               <div style={{ fontSize: 11, color: C.fg3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.personality.role}</div>
               <div style={{ fontSize: 10, color: C.fg3, marginTop: 2 }}>{w.config.codingAgent} · {w.config.model}{w.config.effort ? ` · ${w.config.effort}` : ''}</div>
             </button>
@@ -38,6 +49,7 @@ export default function WorkersTab() {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
+        {mode.kind === 'builtin' && <BuiltinAvatarEditor key={mode.member} member={mode.member} initial={builtinAvatar(mode.member, builtinAvatars)} />}
         {mode.kind === 'idle' && <EmptyState />}
         {mode.kind === 'create' && <CreatePanel loading={loading} setLoading={setLoading} onCreated={async (w) => { await reload(); setMode({ kind: 'select', name: w.name }) }} onCancel={() => setMode({ kind: 'idle' })} />}
         {mode.kind === 'select' && selected && <EditorPanel worker={selected} onSaved={reload} onDeleted={async () => { await reload(); setMode({ kind: 'idle' }) }} />}
@@ -87,6 +99,7 @@ function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: bo
 }
 
 function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSaved: () => void; onDeleted: () => void }) {
+  const [avatar, setAvatar] = useState(() => resolveWorkerAvatar(worker.name, worker.config.avatar))
   const [role, setRole] = useState(worker.personality.role)
   const [soul, setSoul] = useState(worker.personality.soul)
   const [instructions, setInstructions] = useState(worker.personality.instructions)
@@ -113,6 +126,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
   useEffect(() => {
     setRole(worker.personality.role); setSoul(worker.personality.soul); setInstructions(worker.personality.instructions)
     setCodingAgent(worker.config.codingAgent); setModel(worker.config.model); setToolsText(worker.config.tools.join(', '))
+    setAvatar(resolveWorkerAvatar(worker.name, worker.config.avatar))
     setEffort(worker.config.effort ?? '')
     setSaved(false); setError(null)
   }, [worker.name])
@@ -126,12 +140,15 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
       await apiService.updateWorker(worker.name, {
         personality: { role, soul, instructions },
         config: {
+          ...worker.config,
+          avatar,
           codingAgent,
           model,
           tools: toolsText.split(',').map(s => s.trim()).filter(Boolean),
-          ...(effort ? { effort } : {}),
+          effort: effort || undefined,
         },
       })
+      window.dispatchEvent(new Event('codey:workers-changed'))
       setSaved(true); setTimeout(() => setSaved(false), 1500); onSaved()
     } catch (err: any) {
       setError(err.message || String(err))
@@ -156,6 +173,18 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
       </div>
       {error && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 10, borderRadius: 6, fontSize: 12 }}>{error}</div>}
 
+      <label style={labelStyle}>Avatar shape</label>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {avatarShapes.map(shape => <button key={shape} type="button" aria-label={shape} aria-pressed={avatar.shape === shape}
+          onClick={() => setAvatar(a => ({ ...a, shape }))} style={{ background: C.surface2, border: `2px solid ${avatar.shape === shape ? C.accent : C.border}`, borderRadius: 10, padding: 5, cursor: 'pointer' }}>
+          <WorkerAvatar name={shape} config={{ ...avatar, shape }} size={44} />
+        </button>)}
+      </div>
+      <label style={labelStyle}>Avatar color</label>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {avatarColors.map(color => <button key={color} type="button" aria-label={`Color ${color}`} aria-pressed={avatar.color === color}
+          onClick={() => setAvatar(a => ({ ...a, color }))} style={{ width: 28, height: 28, background: color, border: `3px solid ${avatar.color === color ? C.fg : 'transparent'}`, borderRadius: '50%', cursor: 'pointer' }} />)}
+      </div>
       <label style={labelStyle}>Role</label>
       <textarea value={role} onChange={e => setRole(e.target.value)} style={{ ...fieldStyle, minHeight: 60 }} />
 
@@ -210,4 +239,27 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
       </div>
     </div>
   )
+}
+
+function BuiltinAvatarEditor({ member, initial }: { member: BuiltinMember; initial: MemberAvatar }) {
+  const [avatar, setAvatar] = useState(initial)
+  const [message, setMessage] = useState('')
+  const [saving, setSaving] = useState(false)
+  const save = async () => {
+    setSaving(true)
+    try {
+      const result = await window.codey.builtinAvatars.set(member, avatar)
+      if (!result.ok) throw new Error(result.error)
+      window.dispatchEvent(new Event('codey:workers-changed'))
+      setMessage('Saved')
+    } catch (error) { setMessage(String(error)) }
+    finally { setSaving(false) }
+  }
+  return <div style={{ padding: 24 }}>
+    <h3>{member === 'aide' ? 'Aide' : 'Advisor'}</h3>
+    <p>{member === 'aide' ? 'Summarizes recorded team results.' : 'Coordinates the team and decides next steps.'}</p>
+    <AvatarPicker value={avatar} onChange={setAvatar} />
+    <button type="button" disabled={saving} onClick={save} style={{ marginTop: 20 }}>{saving ? 'Saving…' : 'Save'}</button>
+    <p role="status">{message}</p>
+  </div>
 }

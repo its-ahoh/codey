@@ -113,6 +113,10 @@ contextBridge.exposeInMainWorld('codey', {
     get: () => ipcRenderer.invoke('dispatcher:get'),
     set: (updates: { agent?: string; model?: string }) => ipcRenderer.invoke('dispatcher:set', updates),
   },
+  builtinAvatars: {
+    get: () => ipcRenderer.invoke('builtin-avatars:get'),
+    set: (member: string, avatar: unknown) => ipcRenderer.invoke('builtin-avatars:set', member, avatar),
+  },
   aide: {
     get: () => ipcRenderer.invoke('aide:get'),
     set: (updates: { agent?: string; model?: string }) => ipcRenderer.invoke('aide:set', updates),

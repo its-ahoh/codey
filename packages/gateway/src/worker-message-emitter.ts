@@ -39,10 +39,11 @@ export class WorkerMessageEmitter {
     private newId: () => string = randomUUID,
   ) {}
 
-  /** Pre-create one stub per worker (parallel). Emits team_start. */
+  /** Pre-create the full roster so the UI can show every member immediately. */
   teamStart(workers: Array<{ step: number; worker: string; agent?: ChatMessage['agent']; model?: string }>): void {
     const list = workers.map(w => {
-      const buf = this.createStub(w.step, w.worker, undefined, w.agent, w.model);
+      const initialStatus = this.meta.mode === 'roundtable' ? 'running' : 'pending';
+      const buf = this.createStub(w.step, w.worker, undefined, w.agent, w.model, initialStatus);
       this.byWorker.set(w.worker, buf);
       return { messageId: buf.messageId, step: w.step, worker: w.worker, agent: w.agent, model: w.model };
     });
@@ -52,7 +53,20 @@ export class WorkerMessageEmitter {
   /** Start a worker (serial). Flushes any still-active worker as done first. */
   beginWorker(args: BeginWorkerArgs): string {
     if (this.active) this.endWorker('done');
-    const buf = this.createStub(args.step, args.worker, args.reason, args.agent, args.model);
+    // Serial teams already have pending roster stubs. Reuse the member's first
+    // stub when their turn arrives so the card gains live content in place.
+    const waiting = this.byWorker.get(args.worker);
+    const buf = waiting ?? this.createStub(args.step, args.worker, args.reason, args.agent, args.model, 'running');
+    if (waiting) {
+      this.byWorker.delete(args.worker);
+      buf.step = args.step;
+      this.store.updateMessage(this.chatId, buf.messageId, {
+        step: args.step, workerStatus: 'running', isComplete: false,
+        ...(args.reason ? { advisorReason: args.reason } : {}),
+        ...(args.agent ? { agent: args.agent } : {}),
+        ...(args.model ? { model: args.model } : {}),
+      });
+    }
     this.active = buf;
     this.sink({ type: 'worker_start', chatId: this.chatId, teamTurnId: this.meta.teamTurnId, messageId: buf.messageId, step: args.step, worker: args.worker, reason: args.reason, agent: args.agent, model: args.model });
     return buf.messageId;
@@ -104,7 +118,7 @@ export class WorkerMessageEmitter {
       ...(extra?.failureReason ? { workerFailureReason: extra.failureReason } : {}),
       ...(extra?.nextUserAction ? { workerNextUserAction: extra.nextUserAction } : {}),
     });
-    this.sink({ type: 'worker_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status, tokens: extra?.tokens, durationSec: extra?.durationSec });
+    this.sink({ type: 'worker_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status, tokens: extra?.tokens, durationSec: extra?.durationSec, failureReason: extra?.failureReason, nextUserAction: extra?.nextUserAction });
     if (buf === this.active) this.active = null;
     if (worker) this.byWorker.delete(worker);
   }
@@ -116,14 +130,14 @@ export class WorkerMessageEmitter {
     return worker ? (this.byWorker.get(worker) ?? null) : this.active;
   }
 
-  private createStub(step: number, worker: string, reason?: string, agent?: ChatMessage['agent'], model?: string): Buf {
+  private createStub(step: number, worker: string, reason?: string, agent?: ChatMessage['agent'], model?: string, status: NonNullable<ChatMessage['workerStatus']> = 'running'): Buf {
     const messageId = this.newId();
     const buf: Buf = { messageId, step, worker, content: '', toolCalls: [], thinking: '' };
     const stub: ChatMessage = {
       id: messageId, role: 'assistant', content: '', timestamp: Date.now(),
       toolCalls: [], isComplete: false,
       teamTurnId: this.meta.teamTurnId, teamName: this.meta.teamName, teamMode: this.meta.mode,
-      step, worker, workerStatus: 'running',
+      step, worker, workerStatus: status,
       ...(agent ? { agent } : {}),
       ...(model ? { model } : {}),
       ...(reason ? { advisorReason: reason } : {}),

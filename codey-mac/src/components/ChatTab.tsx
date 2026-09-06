@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { chatOwnedPrUrl } from './chatPrUrl'
-import type { Chat, ChatMessage, ChatSelection, FileAttachment, TeamRunSummary } from '../types'
+import type { Chat, ChatMessage, ChatSelection, FileAttachment } from '../types'
 import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
@@ -13,9 +13,13 @@ import { consumePendingPairing } from './pendingPairing'
 import { ChatContextPanel } from './ChatContextPanel'
 import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
-import { extractPreview, parseTeamMessage } from './teamMessageFormat'
+import { parseTeamMessage } from './teamMessageFormat'
 import { groupMessages } from './teamGroup'
-import type { RenderItem } from './teamGroup'
+import { useBuiltinAvatars } from './useBuiltinAvatars'
+import { MemberReply } from './MemberReply'
+import { ToolCallList } from './ToolCallList'
+import { WorkerAvatar } from './WorkerAvatar'
+import { workerAvatarState, avatarStateLabels, builtinAvatar } from './workerAvatarModel'
 import { StatusSidecar } from './StatusSidecar'
 import { useStatusPanelEnabled } from './statusPanelPref'
 import { isTaskBriefStale, extractSidecarBrief } from './taskHudView'
@@ -57,8 +61,6 @@ import { WorkspaceDock, type WorkspaceDockTool } from './WorkspaceDock'
 import { resolveWorkspaceDockLayout } from './workspaceDockLayout'
 import { TerminalPanel } from './TerminalPanel'
 import { splitWhiteboardMarkers, type WhiteboardMarker } from './teamWhiteboardFormat'
-import { groupTeamMessagesByMember, teamFinalAnswer, type TeamMemberMessageGroup } from './teamRunModel'
-import { ToolCallList } from './ToolCallList'
 import { useVoiceTurn } from '../hooks/useVoiceTurn'
 import { VoiceMeter } from './VoiceMeter'
 import { ChatMessageNavigator, type ChatNavigationItem } from './ChatMessageNavigator'
@@ -353,7 +355,7 @@ const ThinkingBlock: React.FC<{
 }> = ({ thinking, hasAnswer, isComplete }) => {
   const [userToggled, setUserToggled] = useState<boolean | null>(null)
   if (!thinking.trim()) return null
-  const expanded = userToggled ?? defaultThinkingExpanded({ hasAnswer, isComplete })
+  const expanded = userToggled ?? defaultThinkingExpanded({ hasAnswer, isComplete, member: true })
   return (
     <div>
       <div style={styles.thinkingToggle} onClick={() => setUserToggled(!expanded)}>
@@ -368,21 +370,6 @@ const ThinkingBlock: React.FC<{
 }
 
 const stepDomId = (messageId: string, stepNum: number) => `step-${messageId}-${stepNum}`
-
-// Keep the avatar stable across runs without requiring every existing worker
-// config to be migrated. More specific role words win; unknown roles use the
-// coding avatar as a neutral fallback.
-const workerAvatar = (worker: string): string => {
-  const name = worker.toLowerCase()
-  const hasRole = (roles: string) => new RegExp(`(^|[-_\\s])(?:${roles})(?=$|[-_\\s])`).test(name)
-  if (hasRole('product|project|manager|advisor|lead')) return '🧑‍💼'
-  if (hasRole('design|designer|ux|ui|creative')) return '🎨'
-  if (hasRole('review|reviewer|qa|quality|test|tester|audit|auditor')) return '🕵️'
-  if (hasRole('research|researcher|analyst|data')) return '🔎'
-  if (hasRole('writer|content|docs|documentation')) return '✍️'
-  if (hasRole('security|risk')) return '🛡️'
-  return '🧑‍💻'
-}
 
 const markerLabel = (marker: WhiteboardMarker): string => {
   if (marker.kind === 'decision') return 'Decision'
@@ -420,344 +407,8 @@ const TeamWorkerContent: React.FC<{ content: string }> = ({ content }) => {
   )
 }
 
-const TeamRunFooter: React.FC<{ content: string }> = ({ content }) => {
-  const blackboardMatch = /###\s+(?:🧠\s*)?Team blackboard/i.exec(content)
-  const markerIndex = blackboardMatch?.index ?? -1
-  let summary = markerIndex >= 0 ? content.slice(0, markerIndex).replace(/\n*-{3,}\s*$/, '').trim() : content.trim()
-  const whiteboard = markerIndex >= 0 ? content.slice(markerIndex + (blackboardMatch?.[0].length ?? 0)).trim() : ''
-  // Sequential/graph footers repeat every worker output. Those outputs already
-  // have their own cards, so retain only the formatted whiteboard here.
-  if (/^📊 Team \*\*.+?\*\* (?:flow )?results/.test(summary)) summary = ''
-  if (!summary && !whiteboard) return null
-  return (
-    <div style={styles.teamRunFooter}>
-      {summary && <div style={styles.teamRunSummary}><Markdown variant="assistant">{summary}</Markdown></div>}
-      {whiteboard && (
-        <div style={styles.whiteboard}>
-          <div style={styles.whiteboardTitle}>Team whiteboard</div>
-          <Markdown variant="assistant">{whiteboard}</Markdown>
-        </div>
-      )}
-    </div>
-  )
-}
-
-type TeamWhiteboardEntry = WhiteboardMarker & { worker: string; step?: number }
-
-const TeamWhiteboardPanel: React.FC<{ workerMessages: ChatMessage[]; footerMessages: ChatMessage[]; onClose?: () => void }> = ({ workerMessages, footerMessages, onClose }) => {
-  const entries: TeamWhiteboardEntry[] = []
-  const seen = new Set<string>()
-  let sharedNotes = ''
-  const addMarkers = (markers: WhiteboardMarker[], worker: string, step?: number) => {
-    for (const marker of markers) {
-      const key = `${marker.kind}\u0000${marker.to ?? ''}\u0000${marker.text}`.toLowerCase()
-      if (seen.has(key)) continue
-      seen.add(key)
-      entries.push({ ...marker, worker, step })
-    }
-  }
-
-  for (const message of workerMessages) {
-    addMarkers(splitWhiteboardMarkers(message.content).markers, message.worker ?? 'Team', message.step)
-  }
-  for (const message of footerMessages) {
-    const match = /###\s+(?:🧠\s*)?Team blackboard/i.exec(message.content)
-    if (!match) continue
-    const board = message.content.slice(match.index + match[0].length).trim()
-    const parsed = splitWhiteboardMarkers(board)
-    addMarkers(parsed.markers, 'Team')
-    if (parsed.stripped) sharedNotes = [sharedNotes, parsed.stripped].filter(Boolean).join('\n\n')
-  }
-
-  return (
-    <div style={styles.teamWhiteboardPanel}>
-      <div style={styles.teamWhiteboardPanelHead}>
-        <div style={styles.teamWhiteboardPanelIdentity}>
-          <span style={styles.whiteboardTitle}>Team whiteboard</span>
-          <span style={styles.teamHistoryCount}>{entries.length} update{entries.length === 1 ? '' : 's'}</span>
-        </div>
-        {onClose && (
-          <button type="button" onClick={onClose} aria-label="Close whiteboard" title="Close" style={styles.teamWhiteboardCloseButton}>
-            <UIIcon name="close" size={14} />
-          </button>
-        )}
-      </div>
-      {entries.map((entry, index) => (
-        <div key={`${entry.kind}-${entry.worker}-${entry.step ?? 0}-${index}`} style={styles.teamWhiteboardEntry}>
-          <span style={{
-            ...styles.whiteboardBadge,
-            ...(entry.kind === 'decision' ? styles.whiteboardBadgeDecision
-              : entry.kind === 'open' ? styles.whiteboardBadgeOpen
-                : entry.kind === 'handoff' ? styles.whiteboardBadgeHandoff
-                  : undefined),
-          }}>{markerLabel(entry)}</span>
-          <div style={styles.teamWhiteboardEntryCopy}>
-            <div style={styles.whiteboardText}>{entry.text}</div>
-            <div style={styles.teamWhiteboardSource}>
-              {entry.worker}{entry.step != null ? ` · Round ${entry.step}` : ''}
-            </div>
-          </div>
-        </div>
-      ))}
-      {sharedNotes && <div style={styles.teamWhiteboardShared}><Markdown variant="assistant">{sharedNotes}</Markdown></div>}
-      {entries.length === 0 && !sharedNotes && (
-        <div style={styles.teamWhiteboardEmpty}>No whiteboard updates yet.</div>
-      )}
-    </div>
-  )
-}
-
-const TeamWhiteboardModal: React.FC<{
-  workerMessages: ChatMessage[]
-  footerMessages: ChatMessage[]
-  onClose: () => void
-}> = ({ workerMessages, footerMessages, onClose }) => {
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      onClose()
-    }
-    window.addEventListener('keydown', closeOnEscape, true)
-    return () => window.removeEventListener('keydown', closeOnEscape, true)
-  }, [onClose])
-
-  return (
-    <div style={styles.teamWhiteboardModalBackdrop} onMouseDown={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Team whiteboard"
-        style={styles.teamWhiteboardModal}
-        onMouseDown={event => event.stopPropagation()}
-      >
-        <TeamWhiteboardPanel workerMessages={workerMessages} footerMessages={footerMessages} onClose={onClose} />
-      </div>
-    </div>
-  )
-}
-
-const TeamSummaryPanel: React.FC<{ summary?: TeamRunSummary }> = ({ summary }) => {
-  if (!summary) {
-    return (
-      <div style={styles.teamSummaryPanel}>
-        <div style={styles.teamSummaryMuted}>Final summary will be available when the team finishes.</div>
-      </div>
-    )
-  }
-
-  return (
-    <div style={styles.teamSummaryPanel}>
-      <div style={styles.teamSummarySection}>
-        <div style={styles.teamSummarySectionTitle}>Completed</div>
-        {summary.completed.length > 0 ? (
-          <ul style={styles.teamSummaryList}>
-            {summary.completed.map((item, index) => <li key={index} style={styles.teamSummaryListItem}>{item.text}</li>)}
-          </ul>
-        ) : (
-          <div style={styles.teamSummaryMuted}>No completed outcome was recorded</div>
-        )}
-      </div>
-
-      {summary.failures.length > 0 && (
-        <div style={styles.teamSummarySection}>
-          <div style={{ ...styles.teamSummarySectionTitle, color: C.red }}>Problems</div>
-          <ul style={styles.teamSummaryList}>
-            {summary.failures.map((item, index) => <li key={index} style={styles.teamSummaryListItem}>{item.text}</li>)}
-          </ul>
-        </div>
-      )}
-
-      <div style={styles.teamSummarySection}>
-        <div style={styles.teamSummarySectionTitle}>Next for you</div>
-        {summary.nextUserActions.length > 0 ? (
-          <ul style={styles.teamSummaryList}>
-            {summary.nextUserActions.map((item, index) => <li key={index} style={styles.teamSummaryListItem}>{item.text}</li>)}
-          </ul>
-        ) : <div style={styles.teamSummaryMuted}>No user action required</div>}
-      </div>
-    </div>
-  )
-}
-
-const groupPreview = (group: TeamMemberMessageGroup): string => {
-  const visible = splitWhiteboardMarkers(group.latest.content).stripped
-  return group.status === 'running' && !visible ? 'Working…' : extractPreview(visible || group.latest.content)
-}
-
-const TeamRoundDetail: React.FC<{ message: ChatMessage }> = ({ message }) => {
-  const tokenText = message.tokens != null ? formatTokens(message.tokens) : null
-  const durationText = message.durationSec != null && Number.isFinite(message.durationSec) ? `${message.durationSec}s` : null
-  return (
-    <div style={styles.teamInlineRunDetail} onClick={event => event.stopPropagation()}>
-      {message.advisorReason && (
-        <div style={styles.teamInlineRunSection}>
-          <div style={styles.teamInlineRunLabel}>Assigned task</div>
-          <div style={styles.teamInlineRunReason}>{message.advisorReason}</div>
-        </div>
-      )}
-      {message.thinking && (
-        <div style={styles.teamInlineRunSection}>
-          <ThinkingBlock
-            thinking={message.thinking}
-            hasAnswer={!!message.content.trim()}
-            isComplete={message.isComplete !== false}
-          />
-        </div>
-      )}
-      {!!message.toolCalls?.length && (
-        <div style={styles.teamInlineRunSection}>
-          <div style={styles.teamInlineRunLabel}>Execution</div>
-          <ToolCallList toolCalls={message.toolCalls} minimal />
-        </div>
-      )}
-      <div style={styles.teamInlineRunSection}>
-        <div style={styles.teamInlineRunLabel}>Output</div>
-        <TeamWorkerContent content={message.content} />
-      </div>
-      {(tokenText || durationText) && (
-        <div style={styles.teamInlineRunMeta}>
-          {tokenText && `${tokenText} tok`}
-          {tokenText && durationText && ' · '}
-          {durationText}
-        </div>
-      )}
-    </div>
-  )
-}
-
-const TeamSpatialStage: React.FC<{
-  mode: Extract<RenderItem, { kind: 'team' }>['teamMode']
-  groups: TeamMemberMessageGroup[]
-  rounds: ChatMessage[]
-  totalRounds: number
-  isStreaming: boolean
-  expandedRounds: Map<string, boolean>
-  onToggleRound: (message: ChatMessage) => void
-  onSetAllRounds: (expanded: boolean) => void
-}> = ({ mode, groups, rounds, totalRounds, isStreaming, expandedRounds, onToggleRound, onSetAllRounds }) => {
-  const isRoundTable = mode === 'auto' || mode === 'roundtable'
-  if (groups.length === 0) return null
-
-  const stageHeader = (title: string) => (
-    <div style={styles.teamSpatialHeader}>
-      <div style={styles.teamSpatialTitle}>{title}</div>
-      <div style={styles.teamOverviewActions}>
-        <button type="button" style={styles.teamGraphActionButton} onClick={() => onSetAllRounds(true)}>Expand all</button>
-        <button type="button" style={styles.teamGraphActionButton} onClick={() => onSetAllRounds(false)}>Collapse all</button>
-      </div>
-    </div>
-  )
-
-  if (isRoundTable) {
-    const workingCount = groups.filter(group => group.status === 'running').length
-    return (
-      <div style={styles.teamSpatialStage}>
-        {stageHeader(mode === 'roundtable' ? `Roundtable · Round ${totalRounds}` : `Auto team · Step ${totalRounds}`)}
-        <div style={styles.teamRoundTableSpace}>
-          <div style={styles.teamRoundTableCenter}>
-            <span style={styles.teamRoundTableCenterTitle}>{mode === 'roundtable' ? 'Roundtable' : 'Auto team'}</span>
-            <span style={styles.teamRoundTableCenterSub}>{workingCount > 0 ? `${workingCount} working` : `${groups.length} members`}</span>
-          </div>
-          {groups.map((group, index) => {
-            const angle = (-Math.PI / 2) + (index * Math.PI * 2 / groups.length)
-            const left = 50 + Math.cos(angle) * 37
-            const top = 50 + Math.sin(angle) * 38
-            const active = isStreaming && group.status === 'running'
-            return (
-              <div
-                key={group.worker}
-                style={{ ...styles.teamRoundTableMember, left: `${left}%`, top: `${top}%`, ...(active ? styles.teamRoundTableMemberActive : undefined) }}
-                role="button"
-                tabIndex={0}
-                aria-expanded={expandedRounds.get(group.latest.id) ?? false}
-                onClick={() => onToggleRound(group.latest)}
-                onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onToggleRound(group.latest) } }}
-              >
-                <span style={styles.teamSpatialAvatar} aria-label={`${group.worker} avatar`}>
-                  {workerAvatar(group.worker)}
-                  <span style={{
-                    ...styles.teamSpatialStatus,
-                    background: group.status === 'failed' ? C.red : group.status === 'askedUser' ? C.yellow : active ? C.accent : C.green,
-                    boxShadow: active ? `0 0 7px ${C.accent}` : 'none',
-                  }} />
-                </span>
-                <div style={styles.teamSpatialMemberCopy}>
-                  <div style={styles.teamSpatialMemberName}>{group.worker}</div>
-                  <div style={styles.teamSpatialSpeech}>{groupPreview(group)}</div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-        {groups.filter(group => expandedRounds.get(group.latest.id)).map(group => (
-          <div key={group.latest.id} style={styles.teamRoundTableDetail}>
-            <div style={styles.teamWorkflowCardHead}>
-              <span style={styles.teamSpatialAvatar} aria-label={`${group.worker} avatar`}>{workerAvatar(group.worker)}</span>
-              <span style={styles.teamSpatialMemberName}>{group.worker}</span>
-              <span style={styles.teamMemberRoundsLabel}>Round {group.latest.step}</span>
-            </div>
-            <TeamRoundDetail message={group.latest} />
-          </div>
-        ))}
-      </div>
-    )
-  }
-
-  const workflowRounds = [...rounds].sort((a, b) => (a.step ?? 0) - (b.step ?? 0))
-
-  return (
-    <div style={styles.teamSpatialStage}>
-      {stageHeader(`${mode === 'graph' ? 'Flow progress' : 'Sequential workflow'} · ${totalRounds} rounds`)}
-      <div style={styles.teamWorkflow}>
-        {workflowRounds.map((message, index) => {
-          const active = isStreaming && message.workerStatus === 'running'
-          const visible = splitWhiteboardMarkers(message.content).stripped
-          const preview = active && !visible ? 'Working…' : extractPreview(visible || message.content)
-          const expanded = expandedRounds.get(message.id) ?? active
-          return (
-            <div
-              key={message.id}
-              style={styles.teamWorkflowStage}
-              role="button"
-              tabIndex={0}
-              aria-expanded={expanded}
-              onClick={() => onToggleRound(message)}
-              onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onToggleRound(message) } }}
-            >
-              {index < workflowRounds.length - 1 && <span style={styles.teamWorkflowLine} />}
-              <span style={{ ...styles.teamWorkflowIndex, ...(active ? styles.teamWorkflowIndexActive : undefined) }}>{message.step ?? index + 1}</span>
-              <span style={styles.teamSpatialAvatar} aria-label={`${message.worker} avatar`}>
-                {workerAvatar(message.worker ?? '')}
-                <span style={{
-                  ...styles.teamSpatialStatus,
-                  background: message.workerStatus === 'failed' ? C.red : message.workerStatus === 'askedUser' ? C.yellow : active ? C.accent : C.green,
-                  boxShadow: active ? `0 0 7px ${C.accent}` : 'none',
-                }} />
-              </span>
-              <div style={styles.teamWorkflowColumn}>
-                <div style={{ ...styles.teamWorkflowCard, ...(active ? styles.teamWorkflowCardActive : undefined) }}>
-                  <div style={styles.teamWorkflowCardHead}>
-                    <span style={{ ...styles.teamStepChevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
-                    <span style={styles.teamSpatialMemberName}>{message.worker}</span>
-                    <span style={styles.teamMemberRoundsLabel}>Round {message.step ?? index + 1}</span>
-                    {message.model && <span style={styles.modelBadge}>{message.model}</span>}
-                    {active && <span style={styles.teamStepRunning}>working</span>}
-                  </div>
-                  {!expanded && <div style={styles.teamWorkflowSpeech}>{preview}</div>}
-                </div>
-                {expanded && <TeamRoundDetail message={message} />}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 const TeamMessage: React.FC<{
+  workers: WorkerDto[]
   messageId: string
   parsed: NonNullable<ReturnType<typeof parseTeamMessage>>
   isStreaming: boolean
@@ -765,7 +416,7 @@ const TeamMessage: React.FC<{
   thinkingByStep?: Record<number, string>
   expanded: Set<string>
   setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
-}> = ({ messageId, parsed, isStreaming, isComplete, thinkingByStep, expanded, setExpanded }) => {
+}> = ({ workers, messageId, parsed, isStreaming, isComplete, thinkingByStep, expanded, setExpanded }) => {
   const lastIdx = parsed.steps.length - 1
   return (
     <div>
@@ -782,7 +433,7 @@ const TeamMessage: React.FC<{
         return (
           <div key={baseKey} id={stepDomId(messageId, s.step)} style={cardStyle}>
             <div style={styles.teamStepHeader}>
-              <span style={styles.teamStepLabel}>Step {s.step}: {s.worker}</span>
+              <WorkerAvatar name={s.worker} config={workers.find(w => w.name === s.worker)?.config.avatar} state={/^❌/.test(s.output.trim()) ? 'failed' : isLastDuringStream ? 'working' : isComplete ? 'done' : 'stopped'} /><span style={styles.teamStepLabel}>{s.worker}</span>
               {isLastDuringStream && <span style={styles.teamStepRunning}>● running</span>}
             </div>
             <div style={styles.teamStepBody}>
@@ -805,115 +456,6 @@ const TeamMessage: React.FC<{
         )
       })}
     </div>
-  )
-}
-
-const TeamRunGroup: React.FC<{
-  item: Extract<RenderItem, { kind: 'team' }>
-  isStreaming: boolean
-}> = ({ item, isStreaming }) => {
-  // null = follow the run: open while it works, folded once it has answered.
-  const [userCollapsed, setUserCollapsed] = React.useState<boolean | null>(null)
-  const [summaryOpen, setSummaryOpen] = React.useState(false)
-  const [whiteboardOpen, setWhiteboardOpen] = React.useState(false)
-  const [roundExpansion, setRoundExpansion] = React.useState<Map<string, boolean>>(new Map())
-  const workerMessages = item.messages.filter(m => !!m.worker)
-  const memberGroups = groupTeamMessagesByMember(workerMessages)
-  const footerMessages = item.messages.filter(m => !m.worker && !!m.content.trim())
-  const finalSummary = [...item.messages].reverse().find(message => message.teamSummary)?.teamSummary
-  // Once the run is over the stage is just history: fold it and show the
-  // answer on its own, the way a single-agent turn would read.
-  const finalAnswer = isStreaming ? null : teamFinalAnswer(item.messages, item.teamMode)
-  const collapsed = userCollapsed ?? finalAnswer !== null
-  const setCollapsed = (update: boolean | ((current: boolean) => boolean)) =>
-    setUserCollapsed(typeof update === 'function' ? update(collapsed) : update)
-  const completedCount = workerMessages.filter(m => m.workerStatus && m.workerStatus !== 'running').length
-  const failedCount = workerMessages.filter(m => m.workerStatus === 'failed').length
-  const activeCount = workerMessages.filter(m => m.workerStatus === 'running').length
-  // Only the parallel room runs true rounds; auto and sequential teams take
-  // one worker step at a time.
-  const turnWord = item.teamMode === 'roundtable' ? 'round' : 'step'
-  const modeLabel = item.teamMode === 'auto'
-    ? 'Auto'
-    : item.teamMode === 'roundtable'
-      ? 'Roundtable'
-      : 'Sequential'
-  const toggleRound = (message: ChatMessage) => setRoundExpansion(current => {
-    const next = new Map(current)
-    next.set(message.id, !(current.get(message.id) ?? (isStreaming && message.workerStatus === 'running')))
-    return next
-  })
-  const setAllRounds = (expanded: boolean) => {
-    setRoundExpansion(new Map(workerMessages.map(message => [message.id, expanded])))
-  }
-  return (
-    <>
-    <div style={styles.teamGroup}>
-      <div style={styles.teamGroupHeader} onClick={() => setCollapsed(c => !c)}>
-        <span style={{ ...styles.teamStepChevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>▶</span>
-        <div style={styles.teamGroupIdentity}>
-          <span style={styles.teamGroupTitle}>{item.teamName ?? 'Team'}</span>
-          <span style={styles.teamModeBadge}>{modeLabel}</span>
-        </div>
-        <span style={styles.teamGroupProgress}>
-          {memberGroups.length} {memberGroups.length === 1 ? 'member' : 'members'} · {activeCount > 0 && isStreaming ? `${completedCount}/${workerMessages.length} ${turnWord}${workerMessages.length === 1 ? '' : 's'}` : failedCount ? `${completedCount}/${workerMessages.length} ${turnWord}${workerMessages.length === 1 ? '' : 's'} · ${failedCount} failed` : `${completedCount}/${workerMessages.length} ${turnWord}${workerMessages.length === 1 ? '' : 's'}`}
-        </span>
-        <div style={styles.teamGroupHeaderActions} onClick={event => event.stopPropagation()}>
-          <button
-            type="button"
-            style={{ ...styles.teamWhiteboardButton, ...(whiteboardOpen ? styles.teamWhiteboardButtonActive : undefined) }}
-            aria-expanded={whiteboardOpen}
-            onClick={() => {
-              if (collapsed) setCollapsed(false)
-              setWhiteboardOpen(open => collapsed ? true : !open)
-            }}
-          >
-            Whiteboard
-          </button>
-        </div>
-      </div>
-      {whiteboardOpen && (
-        <TeamWhiteboardModal
-          workerMessages={workerMessages}
-          footerMessages={footerMessages}
-          onClose={() => setWhiteboardOpen(false)}
-        />
-      )}
-      {!collapsed && (
-        <TeamSpatialStage
-          mode={item.teamMode}
-          groups={memberGroups}
-          rounds={workerMessages}
-          totalRounds={workerMessages.length}
-          isStreaming={isStreaming}
-          expandedRounds={roundExpansion}
-          onToggleRound={toggleRound}
-          onSetAllRounds={setAllRounds}
-        />
-      )}
-      {!collapsed && footerMessages.map(m => <TeamRunFooter key={m.id} content={m.content} />)}
-      {!collapsed && (
-        <div style={styles.teamSummaryCollapse}>
-          <button
-            type="button"
-            style={{ ...styles.teamSummaryToggle, ...(summaryOpen ? styles.teamSummaryToggleOpen : undefined) }}
-            aria-expanded={summaryOpen}
-            onClick={() => setSummaryOpen(open => !open)}
-          >
-            <span style={{ ...styles.teamStepChevron, transform: summaryOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
-            <span>{finalSummary ? 'Final summary' : 'Summary'}</span>
-          </button>
-          {summaryOpen && <TeamSummaryPanel summary={finalSummary} />}
-        </div>
-      )}
-    </div>
-    {finalAnswer && (
-      <div style={styles.teamFinalAnswer}>
-        <div style={styles.teamFinalAnswerBy}>{finalAnswer.worker}</div>
-        <Markdown variant="assistant">{finalAnswer.text}</Markdown>
-      </div>
-    )}
-    </>
   )
 }
 
@@ -985,6 +527,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const [resourceIndex, setResourceIndex] = useState<MentionEntry[]>([])
   const [mention, setMention] = useState<ActiveMention | null>(null)
   const [mentionIdx, setMentionIdx] = useState(0)
+  const builtinAvatars = useBuiltinAvatars()
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   const [teamNames, setTeamNames] = useState<string[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
@@ -1136,7 +679,12 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     window.addEventListener('mouseup', onUp)
   }
 
-  useEffect(() => { apiService.listWorkers().then(setWorkers) }, [])
+  useEffect(() => {
+    const refresh = () => { void apiService.listWorkers().then(setWorkers).catch(() => {}) }
+    refresh()
+    window.addEventListener('codey:workers-changed', refresh)
+    return () => window.removeEventListener('codey:workers-changed', refresh)
+  }, [])
   const refreshPairings = async () => {
     try {
       const p = await apiService.listPairings()
@@ -1354,16 +902,6 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // Only Codey's side of the conversation is mapped: user prompts are short and
   // sit right above their reply, so they would just double the tick count.
   const navigationItems = useMemo<ChatNavigationItem[]>(() => renderItems.flatMap<ChatNavigationItem>(item => {
-    if (item.kind === 'team') {
-      const source = [...item.messages].reverse().find(message => message.content.trim())
-      const preview = (source?.content || `${item.messages.length} team updates`).replace(/\s+/g, ' ').trim()
-      return [{
-        id: `team:${item.teamTurnId}`,
-        title: item.teamName || 'Team run',
-        preview: preview.slice(0, 180),
-        role: 'team',
-      }]
-    }
     const msg = item.message
     if (msg.role !== 'assistant') return []
     const plain = (msg.content || msg.userQuestion?.question || 'Agent update')
@@ -2559,17 +2097,12 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
             onNavigate={() => setFollowLatest(false)}
           />
           {renderItems.map((item, idx) => {
-          if (item.kind === 'team') {
-            return (
-              <div key={item.teamTurnId} data-chat-navigation-id={`team:${item.teamTurnId}`}>
-                <TeamRunGroup
-                  item={item}
-                  isStreaming={!!flight && item.messages[item.messages.length - 1]?.id === lastMsg?.id}
-                />
-              </div>
-            )
-          }
           const msg = item.message
+          const member = msg.worker ? workers.find(w => w.name.toLowerCase() === msg.worker!.toLowerCase()) : undefined
+          const memberActive = !!flight && (msg.teamTurnId
+            ? chat.messages.slice(chat.messages.findIndex(m => m.id === flight.userMessageId) + 1).some(m => m.id === msg.id)
+            : msg === lastMsg)
+          const memberState = workerAvatarState(msg, memberActive)
           const isUser = msg.role === 'user'
           const isSelected = !isUser && msg.id === selectedTurnId && overviewOpen
           const isEditing = isUser && editingMsgId === msg.id
@@ -2636,14 +2169,20 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 overflowWrap: 'anywhere', wordBreak: 'break-word',
                 transition: 'border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease',
               }}>
+                {!isUser && msg.worker && <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                  <WorkerAvatar name={msg.worker} config={msg.builtinMember ? builtinAvatar(msg.builtinMember, builtinAvatars) : member?.config.avatar} state={memberState} />
+                  <strong>{msg.builtinMember === 'aide' ? 'Aide' : msg.builtinMember === 'advisor' ? 'Advisor' : msg.worker}</strong>
+                  <span role="status" style={{ fontSize: 11, color: memberState === 'failed' ? C.red : C.fg3 }}>{msg.teamFinal ? (msg.teamFinal.source === 'fallback' ? 'Execution record summary' : 'Team summary') : avatarStateLabels[memberState]}</span>
+                </div>}
                 {!isUser && (() => {
                   const thinking = msg.thinking?.trim() ?? ''
                   // Keyed off the in-flight turn rather than msg.isComplete:
                   // messages persisted before isComplete existed would
                   // otherwise lose their rule and timestamp for good.
-                  const streaming = !!flight && msg === lastMsg
+                  const streaming = msg.worker ? memberActive && msg.workerStatus !== 'done' && msg.workerStatus !== 'failed' : !!flight && msg === lastMsg
                   const expanded = thinkingToggles[msg.id]
                     ?? defaultThinkingExpanded({
+                      member: !!msg.worker,
                       hasAnswer: !!msg.content.trim(),
                       isComplete: msg.isComplete ?? false,
                     })
@@ -2663,9 +2202,13 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     </>
                   )
                 })()}
-                {!isUser && !!flight && msg === lastMsg && (
+                {!isUser && (msg.worker ? memberActive && memberState === 'working' : !!flight && msg === lastMsg) && (
                   <LiveActivity toolCalls={msg.toolCalls} />
                 )}
+                {!isUser && msg.worker && !!msg.toolCalls?.length && <details style={{ margin: '6px 0' }}>
+                  <summary style={{ cursor: 'pointer', color: C.fg3, fontSize: 11 }}>Tool history</summary>
+                  <ToolCallList toolCalls={msg.toolCalls} />
+                </details>}
                 {(msg.content || (!isUser && msg.userQuestion?.question)) && (() => {
                   if (isUser) {
                     if (isEditing) return (
@@ -2695,6 +2238,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     return <UserMessageContent content={msg.content} />
                   }
                   const text = msg.content || msg.userQuestion?.question || ''
+                  if (msg.worker) return <MemberReply content={text}><TeamWorkerContent content={text} /></MemberReply>
                   const parsed = parseTeamMessage(text)
                   const isStreaming = !!flight && msg === lastMsg
                   if (!parsed) return (
@@ -2704,6 +2248,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   )
                   return (
                     <TeamMessage
+                      workers={workers}
                       messageId={msg.id}
                       parsed={parsed}
                       isStreaming={isStreaming}
@@ -2714,6 +2259,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     />
                   )
                 })()}
+                {!isUser && msg.workerFailureReason && <div role="alert" style={{ color: C.red }}>{msg.workerFailureReason}</div>}
+                {!isUser && msg.workerNextUserAction && <div>{msg.workerNextUserAction.text}</div>}
                 {isUser && msg.attachments && msg.attachments.length > 0 && (
                   <div style={styles.attachmentsContainer}>
                     {msg.attachments.map(att => {
@@ -3949,249 +3496,6 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1, minWidth: 0,
   },
   teamStepBody: { marginTop: 4, marginLeft: 17 },
-  teamGroup: { border: `1px solid ${C.border}`, borderRadius: 12, margin: '8px 0 14px', overflow: 'hidden', background: C.surface2 },
-  teamFinalAnswer: { margin: '0 0 14px' },
-  teamFinalAnswerBy: { fontSize: 11, color: C.fg3, marginBottom: 4 },
-  teamGroupHeader: { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}` },
-  teamGroupIdentity: { display: 'flex', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 },
-  teamGroupTitle: { fontSize: 13, fontWeight: 700, color: C.fg, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
-  teamModeBadge: {
-    fontSize: 10, fontWeight: 500, color: C.fg3, whiteSpace: 'nowrap' as const,
-  },
-  teamGroupProgress: { fontSize: 10, color: C.fg3, whiteSpace: 'nowrap' as const },
-  teamGroupHeaderActions: { display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 },
-  teamWhiteboardButton: {
-    flexShrink: 0, padding: '4px 8px', borderRadius: 6,
-    border: `1px solid ${C.border2}`, background: C.surface3,
-    color: C.fg2, fontSize: 10, fontWeight: 600, cursor: 'pointer',
-  },
-  teamWhiteboardButtonActive: {
-    color: C.accent, border: `1px solid ${C.accent}66`, background: C.accentDim,
-  },
-  teamSummaryPanel: {
-    padding: '4px 12px 12px',
-    background: C.surface2,
-  },
-  teamSummaryCollapse: { borderTop: `1px solid ${C.border2}`, background: C.surface2 },
-  teamSummaryToggle: {
-    display: 'flex', alignItems: 'center', width: '100%', padding: '9px 12px',
-    border: 'none', background: 'transparent', color: C.fg2,
-    fontSize: 11, fontWeight: 600, textAlign: 'left' as const, cursor: 'pointer',
-  },
-  teamSummaryToggleOpen: { color: C.accent },
-  teamSummarySection: {
-    marginTop: 7, padding: '9px 10px', borderRadius: 8,
-    border: `1px solid ${C.border2}`, background: C.surface,
-  },
-  teamSummarySectionTitle: {
-    marginBottom: 6, color: C.fg3, fontSize: 9, fontWeight: 700,
-    textTransform: 'uppercase' as const, letterSpacing: '0.05em',
-  },
-  teamSummaryList: { margin: 0, paddingLeft: 17 },
-  teamSummaryListItem: { marginTop: 4, color: C.fg2, fontSize: 11, lineHeight: 1.45 },
-  teamSummaryMuted: { color: C.fg3, fontSize: 11, lineHeight: 1.45 },
-  teamWhiteboardPanel: {
-    padding: '12px 14px 14px',
-    background: C.surface2,
-  },
-  teamWhiteboardPanelHead: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 7,
-  },
-  teamWhiteboardPanelIdentity: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
-  teamWhiteboardCloseButton: {
-    width: 26, height: 26, display: 'grid', placeItems: 'center', flexShrink: 0,
-    padding: 0, border: 'none', borderRadius: 7, background: 'transparent',
-    color: C.fg3, cursor: 'pointer',
-  },
-  teamWhiteboardModalBackdrop: {
-    position: 'fixed' as const, inset: 0, zIndex: 1200,
-    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
-    background: 'rgba(0,0,0,0.42)',
-  },
-  teamWhiteboardModal: {
-    width: 'min(520px, calc(100vw - 40px))', maxHeight: 'min(560px, calc(100vh - 80px))',
-    overflowY: 'auto' as const, border: `1px solid ${C.border}`, borderRadius: 12,
-    background: C.surface2, boxShadow: '0 18px 55px rgba(0,0,0,0.38)',
-  },
-  teamWhiteboardEntry: {
-    display: 'flex', alignItems: 'flex-start', gap: 9, padding: '7px 0',
-    borderTop: `1px solid ${C.border2}`,
-  },
-  teamWhiteboardEntryCopy: { minWidth: 0, flex: 1 },
-  teamWhiteboardSource: { marginTop: 3, color: C.fg3, fontSize: 9 },
-  teamWhiteboardShared: {
-    marginTop: 8, padding: '8px 9px', borderRadius: 8,
-    border: `1px solid ${C.border2}`, background: C.surface,
-  },
-  teamWhiteboardEmpty: { padding: '8px 0 2px', color: C.fg3, fontSize: 10 },
-  teamSpatialStage: {
-    padding: '10px 12px 12px', borderBottom: `1px solid ${C.border2}`,
-    background: C.surface,
-  },
-  teamSpatialHeader: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: 10, marginBottom: 7,
-  },
-  teamSpatialTitle: {
-    color: C.fg3, fontSize: 10, fontWeight: 600,
-    textTransform: 'uppercase' as const, letterSpacing: '0.04em',
-  },
-  teamRoundTableSpace: {
-    position: 'relative', height: 280, overflow: 'hidden',
-    borderRadius: 12, background: C.surface2,
-    border: `1px solid ${C.border2}`,
-  },
-  teamRoundTableCenter: {
-    position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
-    width: 148, height: 72, display: 'flex', flexDirection: 'column',
-    alignItems: 'center', justifyContent: 'center', borderRadius: '50%',
-    border: `1px solid ${C.border}`, background: C.surface3,
-    boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
-  },
-  teamRoundTableCenterTitle: { color: C.fg, fontSize: 12, fontWeight: 600 },
-  teamRoundTableCenterSub: { marginTop: 3, color: C.fg3, fontSize: 9 },
-  teamRoundTableMember: {
-    position: 'absolute', transform: 'translate(-50%, -50%)',
-    display: 'flex', alignItems: 'center', gap: 7, width: 150,
-    padding: '7px 8px', borderRadius: 10, border: `1px solid ${C.border2}`,
-    background: C.surface, boxShadow: '0 5px 14px rgba(0,0,0,0.12)', cursor: 'pointer',
-  },
-  teamRoundTableMemberActive: {
-    border: `1px solid ${C.accent}`, boxShadow: `0 0 0 1px ${C.accentDim}, 0 5px 16px rgba(0,0,0,0.14)`,
-  },
-  teamSpatialAvatar: {
-    position: 'relative', display: 'inline-grid', placeItems: 'center',
-    width: 32, height: 32, flexShrink: 0, borderRadius: 10,
-    background: C.surface3, fontSize: 19,
-  },
-  teamSpatialStatus: {
-    position: 'absolute', right: -2, bottom: -2, width: 8, height: 8,
-    borderRadius: '50%', border: `2px solid ${C.surface}`,
-  },
-  teamSpatialMemberCopy: { minWidth: 0, flex: 1 },
-  teamSpatialMemberName: {
-    color: C.fg, fontSize: 10, fontWeight: 600,
-    whiteSpace: 'nowrap' as const, overflow: 'hidden' as const, textOverflow: 'ellipsis',
-  },
-  teamSpatialSpeech: {
-    marginTop: 3, color: C.fg3, fontSize: 9, fontStyle: 'italic',
-    whiteSpace: 'nowrap' as const, overflow: 'hidden' as const, textOverflow: 'ellipsis',
-  },
-  teamRoundTableDetail: {
-    marginTop: 8, padding: '9px 10px', borderRadius: 10,
-    border: `1px solid ${C.border2}`, background: C.surface2,
-  },
-  teamWorkflow: { display: 'flex', flexDirection: 'column', gap: 0, padding: '2px 0' },
-  teamWorkflowStage: {
-    position: 'relative', display: 'grid', gridTemplateColumns: '24px 34px minmax(0, 1fr)',
-    alignItems: 'start', gap: 9, minHeight: 64, padding: '7px 0', cursor: 'pointer',
-  },
-  teamWorkflowLine: {
-    position: 'absolute', left: 11, top: 31, bottom: -31,
-    width: 2, background: C.border2,
-  },
-  teamWorkflowIndex: {
-    position: 'relative', zIndex: 1, display: 'grid', placeItems: 'center',
-    width: 24, height: 24, borderRadius: '50%', color: C.fg3,
-    marginTop: 5, background: C.surface3, border: `1px solid ${C.border2}`, fontSize: 9,
-  },
-  teamWorkflowIndexActive: { color: C.accent, border: `1px solid ${C.accent}`, background: C.accentDim },
-  teamWorkflowCard: {
-    minWidth: 0, padding: '7px 9px', borderRadius: 9,
-    border: `1px solid ${C.border2}`, background: C.surface2,
-  },
-  teamWorkflowCardActive: { border: `1px solid ${C.accent}`, background: C.accentDim },
-  teamWorkflowCardHead: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 },
-  teamWorkflowColumn: { minWidth: 0 },
-  teamWorkflowSpeech: {
-    marginTop: 4, color: C.fg3, fontSize: 10, fontStyle: 'italic',
-    whiteSpace: 'nowrap' as const, overflow: 'hidden' as const, textOverflow: 'ellipsis',
-  },
-  teamInlineRunDetail: {
-    marginTop: 6, padding: '10px 11px', borderRadius: 9,
-    border: `1px solid ${C.border2}`, background: C.surface,
-    cursor: 'default',
-  },
-  teamInlineRunSection: { marginBottom: 10 },
-  teamInlineRunLabel: {
-    marginBottom: 5, color: C.fg3, fontSize: 9, fontWeight: 700,
-    textTransform: 'uppercase' as const, letterSpacing: '0.05em',
-  },
-  teamInlineRunReason: { color: C.fg2, fontSize: 11, lineHeight: 1.5 },
-  teamInlineRunMeta: { color: C.fg3, fontSize: 9, textAlign: 'right' as const },
-  teamHistoryHeader: {
-    display: 'flex', alignItems: 'center', gap: 7, minHeight: 38,
-    padding: '7px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border2}`,
-    background: C.surface2, userSelect: 'none' as const,
-  },
-  teamHistoryTitle: { color: C.fg2, fontSize: 11, fontWeight: 600 },
-  teamHistoryCount: { flex: 1, color: C.fg3, fontSize: 9 },
-  teamOverview: {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px',
-    borderBottom: `1px solid ${C.border2}`, background: C.surface,
-  },
-  teamMemberRail: { display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, flex: 1, flexWrap: 'wrap' as const },
-  teamMemberPill: {
-    display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0,
-    padding: '3px 7px', borderRadius: 999, border: `1px solid ${C.border2}`,
-    background: C.surface2,
-  },
-  teamMemberPillAvatar: {
-    display: 'inline-grid', placeItems: 'center', width: 18, height: 18,
-    flexShrink: 0, borderRadius: 6, background: C.surface3, fontSize: 12,
-  },
-  teamMemberDot: { width: 6, height: 6, borderRadius: '50%', flexShrink: 0 },
-  teamMemberPillName: { maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, fontSize: 10, color: C.fg2 },
-  teamMemberRoundCount: {
-    minWidth: 16, padding: '1px 4px', borderRadius: 999, textAlign: 'center' as const,
-    fontSize: 9, color: C.fg3, background: C.surface3,
-  },
-  teamOverviewActions: { display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 },
-  teamGraphActionButton: {
-    padding: '4px 8px', border: `1px solid ${C.border2}`,
-    background: C.surface3, cursor: 'pointer', color: C.fg2,
-    fontSize: 9, fontWeight: 600, borderRadius: 6,
-  },
-  teamWorkerBubble: { padding: '8px 12px', borderBottom: `1px solid ${C.border2}`, cursor: 'pointer', background: C.surface2 },
-  teamWorkerBubbleActive: { background: C.surface3 },
-  teamWorkerHead: { display: 'flex', alignItems: 'center', gap: 6, minHeight: 22, marginBottom: 1, userSelect: 'none' as const },
-  teamWorkerAvatar: {
-    position: 'relative', display: 'inline-grid', placeItems: 'center',
-    width: 28, height: 28, flexShrink: 0, borderRadius: 9,
-    background: C.surface3, fontSize: 17,
-  },
-  teamWorkerAvatarDot: {
-    position: 'absolute', right: -2, bottom: -2, width: 8, height: 8,
-    borderRadius: '50%', border: `2px solid ${C.surface2}`,
-  },
-  teamMemberGroup: { borderBottom: `1px solid ${C.border2}`, background: C.surface2 },
-  teamMemberGroupHead: {
-    display: 'flex', alignItems: 'center', gap: 6, minHeight: 46,
-    padding: '7px 12px', cursor: 'pointer', userSelect: 'none' as const,
-  },
-  teamMemberRoundsLabel: {
-    padding: '2px 6px', borderRadius: 999, flexShrink: 0,
-    fontSize: 9, color: C.fg3, background: C.surface3,
-  },
-  teamRoundList: {
-    margin: '0 12px 10px 51px', borderLeft: `2px solid ${C.border2}`,
-    background: C.surface,
-  },
-  teamRound: { borderBottom: `1px solid ${C.border2}`, cursor: 'pointer' },
-  teamRoundActive: { background: C.surface3 },
-  teamRoundHead: {
-    display: 'flex', alignItems: 'center', gap: 6, minHeight: 34,
-    padding: '5px 9px', userSelect: 'none' as const,
-  },
-  teamRoundLabel: { color: C.fg2, fontSize: 11, fontWeight: 500, flexShrink: 0 },
-  teamRoundReason: { margin: '1px 10px 5px 28px', color: C.fg3, fontSize: 10 },
-  teamRoundBody: { margin: '5px 10px 9px 28px' },
-  teamStepNumber: { fontSize: 9, color: C.fg3, flexShrink: 0 },
-  teamWorkerReason: { fontSize: 11, color: C.fg3, margin: '2px 0 5px 51px' },
-  teamWorkerBody: { marginTop: 5, marginLeft: 51 },
-  teamWorkerFailed: { fontSize: 10, color: C.red ?? '#e66', textTransform: 'uppercase' as const },
-  teamRunFooter: { padding: '10px 12px', borderTop: `1px solid ${C.border2}` },
-  teamRunSummary: { marginBottom: 8, color: C.fg2 },
   whiteboard: {
     marginTop: 10, padding: '9px 10px', borderRadius: 8,
     border: `1px solid ${C.border2}`, background: C.surface3,
