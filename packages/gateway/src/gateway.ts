@@ -6030,24 +6030,60 @@ Example: /model gpt-4.1 write a Python script`;
       this.chatManager.clearLastAskedOptions(chatId);
     }
 
-    // "@worker" mentions route the turn to those workers. One mention runs that
+    // "@worker" / "@team" mentions route the turn. One worker mention runs that
     // worker alone; several form an ad-hoc `auto` team the Advisor dispatches,
-    // honouring any split the user wrote into the message. Not parsed on slash
-    // turns, paused-team answers, or chats already bound to a named team. The
-    // user message is persisted as typed; only the task the workers see has
-    // the mentions reduced to bare names.
-    let adHocTeam: { name: string; team: TeamConfig } | undefined;
+    // honouring any split the user wrote into the message. A lone team mention
+    // runs that team with its configured dispatch (and flow graph); mixing a
+    // team with extra workers falls back to an ad-hoc `auto` team over the
+    // union of members. Not parsed on slash turns, paused-team answers, or
+    // chats already bound to a named team. The user message is persisted as
+    // typed; only the task the workers see has the mentions reduced to bare
+    // names.
+    let adHocTeam: { name: string; team: TeamConfig; named?: boolean } | undefined;
     let historyText: string | undefined;
     if (!isSlashTurn && !pendingTeam && chat.selection.type !== 'team') {
       const wm = this.workspaceManager.getWorkerManager();
-      const mentions = parseWorkerMentions(userText, n => wm.hasWorker(n));
-      if (mentions.workers.length > 0) {
+      const teamLib: Record<string, TeamConfigRaw> = this.configManager?.getTeams() ?? {};
+      const teamKey = (name: string) => Object.keys(teamLib).find(k => k.toLowerCase() === name.toLowerCase());
+      const teamMembers = (name: string): string[] => {
+        const key = teamKey(name);
+        if (!key) return [];
+        const raw = teamLib[key];
+        return Array.isArray(raw) ? raw : (raw?.members ?? []);
+      };
+      const mentions = parseWorkerMentions(userText, n => wm.hasWorker(n), n => teamMembers(n).length > 0);
+      if (mentions.workers.length > 0 || mentions.teams.length > 0) {
         historyText = userText;
         userText = mentions.task;
-        adHocTeam = {
-          name: mentions.workers.join('+'),
-          team: { members: mentions.workers, dispatch: mentions.workers.length > 1 ? 'auto' : 'sequential' },
-        };
+        if (mentions.teams.length === 1 && mentions.workers.length === 0) {
+          // Reuse the workspace's normalized team so dispatch mode, roundtable
+          // settings and any validated flow graph come along; fall back to a
+          // plain sequential team built from the raw library entry.
+          const name = teamKey(mentions.teams[0])!;
+          const team = this.workspaceManager.getTeam(name)
+            ?? { members: teamMembers(name), dispatch: 'sequential' as const };
+          adHocTeam = { name, team, named: true };
+        } else {
+          // Union of every mentioned team's members plus the named workers,
+          // deduped, in mention order. Members a team names but the workspace
+          // no longer has are dropped rather than failing the turn.
+          const members: string[] = [];
+          const seen = new Set<string>();
+          const add = (n: string) => {
+            const key = n.toLowerCase();
+            if (seen.has(key) || !wm.hasWorker(key)) return;
+            seen.add(key);
+            members.push(key);
+          };
+          for (const t of mentions.teams) teamMembers(t).forEach(add);
+          mentions.workers.forEach(add);
+          if (members.length > 0) {
+            adHocTeam = {
+              name: members.join('+'),
+              team: { members, dispatch: members.length > 1 ? 'auto' : 'sequential' },
+            };
+          }
+        }
       }
     }
     const isTeamTurn = chat.selection.type === 'team' || adHocTeam !== undefined;
@@ -6450,11 +6486,15 @@ Example: /model gpt-4.1 write a Python script`;
       } else if (adHocTeam) {
         const { name: teamName, team } = adHocTeam;
         const teamPrompt = prompt + '\n\n[Addressed workers]\n'
-          + `The user addressed these workers directly: ${team.members.join(', ')}. `
+          + (adHocTeam.named
+            ? `The user addressed the team "${teamName}" (${team.members.join(', ')}). `
+            : `The user addressed these workers directly: ${team.members.join(', ')}. `)
           + 'If the message assigns work to specific workers, follow that assignment. Otherwise decide who does what.';
-        sink({ type: 'info', chatId, message: team.members.length > 1
-          ? `Ad-hoc team from mentions: ${team.members.join(', ')} (Advisor dispatches)`
-          : `Routing to worker ${team.members[0]}` });
+        sink({ type: 'info', chatId, message: adHocTeam.named
+          ? `Team "${teamName}" from mention: ${team.members.join(', ')} [${team.dispatch}]`
+          : team.members.length > 1
+            ? `Ad-hoc team from mentions: ${team.members.join(', ')} (Advisor dispatches)`
+            : `Routing to worker ${team.members[0]}` });
         const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model);
         output = r.response;
         tokens = r.tokens;

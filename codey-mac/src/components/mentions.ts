@@ -10,11 +10,12 @@ export type MentionFile = { path: string; name: string; isDir: boolean }
 /**
  * What a menu row refers to. Files are paths in the workspace; the others are
  * capabilities the user already has installed, referenced by a namespaced
- * token (`skill:browser`) so one flat matcher can rank them all. A `worker`
- * mention is different in effect: the gateway routes the turn to that worker
- * (several form an ad-hoc team), so it is never appended as a prompt hint.
+ * token (`skill:browser`) so one flat matcher can rank them all. `worker` and
+ * `team` mentions are different in effect: the gateway routes the turn to them
+ * (several workers form an ad-hoc team; a team runs with its configured
+ * dispatch), so they are never appended as a prompt hint.
  */
-export type MentionKind = 'file' | 'skill' | 'plugin' | 'mcp' | 'worker'
+export type MentionKind = 'file' | 'skill' | 'plugin' | 'mcp' | 'worker' | 'team'
 
 /**
  * A row in the "@" menu. `path` is the match key and the text inserted after
@@ -29,7 +30,7 @@ export type MentionEntry = MentionFile & {
 }
 
 /** The namespace prefixes, in the order the menu groups them. */
-export const RESOURCE_KINDS: Exclude<MentionKind, 'file'>[] = ['worker', 'skill', 'plugin', 'mcp']
+export const RESOURCE_KINDS: Exclude<MentionKind, 'file'>[] = ['worker', 'team', 'skill', 'plugin', 'mcp']
 
 /** Build a menu row for an installed capability. */
 export function resourceEntry(kind: Exclude<MentionKind, 'file'>, name: string, detail = ''): MentionEntry {
@@ -203,6 +204,7 @@ const KIND_LABEL: Record<Exclude<MentionKind, 'file'>, string> = {
   plugin: 'plugin',
   mcp: 'MCP server',
   worker: 'worker',
+  team: 'team',
 }
 
 /**
@@ -212,8 +214,8 @@ const KIND_LABEL: Record<Exclude<MentionKind, 'file'>, string> = {
  * hint in the prompt, and an agent is free to ignore it.
  */
 export function appendMentionContext(text: string, entries: MentionEntry[]): string {
-  // Workers are routing, not hints: the gateway reads `@worker:x` itself.
-  const hints = entries.filter(e => e.kind !== 'worker')
+  // Workers/teams are routing, not hints: the gateway reads those tokens itself.
+  const hints = entries.filter(e => e.kind !== 'worker' && e.kind !== 'team')
   if (hints.length === 0) return text
   const lines = hints.map(e => {
     const label = KIND_LABEL[(e.kind ?? 'skill') as Exclude<MentionKind, 'file'>]
