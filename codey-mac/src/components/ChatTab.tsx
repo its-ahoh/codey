@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom'
 import { chatOwnedPrUrl } from './chatPrUrl'
 import type { Chat, ChatMessage, ChatSelection, FileAttachment } from '../types'
+import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 import { apiService, WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
@@ -528,7 +529,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const [mentionIdx, setMentionIdx] = useState(0)
   const builtinAvatars = useBuiltinAvatars()
   const [workers, setWorkers] = useState<WorkerDto[]>([])
-  const [teamNames, setTeamNames] = useState<string[]>([])
+  // The full global team library — names drive the picker, members the "@" menu.
+  const [teamLib, setTeamLib] = useState<Record<string, TeamConfigRaw>>({})
+  const teamNames = React.useMemo(() => Object.keys(teamLib), [teamLib])
   const [models, setModels] = useState<ModelEntry[]>([])
   const [defaultAgent, setDefaultAgent] = useState<string | null>(null)
   // Shared install-probe store — an agent whose CLI isn't on PATH is greyed
@@ -721,8 +724,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     // global library rather than a per-workspace enabled subset.
     const refresh = () =>
       apiService.getGlobalTeams()
-        .then(lib => setTeamNames(Object.keys(lib)))
-        .catch(() => setTeamNames([]))
+        .then(lib => setTeamLib(lib))
+        .catch(() => setTeamLib({}))
     refresh()
     // Re-fetch when teams are enabled/edited in the Settings overlay, which
     // stays mounted alongside this tab so workspaceName never changes.
@@ -1283,6 +1286,12 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
           entries.push(resourceEntry('worker', worker.name, worker.config?.dispatchHint?.trim() || role))
         }
       }
+      // Teams sit next to workers: "@team:release ..." runs that team with its
+      // configured dispatch instead of an ad-hoc one.
+      for (const [name, raw] of Object.entries(teamLib)) {
+        const members: string[] = Array.isArray(raw) ? raw : (raw.members ?? [])
+        entries.push(resourceEntry('team', name, members.join(' → ')))
+      }
       if (skills.ok) {
         for (const skill of skills.data.skills) {
           if (!skill.enabled) continue
@@ -1315,7 +1324,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
       setResourceIndex(entries)
     })()
     return () => { stale = true }
-  }, [mention !== null, effectiveAgent, workingDir]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mention !== null, effectiveAgent, workingDir, teamLib]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // A chat can be rebound to a different worktree while mounted; the old
   // repo's paths must not linger in the menu.
@@ -2502,6 +2511,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
               >
                 <span style={styles.mentionIcon}>
                   {entry.kind === 'worker' ? <WorkerAvatar name={entry.name} config={workers.find(w => w.name === entry.name)?.config.avatar} size={14} />
+                    : entry.kind === 'team' ? <UIIcon name="users" size={13} color={C.fg3} />
                     : entry.kind === 'skill' ? <UIIcon name="sparkle" size={13} color={C.fg3} />
                     : entry.kind === 'plugin' ? <UIIcon name="tools" size={13} color={C.fg3} />
                     : entry.kind === 'mcp' ? <UIIcon name="server" size={13} color={C.fg3} />
