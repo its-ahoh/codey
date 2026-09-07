@@ -25,6 +25,9 @@ struct VoiceConfig: Codable {
     var apiModel: String = "gpt-4o-mini-transcribe"
     /// WhisperKit model variant id (HuggingFace argmaxinc/whisperkit-coreml).
     var localModel: String = "openai_whisper-large-v3_turbo_954MB"
+    /// On-device streaming model id (`nemotron/<multilingual|latin>/<ms>ms`),
+    /// used when `provider` is `.localStreaming`. See `NemotronVariant`.
+    var streamingModel: String = "nemotron/multilingual/1120ms"
     /// OpenAI Realtime API WebSocket URL. Uses the same apiKey as the batch API.
     /// Requires `?intent=transcription` to open a transcription session.
     var realtimeUrl: String = "wss://api.openai.com/v1/realtime?intent=transcription"
@@ -69,8 +72,16 @@ struct VoiceConfig: Codable {
 
     enum Provider: String, Codable {
         case api
+        /// On-device WhisperKit: decodes the finished clip after recording.
         case local
+        /// On-device Nemotron via FluidAudio: true chunked streaming.
+        case localStreaming
         case realtime
+
+        /// Both local engines run inside this helper; the Mac app routes
+        /// composer capture here for either, and the API providers stay in
+        /// Electron.
+        var isOnDevice: Bool { self == .local || self == .localStreaming }
     }
 
     static var `default`: VoiceConfig {
@@ -101,6 +112,7 @@ struct VoiceConfig: Codable {
         apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? d.apiKey
         apiModel = try c.decodeIfPresent(String.self, forKey: .apiModel) ?? d.apiModel
         localModel = try c.decodeIfPresent(String.self, forKey: .localModel) ?? d.localModel
+        streamingModel = try c.decodeIfPresent(String.self, forKey: .streamingModel) ?? d.streamingModel
         realtimeUrl = try c.decodeIfPresent(String.self, forKey: .realtimeUrl) ?? d.realtimeUrl
         realtimeModel = try c.decodeIfPresent(String.self, forKey: .realtimeModel) ?? d.realtimeModel
         // A malformed vocabulary entry must not take down the whole config

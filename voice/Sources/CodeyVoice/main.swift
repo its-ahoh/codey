@@ -1,5 +1,6 @@
 import Cocoa
 import Darwin
+import FluidAudio
 import WhisperKit
 
 final class ExitCodeBox: @unchecked Sendable {
@@ -16,6 +17,66 @@ setbuf(stderr, nil)
 // is emitted as `download:progress <fraction>` lines so the parent (Electron
 // main) can stream a progress bar to the UI.
 let cliArgs = CommandLine.arguments
+
+// The streaming engine's models share the same two one-shot modes. Its ids
+// carry a `nemotron/` prefix (see `NemotronVariant`), so the same
+// `--download-model` / `--warm-model` flags route by name and Electron does
+// not need a second set of spawn paths or progress parsers.
+if let dlIdx = cliArgs.firstIndex(of: "--download-model"), dlIdx + 1 < cliArgs.count,
+   let variant = NemotronVariant(id: cliArgs[dlIdx + 1]) {
+    print("download:start \(variant.id)")
+    let sema = DispatchSemaphore(value: 0)
+    let exitCodeBox = ExitCodeBox()
+    Task {
+        do {
+            let folder = try await variant.download { fraction in
+                print(String(format: "download:progress %.4f", fraction))
+            }
+            print("download:done \(folder.path)")
+        } catch {
+            print("download:error \(String(describing: error))")
+            exitCodeBox.code = 1
+        }
+        sema.signal()
+    }
+    sema.wait()
+    exit(exitCodeBox.code)
+}
+
+if let wIdx = cliArgs.firstIndex(of: "--warm-model"), wIdx + 1 < cliArgs.count,
+   let variant = NemotronVariant(id: cliArgs[wIdx + 1]) {
+    print("warm:start \(variant.id)")
+    let sema = DispatchSemaphore(value: 0)
+    let exitCodeBox = ExitCodeBox()
+    Task {
+        let t0 = Date()
+        do {
+            // Same load path as the engine so CoreML's per-machine compile
+            // lands in the cache the engine will read. One chunk of silence
+            // through the pipeline forces every sub-model to compile.
+            let manager = try await variant.loadManagerWithRecovery { fraction in
+                print(String(format: "warm:progress %.4f", fraction))
+            }
+            // Exercise the vocabulary-aware logits path as well as the
+            // default fused decoder. Otherwise a user with dictionary terms
+            // could still pay a one-time CoreML compile on first dictation.
+            await manager.setCustomVocabulary([CustomVocabularyTerm(text: "Codey")])
+            await manager.reset()
+            _ = try await manager.process(samples: [Float](repeating: 0, count: 16000 * 2))
+            _ = try await manager.finish()
+            await manager.cleanup()
+            let elapsed = Date().timeIntervalSince(t0)
+            print(String(format: "warm:done %.2f", elapsed))
+        } catch {
+            print("warm:error \(String(describing: error))")
+            exitCodeBox.code = 1
+        }
+        sema.signal()
+    }
+    sema.wait()
+    exit(exitCodeBox.code)
+}
+
 if let dlIdx = cliArgs.firstIndex(of: "--download-model"), dlIdx + 1 < cliArgs.count {
     // WhisperKit's HF lookup uses glob `*openai*<variant>/*`, so the variant
     // must be the bare model name (e.g. `large-v3-turbo`), not the full repo
