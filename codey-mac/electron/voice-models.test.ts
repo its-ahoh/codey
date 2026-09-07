@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   allStreamingModelIds,
+  isBogusWarmMarkerKey,
   isOnDeviceVoiceProvider,
   parseStreamingModelId,
   selectedOnDeviceModel,
   streamingModelDir,
   streamingModelId,
   streamingModelIsComplete,
+  warmMarkerDeleteKeys,
+  warmMarkerWriteKeys,
 } from './voice-models'
 
 describe('isOnDeviceVoiceProvider', () => {
@@ -104,5 +107,47 @@ describe('streamingModelIsComplete', () => {
     const missing = { ...full }
     delete missing[`${DIR}/tokenizer.json`]
     expect(streamingModelIsComplete(DIR, probeFor(missing))).toBe(false)
+  })
+})
+
+describe('warm marker keys', () => {
+  it('aliases a Whisper id so either spelling looks up', () => {
+    expect(new Set(warmMarkerWriteKeys('openai_whisper-large-v3_turbo_954MB'))).toEqual(
+      new Set(['large-v3_turbo_954MB', 'openai_whisper-large-v3_turbo_954MB'])
+    )
+    expect(new Set(warmMarkerWriteKeys('large-v3_turbo_954MB'))).toEqual(
+      new Set(['large-v3_turbo_954MB', 'openai_whisper-large-v3_turbo_954MB'])
+    )
+  })
+
+  it('stores a streaming id under its own name only', () => {
+    expect(warmMarkerWriteKeys('nemotron/multilingual/1120ms')).toEqual(['nemotron/multilingual/1120ms'])
+  })
+
+  it('clears the bogus prefixed alias older builds wrote for streaming ids', () => {
+    // Without this the leftover key still matched in the UI's variant check
+    // and a deleted streaming model kept reporting "Ready".
+    expect(warmMarkerDeleteKeys('nemotron/multilingual/1120ms')).toEqual([
+      'nemotron/multilingual/1120ms',
+      'openai_whisper-nemotron/multilingual/1120ms',
+    ])
+  })
+
+  it('deletes every key it would have written for a Whisper id', () => {
+    const written = new Set(warmMarkerWriteKeys('large-v3_turbo_954MB'))
+    for (const key of written) {
+      expect(warmMarkerDeleteKeys('large-v3_turbo_954MB')).toContain(key)
+    }
+  })
+})
+
+describe('isBogusWarmMarkerKey', () => {
+  it('flags the prefixed streaming alias left by older builds', () => {
+    expect(isBogusWarmMarkerKey('openai_whisper-nemotron/multilingual/1120ms')).toBe(true)
+  })
+
+  it('leaves real Whisper and streaming keys alone', () => {
+    expect(isBogusWarmMarkerKey('openai_whisper-large-v3_turbo_954MB')).toBe(false)
+    expect(isBogusWarmMarkerKey('nemotron/multilingual/1120ms')).toBe(false)
   })
 })

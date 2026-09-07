@@ -3,7 +3,7 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
 import { hudStateCommand, hudLevelCommand, conversationToggleCommand } from './voice-hud'
-import { allStreamingModelIds, FileProbe, isOnDeviceVoiceProvider, selectedOnDeviceModel, streamingModelDir, streamingModelIsComplete } from './voice-models'
+import { allStreamingModelIds, FileProbe, isOnDeviceVoiceProvider, selectedOnDeviceModel, streamingModelDir, streamingModelIsComplete, isBogusWarmMarkerKey, warmMarkerDeleteKeys, warmMarkerWriteKeys } from './voice-models'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
 import { clampZoom, formatZoom, zoomIn, zoomOut, DEFAULT_ZOOM } from './zoom'
@@ -1738,6 +1738,7 @@ function warmedVoiceModels(): string[] {
   const helperId = currentHelperId()
   const markers = readWarmMarkers()
   return Object.keys(markers).filter(k => {
+    if (isBogusWarmMarkerKey(k)) return false
     const m = markers[k]
     return m?.osBuild === build && m?.helperId === helperId
   })
@@ -1757,13 +1758,8 @@ function writeWarmMarker(model: string, loadSeconds: number) {
   try {
     const fs = require('fs') as typeof import('fs')
     const cur = readWarmMarkers()
-    // Store under both forms so lookups work whether UI sends the prefixed
-    // (`openai_whisper-...`) or bare (`large-v3...`) variant string.
-    const bare = model.startsWith('openai_whisper-') ? model.slice('openai_whisper-'.length) : model
     const entry = { warmedAt: new Date().toISOString(), loadSeconds, osBuild: currentOsBuild(), helperId: currentHelperId() }
-    cur[model] = entry
-    cur[bare] = entry
-    cur[`openai_whisper-${bare}`] = entry
+    for (const key of warmMarkerWriteKeys(model)) cur[key] = entry
     fs.writeFileSync(warmMarkerPath(), JSON.stringify(cur, null, 2))
   } catch (e) {
     console.warn('writeWarmMarker failed:', e)
@@ -4135,8 +4131,11 @@ app.whenReady().then(async () => {
         }
         try {
           const markers = readWarmMarkers()
-          if (modelName in markers) {
-            delete markers[modelName]
+          let changed = false
+          for (const key of warmMarkerDeleteKeys(modelName)) {
+            if (key in markers) { delete markers[key]; changed = true }
+          }
+          if (changed) {
             fsMod.writeFileSync(warmMarkerPath(), JSON.stringify(markers, null, 2))
           }
         } catch (e) {
@@ -4162,7 +4161,7 @@ app.whenReady().then(async () => {
       try {
         const markers = readWarmMarkers()
         let changed = false
-        for (const v of variants) {
+        for (const v of warmMarkerDeleteKeys(modelName)) {
           if (v in markers) { delete markers[v]; changed = true }
         }
         if (changed) {

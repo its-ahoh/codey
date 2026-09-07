@@ -123,3 +123,42 @@ export function streamingModelIsComplete(dir: string, probe: FileProbe): boolean
     return weights !== null && weights > STREAMING_MIN_WEIGHT_BYTES
   })
 }
+
+/**
+ * Keys a warm marker is stored under when `model` is warmed.
+ *
+ * Whisper ids get all three spellings so a lookup succeeds whether the caller
+ * holds the prefixed (`openai_whisper-large-v3`) or bare (`large-v3`) form.
+ * A streaming id has no prefixed form, so it is stored once.
+ */
+export function warmMarkerWriteKeys(model: string): string[] {
+  if (parseStreamingModelId(model)) return [model]
+  const bare = model.startsWith('openai_whisper-')
+    ? model.slice('openai_whisper-'.length)
+    : model
+  return [model, bare, `openai_whisper-${bare}`]
+}
+
+/**
+ * Keys to clear when `model` is deleted.
+ *
+ * Same as the write keys, except a streaming id also clears the bogus
+ * `openai_whisper-nemotron/...` alias that builds through 0.12.14 wrote. Left
+ * behind, that alias still matches the model in the UI's variant check, so a
+ * deleted streaming model kept reporting "Ready".
+ */
+export function warmMarkerDeleteKeys(model: string): string[] {
+  if (parseStreamingModelId(model)) return [model, `openai_whisper-${model}`]
+  return warmMarkerWriteKeys(model)
+}
+
+/**
+ * True for the `openai_whisper-nemotron/...` alias that builds through 0.12.14
+ * wrote for streaming models. Existing installs still carry it, and one left
+ * over from a delete that happened before the fix would keep reporting the
+ * model as warm, so warm listings drop it on sight.
+ */
+export function isBogusWarmMarkerKey(key: string): boolean {
+  return key.startsWith('openai_whisper-')
+    && parseStreamingModelId(key.slice('openai_whisper-'.length)) !== null
+}
