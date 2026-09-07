@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, pr
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
-import { hudStateCommand, hudLevelCommand, conversationToggleCommand } from './voice-hud'
+import { hudStateCommand, hudLevelCommand, conversationToggleCommand, hudVocabularyCommand } from './voice-hud'
 import { allStreamingModelIds, FileProbe, isOnDeviceVoiceProvider, selectedOnDeviceModel, streamingModelDir, streamingModelIsComplete, isBogusWarmMarkerKey, warmMarkerDeleteKeys, warmMarkerWriteKeys } from './voice-models'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
@@ -348,6 +348,35 @@ let nativeDictationActive = false
 // clicks override this before sending their stdin command.
 let nativeConverseFromHotkey = true
 
+/**
+ * The word most recently announced on a vocabulary capsule, kept so a click on
+ * that capsule can be turned back into a dictionary edit. The helper reports
+ * the term it showed, but not the mis-hearing behind it, and `forgetCorrection`
+ * needs both to clear the waiting list as well as the dictionary.
+ */
+let capsuleVocabulary: { term: string; alias: string } | null = null
+
+/**
+ * Take a learned word back out of the dictionary *and* off the waiting list, so
+ * undo means "never mind" rather than "not yet". Shared by the composer pill's
+ * IPC and by a click on the vocabulary capsule.
+ */
+function forgetVocabularyEntry(term: string, alias: string): boolean {
+  if (!coreConfigManager || !term || !alias) return false
+  const voice = (coreConfigManager.get() as any)?.voice
+  if (!voice) return false
+  const next = forgetCorrection(
+    normalizeVocabulary(voice.vocabulary),
+    normalizePending(voice.vocabularyPending),
+    { term, alias },
+  )
+  coreConfigManager.update({
+    voice: { ...voice, vocabulary: next.terms, vocabularyPending: next.pending },
+  } as any)
+  mainWindow?.webContents.send('voice:vocabularyLearned', next.terms)
+  return true
+}
+
 function showVoiceHud(state: string) {
   sendVoiceHudCommand(hudStateCommand(state))
 }
@@ -356,13 +385,18 @@ function hideVoiceHud() {
   sendVoiceHudCommand(hudStateCommand('idle'))
 }
 
-function sendVoiceHudCommand(command: string | null) {
-  if (!command) return
+/** True when the command actually reached the helper, so a caller that needs to
+ *  know whether the capsule went up (rather than fire-and-forget phases) can
+ *  fall back to its in-window UI. */
+function sendVoiceHudCommand(command: string | null): boolean {
+  if (!command) return false
   if (!sendVoiceHelperCommand(command)) {
     // No helper means no capsule, but it also means capture is already broken;
     // one log line beats a dialog the user cannot act on.
     sendToRenderer('gateway-log', `[voice] helper unavailable, capsule skipped: ${command}`)
+    return false
   }
+  return true
 }
 
 function createCaptureWindow(): BrowserWindow {
@@ -1372,6 +1406,17 @@ function handleVoiceHelperLine(line: string) {
         // isn't — the renderer carries it through the agent run and the reply.
         nativeConverseActive = false
         mainWindow?.webContents.send('voice:nativeConverseTranscript', event.text)
+      }
+    } else if (event.type === 'vocabulary-undo') {
+      // A click on the vocabulary capsule. The helper echoes the word it
+      // showed; the alias it never knew comes from our own copy, and a mismatch
+      // means the capsule outlived the word it announced, so nothing is undone.
+      const term = typeof (event as any).term === 'string' ? (event as any).term : ''
+      const pending = capsuleVocabulary
+      capsuleVocabulary = null
+      const shown = pending ? (hudVocabularyCommand(pending.term) ?? '').slice('hud-vocabulary '.length) : ''
+      if (pending && term && term === shown) {
+        forgetVocabularyEntry(pending.term, pending.alias)
       }
     } else if (event.type === 'cancel') {
       // Esc reached the helper's global monitor while the turn was in
@@ -3938,7 +3983,20 @@ app.whenReady().then(async () => {
       // list entry; it is not stored anywhere and the pill does not show it.
       const promotedFor = (term: string) =>
         seen.promoted.find(p => p.term.toLowerCase() === term.toLowerCase())?.alias ?? ''
-      return { learned: merged.added.map(term => ({ term, alias: promotedFor(term) })) }
+      const learned = merged.added.map(term => ({ term, alias: promotedFor(term) }))
+
+      // Where the news lands depends on where the user is looking. With the
+      // window focused, the composer pill under the textarea is right there and
+      // reads better than a floating panel over it. Focus elsewhere - a send
+      // that happened as they switched apps - and the pill would sit unseen,
+      // so the same capsule the hotkey turn uses carries it instead. Only the
+      // first word: the capsule is one line with one undo target.
+      const first = learned[0]
+      const viaCapsule = Boolean(
+        first && !mainWindow?.isFocused() && sendVoiceHudCommand(hudVocabularyCommand(first.term))
+      )
+      if (viaCapsule && first) capsuleVocabulary = first
+      return { learned: viaCapsule ? learned.slice(1) : learned }
     })
   )
 
@@ -3947,23 +4005,9 @@ app.whenReady().then(async () => {
   // go active on the user's very next correction of it.
   ipcMain.handle('voice:forgetVocabulary', async (_e, payload: { term?: string; alias?: string }) =>
     wrap(async () => {
-      if (!coreConfigManager) return { ok: false }
       const term = String(payload?.term ?? '')
       const alias = String(payload?.alias ?? '')
-      if (!term || !alias) return { ok: false }
-      const voice = (coreConfigManager.get() as any)?.voice
-      if (!voice) return { ok: false }
-
-      const next = forgetCorrection(
-        normalizeVocabulary(voice.vocabulary),
-        normalizePending(voice.vocabularyPending),
-        { term, alias },
-      )
-      coreConfigManager.update({
-        voice: { ...voice, vocabulary: next.terms, vocabularyPending: next.pending },
-      } as any)
-      mainWindow?.webContents.send('voice:vocabularyLearned', next.terms)
-      return { ok: true }
+      return { ok: forgetVocabularyEntry(term, alias) }
     })
   )
 

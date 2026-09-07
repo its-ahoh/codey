@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { hudStateCommand, hudLevelCommand, conversationToggleCommand } from './voice-hud'
+import { hudStateCommand, hudLevelCommand, conversationToggleCommand, hudVocabularyCommand } from './voice-hud'
 
 describe('conversationToggleCommand', () => {
   it('tells the helper which turns own a capsule', () => {
@@ -39,5 +39,25 @@ describe('hudLevelCommand', () => {
     // NaN and poison the meter's sliding window.
     expect(hudLevelCommand(NaN)).toBeNull()
     expect(hudLevelCommand(Infinity)).toBeNull()
+  })
+})
+
+describe('hudVocabularyCommand', () => {
+  it('carries the learned word as one line', () => {
+    expect(hudVocabularyCommand('Codey')).toBe('hud-vocabulary Codey')
+  })
+
+  it('flattens whitespace so the term stays a single stdin line', () => {
+    expect(hudVocabularyCommand(' zhuan\nxie qi ')).toBe('hud-vocabulary zhuan xie qi')
+  })
+
+  it('caps the length rather than pushing a paragraph at the pill', () => {
+    const long = 'a'.repeat(120)
+    expect(hudVocabularyCommand(long)).toBe(`hud-vocabulary ${'a'.repeat(40)}`)
+  })
+
+  it('sends nothing when there is no readable word left', () => {
+    expect(hudVocabularyCommand('   ')).toBeNull()
+    expect(hudVocabularyCommand('')).toBeNull()
   })
 })

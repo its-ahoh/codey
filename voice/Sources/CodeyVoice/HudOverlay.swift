@@ -29,6 +29,11 @@ final class HudOverlay {
         case notice(String)
         case error(String)
         case dictation(String)
+        /// A word the dictionary just learned, offered with an undo. Wears the
+        /// conversation capsule's chrome on purpose: it is the same floating
+        /// object the hotkey turn just showed, now reporting what that turn
+        /// taught it, rather than a second kind of pill to recognize.
+        case vocabulary(String)
         /// The conversation capsule. Distinct from the dictation pill on
         /// purpose: a conversation is ongoing and two-way, so it gets the live
         /// rainbow rather than a static chrome.
@@ -71,6 +76,12 @@ final class HudOverlay {
     /// is a repeated action and rebuilding the gradient each time is waste.
     private var capsuleLayer: RainbowCapsuleLayer?
     private var isCapsuleMode = false
+    /// True only while a `.vocabulary` capsule is up, so `handleClick` can tell
+    /// "undo that word" from the dictation card's plain dismiss.
+    private var vocabularyClickUndoes = false
+    /// Called when the user clicks a `.vocabulary` capsule. The overlay knows
+    /// nothing about the dictionary — the coordinator reports the click onward.
+    var onVocabularyUndo: (() -> Void)?
     /// Size/radius the blur view's `maskImage` was last drawn for, so a resize
     /// that changes neither skips the redraw.
     private var maskedSize: CGSize = .zero
@@ -108,6 +119,7 @@ final class HudOverlay {
 
         hideWorkItem?.cancel()
         hideWorkItem = nil
+        vocabularyClickUndoes = false
         // Mark the panel as wanted on-screen so an in-flight hide fade-out's
         // completion won't orderOut the panel we're about to (re)show.
         wantVisible = true
@@ -199,6 +211,21 @@ final class HudOverlay {
             // panel floating over whatever they do next.
             panel.ignoresMouseEvents = false
             scheduleHide(after: 5.0)
+        case .vocabulary(let term):
+            // Same rainbow chrome as a converse turn, and no meter: there is no
+            // audio behind this one, it is the turn's result.
+            label.stringValue = "Added \"\(term)\" - click to undo"
+            label.textColor = NSColor.white
+            spinner.stopAnimation(nil)
+            spinner.isHidden = true
+            setMeterVisible(false)
+            setCapsuleMode(true)
+            applyPillLayout()
+            // The only mode besides `.dictation` that takes clicks, and the
+            // only one where a click means something other than "go away".
+            panel.ignoresMouseEvents = false
+            vocabularyClickUndoes = true
+            scheduleHide(after: 6.0)
         case .conversation(let phase):
             label.stringValue = phase.label
             label.textColor = NSColor.white
@@ -407,9 +434,13 @@ final class HudOverlay {
     }
 
     @objc private func handleClick() {
-        // Only dictation mode opts into mouse events, so any click here is a
-        // dismiss request. Cancel the pasteboard restore that paste-injection
-        // schedules — irrelevant here since no paste happened.
+        // Dictation and vocabulary are the only modes that opt into mouse
+        // events. A click on the dictation card just dismisses it; on a
+        // vocabulary capsule it also takes the word back out of the dictionary.
+        if vocabularyClickUndoes {
+            vocabularyClickUndoes = false
+            onVocabularyUndo?()
+        }
         hide()
     }
 

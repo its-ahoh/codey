@@ -69,6 +69,10 @@ final class VoiceCoordinator {
     /// True while Electron owns the visible half of a conversation turn (the
     /// agent run or the spoken reply). Esc belongs to it in that window.
     private var electronTurnActive = false
+    /// The word currently offered for undo on a `.vocabulary` capsule. Held
+    /// here rather than read back off the label so a click that lands during
+    /// the fade-out reports the word that was actually shown.
+    private var vocabularyCapsuleTerm: String?
     private var escMonitorGlobal: Any?
     private var escMonitorLocal: Any?
     /// Timestamp of the most recent `.partial` HUD push (local streaming).
@@ -210,6 +214,18 @@ final class VoiceCoordinator {
                     self.hud.updateLevel(level)
                 }
             }
+        }
+
+        // A click on the vocabulary capsule. The overlay reports it here so the
+        // dictionary edit stays on Electron's side, where the config lives.
+        hud.onVocabularyUndo = { [weak self] in
+            guard let self = self, let term = self.vocabularyCapsuleTerm else { return }
+            self.vocabularyCapsuleTerm = nil
+            self.emitConversationEvent(
+                type: "vocabulary-undo",
+                payload: ["term": term],
+                modeOverride: "vocabulary"
+            )
         }
 
         // Playback draining is what actually ends a converse turn — the HTTP
@@ -483,6 +499,14 @@ final class VoiceCoordinator {
         // sees the agent working and the reply being read back. `listening` and
         // the first `thinking` are asserted locally in startRecording /
         // stopRecording, so they don't depend on this round trip.
+        // The word the dictionary just learned, shown while the user is looking
+        // at some other app. Dropped rather than queued when a capture is live:
+        // there is one panel, and the turn in flight has the better claim on it.
+        case "hud-vocabulary":
+            let term = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !term.isEmpty, !dictationCaptureInFlight, state == .idle, !electronTurnActive else { break }
+            vocabularyCapsuleTerm = term
+            hud.show(.vocabulary(term))
         case "hud-state": applyConversationHud(argument)
         case "hud-level":
             guard !dictationCaptureInFlight, let level = Float(argument) else { break }
