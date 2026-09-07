@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { apiService, WorkerDto } from '../services/api'
+import { AvatarPicker } from './AvatarPicker'
 import { WorkerAvatar } from './WorkerAvatar'
-import { avatarShapes, avatarColors, resolveWorkerAvatar } from './workerAvatarModel'
+import { resolveWorkerAvatar } from './workerAvatarModel'
 import { C } from '../theme'
 
 import { AGENT_API_TYPE, ApiType, modelFitsApiType } from './modelApiType'
@@ -42,7 +43,7 @@ export default function WorkersTab() {
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {mode.kind === 'idle' && <EmptyState />}
         {mode.kind === 'create' && <CreatePanel loading={loading} setLoading={setLoading} onCreated={async (w) => { await reload(); setMode({ kind: 'select', name: w.name }) }} onCancel={() => setMode({ kind: 'idle' })} />}
-        {mode.kind === 'select' && selected && <EditorPanel worker={selected} onSaved={reload} onDeleted={async () => { await reload(); setMode({ kind: 'idle' }) }} />}
+        {mode.kind === 'select' && selected && <EditorPanel key={selected.name} worker={selected} onSaved={reload} onDeleted={async () => { await reload(); setMode({ kind: 'idle' }) }} />}
       </div>
     </div>
   )
@@ -163,18 +164,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
       </div>
       {error && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 10, borderRadius: 6, fontSize: 12 }}>{error}</div>}
 
-      <label style={labelStyle}>Avatar shape</label>
-      <div style={{ display: 'flex', gap: 8 }}>
-        {avatarShapes.map(shape => <button key={shape} type="button" aria-label={shape} aria-pressed={avatar.shape === shape}
-          onClick={() => setAvatar(a => ({ ...a, shape }))} style={{ background: C.surface2, border: `2px solid ${avatar.shape === shape ? C.accent : C.border}`, borderRadius: 10, padding: 5, cursor: 'pointer' }}>
-          <WorkerAvatar name={shape} config={{ ...avatar, shape }} size={44} />
-        </button>)}
-      </div>
-      <label style={labelStyle}>Avatar color</label>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {avatarColors.map(color => <button key={color} type="button" aria-label={`Color ${color}`} aria-pressed={avatar.color === color}
-          onClick={() => setAvatar(a => ({ ...a, color }))} style={{ width: 28, height: 28, background: color, border: `3px solid ${avatar.color === color ? C.fg : 'transparent'}`, borderRadius: '50%', cursor: 'pointer' }} />)}
-      </div>
+      <div style={{ margin: '18px 0' }}><AvatarPicker name={worker.name} value={avatar} onChange={setAvatar} /></div>
       <label style={labelStyle}>Role</label>
       <textarea value={role} onChange={e => setRole(e.target.value)} style={{ ...fieldStyle, minHeight: 60 }} />
 

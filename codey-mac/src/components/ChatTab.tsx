@@ -17,10 +17,9 @@ import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
 import { groupMessages } from './teamGroup'
-import { useBuiltinAvatars } from './useBuiltinAvatars'
 import { MemberReply } from './MemberReply'
 import { WorkerAvatar } from './WorkerAvatar'
-import { workerAvatarState, builtinAvatar } from './workerAvatarModel'
+import { workerAvatarState } from './workerAvatarModel'
 import { StatusSidecar } from './StatusSidecar'
 import { useStatusPanelEnabled } from './statusPanelPref'
 import { isTaskBriefStale, extractSidecarBrief } from './taskHudView'
@@ -528,7 +527,6 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const [resourceIndex, setResourceIndex] = useState<MentionEntry[]>([])
   const [mention, setMention] = useState<ActiveMention | null>(null)
   const [mentionIdx, setMentionIdx] = useState(0)
-  const builtinAvatars = useBuiltinAvatars()
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   // The full global team library — names drive the picker, members the "@" menu.
   const [teamLib, setTeamLib] = useState<Record<string, TeamConfigRaw>>({})
@@ -2107,7 +2105,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
           />
           {renderItems.map((item, idx) => {
           const msg = item.message
-          const member = msg.worker ? workers.find(w => w.name.toLowerCase() === msg.worker!.toLowerCase()) : undefined
+          const isWorkerMessage = !!msg.worker && !msg.builtinMember && !msg.teamFinal
+          const member = isWorkerMessage ? workers.find(w => w.name.toLowerCase() === msg.worker!.toLowerCase()) : undefined
           const memberActive = !!flight && (msg.teamTurnId
             ? chat.messages.slice(chat.messages.findIndex(m => m.id === flight.userMessageId) + 1).some(m => m.id === msg.id)
             : msg === lastMsg)
@@ -2178,22 +2177,19 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 overflowWrap: 'anywhere', wordBreak: 'break-word',
                 transition: 'border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease',
               }}>
-                {/* The team final answer reads like a plain Codey reply: no
-                    member header. Live state is shown by the footer, so the
-                    header carries only identity. */}
-                {!isUser && msg.worker && !msg.teamFinal && <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                  <WorkerAvatar name={msg.worker} config={msg.builtinMember ? builtinAvatar(msg.builtinMember, builtinAvatars) : member?.config.avatar} state={memberState} />
-                  <strong>{msg.builtinMember === 'aide' ? 'Aide' : msg.builtinMember === 'advisor' ? 'Advisor' : msg.worker}</strong>
+                {!isUser && isWorkerMessage && <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                  <WorkerAvatar name={msg.worker!} config={member?.config.avatar} state={memberState} />
+                  <strong>{msg.worker}</strong>
                 </div>}
                 {!isUser && (() => {
                   const thinking = msg.thinking?.trim() ?? ''
                   // Keyed off the in-flight turn rather than msg.isComplete:
                   // messages persisted before isComplete existed would
                   // otherwise lose their rule and timestamp for good.
-                  const streaming = msg.worker ? memberActive && msg.workerStatus !== 'done' && msg.workerStatus !== 'failed' : !!flight && msg === lastMsg
+                  const streaming = isWorkerMessage ? memberActive && msg.workerStatus !== 'done' && msg.workerStatus !== 'failed' : !!flight && msg === lastMsg
                   const expanded = thinkingToggles[msg.id]
                     ?? defaultThinkingExpanded({
-                      member: !!msg.worker,
+                      member: isWorkerMessage,
                       hasAnswer: !!msg.content.trim(),
                       isComplete: msg.isComplete ?? false,
                     })
@@ -2213,7 +2209,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     </>
                   )
                 })()}
-                {!isUser && (msg.worker ? memberActive && memberState === 'working' : !!flight && msg === lastMsg) && (
+                {!isUser && (isWorkerMessage ? memberActive && memberState === 'working' : !!flight && msg === lastMsg) && (
                   <LiveActivity toolCalls={msg.toolCalls} />
                 )}
                 {(msg.content || (!isUser && msg.userQuestion?.question)) && (() => {
@@ -2245,8 +2241,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     return <UserMessageContent content={msg.content} />
                   }
                   const text = msg.content || msg.userQuestion?.question || ''
-                  if (msg.worker) return <MemberReply content={text}><TeamWorkerContent content={text} /></MemberReply>
-                  const parsed = parseTeamMessage(text)
+                  if (isWorkerMessage) return <MemberReply content={text}><TeamWorkerContent content={text} /></MemberReply>
+                  const parsed = msg.builtinMember || msg.teamFinal ? null : parseTeamMessage(text)
                   const isStreaming = !!flight && msg === lastMsg
                   if (!parsed) return (
                     <div>
