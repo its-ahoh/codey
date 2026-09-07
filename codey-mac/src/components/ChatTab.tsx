@@ -658,6 +658,26 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const messagesRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const [showLatestMessage, setShowLatestMessage] = useState(false)
+  // The composer floats over the transcript instead of sitting in a strip below
+  // it. Its own height is pulled back out of the layout with a negative margin,
+  // so the transcript keeps the full height and the composer overlaps its
+  // bottom edge. Everything downstream (last message resting place, the fade
+  // that dissolves text sliding underneath) is driven off this measurement.
+  const inputContainerRef = useRef<HTMLDivElement>(null)
+  const [composerOverlayH, setComposerOverlayH] = useState(0)
+
+  useEffect(() => {
+    const el = inputContainerRef.current
+    if (!el) return
+    const measure = () => setComposerOverlayH(el.offsetHeight)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  // Opaque down to where the last message rests, then a 28px dissolve into the
+  // band the composer floats over.
+  const transcriptFade = `linear-gradient(to bottom, #000 calc(100% - ${composerOverlayH + 12}px), transparent calc(100% - ${Math.max(composerOverlayH - 16, 0)}px))`
 
   useEffect(() => {
     if (composerHeight != null) localStorage.setItem('codey.composerHeight', String(composerHeight))
@@ -2099,7 +2119,16 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
       <div style={styles.transcriptShell}>
         <div
           ref={messagesRef}
-          style={{ ...styles.messages, position: 'relative' }}
+          style={{
+            ...styles.messages,
+            position: 'relative',
+            // Rest the last message clear of the floating composer...
+            paddingBottom: composerOverlayH + 12,
+            // ...and dissolve anything scrolled into the band behind it, so
+            // text is never sliced in half by the composer's edge.
+            maskImage: transcriptFade,
+            WebkitMaskImage: transcriptFade,
+          }}
           onScroll={updateLatestMessageVisibility}
         >
           <ChatFindBar
@@ -2483,7 +2512,17 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
       {/* While the composer holds the caret this outranks the bottom terminal
           (zIndex 8), so the composer's downward shadow lands on the terminal
           instead of being painted over by it. */}
-      <div style={{ ...styles.inputContainer, position: 'relative' as const, zIndex: composerFocused ? 9 : undefined }}>
+      <div
+        ref={inputContainerRef}
+        style={{
+          ...styles.inputContainer,
+          position: 'relative' as const,
+          // Negative margin equal to its own height: the composer contributes
+          // nothing to the column, so the transcript runs full height behind it.
+          marginTop: -composerOverlayH,
+          zIndex: composerFocused ? 9 : 2,
+        }}
+      >
         {showLatestMessage && (
           <button
             type="button"
@@ -3119,7 +3158,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'SF Mono, Menlo, monospace',
     maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
-  inputContainer: { padding: '12px max(16px, 4%) 16px', borderTop: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, background: C.surface },
+  // No border or panel fill here: the composer should read as a card floating
+  // over the transcript, so this strip just matches the transcript background.
+  inputContainer: { padding: '0 max(16px, 4%) 16px', display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, background: 'transparent' },
   latestMessageButton: {
     position: 'absolute' as const, bottom: 'calc(100% + 8px)', left: '50%', zIndex: 20,
     transform: 'translateX(-50%)',
@@ -3133,6 +3174,9 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 14,
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
     position: 'relative' as const,
+    // Resting lift: with no panel behind it, the shadow is what makes the
+    // composer read as floating over the transcript.
+    boxShadow: '0 4px 14px rgba(0,0,0,0.07)',
     transition: 'box-shadow 0.16s ease',
   },
   // Focused composer lifts above the bottom terminal: it casts the shadow
