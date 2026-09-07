@@ -22,11 +22,17 @@ interface VoiceCfg {
   converseHotkey: string
   language: string
   injection: 'paste' | 'ax'
-  provider: 'api' | 'local' | 'realtime'
+  /**
+   * `local` = on-device WhisperKit, `localStreaming` = on-device Nemotron
+   * streaming. A switch, not a pair: only the selected engine is loaded.
+   */
+  provider: 'api' | 'local' | 'localStreaming' | 'realtime'
   apiUrl: string
   apiKeyRef: string
   apiModel: string
   localModel: string
+  /** Streaming model id, `nemotron/<multilingual|latin>/<ms>ms`. */
+  streamingModel: string
   realtimeUrl: string
   realtimeModel: string
   /** Preferred spellings, handed to the recognizer as a prompt hint. */
@@ -79,6 +85,7 @@ const VOICE_DEFAULT: VoiceCfg = {
   apiKeyRef: '',
   apiModel: 'gpt-4o-mini-transcribe',
   localModel: 'openai_whisper-large-v3_turbo_954MB',
+  streamingModel: 'nemotron/multilingual/1120ms',
   realtimeUrl: 'wss://api.openai.com/v1/realtime?intent=transcription',
   realtimeModel: 'gpt-4o-mini-transcribe',
   vocabulary: [],
@@ -101,15 +108,55 @@ interface SavedApiKey { name: string; apiKey: string; openaiBaseUrl?: string; pu
 
 // Values must match real folder names in argmaxinc/whisperkit-coreml on HF.
 // The helper strips the `openai_whisper-` prefix before passing to WhisperKit.
-const LOCAL_MODELS: Array<{ value: string; label: string; note: string }> = [
-  { value: 'openai_whisper-large-v3_turbo_954MB', label: 'large-v3 turbo · 954MB (recommended)', note: 'Quantized — near large-v3 quality at small-model speed. Best balance for most users.' },
-  { value: 'openai_whisper-large-v3_turbo', label: 'large-v3 turbo · ~1.6GB', note: 'Full-precision turbo. Highest accuracy, but larger download and slower inference.' },
-  { value: 'openai_whisper-large-v3', label: 'large-v3 · ~3GB (full precision)', note: 'Original large-v3 (non-turbo). Maximum accuracy at the cost of speed and disk space.' },
-  { value: 'openai_whisper-large-v3-v20240930_turbo_632MB', label: 'large-v3 turbo · Sep 2024 · 632MB', note: 'Compact quantized turbo. Lower disk usage but slightly weaker on non-English languages.' },
-  { value: 'openai_whisper-small_216MB', label: 'small · 216MB', note: 'Quantized small. Moderate quality, acceptable for English; weaker on other languages.' },
-  { value: 'openai_whisper-small', label: 'small · ~480MB', note: 'Full-precision small. Mid-range accuracy and speed.' },
-  { value: 'openai_whisper-base', label: 'base · ~150MB', note: 'Minimal footprint. Low accuracy — useful only for quick testing.' },
-  { value: 'openai_whisper-tiny', label: 'tiny · ~75MB', note: 'Smallest model. Very fast but accuracy is poor; not recommended for real use.' },
+const LOCAL_MODELS: Array<{ value: string; label: string; size: string; note: string }> = [
+  { value: 'openai_whisper-large-v3_turbo_954MB', label: 'large-v3 turbo (recommended)', size: '954MB', note: 'Quantized — near large-v3 quality at small-model speed. Best balance for most users.' },
+  { value: 'openai_whisper-large-v3_turbo', label: 'large-v3 turbo (full precision)', size: '~1.6GB', note: 'Full-precision turbo. Highest accuracy, but larger download and slower inference.' },
+  { value: 'openai_whisper-large-v3', label: 'large-v3 (full precision)', size: '~3GB', note: 'Original large-v3 (non-turbo). Maximum accuracy at the cost of speed and disk space.' },
+  { value: 'openai_whisper-large-v3-v20240930_turbo_632MB', label: 'large-v3 turbo · Sep 2024', size: '632MB', note: 'Compact quantized turbo. Lower disk usage but slightly weaker on non-English languages.' },
+  { value: 'openai_whisper-small_216MB', label: 'small (quantized)', size: '216MB', note: 'Quantized small. Moderate quality, acceptable for English; weaker on other languages.' },
+  { value: 'openai_whisper-small', label: 'small (full precision)', size: '~480MB', note: 'Full-precision small. Mid-range accuracy and speed.' },
+  { value: 'openai_whisper-base', label: 'base', size: '~150MB', note: 'Minimal footprint. Low accuracy — useful only for quick testing.' },
+  { value: 'openai_whisper-tiny', label: 'tiny', size: '~75MB', note: 'Smallest model. Very fast but accuracy is poor; not recommended for real use.' },
+]
+
+// Streaming (Nemotron via FluidAudio) builds. The id encodes the vocabulary
+// build and the chunk tier; the helper's NemotronVariant parses the same
+// shape. "multilingual" covers en/es/fr/it/pt/de/zh/ja; "latin" is a pruned,
+// slightly faster build for the six Latin-script languages only.
+const STREAMING_MODELS: Array<{ value: string; label: string; size: string; note: string }> = [
+  { value: 'nemotron/multilingual/1120ms', label: 'Nemotron multilingual · 1.1s chunks (recommended)', size: '660MB', note: 'Words appear about a second after you say them. English, Spanish, French, Italian, Portuguese, German, Chinese, Japanese.' },
+  { value: 'nemotron/multilingual/560ms', label: 'Nemotron multilingual · 0.56s chunks', size: '660MB', note: 'Lowest latency. Punctuation thins out on very long takes; fine for dictation-length turns.' },
+  { value: 'nemotron/multilingual/2240ms', label: 'Nemotron multilingual · 2.2s chunks', size: '660MB', note: 'Slightly more accurate and better punctuated, at the cost of a two-second lag.' },
+  { value: 'nemotron/latin/1120ms', label: 'Nemotron Latin-script · 1.1s chunks', size: '610MB', note: 'Pruned vocabulary, a little faster. English, Spanish, French, Italian, Portuguese, German only — no Chinese or Japanese.' },
+]
+
+// Guidance shown under the Transcription source / Engine pills. The two
+// on-device engines differ in ways a model name doesn't convey — Whisper
+// computes once after you release the key, Nemotron computes continuously
+// while you speak — so hardware advice and caveats live here rather than in
+// release notes nobody reads.
+const ENGINE_GUIDE: Record<'api' | 'local' | 'localStreaming' | 'realtime', { summary: string }> = {
+  local: { summary: 'Runs privately on this Mac with WhisperKit. Audio never leaves the machine; the selected model downloads once before first use.' },
+  localStreaming: { summary: 'Runs privately on this Mac with Nemotron streaming: words appear while you are still talking.' },
+  api: { summary: 'Uploads each completed recording to an OpenAI-compatible transcription endpoint.' },
+  realtime: { summary: 'Streams audio to OpenAI for lower-latency partial transcripts while you speak.' },
+}
+
+// Rendered as a two-column table so both on-device engines are visible at
+// once, whichever one is currently selected.
+const ENGINE_COMPARE: Array<{ label: string; local: string; streaming: string }> = [
+  { label: 'Text appears', local: 'After you release the hotkey', streaming: 'While you are still talking' },
+  { label: 'Languages', local: '~99, including Korean', streaming: '8 (6 on the Latin-script build)' },
+  { label: 'Best on', local: 'Any Apple silicon — fine on an M1 Air or on battery', streaming: 'M2 or newer, or plugged in' },
+  { label: 'Battery', local: 'One burst after you stop', streaming: 'Runs the whole time you speak' },
+  { label: 'Download', local: '75MB – 3GB depending on model', streaming: '610 – 660MB' },
+]
+
+// True of both on-device engines, so they sit below the table rather than
+// being repeated in each column.
+const ENGINE_SHARED_NOTES: string[] = [
+  'First use compiles the model for your Mac (30–90s, one time). Later presses are instant.',
+  'The model loads when the voice helper starts and unloads after 30 minutes idle. Switching engines unloads the other one, so only one model is ever in memory.',
 ]
 
 const VOICE_LANGUAGES: Array<{ value: string; label: string }> = [
@@ -152,6 +199,10 @@ const inputStyle: React.CSSProperties = {
   color: C.fg, fontSize: 13, padding: '6px 10px', outline: 'none', width: 180,
 }
 const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' }
+const engineColHeadStyle: React.CSSProperties = {
+  fontSize: 11, fontWeight: 600, paddingBottom: 4,
+  borderBottom: `1px solid ${C.border}`,
+}
 const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSProperties => ({
   padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600,
   border: 'none', cursor: 'pointer',
@@ -289,7 +340,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
 
   const deleteModel = async (model: string) => {
     if (dlState.active || warmState.active) return
-    const label = LOCAL_MODELS.find(m => m.value === model)?.label ?? model
+    const label = [...LOCAL_MODELS, ...STREAMING_MODELS].find(m => m.value === model)?.label ?? model
     if (!window.confirm(`Delete "${label}"?\n\nThis removes the model files from disk. You can re-download anytime.`)) return
     try {
       const res = await window.codey.voice.deleteModel(model)
@@ -384,15 +435,16 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
   // Covers both "user switched to a different downloaded model" and "app boot
   // with a model that was downloaded in a prior session but never warmed".
   useEffect(() => {
-    if (voice.provider !== 'local') return
-    const m = voice.localModel
+    const m = voice.provider === 'local' ? voice.localModel
+      : voice.provider === 'localStreaming' ? voice.streamingModel
+      : ''
     if (!m) return
     if (dlState.active || warmState.active) return
     if (!isDownloaded(m)) return
     if (isWarmed(m)) return
     if (warmFailed.has(m)) return
     warmModel(m)
-  }, [voice.provider, voice.localModel, downloaded, warmed, dlState.active, warmState.active, isDownloaded, isWarmed, warmModel, warmFailed])
+  }, [voice.provider, voice.localModel, voice.streamingModel, downloaded, warmed, dlState.active, warmState.active, isDownloaded, isWarmed, warmModel, warmFailed])
 
   const handleHotkeyRecordingChange = useCallback((active: boolean) => {
     void window.codey.voice.setHotkeyCaptureActive(active)
@@ -481,6 +533,11 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
   // "API" groups the two cloud modes (batch Whisper + Realtime WebSocket); they
   // share the same API key and only differ in transport. "Local" is on-device.
   const isApi = voice.provider === 'api' || voice.provider === 'realtime'
+  // "On-device" likewise groups the two local engines; they differ in how the
+  // text arrives (WhisperKit decodes the finished clip, Nemotron streams it
+  // while you talk) and only the selected one is loaded.
+  const isOnDevice = voice.provider === 'local' || voice.provider === 'localStreaming'
+  const isStreaming = voice.provider === 'localStreaming'
 
   return (
     <div style={{ padding: 20, height: '100%', overflowY: 'auto' }}>
@@ -748,11 +805,26 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
               style={pillButton(isApi ? 'primary' : 'ghost')}
             >API</button>
             <button
-              onClick={() => updateVoice({ provider: 'local' })}
-              style={pillButton(voice.provider === 'local' ? 'primary' : 'ghost')}
+              onClick={() => { if (!isOnDevice) updateVoice({ provider: 'local' }) }}
+              style={pillButton(isOnDevice ? 'primary' : 'ghost')}
             >On-device</button>
           </div>
         </div>
+        {isOnDevice && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 0 8px' }}>
+            <span style={{ color: C.fg3, fontSize: 12 }}>Engine</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => updateVoice({ provider: 'local' })}
+                style={{ ...pillButton(voice.provider === 'local' ? 'primary' : 'ghost'), fontSize: 11 }}
+              >Whisper</button>
+              <button
+                onClick={() => updateVoice({ provider: 'localStreaming' })}
+                style={{ ...pillButton(isStreaming ? 'primary' : 'ghost'), fontSize: 11 }}
+              >Streaming</button>
+            </div>
+          </div>
+        )}
         {isApi && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 0 8px' }}>
             <span style={{ color: C.fg3, fontSize: 12 }}>API mode</span>
@@ -769,26 +841,57 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           </div>
         )}
         <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 2 }}>
-          {voice.provider === 'local'
-            ? 'Runs privately on this Mac with WhisperKit. The selected model downloads once before first use.'
-            : voice.provider === 'realtime'
-              ? 'Streams audio to OpenAI for lower-latency partial transcripts while you speak.'
-              : 'Uploads each completed recording to an OpenAI-compatible transcription endpoint.'}
+          {ENGINE_GUIDE[voice.provider].summary}
         </div>
+        {isOnDevice && (
+          <div style={{ marginTop: 8 }}>
+            {/* Both engines side by side, always — picking between them is the
+                whole decision, and a description that only appears after you
+                already clicked can't help you make it. The selected column is
+                highlighted rather than being the only one rendered. */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: '78px 1fr 1fr', gap: '0 10px',
+              fontSize: 11, lineHeight: 1.45,
+            }}>
+              <div />
+              <div style={{ ...engineColHeadStyle, color: !isStreaming ? C.fg : C.fg3 }}>Whisper</div>
+              <div style={{ ...engineColHeadStyle, color: isStreaming ? C.fg : C.fg3 }}>Streaming</div>
+              {ENGINE_COMPARE.map(row => (
+                <React.Fragment key={row.label}>
+                  <div style={{ color: C.fg3, padding: '4px 0' }}>{row.label}</div>
+                  <div style={{ color: !isStreaming ? C.fg2 : C.fg3, padding: '4px 0' }}>{row.local}</div>
+                  <div style={{ color: isStreaming ? C.fg2 : C.fg3, padding: '4px 0' }}>{row.streaming}</div>
+                </React.Fragment>
+              ))}
+            </div>
+            <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 8 }}>
+              {ENGINE_SHARED_NOTES.map((n, i) => (
+                <div key={i} style={{ paddingLeft: 10, textIndent: -10 }}>· {n}</div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
-      {voice.provider === 'local' && (() => {
-        const selectedDownloaded = isDownloaded(voice.localModel)
-        const selectedWarmed = isWarmed(voice.localModel)
-        const downloadingThis = dlState.active && dlState.model === voice.localModel
-        const warmingThis = warmState.active && warmState.model === voice.localModel
-        const warmErrorForThis = !warmState.active && warmState.error && warmState.model === voice.localModel
+      {isOnDevice && (() => {
+        // One block serves both engines: same download / warm / delete arc,
+        // different model list and config field.
+        const models = isStreaming ? STREAMING_MODELS : LOCAL_MODELS
+        const selectedModel = isStreaming ? voice.streamingModel : voice.localModel
+        const selectModel = (value: string) => updateVoice(isStreaming ? { streamingModel: value } : { localModel: value })
+        const selectedDownloaded = isDownloaded(selectedModel)
+        const selectedWarmed = isWarmed(selectedModel)
+        const downloadingThis = dlState.active && dlState.model === selectedModel
+        const warmingThis = warmState.active && warmState.model === selectedModel
+        const warmErrorForThis = !warmState.active && warmState.error && warmState.model === selectedModel
         const downloadErrorForThis = dlState.msg && !dlState.active && !selectedDownloaded
-        const note = LOCAL_MODELS.find(m => m.value === voice.localModel)?.note ?? ''
+        const note = models.find(m => m.value === selectedModel)?.note ?? ''
 
         // Three states per model: warmed (instant), downloaded but not warmed
-        // (first use = 30-90s compile), or not downloaded.
-        const prefixFor = (m: string) => isWarmed(m) ? 'Ready · ' : isDownloaded(m) ? 'Downloaded · ' : 'Not downloaded · '
+        // (first use = 30-90s compile), or not on disk. The last one gets no
+        // badge — the download size in the row already says "you'd be fetching
+        // this", so a "Not downloaded" tag is noise on every other line.
+        const prefixFor = (m: string) => isWarmed(m) ? 'Ready · ' : isDownloaded(m) ? 'Downloaded · ' : ''
 
         let statusLine: React.ReactNode = note
         let statusColor: string = C.fg3
@@ -796,7 +899,9 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           statusLine = dlState.msg
           statusColor = C.red
         } else if (warmErrorForThis) {
-          statusLine = `Warm-up failed: ${warmState.error}. First voice press will trigger CoreML compile (~30-90s).`
+          statusLine = isStreaming
+            ? `Warm-up failed: ${warmState.error}. This streaming model could not be loaded on this Mac/macOS; try another model or switch to Whisper.`
+            : `Warm-up failed: ${warmState.error}. First voice press will trigger CoreML compile (~30-90s).`
           statusColor = C.red
         } else if (warmingThis) {
           statusLine = `Compiling for your Mac… ${warmElapsed}s (one-time, ~30-90s on first use)`
@@ -812,21 +917,21 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         return (
           <div style={lastSettingBlockStyle}>
             <div style={settingRowStyle}>
-              <span style={{ color: C.fg, fontSize: 13 }}>Local model</span>
+              <span style={{ color: C.fg, fontSize: 13 }}>{isStreaming ? 'Streaming model' : 'Local model'}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <select
-                  value={voice.localModel}
-                  onChange={e => updateVoice({ localModel: e.target.value })}
+                  value={selectedModel}
+                  onChange={e => selectModel(e.target.value)}
                   style={{ ...selectStyle, width: 280 }}
                 >
-                  {LOCAL_MODELS.map(m => (
+                  {models.map(m => (
                     <option key={m.value} value={m.value}>
-                      {prefixFor(m.value)}{m.label}
+                      {prefixFor(m.value)}{m.label} · {m.size}
                     </option>
                   ))}
                 </select>
                 <button
-                  onClick={() => !downloadingThis && !selectedDownloaded && downloadModel(voice.localModel)}
+                  onClick={() => !downloadingThis && !selectedDownloaded && downloadModel(selectedModel)}
                   disabled={dlState.active || selectedDownloaded}
                   title={selectedDownloaded ? 'Already downloaded' : downloadingThis ? 'Downloading…' : 'Download model'}
                   style={{
@@ -845,7 +950,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
                 </button>
                 {selectedDownloaded && !downloadingThis && !warmingThis && (
                   <button
-                    onClick={() => deleteModel(voice.localModel)}
+                    onClick={() => deleteModel(selectedModel)}
                     title="Delete this model from disk"
                     style={pillButton('danger')}
                   >

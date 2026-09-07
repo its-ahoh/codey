@@ -7,10 +7,8 @@ import QuartzCore  // CACurrentMediaTime
 final class AudioCapture {
     private let engine = AVAudioEngine()
     private var pcmBuffer: [Float] = []
-    /// Guards `pcmBuffer` so streaming consumers can read a coherent snapshot
-    /// while the audio tap thread keeps appending. Lock is held only for the
-    /// length of an `append` or a snapshot copy — never across the resample
-    /// math, so contention is minimal.
+    /// Guards `pcmBuffer` while the audio tap thread appends and the control
+    /// path starts, stops, or cancels capture.
     private let bufferLock = NSLock()
     private let sampleRate: Double = 16000
     private let maxDurationSeconds: Double = 300  // 5-minute cap
@@ -25,9 +23,8 @@ final class AudioCapture {
 
     /// Called from the audio tap thread with each freshly resampled 16 kHz mono
     /// chunk (~20-50 ms). Receiver must hop to main if it touches AppKit. Used by
-    /// the realtime transcription engine to forward audio over WebSocket as it
-    /// arrives. Always-accumulate + additionally-emit: the full buffer snapshot
-    /// remains available via currentSamplesSnapshot(). Nil = batch-only behavior.
+    /// true streaming engines to consume audio as it arrives. The full buffer
+    /// is still accumulated for batch transcription and streaming fallback.
     var onChunk: (([Float]) -> Void)?
 
     /// Called from the audio tap thread (~every buffer, ~20-50ms) with a 0..1
@@ -83,15 +80,6 @@ final class AudioCapture {
         let snapshot = pcmBuffer
         bufferLock.unlock()
         onRecordingComplete?(snapshot)
-    }
-
-    /// Coherent copy of the buffer captured so far. Safe to call from any
-    /// thread while recording. Used by the local streaming transcriber to
-    /// pull periodic snapshots without disturbing the audio tap.
-    func currentSamplesSnapshot() -> [Float] {
-        bufferLock.lock()
-        defer { bufferLock.unlock() }
-        return pcmBuffer
     }
 
     /// Stop the engine and DISCARD the buffer without firing the complete

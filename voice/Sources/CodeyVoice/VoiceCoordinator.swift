@@ -54,6 +54,7 @@ final class VoiceCoordinator {
     private let audioCapture: AudioCapture
     private let apiEngine: TranscriptionEngine
     private let localEngine: WhisperKitEngine
+    private let streamingEngine: NemotronStreamingEngine
     private let realtimeEngine: RealtimeTranscriptionEngine
     private var textInjector: TextInjector
     private var hotkeyManager: HotkeyManager?
@@ -106,6 +107,7 @@ final class VoiceCoordinator {
         self.audioCapture = AudioCapture()
         self.apiEngine = TranscriptionEngine(config: .default)
         self.localEngine = WhisperKitEngine(config: .default)
+        self.streamingEngine = NemotronStreamingEngine(config: .default)
         self.realtimeEngine = RealtimeTranscriptionEngine(config: .default)
         self.textInjector = TextInjector(mode: .paste)
         self.converseClient = ConverseClient(port: gatewayPort)
@@ -114,8 +116,29 @@ final class VoiceCoordinator {
     private var activeEngine: TranscriptionEngineProtocol {
         switch config.provider {
         case .local: return localEngine
+        case .localStreaming: return streamingEngine
         case .api: return apiEngine
         case .realtime: return realtimeEngine
+        }
+    }
+
+    /// Whichever on-device engine the config selects, or nil for the API
+    /// providers. Only one of the two is ever loaded: switching providers
+    /// unloads the other (see `applyConfig`), which is what keeps the memory
+    /// cost of offering both engines at "one model", not two.
+    private var onDeviceReady: Bool {
+        switch config.provider {
+        case .local: return localEngine.isReady
+        case .localStreaming: return streamingEngine.isReady
+        case .api, .realtime: return true
+        }
+    }
+
+    private func prewarmOnDevice() {
+        switch config.provider {
+        case .local: localEngine.prewarm()
+        case .localStreaming: streamingEngine.prewarm()
+        case .api, .realtime: break
         }
     }
 
@@ -161,16 +184,18 @@ final class VoiceCoordinator {
             }
         }
         apiEngine.onPartial = partialHandler
-        localEngine.onPartial = partialHandler
+        streamingEngine.onPartial = partialHandler
         realtimeEngine.onPartial = partialHandler
 
-        // Route audio chunks to the realtime engine during recording.
-        // The engine's appendAudioChunk is a no-op when no session is open,
+        // Route audio chunks to the streaming engines during recording.
+        // Both engines' appendAudioChunk is a no-op when no session is open,
         // so this is safe to leave wired permanently.
         audioCapture.onChunk = { [weak self] chunk in
             guard let self = self else { return }
-            if self.config.provider == .realtime {
-                self.realtimeEngine.appendAudioChunk(chunk)
+            switch self.config.provider {
+            case .realtime: self.realtimeEngine.appendAudioChunk(chunk)
+            case .localStreaming: self.streamingEngine.appendAudioChunk(chunk)
+            case .api, .local: break
             }
         }
 
@@ -207,15 +232,14 @@ final class VoiceCoordinator {
         idleUnloadTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             guard let self = self, self.state == .idle else { return }
             self.localEngine.unloadIfIdle()
+            self.streamingEngine.unloadIfIdle()
             self.realtimeEngine.unloadIfIdle()
         }
 
-        // Prewarm WhisperKit so the first hotkey press doesn't pay the model
-        // load cost. We only do this when local is the active provider — no
+        // Prewarm the selected on-device engine so the first hotkey press
+        // doesn't pay the model load cost. No-op for API providers — no
         // sense pulling weights for API-only users.
-        if config.provider == .local {
-            localEngine.prewarm()
-        }
+        prewarmOnDevice()
         // Prewarm the audio engine regardless of provider — `engine.prepare()`
         // negotiates the input format with Core Audio so `start()` later on
         // hotkey press is a fast transition rather than a cold open. Also
@@ -234,8 +258,8 @@ final class VoiceCoordinator {
     private func handleConverseToggle() {
         guard config.conversationEnabled else { return }
         // API and Realtime capture remain in Electron. On-device capture must
-        // stay here so it can reuse the already-warmed WhisperKit pipeline.
-        guard config.provider == .local else {
+        // stay here so it can reuse the already-warmed local pipeline.
+        guard config.provider.isOnDevice else {
             Task { await gateway.triggerConverseHotkey() }
             return
         }
@@ -296,9 +320,9 @@ final class VoiceCoordinator {
     /// finished talking, which is the worst moment to discover the wait. Say
     /// "not yet" up front, kick the load, and let them press again.
     private func localModelReady(for destination: CaptureDestination) -> Bool {
-        guard config.provider == .local, !localEngine.isReady else { return true }
+        guard config.provider.isOnDevice, !onDeviceReady else { return true }
         print("handleToggle: refused — the on-device model is not loaded yet")
-        localEngine.prewarm()
+        prewarmOnDevice()
         let message = "Preparing the speech model"
         if destination.composerMode != nil {
             emitConversationEvent(type: "error", payload: ["message": message])
@@ -335,16 +359,11 @@ final class VoiceCoordinator {
             }
             installEscMonitor()
 
-            // Kick off WhisperKit's sliding-window streaming so the HUD can
-            // show partial transcripts while the user is still speaking.
-            // API streaming, by contrast, only kicks in after stop because
-            // /audio/transcriptions takes a complete clip.
-            if config.provider == .local {
-                let capture = audioCapture
-                localEngine.startStreaming(
-                    audioSnapshot: { capture.currentSamplesSnapshot() },
-                    language: config.language
-                )
+            // The Nemotron engine decodes chunks as they arrive via onChunk
+            // (wired in start()); opening the session here resets its state
+            // for this utterance and applies language + vocabulary.
+            if config.provider == .localStreaming {
+                streamingEngine.startSession(language: config.language)
             }
 
             // Start the realtime WebSocket session if using the realtime provider.
@@ -379,10 +398,6 @@ final class VoiceCoordinator {
             setConversationCapsule(.thinking)
             emitConversationEvent(type: "state", payload: ["state": "transcribing"])
         }
-        // Cancel streaming partials before we run the final transcribe so a
-        // late partial can't overwrite the success HUD or trigger a duplicate
-        // injection.
-        localEngine.stopStreaming()
         audioCapture.stopRecording()
         // onRecordingComplete callback handles the rest
     }
@@ -394,8 +409,7 @@ final class VoiceCoordinator {
         print("cancelRecording: Esc pressed — discarding buffer")
         captureGeneration += 1
         removeEscMonitor()
-        localEngine.stopStreaming()
-        audioCapture.onChunk = nil
+        streamingEngine.cancelSession()
         realtimeEngine.cancelSession()
         audioCapture.cancelRecording()
         state = .idle
@@ -423,7 +437,7 @@ final class VoiceCoordinator {
         guard state == .transcribing else { return }
         captureGeneration += 1
         removeEscMonitor()
-        localEngine.stopStreaming()
+        streamingEngine.cancelSession()
         realtimeEngine.cancelSession()
         state = .idle
         statusItem?.updateState(.idle)
@@ -622,11 +636,13 @@ final class VoiceCoordinator {
         Task {
             do {
                 let lang = config.language
-                let providerLabel = config.provider == .local
-                    ? "local(\(config.localModel))"
-                    : config.provider == .realtime
-                    ? "realtime(\(config.realtimeModel))"
-                    : "api(\(config.apiModel))"
+                let providerLabel: String
+                switch config.provider {
+                case .local: providerLabel = "local(\(config.localModel))"
+                case .localStreaming: providerLabel = "localStreaming(\(config.streamingModel))"
+                case .realtime: providerLabel = "realtime(\(config.realtimeModel))"
+                case .api: providerLabel = "api(\(config.apiModel))"
+                }
                 print("transcribe: starting (language=\(lang.isEmpty ? "auto" : lang), provider=\(providerLabel))")
                 let heard = try await activeEngine.transcribe(audio: buffer, language: lang)
 
@@ -916,17 +932,26 @@ final class VoiceCoordinator {
         textInjector = TextInjector(mode: newConfig.injection)
         apiEngine.updateConfig(newConfig)
         localEngine.updateConfig(newConfig)
+        streamingEngine.updateConfig(newConfig)
         realtimeEngine.updateConfig(newConfig)
+        // Leaving an on-device engine releases it right away rather than
+        // waiting for the idle timer: the whole point of making the two
+        // local engines a switch instead of a pair is that only one is
+        // ever resident.
         if oldProvider == .local && newConfig.provider != .local {
             localEngine.forceUnload(reason: "provider switched to \(newConfig.provider.rawValue)")
+        }
+        if oldProvider == .localStreaming && newConfig.provider != .localStreaming {
+            streamingEngine.cancelSession()
+            streamingEngine.forceUnload(reason: "provider switched to \(newConfig.provider.rawValue)")
         }
         if oldProvider == .realtime && newConfig.provider != .realtime {
             realtimeEngine.cancelSession()
         }
-        if oldProvider != .local && newConfig.provider == .local {
-            // User just turned local on (or changed model) — start warming now
-            // so the first press is fast.
-            localEngine.prewarm()
+        if oldProvider != newConfig.provider && newConfig.provider.isOnDevice {
+            // User just turned an on-device engine on — start warming now so
+            // the first press is fast.
+            prewarmOnDevice()
         }
 
         if newConfig.converseHotkey != oldConverseHotkey
@@ -984,6 +1009,7 @@ final class VoiceCoordinator {
         pollTimer?.invalidate()
         idleUnloadTimer?.invalidate()
         localEngine.forceUnload(reason: "app terminating")
+        streamingEngine.forceUnload(reason: "app terminating")
         realtimeEngine.cancelSession()
     }
 

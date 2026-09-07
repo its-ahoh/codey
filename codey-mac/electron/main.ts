@@ -3,6 +3,7 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
 import { hudStateCommand, hudLevelCommand, conversationToggleCommand } from './voice-hud'
+import { allStreamingModelIds, FileProbe, isOnDeviceVoiceProvider, selectedOnDeviceModel, streamingModelDir, streamingModelIsComplete, isBogusWarmMarkerKey, warmMarkerDeleteKeys, warmMarkerWriteKeys } from './voice-models'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
 import { clampZoom, formatZoom, zoomIn, zoomOut, DEFAULT_ZOOM } from './zoom'
@@ -1444,7 +1445,8 @@ async function transcribeChromeVoiceLocally(data: Buffer, voice: any): Promise<s
   try {
     const args = ['--transcribe-file', audioPath]
     if (voice.language && voice.language !== 'auto') args.push('--lang', voice.language)
-    if (voice.localModel) args.push('--model', voice.localModel)
+    const model = selectedOnDeviceModel(voice)
+    if (model) args.push('--model', model)
     const vocabulary = normalizeVocabulary(voice.vocabulary)
     if (vocabulary.length) args.push('--vocab', vocabulary.join(','))
     return await new Promise<string>((resolve, reject) => {
@@ -1545,6 +1547,23 @@ function listDownloadedVoiceModels(): string[] {
         if (allWeightsOK) found.add(entry)
       } catch { /* skip */ }
     }
+  }
+  // Streaming (Nemotron) variants live in FluidAudio's own cache. metadata.json
+  // arrives with the bundles rather than after them, so an interrupted
+  // download leaves it next to a half-written weight blob. Check the weights
+  // instead, or the UI advertises a model that fails CoreML warm-up with
+  // execution-plan error -14 and offers no way back to Download.
+  const probe: FileProbe = {
+    size(p: string) {
+      try {
+        const st = fsMod.statSync(p)
+        return st.isFile() ? st.size : null
+      } catch { return null }
+    },
+  }
+  for (const id of allStreamingModelIds()) {
+    const dir = streamingModelDir(home, id)
+    if (dir && streamingModelIsComplete(dir, probe)) found.add(id)
   }
   return Array.from(found)
 }
@@ -1658,8 +1677,8 @@ async function warmSelectedVoiceModelOnStartup(): Promise<void> {
   try {
     const voice = (coreConfigManager?.get() as any)?.voice
     if (!voice?.enabled) return
-    if (voice.provider !== 'local') return
-    const model = String(voice.localModel ?? '')
+    if (!isOnDeviceVoiceProvider(voice.provider)) return
+    const model = selectedOnDeviceModel(voice)
     if (!model) return
 
     // Nothing to warm if the weights aren't on disk — that is a Download
@@ -1719,6 +1738,7 @@ function warmedVoiceModels(): string[] {
   const helperId = currentHelperId()
   const markers = readWarmMarkers()
   return Object.keys(markers).filter(k => {
+    if (isBogusWarmMarkerKey(k)) return false
     const m = markers[k]
     return m?.osBuild === build && m?.helperId === helperId
   })
@@ -1738,13 +1758,8 @@ function writeWarmMarker(model: string, loadSeconds: number) {
   try {
     const fs = require('fs') as typeof import('fs')
     const cur = readWarmMarkers()
-    // Store under both forms so lookups work whether UI sends the prefixed
-    // (`openai_whisper-...`) or bare (`large-v3...`) variant string.
-    const bare = model.startsWith('openai_whisper-') ? model.slice('openai_whisper-'.length) : model
     const entry = { warmedAt: new Date().toISOString(), loadSeconds, osBuild: currentOsBuild(), helperId: currentHelperId() }
-    cur[model] = entry
-    cur[bare] = entry
-    cur[`openai_whisper-${bare}`] = entry
+    for (const key of warmMarkerWriteKeys(model)) cur[key] = entry
     fs.writeFileSync(warmMarkerPath(), JSON.stringify(cur, null, 2))
   } catch (e) {
     console.warn('writeWarmMarker failed:', e)
@@ -1807,7 +1822,7 @@ async function applyVoiceHelper(rawCfg: any) {
   // available for their shared on-device WhisperKit path even when both
   // global bindings are turned off.
   const enabled = !voiceHotkeyCaptureActive
-    && (dictationEnabled || conversationEnabled || voice?.provider === 'local')
+    && (dictationEnabled || conversationEnabled || isOnDeviceVoiceProvider(voice?.provider))
   if (!enabled) {
     if (voiceHelperStarted) sendToRenderer('gateway-log', `[voice] disabled — stopping helper`)
     stopVoiceHelper()
@@ -2211,7 +2226,7 @@ app.whenReady().then(async () => {
         if (!coreConfigManager) throw new Error('Codey configuration is unavailable')
         const voice = coreConfigManager.getResolvedVoiceConfig()
         if (!voice) throw new Error('Configure Voice in Codey Settings first')
-        if (voice.provider === 'local') {
+        if (isOnDeviceVoiceProvider(voice.provider)) {
           if (mimeType !== 'audio/wav') throw new Error('Reload the Codey Chrome extension to enable local voice transcription')
           return { text: await transcribeChromeVoiceLocally(data, voice) }
         }
@@ -3799,7 +3814,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('voice:toggleNativeConversation', async (_e, fromHotkey: boolean) =>
     wrap(async () => {
       const provider = coreConfigManager?.get().voice?.provider
-      if (provider !== 'local') return { native: false }
+      if (!isOnDeviceVoiceProvider(provider)) return { native: false }
       // Carried on the command instead of stashed here first: the helper
       // silently declines a toggle that arrives mid-transcription, and a
       // pre-emptive assignment then had nothing to reset it.
@@ -3813,7 +3828,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('voice:toggleNativeDictation', async () =>
     wrap(async () => {
       const provider = coreConfigManager?.get().voice?.provider
-      if (provider !== 'local') return { native: false }
+      if (!isOnDeviceVoiceProvider(provider)) return { native: false }
       if (!sendVoiceHelperCommand('composer-dictation-toggle')) {
         throw new Error('Voice Helper is not available')
       }
@@ -3973,7 +3988,7 @@ app.whenReady().then(async () => {
       if (!coreConfigManager) throw new Error('Gateway configuration is not available')
       const voice = coreConfigManager.getResolvedVoiceConfig()
       if (!voice) throw new Error('Voice is not configured')
-      if (voice.provider === 'local') {
+      if (isOnDeviceVoiceProvider(voice.provider)) {
         throw new Error('Conversation recording currently requires API transcription; choose API under Voice → Speech recognition.')
       }
       if (!voice.apiKey) throw new Error('Select a Transcription key under Voice → Speech recognition.')
@@ -4105,6 +4120,29 @@ app.whenReady().then(async () => {
         : modelName
       const variants = new Set([modelName, bare, `openai_whisper-${bare}`])
       const home = app.getPath('home')
+      // A streaming id maps to exactly one FluidAudio cache folder; the
+      // WhisperKit roots below never contain it, so this is the whole job.
+      const streamingDir = streamingModelDir(home, modelName)
+      if (streamingDir) {
+        const removed: string[] = []
+        if (fsMod.existsSync(streamingDir)) {
+          fsMod.rmSync(streamingDir, { recursive: true, force: true })
+          removed.push(streamingDir)
+        }
+        try {
+          const markers = readWarmMarkers()
+          let changed = false
+          for (const key of warmMarkerDeleteKeys(modelName)) {
+            if (key in markers) { delete markers[key]; changed = true }
+          }
+          if (changed) {
+            fsMod.writeFileSync(warmMarkerPath(), JSON.stringify(markers, null, 2))
+          }
+        } catch (e) {
+          console.warn('voice:deleteModel: failed to update warm markers:', e)
+        }
+        return { removed }
+      }
       const roots = [
         pathMod.join(home, 'Documents', 'huggingface', 'models', 'argmaxinc', 'whisperkit-coreml'),
         pathMod.join(home, 'Library', 'Application Support', 'huggingface', 'models', 'argmaxinc', 'whisperkit-coreml'),
@@ -4123,7 +4161,7 @@ app.whenReady().then(async () => {
       try {
         const markers = readWarmMarkers()
         let changed = false
-        for (const v of variants) {
+        for (const v of warmMarkerDeleteKeys(modelName)) {
           if (v in markers) { delete markers[v]; changed = true }
         }
         if (changed) {

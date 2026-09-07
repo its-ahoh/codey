@@ -144,8 +144,12 @@ export interface GatewayConfigJson {
     converseHotkey?: string;
     language: string;
     injection: 'paste' | 'ax';
-    /** Transcription backend: hosted API or on-device WhisperKit. */
-    provider: 'api' | 'local';
+    /**
+     * Transcription backend. `local` is on-device WhisperKit, `localStreaming`
+     * is on-device Nemotron streaming (FluidAudio); the two are a switch, only
+     * the selected one is loaded. `realtime` is the OpenAI WebSocket API.
+     */
+    provider: 'api' | 'local' | 'localStreaming' | 'realtime';
     /** Base URL of an OpenAI-compatible transcription endpoint (e.g. https://api.openai.com/v1). */
     apiUrl: string;
     /** Saved Voice key selected from Settings → API Keys. */
@@ -154,6 +158,8 @@ export interface GatewayConfigJson {
     apiModel: string;
     /** WhisperKit model variant for local mode (e.g. openai_whisper-large-v3-turbo). */
     localModel: string;
+    /** Streaming model id for localStreaming mode (e.g. nemotron/multilingual/1120ms). */
+    streamingModel?: string;
     /**
      * Proper nouns the recognizer keeps getting wrong. Each term is hinted to
      * the decoder before transcription; its aliases are rewritten to the term
