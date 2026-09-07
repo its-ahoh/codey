@@ -2177,6 +2177,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 overflowWrap: 'anywhere', wordBreak: 'break-word',
                 transition: 'border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease',
               }}>
+                {/* Aide, Advisor and the team final answer read like a plain
+                    Codey reply: no member header at all. Only real workers
+                    get a name and an avatar. */}
                 {!isUser && isWorkerMessage && <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
                   <WorkerAvatar name={msg.worker!} config={member?.config.avatar} state={memberState} />
                   <strong>{msg.worker}</strong>

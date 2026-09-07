@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
 import { SecretKey, SecretStore, apiKeySecret, channelSecret } from './secret-store';
-import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, isApiType, isMemberAvatar, McpServerSpec, ModelEntry, TeamConfigRaw, ThinkingEffort } from '@codey/core';
+import { ApiKeyEntry, CodingAgent, FallbackConfig, FallbackEntry, isApiType, McpServerSpec, ModelEntry, TeamConfigRaw, ThinkingEffort } from '@codey/core';
 
 // ── Configuration types ─────────────────────────────────────────────
 
@@ -20,7 +20,6 @@ export interface ExternalMcpServerConfig {
 export const DEFAULT_API_BIND_HOST = '127.0.0.1';
 
 export interface GatewayConfigJson {
-  builtinAvatars?: import('@codey/core').GatewayConfig['builtinAvatars'];
   gateway: {
     port: number;
     skipPermissions?: boolean;
@@ -453,7 +452,6 @@ export class ConfigManager extends EventEmitter {
     if (partial.fallback !== undefined) this.config.fallback = partial.fallback;
     if (partial.advisor !== undefined) this.config.advisor = partial.advisor;
     if (partial.aide !== undefined) this.config.aide = partial.aide;
-    if (partial.builtinAvatars !== undefined) this.config.builtinAvatars = partial.builtinAvatars;
     if (partial.teams !== undefined) this.config.teams = partial.teams;
     if (partial.memory !== undefined) {
       this.config.memory = { ...this.config.memory, ...partial.memory };
@@ -982,13 +980,6 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
       agent: raw.aide.agent,
       model: raw.aide.model,
     };
-  }
-  if (raw.builtinAvatars && typeof raw.builtinAvatars === 'object') {
-    const avatars: NonNullable<GatewayConfigJson['builtinAvatars']> = {};
-    for (const member of ['aide', 'advisor'] as const) {
-      if (isMemberAvatar(raw.builtinAvatars[member])) avatars[member] = { ...raw.builtinAvatars[member] };
-    }
-    if (Object.keys(avatars).length) out.builtinAvatars = avatars;
   }
   if (raw.skills && typeof raw.skills === 'object') {
     out.skills = {

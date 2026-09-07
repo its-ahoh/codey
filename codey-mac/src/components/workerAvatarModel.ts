@@ -1,7 +1,7 @@
 import type { ChatMessage } from '../types'
 
 import { avatarShapes, avatarColors } from '../../../packages/core/src/member-avatars'
-export { avatarShapes, avatarColors, builtinAvatar } from '../../../packages/core/src/member-avatars'
+export { avatarShapes, avatarColors } from '../../../packages/core/src/member-avatars'
 export type { MemberAvatar as WorkerAvatarConfig } from '../../../packages/core/src/member-avatars'
 import type { MemberAvatar as WorkerAvatarConfig } from '../../../packages/core/src/member-avatars'
 export type AvatarState = 'waiting' | 'working' | 'reply' | 'done' | 'failed' | 'idle' | 'stopped'

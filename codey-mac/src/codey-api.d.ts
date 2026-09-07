@@ -1,4 +1,3 @@
-import type { BuiltinMember, MemberAvatar } from '../../packages/core/src/member-avatars'
 import type { Chat, ChatSelection } from '../../packages/core/src/types/chat'
 import type { ChatStreamEvent, QQStreamEvent } from '../../packages/gateway/src/chat-runner'
 import type { TaskBrief } from '../types'
@@ -384,10 +383,6 @@ declare global {
       dispatcher: {
         get: () => Promise<IpcResult<{ agent?: string; model?: string }>>
         set: (updates: { agent?: string; model?: string }) => Promise<IpcResult<void>>
-      }
-      builtinAvatars: {
-        get: () => Promise<IpcResult<Partial<Record<BuiltinMember, MemberAvatar>>>>
-        set: (member: BuiltinMember, avatar: MemberAvatar) => Promise<IpcResult<void>>
       }
       aide: {
         get: () => Promise<IpcResult<{ agent?: string; model?: string }>>
