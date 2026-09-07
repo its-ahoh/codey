@@ -180,6 +180,16 @@ describe('recordCorrections', () => {
     expect(second.promoted).toHaveLength(1)
   })
 
+  it('counts sightings by the corrected word, not by how it was misheard', () => {
+    // The recognizer rarely fails the same way twice ("Wisber", "wsper"),
+    // so keying on the alias would leave every word stuck at one sighting.
+    const first = recordCorrections([], [], [{ term: 'Whisper', alias: 'Wisber' }])
+    const second = recordCorrections(first.pending, [], [{ term: 'Whisper', alias: 'wsper' }])
+    expect(first.pending).toHaveLength(1)
+    expect(second.promoted.map(p => p.term)).toEqual(['Whisper'])
+    expect(second.pending).toEqual([])
+  })
+
   it('ignores a correction whose word is already in the dictionary', () => {
     const r = recordCorrections([], ['Codey'], [codey])
     expect(r.promoted).toEqual([])

@@ -8,9 +8,9 @@
  */
 
 /** A word swap observed by comparing what was dictated against what the user
- *  actually sent. `alias` never reaches the dictionary — it is the evidence
- *  that `term` is a word the recognizer cannot spell, and the key the waiting
- *  list counts sightings under. */
+ *  actually sent. `alias` never reaches the dictionary — it is only the
+ *  evidence that `term` is a word the recognizer cannot spell. The waiting
+ *  list counts sightings by `term` alone. */
 export interface LearnedCorrection {
   /** The corrected spelling — what the user left in the composer. */
   term: string
@@ -358,8 +358,12 @@ export function normalizePending(raw: unknown): PendingCorrection[] {
   })
 }
 
-function pendingKey(term: string, alias: string): string {
-  return `${alias.toLowerCase()}\u0000${term.toLowerCase()}`
+/** Sightings are counted by the corrected word alone. The recognizer rarely
+ *  fails the same way twice ("Wisber" one turn, "wsper" the next), so keying
+ *  on the alias as well left every word stuck at one sighting forever. The
+ *  alias is kept only as evidence of the first mis-hearing. */
+function pendingKey(term: string, _alias?: string): string {
+  return term.toLowerCase()
 }
 
 /**
