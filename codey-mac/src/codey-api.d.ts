@@ -299,6 +299,7 @@ declare global {
         get: (name: string) => Promise<IpcResult<any>>
         save: (name: string, personality: any, config: any) => Promise<IpcResult<void>>
         delete: (name: string) => Promise<IpcResult<void>>
+        rename: (oldName: string, newName: string) => Promise<IpcResult<void>>
         generate: (prompt: string) => Promise<IpcResult<any>>
       }
       workspaces: {

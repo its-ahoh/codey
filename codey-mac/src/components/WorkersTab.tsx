@@ -43,7 +43,9 @@ export default function WorkersTab() {
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {mode.kind === 'idle' && <EmptyState />}
         {mode.kind === 'create' && <CreatePanel loading={loading} setLoading={setLoading} onCreated={async (w) => { await reload(); setMode({ kind: 'select', name: w.name }) }} onCancel={() => setMode({ kind: 'idle' })} />}
-        {mode.kind === 'select' && selected && <EditorPanel key={selected.name} worker={selected} onSaved={reload} onDeleted={async () => { await reload(); setMode({ kind: 'idle' }) }} />}
+        {mode.kind === 'select' && selected && <EditorPanel key={selected.name} worker={selected}
+          onSaved={async (name) => { await reload(); setMode({ kind: 'select', name }) }}
+          onDeleted={async () => { await reload(); setMode({ kind: 'idle' }) }} />}
       </div>
     </div>
   )
@@ -89,8 +91,10 @@ function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: bo
   )
 }
 
-function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSaved: () => void; onDeleted: () => void }) {
+function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSaved: (name: string) => void; onDeleted: () => void }) {
   const [avatar, setAvatar] = useState(() => resolveWorkerAvatar(worker.name, worker.config.avatar))
+  const [name, setName] = useState(worker.name)
+  const [editingName, setEditingName] = useState(false)
   const [role, setRole] = useState(worker.personality.role)
   const [soul, setSoul] = useState(worker.personality.soul)
   const [instructions, setInstructions] = useState(worker.personality.instructions)
@@ -118,6 +122,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
     setRole(worker.personality.role); setSoul(worker.personality.soul); setInstructions(worker.personality.instructions)
     setCodingAgent(worker.config.codingAgent); setModel(worker.config.model); setToolsText(worker.config.tools.join(', '))
     setAvatar(resolveWorkerAvatar(worker.name, worker.config.avatar))
+    setName(worker.name); setEditingName(false)
     setEffort(worker.config.effort ?? '')
     setSaved(false); setError(null)
   }, [worker.name])
@@ -127,8 +132,10 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
 
   const save = async () => {
     setSaving(true); setError(null)
+    const nextName = name.trim()
     try {
-      await apiService.updateWorker(worker.name, {
+      if (nextName !== worker.name) await apiService.renameWorker(worker.name, nextName)
+      await apiService.updateWorker(nextName, {
         personality: { role, soul, instructions },
         config: {
           ...worker.config,
@@ -140,7 +147,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
         },
       })
       window.dispatchEvent(new Event('codey:workers-changed'))
-      setSaved(true); setTimeout(() => setSaved(false), 1500); onSaved()
+      setSaved(true); setTimeout(() => setSaved(false), 1500); onSaved(nextName)
     } catch (err: any) {
       setError(err.message || String(err))
     } finally {
@@ -158,13 +165,26 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
 
   return (
     <div style={{ padding: 20, maxWidth: 720 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <div style={{ fontSize: 18, fontWeight: 600 }}>{worker.name}</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
+          <AvatarPicker name={name.trim() || worker.name} value={avatar} onChange={setAvatar} />
+          {editingName
+            ? <input autoFocus value={name} aria-label="Worker name"
+                onChange={e => setName(e.target.value)}
+                onBlur={() => { setEditingName(false); if (!name.trim()) setName(worker.name) }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') e.currentTarget.blur()
+                  if (e.key === 'Escape') { setName(worker.name); setEditingName(false) }
+                }}
+                style={{ fontSize: 18, fontWeight: 600, padding: '2px 6px', background: C.surface2, color: C.fg, border: `1px solid ${C.accent}`, borderRadius: 6, fontFamily: 'inherit', minWidth: 0 }} />
+            : <button type="button" onClick={() => setEditingName(true)} title="Rename" aria-label={`Rename ${name}`}
+                style={{ fontSize: 18, fontWeight: 600, padding: '2px 6px', margin: '0 -6px', background: 'transparent', color: C.fg, border: 'none', borderRadius: 6, cursor: 'text', fontFamily: 'inherit', textAlign: 'left' }}>
+                {name}</button>}
+        </div>
         <button onClick={confirmDelete} style={{ background: 'transparent', color: C.dangerFg, border: `1px solid ${C.dangerBorder}`, padding: '6px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>Delete</button>
       </div>
       {error && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 10, borderRadius: 6, fontSize: 12 }}>{error}</div>}
 
-      <div style={{ margin: '18px 0' }}><AvatarPicker name={worker.name} value={avatar} onChange={setAvatar} /></div>
       <label style={labelStyle}>Role</label>
       <textarea value={role} onChange={e => setRole(e.target.value)} style={{ ...fieldStyle, minHeight: 60 }} />
 

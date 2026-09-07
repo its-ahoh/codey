@@ -402,4 +402,63 @@ export class WorkerManager {
     await fs.promises.rm(dir, { recursive: true, force: true });
     this.workers.delete(name.toLowerCase());
   }
+
+  /**
+   * Moves `<workersDir>/<oldName>` to `<workersDir>/<newName>` and rewrites the
+   * personality heading. Team references are the caller's job — see
+   * `renameWorkerInTeams`, which needs the gateway config this manager never sees.
+   */
+  async renameWorker(oldName: string, newName: string): Promise<void> {
+    if (oldName === newName) return;
+    if (!WORKER_NAME_RE.test(newName)) {
+      throw new Error(`Worker name "${newName}" must be lowercase letters, digits and dashes, starting with a letter`);
+    }
+    const existing = this.workers.get(oldName.toLowerCase());
+    if (!existing) throw new Error(`Worker not found: ${oldName}`);
+    if (newName.toLowerCase() !== oldName.toLowerCase() && this.workers.has(newName.toLowerCase())) {
+      throw new Error(`Worker "${newName}" already exists`);
+    }
+    const from = path.join(this.workersDir, existing.name);
+    const to = path.join(this.workersDir, newName);
+    await fs.promises.rename(from, to);
+    const mdPath = path.join(to, 'personality.md');
+    const content = await fs.promises.readFile(mdPath, 'utf-8');
+    await fs.promises.writeFile(mdPath, content.replace(/^# .*(\r?\n|$)/, `# Worker: ${newName}$1`), 'utf-8');
+    await this.loadWorkers();
+  }
+}
+
+const WORKER_NAME_RE = /^[a-z][a-z0-9-]*$/;
+
+/**
+ * Pure cascade for a worker rename: swaps `oldName` for `newName` in every
+ * team's member list and in every flow-graph worker node. Untouched teams keep
+ * their original object identity so callers can skip a config write when
+ * `changed` is false.
+ */
+export function renameWorkerInTeams<T extends Record<string, any>>(
+  teams: T, oldName: string, newName: string,
+): { teams: T; changed: boolean } {
+  const swap = (name: string) => (name === oldName ? newName : name);
+  let changed = false;
+  const next: Record<string, any> = {};
+  for (const [teamName, raw] of Object.entries(teams)) {
+    if (Array.isArray(raw)) {
+      const members = raw.map(swap);
+      const hit = members.some((m, i) => m !== raw[i]);
+      next[teamName] = hit ? members : raw;
+      changed ||= hit;
+      continue;
+    }
+    const members: string[] = (raw.members ?? []).map(swap);
+    let hit = members.some((m: string, i: number) => m !== raw.members?.[i]);
+    let graph = raw.graph;
+    if (graph?.nodes?.some((n: any) => n.worker === oldName)) {
+      graph = { ...graph, nodes: graph.nodes.map((n: any) => (n.worker === oldName ? { ...n, worker: newName } : n)) };
+      hit = true;
+    }
+    next[teamName] = hit ? { ...raw, members, ...(graph ? { graph } : {}) } : raw;
+    changed ||= hit;
+  }
+  return { teams: next as T, changed };
 }

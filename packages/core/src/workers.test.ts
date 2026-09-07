@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { WorkerManager } from './workers';
+import { WorkerManager, renameWorkerInTeams } from './workers';
 
 function seedWorkers(workersDir: string, names: string[]) {
   for (const n of names) {
@@ -78,5 +78,91 @@ describe('worker avatar persistence', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('WorkerManager.renameWorker', () => {
+  it('moves the folder, rewrites the personality heading, and reloads under the new name', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'worker-rename-'));
+    try {
+      seedWorkers(root, ['alice', 'bob']);
+      const manager = new WorkerManager(root);
+      await manager.loadWorkers();
+      await manager.renameWorker('alice', 'alicia');
+
+      expect(fs.existsSync(path.join(root, 'alice'))).toBe(false);
+      expect(fs.readFileSync(path.join(root, 'alicia', 'personality.md'), 'utf-8')).toMatch(/^# Worker: alicia\n/);
+      expect(manager.getWorker('alice')).toBeUndefined();
+      expect(manager.getWorker('alicia')!.personality.role).toBe('ROLE_OF_alice');
+      expect(manager.getWorker('bob')).toBeDefined();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid, missing, and already-taken names without touching disk', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'worker-rename-'));
+    try {
+      seedWorkers(root, ['alice', 'bob']);
+      const manager = new WorkerManager(root);
+      await manager.loadWorkers();
+      await expect(manager.renameWorker('alice', 'Bad Name')).rejects.toThrow(/lowercase/);
+      await expect(manager.renameWorker('ghost', 'x')).rejects.toThrow(/not found/i);
+      await expect(manager.renameWorker('alice', 'bob')).rejects.toThrow(/already exists/i);
+      expect(fs.existsSync(path.join(root, 'alice'))).toBe(true);
+      expect(manager.getWorker('alice')).toBeDefined();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('is a no-op when the name does not change', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'worker-rename-'));
+    try {
+      seedWorkers(root, ['alice']);
+      const manager = new WorkerManager(root);
+      await manager.loadWorkers();
+      await manager.renameWorker('alice', 'alice');
+      expect(manager.getWorker('alice')).toBeDefined();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('renameWorkerInTeams', () => {
+  it('rewrites members and graph worker nodes in every team that references the worker', () => {
+    const teams = {
+      legacy: ['alice', 'bob'],
+      flow: {
+        members: ['alice'],
+        dispatch: 'sequential' as const,
+        graph: {
+          entry: 'start', maxHops: 5,
+          nodes: [
+            { id: 'start', type: 'start' as const, x: 0, y: 0 },
+            { id: 'n1', type: 'worker' as const, worker: 'alice', x: 0, y: 0 },
+            { id: 'end', type: 'end' as const, x: 0, y: 0 },
+          ],
+          edges: [{ id: 'e1', from: 'start', to: 'n1' }, { id: 'e2', from: 'n1', to: 'end' }],
+        },
+      },
+      untouched: ['bob'],
+    };
+    const { teams: next, changed } = renameWorkerInTeams(teams, 'alice', 'alicia');
+    expect(changed).toBe(true);
+    expect(next.legacy).toEqual(['alicia', 'bob']);
+    expect((next.flow as any).members).toEqual(['alicia']);
+    expect((next.flow as any).graph.nodes[1].worker).toBe('alicia');
+    expect((next.flow as any).graph.edges).toEqual(teams.flow.graph.edges);
+    expect(next.untouched).toBe(teams.untouched);
+    expect(teams.legacy).toEqual(['alice', 'bob']);
+  });
+
+  it('reports no change when nothing references the worker', () => {
+    const teams = { a: ['bob'] };
+    const result = renameWorkerInTeams(teams, 'alice', 'alicia');
+    expect(result.changed).toBe(false);
+    expect(result.teams).toEqual(teams);
   });
 });
