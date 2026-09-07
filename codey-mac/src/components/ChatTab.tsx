@@ -647,6 +647,10 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     return Number.isFinite(n) ? n : null
   })
   const [composerHandleHover, setComposerHandleHover] = useState(false)
+  // Which of the two stacked panes (composer / bottom terminal) has the caret.
+  // The drop shadow between them points away from whichever is focused, so the
+  // focused pane always reads as the one sitting on top.
+  const [composerFocused, setComposerFocused] = useState(false)
   const [composerResizing, setComposerResizing] = useState(false)
   const dragDepthRef = useRef(0)
   const composerResizeRef = useRef<{ y: number; h: number } | null>(null)
@@ -2476,7 +2480,10 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
           Workspace "{chat.workspaceName}" no longer exists. Sending is disabled.
         </div>
       )}
-      <div style={{ ...styles.inputContainer, position: 'relative' as const }}>
+      {/* While the composer holds the caret this outranks the bottom terminal
+          (zIndex 8), so the composer's downward shadow lands on the terminal
+          instead of being painted over by it. */}
+      <div style={{ ...styles.inputContainer, position: 'relative' as const, zIndex: composerFocused ? 9 : undefined }}>
         {showLatestMessage && (
           <button
             type="button"
@@ -2565,7 +2572,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
             </span>
           </div>
         )}
-        <div style={styles.composer}>
+        <div style={composerFocused ? { ...styles.composer, ...styles.composerRaised } : styles.composer}>
           <div
             style={styles.composerResizeHandle}
             onMouseEnter={() => setComposerHandleHover(true)}
@@ -2653,7 +2660,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 onKeyDown={handleKey}
                 onKeyUp={() => syncMention()}
                 onClick={() => syncMention()}
-                onBlur={() => setMention(null)}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => { setMention(null); setComposerFocused(false) }}
                 onScroll={e => { if (highlightRef.current) highlightRef.current.scrollTop = e.currentTarget.scrollTop }}
                 onInput={e => {
                   if (composerHeight != null) return // manual height pinned
@@ -2863,7 +2871,11 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         />
       )}
       {bottomTerminalOpen && workingDir && (
-        <div style={{ ...styles.bottomTerminal, height: bottomTerminalHeight }}>
+        <div style={{
+          ...styles.bottomTerminal,
+          ...(composerFocused ? {} : styles.bottomTerminalRaised),
+          height: bottomTerminalHeight,
+        }}>
           <div
             style={styles.bottomTerminalResizer}
             onPointerDown={startBottomTerminalResize}
@@ -2977,7 +2989,11 @@ const styles: Record<string, React.CSSProperties> = {
   container: { display: 'flex', flexDirection: 'column', height: '100%', flex: 1, minWidth: 0, position: 'relative' },
   bottomTerminal: {
     position: 'relative', flexShrink: 0, minHeight: 180, maxHeight: '70%',
-    borderTop: `1px solid ${C.border2}`, boxShadow: '0 -10px 28px rgba(0,0,0,0.14)', zIndex: 8,
+    borderTop: `1px solid ${C.border2}`, zIndex: 8,
+    transition: 'box-shadow 0.16s ease',
+  },
+  bottomTerminalRaised: {
+    boxShadow: '0 -10px 28px rgba(0,0,0,0.14)',
   },
   bottomTerminalResizer: {
     position: 'absolute', left: 0, right: 0, top: -4, height: 8, cursor: 'row-resize', zIndex: 20,
@@ -3117,6 +3133,12 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 14,
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
     position: 'relative' as const,
+    transition: 'box-shadow 0.16s ease',
+  },
+  // Focused composer lifts above the bottom terminal: it casts the shadow
+  // downward instead of receiving the terminal's upward one.
+  composerRaised: {
+    boxShadow: '0 10px 28px rgba(0,0,0,0.14)', zIndex: 9,
   },
   // Absolutely positioned over the composer's top edge so it adds no vertical
   // space — the input stays compact and the grip only shows on hover.
