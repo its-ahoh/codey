@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { composeTeamFinal, publishTeamFinal } from './team-finalizer';
+import { composeTeamFinal, publishTeamFinal, planTeamFooter } from './team-finalizer';
 import type { ChatMessage } from '@codey/core';
 import { ChatManager } from './chats';
 import * as fs from 'fs';
@@ -78,5 +78,30 @@ describe('Aide terminal message', () => {
       const reloaded = new ChatManager(root);
       expect(reloaded.get(chat.id)!.messages.at(-1)).toMatchObject({ builtinMember: 'aide', id: 'team-final:t' });
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+describe('planTeamFooter', () => {
+  const msgs = (...workers: string[]): ChatMessage[] =>
+    workers.map((w, i) => worker('done', { id: `w${i}`, worker: w }));
+
+  it('drops the transcript footer for a finished lone "@worker" run — the member bubble already shows it', () => {
+    expect(planTeamFooter({ hasFinal: false, footerText: '📊 Team **pm** results\n\n**pm**: done', hasSummary: true, pending: false, boundToTeam: false, messages: msgs('pm'), teamTurnId: 't' })).toBe('attach');
+  });
+
+  it('keeps the footer while a lone "@worker" run is paused on a question', () => {
+    expect(planTeamFooter({ hasFinal: false, footerText: 'Which one?', hasSummary: false, pending: true, boundToTeam: false, messages: msgs('pm'), teamTurnId: 't' })).toBe('append');
+  });
+
+  it('keeps the footer for a multi-member run without an Aide final', () => {
+    expect(planTeamFooter({ hasFinal: false, footerText: 'x', hasSummary: true, pending: false, boundToTeam: false, messages: msgs('a', 'b'), teamTurnId: 't' })).toBe('append');
+  });
+
+  it('never appends a footer next to an Aide final', () => {
+    expect(planTeamFooter({ hasFinal: true, footerText: 'x', hasSummary: true, pending: false, boundToTeam: true, messages: msgs('a', 'b'), teamTurnId: 't' })).toBe('none');
+  });
+
+  it('does nothing when there is neither footer text nor a summary', () => {
+    expect(planTeamFooter({ hasFinal: false, footerText: '  ', hasSummary: false, pending: false, boundToTeam: false, messages: msgs('pm'), teamTurnId: 't' })).toBe('none');
   });
 });

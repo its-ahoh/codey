@@ -73,6 +73,19 @@ describe('team reducer routing', () => {
     expect(s.chats.c1.messages.find(x => x.id === 'w1')!.workerStatus).toBe('done');
   });
 
+  it('stores live blackboard updates on the worker message', () => {
+    let s = baseState();
+    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' });
+    const blackboard = {
+      facts: [{ worker: 'a', step: 1, text: 'The API is stable' }],
+      decisions: [],
+      handoffs: [],
+      open: [],
+    };
+    s = reducer(s, { type: 'blackboardUpdate', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', blackboard });
+    expect(s.chats.c1.messages.find(message => message.id === 'w1')?.teamBlackboard).toEqual(blackboard);
+  });
+
   it('attaches a terminal team summary only when teamEnd arrives', () => {
     let s = baseState();
     s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' });

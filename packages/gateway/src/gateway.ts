@@ -1,8 +1,8 @@
-import { publishTeamFinal } from './team-finalizer';
+import { publishTeamFinal, planTeamFooter, isSoloMentionRun } from './team-finalizer';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseWorkerMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseWorkerMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -3835,7 +3835,7 @@ Example: /model gpt-4.1 write a Python script`;
     chatModel: ModelConfig | undefined,
     perStep: (msg:
       | { kind: 'route'; step: number; worker: string; reason: string; isRevision: boolean }
-      | { kind: 'blackboard'; step: number; worker: string; summary: string }
+      | { kind: 'blackboard'; step: number; worker: string; summary: string; blackboard: BlackboardSnapshot }
     ) => void | Promise<void>,
     runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
     onStepDone?: (d: { step: number; worker: string; failed: boolean; error?: string }) => void,
@@ -4004,7 +4004,7 @@ Example: /model gpt-4.1 write a Python script`;
       const ingested = blackboard.ingest(turnNext, step, response.output);
       const cleanOutput = ingested.stripped;
       const deltaSummary = blackboard.summarizeDelta(ingested.added);
-      if (deltaSummary) await perStep({ kind: 'blackboard', step, worker: turnNext, summary: deltaSummary });
+      if (deltaSummary) await perStep({ kind: 'blackboard', step, worker: turnNext, summary: deltaSummary, blackboard: blackboard.toJSON() });
 
       parts.push({ step, worker: turnNext, output: cleanOutput, isRevision });
       onStepDone?.({ step, worker: turnNext, failed: false });
@@ -4404,7 +4404,8 @@ Example: /model gpt-4.1 write a Python script`;
       response.output = ingested.stripped;
       const deltaSummary = blackboard.summarizeDelta(ingested.added);
       if (deltaSummary) {
-        await emitter.status(deltaSummary);
+        if (emitter.updateBlackboard) emitter.updateBlackboard(blackboard.toJSON());
+        else await emitter.status(deltaSummary);
       }
       const ask = parseAskUser(response.output);
       if (ask) {
@@ -4632,7 +4633,8 @@ Example: /model gpt-4.1 write a Python script`;
       const cleanOutput = ingested.stripped;
       const deltaSummary = blackboard.summarizeDelta(ingested.added);
       if (deltaSummary) {
-        await emitter.status(deltaSummary);
+        if (emitter.updateBlackboard) emitter.updateBlackboard(blackboard.toJSON());
+        else await emitter.status(deltaSummary);
       }
       const ask = parseAskUser(cleanOutput);
       if (ask) {
@@ -4855,6 +4857,9 @@ Example: /model gpt-4.1 write a Python script`;
       if (!resp.success) { results.push(`**${worker.name}**: ❌ Failed - ${resp.error}`); emitter.endWorker?.('failed', { failureReason: resp.error ?? 'Worker failed without an error message' }); break; }
 
       const ingested = blackboard.ingest(workerName, stepIndex, resp.output);
+      if (blackboard.summarizeDelta(ingested.added)) {
+        emitter.updateBlackboard?.(blackboard.toJSON());
+      }
       results.push(`**${worker.name}**:\n${ingested.stripped}`);
       lastWorkerOutput = ingested.stripped;
       lastWorkerName = workerName;
@@ -5265,7 +5270,7 @@ Example: /model gpt-4.1 write a Python script`;
               model: workerModel?.model,
             });
           } else {
-            sink({ type: 'info', chatId, message: msg.summary });
+            workerMsgs.updateBlackboard(msg.blackboard);
           }
         },
         runOneWorker,
@@ -6427,8 +6432,7 @@ Example: /model gpt-4.1 write a Python script`;
       const messages = this.chatManager.get(chatId)!.messages;
       // A lone "@worker" mention speaks for itself; the Aide only closes a
       // real team run (a named team, or an ad-hoc team with several members).
-      const memberCount = new Set(messages.filter(m => m.teamTurnId === activeTeamId && m.worker && !m.builtinMember).map(m => m.worker)).size;
-      if (chat.selection.type !== 'team' && memberCount < 2) return null;
+      if (isSoloMentionRun(messages, activeTeamId, chat.selection.type === 'team')) return null;
       const message = await publishTeamFinal({
         teamTurnId: activeTeamId, teamName: activeTeamName, messages, context, task: pendingTeam?.task ?? userText,
         reason: reason || teamTermination, stopped, signal: abortController.signal,
@@ -6728,6 +6732,15 @@ Example: /model gpt-4.1 write a Python script`;
       // group-level footer (Advisor summary / formatted blackboard), identified
       // by teamTurnId and no worker, rather than a standalone duplicate bubble.
       let teamSummaryMessageId: string | undefined;
+      const footerPlan = teamTurnId ? planTeamFooter({
+        hasFinal: !!finalTeamMessage,
+        footerText: output,
+        hasSummary: !!terminalTeamSummary,
+        pending: !!this.chatManager.get(chatId)?.pendingTeam,
+        boundToTeam: chat.selection.type === 'team',
+        messages: terminalTeamMessages,
+        teamTurnId,
+      }) : 'none';
       if (!teamTurnId) {
         const updated = this.chatManager.appendMessage(chatId, assistantMessage);
 
@@ -6752,7 +6765,7 @@ Example: /model gpt-4.1 write a Python script`;
         if (plainAskOptions && !updated.pendingTeam) {
           this.chatManager.setLastAskedOptions(chatId, assistantMessage.id, plainAskOptions);
         }
-      } else if (!finalTeamMessage && output.trim()) {
+      } else if (footerPlan === 'append') {
         const workerMessage = this.chatManager.get(chatId)?.messages.find(m => m.teamTurnId === teamTurnId && m.worker);
         this.chatManager.appendMessage(chatId, {
           ...assistantMessage,
@@ -6761,7 +6774,7 @@ Example: /model gpt-4.1 write a Python script`;
           teamMode: workerMessage?.teamMode,
         });
         teamSummaryMessageId = assistantMessage.id;
-      } else if (!finalTeamMessage && terminalTeamSummary) {
+      } else if (footerPlan === 'attach') {
         const lastWorkerMessage = this.chatManager.get(chatId)?.messages
           .filter(message => message.teamTurnId === teamTurnId && message.worker)
           .pop();
@@ -6790,7 +6803,10 @@ Example: /model gpt-4.1 write a Python script`;
 
       const adoptedWorkspace = await this.adoptAgentCreatedWorktree(chatId);
       if (adoptedWorkspace) sink({ type: 'workspace_ready', chatId });
-      sink({ type: 'done', chatId, response: output, worker: assistantMessage.worker, workerStatus: assistantMessage.workerStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
+      // The Mac app turns a non-empty team response into a footer bubble, so
+      // it only travels when a footer was actually persisted.
+      const doneResponse = teamTurnId && footerPlan !== 'append' ? '' : output;
+      sink({ type: 'done', chatId, response: doneResponse, worker: assistantMessage.worker, workerStatus: assistantMessage.workerStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
 
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
       // Skip the whole pass when this turn ended PAUSED — i.e. the team run

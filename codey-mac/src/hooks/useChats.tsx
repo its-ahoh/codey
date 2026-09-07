@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react'
 import { apiService } from '../services/api'
 import type { Chat, ChatSelection, ChatMessage, ChecklistItem, ToolCallEntry, FileAttachment, TaskBrief, TeamRunSummary } from '../types'
+import type { BlackboardSnapshot } from '@codey/core'
 import type { ChatStreamEvent } from '../../../packages/gateway/src/chat-runner'
 import { activityForTool, type AgentActivity } from '../components/agentActivity'
 import type { UnreadKind } from '../components/notificationLogic'
@@ -81,6 +82,7 @@ type Action =
   | { type: 'teamStart'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string }> }
   | { type: 'workerStart'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
   | { type: 'workerEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser'; failureReason?: string; nextUserAction?: ChatMessage['workerNextUserAction'] }
+  | { type: 'blackboardUpdate'; chatId: string; teamTurnId: string; messageId: string; blackboard: BlackboardSnapshot }
   | { type: 'teamEnd'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
 
 function reorder(order: string[], chatId: string): string[] {
@@ -89,7 +91,7 @@ function reorder(order: string[], chatId: string): string[] {
 
 const EXTERNAL_TURN_EVENTS = new Set([
   'tool_start', 'tool_end', 'info', 'stream', 'thinking',
-  'team_start', 'worker_start', 'worker_end', 'team_end',
+  'team_start', 'worker_start', 'worker_end', 'blackboard_update', 'team_end',
 ])
 
 /**
@@ -430,6 +432,16 @@ export function reducer(state: State, action: Action): State {
       const chat = state.chats[action.chatId]
       if (!chat) return state
       const messages = chat.messages.map(m => m.id === action.messageId ? { ...m, workerStatus: action.status, isComplete: action.status !== 'running', workerFailureReason: action.failureReason, workerNextUserAction: action.nextUserAction } : m)
+      return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
+    }
+    case 'blackboardUpdate': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      const messages = chat.messages.map(message =>
+        message.id === action.messageId && message.teamTurnId === action.teamTurnId
+          ? { ...message, teamBlackboard: action.blackboard }
+          : message
+      )
       return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
     }
     case 'teamFinal': {
@@ -773,6 +785,9 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           break
         case 'worker_end':
           dispatch({ type: 'workerEnd', chatId: ev.chatId, messageId: ev.messageId, step: ev.step, status: ev.status, failureReason: ev.failureReason, nextUserAction: ev.nextUserAction })
+          break
+        case 'blackboard_update':
+          dispatch({ type: 'blackboardUpdate', chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, blackboard: ev.blackboard })
           break
         case 'team_final':
           dispatch({ type: 'teamFinal', chatId: ev.chatId, message: ev.message })

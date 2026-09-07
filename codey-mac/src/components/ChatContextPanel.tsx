@@ -63,7 +63,7 @@ interface Props {
 
 export const ChatContextPanel: React.FC<Props> = ({
   chat, selectedTurnId, followLatest,
-  effectiveAgent, effectiveModel, workerName, teamName, teamGraph, workingDir,
+  workingDir,
   width, onFollowLatest, onClose, onResize, onRevealFile, onScrollToStep, isTurnStreaming,
   activeTab, onTabChange, qqInputRef,
   onAnswerNextAction, taskBriefLoading, onTaskTabShown,
@@ -92,6 +92,12 @@ export const ChatContextPanel: React.FC<Props> = ({
     }
     return null
   })()
+
+  const teamBlackboard = turn?.teamTurnId
+    ? [...chat.messages].reverse().find(message =>
+        message.teamTurnId === turn.teamTurnId && message.teamBlackboard
+      )?.teamBlackboard
+    : undefined
 
   const [localTab, setLocalTab] = React.useState<ContextPanelTab>('current')
   const requestedTab: ContextPanelTab = activeTab ?? localTab
@@ -178,15 +184,7 @@ export const ChatContextPanel: React.FC<Props> = ({
           />
         ) : tab === 'current' ? (
           <>
-            {/* Run target */}
-            <Section title="Run target">
-              <div style={styles.runTargetRow}>
-                {teamName ? `Team: ${teamName}` : workerName ? `Worker: ${workerName}` : 'Direct chat'}
-              </div>
-              <div style={styles.runTargetSub}>
-                {effectiveAgent}{effectiveModel ? ` · ${effectiveModel}` : ''}
-              </div>
-            </Section>
+            {turn?.teamTurnId && <BlackboardSection blackboard={teamBlackboard} />}
 
             {turn && <ToolTimeline toolCalls={turn.toolCalls ?? []} />}
             {turn && <FilesTouched toolCalls={turn.toolCalls ?? []} workingDir={workingDir} onReveal={onRevealFile} />}
@@ -218,6 +216,35 @@ export const ChatContextPanel: React.FC<Props> = ({
 }
 
 const FILE_TOOLS = new Set(['Read', 'Edit', 'Write', 'NotebookEdit'])
+
+const BlackboardSection: React.FC<{
+  blackboard?: NonNullable<ChatMessage['teamBlackboard']>
+}> = ({ blackboard }) => {
+  const groups = blackboard ? [
+    { label: 'Decisions', entries: blackboard.decisions, color: C.accent },
+    { label: 'Open questions', entries: blackboard.open, color: C.yellow },
+    { label: 'Facts', entries: blackboard.facts, color: C.fg2 },
+    { label: 'Handoffs', entries: blackboard.handoffs, color: C.purple },
+  ].filter(group => group.entries.length > 0) : []
+
+  return (
+    <Section title="Blackboard">
+      {groups.length === 0 ? (
+        <div style={styles.emptyHint}>Workers have not added anything yet.</div>
+      ) : groups.map(group => (
+        <div key={group.label} style={styles.blackboardGroup}>
+          <div style={{ ...styles.blackboardGroupTitle, color: group.color }}>{group.label}</div>
+          {group.entries.map((entry, index) => (
+            <div key={`${entry.worker}-${entry.step}-${index}`} style={styles.blackboardEntry}>
+              <div style={styles.blackboardText}>{entry.text}</div>
+              <div style={styles.blackboardMeta}>{entry.worker} · step {entry.step}</div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </Section>
+  )
+}
 
 const FilesTouched: React.FC<{
   toolCalls: import('../types').ToolCallEntry[]
@@ -1276,7 +1303,10 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg3, fontSize: 10, fontWeight: 600, letterSpacing: 0.6,
     textTransform: 'uppercase', marginBottom: 6,
   },
-  runTargetRow: { color: C.fg, fontSize: 12 },
-  runTargetSub: { color: C.fg3, fontSize: 11, marginTop: 2 },
+  blackboardGroup: { marginBottom: 10 },
+  blackboardGroupTitle: { fontSize: 10, fontWeight: 700, letterSpacing: 0.35, marginBottom: 4 },
+  blackboardEntry: { padding: '7px 8px', marginBottom: 5, borderRadius: 7, background: C.surface2, border: `1px solid ${C.border}` },
+  blackboardText: { color: C.fg, fontSize: 12, lineHeight: 1.4, overflowWrap: 'anywhere' },
+  blackboardMeta: { color: C.fg3, fontSize: 10, marginTop: 3 },
   emptyHint: { color: C.fg3, fontSize: 11, fontStyle: 'italic', padding: '12px 0' },
 }
