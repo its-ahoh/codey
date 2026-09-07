@@ -41,3 +41,18 @@ export function hudLevelCommand(level: number): string | null {
   const clamped = Math.min(1, Math.max(0, level))
   return `hud-level ${clamped.toFixed(3)}`
 }
+
+/**
+ * Announce a word the dictionary just learned on the capsule.
+ *
+ * One line of stdin, so the term must survive as a single token: newlines are
+ * flattened (a transcript fragment can carry one) and the length is capped, since
+ * the pill truncates anyway and a pasted paragraph is not a learned word. Returns
+ * null when nothing readable is left, so the caller sends no command at all
+ * rather than raising an empty capsule.
+ */
+export function hudVocabularyCommand(term: string): string | null {
+  const flat = term.replace(/\s+/g, ' ').trim()
+  if (!flat) return null
+  return `hud-vocabulary ${flat.slice(0, 40)}`
+}
