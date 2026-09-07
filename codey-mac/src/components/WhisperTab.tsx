@@ -130,6 +130,35 @@ const STREAMING_MODELS: Array<{ value: string; label: string; size: string; note
   { value: 'nemotron/latin/1120ms', label: 'Nemotron Latin-script · 1.1s chunks', size: '610MB', note: 'Pruned vocabulary, a little faster. English, Spanish, French, Italian, Portuguese, German only — no Chinese or Japanese.' },
 ]
 
+// Guidance shown under the Transcription source / Engine pills. The two
+// on-device engines differ in ways a model name doesn't convey — Whisper
+// computes once after you release the key, Nemotron computes continuously
+// while you speak — so hardware advice and caveats live here rather than in
+// release notes nobody reads.
+const ENGINE_GUIDE: Record<'api' | 'local' | 'localStreaming' | 'realtime', { summary: string }> = {
+  local: { summary: 'Runs privately on this Mac with WhisperKit. Audio never leaves the machine; the selected model downloads once before first use.' },
+  localStreaming: { summary: 'Runs privately on this Mac with Nemotron streaming: words appear while you are still talking.' },
+  api: { summary: 'Uploads each completed recording to an OpenAI-compatible transcription endpoint.' },
+  realtime: { summary: 'Streams audio to OpenAI for lower-latency partial transcripts while you speak.' },
+}
+
+// Rendered as a two-column table so both on-device engines are visible at
+// once, whichever one is currently selected.
+const ENGINE_COMPARE: Array<{ label: string; local: string; streaming: string }> = [
+  { label: 'Text appears', local: 'After you release the hotkey', streaming: 'While you are still talking' },
+  { label: 'Languages', local: '~99, including Korean', streaming: '8 (6 on the Latin-script build)' },
+  { label: 'Best on', local: 'Any Apple silicon — fine on an M1 Air or on battery', streaming: 'M2 or newer, or plugged in' },
+  { label: 'Battery', local: 'One burst after you stop', streaming: 'Runs the whole time you speak' },
+  { label: 'Download', local: '75MB – 3GB depending on model', streaming: '610 – 660MB' },
+]
+
+// True of both on-device engines, so they sit below the table rather than
+// being repeated in each column.
+const ENGINE_SHARED_NOTES: string[] = [
+  'First use compiles the model for your Mac (30–90s, one time). Later presses are instant.',
+  'The model loads when the voice helper starts and unloads after 30 minutes idle. Switching engines unloads the other one, so only one model is ever in memory.',
+]
+
 const VOICE_LANGUAGES: Array<{ value: string; label: string }> = [
   { value: 'auto', label: 'Auto-detect' },
   { value: 'en', label: 'English' },
@@ -170,6 +199,10 @@ const inputStyle: React.CSSProperties = {
   color: C.fg, fontSize: 13, padding: '6px 10px', outline: 'none', width: 180,
 }
 const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' }
+const engineColHeadStyle: React.CSSProperties = {
+  fontSize: 11, fontWeight: 600, paddingBottom: 4,
+  borderBottom: `1px solid ${C.border}`,
+}
 const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSProperties => ({
   padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600,
   border: 'none', cursor: 'pointer',
@@ -808,14 +841,36 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           </div>
         )}
         <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 2 }}>
-          {voice.provider === 'local'
-            ? 'Runs privately on this Mac with WhisperKit. The selected model downloads once before first use.'
-            : isStreaming
-              ? 'Runs privately on this Mac with Nemotron streaming: words appear while you are still talking. Switching engines unloads the other one, so only one model is ever in memory.'
-            : voice.provider === 'realtime'
-              ? 'Streams audio to OpenAI for lower-latency partial transcripts while you speak.'
-              : 'Uploads each completed recording to an OpenAI-compatible transcription endpoint.'}
+          {ENGINE_GUIDE[voice.provider].summary}
         </div>
+        {isOnDevice && (
+          <div style={{ marginTop: 8 }}>
+            {/* Both engines side by side, always — picking between them is the
+                whole decision, and a description that only appears after you
+                already clicked can't help you make it. The selected column is
+                highlighted rather than being the only one rendered. */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: '78px 1fr 1fr', gap: '0 10px',
+              fontSize: 11, lineHeight: 1.45,
+            }}>
+              <div />
+              <div style={{ ...engineColHeadStyle, color: !isStreaming ? C.fg : C.fg3 }}>Whisper</div>
+              <div style={{ ...engineColHeadStyle, color: isStreaming ? C.fg : C.fg3 }}>Streaming</div>
+              {ENGINE_COMPARE.map(row => (
+                <React.Fragment key={row.label}>
+                  <div style={{ color: C.fg3, padding: '4px 0' }}>{row.label}</div>
+                  <div style={{ color: !isStreaming ? C.fg2 : C.fg3, padding: '4px 0' }}>{row.local}</div>
+                  <div style={{ color: isStreaming ? C.fg2 : C.fg3, padding: '4px 0' }}>{row.streaming}</div>
+                </React.Fragment>
+              ))}
+            </div>
+            <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 8 }}>
+              {ENGINE_SHARED_NOTES.map((n, i) => (
+                <div key={i} style={{ paddingLeft: 10, textIndent: -10 }}>· {n}</div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {isOnDevice && (() => {
