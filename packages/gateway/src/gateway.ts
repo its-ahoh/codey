@@ -1,4 +1,4 @@
-import { publishTeamFinal } from './team-finalizer';
+import { publishTeamFinal, planTeamFooter, isSoloMentionRun } from './team-finalizer';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -6427,8 +6427,7 @@ Example: /model gpt-4.1 write a Python script`;
       const messages = this.chatManager.get(chatId)!.messages;
       // A lone "@worker" mention speaks for itself; the Aide only closes a
       // real team run (a named team, or an ad-hoc team with several members).
-      const memberCount = new Set(messages.filter(m => m.teamTurnId === activeTeamId && m.worker && !m.builtinMember).map(m => m.worker)).size;
-      if (chat.selection.type !== 'team' && memberCount < 2) return null;
+      if (isSoloMentionRun(messages, activeTeamId, chat.selection.type === 'team')) return null;
       const message = await publishTeamFinal({
         teamTurnId: activeTeamId, teamName: activeTeamName, messages, context, task: pendingTeam?.task ?? userText,
         reason: reason || teamTermination, stopped, signal: abortController.signal,
@@ -6728,6 +6727,15 @@ Example: /model gpt-4.1 write a Python script`;
       // group-level footer (Advisor summary / formatted blackboard), identified
       // by teamTurnId and no worker, rather than a standalone duplicate bubble.
       let teamSummaryMessageId: string | undefined;
+      const footerPlan = teamTurnId ? planTeamFooter({
+        hasFinal: !!finalTeamMessage,
+        footerText: output,
+        hasSummary: !!terminalTeamSummary,
+        pending: !!this.chatManager.get(chatId)?.pendingTeam,
+        boundToTeam: chat.selection.type === 'team',
+        messages: terminalTeamMessages,
+        teamTurnId,
+      }) : 'none';
       if (!teamTurnId) {
         const updated = this.chatManager.appendMessage(chatId, assistantMessage);
 
@@ -6752,7 +6760,7 @@ Example: /model gpt-4.1 write a Python script`;
         if (plainAskOptions && !updated.pendingTeam) {
           this.chatManager.setLastAskedOptions(chatId, assistantMessage.id, plainAskOptions);
         }
-      } else if (!finalTeamMessage && output.trim()) {
+      } else if (footerPlan === 'append') {
         const workerMessage = this.chatManager.get(chatId)?.messages.find(m => m.teamTurnId === teamTurnId && m.worker);
         this.chatManager.appendMessage(chatId, {
           ...assistantMessage,
@@ -6761,7 +6769,7 @@ Example: /model gpt-4.1 write a Python script`;
           teamMode: workerMessage?.teamMode,
         });
         teamSummaryMessageId = assistantMessage.id;
-      } else if (!finalTeamMessage && terminalTeamSummary) {
+      } else if (footerPlan === 'attach') {
         const lastWorkerMessage = this.chatManager.get(chatId)?.messages
           .filter(message => message.teamTurnId === teamTurnId && message.worker)
           .pop();
@@ -6790,7 +6798,10 @@ Example: /model gpt-4.1 write a Python script`;
 
       const adoptedWorkspace = await this.adoptAgentCreatedWorktree(chatId);
       if (adoptedWorkspace) sink({ type: 'workspace_ready', chatId });
-      sink({ type: 'done', chatId, response: output, worker: assistantMessage.worker, workerStatus: assistantMessage.workerStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
+      // The Mac app turns a non-empty team response into a footer bubble, so
+      // it only travels when a footer was actually persisted.
+      const doneResponse = teamTurnId && footerPlan !== 'append' ? '' : output;
+      sink({ type: 'done', chatId, response: doneResponse, worker: assistantMessage.worker, workerStatus: assistantMessage.workerStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
 
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
       // Skip the whole pass when this turn ended PAUSED — i.e. the team run

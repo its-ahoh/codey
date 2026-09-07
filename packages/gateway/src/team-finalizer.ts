@@ -81,3 +81,39 @@ export async function publishTeamFinal(input: TeamFinalInput, store: {
   store.emit(message);
   return message;
 }
+
+/** Distinct human members that ran in a team turn (Aide/Advisor excluded). */
+export function teamMemberCount(messages: ChatMessage[], teamTurnId: string | undefined): number {
+  return new Set(messages.filter(m => m.teamTurnId === teamTurnId && m.worker && !m.builtinMember).map(m => m.worker)).size;
+}
+
+/** A lone "@worker" mention in a chat not bound to a team. It gets no Aide
+ * final: the single member bubble speaks for itself. */
+export function isSoloMentionRun(messages: ChatMessage[], teamTurnId: string | undefined, boundToTeam: boolean): boolean {
+  return !boundToTeam && teamMemberCount(messages, teamTurnId) < 2;
+}
+
+export type TeamFooterPlan = 'append' | 'attach' | 'none';
+
+/** What to persist after a team turn besides the member bubbles.
+ *  - `append`: a group-level footer message (the transcript / question text).
+ *  - `attach`: no footer; hang the run summary on the last member bubble.
+ *  - `none`: nothing extra (an Aide final already closes the run).
+ * A finished solo "@worker" run never gets a footer: the transcript would
+ * repeat the member bubble word for word. While it is paused on a question
+ * the footer still carries the question and its choices, so it stays. */
+export function planTeamFooter(args: {
+  hasFinal: boolean;
+  footerText: string;
+  hasSummary: boolean;
+  pending: boolean;
+  boundToTeam: boolean;
+  messages: ChatMessage[];
+  teamTurnId: string | undefined;
+}): TeamFooterPlan {
+  if (args.hasFinal) return 'none';
+  const soloDone = !args.pending && isSoloMentionRun(args.messages, args.teamTurnId, args.boundToTeam);
+  if (args.footerText.trim() && !soloDone) return 'append';
+  if (args.hasSummary) return 'attach';
+  return 'none';
+}
