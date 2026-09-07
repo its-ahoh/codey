@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import type { ChatMessage, ToolCallEntry, WriteDiff } from '@codey/core';
+import type { BlackboardSnapshot, ChatMessage, ToolCallEntry, WriteDiff } from '@codey/core';
 import type { ChatStreamEvent } from './chat-runner';
 
 type Sink = (e: ChatStreamEvent) => void;
@@ -100,6 +100,20 @@ export class WorkerMessageEmitter {
       type: 'tool_end', chatId: this.chatId, tool: entry.tool, message: entry.message ?? '', output: entry.output, messageId: buf.messageId, step: buf.step,
       ...(entry.writes?.length ? { writes: entry.writes } : {}),
       ...(entry.writeDiffs?.length ? { writeDiffs: entry.writeDiffs } : {}),
+    });
+  }
+
+  /** Persist and publish the authoritative board after a worker contributes. */
+  updateBlackboard(blackboard: BlackboardSnapshot, worker?: string): void {
+    const buf = this.target(worker);
+    if (!buf) return;
+    this.store.updateMessage(this.chatId, buf.messageId, { teamBlackboard: blackboard });
+    this.sink({
+      type: 'blackboard_update',
+      chatId: this.chatId,
+      teamTurnId: this.meta.teamTurnId,
+      messageId: buf.messageId,
+      blackboard,
     });
   }
 

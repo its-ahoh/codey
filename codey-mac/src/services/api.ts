@@ -1,6 +1,7 @@
 // IPC proxy — all calls go through window.codey.* (Electron preload)
 
 import type { ChatMessage, Chat, ChatSelection, ChecklistItem, TaskBrief, TeamRunSummary } from '../types'
+import type { BlackboardSnapshot } from '@codey/core'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 
 // Inline ChatStreamEvent to avoid cross-package import
@@ -17,6 +18,7 @@ export type ChatStreamEvent =
   | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string }> }
   | { type: 'worker_start'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; reason?: string }
   | { type: 'worker_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number; failureReason?: string; nextUserAction?: { text: string; options?: string[] } }
+  | { type: 'blackboard_update'; chatId: string; teamTurnId: string; messageId: string; blackboard: BlackboardSnapshot }
   | { type: 'team_end'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
   | { type: 'workspace_ready'; chatId: string }
   | { type: 'done'; chatId: string; response: string; worker?: string; workerStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string; reason?: string }; teamTurnId?: string }

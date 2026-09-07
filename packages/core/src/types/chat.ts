@@ -1,6 +1,7 @@
 import { ChatRoute } from './route';
 import { PendingTeamState } from './pending-team';
 import type { CodingAgent, ThinkingEffort } from './index';
+import type { BlackboardSnapshot } from '../team-blackboard';
 
 /** The three CLIs report task lists in three shapes; the adapters normalize
  *  onto this one. codex has only a completed boolean, so it never produces
@@ -126,6 +127,8 @@ export interface ChatMessage {
   workerSummaryExcluded?: boolean;
   /** Gateway-authored terminal aggregate for this teamTurnId. */
   teamSummary?: TeamRunSummary;
+  /** Latest shared blackboard snapshot after this worker completed a step. */
+  teamBlackboard?: BlackboardSnapshot;
   /** Option labels when this assistant message ended in [ASK_USER:choice]. */
   choices?: string[];
   /** Structured question from AskUserQuestion tool call, with option descriptions. */

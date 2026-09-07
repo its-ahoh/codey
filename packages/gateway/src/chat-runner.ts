@@ -1,4 +1,4 @@
-import { Chat, ChatMessage, ChecklistItem, CodingAgent, FileAttachment, TaskBrief, TeamRunSummary, ToolCallEntry, TranscriptSlice, renderSliceSection, WriteDiff } from '@codey/core';
+import { BlackboardSnapshot, Chat, ChatMessage, ChecklistItem, CodingAgent, FileAttachment, TaskBrief, TeamRunSummary, ToolCallEntry, TranscriptSlice, renderSliceSection, WriteDiff } from '@codey/core';
 
 export const MAX_CONCURRENT_AGENTS = 4;
 export const CHAT_CONTEXT_WINDOW = 40;
@@ -56,6 +56,7 @@ export type ChatStreamEvent =
   | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: CodingAgent; model?: string }> }
   | { type: 'worker_start'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: CodingAgent; model?: string; reason?: string }
   | { type: 'worker_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number; failureReason?: string; nextUserAction?: { text: string; options?: string[] } }
+  | { type: 'blackboard_update'; chatId: string; teamTurnId: string; messageId: string; blackboard: BlackboardSnapshot }
   | { type: 'team_end'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
   | { type: 'workspace_ready'; chatId: string }
   | { type: 'done'; chatId: string; response: string; worker?: string; workerStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string; reason?: string }; teamTurnId?: string }

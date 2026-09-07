@@ -82,6 +82,22 @@ describe('WorkerMessageEmitter — serial', () => {
     expect(h.events.at(-1)).toMatchObject({ type: 'worker_end', messageId: id, status: 'done' });
   });
 
+  it('persists and emits the latest team blackboard snapshot', () => {
+    const h = harness();
+    const id = h.em.beginWorker({ step: 1, worker: 'pm' });
+    const blackboard = {
+      facts: [],
+      decisions: [{ worker: 'pm', step: 1, text: 'Ship the live panel' }],
+      handoffs: [],
+      open: [],
+    };
+    h.em.updateBlackboard(blackboard);
+    expect(h.patched.at(-1)).toEqual({ id, patch: { teamBlackboard: blackboard } });
+    expect(h.events.at(-1)).toMatchObject({
+      type: 'blackboard_update', teamTurnId: 'tt1', messageId: id, blackboard,
+    });
+  });
+
   it('persists thinking tokens without translating or normalizing them', () => {
     const h = harness();
     const source = `\n\u4FDD\u7559\u539F\u59CB\u8BED\u8A00\nEnglish follows  `;
