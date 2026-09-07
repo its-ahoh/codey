@@ -23,6 +23,10 @@ const HOVER_CARD_DELAY_MS = 550
  *  "Show more" — enough that a busy workspace never buries its neighbours. */
 const CHATS_PER_WORKSPACE = 8
 
+/** How many extra chats one "Show more" click reveals, so a long history
+ *  unrolls in readable steps instead of flooding the sidebar at once. */
+const CHATS_PER_SHOW_MORE = 10
+
 interface Props {
   onOpenSettings: (tab?: string) => void
   onOpenAutomations: () => void
@@ -73,7 +77,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   const [chatMenu, setChatMenu] = useState<{ chat: Chat; x: number; y: number } | null>(null)
   const [chatMenuView, setChatMenuView] = useState<'main' | 'connect'>('main')
   const [hoveredChatId, setHoveredChatId] = useState<string | null>(null)
-  const [expandedChatGroups, setExpandedChatGroups] = useState<Record<string, boolean>>({})
+  const [revealedChatGroups, setRevealedChatGroups] = useState<Record<string, number>>({})
   const [hoverCard, setHoverCard] = useState<{
     chatId: string
     top: number
@@ -400,7 +404,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
         )}
         {groupNames.map(ws => {
           const collapsed = !!state.collapsedWorkspaces[ws]
-          const shown = visibleChatCount(groups[ws], CHATS_PER_WORKSPACE, !!expandedChatGroups[ws], activeChatId)
+          const shown = visibleChatCount(groups[ws], CHATS_PER_WORKSPACE, revealedChatGroups[ws] ?? 0, activeChatId)
           const hidden = groups[ws].length - shown
           const unreadCount = groups[ws].reduce(
             (count, chat) => count + (state.unreadChats[chat.id] ? 1 : 0),
@@ -617,12 +621,18 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                   </div>
                 )
               })}
-              {!collapsed && (hidden > 0 || expandedChatGroups[ws]) && (
+              {!collapsed && (hidden > 0 || (revealedChatGroups[ws] ?? 0) > 0) && (
                 <button
                   style={styles.showMoreBtn}
-                  onClick={() => setExpandedChatGroups(prev => ({ ...prev, [ws]: !prev[ws] }))}
+                  onClick={() => setRevealedChatGroups(prev => (
+                    hidden > 0
+                      ? { ...prev, [ws]: (prev[ws] ?? 0) + CHATS_PER_SHOW_MORE }
+                      : { ...prev, [ws]: 0 }
+                  ))}
                 >
-                  {hidden > 0 ? `Show ${hidden} more` : 'Show less'}
+                  {hidden > 0
+                    ? `Show ${Math.min(hidden, CHATS_PER_SHOW_MORE)} more`
+                    : 'Show less'}
                 </button>
               )}
             </div>
