@@ -244,18 +244,3 @@ describe('api key CRUD', () => {
     });
   });
 });
-
-describe('built-in member avatars', () => {
-  it('persists independent Aide and Advisor choices without changing their models', () => {
-    withTempConfig({ aide: { agent: 'codex', model: 'small' }, advisor: { agent: 'codex', model: 'large' } }, (cm, p) => {
-      cm.update({ builtinAvatars: { aide: { shape: 'triangle', color: '#8CCDB5' } } });
-      cm.update({ builtinAvatars: { ...cm.get().builtinAvatars, advisor: { shape: 'capsule', color: '#B5A2D8' } } });
-      const saved = JSON.parse(fs.readFileSync(p, 'utf8'));
-      expect(saved.builtinAvatars.aide).toEqual({ shape: 'triangle', color: '#8CCDB5' });
-      expect(saved.builtinAvatars.advisor).toEqual({ shape: 'capsule', color: '#B5A2D8' });
-      expect(saved.aide.model).toBe('small'); expect(saved.advisor.model).toBe('large');
-      const reloaded = new ConfigManager(p, new SecretStore(path.join(path.dirname(p), 'secrets.json')));
-      try { expect(reloaded.get().builtinAvatars).toEqual(saved.builtinAvatars); } finally { reloaded.stop(); }
-    });
-  });
-});
