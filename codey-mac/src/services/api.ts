@@ -70,6 +70,9 @@ export const apiService = {
   deleteWorker: async (name: string): Promise<void> =>
     unwrap(await window.codey.workers.delete(name)),
 
+  renameWorker: async (oldName: string, newName: string): Promise<void> =>
+    unwrap(await window.codey.workers.rename(oldName, newName)),
+
   generateWorker: async (prompt: string): Promise<WorkerDto> =>
     unwrap(await window.codey.workers.generate(prompt)),
 

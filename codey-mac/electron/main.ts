@@ -47,7 +47,7 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { browserSkillStatus, checkBrowserSkillUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, uninstallChromeCompanionSkill, WorkerManager, WorkspaceManager } from '@codey/core'
+import { browserSkillStatus, checkBrowserSkillUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, uninstallChromeCompanionSkill, renameWorkerInTeams, WorkerManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
@@ -3440,6 +3440,20 @@ app.whenReady().then(async () => {
       // Invalidate any warm `--resume` sessions bootstrapped under the
       // previous personality; next run rebuilds with the new definition.
       inProcessGateway?.invalidateWorkerSessions(name)
+    })
+  )
+
+  ipcMain.handle('workers:rename', async (_e, oldName: string, newName: string) =>
+    wrap(async () => {
+      if (!workerManager) throw new Error('Workers are not loaded yet')
+      await workerManager.renameWorker(oldName, newName)
+      inProcessGateway?.invalidateWorkerSessions(oldName)
+      // Cascade: every team member list and flow-graph node that pointed at
+      // the old name now points at the new one.
+      if (coreConfigManager) {
+        const { teams, changed } = renameWorkerInTeams(coreConfigManager.getTeams(), oldName, newName)
+        if (changed) coreConfigManager.setTeams(teams)
+      }
     })
   )
 

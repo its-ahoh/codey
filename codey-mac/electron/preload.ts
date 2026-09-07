@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('codey', {
     save: (name: string, personality: any, config: any) =>
       ipcRenderer.invoke('workers:save', name, personality, config),
     delete: (name: string) => ipcRenderer.invoke('workers:delete', name),
+    rename: (oldName: string, newName: string) => ipcRenderer.invoke('workers:rename', oldName, newName),
     generate: (prompt: string) => ipcRenderer.invoke('workers:generate', prompt),
   },
   workspaces: {
