@@ -1,6 +1,14 @@
 .worker-avatar-eyes { transform-box: fill-box; transform-origin: center; }
-.worker-avatar--waiting .worker-avatar-eyes { animation: worker-blink 7s ease-in-out infinite; }
+.worker-avatar--waiting .worker-avatar-body { animation: worker-doze 5s ease-in-out infinite; }
 .worker-avatar--working .worker-avatar-pupil { animation: worker-look 3s ease-in-out infinite; }
 @keyframes worker-blink { 0%, 90%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.12); } }
 @keyframes worker-look { 0%, 100% { transform: translateX(-2px); } 50% { transform: translateX(2px); } }
+.worker-avatar-body { transform-origin: 50px 86px; }
+.worker-avatar--working .worker-avatar-body { animation: worker-bob 3s ease-in-out infinite; }
+@keyframes worker-bob { 0%, 100% { transform: translateY(0) scale(1, 1); } 50% { transform: translateY(-1px) scale(.99, 1.01); } }
+
+@keyframes worker-doze { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(3deg) translateY(1px); } }
+
+.worker-avatar-sleep-bubble { transform-origin: 51px 59px; animation: worker-sleep-bubble 5s ease-in-out infinite; }
+@keyframes worker-sleep-bubble { 0%, 100% { transform: scale(.88); } 50% { transform: scale(1.08); } }
 @media (prefers-reduced-motion: reduce) { .worker-avatar * { animation: none !important; } }
