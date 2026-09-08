@@ -139,7 +139,7 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
             ) : null}
           </div>
           {meta.fallback && (
-            <FallbackWarning fallback={meta.fallback} onAskAgent={onAskAgentAboutFallback} />
+            <FallbackWarning fallback={meta.fallback} onAskAgent={onAskAgentAboutFallback} visible={identityVisible} />
           )}
         </div>
         <div style={styles.right}>
@@ -170,7 +170,11 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
 const FallbackWarning: React.FC<{
   fallback: { from: string; to: string; reason?: string }
   onAskAgent?: (detail: string, fallback: { from: string; to: string }) => void
-}> = ({ fallback, onAskAgent }) => {
+  /** Same reveal-on-hover gate as the identity label beside it, so the two
+   *  read as one piece of on-demand metadata instead of the triangle
+   *  permanently drawing the eye on every fallback turn. */
+  visible: boolean
+}> = ({ fallback, onAskAgent, visible }) => {
   const [open, setOpen] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
   const detail = fallbackErrorText(fallback)
@@ -211,7 +215,7 @@ const FallbackWarning: React.FC<{
       <span
         tabIndex={0}
         role="button"
-        style={styles.fallbackButton}
+        style={{ ...styles.fallbackButton, opacity: visible ? 1 : 0, transition: 'opacity 0.1s ease' }}
         aria-label={`Fallback warning. Failed agent and model: ${fallback.from}. Fallback agent and model: ${fallback.to}. Error: ${detail}`}
       >
         <UIIcon name="alert" size={13} strokeWidth={1.8} />
