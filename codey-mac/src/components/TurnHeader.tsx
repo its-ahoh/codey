@@ -57,14 +57,17 @@ interface Props {
   leftPrefix?: React.ReactNode
 }
 
-/** An `agent · model` label, invisible until the row it lives in is hovered.
+/** An `agent · model` label, invisible until the name/identity group it lives
+ *  in is hovered.
  *
  *  It's noise on every turn but useful on demand, so it reserves its layout
  *  space (no reflow on reveal) and dims in at the same tone as the stats on
  *  the other end of the row rather than declaring its own. The hover/focus
- *  state lives on the row (see TurnHeader), not here, so pointing anywhere in
- *  the row — the worker name, the disclosure button, empty space between them
- *  — reveals it, not just the exact pixels of the text itself. */
+ *  state lives on that group (see TurnHeader's `left` container), not here,
+ *  so pointing anywhere in it — the worker name, the disclosure button, empty
+ *  space between them — reveals it, not just the exact pixels of the text
+ *  itself. It does not extend to the stats/timer on the right: that's a
+ *  separate piece of information, not part of this identity's header. */
 export const IdentityLabel: React.FC<{ identity: string; visible: boolean }> = ({ identity, visible }) => (
   <span style={{ ...styles.identity, opacity: visible ? 0.55 : 0 }} title={identity}>
     {identity}
@@ -88,9 +91,10 @@ export const IdentityLabel: React.FC<{ identity: string; visible: boolean }> = (
 export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback, leftPrefix }) => {
   const elapsedSec = useElapsedSeconds(!turnComplete, msg.timestamp)
   const meta = turnHeaderMeta(msg, { elapsedSec })
-  // Lives on the whole row, not on the identity label itself, so pointing
-  // anywhere in the row — the worker name, the disclosure button, the gap
-  // between them — reveals it, not just its own (usually invisible) pixels.
+  // Lives on the left (name/identity) group, not on the identity label
+  // itself, so pointing anywhere in that group — the worker name, the
+  // disclosure button, the gap between them — reveals it, not just its own
+  // (usually invisible) pixels. Deliberately excludes the stats on the right.
   const [identityHovered, setIdentityHovered] = React.useState(false)
   // A worker's avatar/name makes the row worth drawing even when there's
   // otherwise nothing to show.
@@ -100,16 +104,16 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
 
   return (
     <div>
-      <div
-        style={styles.row}
-        onMouseEnter={() => setIdentityHovered(true)}
-        onMouseLeave={() => setIdentityHovered(false)}
-        onFocus={() => setIdentityHovered(true)}
-        onBlur={e => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setIdentityHovered(false)
-        }}
-      >
-        <div style={styles.left}>
+      <div style={styles.row}>
+        <div
+          style={styles.left}
+          onMouseEnter={() => setIdentityHovered(true)}
+          onMouseLeave={() => setIdentityHovered(false)}
+          onFocus={() => setIdentityHovered(true)}
+          onBlur={e => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setIdentityHovered(false)
+          }}
+        >
           {leftPrefix}
           {hasThinking ? (
             <button
@@ -243,7 +247,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center',
     gap: 10, fontSize: 11, color: C.fg3, marginBottom: 4,
   },
-  left: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 },
+  // Baseline, not center: the worker's bold name and the monospace identity
+  // sit at different font sizes, and centering them left the smaller text
+  // looking like it floated above where it should sit.
+  left: { display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 },
   right: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' },
   identity: {
     fontFamily: 'SF Mono, Menlo, monospace', color: C.fg3,
