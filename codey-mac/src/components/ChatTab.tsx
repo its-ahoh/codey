@@ -25,9 +25,9 @@ import { isTaskBriefStale, extractSidecarBrief } from './taskHudView'
 import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 import { defaultThinkingExpanded } from './thinkingState'
-import { formatTokens, turnHeaderMeta } from './turnHeaderModel'
+import { formatTokens } from './turnHeaderModel'
 import {
-  TurnHeader, IdentityLabel, MESSAGE_ROW_INSET, TURN_RAIL_WIDTH, TURN_TEXT_PADDING, TURN_TEXT_INSET,
+  TurnHeader, MESSAGE_ROW_INSET, TURN_RAIL_WIDTH, TURN_TEXT_PADDING, TURN_TEXT_INSET,
   USER_BUBBLE_PADDING_X,
 } from './TurnHeader'
 import { ACTIVITY_LABEL } from './agentActivity'
@@ -2177,17 +2177,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
               }}>
                 {/* Aide, Advisor and the team final answer read like a plain
                     Codey reply: no member header at all. Only real workers
-                    get a name and an avatar. */}
-                {!isUser && isWorkerMessage && (() => {
-                  const identity = turnHeaderMeta(msg).identity
-                  return (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                      <WorkerAvatar name={msg.worker!} config={member?.config.avatar} state={memberState} />
-                      <strong>{msg.worker}</strong>
-                      {identity && <IdentityLabel identity={identity} />}
-                    </div>
-                  )
-                })()}
+                    get a name and an avatar, folded into TurnHeader's own row
+                    so the name sits directly above the rule instead of on a
+                    separate row with a gap under it. */}
                 {!isUser && (() => {
                   const thinking = msg.thinking?.trim() ?? ''
                   // Keyed off the in-flight turn rather than msg.isComplete:
@@ -2208,7 +2200,12 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         expanded={expanded}
                         onToggle={() => setThinkingToggles(p => ({ ...p, [msg.id]: !expanded }))}
                         onAskAgentAboutFallback={(detail, fb) => { void askAgentAboutFallback(detail, fb) }}
-                        hideIdentity={isWorkerMessage}
+                        leftPrefix={isWorkerMessage ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <WorkerAvatar name={msg.worker!} config={member?.config.avatar} state={memberState} />
+                            <strong>{msg.worker}</strong>
+                          </div>
+                        ) : undefined}
                       />
                       {!!thinking && expanded && (
                         <div style={styles.thinkingBody}>{thinking}</div>

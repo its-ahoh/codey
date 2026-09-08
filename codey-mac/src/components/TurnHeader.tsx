@@ -51,32 +51,25 @@ interface Props {
    *  surface exists, which hides the "Ask Agent" action rather than offering a
    *  button that does nothing. */
   onAskAgentAboutFallback?: (detail: string, fallback: { from: string; to: string }) => void
-  /** True for a worker turn, where the identity already renders next to the
-   *  worker's name/avatar. Keeps this header from repeating it. */
-  hideIdentity?: boolean
+  /** A worker turn's avatar + name, rendered at the start of this same row so
+   *  the identity that follows it sits right next to the name it belongs to
+   *  instead of on a second, mostly-empty row of its own. */
+  leftPrefix?: React.ReactNode
 }
 
-/** An `agent · model` label, invisible until hovered.
+/** An `agent · model` label, invisible until the row it lives in is hovered.
  *
  *  It's noise on every turn but useful on demand, so it reserves its layout
- *  space (no reflow on hover) and only reveals itself on hover/focus — the
- *  same interaction FallbackWarning below already uses for its popover. */
-export const IdentityLabel: React.FC<{ identity: string }> = ({ identity }) => {
-  const [hovered, setHovered] = React.useState(false)
-  return (
-    <span
-      tabIndex={0}
-      style={{ ...styles.identity, opacity: hovered ? 1 : 0, transition: 'opacity 0.1s ease' }}
-      title={identity}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onFocus={() => setHovered(true)}
-      onBlur={() => setHovered(false)}
-    >
-      {identity}
-    </span>
-  )
-}
+ *  space (no reflow on reveal) and dims in at the same tone as the stats on
+ *  the other end of the row rather than declaring its own. The hover/focus
+ *  state lives on the row (see TurnHeader), not here, so pointing anywhere in
+ *  the row — the worker name, the disclosure button, empty space between them
+ *  — reveals it, not just the exact pixels of the text itself. */
+export const IdentityLabel: React.FC<{ identity: string; visible: boolean }> = ({ identity, visible }) => (
+  <span style={{ ...styles.identity, opacity: visible ? 0.55 : 0 }} title={identity}>
+    {identity}
+  </span>
+)
 
 /** Identifies an assistant turn and bounds it.
  *
@@ -92,19 +85,32 @@ export const IdentityLabel: React.FC<{ identity: string }> = ({ identity }) => {
  *  gaining a line when the turn lands. The metadata row renders only when there
  *  is something to put in it, so a turn with no metadata is a bare hairline
  *  rather than a blank row. */
-export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback, hideIdentity }) => {
+export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback, leftPrefix }) => {
   const elapsedSec = useElapsedSeconds(!turnComplete, msg.timestamp)
   const meta = turnHeaderMeta(msg, { elapsedSec })
-  // With the identity hidden (a worker turn shows it beside its name instead),
-  // a turn with nothing else to say is empty even though meta.identity is set.
-  const isEmpty = hideIdentity ? !meta.stats.length && !meta.fallback : meta.isEmpty
+  // Lives on the whole row, not on the identity label itself, so pointing
+  // anywhere in the row — the worker name, the disclosure button, the gap
+  // between them — reveals it, not just its own (usually invisible) pixels.
+  const [identityHovered, setIdentityHovered] = React.useState(false)
+  // A worker's avatar/name makes the row worth drawing even when there's
+  // otherwise nothing to show.
+  const isEmpty = leftPrefix ? false : meta.isEmpty
   const rule = <div style={styles.rule} />
   if (isEmpty && !hasThinking) return rule
 
   return (
     <div>
-      <div style={styles.row}>
+      <div
+        style={styles.row}
+        onMouseEnter={() => setIdentityHovered(true)}
+        onMouseLeave={() => setIdentityHovered(false)}
+        onFocus={() => setIdentityHovered(true)}
+        onBlur={e => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setIdentityHovered(false)
+        }}
+      >
         <div style={styles.left}>
+          {leftPrefix}
           {hasThinking ? (
             <button
               type="button"
@@ -114,13 +120,13 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
               aria-label={`${expanded ? 'Hide' : 'Show'} thinking${meta.identity ? ` for ${meta.identity}` : ''}`}
               title={expanded ? 'Hide thinking' : 'Show thinking'}
             >
-              {meta.identity && !hideIdentity && <IdentityLabel identity={meta.identity} />}
+              {meta.identity && <IdentityLabel identity={meta.identity} visible={identityHovered} />}
               <span style={{ ...styles.chevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
                 <UIIcon name="chevron" size={14} strokeWidth={2} />
               </span>
             </button>
-          ) : meta.identity && !hideIdentity ? (
-            <IdentityLabel identity={meta.identity} />
+          ) : meta.identity ? (
+            <IdentityLabel identity={meta.identity} visible={identityHovered} />
           ) : null}
           {meta.fallback && (
             <FallbackWarning fallback={meta.fallback} onAskAgent={onAskAgentAboutFallback} />
@@ -240,8 +246,9 @@ const styles: Record<string, React.CSSProperties> = {
   left: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 },
   right: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' },
   identity: {
-    fontFamily: 'SF Mono, Menlo, monospace',
+    fontFamily: 'SF Mono, Menlo, monospace', color: C.fg3,
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    transition: 'opacity 0.1s ease',
   },
   disclosure: {
     appearance: 'none', border: 0, background: 'transparent', color: 'inherit',
