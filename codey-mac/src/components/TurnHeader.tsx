@@ -242,7 +242,7 @@ const styles: Record<string, React.CSSProperties> = {
   left: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 },
   right: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' },
   identity: {
-    fontFamily: 'SF Mono, Menlo, monospace',
+    fontFamily: 'SF Mono, Menlo, monospace', color: C.fg3,
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
   disclosure: {
