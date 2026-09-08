@@ -2200,12 +2200,10 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         expanded={expanded}
                         onToggle={() => setThinkingToggles(p => ({ ...p, [msg.id]: !expanded }))}
                         onAskAgentAboutFallback={(detail, fb) => { void askAgentAboutFallback(detail, fb) }}
-                        leftPrefix={isWorkerMessage ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <WorkerAvatar name={msg.worker!} config={member?.config.avatar} state={memberState} />
-                            <strong>{msg.worker}</strong>
-                          </div>
+                        leftAvatar={isWorkerMessage ? (
+                          <WorkerAvatar name={msg.worker!} config={member?.config.avatar} state={memberState} />
                         ) : undefined}
+                        leftLabel={isWorkerMessage ? <strong>{msg.worker}</strong> : undefined}
                       />
                       {!!thinking && expanded && (
                         <div style={styles.thinkingBody}>{thinking}</div>

@@ -51,10 +51,14 @@ interface Props {
    *  surface exists, which hides the "Ask Agent" action rather than offering a
    *  button that does nothing. */
   onAskAgentAboutFallback?: (detail: string, fallback: { from: string; to: string }) => void
-  /** A worker turn's avatar + name, rendered at the start of this same row so
-   *  the identity that follows it sits right next to the name it belongs to
-   *  instead of on a second, mostly-empty row of its own. */
-  leftPrefix?: React.ReactNode
+  /** A worker turn's avatar, rendered at the start of this row and centered
+   *  against it — unlike the name/identity text, it's tall enough that
+   *  baseline-aligning it against them reads as misplaced. */
+  leftAvatar?: React.ReactNode
+  /** A worker turn's name, rendered right before the identity so the two sit
+   *  in the same baseline-aligned text group instead of the identity landing
+   *  on a second, mostly-empty row of its own. */
+  leftLabel?: React.ReactNode
 }
 
 /** An `agent · model` label, invisible until the row it lives in is hovered.
@@ -62,9 +66,9 @@ interface Props {
  *  It's noise on every turn but useful on demand, so it reserves its layout
  *  space (no reflow on reveal) and dims in at the same tone as the stats on
  *  the other end of the row rather than declaring its own. The hover/focus
- *  state lives on the row (see TurnHeader), not here, so pointing anywhere in
- *  the row — the worker name, the disclosure button, empty space between them
- *  — reveals it, not just the exact pixels of the text itself. */
+ *  state lives on the whole row (see TurnHeader), not here, so pointing
+ *  anywhere in it — the worker name, the disclosure button, the stats/timer
+ *  on the right — reveals it, not just the exact pixels of the text itself. */
 export const IdentityLabel: React.FC<{ identity: string; visible: boolean }> = ({ identity, visible }) => (
   <span style={{ ...styles.identity, opacity: visible ? 0.55 : 0 }} title={identity}>
     {identity}
@@ -85,16 +89,16 @@ export const IdentityLabel: React.FC<{ identity: string; visible: boolean }> = (
  *  gaining a line when the turn lands. The metadata row renders only when there
  *  is something to put in it, so a turn with no metadata is a bare hairline
  *  rather than a blank row. */
-export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback, leftPrefix }) => {
+export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback, leftAvatar, leftLabel }) => {
   const elapsedSec = useElapsedSeconds(!turnComplete, msg.timestamp)
   const meta = turnHeaderMeta(msg, { elapsedSec })
   // Lives on the whole row, not on the identity label itself, so pointing
-  // anywhere in the row — the worker name, the disclosure button, the gap
-  // between them — reveals it, not just its own (usually invisible) pixels.
+  // anywhere in it — the worker name, the disclosure button, the stats/timer
+  // on the right — reveals it, not just its own (usually invisible) pixels.
   const [identityHovered, setIdentityHovered] = React.useState(false)
   // A worker's avatar/name makes the row worth drawing even when there's
   // otherwise nothing to show.
-  const isEmpty = leftPrefix ? false : meta.isEmpty
+  const isEmpty = (leftAvatar || leftLabel) ? false : meta.isEmpty
   const rule = <div style={styles.rule} />
   if (isEmpty && !hasThinking) return rule
 
@@ -110,24 +114,27 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
         }}
       >
         <div style={styles.left}>
-          {leftPrefix}
-          {hasThinking ? (
-            <button
-              type="button"
-              style={styles.disclosure}
-              onClick={onToggle}
-              aria-expanded={expanded}
-              aria-label={`${expanded ? 'Hide' : 'Show'} thinking${meta.identity ? ` for ${meta.identity}` : ''}`}
-              title={expanded ? 'Hide thinking' : 'Show thinking'}
-            >
-              {meta.identity && <IdentityLabel identity={meta.identity} visible={identityHovered} />}
-              <span style={{ ...styles.chevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
-                <UIIcon name="chevron" size={14} strokeWidth={2} />
-              </span>
-            </button>
-          ) : meta.identity ? (
-            <IdentityLabel identity={meta.identity} visible={identityHovered} />
-          ) : null}
+          {leftAvatar}
+          <div style={styles.leftText}>
+            {leftLabel}
+            {hasThinking ? (
+              <button
+                type="button"
+                style={styles.disclosure}
+                onClick={onToggle}
+                aria-expanded={expanded}
+                aria-label={`${expanded ? 'Hide' : 'Show'} thinking${meta.identity ? ` for ${meta.identity}` : ''}`}
+                title={expanded ? 'Hide thinking' : 'Show thinking'}
+              >
+                {meta.identity && <IdentityLabel identity={meta.identity} visible={identityHovered} />}
+                <span style={{ ...styles.chevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                  <UIIcon name="chevron" size={14} strokeWidth={2} />
+                </span>
+              </button>
+            ) : meta.identity ? (
+              <IdentityLabel identity={meta.identity} visible={identityHovered} />
+            ) : null}
+          </div>
           {meta.fallback && (
             <FallbackWarning fallback={meta.fallback} onAskAgent={onAskAgentAboutFallback} />
           )}
@@ -243,7 +250,13 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center',
     gap: 10, fontSize: 11, color: C.fg3, marginBottom: 4,
   },
-  left: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 },
+  left: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
+  // Baseline, not center: the worker's bold name and the monospace identity
+  // sit at different font sizes, and centering them left the smaller text
+  // looking like it floated above where it should sit. Kept separate from
+  // `left` above so the (much taller) avatar still centers normally instead
+  // of baseline-aligning against text and landing near the bottom.
+  leftText: { display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 },
   right: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' },
   identity: {
     fontFamily: 'SF Mono, Menlo, monospace', color: C.fg3,
