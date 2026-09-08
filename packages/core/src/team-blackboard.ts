@@ -235,7 +235,7 @@ export class TeamBlackboard {
    */
   renderForUser(): string {
     if (this.isEmpty()) return '';
-    const lines: string[] = ['---', '', '### 🧠 Team blackboard'];
+    const lines: string[] = ['---', '', '### 🧠 Team whiteboard'];
     if (this.decisions.length > 0) {
       lines.push('', '**Decisions:**');
       for (const d of this.decisions) lines.push(`- *${d.worker}* — ${d.text}`);
@@ -258,7 +258,7 @@ export class TeamBlackboard {
     if (added.facts) parts.push(`${added.facts} fact${added.facts > 1 ? 's' : ''}`);
     if (added.handoffs) parts.push(`${added.handoffs} handoff${added.handoffs > 1 ? 's' : ''}`);
     if (added.open) parts.push(`${added.open} open question${added.open > 1 ? 's' : ''}`);
-    return parts.length ? `📋 Blackboard +${parts.join(', +')}` : '';
+    return parts.length ? `📋 Whiteboard +${parts.join(', +')}` : '';
   }
 }
 
@@ -267,7 +267,7 @@ export class TeamBlackboard {
  * so it doesn't dominate the per-step prompt.
  */
 export const BLACKBOARD_MARKER_INSTRUCTIONS = [
-  '## Team blackboard markers',
+  '## Team whiteboard markers',
   'In addition to your normal output, you may surface structured notes for the rest of the team using single-line markers anywhere in your reply. These lines are EXTRACTED and STRIPPED from the user-visible output, so put them on their own line, exactly:',
   '- `[FACT]: <one line>` — something you discovered that the team should remember',
   '- `[DECISION]: <one line>` — a decision you made, ideally with a "because" clause',

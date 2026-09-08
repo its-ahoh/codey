@@ -17,7 +17,6 @@ import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
 import { groupMessages } from './teamGroup'
-import { MemberReply } from './MemberReply'
 import { WorkerAvatar } from './WorkerAvatar'
 import { workerAvatarState } from './workerAvatarModel'
 import { StatusSidecar } from './StatusSidecar'
@@ -60,7 +59,7 @@ import type { BrowserLoginWaitEvent } from '../codey-api'
 import { WorkspaceDock, type WorkspaceDockTool } from './WorkspaceDock'
 import { resolveWorkspaceDockLayout } from './workspaceDockLayout'
 import { TerminalPanel } from './TerminalPanel'
-import { splitWhiteboardMarkers, type WhiteboardMarker } from './teamWhiteboardFormat'
+import { splitWhiteboardMarkers } from './teamWhiteboardFormat'
 import { useVoiceTurn } from '../hooks/useVoiceTurn'
 import { VoiceMeter } from './VoiceMeter'
 import { ChatMessageNavigator, type ChatNavigationItem } from './ChatMessageNavigator'
@@ -355,7 +354,7 @@ const ThinkingBlock: React.FC<{
 }> = ({ thinking, hasAnswer, isComplete }) => {
   const [userToggled, setUserToggled] = useState<boolean | null>(null)
   if (!thinking.trim()) return null
-  const expanded = userToggled ?? defaultThinkingExpanded({ hasAnswer, isComplete, member: true })
+  const expanded = userToggled ?? defaultThinkingExpanded({ hasAnswer, isComplete })
   return (
     <div>
       <div style={styles.thinkingToggle} onClick={() => setUserToggled(!expanded)}>
@@ -370,42 +369,6 @@ const ThinkingBlock: React.FC<{
 }
 
 const stepDomId = (messageId: string, stepNum: number) => `step-${messageId}-${stepNum}`
-
-const markerLabel = (marker: WhiteboardMarker): string => {
-  if (marker.kind === 'decision') return 'Decision'
-  if (marker.kind === 'fact') return 'Fact'
-  if (marker.kind === 'open') return 'Open question'
-  return marker.to ? `Handoff → ${marker.to}` : 'Handoff'
-}
-
-/** Render the marker protocol as a real whiteboard instead of leaking raw
- * `[FACT]` / `[DECISION]` lines into a worker's answer. */
-const TeamWorkerContent: React.FC<{ content: string }> = ({ content }) => {
-  const { stripped, markers } = splitWhiteboardMarkers(content)
-  return (
-    <>
-      {stripped && <Markdown variant="assistant">{stripped}</Markdown>}
-      {markers.length > 0 && (
-        <div style={styles.whiteboard}>
-          <div style={styles.whiteboardTitle}>Whiteboard updates</div>
-          {markers.map((marker, index) => (
-            <div key={`${marker.kind}-${index}`} style={styles.whiteboardRow}>
-              <span style={{
-                ...styles.whiteboardBadge,
-                ...(marker.kind === 'decision' ? styles.whiteboardBadgeDecision
-                  : marker.kind === 'open' ? styles.whiteboardBadgeOpen
-                    : marker.kind === 'handoff' ? styles.whiteboardBadgeHandoff
-                      : undefined),
-              }}>{markerLabel(marker)}</span>
-              <span style={styles.whiteboardText}>{marker.text}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {!stripped && markers.length === 0 && <Markdown variant="assistant">…</Markdown>}
-    </>
-  )
-}
 
 const TeamMessage: React.FC<{
   workers: WorkerDto[]
@@ -1012,11 +975,13 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   }, [])
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && flight) stopChat(chatId)
+      // Escape stops the running turn, and — once nothing is running — still
+      // clears anything queued behind it, so one press ends the whole thing.
+      if (e.key === 'Escape' && (flight || queuedMessages.length > 0)) stopChat(chatId)
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [flight, chatId])
+  }, [flight, chatId, queuedMessages.length])
   // Refresh the Status task brief on each turn boundary — when a turn is sent
   // and again when it completes — while the Status tab is open, so it reflects
   // the live history. The tab-switch trigger alone misses these: nothing
@@ -2225,7 +2190,6 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   const streaming = isWorkerMessage ? memberActive && msg.workerStatus !== 'done' && msg.workerStatus !== 'failed' : !!flight && msg === lastMsg
                   const expanded = thinkingToggles[msg.id]
                     ?? defaultThinkingExpanded({
-                      member: isWorkerMessage,
                       hasAnswer: !!msg.content.trim(),
                       isComplete: msg.isComplete ?? false,
                     })
@@ -2276,10 +2240,15 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     )
                     return <UserMessageContent content={msg.content} />
                   }
-                  const text = msg.content || msg.userQuestion?.question || ''
-                  if (isWorkerMessage) return <MemberReply content={text}><TeamWorkerContent content={text} /></MemberReply>
-                  const parsed = msg.builtinMember || msg.teamFinal ? null : parseTeamMessage(text)
-                  const isStreaming = !!flight && msg === lastMsg
+                  const raw = msg.content || msg.userQuestion?.question || ''
+                  // A worker reply is an ordinary assistant reply. The only
+                  // thing it does not share with one is the marker protocol,
+                  // which is whiteboard bookkeeping rather than prose.
+                  const text = isWorkerMessage ? (splitWhiteboardMarkers(raw).stripped || '…') : raw
+                  const parsed = isWorkerMessage || msg.builtinMember || msg.teamFinal ? null : parseTeamMessage(text)
+                  const isStreaming = isWorkerMessage
+                    ? memberActive && msg.workerStatus !== 'done' && msg.workerStatus !== 'failed'
+                    : !!flight && msg === lastMsg
                   if (!parsed) return (
                     <div>
                       <Markdown variant="assistant" layout="roomy">{text}</Markdown>
@@ -2302,7 +2271,6 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   )
                 })()}
                 {!isUser && msg.workerFailureReason && <div role="alert" style={{ color: C.red }}>{msg.workerFailureReason}</div>}
-                {!isUser && msg.workerNextUserAction && <div>{msg.workerNextUserAction.text}</div>}
                 {isUser && msg.attachments && msg.attachments.length > 0 && (
                   <div style={styles.attachmentsContainer}>
                     {msg.attachments.map(att => {
@@ -3572,24 +3540,6 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1, minWidth: 0,
   },
   teamStepBody: { marginTop: 4, marginLeft: 17 },
-  whiteboard: {
-    marginTop: 10, padding: '9px 10px', borderRadius: 8,
-    border: `1px solid ${C.border2}`, background: C.surface3,
-  },
-  whiteboardTitle: {
-    marginBottom: 7, fontSize: 11, fontWeight: 700, color: C.fg2,
-    textTransform: 'uppercase' as const, letterSpacing: '0.04em',
-  },
-  whiteboardRow: { display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 6 },
-  whiteboardBadge: {
-    flexShrink: 0, padding: '2px 6px', borderRadius: 999,
-    fontSize: 10, fontWeight: 700, color: C.fg2,
-    border: `1px solid ${C.border}`, background: C.surface2,
-  },
-  whiteboardBadgeDecision: { color: C.green, borderColor: `${C.green}66`, background: `${C.green}12` },
-  whiteboardBadgeOpen: { color: C.yellow, borderColor: `${C.yellow}66`, background: `${C.yellow}12` },
-  whiteboardBadgeHandoff: { color: C.accent, borderColor: `${C.accent}66`, background: C.accentDim },
-  whiteboardText: { minWidth: 0, paddingTop: 1, color: C.fg2, fontSize: 12, lineHeight: 1.45 },
   thinkingToggle: {
     display: 'flex', alignItems: 'center', cursor: 'pointer',
     fontSize: 11, color: C.fg3, padding: '2px 0', userSelect: 'none' as const,

@@ -15,6 +15,58 @@ export interface TeamFinalInput {
   timeoutMs?: number;
 }
 
+export interface TeamStepRecord {
+  step: number;
+  worker: string;
+  output: string;
+  failed?: boolean;
+  failureReason?: string;
+}
+
+/** `**worker**: output` — the line format every channel run already accumulates
+ *  in its `results` array. A step that failed starts its body with ❌. */
+const RESULT_LINE = /^\*\*(.+?)\*\*:[ \t]?([\s\S]*)$/;
+
+/** Parse those lines back into steps. Channels keep no per-worker records, so
+ *  this is how their run is recovered for the shared summarizer. */
+export function parseTeamResultLines(results: string[]): TeamStepRecord[] {
+  const steps: TeamStepRecord[] = [];
+  for (const line of results) {
+    const m = line.match(RESULT_LINE);
+    if (!m) continue;
+    const output = m[2].trim();
+    const failed = output.startsWith('\u274C');
+    steps.push({
+      step: steps.length + 1,
+      worker: m[1].trim(),
+      output,
+      failed,
+      ...(failed ? { failureReason: output.replace(/^\u274C\s*(?:Failed\s*-\s*)?/, '').trim() || undefined } : {}),
+    });
+  }
+  return steps;
+}
+
+/** Steps as ChatMessage-shaped records so `composeTeamFinal` can summarize a
+ *  channel run exactly the way it summarizes a chat run. These are never
+ *  persisted — they exist only for the length of the summary call. */
+export function teamStepRecords(steps: TeamStepRecord[], teamTurnId: string, teamName?: string): ChatMessage[] {
+  return steps.map(s => ({
+    id: `${teamTurnId}:${s.step}`,
+    role: 'assistant' as const,
+    content: s.output,
+    timestamp: Date.now(),
+    toolCalls: [],
+    isComplete: true,
+    teamTurnId,
+    teamName,
+    step: s.step,
+    worker: s.worker,
+    workerStatus: (s.failed ? 'failed' : 'done') as NonNullable<ChatMessage['workerStatus']>,
+    ...(s.failureReason ? { workerFailureReason: s.failureReason } : {}),
+  }));
+}
+
 /** One stable final message per logical team run, including resumed runs. */
 export async function composeTeamFinal(input: TeamFinalInput): Promise<ChatMessage | null> {
   if (input.paused && !input.stopped) return null;

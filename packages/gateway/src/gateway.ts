@@ -1,8 +1,8 @@
-import { publishTeamFinal, planTeamFooter, isSoloMentionRun } from './team-finalizer';
+import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloMentionRun, parseTeamResultLines, teamStepRecords, TeamStepRecord } from './team-finalizer';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseWorkerMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, WorkerAnchor, lastParagraphPreview, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseWorkerMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, WorkerAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -4075,22 +4075,34 @@ Example: /model gpt-4.1 write a Python script`;
     return sections.join('\n\n');
   }
 
-  private formatAdvisorParts(
-    parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>,
-    finalSummary: string,
-    previewChars?: number,
-  ): string {
-    const head = finalSummary ? `🧭 Advisor summary: ${finalSummary}\n\n` : '';
-    const body = parts
-      .map(p => {
-        const label = p.isRevision ? `${p.worker} (revision)` : p.worker;
-        // Condense each step to its last paragraph (~previewChars) so the run
-        // reads as a tight summary instead of a wall of per-step output.
-        const out = previewChars ? lastParagraphPreview(p.output, previewChars) : p.output;
-        return `### Step ${p.step}: ${label}\n\n${out}`;
-      })
-      .join('\n\n---\n\n');
-    return head + body;
+  /**
+   * Close a team run with the Aide final and nothing else. Every surface ends
+   * the same way; the only difference is who sends it. A surface with
+   * per-worker bubbles (chat) publishes the final itself from the persisted
+   * member messages, so this is a no-op there. A surface without them
+   * (channels) gets the same summary sent here from the in-memory steps.
+   */
+  private async notifyTeamFinal(
+    emitter: TeamEmitter,
+    teamName: string,
+    task: string,
+    steps: TeamStepRecord[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (emitter.rendersWorkerBubbles) return;
+    const teamTurnId = `channel:${teamName}`;
+    const final = await composeTeamFinal({
+      teamTurnId,
+      teamName,
+      messages: teamStepRecords(steps, teamTurnId, teamName),
+      task,
+      signal,
+      run: this.isAideConfigured()
+        ? (prompt, s) => runAide(prompt, { ...this.getAideOptions(s, false), retries: 0 })
+        : undefined,
+    });
+    const text = final?.content.trim();
+    if (text) await emitter.notify(text);
   }
 
   private async runTeamTask(
@@ -4222,7 +4234,7 @@ Example: /model gpt-4.1 write a Python script`;
           blackboard: result.blackboard.toJSON(),
           workerAnchors: this.snapshotWorkerAnchors(teamConv),
         });
-        const rendered1 = renderQuestion(askWorkerName, '', p.question, p.options);
+        const rendered1 = renderQuestion(askWorkerName, p.question, p.options);
         await this.sendResponse({
           chatId: message.chatId,
           channel: message.channel,
@@ -4240,14 +4252,12 @@ Example: /model gpt-4.1 write a Python script`;
         });
       }
 
-      const text = this.formatAdvisorParts(result.parts, result.finalSummary, /*previewChars*/ 200);
-      const bbBlock = result.blackboard.renderForUser();
-      const body = `📊 Team **${teamName}** results\n\n${text}`;
-      await this.sendResponse({
-        chatId,
-        channel,
-        text: bbBlock ? `${body}\n\n${bbBlock}` : body,
-      });
+      // Same closing contract as every other surface: the Aide final only.
+      const finalEmitter = new ChannelEmitter((r) => this.sendResponse(r), undefined, chatId, channel);
+      await this.notifyTeamFinal(
+        finalEmitter, teamName, task,
+        result.parts.map(p => ({ step: p.step, worker: p.worker, output: p.output })),
+      );
       this.persistBlackboardDecisions(result.blackboard, teamName);
       return;
     }
@@ -4316,12 +4326,6 @@ Example: /model gpt-4.1 write a Python script`;
     emitter: TeamEmitter,
     signal?: AbortSignal,
   ): Promise<string> {
-    // NOTE: this resume path emits the legacy "📊 Team results" format (not the
-    // `### Step` structure parsed by the mac UI), so extended-thinking is only
-    // surfaced through the emitter's onThinking hook. Showing per-step thinking
-    // on resume more richly requires first unifying this path onto the same sink
-    // + structured-message pipeline as runTeamForChat — tracked as a follow-up
-    // (see docs/superpowers/specs/...-resume-streaming-unification).
     const nextResumeStep = Math.max(
       0,
       ...(this.chatManager.get(chatId)?.messages
@@ -4420,7 +4424,7 @@ Example: /model gpt-4.1 write a Python script`;
           blackboard: blackboard.toJSON(),
           workerAnchors: this.snapshotWorkerAnchors(teamConv),
         });
-        const rendered2 = renderQuestion(memberName, ask.preamble, ask.question, ask.options);
+        const rendered2 = renderQuestion(memberName, ask.question, ask.options);
         await emitter.notify(rendered2.text, rendered2.choices);
         emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
         return emitter.transcript;
@@ -4485,7 +4489,7 @@ Example: /model gpt-4.1 write a Python script`;
       { worker: pending.askingWorker, summary: `User clarified: ${pending.question} → ${answer}` },
     ];
     if (turn.done || !turn.next) {
-      await emitter.notify(this.formatAdvisorParts(pending.partsSoFar, turn.final_summary ?? '', 200));
+      await this.notifyTeamFinal(emitter, pending.teamName, pending.task, pending.partsSoFar, signal);
       return emitter.transcript;
     }
     const isRevision = pending.seenWorkers.includes(turn.next);
@@ -4544,7 +4548,7 @@ Example: /model gpt-4.1 write a Python script`;
         askedAt: Date.now(),
         workerAnchors: this.snapshotWorkerAnchors(teamConv),
       });
-      const rendered3 = renderQuestion(turn.next, ask.preamble, ask.question, ask.options);
+      const rendered3 = renderQuestion(turn.next, ask.question, ask.options);
       await emitter.notify(rendered3.text, rendered3.choices);
       emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
       return emitter.transcript;
@@ -4561,11 +4565,8 @@ Example: /model gpt-4.1 write a Python script`;
       },
       { agent: mAgent, model: mModel, runner: this.advisorRunner, signal },
     );
-    const finalSummary = closing.fallback ? '' : (closing.final_summary ?? '');
-    const resumeBlock = resumeBoard.renderForUser();
-    const resumeFormatted = this.formatAdvisorParts(newParts, finalSummary, 200);
     this.persistBlackboardDecisions(resumeBoard, pending.teamName);
-    await emitter.notify(resumeBlock ? `${resumeFormatted}\n\n${resumeBlock}` : resumeFormatted);
+    await this.notifyTeamFinal(emitter, pending.teamName, pending.task, newParts, signal);
     return emitter.transcript;
   }
 
@@ -4654,7 +4655,7 @@ Example: /model gpt-4.1 write a Python script`;
           workerAnchors: this.snapshotWorkerAnchors(teamConv),
         };
         this.persistPendingTeam(chatId, pending);
-        const rendered4 = renderQuestion(worker.name, ask.preamble, ask.question, ask.options);
+        const rendered4 = renderQuestion(worker.name, ask.question, ask.options);
         await emitter.notify(rendered4.text, rendered4.choices);
         emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
         return { thinkingByStep };
@@ -4665,9 +4666,7 @@ Example: /model gpt-4.1 write a Python script`;
       currentTask = `Previous worker output:\n${cleanOutput}\n\nYour task: ${task}`;
     }
 
-    const bbBlock = blackboard.renderForUser();
-    const body = `📊 Team **${teamName}** results\n\n${results.join('\n\n')}`;
-    await emitter.notify(bbBlock ? `${body}\n\n${bbBlock}` : body);
+    await this.notifyTeamFinal(emitter, teamName, task, parseTeamResultLines(results), opts.signal);
     this.persistBlackboardDecisions(blackboard, teamName);
     return { thinkingByStep };
   }
@@ -4877,7 +4876,7 @@ Example: /model gpt-4.1 write a Python script`;
           workerAnchors: this.snapshotWorkerAnchors(teamConv),
         });
         const askWorkerName = this.workspaceManager.getWorkerManager().getWorker(workerName)?.name ?? workerName;
-        const rendered = renderQuestion(askWorkerName, ask.preamble, ask.question, ask.options);
+        const rendered = renderQuestion(askWorkerName, ask.question, ask.options);
         await emitter.notify(rendered.text, rendered.choices);
         emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
         return emitter.transcript;
@@ -4906,9 +4905,7 @@ Example: /model gpt-4.1 write a Python script`;
       emitter.termination?.(`Flow reached maximum hops (${graph.maxHops}); partial results only`);
       await emitter.status(`⚠️ Flow hit the max-hops cap (${graph.maxHops}); reporting partial result.`);
     }
-    const bbBlock = blackboard.renderForUser();
-    const body = `📊 Team **${teamName}** flow results\n\n${results.join('\n\n')}`;
-    await emitter.notify(bbBlock ? `${body}\n\n${bbBlock}` : body);
+    await this.notifyTeamFinal(emitter, teamName, task, parseTeamResultLines(results), opts?.signal);
     this.persistBlackboardDecisions(blackboard, teamName);
     return emitter.transcript;
   }
@@ -5191,7 +5188,7 @@ Example: /model gpt-4.1 write a Python script`;
         },
         onUserQuestion: q => {
           this.parallelResumes.set(chat.id, q.resume);
-          const rendered = renderQuestion('Advisor', '', q.question, q.choices);
+          const rendered = renderQuestion('Advisor', q.question, q.choices);
           sink({ type: 'stream', chatId, token: rendered.text });
         },
         onFinal: ev => {
@@ -5316,7 +5313,7 @@ Example: /model gpt-4.1 write a Python script`;
           });
           sink({ type: 'worker_end', chatId, messageId: askingMessage.id, step: askingMessage.step ?? p.step, status: 'askedUser' });
         }
-        const rendered5 = renderQuestion(askWorkerName, '', p.question, p.options);
+        const rendered5 = renderQuestion(askWorkerName, p.question, p.options);
         sink({ type: 'stream', chatId, token: rendered5.text });
         return { response: rendered5.text, choices: rendered5.choices, teamTurnId };
       } else {
@@ -5333,9 +5330,10 @@ Example: /model gpt-4.1 write a Python script`;
         if (result.fallbackMidRun) {
           sink({ type: 'info', chatId, message: `Advisor halted mid-run: ${result.fallbackMidRun.reason}` });
         }
-        const bbBlock = result.blackboard.renderForUser();
+        // Chat renders the whiteboard in the context panel, so the reply
+        // carries only the Advisor summary.
         this.persistBlackboardDecisions(result.blackboard, teamName);
-        const response = [summary, bbBlock].filter(Boolean).join('\n\n');
+        const response = summary;
         return { response, thinkingByStep: result.thinkingByStep, teamTurnId };
       }
     }
@@ -6209,13 +6207,30 @@ Example: /model gpt-4.1 write a Python script`;
       userText = chatSkillTask;
     }
 
+    const abortController = new AbortController();
+    // Register the abort handle BEFORE waiting for a slot: a turn parked on the
+    // semaphore is stoppable too. Without this, Stop reports "nothing to abort"
+    // for it, the client falls back to clearing its own spinner, and the turn
+    // then starts anyway. Only claim the slot when no other run owns it, so a
+    // second turn queued behind a running one can't steal its abort handle.
+    const ownsAbort = !this.chatAborts.has(chatId);
+    if (ownsAbort) this.chatAborts.set(chatId, abortController);
+
     // Queue if at capacity
     if ((this.chatSemaphore as any).running >= (this.chatSemaphore as any).max) {
       sink({ type: 'queued', chatId, position: this.chatSemaphore.queueLength + 1 });
     }
     await this.chatSemaphore.acquire();
 
-    const abortController = new AbortController();
+    if (abortController.signal.aborted) {
+      // Stopped while queued: nothing has run and no user message is persisted
+      // yet, so just hand the prompt back for the input box.
+      this.chatSemaphore.release();
+      if (this.chatAborts.get(chatId) === abortController) this.chatAborts.delete(chatId);
+      sink({ type: 'stopped', chatId, userMessageId: '', text: userText });
+      return { response: '', chatId };
+    }
+
     this.chatAborts.set(chatId, abortController);
 
     const started = Date.now();

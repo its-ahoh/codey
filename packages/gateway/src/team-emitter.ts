@@ -5,7 +5,10 @@ import type { EndWorkerMeta, WorkerMessageEmitter } from './worker-message-emitt
 export interface TeamEmitter {
   /** A discrete status / result / ASK_USER message to the user. */
   notify(text: string, choices?: string[]): Promise<void>;
-  /** An ephemeral status/orchestration line. NOT recorded in the chat transcript. */
+  /** An ephemeral progress line ("step 2: architect is working"). Never a
+   * message: chat shows it as a transient info event, channels have no
+   * transient surface and drop it. A team run's messages are the worker
+   * bubbles (where the surface has them), any question, and the Aide final. */
   status(text: string): Promise<void>;
   termination?(reason: string): void;
   /** Per-worker streamed output token. */
@@ -22,6 +25,10 @@ export interface TeamEmitter {
   readonly transcript: string;
   /** Latest choices passed to notify (for the chat return contract). */
   readonly choices: string[] | undefined;
+  /** True when each worker's own output already has its own chat bubble. Such
+   * surfaces must not repeat that output inside a group-level notice (an
+   * ASK_USER preamble, the whiteboard block) — it would read twice. */
+  readonly rendersWorkerBubbles: boolean;
 }
 
 type SinkLike = (ev: any) => void;
@@ -41,8 +48,11 @@ export class ChatEmitter implements TeamEmitter {
     try { this.sink({ type: 'info', chatId: this.chatId, message: text }); } catch { /* swallow */ }
   }
   onStream(token: string): void {
-    this.parts.push(token);
+    // With per-worker bubbles the token already has a home: the member's own
+    // message. Keeping a second copy in the transcript is what made a paused
+    // run render its answer twice (transcript -> group footer bubble).
     if (this.workerMsgs) { this.workerMsgs.onStream(token); return; }
+    this.parts.push(token);
     try { this.sink({ type: 'stream', chatId: this.chatId, token }); } catch { /* swallow */ }
   }
   onThinking(token: string, step: number): void {
@@ -54,6 +64,7 @@ export class ChatEmitter implements TeamEmitter {
   updateBlackboard(blackboard: BlackboardSnapshot): void { this.workerMsgs?.updateBlackboard(blackboard); }
   get transcript(): string { return this.parts.join('\n\n'); }
   get choices(): string[] | undefined { return this._choices; }
+  get rendersWorkerBubbles(): boolean { return !!this.workerMsgs; }
 }
 
 /** Emits to a channel via the gateway's sendResponse + handler.streamText. */
@@ -70,11 +81,10 @@ export class ChannelEmitter implements TeamEmitter {
     this._choices = choices;
     await this.send({ chatId: this.chatId, channel: this.channel, text, choices });
   }
-  async status(text: string): Promise<void> {
-    await this.send({ chatId: this.chatId, channel: this.channel, text });
-  }
+  async status(_text: string): Promise<void> { /* no transient surface on a channel */ }
   onStream(token: string): void { this.streamText?.(token); }
   onThinking(_token: string, _step: number): void { /* channels don't render thinking today */ }
   get transcript(): string { return ''; }
   get choices(): string[] | undefined { return this._choices; }
+  readonly rendersWorkerBubbles = false;
 }

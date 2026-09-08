@@ -10,21 +10,19 @@ export interface QuestionRender {
   choices?: string[];
 }
 
+/** The question card a paused worker sends. It carries only the question
+ *  and its options: a worker's reasoning before the question is that
+ *  worker's own message, not part of the card. */
 export function renderQuestion(
   workerName: string,
-  preamble: string,
   question: string,
   options?: string[],
-  truncate = 500,
 ): QuestionRender {
-  const head = preamble.trim();
-  const trimmedHead = head.length > truncate ? head.substring(0, truncate) + '…' : head;
   const intro = `❓ **${workerName}** needs your input:`;
-  const body = `${question}`;
   const footer = options && options.length > 0
     ? '_Tap an option below, or type your own answer._'
     : '_Reply with your answer to continue, or send a slash command to cancel._';
-  const text = [trimmedHead, intro, body, footer].filter(Boolean).join('\n\n');
+  const text = [intro, question, footer].join('\n\n');
   return options && options.length > 0 ? { text, choices: options } : { text };
 }
 
