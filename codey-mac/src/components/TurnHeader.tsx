@@ -51,9 +51,10 @@ interface Props {
    *  surface exists, which hides the "Ask Agent" action rather than offering a
    *  button that does nothing. */
   onAskAgentAboutFallback?: (detail: string, fallback: { from: string; to: string }) => void
-  /** True for a worker turn, where the identity already renders next to the
-   *  worker's name/avatar. Keeps this header from repeating it. */
-  hideIdentity?: boolean
+  /** A worker turn's avatar + name, rendered at the start of this same row so
+   *  the identity that follows it sits right next to the name it belongs to
+   *  instead of on a second, mostly-empty row of its own. */
+  leftPrefix?: React.ReactNode
 }
 
 /** An `agent · model` label, invisible until hovered.
@@ -92,12 +93,12 @@ export const IdentityLabel: React.FC<{ identity: string }> = ({ identity }) => {
  *  gaining a line when the turn lands. The metadata row renders only when there
  *  is something to put in it, so a turn with no metadata is a bare hairline
  *  rather than a blank row. */
-export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback, hideIdentity }) => {
+export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback, leftPrefix }) => {
   const elapsedSec = useElapsedSeconds(!turnComplete, msg.timestamp)
   const meta = turnHeaderMeta(msg, { elapsedSec })
-  // With the identity hidden (a worker turn shows it beside its name instead),
-  // a turn with nothing else to say is empty even though meta.identity is set.
-  const isEmpty = hideIdentity ? !meta.stats.length && !meta.fallback : meta.isEmpty
+  // A worker's avatar/name makes the row worth drawing even when there's
+  // otherwise nothing to show.
+  const isEmpty = leftPrefix ? false : meta.isEmpty
   const rule = <div style={styles.rule} />
   if (isEmpty && !hasThinking) return rule
 
@@ -105,6 +106,7 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
     <div>
       <div style={styles.row}>
         <div style={styles.left}>
+          {leftPrefix}
           {hasThinking ? (
             <button
               type="button"
@@ -114,12 +116,12 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
               aria-label={`${expanded ? 'Hide' : 'Show'} thinking${meta.identity ? ` for ${meta.identity}` : ''}`}
               title={expanded ? 'Hide thinking' : 'Show thinking'}
             >
-              {meta.identity && !hideIdentity && <IdentityLabel identity={meta.identity} />}
+              {meta.identity && <IdentityLabel identity={meta.identity} />}
               <span style={{ ...styles.chevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
                 <UIIcon name="chevron" size={14} strokeWidth={2} />
               </span>
             </button>
-          ) : meta.identity && !hideIdentity ? (
+          ) : meta.identity ? (
             <IdentityLabel identity={meta.identity} />
           ) : null}
           {meta.fallback && (
