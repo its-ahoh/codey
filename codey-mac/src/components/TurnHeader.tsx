@@ -51,6 +51,31 @@ interface Props {
    *  surface exists, which hides the "Ask Agent" action rather than offering a
    *  button that does nothing. */
   onAskAgentAboutFallback?: (detail: string, fallback: { from: string; to: string }) => void
+  /** True for a worker turn, where the identity already renders next to the
+   *  worker's name/avatar. Keeps this header from repeating it. */
+  hideIdentity?: boolean
+}
+
+/** An `agent · model` label, invisible until hovered.
+ *
+ *  It's noise on every turn but useful on demand, so it reserves its layout
+ *  space (no reflow on hover) and only reveals itself on hover/focus — the
+ *  same interaction FallbackWarning below already uses for its popover. */
+export const IdentityLabel: React.FC<{ identity: string }> = ({ identity }) => {
+  const [hovered, setHovered] = React.useState(false)
+  return (
+    <span
+      tabIndex={0}
+      style={{ ...styles.identity, opacity: hovered ? 1 : 0, transition: 'opacity 0.1s ease' }}
+      title={identity}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setHovered(true)}
+      onBlur={() => setHovered(false)}
+    >
+      {identity}
+    </span>
+  )
 }
 
 /** Identifies an assistant turn and bounds it.
@@ -67,11 +92,14 @@ interface Props {
  *  gaining a line when the turn lands. The metadata row renders only when there
  *  is something to put in it, so a turn with no metadata is a bare hairline
  *  rather than a blank row. */
-export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback }) => {
+export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback, hideIdentity }) => {
   const elapsedSec = useElapsedSeconds(!turnComplete, msg.timestamp)
   const meta = turnHeaderMeta(msg, { elapsedSec })
+  // With the identity hidden (a worker turn shows it beside its name instead),
+  // a turn with nothing else to say is empty even though meta.identity is set.
+  const isEmpty = hideIdentity ? !meta.stats.length && !meta.fallback : meta.isEmpty
   const rule = <div style={styles.rule} />
-  if (meta.isEmpty && !hasThinking) return rule
+  if (isEmpty && !hasThinking) return rule
 
   return (
     <div>
@@ -86,15 +114,13 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
               aria-label={`${expanded ? 'Hide' : 'Show'} thinking${meta.identity ? ` for ${meta.identity}` : ''}`}
               title={expanded ? 'Hide thinking' : 'Show thinking'}
             >
-              {meta.identity && (
-                <span style={styles.identity} title={meta.identity}>{meta.identity}</span>
-              )}
+              {meta.identity && !hideIdentity && <IdentityLabel identity={meta.identity} />}
               <span style={{ ...styles.chevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
                 <UIIcon name="chevron" size={14} strokeWidth={2} />
               </span>
             </button>
-          ) : meta.identity ? (
-            <span style={styles.identity} title={meta.identity}>{meta.identity}</span>
+          ) : meta.identity && !hideIdentity ? (
+            <IdentityLabel identity={meta.identity} />
           ) : null}
           {meta.fallback && (
             <FallbackWarning fallback={meta.fallback} onAskAgent={onAskAgentAboutFallback} />
