@@ -59,6 +59,10 @@ interface Props {
    *  in the same baseline-aligned text group instead of the identity landing
    *  on a second, mostly-empty row of its own. */
   leftLabel?: React.ReactNode
+  /** Whether the containing assistant message is hovered. The header also
+   *  tracks focus/hover locally for standalone keyboard and pointer access,
+   *  but the parent owns the full-turn hit area (reply, tools and footer). */
+  messageHovered?: boolean
 }
 
 /** An `agent · model` label, invisible until the row it lives in is hovered.
@@ -66,9 +70,8 @@ interface Props {
  *  It's noise on every turn but useful on demand, so it reserves its layout
  *  space (no reflow on reveal) and dims in at the same tone as the stats on
  *  the other end of the row rather than declaring its own. The hover/focus
- *  state lives on the whole row (see TurnHeader), not here, so pointing
- *  anywhere in it — the worker name, the disclosure button, the stats/timer
- *  on the right — reveals it, not just the exact pixels of the text itself. */
+ *  state lives outside this label, so pointing anywhere in the assistant turn
+ *  reveals it, not just the exact pixels of the text itself. */
 export const IdentityLabel: React.FC<{ identity: string; visible: boolean }> = ({ identity, visible }) => (
   <span style={{ ...styles.identity, opacity: visible ? 0.55 : 0 }} title={identity}>
     {identity}
@@ -89,13 +92,13 @@ export const IdentityLabel: React.FC<{ identity: string; visible: boolean }> = (
  *  gaining a line when the turn lands. The metadata row renders only when there
  *  is something to put in it, so a turn with no metadata is a bare hairline
  *  rather than a blank row. */
-export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback, leftAvatar, leftLabel }) => {
+export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback, leftAvatar, leftLabel, messageHovered = false }) => {
   const elapsedSec = useElapsedSeconds(!turnComplete, msg.timestamp)
   const meta = turnHeaderMeta(msg, { elapsedSec })
-  // Lives on the whole row, not on the identity label itself, so pointing
-  // anywhere in it — the worker name, the disclosure button, the stats/timer
-  // on the right — reveals it, not just its own (usually invisible) pixels.
-  const [identityHovered, setIdentityHovered] = React.useState(false)
+  // Keep a local state for focus and direct header hover, while ChatTab passes
+  // the containing assistant turn's hover state to cover the reply body too.
+  const [headerActive, setHeaderActive] = React.useState(false)
+  const identityVisible = messageHovered || headerActive
   // A worker's avatar/name makes the row worth drawing even when there's
   // otherwise nothing to show.
   const isEmpty = (leftAvatar || leftLabel) ? false : meta.isEmpty
@@ -106,11 +109,11 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
     <div>
       <div
         style={styles.row}
-        onMouseEnter={() => setIdentityHovered(true)}
-        onMouseLeave={() => setIdentityHovered(false)}
-        onFocus={() => setIdentityHovered(true)}
+        onMouseEnter={() => setHeaderActive(true)}
+        onMouseLeave={() => setHeaderActive(false)}
+        onFocus={() => setHeaderActive(true)}
         onBlur={e => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setIdentityHovered(false)
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHeaderActive(false)
         }}
       >
         <div style={styles.left}>
@@ -126,13 +129,13 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
                 aria-label={`${expanded ? 'Hide' : 'Show'} thinking${meta.identity ? ` for ${meta.identity}` : ''}`}
                 title={expanded ? 'Hide thinking' : 'Show thinking'}
               >
-                {meta.identity && <IdentityLabel identity={meta.identity} visible={identityHovered} />}
+                {meta.identity && <IdentityLabel identity={meta.identity} visible={identityVisible} />}
                 <span style={{ ...styles.chevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
                   <UIIcon name="chevron" size={14} strokeWidth={2} />
                 </span>
               </button>
             ) : meta.identity ? (
-              <IdentityLabel identity={meta.identity} visible={identityHovered} />
+              <IdentityLabel identity={meta.identity} visible={identityVisible} />
             ) : null}
           </div>
           {meta.fallback && (
