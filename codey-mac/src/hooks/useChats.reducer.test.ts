@@ -250,6 +250,13 @@ describe('message queue', () => {
     expect(s.queuedMessages.c1).toBeUndefined()
   })
 
+  it('clearing a stale in-flight turn drops the queue too', () => {
+    let s = baseState()
+    s = reducer(s, q('one', 'q1'))
+    s = reducer(s, { type: 'clearInFlight', chatId: 'c1' })
+    expect(s.queuedMessages.c1).toBeUndefined()
+  })
+
   it('deleting a chat drops its queue', () => {
     let s = baseState()
     s = reducer(s, q('one', 'q1'))

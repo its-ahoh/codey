@@ -6209,13 +6209,30 @@ Example: /model gpt-4.1 write a Python script`;
       userText = chatSkillTask;
     }
 
+    const abortController = new AbortController();
+    // Register the abort handle BEFORE waiting for a slot: a turn parked on the
+    // semaphore is stoppable too. Without this, Stop reports "nothing to abort"
+    // for it, the client falls back to clearing its own spinner, and the turn
+    // then starts anyway. Only claim the slot when no other run owns it, so a
+    // second turn queued behind a running one can't steal its abort handle.
+    const ownsAbort = !this.chatAborts.has(chatId);
+    if (ownsAbort) this.chatAborts.set(chatId, abortController);
+
     // Queue if at capacity
     if ((this.chatSemaphore as any).running >= (this.chatSemaphore as any).max) {
       sink({ type: 'queued', chatId, position: this.chatSemaphore.queueLength + 1 });
     }
     await this.chatSemaphore.acquire();
 
-    const abortController = new AbortController();
+    if (abortController.signal.aborted) {
+      // Stopped while queued: nothing has run and no user message is persisted
+      // yet, so just hand the prompt back for the input box.
+      this.chatSemaphore.release();
+      if (this.chatAborts.get(chatId) === abortController) this.chatAborts.delete(chatId);
+      sink({ type: 'stopped', chatId, userMessageId: '', text: userText });
+      return { response: '', chatId };
+    }
+
     this.chatAborts.set(chatId, abortController);
 
     const started = Date.now();

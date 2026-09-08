@@ -1012,11 +1012,13 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   }, [])
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && flight) stopChat(chatId)
+      // Escape stops the running turn, and — once nothing is running — still
+      // clears anything queued behind it, so one press ends the whole thing.
+      if (e.key === 'Escape' && (flight || queuedMessages.length > 0)) stopChat(chatId)
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [flight, chatId])
+  }, [flight, chatId, queuedMessages.length])
   // Refresh the Status task brief on each turn boundary — when a turn is sent
   // and again when it completes — while the Status tab is open, so it reflects
   // the live history. The tab-switch trigger alone misses these: nothing

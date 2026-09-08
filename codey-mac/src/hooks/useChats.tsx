@@ -569,10 +569,14 @@ export function reducer(state: State, action: Action): State {
       }
     }
     case 'clearInFlight': {
-      if (!state.inFlight[action.chatId]) return state
+      const queuedMessages = dropQueue(state.queuedMessages, action.chatId)
+      if (!state.inFlight[action.chatId]) return { ...state, queuedMessages }
       const inFlight = { ...state.inFlight }
       delete inFlight[action.chatId]
-      return { ...state, inFlight }
+      // Same rule as 'stoppedSend': this only fires from Stop/Escape, and a
+      // stop must not let the next queued prompt fire the instant the turn
+      // clears.
+      return { ...state, inFlight, queuedMessages }
     }
     case 'clearRestore': {
       if (!(action.chatId in state.pendingRestores)) return state
