@@ -445,9 +445,12 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   chat,
 }) => {
   const outerRef = useRef<HTMLDivElement>(null)
-  const { state, createChat, sendMessage, removeQueuedMessage, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, createChat, sendMessage, removeQueuedMessage, resumeQueue, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const flight = state.inFlight[chatId]
   const queuedMessages = state.queuedMessages[chatId] ?? []
+  // A stop holds the queue instead of emptying it, so these prompts stay put
+  // until you resume them, send something new, or drop them one by one.
+  const queuePaused = !!state.pausedQueues[chatId]
 
   // Voice: capture, playback and the turn itself live above this component
   // (see VoiceTurnProvider) so they survive switching chats. What stays here
@@ -976,12 +979,13 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Escape stops the running turn, and — once nothing is running — still
-      // clears anything queued behind it, so one press ends the whole thing.
-      if (e.key === 'Escape' && (flight || queuedMessages.length > 0)) stopChat(chatId)
+      // holds back anything queued behind it, so one press ends the whole run.
+      // An already-paused queue has nothing left to stop.
+      if (e.key === 'Escape' && (flight || (queuedMessages.length > 0 && !queuePaused))) stopChat(chatId)
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [flight, chatId, queuedMessages.length])
+  }, [flight, chatId, queuedMessages.length, queuePaused])
   // Refresh the Status task brief on each turn boundary — when a turn is sent
   // and again when it completes — while the Status tab is open, so it reflects
   // the live history. The tab-switch trigger alone misses these: nothing
@@ -2597,6 +2601,16 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
           </div>
           {queuedMessages.length > 0 && (
             <div style={styles.queuedRow}>
+              {queuePaused && (
+                <div style={styles.queuedPausedRow}>
+                  <span style={styles.queuedPausedLabel}>
+                    Paused · {queuedMessages.length} queued
+                  </span>
+                  <button onClick={() => resumeQueue(chatId)} style={styles.queuedResumeBtn}>
+                    Resume
+                  </button>
+                </div>
+              )}
               {queuedMessages.map((queued, i) => (
                 <div key={queued.id} style={styles.queuedChip} title={queued.text}>
                   <span style={styles.queuedIndex}>{i + 1}</span>
@@ -3277,6 +3291,15 @@ const styles: Record<string, React.CSSProperties> = {
   queuedText: {
     flex: 1, fontSize: 12, color: C.fg2,
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
+  },
+  queuedPausedRow: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+    padding: '0 2px',
+  },
+  queuedPausedLabel: { fontSize: 11, color: C.fg3 },
+  queuedResumeBtn: {
+    border: `1px solid ${C.border2}`, background: 'transparent', borderRadius: 6,
+    color: C.fg2, cursor: 'pointer', fontSize: 11, padding: '2px 8px',
   },
   queuedRemoveBtn: {
     flexShrink: 0, border: 'none', background: 'transparent',
