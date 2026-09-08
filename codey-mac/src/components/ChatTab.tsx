@@ -569,8 +569,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     return () => { stale = true }
   }, [isGatewayRunning, runSettingsOpen])
   const [followLatest, setFollowLatest] = useState(true)
-  // A user bubble keeps its footer (timestamp + actions) hidden until the
-  // pointer is on that message, so a quiet transcript stays quiet.
+  // Shared message hover state reveals a user's footer or an assistant turn's
+  // agent/model identity without giving either feature a narrower hit area.
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null)
   // The message being edited in place, plus its working text. Saving sends the
   // edited text as a fresh turn; the original stays in the transcript.
@@ -2118,8 +2118,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
           const isEditing = isUser && editingMsgId === msg.id
           return (
             <div key={msg.id} data-chat-navigation-id={msg.id}
-              onMouseEnter={isUser ? () => setHoveredMsgId(msg.id) : undefined}
-              onMouseLeave={isUser ? () => setHoveredMsgId(id => (id === msg.id ? null : id)) : undefined}
+              onMouseEnter={() => setHoveredMsgId(msg.id)}
+              onMouseLeave={() => setHoveredMsgId(id => (id === msg.id ? null : id))}
               onDoubleClick={isUser ? undefined : () => {
                 setSelectedTurnIdState(msg.id)
                 setFollowLatest(false)
@@ -2208,6 +2208,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                           <WorkerAvatar name={msg.worker!} config={member?.config.avatar} state={memberState} />
                         ) : undefined}
                         leftLabel={isWorkerMessage ? <strong>{msg.worker}</strong> : undefined}
+                        messageHovered={hoveredMsgId === msg.id}
                       />
                       {!!thinking && expanded && (
                         <div style={styles.thinkingBody}>{thinking}</div>
