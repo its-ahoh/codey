@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ChannelEmitter, ChatEmitter } from './team-emitter';
 
 describe('ChatEmitter', () => {
@@ -25,6 +25,22 @@ describe('ChatEmitter', () => {
     expect(events.some(v => v.type === 'thinking' && v.token === 'pondering' && v.step === 2)).toBe(true);
   });
 
+  it('keeps worker tokens out of the transcript when they have their own bubbles', async () => {
+    const workerMsgs = { onStream: vi.fn(), onThinking: vi.fn() } as any;
+    const e = new ChatEmitter(() => {}, 'c1', workerMsgs);
+    expect(e.rendersWorkerBubbles).toBe(true);
+    e.onStream('the whole answer');
+    await e.notify('a question for you');
+    expect(workerMsgs.onStream).toHaveBeenCalledWith('the whole answer');
+    // The member bubble owns the answer; only the group-level notice is left.
+    expect(e.transcript).toBe('a question for you');
+  });
+
+  it('reports no worker bubbles without a WorkerMessageEmitter', () => {
+    expect(new ChatEmitter(() => {}, 'c1').rendersWorkerBubbles).toBe(false);
+    expect(new ChannelEmitter(async () => {}, undefined, 'c1', 'telegram' as any).rendersWorkerBubbles).toBe(false);
+  });
+
   it('status emits an info event and is NOT recorded in the transcript', async () => {
     const events: any[] = [];
     const e = new ChatEmitter((ev) => events.push(ev), 'c1');
@@ -49,10 +65,10 @@ describe('ChannelEmitter', () => {
     expect(e.transcript).toBe('');
   });
 
-  it('status routes through sendResponse without choices', async () => {
+  it('status is not sent as a channel message', async () => {
     const sent: any[] = [];
     const e = new ChannelEmitter(async (r) => { sent.push(r); }, undefined, 'c1', 'telegram' as any);
     await e.status('working');
-    expect(sent).toContainEqual({ chatId: 'c1', channel: 'telegram', text: 'working' });
+    expect(sent).toEqual([]);
   });
 });

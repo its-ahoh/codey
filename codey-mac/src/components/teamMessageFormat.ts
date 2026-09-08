@@ -53,13 +53,15 @@ export function parseTeamMessage(content: string): ParsedTeamMessage | null {
 //   **worker-b**: ❌ Failed - ...
 //
 //   ---
-//   ### 🧠 Team blackboard
+//   ### 🧠 Team whiteboard
 //   ...
 //
 // A "**name**:" worker header has its colon OUTSIDE the bold, which
-// distinguishes it from blackboard labels like "**Decisions:**" (colon inside).
+// distinguishes it from whiteboard labels like "**Decisions:**" (colon inside).
+// The heading was renamed from "blackboard" to "whiteboard"; transcripts
+// persisted before the rename still carry the old wording, so match both.
 const SEQ_HEADER = /^📊 Team \*\*.+?\*\* (?:flow )?results\s*\n+/
-const BLACKBOARD_MARKER = '### 🧠 Team blackboard'
+const WHITEBOARD_MARKER = /### 🧠 Team (?:whiteboard|blackboard)/
 const WORKER_HEADER = /^\*\*([^\n*]+?)\*\*:[ \t]?(.*)$/
 
 function parseSequentialTeamMessage(content: string): ParsedTeamMessage | null {
@@ -67,8 +69,8 @@ function parseSequentialTeamMessage(content: string): ParsedTeamMessage | null {
   if (!header) return null
   let body = content.slice(header[0].length)
 
-  // Drop the trailing blackboard section (and a preceding `---` separator).
-  const bbIdx = body.indexOf(BLACKBOARD_MARKER)
+  // Drop the trailing whiteboard section (and a preceding `---` separator).
+  const bbIdx = body.search(WHITEBOARD_MARKER)
   if (bbIdx !== -1) body = body.slice(0, bbIdx).replace(/\n*-{3,}\s*$/, '').trimEnd()
 
   const steps: TeamStep[] = []

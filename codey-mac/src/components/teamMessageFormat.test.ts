@@ -106,6 +106,24 @@ describe('parseTeamMessage', () => {
     expect(r!.steps[1]).toMatchObject({ step: 2, worker: 'developer', output: '❌ Failed - build error' })
   })
 
+  it('drops the renamed "Team whiteboard" section too', () => {
+    const input = [
+      '📊 Team **Feature** flow results',
+      '',
+      '**alice**:',
+      'did a thing',
+      '',
+      '---',
+      '',
+      '### 🧠 Team whiteboard',
+      '',
+      '**Decisions:**',
+      '- *alice* — ship it',
+    ].join('\n')
+    const r = parseTeamMessage(input)
+    expect(r!.steps).toEqual([{ step: 1, worker: 'alice', output: 'did a thing' }])
+  })
+
   it('also parses the "results" header without the "flow" word (all path)', () => {
     const input = '📊 Team **Crew** results\n\n**alice**:\ndid a thing'
     const r = parseTeamMessage(input)
