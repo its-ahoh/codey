@@ -42,6 +42,10 @@ export interface State {
   // Prompts typed while a turn was in flight, per chat, oldest first. Drained
   // one at a time by the provider as soon as the chat has no inFlight turn.
   queuedMessages: Record<string, QueuedMessage[]>
+  // Chats whose queue is held back after a stop. The prompts are kept — an
+  // interrupt pauses the run rather than throwing away what was typed — and
+  // stay put until the user resumes or sends something new.
+  pausedQueues: Record<string, true>
 }
 
 type Action =
@@ -79,6 +83,7 @@ type Action =
   | { type: 'enqueueMessage'; chatId: string; message: QueuedMessage }
   | { type: 'dequeueMessage'; chatId: string }
   | { type: 'removeQueuedMessage'; chatId: string; id: string }
+  | { type: 'resumeQueue'; chatId: string }
   | { type: 'teamStart'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string }> }
   | { type: 'workerStart'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
   | { type: 'workerEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser'; failureReason?: string; nextUserAction?: ChatMessage['workerNextUserAction'] }
@@ -126,8 +131,24 @@ function setQueue(
   return next
 }
 
-function dropQueue(map: Record<string, QueuedMessage[]>, chatId: string): Record<string, QueuedMessage[]> {
-  return setQueue(map, chatId, [])
+/** Hold this chat's queue back after a stop. A chat with nothing queued has
+ *  nothing to pause, so the flag is only set when prompts are actually
+ *  waiting — that keeps "paused" true only while the UI has something to show. */
+function pauseQueue(
+  paused: Record<string, true>,
+  queues: Record<string, QueuedMessage[]>,
+  chatId: string,
+): Record<string, true> {
+  if (!queues[chatId]?.length) return unpauseQueue(paused, chatId)
+  if (paused[chatId]) return paused
+  return { ...paused, [chatId]: true }
+}
+
+function unpauseQueue(paused: Record<string, true>, chatId: string): Record<string, true> {
+  if (!paused[chatId]) return paused
+  const next = { ...paused }
+  delete next[chatId]
+  return next
 }
 
 export function reducer(state: State, action: Action): State {
@@ -257,12 +278,25 @@ export function reducer(state: State, action: Action): State {
     case 'dequeueMessage': {
       const queue = state.queuedMessages[action.chatId]
       if (!queue || queue.length === 0) return state
-      return { ...state, queuedMessages: setQueue(state.queuedMessages, action.chatId, queue.slice(1)) }
+      const queuedMessages = setQueue(state.queuedMessages, action.chatId, queue.slice(1))
+      const pausedQueues = queuedMessages[action.chatId]
+        ? state.pausedQueues
+        : unpauseQueue(state.pausedQueues, action.chatId)
+      return { ...state, queuedMessages, pausedQueues }
     }
     case 'removeQueuedMessage': {
       const queue = state.queuedMessages[action.chatId]
       if (!queue) return state
-      return { ...state, queuedMessages: setQueue(state.queuedMessages, action.chatId, queue.filter(m => m.id !== action.id)) }
+      const queuedMessages = setQueue(state.queuedMessages, action.chatId, queue.filter(m => m.id !== action.id))
+      // Dropping the last paused prompt ends the pause: there is nothing left
+      // to resume, and a stale flag would hold back the next queue.
+      const pausedQueues = queuedMessages[action.chatId]
+        ? state.pausedQueues
+        : unpauseQueue(state.pausedQueues, action.chatId)
+      return { ...state, queuedMessages, pausedQueues }
+    }
+    case 'resumeQueue': {
+      return { ...state, pausedQueues: unpauseQueue(state.pausedQueues, action.chatId) }
     }
     case 'remove': {
       const chats = { ...state.chats }
@@ -273,7 +307,7 @@ export function reducer(state: State, action: Action): State {
       delete inFlight[action.chatId]
       const queuedMessages = { ...state.queuedMessages }
       delete queuedMessages[action.chatId]
-      return { ...state, chats, order, selectedChatId, inFlight, queuedMessages }
+      return { ...state, chats, order, selectedChatId, inFlight, queuedMessages, pausedQueues: unpauseQueue(state.pausedQueues, action.chatId) }
     }
     case 'select': {
       const unreadChats = { ...state.unreadChats }
@@ -549,7 +583,10 @@ export function reducer(state: State, action: Action): State {
     case 'stoppedSend': {
       const chat = state.chats[action.chatId]
       const fl = state.inFlight[action.chatId]
-      if (!chat || !fl) return state
+      // The pause holds even when the turn is already gone from local state —
+      // a stop is a stop, and the queue must not run on without it.
+      const paused = pauseQueue(state.pausedQueues, state.queuedMessages, action.chatId)
+      if (!chat || !fl) return paused === state.pausedQueues ? state : { ...state, pausedQueues: paused }
       // Drop both the user prompt and the assistant placeholder for this turn.
       // The prompt text is stashed in pendingRestores so ChatTab can lift it
       // back into the input box.
@@ -563,20 +600,21 @@ export function reducer(state: State, action: Action): State {
         chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } },
         inFlight,
         // An interrupt means "stop", so anything queued behind this turn is
-        // dropped rather than fired the instant the turn clears.
-        queuedMessages: dropQueue(state.queuedMessages, action.chatId),
+        // paused rather than fired the instant the turn clears. The prompts
+        // are kept; the user resumes them or drops them one by one.
+        pausedQueues: paused,
         pendingRestores: { ...state.pendingRestores, [action.chatId]: action.text },
       }
     }
     case 'clearInFlight': {
-      const queuedMessages = dropQueue(state.queuedMessages, action.chatId)
-      if (!state.inFlight[action.chatId]) return { ...state, queuedMessages }
-      const inFlight = { ...state.inFlight }
-      delete inFlight[action.chatId]
       // Same rule as 'stoppedSend': this only fires from Stop/Escape, and a
       // stop must not let the next queued prompt fire the instant the turn
       // clears.
-      return { ...state, inFlight, queuedMessages }
+      const pausedQueues = pauseQueue(state.pausedQueues, state.queuedMessages, action.chatId)
+      if (!state.inFlight[action.chatId]) return { ...state, pausedQueues }
+      const inFlight = { ...state.inFlight }
+      delete inFlight[action.chatId]
+      return { ...state, inFlight, pausedQueues }
     }
     case 'clearRestore': {
       if (!(action.chatId in state.pendingRestores)) return state
@@ -641,6 +679,7 @@ interface ChatsContextValue {
   stopChat: (chatId: string) => Promise<void>
   /** Drop a prompt that is still waiting behind the running turn. */
   removeQueuedMessage: (chatId: string, id: string) => void
+  resumeQueue: (chatId: string) => void
   resolvePermission: (chatId: string, allow: boolean) => Promise<void>
   clearRestore: (chatId: string) => void
   toggleWorkspace: (workspaceName: string) => void
@@ -667,6 +706,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     unreadChats: {},
     pendingPermissions: {},
     queuedMessages: {},
+    pausedQueues: {},
   })
 
   const pendingAssistantId = useRef<Record<string, string>>({})
@@ -916,6 +956,9 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     identity?: { agent?: ChatMessage['agent']; model?: string },
   ) => {
     const busy = !!stateRef.current.inFlight[chatId] || (stateRef.current.queuedMessages[chatId]?.length ?? 0) > 0
+    // Sending again is how you say "carry on": a queue paused by a stop starts
+    // moving once more, with the new prompt at the back of it.
+    if (stateRef.current.pausedQueues[chatId]) dispatch({ type: 'resumeQueue', chatId })
     if (busy) {
       dispatch({
         type: 'enqueueMessage',
@@ -931,13 +974,13 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // a second pass firing the same head before `startSend` lands in state.
   const draining = useRef<Set<string>>(new Set())
   useEffect(() => {
-    for (const { chatId, message } of readyDeliveries(state.queuedMessages, state.inFlight, draining.current)) {
+    for (const { chatId, message } of readyDeliveries(state.queuedMessages, state.inFlight, draining.current, state.pausedQueues)) {
       draining.current.add(chatId)
       dispatch({ type: 'dequeueMessage', chatId })
       void deliverMessage(chatId, message.text, message.attachments, message.identity)
         .finally(() => { draining.current.delete(chatId) })
     }
-  }, [state.queuedMessages, state.inFlight, deliverMessage])
+  }, [state.queuedMessages, state.inFlight, state.pausedQueues, deliverMessage])
 
   const value = useMemo<ChatsContextValue>(() => ({
     state,
@@ -1035,6 +1078,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     sendMessage,
     removeQueuedMessage(chatId, id) { dispatch({ type: 'removeQueuedMessage', chatId, id }) },
+    resumeQueue(chatId) { dispatch({ type: 'resumeQueue', chatId }) },
     async stopChat(chatId) {
       let stopped = false
       try { stopped = await apiService.chats.stop(chatId) } catch { /* treated as nothing to stop */ }

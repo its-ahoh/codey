@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { reducer, shouldAdoptExternalTurn, type State } from './useChats'
+import { readyDeliveries } from './messageQueue'
 import type { Chat } from '../types'
 
 const emptyState = (): State => ({
   chats: {}, order: [], selectedChatId: null, inFlight: {},
   collapsedWorkspaces: {}, workspaces: [], pendingRestores: {},
-  unreadChats: {}, pendingPermissions: {}, queuedMessages: {},
+  unreadChats: {}, pendingPermissions: {}, queuedMessages: {}, pausedQueues: {},
 })
 
 // A chat as it exists server-side at turn start: the user message is already
@@ -22,7 +23,7 @@ function baseState(): State {
     chats: { c1: { id: 'c1', title: 't', workspaceName: 'ws', selection: { type: 'team', name: 'team' }, messages: [], createdAt: 0, updatedAt: 0 } },
     order: ['c1'], selectedChatId: 'c1',
     inFlight: { c1: { assistantMessageId: 'asst-x', userMessageId: 'u1', agentStatus: 'thinking' } },
-    collapsedWorkspaces: {}, workspaces: ['ws'], pendingRestores: {}, unreadChats: {}, pendingPermissions: {}, queuedMessages: {},
+    collapsedWorkspaces: {}, workspaces: ['ws'], pendingRestores: {}, unreadChats: {}, pendingPermissions: {}, queuedMessages: {}, pausedQueues: {},
   };
 }
 
@@ -239,7 +240,7 @@ describe('message queue', () => {
     expect(s.queuedMessages.c1.map(m => m.text)).toEqual(['two'])
   })
 
-  it('stopping a turn drops the queue so nothing fires after an interrupt', () => {
+  it('stopping a turn pauses the queue so nothing fires after an interrupt', () => {
     let s = baseState()
     s.chats.c1.messages = [
       { id: 'u1', role: 'user', content: 'go', timestamp: 1, isComplete: true },
@@ -247,14 +248,36 @@ describe('message queue', () => {
     ]
     s = reducer(s, q('one', 'q1'))
     s = reducer(s, { type: 'stoppedSend', chatId: 'c1', text: 'go' })
-    expect(s.queuedMessages.c1).toBeUndefined()
+    expect(s.queuedMessages.c1.map(m => m.text)).toEqual(['one'])
+    expect(s.pausedQueues.c1).toBe(true)
+    expect(readyDeliveries(s.queuedMessages, s.inFlight, new Set(), s.pausedQueues)).toEqual([])
   })
 
-  it('clearing a stale in-flight turn drops the queue too', () => {
+  it('resuming lets the paused queue drain again', () => {
     let s = baseState()
     s = reducer(s, q('one', 'q1'))
     s = reducer(s, { type: 'clearInFlight', chatId: 'c1' })
+    expect(s.pausedQueues.c1).toBe(true)
+    s = reducer(s, { type: 'resumeQueue', chatId: 'c1' })
+    expect(s.pausedQueues.c1).toBeUndefined()
+    expect(readyDeliveries(s.queuedMessages, s.inFlight, new Set(), s.pausedQueues).map(r => r.message.text)).toEqual(['one'])
+  })
+
+  it('dropping the last paused prompt ends the pause', () => {
+    let s = baseState()
+    s = reducer(s, q('one', 'q1'))
+    s = reducer(s, { type: 'clearInFlight', chatId: 'c1' })
+    s = reducer(s, { type: 'removeQueuedMessage', chatId: 'c1', id: 'q1' })
     expect(s.queuedMessages.c1).toBeUndefined()
+    expect(s.pausedQueues.c1).toBeUndefined()
+  })
+
+  it('clearing a stale in-flight turn pauses the queue too', () => {
+    let s = baseState()
+    s = reducer(s, q('one', 'q1'))
+    s = reducer(s, { type: 'clearInFlight', chatId: 'c1' })
+    expect(s.queuedMessages.c1.map(m => m.text)).toEqual(['one'])
+    expect(s.pausedQueues.c1).toBe(true)
   })
 
   it('deleting a chat drops its queue', () => {
