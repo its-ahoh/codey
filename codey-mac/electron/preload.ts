@@ -499,7 +499,7 @@ contextBridge.exposeInMainWorld('codey', {
     getPageContext: () => ipcRenderer.invoke('browser:getPageContext'),
     downloads: () => ipcRenderer.invoke('browser:downloads'),
     tabs: () => ipcRenderer.invoke('browser:tabs'),
-    newTab: (url?: string) => ipcRenderer.invoke('browser:newTab', url),
+    newTab: (url?: string, profile?: string | null) => ipcRenderer.invoke('browser:newTab', url, profile),
     switchTab: (id: string) => ipcRenderer.invoke('browser:switchTab', id),
     closeTab: (id: string) => ipcRenderer.invoke('browser:closeTab', id),
     resetSession: () => ipcRenderer.invoke('browser:resetSession'),

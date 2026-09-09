@@ -194,6 +194,7 @@ export interface BrowserTab {
   title: string
   url: string
   active: boolean
+  profile: string | null
 }
 
 /** A saved browser session ("profile") as listed by the profiles manager. */
@@ -669,7 +670,7 @@ declare global {
         getPageContext: () => Promise<IpcResult<BrowserPageContext>>
         downloads: () => Promise<IpcResult<BrowserDownload[]>>
         tabs: () => Promise<IpcResult<BrowserTab[]>>
-        newTab: (url?: string) => Promise<IpcResult<BrowserState>>
+        newTab: (url?: string, profile?: string | null) => Promise<IpcResult<BrowserState>>
         switchTab: (id: string) => Promise<IpcResult<BrowserState>>
         closeTab: (id: string) => Promise<IpcResult<BrowserState>>
         resetSession: () => Promise<IpcResult<BrowserState>>

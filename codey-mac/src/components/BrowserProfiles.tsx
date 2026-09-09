@@ -26,8 +26,8 @@ function formatWhen(timestamp: number): string {
 
 /** The browser-profiles manager, shared by the browser toolbar (compact) and
  *  the Settings tab (full width). List, save the current session, import a
- *  session file, activate, export and delete profiles through the main
- *  process's `window.codey.browser.profiles` bridge. */
+ *  session file, choose the default for new tabs, export and delete profiles
+ *  through the main process's `window.codey.browser.profiles` bridge. */
 export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   // Derived from the list itself, so it cannot disagree with the rows shown.
   const [profiles, setProfiles] = useState<BrowserProfileSummary[]>([])
@@ -124,6 +124,7 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
     const when = formatWhen(profile.updatedAt)
     if (when) bits.push(`updated ${when}`)
     if (profile.autoSync) bits.push('syncs with Chrome')
+    if (profile.active) bits.push('new tabs open here')
     return bits.join(' · ')
   }
 
@@ -190,6 +191,24 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
         </div>
       )}
 
+      {profiles.length > 0 && (
+        <button
+          type="button"
+          role="radio"
+          aria-checked={!profiles.some(profile => profile.active)}
+          disabled={busy}
+          onClick={() => void run(() => window.codey.browser.profiles.setDefault(null))}
+          style={{
+            ...styles.defaultChoice,
+            ...(!profiles.some(profile => profile.active) ? styles.defaultChoiceActive : null),
+          }}
+          title="Open new tabs without a saved profile"
+        >
+          <span aria-hidden="true">{profiles.some(profile => profile.active) ? '○' : '●'}</span>
+          New tabs open without a profile
+        </button>
+      )}
+
       {profiles.map(profile => (
         <div key={profile.name} style={{
           display: 'flex', flexDirection: 'column', gap: 8,
@@ -246,21 +265,18 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
                 {meta(profile) || (profile.sourceUrl ? 'saved session' : 'empty profile')}
               </button>
             </div>
-            {/* Several profiles can be on at once, so a profile is simply on
-                or off - there is nothing to switch between. A switch says that
-                by its shape, where a button labelled "Use"/"In use" made the
-                reader work out whether the word was a state or a command. */}
-            <Toggle
-              on={profile.active}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={profile.active}
               disabled={busy}
-              onChange={next => void run(() => next
-                ? window.codey.browser.profiles.enable(profile.name)
-                : window.codey.browser.profiles.disable(profile.name))}
-              label={`Use ${profile.name}\u2019s logins`}
-              title={profile.active
-                ? `${profile.name}\u2019s logins are in use \u2014 switch off to stop using them`
-                : `Switch on to add ${profile.name}\u2019s logins to the live session`}
-            />
+              onClick={() => void run(() => window.codey.browser.profiles.setDefault(profile.name))}
+              style={{ ...styles.defaultChoice, ...(profile.active ? styles.defaultChoiceActive : null) }}
+              title={`Open new tabs in ${profile.name}`}
+            >
+              <span aria-hidden="true">{profile.active ? '●' : '○'}</span>
+              {profile.active ? 'New tabs open here' : 'Use for new tabs'}
+            </button>
             {/* Logins expire. Refreshing the whole profile from Chrome is one
                 click here, and works whether or not it is currently in use. */}
             <button
@@ -313,7 +329,6 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
             <div style={styles.syncRow}>
               <span style={styles.syncCopy}>
                 Keep in sync with Chrome — when one of this profile’s logins changes there, it refreshes itself.
-                If two syncing profiles share a site, that site stays manual: Chrome holds one identity per site, so Codey will not guess whose it is.
               </span>
               <Toggle
                 on={profile.autoSync}
@@ -359,6 +374,8 @@ function buttonStyle(compact: boolean): React.CSSProperties {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  defaultChoice: { display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', padding: '5px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.fg2, cursor: 'pointer', fontSize: 11 },
+  defaultChoiceActive: { borderColor: C.accent, background: C.accentDim, color: C.accent },
   syncRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
   syncCopy: { flex: 1, minWidth: 0, color: C.fg2, fontSize: 11, lineHeight: 1.45 },
   contents: { display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 200, overflowY: 'auto', padding: '5px 6px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },

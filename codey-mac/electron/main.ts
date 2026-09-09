@@ -2432,7 +2432,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('browser:getPageContext', event => browserCall(event, () => browserController.getPageContext()))
   ipcMain.handle('browser:downloads', event => browserCall(event, () => browserController.listDownloads()))
   ipcMain.handle('browser:tabs', event => browserCall(event, () => browserController.listTabs()))
-  ipcMain.handle('browser:newTab', (event, url?: string) => browserCall(event, () => browserController.newTab(url)))
+  ipcMain.handle('browser:newTab', (event, url?: string, profile?: string | null) =>
+    browserCall(event, () => browserController.newTab(
+      url,
+      profile === undefined ? browserController.activeProfileName() : profile,
+    )))
   ipcMain.handle('browser:switchTab', (event, id: string) => browserCall(event, () => browserController.switchTab(id)))
   ipcMain.handle('browser:closeTab', (event, id: string) => browserCall(event, () => browserController.closeTab(id)))
   ipcMain.handle('browser:resetSession', event => browserCall(event, async () => {
