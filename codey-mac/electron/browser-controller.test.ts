@@ -319,9 +319,9 @@ describe('BrowserController agent controls', () => {
     const opener = { webContents: openerContents }
     const parent = { isDestroyed: vi.fn(() => false) }
     const controller = new BrowserController(() => parent as any, vi.fn())
-    ;(controller as any).tabs = [{ id: 't1', view: opener }]
+    ;(controller as any).tabs = [{ id: 't1', view: opener, profile: null }]
     ;(controller as any).view = opener
-    ;(controller as any).bindEvents(openerContents)
+    ;(controller as any).bindEvents(openerContents, null)
 
     const response = openHandler!({
       url: 'https://accounts.google.com/o/oauth2/auth',
@@ -964,6 +964,24 @@ describe('BrowserController profiles', () => {
       expect(result.path).toBe(path.resolve(out))
       expect(JSON.parse(fs.readFileSync(out, 'utf8')).name).toBe('work')
       fs.rmSync(out, { force: true })
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports which profile each tab belongs to', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-tabprofile-'))
+    try {
+      const { controller } = makeFixture(dir)
+      ;(controller as any).tabs = [
+        { id: 't1', view: { webContents: { isDestroyed: () => false, getURL: () => 'https://a.com/', getTitle: () => 'A' } }, profile: null },
+        { id: 't2', view: { webContents: { isDestroyed: () => false, getURL: () => 'https://b.com/', getTitle: () => 'B' } }, profile: 'work' },
+      ]
+      ;(controller as any).view = (controller as any).tabs[1].view
+      expect(controller.listTabs().map(tab => [tab.id, tab.profile])).toEqual([
+        ['t1', null],
+        ['t2', 'work'],
+      ])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

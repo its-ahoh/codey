@@ -103,7 +103,7 @@ export interface HumanInputOptions {
  *  not currently open (injectable so tests need no real Electron). */
 export interface BrowserControllerOptions extends HumanInputOptions {
   getProfilesDir?: () => string
-  createHiddenView?: () => WebContentsView
+  createHiddenView?: (partition: string) => WebContentsView
 }
 
 export interface BrowserWaitRequest {
@@ -130,6 +130,8 @@ export interface BrowserTab {
   title: string
   url: string
   active: boolean
+  /** The profile whose storage jar this tab uses; null is the default jar. */
+  profile: string | null
 }
 
 /** Privacy-preserving signals used to detect when an authentication wall changes. */
@@ -147,6 +149,7 @@ export interface BrowserLoginStatus {
 interface BrowserTabRecord {
   id: string
   view: WebContentsView
+  profile: string | null
 }
 
 const EMPTY_STATE: BrowserState = {
@@ -251,7 +254,7 @@ export class BrowserController {
   private readonly random: () => number
   private readonly sleep: (ms: number) => Promise<void>
   private readonly getProfilesDir: () => string
-  private readonly createHiddenView?: () => WebContentsView
+  private readonly createHiddenView?: (partition: string) => WebContentsView
   private profileStore: BrowserProfileStore | null = null
   private profileStoreDir: string | null = null
 
@@ -270,9 +273,9 @@ export class BrowserController {
     // Hidden page used to apply a profile's localStorage for origins that are
     // not currently open in a tab. Shares the browser's persistent partition,
     // so it reads and writes the same storage the visible tabs use.
-    this.createHiddenView = options.createHiddenView ?? (() => new WebContentsView({
+    this.createHiddenView = options.createHiddenView ?? ((partition: string) => new WebContentsView({
       webPreferences: {
-        partition: BROWSER_PARTITION,
+        partition,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -314,12 +317,14 @@ export class BrowserController {
       title: tab.view.webContents.getTitle() || 'New tab',
       url: tab.view.webContents.getURL() === 'about:blank' ? '' : tab.view.webContents.getURL(),
       active: tab.view === this.view,
+      profile: tab.profile,
     }))
   }
 
-  async newTab(input = 'about:blank'): Promise<BrowserState> {
+  async newTab(input = 'about:blank', profileName: string | null = null): Promise<BrowserState> {
+    if (profileName !== null) assertProfileName(profileName)
     const url = normalizeBrowserUrl(input)
-    const tab = this.createTab(true)
+    const tab = this.createTab(true, profileName)
     if (url !== 'about:blank') await tab.view.webContents.loadURL(url)
     return this.refreshState()
   }
@@ -1397,7 +1402,7 @@ export class BrowserController {
         // Fall through to a hidden page.
       }
     }
-    const view = this.createHiddenView?.()
+    const view = this.createHiddenView?.(profilePartition(null))
     if (!view) return
     try {
       await new Promise<void>((resolve, reject) => {
@@ -1593,14 +1598,14 @@ export class BrowserController {
     return tab.view
   }
 
-  private createTab(activate: boolean): BrowserTabRecord {
-    const browserSession = this.sessionFor(null)
+  private createTab(activate: boolean, profileName: string | null = null): BrowserTabRecord {
+    const browserSession = this.sessionFor(profileName)
     this.bindSitePermissions(browserSession)
     this.bindDownloads(browserSession)
 
     const view = new WebContentsView({
       webPreferences: {
-        partition: BROWSER_PARTITION,
+        partition: profilePartition(profileName),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -1612,9 +1617,9 @@ export class BrowserController {
       },
     })
     view.setBackgroundColor('#141414')
-    const tab: BrowserTabRecord = { id: `t${++this.tabSequence}`, view }
+    const tab: BrowserTabRecord = { id: `t${++this.tabSequence}`, view, profile: profileName }
     this.tabs.push(tab)
-    this.bindEvents(view.webContents)
+    this.bindEvents(view.webContents, profileName)
     if (activate) {
       const win = this.attachedTo
       this.detach()
@@ -1656,7 +1661,7 @@ export class BrowserController {
     })
   }
 
-  private bindEvents(contents: WebContents): void {
+  private bindEvents(contents: WebContents, profileName: string | null): void {
     const active = () => this.view?.webContents === contents
     const refresh = () => { if (active()) this.refreshState() }
     contents.on('did-start-loading', () => { if (active()) this.patchState({ loading: true, error: null }) })
@@ -1701,7 +1706,7 @@ export class BrowserController {
             backgroundColor: '#141414',
             autoHideMenuBar: true,
             webPreferences: {
-              partition: BROWSER_PARTITION,
+              partition: profilePartition(profileName),
               contextIsolation: true,
               nodeIntegration: false,
               sandbox: true,
@@ -1712,7 +1717,7 @@ export class BrowserController {
       }
 
       const target = normalizeBrowserUrl(url)
-      const tab = this.createTab(true)
+      const tab = this.createTab(true, profileName)
       void tab.view.webContents.loadURL(target).catch(error => this.patchState({ error: error instanceof Error ? error.message : String(error) }))
       return { action: 'deny' }
     })
