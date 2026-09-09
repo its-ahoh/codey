@@ -141,6 +141,23 @@ describe('BrowserController agent controls', () => {
     expect('sendInputEvent' in contents).toBe(false)
   })
 
+  it('opens a followed new-tab link in the current tab\'s profile', async () => {
+    const target = { url: 'https://example.com/docs', newTab: true }
+    const contents = {
+      isDestroyed: vi.fn(() => false),
+      getURL: vi.fn(() => 'https://example.com/start'),
+      executeJavaScript: vi.fn(async () => target),
+    }
+    const view = { webContents: contents }
+    const controller = new BrowserController(() => null, vi.fn())
+    ;(controller as any).view = view
+    ;(controller as any).tabs = [{ id: 't1', view, profile: 'work' }]
+    const newTab = vi.spyOn(controller, 'newTab').mockResolvedValue({ url: target.url } as any)
+
+    await expect(controller.follow('e3')).resolves.toMatchObject({ ok: true, url: target.url })
+    expect(newTab).toHaveBeenCalledWith(target.url, 'work')
+  })
+
   it('leaves non-links and mutation-like links for the full-control click path', async () => {
     const contents = {
       isDestroyed: vi.fn(() => false),
@@ -820,6 +837,30 @@ describe('BrowserController profiles', () => {
       expect(cookiesSet).not.toHaveBeenCalled()
       await controller.setDefaultProfile(null)
       expect(controller.activeProfileName()).toBeNull()
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the default profile when it creates the first browser tab', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-first-tab-'))
+    try {
+      const controller = new BrowserController(
+        () => null,
+        vi.fn(),
+        vi.fn(),
+        undefined,
+        undefined,
+        { getProfilesDir: () => dir },
+      )
+      const store = new BrowserProfileStore(dir)
+      store.writeMeta('work', null)
+      store.setActive('work')
+      const view = { webContents: { loadURL: vi.fn(async () => {}) } }
+      const createTab = vi.spyOn(controller as any, 'createTab').mockReturnValue({ id: 't1', view, profile: 'work' })
+
+      expect((controller as any).ensureView()).toBe(view)
+      expect(createTab).toHaveBeenCalledWith(true, 'work')
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

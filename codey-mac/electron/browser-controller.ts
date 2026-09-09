@@ -357,7 +357,8 @@ export class BrowserController {
     if (wasActive) this.detach()
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false })
     if (wasActive) {
-      const next = this.tabs[Math.min(index, this.tabs.length - 1)] ?? this.createTab(false)
+      const next = this.tabs[Math.min(index, this.tabs.length - 1)]
+        ?? this.createTab(false, this.activeProfileName())
       if (!next.view.webContents.getURL()) {
         void next.view.webContents.loadURL('about:blank').catch(() => {})
       }
@@ -660,7 +661,8 @@ export class BrowserController {
 
     if (!target?.url || !isSafeBrowserNavigationUrl(target.url)) return null
     if (target.newTab) {
-      const state = await this.newTab(target.url)
+      const profileName = this.tabs.find(tab => tab.view === this.view)?.profile ?? null
+      const state = await this.newTab(target.url, profileName)
       return { ok: true, url: state.url, message: `Opened link in a new tab: ${target.url}` }
     }
     await contents.loadURL(target.url)
@@ -1557,7 +1559,7 @@ export class BrowserController {
   private ensureView(): WebContentsView {
     if (this.view && !this.view.webContents.isDestroyed()) return this.view
 
-    const tab = this.createTab(true)
+    const tab = this.createTab(true, this.activeProfileName())
     void tab.view.webContents.loadURL('about:blank').catch(() => {
       // A caller may immediately navigate elsewhere and abort this initial
       // blank load; the real navigation owns any user-visible error state.
