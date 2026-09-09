@@ -14,10 +14,10 @@ import {
   BrowserProfileStore,
   cookieMatchesUrl,
   DEFAULT_BROWSER_PARTITION,
-  mergeProfileSites,
   parseProfileJsonText,
   profileConflict,
   profilePartition,
+  siteCoversHost,
   summarizeProfileSites,
   readProfileJson,
   type BrowserProfile,
@@ -968,96 +968,67 @@ export class BrowserController {
     return this.profiles().active()
   }
 
-  /** Snapshot the live session (cookies + reachable per-site storage) into a
-   *  named profile. Saving does not activate the profile — call activateProfile
-   *  (or import with activate) to switch the browser to it.
-   *
-   *  With several profiles enabled the live session is their union, so writing
-   *  it back over one of them would quietly swallow the others. Saving to a new
-   *  name is still fine: that snapshot is honestly everything the browser
-   *  currently carries. */
-  async saveProfile(name: string): Promise<BrowserProfile> {
+  /** Snapshot the current tab's jar into a named profile. Used to turn "I am
+   *  signed in right now" into a profile that can be reopened later. The guard
+   *  against saving a combined session is gone: a jar holds one profile, so
+   *  there is no union to swallow anything. */
+  async saveProfile(name: string): Promise<BrowserProfileSummary> {
     assertProfileName(name)
-    const enabled = this.profiles().activeNames()
-    if (enabled.length > 1 && enabled.includes(name)) {
-      throw new Error(
-        `${enabled.length} profiles are enabled, so the live session is their combined logins. `
-        + `Saving it over "${name}" would pull ${enabled.filter(entry => entry !== name).join(', ')} into it. `
-        + 'Save to a new name, or leave only that profile enabled first.',
-      )
-    }
-    const data = await this.captureProfileData(null)
+    const current = this.tabs.find(tab => tab.view === this.view)?.profile ?? null
+    const data = await this.captureProfileData(current)
     const sourceUrl = this.view?.webContents.getURL() || null
-    return this.profiles().write(name, data, sourceUrl)
+    this.writeProfileMeta(name, sourceUrl)
+    await this.writeJar(name, data)
+    return this.summaryOf(name)
   }
 
   /** Import a session snapshot from a file path or raw JSON (our profile
-   *  format or a Playwright storageState) into a named profile. Activating is
-   *  the default — "import then enable" in one step. */
+   *  format or a Playwright storageState) into a profile's jar. The import
+   *  always lands in that jar - no other profile can see it - so `makeDefault`
+   *  only decides whether new tabs open under it. */
   async importProfile(
     name: string,
     source: { path: string } | { json: string },
-    activate = true,
+    makeDefault = true,
     sourceUrl: string | null = null,
-  ): Promise<BrowserProfile> {
+  ): Promise<BrowserProfileSummary> {
     assertProfileName(name)
     const data = 'path' in source
       ? readProfileJson(source.path)
       : parseProfileJsonText(source.json)
-    const profile = this.profiles().write(name, data, sourceUrl)
-    if (activate) {
-      await this.applyProfileData(profile)
-      this.profiles().setActive(name)
-    }
-    return profile
+    this.writeProfileMeta(name, sourceUrl)
+    await this.writeJar(name, data)
+    if (makeDefault) this.profiles().setActive(name)
+    return this.summaryOf(name)
   }
 
-  /** Names of saved profiles that already hold a cookie scoped to `url` -
+  /** Record (or refresh) a profile's file. The jar holds the session now, so
+   *  the file carries an empty payload rather than a second copy of it - a
+   *  stale duplicate is exactly what the partitions exist to prevent.
+   *  Task 7 replaces this with a metadata-only record that has no payload at
+   *  all; passing `null` keeps whatever sourceUrl the file already had. */
+  private writeProfileMeta(name: string, sourceUrl: string | null): void {
+    this.profiles().write(name, { cookies: [], origins: [] }, sourceUrl)
+  }
+
+  /** Names of saved profiles whose jar already holds a cookie scoped to `url` -
    *  the profiles a handoff of that page would be refreshing rather than
-   *  creating. Unreadable profiles are simply not offered. */
-  profilesForUrl(url: string): string[] {
+   *  creating. Unreadable jars are simply not offered. */
+  async profilesForUrl(url: string): Promise<string[]> {
     let parsed: URL
     try {
       parsed = new URL(url)
     } catch {
       return []
     }
-    const store = this.profiles()
-    return store.list()
-      .filter(summary => {
-        try {
-          return store.read(summary.name).cookies.some(cookie => cookieMatchesUrl(cookie, parsed))
-        } catch {
-          return false
-        }
-      })
-      .map(summary => summary.name)
-  }
-
-  /** Refuse a refresh that would make an enabled profile clash with another
-   *  enabled one. Enabling checks overlaps, but a re-sync can change a profile
-   *  that is already live — without re-checking, the fresh value would silently
-   *  fight the other profile's over the same cookie or storage key. Checked
-   *  before anything is written, so a refused refresh changes nothing. */
-  private assertRefreshFitsEnabledSet(name: string, next: BrowserProfileData): void {
-    const enabled = this.profiles().activeNames()
-    if (!enabled.includes(name)) return
-    for (const other of enabled) {
-      if (other === name) continue
-      let held: BrowserProfile
+    const names: string[] = []
+    for (const summary of this.profiles().list()) {
       try {
-        held = this.profiles().read(other)
-      } catch {
-        continue
-      }
-      const clash = profileConflict(held, next)
-      if (clash) {
-        throw new Error(
-          `Refreshing "${name}" would give it ${clash}, which enabled profile "${other}" also holds. `
-          + `Turn "${other}" off first, then re-sync.`,
-        )
-      }
+        const data = await this.captureProfileData(summary.name)
+        if (data.cookies.some(cookie => cookieMatchesUrl(cookie, parsed))) names.push(summary.name)
+      } catch { /* an unreadable jar is simply not offered */ }
     }
+    return names
   }
 
   /** What a profile's jar actually holds, site by site, so it can be looked at
@@ -1071,7 +1042,7 @@ export class BrowserController {
   }> {
     assertProfileName(name)
     const meta = this.profiles().read(name)
-    const data = await this.readJar(name)
+    const data = await this.captureProfileData(name)
     return {
       name,
       updatedAt: meta.updatedAt,
@@ -1084,7 +1055,7 @@ export class BrowserController {
    *  a SPA that keeps its token in localStorage may have no cookie at all. */
   async profileSites(name: string): Promise<string[]> {
     assertProfileName(name)
-    const data = await this.readJar(name)
+    const data = await this.captureProfileData(name)
     const seen = new Set<string>()
     for (const cookie of data.cookies) {
       const domain = cookie.domain.replace(/^\./, '').toLowerCase()
@@ -1098,22 +1069,49 @@ export class BrowserController {
     return [...seen]
   }
 
-  /** Refresh every site a profile holds from a fresh multi-site export, so one
-   *  click brings a whole saved identity back up to date. Only the sites the
-   *  export covers are replaced; anything the profile holds from elsewhere
-   *  survives. Refreshing an enabled profile re-applies the live session too. */
+  /** Refresh some of a profile's sites from a fresh export, straight into its
+   *  own jar. Only the cookies and origins the export covers are replaced; the
+   *  jar's other sites are left alone, so a single-site refresh cannot drop an
+   *  unrelated login. No conflict check is needed any more - another profile's
+   *  jar cannot see this one, so there is nothing for a fresh value to fight. */
   async resyncProfileSites(
     name: string,
     source: { json: string },
     sites: readonly string[],
-  ): Promise<BrowserProfile> {
+  ): Promise<BrowserProfileSummary> {
     assertProfileName(name)
-    const existing = this.profiles().read(name)
-    const merged = mergeProfileSites(existing, parseProfileJsonText(source.json), sites)
-    this.assertRefreshFitsEnabledSet(name, merged)
-    const profile = this.profiles().write(name, merged, existing.sourceUrl)
-    if (this.profiles().activeNames().includes(name)) await this.applyLiveProfiles()
-    return profile
+    const incoming = parseProfileJsonText(source.json)
+    const browserSession = this.sessionFor(name)
+    const covered = sites.map(site => site.replace(/^\./, '').toLowerCase()).filter(Boolean)
+    let existing: Electron.Cookie[] = []
+    try { existing = await browserSession.cookies.get({}) } catch { /* nothing to clear */ }
+    for (const cookie of existing) {
+      const domain = (cookie.domain || '').replace(/^\./, '').toLowerCase()
+      if (!domain || !covered.some(site => siteCoversHost(site, domain))) continue
+      const url = `https://${domain}${cookie.path || '/'}`
+      try { await browserSession.cookies.remove(url, cookie.name) } catch { /* best-effort */ }
+    }
+    for (const cookie of incoming.cookies) {
+      try {
+        await browserSession.cookies.set({
+          url: `https://${cookie.domain}${cookie.path || '/'}`,
+          name: cookie.name,
+          value: cookie.value,
+          ...(cookie.hostOnly ? {} : { domain: cookie.domain }),
+          path: cookie.path || '/',
+          secure: cookie.secure,
+          httpOnly: cookie.httpOnly,
+          ...(cookie.expires > 0 ? { expirationDate: cookie.expires } : {}),
+          ...(cookie.sameSite !== 'unspecified' ? { sameSite: cookie.sameSite } : {}),
+        })
+      } catch { /* one cookie failing must not abort the refresh */ }
+    }
+    for (const origin of incoming.origins) {
+      await this.applyLocalStorage(name, origin.origin, origin.localStorage)
+    }
+    // Move updatedAt so "last refreshed" is honest; null keeps the sourceUrl.
+    this.writeProfileMeta(name, null)
+    return this.summaryOf(name)
   }
 
   /** Names of every enabled profile, in the order they were enabled. */
@@ -1179,20 +1177,32 @@ export class BrowserController {
     return this.summaryOf(name)
   }
 
-  private summaryOf(name: string): BrowserProfileSummary {
-    const summary = this.profiles().list().find(entry => entry.name === name)
-    if (summary) return summary
-    const profile = this.profiles().read(name)
-    return {
-      name,
-      avatar: profile.avatar ?? null,
-      autoSync: profile.autoSync === true,
-      createdAt: profile.createdAt,
-      updatedAt: profile.updatedAt,
-      cookieCount: profile.cookies.length,
-      originCount: profile.origins.length,
-      active: this.profiles().activeNames().includes(name),
-      sourceUrl: profile.sourceUrl,
+  /** A profile's summary, with the counts read back from its jar. The file no
+   *  longer holds the session, so it can no longer be counted - only the jar
+   *  knows how much is really in there. */
+  private async summaryOf(name: string): Promise<BrowserProfileSummary> {
+    let base = this.profiles().list().find(entry => entry.name === name)
+    if (!base) {
+      // Not listed yet (the store directory was just created): read it
+      // directly rather than reporting a profile that plainly exists as gone.
+      const profile = this.profiles().read(name)
+      base = {
+        name,
+        avatar: profile.avatar ?? null,
+        autoSync: profile.autoSync === true,
+        createdAt: profile.createdAt,
+        updatedAt: profile.updatedAt,
+        cookieCount: 0,
+        originCount: 0,
+        active: this.profiles().activeNames().includes(name),
+        sourceUrl: profile.sourceUrl,
+      }
+    }
+    try {
+      const data = await this.captureProfileData(name)
+      return { ...base, cookieCount: data.cookies.length, originCount: data.origins.length }
+    } catch {
+      return base
     }
   }
 
@@ -1202,16 +1212,16 @@ export class BrowserController {
     await this.applyLiveProfiles()
   }
 
-  /** Rebuild the live session from every enabled profile. Always a full
-   *  replace, so disabling a profile really removes it and re-syncing one
-   *  cannot leave a stale copy of itself behind. */
+  /** Rebuild the default jar from every enabled profile. Always a full
+   *  replace, so disabling a profile really removes it.
+   *
+   *  This is the last piece of the pre-partition model: it copies profile
+   *  *files* into the shared jar, and those files no longer carry a session.
+   *  Task 8 retires it along with the rest of the merge machinery. */
   private async applyLiveProfiles(): Promise<void> {
-    const names = this.profiles().activeNames()
     const cookies: BrowserProfileCookie[] = []
     const origins: BrowserProfileStorageOrigin[] = []
-    let sourceUrl: string | null = null
-    let createdAt = Date.now()
-    for (const name of names) {
+    for (const name of this.profiles().activeNames()) {
       let profile: BrowserProfile
       try {
         profile = this.profiles().read(name)
@@ -1220,18 +1230,8 @@ export class BrowserController {
       }
       cookies.push(...profile.cookies)
       origins.push(...profile.origins)
-      sourceUrl = sourceUrl ?? profile.sourceUrl
-      createdAt = Math.min(createdAt, profile.createdAt || createdAt)
     }
-    await this.applyProfileData({
-      name: names.join('+'),
-      cookies,
-      origins,
-      avatar: null,
-      createdAt,
-      updatedAt: Date.now(),
-      sourceUrl,
-    })
+    await this.writeJar(null, { cookies, origins })
   }
 
   setProfileAvatar(name: string, avatar: string): BrowserProfileSummary {
@@ -1253,26 +1253,32 @@ export class BrowserController {
     return { deleted: true }
   }
 
-  /** Write a saved profile to an arbitrary path, so a session can be handed to
-   *  another machine (or another profile-enabled tool). */
+  /** Write a profile's jar to an arbitrary path, so a session can be handed to
+   *  another machine (or another profile-enabled tool). The jar is the source
+   *  of truth, so the export is what the profile can actually sign in with. */
   async exportProfile(name: string, targetPath: string): Promise<{ path: string }> {
-    const profile = this.profiles().read(name)
+    const meta = this.profiles().read(name)
+    const data = await this.captureProfileData(name)
     const file = path.resolve(String(targetPath))
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, JSON.stringify(profile, null, 2), { encoding: 'utf8', mode: 0o600 })
+    const payload = {
+      ...data,
+      name,
+      createdAt: meta.createdAt,
+      updatedAt: meta.updatedAt,
+      sourceUrl: meta.sourceUrl,
+    }
+    fs.writeFileSync(file, JSON.stringify(payload, null, 2), { encoding: 'utf8', mode: 0o600 })
     try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
     return { path: file }
   }
 
-  /** Everything a profile's jar holds, in the portable profile shape. Used by
-   *  export, by the contents disclosure, and by the Chrome-sync site list. */
-  private async readJar(profileName: string | null): Promise<BrowserProfileData> {
-    return this.captureProfileData(profileName)
-  }
-
-  /** Collect one profile jar's cookies and the localStorage of every open
-   *  http(s) tab that belongs to it (unique origins). Page text and fields are
-   *  never read — only the storage that holds login state. */
+  /** Everything a profile's jar holds, in the portable profile shape: its
+   *  cookies plus the localStorage of every open http(s) tab that belongs to
+   *  it (unique origins). This is the read side of a profile - export, the
+   *  contents disclosure and the Chrome-sync site list all come through here.
+   *  Page text and fields are never read — only the storage that holds login
+   *  state. */
   private async captureProfileData(profileName: string | null): Promise<BrowserProfileData> {
     let cookies: BrowserProfileCookie[] = []
     try {
@@ -1343,12 +1349,11 @@ export class BrowserController {
     return { cookies, origins: Array.from(origins.values()) }
   }
 
-  /** Replace the live session's cookies with the profile's, then apply its
-   *  per-origin localStorage. Replacing rather than merging is what makes
-   *  activating a profile an identity switch: leftovers from the previous
-   *  profile cannot leak into the new one. */
-  private async applyProfileData(profile: BrowserProfile): Promise<void> {
-    const browserSession = this.sessionFor(null)
+  /** Replace a profile's jar with this data: cookies wholesale, then
+   *  per-origin localStorage. Replacing rather than merging is what makes an
+   *  import an import - leftovers from what the jar held cannot survive it. */
+  private async writeJar(profileName: string | null, data: BrowserProfileData): Promise<void> {
+    const browserSession = this.sessionFor(profileName)
     let existing: Electron.Cookie[] = []
     try {
       existing = await browserSession.cookies.get({})
@@ -1367,7 +1372,7 @@ export class BrowserController {
     try {
       await browserSession.clearStorageData({ storages: ['localstorage'] })
     } catch { /* session unavailable — cookies were the load-bearing part */ }
-    for (const cookie of profile.cookies) {
+    for (const cookie of data.cookies) {
       try {
         const url = `https://${cookie.domain}${cookie.path || '/'}`
         await browserSession.cookies.set({
@@ -1384,13 +1389,11 @@ export class BrowserController {
           ...(cookie.sameSite !== 'unspecified' ? { sameSite: cookie.sameSite } : {}),
         })
       } catch {
-        // One cookie failing must not abort the whole activation.
+        // One cookie failing must not abort the whole import.
       }
     }
-    for (const origin of profile.origins) {
-      // Task 6 moves this write into the profile's own jar; until then the
-      // whole of applyProfileData still lands in the default one.
-      await this.applyLocalStorage(null, origin.origin, origin.localStorage)
+    for (const origin of data.origins) {
+      await this.applyLocalStorage(profileName, origin.origin, origin.localStorage)
     }
   }
 

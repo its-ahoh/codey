@@ -2233,10 +2233,10 @@ app.whenReady().then(async () => {
       },
       suggestProfileName: async hostname => ({
         name: availableProfileName(hostname, browserController.listProfiles().map(profile => profile.name)),
-        existing: browserController.profilesForUrl(`https://${hostname}/`),
+        existing: await browserController.profilesForUrl(`https://${hostname}/`),
       }),
       profilesOverview: async hostname => {
-        const holds = new Set(hostname ? browserController.profilesForUrl(`https://${hostname}/`) : [])
+        const holds = new Set(hostname ? await browserController.profilesForUrl(`https://${hostname}/`) : [])
         return {
           profiles: browserController.listProfiles().map(profile => ({
             name: profile.name,
@@ -2424,7 +2424,11 @@ app.whenReady().then(async () => {
     profiles: browserController.listProfiles(),
   })))
   ipcMain.handle('browser:profiles:save', (event, name: string) =>
-    browserCall(event, () => browserController.saveProfile(String(name || ''))))
+    browserCall(event, async () => {
+      const result = await browserController.saveProfile(String(name || ''))
+      await refreshWatchDomains()
+      return result
+    }))
   ipcMain.handle('browser:profiles:activate', (event, name: string) =>
     browserCall(event, () => browserController.activateProfile(String(name || ''))))
   // Enabling adds a profile to the live session instead of replacing it, so the
@@ -2454,11 +2458,12 @@ app.whenReady().then(async () => {
     const sites = await browserController.profileSites(requested)
     if (sites.length === 0) throw new Error(`"${requested}" holds no logins yet - there is nothing to refresh`)
     const session = await chromeCompanion.exportSessionForSites(sites)
-    await browserController.resyncProfileSites(requested, {
+    const profile = await browserController.resyncProfileSites(requested, {
       json: JSON.stringify({ cookies: session.cookies, origins: session.origins }),
     }, session.sites)
-    const profile = browserController.listProfiles().find(item => item.name === requested)
-    if (!profile) throw new Error(`"${requested}" was refreshed but could not be read back`)
+    // A refresh can add sites the profile had no login for, so the watch list
+    // has to be recomputed from the jar it just changed.
+    await refreshWatchDomains()
     return { profile, siteCount: session.sites.length, cookieCount: session.cookies.length }
   }
   ipcMain.handle('browser:profiles:syncProfile', (event, name: string) =>
@@ -2472,16 +2477,22 @@ app.whenReady().then(async () => {
   const autoSyncProfileNames = () =>
     browserController.listProfiles().filter(profile => profile.autoSync).map(profile => profile.name)
   // The watch list has to be handed to Chrome synchronously, but reading a
-  // profile's jar is async - so it is computed ahead of time and cached, and
-  // refreshed whenever the profiles it is derived from may have changed.
+  // profile's jar is async - so it is computed ahead of time and cached. It is
+  // refreshed on every path that writes a profile, and on a slow timer because
+  // the list now comes from a live jar: simply signing into a new site in a
+  // profile tab changes it with no mutation for us to hook.
   let watchDomainCache: string[] = []
+  // Two refreshes can overlap (a manual sync during an auto-sync pass); without
+  // this the slower one would finish last and install the older list.
+  let watchDomainGeneration = 0
   const refreshWatchDomains = async () => {
-    const syncing = autoSyncProfileNames()
+    const generation = (watchDomainGeneration += 1)
     const domains = new Set<string>()
-    for (const name of syncing) {
+    for (const name of autoSyncProfileNames()) {
       try { for (const site of await browserController.profileSites(name)) domains.add(site) }
       catch { /* an unreadable profile just is not watched */ }
     }
+    if (generation !== watchDomainGeneration) return
     watchDomainCache = [...domains]
   }
   const domainsTouch = (left: string, right: string): boolean => {
@@ -2506,12 +2517,18 @@ app.whenReady().then(async () => {
     // profile's other, unrelated logins). Profiles with the switch off are
     // never written to, and never block the one that has it on.
     const targets = new Map<string, Set<string>>()  // profile -> its changed sites
+    // Each profileSites call reads a whole jar and injects script into every
+    // live page of that profile, so it is done once per profile up front - not
+    // once per (changed domain x profile) pair.
+    const sitesByProfile = new Map<string, string[]>()
+    for (const name of autoSyncProfileNames()) {
+      try { sitesByProfile.set(name, await browserController.profileSites(name)) }
+      catch { /* an unreadable profile does not own anything */ }
+    }
     for (const domain of changed) {
       const owners: string[] = []
-      for (const name of autoSyncProfileNames()) {
-        try {
-          if ((await browserController.profileSites(name)).some(site => domainsTouch(site, domain))) owners.push(name)
-        } catch { /* an unreadable profile does not own anything */ }
+      for (const [name, sites] of sitesByProfile) {
+        if (sites.some(site => domainsTouch(site, domain))) owners.push(name)
       }
       if (owners.length !== 1) {
         if (owners.length > 1) {
@@ -2560,6 +2577,11 @@ app.whenReady().then(async () => {
     },
   })
   void refreshWatchDomains()
+  // The jar changes without going through us whenever a profile tab signs into
+  // a new site, so the watch list is also re-derived periodically. Cheap when
+  // nothing syncs: autoSyncProfileNames() is empty and no jar is read.
+  const watchDomainTimer = setInterval(() => { void refreshWatchDomains() }, 5 * 60 * 1000)
+  watchDomainTimer.unref?.()
   ipcMain.handle('browser:profiles:setAutoSync', (event, name: string, enabled: boolean) =>
     browserCall(event, async () => {
       const result = await browserController.setProfileAutoSync(String(name || ''), enabled === true)
@@ -2570,7 +2592,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('browser:profiles:setAvatar', (event, name: string, avatar: string) =>
     browserCall(event, () => browserController.setProfileAvatar(String(name || ''), String(avatar || ''))))
   ipcMain.handle('browser:profiles:delete', (event, name: string) =>
-    browserCall(event, () => browserController.deleteProfile(String(name || ''))))
+    browserCall(event, async () => {
+      const result = await browserController.deleteProfile(String(name || ''))
+      // A deleted profile's sites are nobody's to watch any more.
+      await refreshWatchDomains()
+      return result
+    }))
   ipcMain.handle('browser:profiles:import', event => browserCall(event, async () => {
     const result = await dialog.showOpenDialog(mainWindow ?? (undefined as any), {
       title: 'Import browser profile',
@@ -2584,9 +2611,11 @@ app.whenReady().then(async () => {
     if (result.canceled || result.filePaths.length === 0) return { imported: false, profile: null }
     const filePath = result.filePaths[0]
     const name = deriveProfileNameFromFile(filePath)
-    // Importing activates by default — "import then enable" in one step — and
-    // the identity switch prompts the user like any mutating browser command.
+    // The import lands in the profile's own jar; making it the default for new
+    // tabs is the usual next step, so it is the default here too.
     const profile = await browserController.importProfile(name, { path: filePath })
+    // An import can bring in sites a syncing profile now holds.
+    await refreshWatchDomains()
     return { imported: true, profile }
   }))
   ipcMain.handle('browser:profiles:export', (event, name: string) => browserCall(event, async () => {
