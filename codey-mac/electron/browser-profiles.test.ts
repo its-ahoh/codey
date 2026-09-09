@@ -123,26 +123,22 @@ describe('BrowserProfileStore', () => {
     try {
       expect(store.list()).toEqual([])
       const before = Date.now()
-      const written = store.write('work', {
-        cookies: [{ name: 'sid', value: 'abc', domain: 'example.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'lax' }],
-        origins: [],
-      }, 'https://example.com/')
+      const written = store.writeMeta('work', 'https://example.com/')
       expect(written.name).toBe('work')
       expect(written.avatar).toBeNull()
       expect(written.createdAt).toBeGreaterThanOrEqual(before)
       expect(written.sourceUrl).toBe('https://example.com/')
 
       const read = store.read('work')
-      expect(read.cookies).toHaveLength(1)
-      expect(read.cookies[0].value).toBe('abc')
+      expect(read.name).toBe('work')
 
       // Re-writing keeps the original createdAt and refreshes updatedAt.
-      const again = store.write('work', { cookies: [], origins: [] }, null)
+      const again = store.writeMeta('work', null)
       expect(again.createdAt).toBe(written.createdAt)
       expect(again.updatedAt).toBeGreaterThanOrEqual(written.updatedAt)
       expect(again.sourceUrl).toBe('https://example.com/')
 
-      store.write('zebra', { cookies: [], origins: [] }, null)
+      store.writeMeta('zebra', null)
       const summaries = store.list()
       expect(summaries.map(profile => profile.name)).toEqual(['work', 'zebra'])
       expect(summaries[0]).toMatchObject({ name: 'work', cookieCount: 0, originCount: 0, active: false })
@@ -164,13 +160,13 @@ describe('BrowserProfileStore', () => {
   it('keeps the per-profile auto-sync switch across re-saves', () => {
     const { dir, store } = makeStore()
     try {
-      store.write('work', { cookies: [], origins: [] }, null)
+      store.writeMeta('work', null)
       expect(store.list()[0].autoSync).toBe(false)
 
       expect(store.setAutoSync('work', true).autoSync).toBe(true)
-      // A refresh rewrites the profile's data; the switch must survive it,
+      // A refresh rewrites the profile's metadata; the switch must survive it,
       // or auto-sync would turn itself off on its own first run.
-      store.write('work', { cookies: [], origins: [] }, null)
+      store.writeMeta('work', null)
       expect(store.read('work').autoSync).toBe(true)
 
       expect(store.setAutoSync('work', false).autoSync).toBe(false)
@@ -230,8 +226,8 @@ describe('BrowserProfileStore', () => {
   it('flags the active profile in list()', () => {
     const { store } = makeStore()
     try {
-      store.write('a', { cookies: [], origins: [] }, null)
-      store.write('b', { cookies: [], origins: [] }, null)
+      store.writeMeta('a', null)
+      store.writeMeta('b', null)
       store.setActive('b')
       const summaries = store.list()
       expect(summaries.find(profile => profile.name === 'b')?.active).toBe(true)
@@ -249,7 +245,7 @@ describe('BrowserProfileStore', () => {
     const { dir, store } = makeStore()
     try {
       expect(() => store.read('ghost')).toThrow(/missing or unreadable/)
-      store.write('bad', { cookies: [], origins: [] }, null)
+      store.writeMeta('bad', null)
       fs.writeFileSync(path.join(dir, 'bad.json'), '{corrupt')
       expect(() => store.read('bad')).toThrow(/missing or unreadable|corrupt/)
       // list() still returns a zeroed summary for the corrupt file.
@@ -474,5 +470,69 @@ describe('profilePartition', () => {
 
   it('refuses a name that is not a valid profile name', () => {
     expect(() => profilePartition('../escape')).toThrow(/Profile names must be/)
+  })
+})
+
+describe('BrowserProfileStore metadata records', () => {
+  it('writes metadata without cookies and marks the schema', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-store-meta-'))
+    try {
+      const store = new BrowserProfileStore(dir)
+      store.writeMeta('work', 'https://github.com/')
+      const raw = JSON.parse(fs.readFileSync(path.join(dir, 'work.json'), 'utf8'))
+      expect(raw.schema).toBe(2)
+      expect(raw.cookies).toBeUndefined()
+      expect(raw.origins).toBeUndefined()
+      expect(raw.sourceUrl).toBe('https://github.com/')
+      expect(store.read('work').name).toBe('work')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports a pre-upgrade file as needing migration, once', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-store-migrate-'))
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, 'work.json'), JSON.stringify({
+        name: 'work',
+        cookies: [{
+          name: 'sid', value: 'w', domain: 'github.com', path: '/', expires: -1,
+          httpOnly: true, secure: true, sameSite: 'lax',
+        }],
+        origins: [],
+        createdAt: 1,
+        updatedAt: 2,
+        sourceUrl: null,
+      }))
+      const store = new BrowserProfileStore(dir)
+      const pending = store.pendingMigrations()
+      expect(pending.map(entry => entry.name)).toEqual(['work'])
+      expect(pending[0].data.cookies.map(cookie => cookie.value)).toEqual(['w'])
+
+      store.markMigrated('work')
+      expect(store.pendingMigrations()).toEqual([])
+      const raw = JSON.parse(fs.readFileSync(path.join(dir, 'work.json'), 'utf8'))
+      expect(raw.cookies).toBeUndefined()
+      expect(raw.createdAt).toBe(1)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the touch timestamp moving without touching other metadata', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-store-touch-'))
+    try {
+      const store = new BrowserProfileStore(dir)
+      store.writeMeta('work', null)
+      store.setAutoSync('work', true)
+      const before = store.read('work').updatedAt
+      store.touch('work', before + 1000)
+      const after = store.read('work')
+      expect(after.updatedAt).toBe(before + 1000)
+      expect(after.autoSync).toBe(true)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

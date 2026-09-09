@@ -578,8 +578,8 @@ describe('BrowserController profiles', () => {
         }) as any,
         { getProfilesDir: () => dir },
       )
-      new BrowserProfileStore(dir).write('work', { cookies: [], origins: [] }, null)
-      new BrowserProfileStore(dir).write('personal', { cookies: [], origins: [] }, null)
+      new BrowserProfileStore(dir).writeMeta('work', null)
+      new BrowserProfileStore(dir).writeMeta('personal', null)
 
       await expect(controller.profileSites('work')).resolves.toEqual(['github.com'])
       await expect(controller.profileSites('personal')).resolves.toEqual(
@@ -589,6 +589,60 @@ describe('BrowserController profiles', () => {
       expect(contents.sites.map(site => site.domain)).toEqual(['github.com'])
       // Values never come back.
       expect(JSON.stringify(contents)).not.toContain('"w"')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('migrates a legacy profile session into its partition exactly once', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-migrate-'))
+    try {
+      fs.writeFileSync(path.join(dir, 'work.json'), JSON.stringify({
+        name: 'work',
+        cookies: [{
+          name: 'sid', value: 'legacy', domain: 'github.com', path: '/', expires: -1,
+          httpOnly: true, secure: true, sameSite: 'lax',
+        }],
+        origins: [],
+        createdAt: 10,
+        updatedAt: 20,
+        sourceUrl: 'https://github.com/',
+      }))
+      const writes: Array<{ partition: string; cookie: any }> = []
+      const controller = new BrowserController(
+        () => null,
+        vi.fn(),
+        vi.fn(),
+        undefined,
+        (partition: string) => ({
+          cookies: {
+            get: vi.fn(async () => []),
+            set: vi.fn(async (cookie: any) => { writes.push({ partition, cookie }) }),
+            remove: vi.fn(async () => {}),
+          },
+          clearStorageData: vi.fn(async () => {}),
+        }) as any,
+        { getProfilesDir: () => dir },
+      )
+
+      await expect(controller.migrateProfilesToPartitions()).resolves.toEqual({ migrated: ['work'] })
+      expect(writes).toEqual([{
+        partition: 'persist:codey-profile-work',
+        cookie: expect.objectContaining({ name: 'sid', value: 'legacy' }),
+      }])
+      const stored = JSON.parse(fs.readFileSync(path.join(dir, 'work.json'), 'utf8'))
+      expect(stored).toMatchObject({
+        schema: 2,
+        name: 'work',
+        createdAt: 10,
+        updatedAt: 20,
+        sourceUrl: 'https://github.com/',
+      })
+      expect(stored.cookies).toBeUndefined()
+      expect(stored.origins).toBeUndefined()
+
+      await expect(controller.migrateProfilesToPartitions()).resolves.toEqual({ migrated: [] })
+      expect(writes).toHaveLength(1)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -626,7 +680,9 @@ describe('BrowserController profiles', () => {
       expect(script).not.toContain('innerText')
       const stored = JSON.parse(fs.readFileSync(path.join(dir, 'work.json'), 'utf8'))
       expect(stored.name).toBe('work')
-      expect(stored.cookies).toEqual([])
+      expect(stored.schema).toBe(2)
+      expect(stored.cookies).toBeUndefined()
+      expect(stored.origins).toBeUndefined()
       // Counts are read back from the jar, which is where the session now is.
       expect(summary).toMatchObject({ cookieCount: 1, active: false })
     } finally {
@@ -677,35 +733,29 @@ describe('BrowserController profiles', () => {
     }
   })
 
-  it('keeps several profiles enabled at once and unions their cookies', async () => {
+  it('keeps several profiles enabled and rebuilds from their jars, not metadata files', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
     try {
       const { controller, cookiesSet } = makeFixture(dir)
       const store = new BrowserProfileStore(dir)
-      store.write('gh', {
-        cookies: [{ name: 'gh', value: '1', domain: 'github.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'lax' }],
-        origins: [],
-      }, null)
-      store.write('jira', {
-        cookies: [{ name: 'jira', value: '2', domain: 'jira.example.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'lax' }],
-        origins: [],
-      }, null)
+      store.writeMeta('gh', null)
+      store.writeMeta('jira', null)
 
       await controller.enableProfile('gh')
       await controller.enableProfile('jira')
       expect(controller.activeProfileNames()).toEqual(['gh', 'jira'])
-      expect(controller.listProfiles().filter(profile => profile.active).map(profile => profile.name)).toEqual(['gh', 'jira'])
+      expect((await controller.listProfiles()).filter(profile => profile.active).map(profile => profile.name)).toEqual(['gh', 'jira'])
 
-      // The last apply carries both logins, not just the one just enabled.
+      // The fixture exposes one live cookie in each jar. Metadata has no
+      // session payload, so these writes prove the jars were read instead.
       const applied = cookiesSet.mock.calls.map(call => (call as any[])[0].name)
-      expect(applied).toContain('gh')
-      expect(applied).toContain('jira')
+      expect(applied).toEqual(['sid', 'sid', 'sid'])
 
       // Turning one off rebuilds the session from what is left.
       cookiesSet.mockClear()
       await controller.disableProfile('gh')
       expect(controller.activeProfileNames()).toEqual(['jira'])
-      expect(cookiesSet.mock.calls.map(call => (call as any[])[0].name)).toEqual(['jira'])
+      expect(cookiesSet.mock.calls.map(call => (call as any[])[0].name)).toEqual(['sid'])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -716,8 +766,8 @@ describe('BrowserController profiles', () => {
     try {
       const { controller } = makeFixture(dir)
       const store = new BrowserProfileStore(dir)
-      store.write('gh', { cookies: [], origins: [] }, null)
-      store.write('jira', { cookies: [], origins: [] }, null)
+      store.writeMeta('gh', null)
+      store.writeMeta('jira', null)
       await controller.enableProfile('gh')
       await controller.enableProfile('jira')
 
@@ -731,8 +781,20 @@ describe('BrowserController profiles', () => {
   it('replaces localStorage wholesale and keeps host-only cookies host-only', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
     try {
-      const { controller, contents, cookiesSet, clearStorage } = makeFixture(dir)
-      new BrowserProfileStore(dir).write('work', {
+      const hidden = {
+        webContents: {
+          isDestroyed: vi.fn(() => false),
+          getURL: vi.fn(() => 'about:blank'),
+          executeJavaScript: vi.fn(async (_script: string) => true),
+          once: vi.fn((event: string, cb: () => void) => { if (event === 'did-finish-load') cb() }),
+          loadURL: vi.fn(async () => {}),
+          close: vi.fn(),
+        },
+      }
+      const { controller, cookiesSet, clearStorage } = makeFixture(dir, {
+        options: { createHiddenView: () => hidden },
+      })
+      await controller.importProfile('work', { json: JSON.stringify({
         cookies: [
           {
             name: 'host', value: '1', domain: 'example.com', path: '/', expires: -1,
@@ -744,15 +806,10 @@ describe('BrowserController profiles', () => {
           },
         ],
         origins: [{ origin: 'https://example.com', localStorage: [{ name: 'token', value: 't' }] }],
-      }, null)
-
-      await controller.activateProfile('work')
-
-      // The token an old identity left in some other origin's storage must not
-      // survive the switch, and a profile only lists the keys it holds - so
-      // the partition is wiped, and each origin is cleared before rewriting.
+      }) }, false)
+      // Import replaces the profile jar's localStorage before rewriting it.
       expect(clearStorage).toHaveBeenCalledWith({ storages: ['localstorage'] })
-      const applyScript = contents.executeJavaScript.mock.calls.map(call => (call as any[])[0]).join('\n')
+      const applyScript = hidden.webContents.executeJavaScript.mock.calls.map(call => (call as any[])[0]).join('\n')
       expect(applyScript).toContain('localStorage.clear()')
 
       // Electron creates a host-only cookie by *omitting* domain; passing it
@@ -783,7 +840,7 @@ describe('BrowserController profiles', () => {
           } },
         }],
       })
-      new BrowserProfileStore(dir).write('spa', { cookies: [], origins: [] }, null)
+      new BrowserProfileStore(dir).writeMeta('spa', null)
       // A SPA login can be storage-only; a refresh that skipped it would claim
       // the profile "holds no logins".
       expect(await controller.profileSites('spa')).toEqual(['app.notion.example'])
@@ -814,7 +871,7 @@ describe('BrowserController profiles', () => {
         }],
       })
       // Only the metadata still comes from the file; the sites come from the jar.
-      new BrowserProfileStore(dir).write('work', { cookies: [], origins: [] }, 'https://github.com/')
+      new BrowserProfileStore(dir).writeMeta('work', 'https://github.com/')
 
       const contents = await controller.profileContents('work')
       expect(contents).toMatchObject({ name: 'work', sourceUrl: 'https://github.com/' })
@@ -865,8 +922,9 @@ describe('BrowserController profiles', () => {
       // Task 7 drops these empty arrays from the file shape entirely.
       const stored = JSON.parse(fs.readFileSync(path.join(dir, 'work.json'), 'utf8'))
       expect(stored.name).toBe('work')
-      expect(stored.cookies).toEqual([])
-      expect(stored.origins).toEqual([])
+      expect(stored.schema).toBe(2)
+      expect(stored.cookies).toBeUndefined()
+      expect(stored.origins).toBeUndefined()
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -923,7 +981,7 @@ describe('BrowserController profiles', () => {
         sameSite: 'lax',
       }))
       expect(controller.activeProfileName()).toBe('gh')
-      expect(controller.listProfiles().find(profile => profile.name === 'gh')?.active).toBe(true)
+      expect((await controller.listProfiles()).find(profile => profile.name === 'gh')?.active).toBe(true)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -936,7 +994,7 @@ describe('BrowserController profiles', () => {
       await controller.importProfile('work', { json: '{"cookies":[]}' }, false)
       expect(controller.activeProfileName()).toBeNull()
       expect(cookiesSet).not.toHaveBeenCalled()
-      expect(controller.listProfiles()).toHaveLength(1)
+      expect(await controller.listProfiles()).toHaveLength(1)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -1008,7 +1066,7 @@ describe('BrowserController profiles', () => {
       expect(cookiesRemove).not.toHaveBeenCalled()
       await controller.deleteProfile('work')
       expect(controller.activeProfileName()).toBeNull()
-      expect(controller.listProfiles()).toEqual([])
+      expect(await controller.listProfiles()).toEqual([])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

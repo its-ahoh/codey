@@ -408,7 +408,7 @@ export class BrowserAgentBridge {
       }
       // ── Profiles ──────────────────────────────────────────────────────
       if (req.method === 'GET' && route === '/profiles') {
-        json(res, 200, { active: this.controller.activeProfileName(), profiles: this.controller.listProfiles() })
+        json(res, 200, { active: this.controller.activeProfileName(), profiles: await this.controller.listProfiles() })
         return
       }
       if (req.method === 'POST' && route === '/profile/save') {

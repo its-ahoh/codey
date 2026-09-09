@@ -2045,6 +2045,14 @@ app.whenReady().then(async () => {
     state => sendToRenderer('browser:sitePermission', state),
   )
   browserController.setSitePermissionManager(browserSitePermissions)
+  try {
+    const { migrated } = await browserController.migrateProfilesToPartitions()
+    if (migrated.length > 0) {
+      console.log(`[browser] moved ${migrated.length} profile(s) into their own partitions: ${migrated.join(', ')}`)
+    }
+  } catch (error) {
+    console.warn(`[browser] profile migration failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
   browserExtensionManager = new BrowserExtensionManager(
     browserSession,
     join(app.getPath('userData'), 'browser-extensions.json'),
@@ -2232,13 +2240,13 @@ app.whenReady().then(async () => {
         return { id: cryptoMod.randomUUID(), name, path: filePath, mimeType, size: data.length }
       },
       suggestProfileName: async hostname => ({
-        name: availableProfileName(hostname, browserController.listProfiles().map(profile => profile.name)),
+        name: availableProfileName(hostname, (await browserController.listProfiles()).map(profile => profile.name)),
         existing: await browserController.profilesForUrl(`https://${hostname}/`),
       }),
       profilesOverview: async hostname => {
         const holds = new Set(hostname ? await browserController.profilesForUrl(`https://${hostname}/`) : [])
         return {
-          profiles: browserController.listProfiles().map(profile => ({
+          profiles: (await browserController.listProfiles()).map(profile => ({
             name: profile.name,
             active: profile.active,
             autoSync: profile.autoSync,
@@ -2251,7 +2259,7 @@ app.whenReady().then(async () => {
         const sessionState = await chromeCompanion.exportSession()
         const tabUrl = new URL(sessionState.tab.url)
         const json = JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins })
-        const taken = browserController.listProfiles().map(profile => profile.name)
+        const taken = (await browserController.listProfiles()).map(profile => profile.name)
         let name: string
         if (requested) {
           // The user typed this name, so a collision is a real mistake worth
@@ -2418,10 +2426,10 @@ app.whenReady().then(async () => {
   }))
   // Browser profiles: saved/imported sessions the renderer (browser toolbar
   // and Settings) manages through the same controller the agents use.
-  ipcMain.handle('browser:profiles:list', event => browserCall(event, () => ({
+  ipcMain.handle('browser:profiles:list', event => browserCall(event, async () => ({
     active: browserController.activeProfileName(),
     activeNames: browserController.activeProfileNames(),
-    profiles: browserController.listProfiles(),
+    profiles: await browserController.listProfiles(),
   })))
   ipcMain.handle('browser:profiles:save', (event, name: string) =>
     browserCall(event, async () => {
@@ -2474,25 +2482,28 @@ app.whenReady().then(async () => {
   // pull path the Sync button uses. The switch lives on each profile - "this
   // profile mirrors Chrome" is a property of the profile, not of the app - so
   // a personal/work pair sharing a site can sync exactly one of the two.
-  const autoSyncProfileNames = () =>
-    browserController.listProfiles().filter(profile => profile.autoSync).map(profile => profile.name)
+  const autoSyncProfileNames = async () =>
+    (await browserController.listProfiles()).filter(profile => profile.autoSync).map(profile => profile.name)
   // The watch list has to be handed to Chrome synchronously, but reading a
   // profile's jar is async - so it is computed ahead of time and cached. It is
   // refreshed on every path that writes a profile, and on a slow timer because
   // the list now comes from a live jar: simply signing into a new site in a
   // profile tab changes it with no mutation for us to hook.
   let watchDomainCache: string[] = []
+  let autoSyncProfileCache: string[] = []
   // Two refreshes can overlap (a manual sync during an auto-sync pass); without
   // this the slower one would finish last and install the older list.
   let watchDomainGeneration = 0
   const refreshWatchDomains = async () => {
     const generation = (watchDomainGeneration += 1)
     const domains = new Set<string>()
-    for (const name of autoSyncProfileNames()) {
+    const names = await autoSyncProfileNames()
+    for (const name of names) {
       try { for (const site of await browserController.profileSites(name)) domains.add(site) }
       catch { /* an unreadable profile just is not watched */ }
     }
     if (generation !== watchDomainGeneration) return
+    autoSyncProfileCache = names
     watchDomainCache = [...domains]
   }
   const domainsTouch = (left: string, right: string): boolean => {
@@ -2521,7 +2532,7 @@ app.whenReady().then(async () => {
     // live page of that profile, so it is done once per profile up front - not
     // once per (changed domain x profile) pair.
     const sitesByProfile = new Map<string, string[]>()
-    for (const name of autoSyncProfileNames()) {
+    for (const name of await autoSyncProfileNames()) {
       try { sitesByProfile.set(name, await browserController.profileSites(name)) }
       catch { /* an unreadable profile does not own anything */ }
     }
@@ -2567,7 +2578,7 @@ app.whenReady().then(async () => {
     }
   }
   chromeCompanion?.setAutoSync({
-    watchDomains: () => (autoSyncProfileNames().length === 0 ? null : watchDomainCache),
+    watchDomains: () => (autoSyncProfileCache.length === 0 ? null : watchDomainCache),
     onSessionChanged: domains => {
       for (const domain of domains) pendingAutoSyncDomains.add(domain)
       // One burst of cookie churn (a login flow sets a handful) becomes one
@@ -2697,7 +2708,7 @@ app.whenReady().then(async () => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
     const requested = String(name || '').trim()
     assertProfileName(requested)
-    if (browserController.listProfiles().some(profile => profile.name === requested)) {
+    if ((await browserController.listProfiles()).some(profile => profile.name === requested)) {
       throw new Error(`A Codey Browser profile named "${requested}" already exists — choose another name`)
     }
     const picked = (Array.isArray(sites) ? sites : [])
@@ -2727,7 +2738,7 @@ app.whenReady().then(async () => {
     await browserController.importProfile(requested, {
       json: JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins }),
     }, true, null)
-    const profile = browserController.listProfiles().find(item => item.name === requested)
+    const profile = (await browserController.listProfiles()).find(item => item.name === requested)
     if (!profile) throw new Error('Chrome sessions were imported but the Codey Browser profile could not be found')
     return { imported: true, profile, cookieCount: sessionState.cookies.length, sites: sessionState.sites }
   }))

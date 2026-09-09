@@ -15,12 +15,10 @@ import {
   cookieMatchesUrl,
   DEFAULT_BROWSER_PARTITION,
   parseProfileJsonText,
-  profileConflict,
   profilePartition,
   siteCoversHost,
   summarizeProfileSites,
   readProfileJson,
-  type BrowserProfile,
   type BrowserProfileCookie,
   type BrowserProfileData,
   type BrowserProfileSiteSummary,
@@ -958,9 +956,13 @@ export class BrowserController {
   // imported from a file, and activated to switch the browser's identity.
   // See browser-profiles.ts for the model and store.
 
-  /** All saved profiles, with the enabled one flagged. */
-  listProfiles(): BrowserProfileSummary[] {
-    return this.profiles().list()
+  /** All saved profiles, with the enabled ones flagged and the counts each
+   *  jar actually holds. The store cannot fill the counts in - it no longer
+   *  sees the session. */
+  async listProfiles(): Promise<BrowserProfileSummary[]> {
+    const filled: BrowserProfileSummary[] = []
+    for (const summary of this.profiles().list()) filled.push(await this.withJarCounts(summary))
+    return filled
   }
 
   /** Name of the enabled profile, or null when none is enabled. */
@@ -977,7 +979,7 @@ export class BrowserController {
     const current = this.tabs.find(tab => tab.view === this.view)?.profile ?? null
     const data = await this.captureProfileData(current)
     const sourceUrl = this.view?.webContents.getURL() || null
-    this.writeProfileMeta(name, sourceUrl)
+    this.profiles().writeMeta(name, sourceUrl)
     await this.writeJar(name, data)
     return this.summaryOf(name)
   }
@@ -996,19 +998,10 @@ export class BrowserController {
     const data = 'path' in source
       ? readProfileJson(source.path)
       : parseProfileJsonText(source.json)
-    this.writeProfileMeta(name, sourceUrl)
+    this.profiles().writeMeta(name, sourceUrl)
     await this.writeJar(name, data)
     if (makeDefault) this.profiles().setActive(name)
     return this.summaryOf(name)
-  }
-
-  /** Record (or refresh) a profile's file. The jar holds the session now, so
-   *  the file carries an empty payload rather than a second copy of it - a
-   *  stale duplicate is exactly what the partitions exist to prevent.
-   *  Task 7 replaces this with a metadata-only record that has no payload at
-   *  all; passing `null` keeps whatever sourceUrl the file already had. */
-  private writeProfileMeta(name: string, sourceUrl: string | null): void {
-    this.profiles().write(name, { cookies: [], origins: [] }, sourceUrl)
   }
 
   /** Names of saved profiles whose jar already holds a cookie scoped to `url` -
@@ -1109,8 +1102,9 @@ export class BrowserController {
     for (const origin of incoming.origins) {
       await this.applyLocalStorage(name, origin.origin, origin.localStorage)
     }
-    // Move updatedAt so "last refreshed" is honest; null keeps the sourceUrl.
-    this.writeProfileMeta(name, null)
+    // Move updatedAt so "last refreshed" is honest; the rest of the metadata
+    // (sourceUrl included) describes the profile, not this refresh.
+    this.profiles().touch(name)
     return this.summaryOf(name)
   }
 
@@ -1128,7 +1122,7 @@ export class BrowserController {
     const enabled = this.profiles().activeNames()
     if (enabled.length === 1 && enabled[0] === name) {
       const current = this.profiles().list().find(profile => profile.name === name)
-      if (current) return current
+      if (current) return this.withJarCounts(current)
       throw new Error(`Profile ${name} is enabled but missing on disk`)
     }
     this.profiles().read(name)
@@ -1138,30 +1132,12 @@ export class BrowserController {
 
   /** Turn a profile on alongside the ones already enabled, so a browser can
    *  hold several logins at once (a GitHub profile and a Jira one, say). The
-   *  live session becomes the union of every enabled profile.
-   *
-   *  Two profiles that carry the same cookie cannot both be honoured - one
-   *  value would silently win - so an overlap is refused and named instead. */
+   *  live session becomes the union of every enabled profile. */
   async enableProfile(name: string): Promise<BrowserProfileSummary> {
     assertProfileName(name)
     const enabled = this.profiles().activeNames()
     if (enabled.includes(name)) return this.summaryOf(name)
-    const incoming = this.profiles().read(name)
-    for (const other of enabled) {
-      let held: BrowserProfile
-      try {
-        held = this.profiles().read(other)
-      } catch {
-        continue
-      }
-      const clash = profileConflict(held, incoming)
-      if (clash) {
-        throw new Error(
-          `"${name}" and "${other}" both hold ${clash}. `
-          + `Turn "${other}" off first, or switch to "${name}" instead of adding it.`,
-        )
-      }
-    }
+    this.profiles().read(name)
     await this.setEnabledProfiles([...enabled, name])
     return this.summaryOf(name)
   }
@@ -1198,12 +1174,35 @@ export class BrowserController {
         sourceUrl: profile.sourceUrl,
       }
     }
+    return this.withJarCounts(base)
+  }
+
+  /** Fill a store summary's counts from the profile's own jar. An unreadable
+   *  jar leaves the zeroes the store wrote rather than failing the listing. */
+  private async withJarCounts(base: BrowserProfileSummary): Promise<BrowserProfileSummary> {
     try {
-      const data = await this.captureProfileData(name)
+      const data = await this.captureProfileData(base.name)
       return { ...base, cookieCount: data.cookies.length, originCount: data.origins.length }
     } catch {
       return base
     }
+  }
+
+  /** Replay any pre-upgrade profile file into its own partition, then rewrite
+   *  the file as metadata only. Runs once per profile; the jar is written
+   *  first, so a crash halfway simply migrates that profile again next start. */
+  async migrateProfilesToPartitions(): Promise<{ migrated: string[] }> {
+    const migrated: string[] = []
+    for (const entry of this.profiles().pendingMigrations()) {
+      try {
+        await this.writeJar(entry.name, entry.data)
+        this.profiles().markMigrated(entry.name)
+        migrated.push(entry.name)
+      } catch {
+        // Leave the file as schema 1 so the next start tries again.
+      }
+    }
+    return { migrated }
   }
 
   /** Record the enabled set and make the live session match it. */
@@ -1212,24 +1211,21 @@ export class BrowserController {
     await this.applyLiveProfiles()
   }
 
-  /** Rebuild the default jar from every enabled profile. Always a full
-   *  replace, so disabling a profile really removes it.
-   *
-   *  This is the last piece of the pre-partition model: it copies profile
-   *  *files* into the shared jar, and those files no longer carry a session.
-   *  Task 8 retires it along with the rest of the merge machinery. */
+  /** Rebuild the default jar from every enabled profile. This is the last
+   *  piece of the pre-partition model; until Task 8 retires it, read the live
+   *  jars rather than the metadata-only files so enabling cannot erase the
+   *  browser's session. */
   private async applyLiveProfiles(): Promise<void> {
     const cookies: BrowserProfileCookie[] = []
     const origins: BrowserProfileStorageOrigin[] = []
     for (const name of this.profiles().activeNames()) {
-      let profile: BrowserProfile
       try {
-        profile = this.profiles().read(name)
+        const data = await this.captureProfileData(name)
+        cookies.push(...data.cookies)
+        origins.push(...data.origins)
       } catch {
-        continue
+        // One unreadable jar must not prevent the others from being applied.
       }
-      cookies.push(...profile.cookies)
-      origins.push(...profile.origins)
     }
     await this.writeJar(null, { cookies, origins })
   }

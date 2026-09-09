@@ -55,6 +55,17 @@ export interface BrowserProfile extends BrowserProfileData {
   sourceUrl: string | null
 }
 
+/** A profile record on disk: everything about a profile except its session,
+ *  which lives in the profile's partition. */
+export interface BrowserProfileMeta {
+  name: string
+  avatar?: string | null
+  autoSync?: boolean
+  createdAt: number
+  updatedAt: number
+  sourceUrl: string | null
+}
+
 export interface BrowserProfileSummary {
   name: string
   avatar?: string | null
@@ -71,6 +82,11 @@ export interface BrowserProfileSummary {
  *  It used to hold a single name; that reads back as a one-profile set, so an
  *  existing install keeps its browser signed in across the upgrade. */
 export const ACTIVE_PROFILE_FILE = '.active'
+
+/** Bumped when a profile file's shape changes. Schema 1 carried the session
+ *  itself; schema 2 carries metadata only, because the partition holds the
+ *  session now. A file with no marker is schema 1 and needs migrating. */
+export const PROFILE_SCHEMA = 2
 
 export const BROWSER_PROFILE_AVATARS = [
   '👤', '💼', '🏠', '🚀', '🧑‍💻', '🎨', '🌟', '🦊',
@@ -422,27 +438,29 @@ export class BrowserProfileStore {
     return names.sort().map(name => this.summary(name, active))
   }
 
+  /** The counts stay on the summary because the UI shows them, but only the
+   *  partition can fill them in now - the controller does that. */
   private summary(name: string, activeNames: readonly string[]): BrowserProfileSummary {
-    let profile: BrowserProfile | null = null
+    let meta: BrowserProfileMeta | null = null
     try {
-      profile = this.read(name)
+      meta = this.read(name)
     } catch {
-      // A half-written file still shows up; counts read as zero.
+      // A half-written file still shows up.
     }
     return {
       name,
-      avatar: profile?.avatar ?? null,
-      autoSync: profile?.autoSync === true,
-      createdAt: profile?.createdAt ?? 0,
-      updatedAt: profile?.updatedAt ?? 0,
-      cookieCount: profile?.cookies.length ?? 0,
-      originCount: profile?.origins.length ?? 0,
+      avatar: meta?.avatar ?? null,
+      autoSync: meta?.autoSync === true,
+      createdAt: meta?.createdAt ?? 0,
+      updatedAt: meta?.updatedAt ?? 0,
+      cookieCount: 0,
+      originCount: 0,
       active: activeNames.includes(name),
-      sourceUrl: profile?.sourceUrl ?? null,
+      sourceUrl: meta?.sourceUrl ?? null,
     }
   }
 
-  read(name: string): BrowserProfile {
+  read(name: string): BrowserProfileMeta {
     assertProfileName(name)
     let parsed: unknown
     try {
@@ -452,9 +470,7 @@ export class BrowserProfileStore {
     }
     if (typeof parsed !== 'object' || parsed === null) throw new Error(`Profile ${name} is corrupt`)
     const record = parsed as Record<string, unknown>
-    const data = parseProfileData(record)
     return {
-      ...data,
       name,
       avatar: typeof record.avatar === 'string' && (BROWSER_PROFILE_AVATARS as readonly string[]).includes(record.avatar)
         ? record.avatar
@@ -466,18 +482,18 @@ export class BrowserProfileStore {
     }
   }
 
-  /** Write (or overwrite) a profile. Keeps the original createdAt so re-saving
-   *  a profile updates its snapshot without pretending it is new. */
-  write(name: string, data: BrowserProfileData, sourceUrl: string | null, now = Date.now()): BrowserProfile {
+  /** Write (or update) a profile's metadata record. Keeps createdAt, the
+   *  avatar and the Chrome-sync switch when the profile already exists. */
+  writeMeta(name: string, sourceUrl: string | null, now = Date.now()): BrowserProfileMeta {
     assertProfileName(name)
-    let existing: BrowserProfile | null = null
+    let existing: BrowserProfileMeta | null = null
     try {
       existing = this.read(name)
     } catch {
       // New profile.
     }
-    const profile: BrowserProfile = {
-      ...data,
+    const meta: BrowserProfileMeta & { schema: number } = {
+      schema: PROFILE_SCHEMA,
       name,
       avatar: existing?.avatar ?? null,
       autoSync: existing?.autoSync === true,
@@ -485,22 +501,72 @@ export class BrowserProfileStore {
       updatedAt: now,
       sourceUrl: sourceUrl ?? existing?.sourceUrl ?? null,
     }
+    this.writeRecord(name, meta)
+    return meta
+  }
+
+  /** Move a profile's updatedAt without changing anything else - what a
+   *  refresh of its jar reports back to the UI. */
+  touch(name: string, now = Date.now()): BrowserProfileMeta {
+    const meta = this.read(name)
+    const next = { ...meta, schema: PROFILE_SCHEMA, updatedAt: now }
+    this.writeRecord(name, next)
+    return next
+  }
+
+  /** Profiles still holding a schema-1 session, with the session to replay
+   *  into their partition. Empty once every profile has been migrated. */
+  pendingMigrations(): Array<{ name: string; data: BrowserProfileData }> {
+    const pending: Array<{ name: string; data: BrowserProfileData }> = []
+    let names: string[] = []
+    try {
+      names = fs.readdirSync(this.dir)
+        .filter(file => file.endsWith('.json'))
+        .map(file => file.slice(0, -'.json'.length))
+    } catch {
+      return []
+    }
+    for (const name of names.sort()) {
+      let record: Record<string, unknown>
+      try {
+        const parsed: unknown = JSON.parse(fs.readFileSync(this.file(name), 'utf8'))
+        if (typeof parsed !== 'object' || parsed === null) continue
+        record = parsed as Record<string, unknown>
+      } catch {
+        continue
+      }
+      if (record.schema === PROFILE_SCHEMA) continue
+      try {
+        pending.push({ name, data: parseProfileData(record) })
+      } catch {
+        // A malformed payload cannot be replayed; leave the file alone.
+      }
+    }
+    return pending
+  }
+
+  /** Rewrite a migrated profile as a metadata-only record, dropping the
+   *  session it used to carry. Called only after the session has been written
+   *  into the partition, so a crash in between simply migrates again. */
+  markMigrated(name: string): void {
+    assertProfileName(name)
+    const meta = this.read(name)
+    this.writeRecord(name, { ...meta, schema: PROFILE_SCHEMA })
+  }
+
+  private writeRecord(name: string, record: object): void {
     fs.mkdirSync(this.dir, { recursive: true })
     const file = this.file(name)
-    fs.writeFileSync(file, JSON.stringify(profile, null, 2), { encoding: 'utf8', mode: 0o600 })
+    fs.writeFileSync(file, JSON.stringify(record, null, 2), { encoding: 'utf8', mode: 0o600 })
     try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
-    return profile
   }
 
   /** Update only presentation metadata; the saved browser session is untouched. */
   setAvatar(name: string, avatar: string): BrowserProfileSummary {
     assertProfileName(name)
     assertProfileAvatar(avatar)
-    const profile = this.read(name)
-    const next: BrowserProfile = { ...profile, avatar }
-    const file = this.file(name)
-    fs.writeFileSync(file, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 })
-    try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
+    const meta = this.read(name)
+    this.writeRecord(name, { ...meta, schema: PROFILE_SCHEMA, avatar })
     return this.summary(name, this.activeNames())
   }
 
@@ -508,11 +574,8 @@ export class BrowserProfileStore {
    *  saved session is untouched, and the snapshot does not read as newer. */
   setAutoSync(name: string, enabled: boolean): BrowserProfileSummary {
     assertProfileName(name)
-    const profile = this.read(name)
-    const next: BrowserProfile = { ...profile, autoSync: enabled === true }
-    const file = this.file(name)
-    fs.writeFileSync(file, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 })
-    try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
+    const meta = this.read(name)
+    this.writeRecord(name, { ...meta, schema: PROFILE_SCHEMA, autoSync: enabled === true })
     return this.summary(name, this.activeNames())
   }
 
