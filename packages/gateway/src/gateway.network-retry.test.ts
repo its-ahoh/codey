@@ -33,4 +33,8 @@ describe('network retry classification', () => {
   it('never retries a successful response', () => {
     expect(isRetryableNetworkFailure({ success: true, output: 'ok' })).toBe(false);
   });
+
+  it('does not misclassify Codey\'s own execution limit as a network failure', () => {
+    expect(isRetryableNetworkFailure(failed('Timeout after 15 minutes'))).toBe(false);
+  });
 });

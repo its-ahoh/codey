@@ -62,11 +62,92 @@ const SOLO_ADVISOR_MAX_ROUNDS = 2;
 /** A failed run may be retried this many times before fallback routing starts. */
 export const MAX_NETWORK_RETRIES = 5;
 
+/** A timeout continuation gets one fresh execution window, not an endless loop. */
+export const MAX_TIMEOUT_RESUMES = 1;
+
+const TIMEOUT_RESUME_PROMPT = `Continue the task from where you left off. The previous turn was interrupted by Codey's execution time limit. Inspect the current state, complete only the remaining work, verify the result, and report the final outcome.`;
+
+/** Codey's adapter timeout, as distinct from a provider/network timeout. */
+export function isOwnTimeoutFailure(response: AgentResponse): boolean {
+  if (response.success) return false;
+  return [response.error, response.output].some(value =>
+    /^timeout after \d+(?:\.\d+)? minutes?$/i.test(value?.trim() ?? ''),
+  );
+}
+
 /** Keep retries narrow: agent/config/permission failures must not be repeated. */
 export function isRetryableNetworkFailure(response: AgentResponse): boolean {
-  if (response.success) return false;
+  if (response.success || isOwnTimeoutFailure(response)) return false;
   const text = `${response.error ?? ''}\n${response.output ?? ''}`.toLowerCase();
   return /(?:\btimeout\b|timed out|deadline exceeded|etimedout|econnreset|econnrefused|enotfound|eai_again|socket hang up|fetch failed|network (?:error|unavailable)|connection (?:closed|lost|reset|refused|error)|temporarily unavailable|service unavailable|gateway timeout|\b(?:408|429|500|502|503|504)\b)/i.test(text);
+}
+
+export interface AgentRetryPlan {
+  retry: boolean;
+  request: AgentRequest;
+  resumedAfterTimeout: boolean;
+}
+
+/** Decide whether and how to retry without ever re-pinning an opened session. */
+export function planAgentRetry(
+  request: AgentRequest,
+  response: AgentResponse,
+  timeoutResumes: number,
+): AgentRetryPlan {
+  if (isOwnTimeoutFailure(response)) {
+    const sessionId = response.startedSessionId;
+    if (request.agent !== 'claude-code' || !sessionId || timeoutResumes >= MAX_TIMEOUT_RESUMES) {
+      return { retry: false, request, resumedAfterTimeout: false };
+    }
+    return {
+      retry: true,
+      request: {
+        ...request,
+        prompt: TIMEOUT_RESUME_PROMPT,
+        resumeSessionId: sessionId,
+        newSessionId: undefined,
+      },
+      resumedAfterTimeout: true,
+    };
+  }
+
+  if (!isRetryableNetworkFailure(response)) {
+    return { retry: false, request, resumedAfterTimeout: false };
+  }
+
+  // Once Claude has announced the session, --session-id can never be used for
+  // it again. Continue it with --resume even when the first failure was a
+  // transient provider/network error.
+  if (request.agent === 'claude-code' && response.startedSessionId) {
+    return {
+      retry: true,
+      request: {
+        ...request,
+        resumeSessionId: response.startedSessionId,
+        newSessionId: undefined,
+      },
+      resumedAfterTimeout: false,
+    };
+  }
+
+  return { retry: true, request, resumedAfterTimeout: false };
+}
+
+/** Strip source-agent session state before entering a fallback route. */
+export function rebaseForFallbackAgent(
+  request: AgentRequest,
+  _fromAgent: CodingAgent,
+  toAgent: CodingAgent,
+  _response: AgentResponse,
+): AgentRequest {
+  return {
+    ...request,
+    agent: toAgent,
+    resumeSessionId: undefined,
+    // A Claude fallback needs its own id. In particular, another Claude model
+    // must not receive the id already opened by the failed primary model.
+    newSessionId: toAgent === 'claude-code' ? randomUUID() : undefined,
+  };
 }
 
 /** Longest primary-failure text carried into fallback metadata. The full text
@@ -5494,18 +5575,38 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   private async runAgentWithNetworkRetry(agent: CodingAgent, request: AgentRequest): Promise<AgentResponse> {
-    let response = await this.agentFactory.run(agent, request);
-    for (let retry = 1; retry <= MAX_NETWORK_RETRIES; retry++) {
-      if (request.signal?.aborted || !isRetryableNetworkFailure(response)) break;
-      // 1s, 2s, 4s, 8s, 8s: enough breathing room for transient outages
-      // without leaving the chat apparently frozen for a long time.
-      const delayMs = Math.min(1000 * 2 ** (retry - 1), 8000);
-      const message = `Network error — retrying ${retry}/${MAX_NETWORK_RETRIES} in ${delayMs / 1000}s`;
+    let activeRequest = request;
+    let response = await this.agentFactory.run(agent, activeRequest);
+    let networkRetries = 0;
+    let timeoutResumes = 0;
+
+    while (!activeRequest.signal?.aborted) {
+      const plan = planAgentRetry(activeRequest, response, timeoutResumes);
+      if (!plan.retry) break;
+
+      let delayMs: number;
+      let message: string;
+      if (plan.resumedAfterTimeout) {
+        timeoutResumes++;
+        // Give the terminated CLI a moment to release its session lock before
+        // starting `--resume`.
+        delayMs = 1000;
+        message = `Execution limit reached — resuming Claude session ${timeoutResumes}/${MAX_TIMEOUT_RESUMES} in 1s`;
+      } else {
+        if (networkRetries >= MAX_NETWORK_RETRIES) break;
+        networkRetries++;
+        // 1s, 2s, 4s, 8s, 8s: enough breathing room for transient outages
+        // without leaving the chat apparently frozen for a long time.
+        delayMs = Math.min(1000 * 2 ** (networkRetries - 1), 8000);
+        message = `Network error — retrying ${networkRetries}/${MAX_NETWORK_RETRIES} in ${delayMs / 1000}s`;
+      }
+
       this.logger.warn(`${agent}: ${message}`);
-      request.onStatus?.({ type: 'info', message });
-      await this.waitForNetworkRetry(delayMs, request.signal);
-      if (request.signal?.aborted) break;
-      response = await this.agentFactory.run(agent, request);
+      activeRequest.onStatus?.({ type: 'info', message });
+      await this.waitForNetworkRetry(delayMs, activeRequest.signal);
+      if (activeRequest.signal?.aborted) break;
+      activeRequest = plan.request;
+      response = await this.agentFactory.run(agent, activeRequest);
     }
     return response;
   }
@@ -5571,8 +5672,7 @@ Example: /model gpt-4.1 write a Python script`;
       const label = `${entry.agent}(${resolvedModel.model})`;
       this.logger.warn(`Agent ${agent} failed, trying ${label}...`);
       const fallbackResponse = await this.runAgentWithNetworkRetry(entry.agent, {
-        ...request,
-        agent: entry.agent,
+        ...rebaseForFallbackAgent(request, agent, entry.agent, response),
         model: resolvedModel,
       });
       if (fallbackResponse.success) {

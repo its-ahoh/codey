@@ -295,6 +295,12 @@ export interface AgentResponse {
    * the gateway already knows the id it sent.
    */
   sessionId?: string;
+  /**
+   * Session id that the adapter observed the CLI open during this invocation.
+   * Unlike `sessionId`, this is also populated on failed or timed-out runs so
+   * the gateway can safely resume work without reusing `--session-id`.
+   */
+  startedSessionId?: string;
   /** Tools that were denied due to permission settings (only when skipPermissions is false). */
   permissionDenials?: Array<{ toolName: string; toolInput?: Record<string, unknown> }>;
   /**
