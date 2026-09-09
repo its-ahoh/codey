@@ -6389,7 +6389,7 @@ Example: /model gpt-4.1 write a Python script`;
     const selPrefix = assistantPrefixForSelection(chat);
     const canResume = !isTeamTurn;
     const warmAnchor = canResume
-      ? this.chatManager.getSessionAnchor(chatId, agent, model?.model)
+      ? this.chatManager.getSessionAnchor(chatId, agent)
       : undefined;
 
     let prompt: string;
@@ -6683,7 +6683,7 @@ Example: /model gpt-4.1 write a Python script`;
         // drop the anchor and retry once with a full bootstrap prompt.
         if (resumeSessionId && !response?.success && !abortController.signal.aborted) {
           this.logger.warn(`[chat ${chatId}] resume of ${resumeSessionId} failed; bootstrapping`);
-          this.chatManager.clearSessionAnchor(chatId, agent, model?.model);
+          this.chatManager.clearSessionAnchor(chatId, agent);
           streamedText = '';
           resumeSessionId = undefined;
           newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
