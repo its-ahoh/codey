@@ -20,7 +20,7 @@ describe('levelForCommand', () => {
     for (const command of ['click', 'fill', 'submit', 'upload', 'chrome click', 'chrome fill']) {
       expect(levelForCommand(command)).toBe('write')
     }
-    for (const command of ['delete-profile', 'activate-profile']) {
+    for (const command of ['delete-profile']) {
       expect(levelForCommand(command)).toBe('full')
     }
   })

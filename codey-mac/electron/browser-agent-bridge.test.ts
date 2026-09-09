@@ -93,7 +93,6 @@ describe('BrowserAgentBridge', () => {
       submit: vi.fn(async ref => ({ ok: true as const, url: state.url, message: `Submitted ${ref}` })),
       listProfiles: vi.fn(async () => []),
       activeProfileName: vi.fn(() => null),
-      activeProfileNames: vi.fn((): string[] => []),
       saveProfile: vi.fn(async name => ({
         name, active: false, autoSync: false, cookieCount: 0, originCount: 0,
         createdAt: 1, updatedAt: 1, sourceUrl: null,
@@ -102,7 +101,7 @@ describe('BrowserAgentBridge', () => {
         name, active: false, autoSync: false, cookieCount: 0, originCount: 0,
         createdAt: 1, updatedAt: 1, sourceUrl: null,
       })),
-      activateProfile: vi.fn(async name => ({
+      setDefaultProfile: vi.fn(async (name: string | null) => name === null ? null : ({
         name, active: true, autoSync: false, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null,
       })),
       deleteProfile: vi.fn(async () => ({ deleted: true })),
@@ -222,12 +221,12 @@ describe('BrowserAgentBridge', () => {
       })
       expect(imported.status).toBe(200)
       expect(controller.importProfile).toHaveBeenCalledWith('gh', { json: '{"cookies":[]}' }, true)
-      // Import activates by default, so it goes through the user approval gate.
-      expect(requestControl).toHaveBeenCalledWith({ command: 'activate-profile', url: state.url, surface: 'browser', level: 'full' })
+      // The import lands in that profile's own jar, so there is nothing to approve.
+      expect(requestControl).not.toHaveBeenCalledWith(expect.objectContaining({ command: 'activate-profile' }))
 
-      const activated = await call(info, 'POST', '/profile/activate', { name: 'work' })
-      expect(activated.status).toBe(200)
-      expect(controller.activateProfile).toHaveBeenCalledWith('work')
+      const madeDefault = await call(info, 'POST', '/profile/default', { name: 'work' })
+      expect(madeDefault.status).toBe(200)
+      expect(controller.setDefaultProfile).toHaveBeenCalledWith('work')
 
       const exported = await call(info, 'POST', '/profile/export', { name: 'work', path: '/tmp/work.json' })
       expect(exported.body).toEqual({ path: '/tmp/exported.json' })
@@ -239,7 +238,7 @@ describe('BrowserAgentBridge', () => {
       expect(tabs.body[0]).toMatchObject({ id: 't1', active: true })
       const newTab = await call(info, 'POST', '/tab/new', { url: 'https://example.com/auth' })
       expect(newTab.status).toBe(200)
-      expect(controller.newTab).toHaveBeenCalledWith('https://example.com/auth')
+      expect(controller.newTab).toHaveBeenCalledWith('https://example.com/auth', null)
 
       const viewOnlyControlCount = requestControl.mock.calls.length
       await call(info, 'POST', '/tab/close', { id: 't1' })
@@ -286,8 +285,8 @@ describe('BrowserAgentBridge', () => {
       })
       expect(JSON.parse(chromeCli.stdout).text).toBe('Signed in through Chrome')
 
-      // `--profile <name>` forwards the profile to the bridge, which
-      // activates it before the command runs.
+      // `--profile <name>` forwards the profile to the bridge, which no longer
+      // switches anything - so the command runs without an approval prompt.
       const profileCli = await execFileAsync(process.execPath, [cli, '--profile', 'cli', 'view'], {
         env: {
           ...process.env,
@@ -297,9 +296,8 @@ describe('BrowserAgentBridge', () => {
         },
       })
       expect(JSON.parse(profileCli.stdout).text).toBe('Hello from the page')
-      expect(controller.activateProfile).toHaveBeenLastCalledWith('cli')
-      // Switching identity mid-command needs the same approval as an explicit activate.
-      expect(requestControl).toHaveBeenLastCalledWith({ command: 'activate-profile', url: state.url, surface: 'browser', level: 'full' })
+      expect(controller.setDefaultProfile).not.toHaveBeenCalledWith('cli')
+      expect(requestControl).not.toHaveBeenCalledWith(expect.objectContaining({ command: 'activate-profile' }))
 
       const profileListCli = await execFileAsync(process.execPath, [cli, 'profile', 'list'], {
         env: {
@@ -334,54 +332,44 @@ describe('BrowserAgentBridge', () => {
     }
   })
 
-  it('runs each --profile command under the profile it asked for, even when another agent switches', async () => {
-    // Two agents, two identities, one browser. The switch and the command have
-    // to be the same turn. If the switch happens up front instead, a second
-    // agent's switch lands while the first is still queued, and the first then
-    // silently acts as the wrong person.
-    let enabled: string[] = []
-    const observed: string[] = []
+  it('keeps two profiled requests apart without either one switching the browser', async () => {
+    // Two agents, two identities, one browser. Isolation makes that a
+    // non-event: each request's tab opens on its own jar, so neither agent can
+    // drag the other onto the wrong identity while it waits its turn.
+    const opened: Array<[string, string | null]> = []
     const release: Array<() => void> = []
     const controller = {
       getState: vi.fn(() => ({ url: 'https://example.com/' })),
-      activeProfileName: vi.fn(() => enabled[0] ?? null),
-      activeProfileNames: vi.fn(() => enabled),
-      activateProfile: vi.fn(async (name: string) => {
-        enabled = [name]
-        return { name, active: true, autoSync: false, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null }
-      }),
-      // Parks until the test releases it, so commands really do pile up behind
-      // one another the way two busy agents would make them.
-      getPageContext: vi.fn(async () => {
-        observed.push(enabled.join(','))
+      activeProfileName: vi.fn(() => null),
+      listTabs: vi.fn(() => []),
+      // Parks until the test releases it, so the two tab requests really do
+      // pile up behind one another the way two busy agents would make them.
+      newTab: vi.fn(async (url: string, profileName: string | null = null) => {
+        opened.push([url, profileName])
         await new Promise<void>(resolve => release.push(resolve))
-        return { url: 'https://example.com/', title: 'Page', description: '', text: '', performance: {} }
+        return { url, title: '', loading: false, canGoBack: false, canGoForward: false, error: null }
       }),
     }
     const bridge = new BrowserAgentBridge(controller as any, vi.fn(), async () => true, vi.fn(), 5)
     const info = await bridge.start()
     const settle = async () => { for (let i = 0; i < 5; i += 1) await new Promise(resolve => setImmediate(resolve)) }
     try {
-      // Something else already holds the browser, so the two profile requests
-      // below have to wait - which is exactly when the identity can drift.
-      const blocker = call(info, 'GET', '/view')
+      const personal = call(info, 'POST', '/tab/new', { url: 'https://example.com/one' }, info.token, { 'X-Codey-Profile': 'personal' })
+      await settle()
+      const work = call(info, 'POST', '/tab/new', { url: 'https://example.com/two' }, info.token, { 'X-Codey-Profile': 'work' })
       await settle()
 
-      const personal = call(info, 'GET', '/view', undefined, info.token, { 'X-Codey-Profile': 'personal' })
-      await settle()
-      const work = call(info, 'GET', '/view', undefined, info.token, { 'X-Codey-Profile': 'work' })
-      await settle()
-
-      for (let attempt = 0; attempt < 60 && observed.length < 3; attempt += 1) {
+      for (let attempt = 0; attempt < 60 && opened.length < 2; attempt += 1) {
         while (release.length > 0) release.shift()!()
         await settle()
       }
       while (release.length > 0) release.shift()!()
-      await Promise.all([blocker, personal, work])
+      await Promise.all([personal, work])
 
-      // The blocker ran with no profile; each of the other two saw its own,
-      // never the other agent's and never both at once.
-      expect(observed).toEqual(['', 'personal', 'work'])
+      expect(opened).toEqual([
+        ['https://example.com/one', 'personal'],
+        ['https://example.com/two', 'work'],
+      ])
     } finally {
       await bridge.stop()
     }

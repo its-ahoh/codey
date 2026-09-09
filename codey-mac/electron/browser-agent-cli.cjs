@@ -13,10 +13,10 @@ const chatId = process.env.CODEY_BROWSER_CHAT_ID
 const browserPluginEnabled = process.env.CODEY_BROWSER_PLUGIN_ENABLED === '1'
 const chromeCompanionPluginEnabled = process.env.CODEY_CHROME_COMPANION_PLUGIN_ENABLED === '1'
 
-// `--profile <name>` (or `-p <name>`) before the command selects the browser
-// profile this command operates under. It is forwarded to the bridge as a
-// header, and the bridge activates that profile before running the command —
-// so every subsequent action happens under that profile's session.
+// `--profile <name>` (or `-p <name>`) before the command names the browser
+// profile the command's tab belongs to. It is forwarded to the bridge as a
+// header; because every profile has its own session jar, a tab opened this way
+// runs under that profile alone and no other tab changes identity.
 let args = process.argv.slice(2)
 let profile = ''
 if ((args[0] === '--profile' || args[0] === '-p') && args.length > 1) {
@@ -29,7 +29,7 @@ const rest = args.slice(1)
 function usage() {
   return [
     'Codey Browser agent tool',
-    '  --profile <name>     Operate under a saved browser profile (activates it first)',
+    '  --profile <name>     Open this command\'s new tab in a saved profile\'s session',
     '  open <url or search>  Open a page and show the in-app browser',
     '  open-view <url>       Open a page and return its content atomically',
     '  view                  Read visible page text and performance timing',
@@ -61,8 +61,8 @@ function usage() {
     '  reload                Reload the current page',
     '  profile list               List saved profiles and the active one',
     '  profile save <name>        Snapshot the current session into a profile',
-    '  profile import <path> [name]  Import a session file and activate it',
-    '  profile activate <name>    Switch the live session to a profile',
+    '  profile import <path> [name]  Import a session file into a profile',
+    '  profile default <name>     Choose which profile new tabs open under',
     '  profile export <name> <path>  Write a profile to a shareable JSON file',
     '  profile delete <name>      Remove a profile',
     '  chrome status              Read Chrome Companion connection state',
@@ -259,9 +259,9 @@ async function main() {
       } else if (sub === 'save') {
         if (!rest[1]) throw new Error(`Missing profile name\n${usage()}`)
         value = await request('POST', '/profile/save', { name: rest[1] })
-      } else if (sub === 'activate') {
+      } else if (sub === 'default') {
         if (!rest[1]) throw new Error(`Missing profile name\n${usage()}`)
-        value = await request('POST', '/profile/activate', { name: rest[1] })
+        value = await request('POST', '/profile/default', { name: rest[1] === 'none' ? null : rest[1] })
       } else if (sub === 'delete') {
         if (!rest[1]) throw new Error(`Missing profile name\n${usage()}`)
         value = await request('POST', '/profile/delete', { name: rest[1] })

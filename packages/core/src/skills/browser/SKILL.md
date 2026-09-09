@@ -51,38 +51,32 @@ The browser can save and restore named sessions ("profiles") - the cookies and
 per-site storage that keep a site signed in - so you can switch identity for a
 task or carry a session to another machine.
 
-The user can have several profiles in use at once, so the browser may be
-carrying more than one login (a work identity and a personal one, say).
-Enabling and disabling profiles is theirs to do - you can see the set, and you
-can borrow one for a command, but you cannot change which ones they keep on.
+Profiles are isolated: each one has its own cookie jar, so two profiles can be
+signed into the same site at once and a login made inside a profile stays
+there. The user chooses which profile new tabs open under by default - you can
+see the set and open your own tab in one, but you cannot change their default
+for them.
 
-- `profile list` - saved profiles, with every one currently in use flagged
+- `profile list` - saved profiles, with the default one flagged
 - `profile save <name>` - snapshot the current session into a named profile
 - `profile import <path> [name]` - import a session file (a Codey profile or
-  a Playwright storageState JSON) and activate it in one step
-- `profile activate <name>` - switch the live session to a saved profile
+  a Playwright storageState JSON) into a profile's jar
+- `profile default <name>` - choose which profile new tabs open under
 - `profile export <name> <path>` - write a saved profile to a shareable file
 - `profile delete <name>` - remove a saved profile
 
-To run a command under a specific profile, put `--profile <name>` before the
-command. That command then runs under that profile and nothing else, so a task
-meant for one identity cannot reach for another's cookies. It is an identity
-switch, so the user is asked to approve it, and the switch happens as part of
-the command itself - another agent working in the same browser cannot slip its
-own profile in between:
+To open a tab in a specific profile, put `--profile <name>` before a command
+that opens a tab. That tab runs on that profile's jar alone, so a task meant
+for one identity cannot reach for another's cookies. No other tab changes, so
+nothing needs approving:
 
 ```
-ELECTRON_RUN_AS_NODE=1 "$CODEY_BROWSER_RUNTIME" "$CODEY_BROWSER_CLI" --profile work open-view "https://github.com"
+ELECTRON_RUN_AS_NODE=1 "$CODEY_BROWSER_RUNTIME" "$CODEY_BROWSER_CLI" --profile work new-tab "https://github.com"
 ```
 
-Note this leaves that profile in use afterwards: it does not put back whatever
-set was enabled before. Say so if that matters to the user.
-
-`state` reports the active profile. Activating a profile replaces the
-session's cookies with the profile's (an identity switch, so the previous
-session's cookies are removed); its site storage is applied best-effort for the
-origins it knows, and a page may need to reload before its stored state is
-visible.
+Every command after that acts on whichever tab is visible, so keep working in
+the tab you just opened. `state` reports the default profile, and `tabs`
+reports the profile each tab belongs to.
 
 ## Rules
 
@@ -90,9 +84,9 @@ visible.
   reload, scrolling and hovering need no approval. Anything that changes page
   state - click, fill, select, check, press, upload, drag, submit - needs
   **write** access and pauses for the user's approval. Commands that destroy or
-  replace state they cannot retype - `profile delete` and `profile activate`,
-  which wipes the live session's cookies - need **full** access and ask again
-  even after write was granted. If they deny it, stop; do not route around the
+  replace state they cannot retype - `profile delete`, which throws away that
+  profile's jar of logins - need **full** access and ask again even after
+  write was granted. If they deny it, stop; do not route around the
   decision.
 - These grants are per browser. Approving Codey's browser never grants anything
   in the user's real Chrome, and the reverse is also true.
