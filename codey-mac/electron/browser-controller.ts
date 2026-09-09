@@ -1141,6 +1141,7 @@ export class BrowserController {
         name,
         avatar: profile.avatar ?? null,
         autoSync: profile.autoSync === true,
+        excludedSites: profile.excludedSites,
         createdAt: profile.createdAt,
         updatedAt: profile.updatedAt,
         cookieCount: 0,
@@ -1187,6 +1188,11 @@ export class BrowserController {
   /** Turn "keep this profile in sync with Chrome" on or off for one profile. */
   setProfileAutoSync(name: string, enabled: boolean): BrowserProfileSummary {
     return this.profiles().setAutoSync(name, enabled)
+  }
+
+  /** Replace the sites this profile excludes from automatic Chrome refresh. */
+  setProfileExcludedSites(name: string, sites: readonly string[]): BrowserProfileSummary {
+    return this.profiles().setExcludedSites(name, sites)
   }
 
   /** Remove a profile: its metadata record and its whole storage jar. Tabs

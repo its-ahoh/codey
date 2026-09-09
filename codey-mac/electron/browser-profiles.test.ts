@@ -122,6 +122,7 @@ describe('BrowserProfileStore', () => {
       const written = store.writeMeta('work', 'https://example.com/')
       expect(written.name).toBe('work')
       expect(written.avatar).toBeNull()
+      expect(written.excludedSites).toEqual([])
       expect(written.createdAt).toBeGreaterThanOrEqual(before)
       expect(written.sourceUrl).toBe('https://example.com/')
 
@@ -167,6 +168,54 @@ describe('BrowserProfileStore', () => {
 
       expect(store.setAutoSync('work', false).autoSync).toBe(false)
       expect(store.read('work').autoSync).toBe(false)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('normalizes and preserves per-profile Chrome exclusions', () => {
+    const { dir, store } = makeStore()
+    try {
+      store.writeMeta('work', null)
+      const updated = store.setExcludedSites('work', [
+        ' GitHub.COM ', '.google.com', '..GITHUB.com', '', '   ', '.Google.COM',
+      ])
+      expect(updated.excludedSites).toEqual(['github.com', 'google.com'])
+
+      // Every metadata-only rewrite must keep the exclusion list.
+      store.writeMeta('work', 'https://github.com/')
+      store.setAvatar('work', '💼')
+      store.setAutoSync('work', true)
+      store.touch('work')
+      expect(store.read('work').excludedSites).toEqual(['github.com', 'google.com'])
+      expect(store.list()[0].excludedSites).toEqual(['github.com', 'google.com'])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('safely normalizes exclusions read from existing schema-2 metadata', () => {
+    const { dir, store } = makeStore()
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, 'work.json'), JSON.stringify({
+        schema: 2,
+        name: 'work',
+        excludedSites: [' Example.COM ', '.example.com', 42, null, '', '...GitHub.COM'],
+        createdAt: 1,
+        updatedAt: 2,
+        sourceUrl: null,
+      }))
+      expect(store.read('work').excludedSites).toEqual(['example.com', 'github.com'])
+      expect(store.pendingMigrations()).toEqual([])
+
+      fs.writeFileSync(path.join(dir, 'work.json'), JSON.stringify({
+        schema: 2,
+        name: 'work',
+        excludedSites: 'example.com',
+      }))
+      expect(store.read('work').excludedSites).toEqual([])
+      expect(store.pendingMigrations()).toEqual([])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -386,6 +435,7 @@ describe('BrowserProfileStore metadata records', () => {
       expect(raw.cookies).toBeUndefined()
       expect(raw.origins).toBeUndefined()
       expect(raw.sourceUrl).toBe('https://github.com/')
+      expect(raw.excludedSites).toEqual([])
       expect(store.read('work').name).toBe('work')
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
@@ -428,11 +478,13 @@ describe('BrowserProfileStore metadata records', () => {
       const store = new BrowserProfileStore(dir)
       store.writeMeta('work', null)
       store.setAutoSync('work', true)
+      store.setExcludedSites('work', ['GitHub.com'])
       const before = store.read('work').updatedAt
       store.touch('work', before + 1000)
       const after = store.read('work')
       expect(after.updatedAt).toBe(before + 1000)
       expect(after.autoSync).toBe(true)
+      expect(after.excludedSites).toEqual(['github.com'])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

@@ -61,6 +61,8 @@ export interface BrowserProfileMeta {
   name: string
   avatar?: string | null
   autoSync?: boolean
+  /** Chrome sites this profile must never refresh from automatically. */
+  excludedSites: string[]
   createdAt: number
   updatedAt: number
   sourceUrl: string | null
@@ -70,6 +72,7 @@ export interface BrowserProfileSummary {
   name: string
   avatar?: string | null
   autoSync: boolean
+  excludedSites: string[]
   createdAt: number
   updatedAt: number
   cookieCount: number
@@ -290,6 +293,21 @@ export function siteCoversHost(site: string, host: string): boolean {
   return !!left && (right === left || right.endsWith(`.${left}`))
 }
 
+/** Normalize the user-maintained Chrome-sync exclusion list. Older metadata
+ *  has no field, and hand-edited files may contain mixed values, so reads are
+ *  deliberately forgiving while still returning one canonical shape. */
+function normalizeExcludedSites(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const sites: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue
+    const site = entry.trim().replace(/^\.+/, '').trim().toLowerCase()
+    if (!site || sites.includes(site)) continue
+    sites.push(site)
+  }
+  return sites
+}
+
 /** What one site inside a profile holds, described without the secrets. Cookie
  *  and localStorage *values* are deliberately absent: the point is to let
  *  someone see which logins a profile carries, not to hand the logins to a
@@ -372,6 +390,7 @@ export class BrowserProfileStore {
       name,
       avatar: meta?.avatar ?? null,
       autoSync: meta?.autoSync === true,
+      excludedSites: meta?.excludedSites ?? [],
       createdAt: meta?.createdAt ?? 0,
       updatedAt: meta?.updatedAt ?? 0,
       cookieCount: 0,
@@ -397,6 +416,7 @@ export class BrowserProfileStore {
         ? record.avatar
         : null,
       autoSync: record.autoSync === true,
+      excludedSites: normalizeExcludedSites(record.excludedSites),
       createdAt: typeof record.createdAt === 'number' ? record.createdAt : 0,
       updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : 0,
       sourceUrl: typeof record.sourceUrl === 'string' ? record.sourceUrl : null,
@@ -418,6 +438,7 @@ export class BrowserProfileStore {
       name,
       avatar: existing?.avatar ?? null,
       autoSync: existing?.autoSync === true,
+      excludedSites: existing?.excludedSites ?? [],
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       sourceUrl: sourceUrl ?? existing?.sourceUrl ?? null,
@@ -497,6 +518,19 @@ export class BrowserProfileStore {
     assertProfileName(name)
     const meta = this.read(name)
     this.writeRecord(name, { ...meta, schema: PROFILE_SCHEMA, autoSync: enabled === true })
+    return this.summary(name, this.activeNames())
+  }
+
+  /** Replace the sites omitted from this profile's automatic Chrome refresh.
+   *  Like the auto-sync switch, this changes metadata only. */
+  setExcludedSites(name: string, sites: readonly string[]): BrowserProfileSummary {
+    assertProfileName(name)
+    const meta = this.read(name)
+    this.writeRecord(name, {
+      ...meta,
+      schema: PROFILE_SCHEMA,
+      excludedSites: normalizeExcludedSites(sites),
+    })
     return this.summary(name, this.activeNames())
   }
 
