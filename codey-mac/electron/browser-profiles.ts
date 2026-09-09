@@ -99,6 +99,21 @@ export function assertProfileName(name: unknown): asserts name is string {
   }
 }
 
+/** The default storage jar, used by tabs that belong to no profile. This is
+ *  the partition the browser used before profiles were isolated, so an
+ *  existing install keeps whatever it was signed into. */
+export const DEFAULT_BROWSER_PARTITION = 'persist:codey-browser'
+
+/** The Electron partition that holds a profile's session. Each profile gets
+ *  its own Chromium storage bucket - cookies, localStorage, IndexedDB, cache -
+ *  so two profiles signed into the same site cannot see or overwrite each
+ *  other. `null` means "no profile", which is the default jar. */
+export function profilePartition(name: string | null): string {
+  if (name === null) return DEFAULT_BROWSER_PARTITION
+  assertProfileName(name)
+  return `persist:codey-profile-${name}`
+}
+
 /** Derive a safe profile name from an import file's name, so importing
  *  "my session backup.json" just works without asking for a name. Falls back
  *  to `imported` when nothing usable remains. */

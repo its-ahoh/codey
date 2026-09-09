@@ -18,6 +18,7 @@ import {
   parseProfileJsonText,
   profileConflict,
   profileFileName,
+  profilePartition,
   readProfileJson,
 } from './browser-profiles'
 
@@ -457,5 +458,21 @@ describe('summarizeProfileSites', () => {
     expect(sites).toEqual([
       { domain: 'app.example.com', cookieCount: 0, cookieNames: [], storage: [{ origin: 'https://app.example.com', keys: 1 }] },
     ])
+  })
+})
+
+describe('profilePartition', () => {
+  it('gives each profile its own partition and the default jar to none', () => {
+    expect(profilePartition(null)).toBe('persist:codey-browser')
+    expect(profilePartition('work')).toBe('persist:codey-profile-work')
+    expect(profilePartition('personal')).toBe('persist:codey-profile-personal')
+  })
+
+  it('never collides two profiles onto one partition', () => {
+    expect(profilePartition('work')).not.toBe(profilePartition('work2'))
+  })
+
+  it('refuses a name that is not a valid profile name', () => {
+    expect(() => profilePartition('../escape')).toThrow(/Profile names must be/)
   })
 })
