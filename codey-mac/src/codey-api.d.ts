@@ -234,7 +234,8 @@ export interface BrowserExtensionCandidate {
 export interface BrowserExtensionEntry extends BrowserExtensionCandidate {
   key: string
   enabled: boolean
-  runtimeId: string | null
+  /** True when the extension is loaded into at least one profile partition. */
+  loaded: boolean
   error: string | null
 }
 

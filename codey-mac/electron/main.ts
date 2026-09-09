@@ -2054,7 +2054,6 @@ app.whenReady().then(async () => {
     console.warn(`[browser] profile migration failed: ${error instanceof Error ? error.message : String(error)}`)
   }
   browserExtensionManager = new BrowserExtensionManager(
-    browserSession,
     join(app.getPath('userData'), 'browser-extensions.json'),
   )
   try {

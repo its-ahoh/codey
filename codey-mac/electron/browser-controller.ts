@@ -102,6 +102,9 @@ export interface HumanInputOptions {
 export interface BrowserControllerOptions extends HumanInputOptions {
   getProfilesDir?: () => string
   createHiddenView?: (partition: string) => WebContentsView
+  /** Called with each partition's session the first time the browser opens a
+   *  tab on it, so extensions and passkeys reach every profile's jar. */
+  onSessionOpened?: (session: Session) => void
 }
 
 export interface BrowserWaitRequest {
@@ -253,6 +256,7 @@ export class BrowserController {
   private readonly sleep: (ms: number) => Promise<void>
   private readonly getProfilesDir: () => string
   private readonly createHiddenView?: (partition: string) => WebContentsView
+  private readonly onSessionOpened?: (session: Session) => void
   private profileStore: BrowserProfileStore | null = null
   private profileStoreDir: string | null = null
 
@@ -268,6 +272,7 @@ export class BrowserController {
     this.random = options.random ?? Math.random
     this.sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
     this.getProfilesDir = options.getProfilesDir ?? (() => path.join(os.tmpdir(), 'codey-browser-profiles'))
+    this.onSessionOpened = options.onSessionOpened
     // Hidden page used to read or apply a profile's localStorage for origins
     // that are not currently open in a tab. The caller picks the partition, so
     // the page reads and writes the same storage that profile's tabs use.
@@ -1564,6 +1569,7 @@ export class BrowserController {
     const browserSession = this.sessionFor(profileName)
     this.bindSitePermissions(browserSession)
     this.bindDownloads(browserSession)
+    this.onSessionOpened?.(browserSession)
 
     const view = new WebContentsView({
       webPreferences: {

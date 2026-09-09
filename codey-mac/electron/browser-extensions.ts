@@ -16,7 +16,18 @@ export interface BrowserExtensionCandidate {
 export interface BrowserExtensionEntry extends BrowserExtensionCandidate {
   key: string
   enabled: boolean
-  runtimeId: string | null
+  /** Runtime ids, one per session the extension is loaded into. Each partition
+   *  is its own Chromium profile, so the same extension gets a different id in
+   *  each of them and has to be removed by the right one. */
+  runtimeIds: Map<ExtensionSession, string>
+  error: string | null
+}
+
+/** What the renderer sees: the per-session runtime ids collapse to one flag. */
+export interface BrowserExtensionSummary extends BrowserExtensionCandidate {
+  key: string
+  enabled: boolean
+  loaded: boolean
   error: string | null
 }
 
@@ -38,7 +49,7 @@ interface LoadedExtension {
   version?: string
 }
 
-interface ExtensionSession {
+export interface ExtensionSession {
   extensions: {
     loadExtension: (extensionPath: string) => Promise<LoadedExtension>
     removeExtension: (extensionId: string) => void
@@ -247,9 +258,10 @@ export function discoverChromeBrowserExtensions(
 export class BrowserExtensionManager {
   private entries = new Map<string, BrowserExtensionEntry>()
   private readonly managedRoot: string
+  /** Every partition's session that has asked to be served, in attach order. */
+  private readonly sessions: ExtensionSession[] = []
 
   constructor(
-    private readonly browserSession: ExtensionSession,
     private readonly stateFile: string,
     private readonly chromeRoots: string[] = defaultChromeRoots(),
   ) {
@@ -259,7 +271,7 @@ export class BrowserExtensionManager {
     this.managedRoot = path.join(stateDirectory, 'browser-extensions')
   }
 
-  async initialize(): Promise<BrowserExtensionEntry[]> {
+  async initialize(): Promise<BrowserExtensionSummary[]> {
     let stored: StoredBrowserExtension[] = []
     try {
       const parsed = JSON.parse(fs.readFileSync(this.stateFile, 'utf8'))
@@ -278,11 +290,11 @@ export class BrowserExtensionManager {
           ...candidate,
           key: extensionKey(candidate.path),
           enabled: item.enabled,
-          runtimeId: null,
+          runtimeIds: new Map(),
           error: null,
         }
         this.entries.set(entry.key, entry)
-        if (entry.enabled) await this.load(entry)
+        if (entry.enabled) await this.loadEverywhere(entry)
       } catch (error) {
         const absolutePath = path.resolve(item.path)
         const entry: BrowserExtensionEntry = {
@@ -295,7 +307,7 @@ export class BrowserExtensionManager {
           hostPermissions: [],
           warnings: [],
           enabled: item.enabled,
-          runtimeId: null,
+          runtimeIds: new Map(),
           error: error instanceof Error ? error.message : String(error),
         }
         this.entries.set(entry.key, entry)
@@ -312,13 +324,30 @@ export class BrowserExtensionManager {
     return discoverChromeBrowserExtensions(this.chromeRoots)
   }
 
-  list(): BrowserExtensionEntry[] {
+  /** Start serving one more session (one more profile's partition). Every
+   *  enabled extension is loaded into it, and it is remembered so extensions
+   *  enabled later reach it too. Attaching the same session twice is a no-op. */
+  async attach(target: ExtensionSession): Promise<void> {
+    if (this.sessions.includes(target)) return
+    this.sessions.push(target)
+    for (const entry of this.entries.values()) {
+      if (entry.enabled) await this.loadInto(entry, target)
+    }
+  }
+
+  list(): BrowserExtensionSummary[] {
     return [...this.entries.values()]
-      .map(entry => ({ ...entry, permissions: [...entry.permissions], hostPermissions: [...entry.hostPermissions], warnings: [...entry.warnings] }))
+      .map(({ runtimeIds, ...entry }) => ({
+        ...entry,
+        loaded: runtimeIds.size > 0,
+        permissions: [...entry.permissions],
+        hostPermissions: [...entry.hostPermissions],
+        warnings: [...entry.warnings],
+      }))
       .sort((a, b) => a.name.localeCompare(b.name))
   }
 
-  async install(extensionPath: string): Promise<BrowserExtensionEntry[]> {
+  async install(extensionPath: string): Promise<BrowserExtensionSummary[]> {
     const candidate = inspectBrowserExtension(extensionPath)
     const key = extensionKey(candidate.path)
     if (this.entries.has(key)) throw new Error('This extension is already added')
@@ -326,16 +355,16 @@ export class BrowserExtensionManager {
       ...candidate,
       key,
       enabled: true,
-      runtimeId: null,
+      runtimeIds: new Map(),
       error: null,
     }
     this.entries.set(key, entry)
-    await this.load(entry)
+    await this.loadEverywhere(entry)
     this.persist()
     return this.list()
   }
 
-  async importFromChrome(extensionPath: string): Promise<BrowserExtensionEntry[]> {
+  async importFromChrome(extensionPath: string): Promise<BrowserExtensionSummary[]> {
     const sourcePath = fs.realpathSync(path.resolve(extensionPath))
     const discovered = this.discoverChrome().find(candidate => candidate.path === sourcePath)
     if (!discovered) throw new Error('The selected extension is not installed in a recognized Chrome profile')
@@ -368,11 +397,11 @@ export class BrowserExtensionManager {
         ...candidate,
         key,
         enabled: true,
-        runtimeId: null,
+        runtimeIds: new Map(),
         error: null,
       }
       this.entries.set(key, entry)
-      await this.load(entry)
+      await this.loadEverywhere(entry)
       this.persist()
       fs.rmSync(backupPath, { recursive: true, force: true })
       return this.list()
@@ -389,9 +418,9 @@ export class BrowserExtensionManager {
     }
   }
 
-  async setEnabled(key: string, enabled: boolean): Promise<BrowserExtensionEntry[]> {
+  async setEnabled(key: string, enabled: boolean): Promise<BrowserExtensionSummary[]> {
     const entry = this.requireEntry(key)
-    if (enabled === entry.enabled && (enabled ? !!entry.runtimeId : true)) return this.list()
+    if (enabled === entry.enabled && (enabled ? entry.runtimeIds.size > 0 : true)) return this.list()
     if (!enabled) this.unload(entry)
     entry.enabled = enabled
     entry.error = null
@@ -399,9 +428,9 @@ export class BrowserExtensionManager {
       try {
         const refreshed = inspectBrowserExtension(entry.path)
         Object.assign(entry, refreshed)
-        await this.load(entry)
+        await this.loadEverywhere(entry)
       } catch (error) {
-        entry.runtimeId = null
+        this.unload(entry)
         entry.error = error instanceof Error ? error.message : String(error)
       }
     }
@@ -409,23 +438,23 @@ export class BrowserExtensionManager {
     return this.list()
   }
 
-  async reload(key: string): Promise<BrowserExtensionEntry[]> {
+  async reload(key: string): Promise<BrowserExtensionSummary[]> {
     const entry = this.requireEntry(key)
     if (!entry.enabled) throw new Error('Enable the extension before reloading it')
     this.unload(entry)
     try {
       const refreshed = inspectBrowserExtension(entry.path)
       Object.assign(entry, refreshed)
-      await this.load(entry)
+      await this.loadEverywhere(entry)
     } catch (error) {
-      entry.runtimeId = null
+      this.unload(entry)
       entry.error = error instanceof Error ? error.message : String(error)
     }
     this.persist()
     return this.list()
   }
 
-  remove(key: string): BrowserExtensionEntry[] {
+  remove(key: string): BrowserExtensionSummary[] {
     const entry = this.requireEntry(key)
     this.unload(entry)
     this.entries.delete(key)
@@ -442,21 +471,27 @@ export class BrowserExtensionManager {
     return entry
   }
 
-  private async load(entry: BrowserExtensionEntry): Promise<void> {
+  /** Load one extension into every session already attached. Before the first
+   *  partition opens this records nothing: the loading happens in `attach`. */
+  private async loadEverywhere(entry: BrowserExtensionEntry): Promise<void> {
+    for (const target of this.sessions) await this.loadInto(entry, target)
+  }
+
+  private async loadInto(entry: BrowserExtensionEntry, target: ExtensionSession): Promise<void> {
     try {
-      const loaded = await this.browserSession.extensions.loadExtension(entry.path)
-      entry.runtimeId = loaded.id
+      const loaded = await target.extensions.loadExtension(entry.path)
+      entry.runtimeIds.set(target, loaded.id)
       entry.error = null
     } catch (error) {
-      entry.runtimeId = null
       entry.error = error instanceof Error ? error.message : String(error)
     }
   }
 
   private unload(entry: BrowserExtensionEntry): void {
-    if (!entry.runtimeId) return
-    try { this.browserSession.extensions.removeExtension(entry.runtimeId) } catch { /* already unloaded */ }
-    entry.runtimeId = null
+    for (const [target, runtimeId] of entry.runtimeIds) {
+      try { target.extensions.removeExtension(runtimeId) } catch { /* already unloaded */ }
+    }
+    entry.runtimeIds.clear()
   }
 
   private persist(): void {
