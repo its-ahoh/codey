@@ -48,14 +48,14 @@ coordinate command.
 ## Profiles
 
 The browser can save and restore named sessions ("profiles") - the cookies and
-per-site storage that keep a site signed in - so you can switch identity for a
-task or carry a session to another machine.
+per-site storage that keep a site signed in - so you can choose an identity for
+a task or carry a session to another machine.
 
 Profiles are isolated: each one has its own cookie jar, so two profiles can be
 signed into the same site at once and a login made inside a profile stays
-there. The user chooses which profile new tabs open under by default - you can
-see the set and open your own tab in one, but you cannot change their default
-for them.
+there without a save step. The user chooses which profile new tabs open under
+by default - you can see the set and open your own tab in one, but you cannot
+change their default for them.
 
 - `profile list` - saved profiles, with the default one flagged
 - `profile save <name>` - snapshot the current session into a named profile

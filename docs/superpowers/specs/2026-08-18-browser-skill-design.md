@@ -1,5 +1,9 @@
 # Browser as a skill, not an MCP server — Design
 
+> The profile model in this document (one shared jar, profiles merged into it,
+> activation as an identity switch) was replaced by
+> `2026-09-08-browser-profile-partitions-design.md`. Everything else still holds.
+
 Date: 2026-08-18
 Status: Implemented (PR #313)
 Supersedes: `2026-07-21-plugins-browser-mcp-design.md` (the browser transport
