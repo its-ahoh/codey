@@ -270,9 +270,9 @@ export class BrowserController {
     this.random = options.random ?? Math.random
     this.sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
     this.getProfilesDir = options.getProfilesDir ?? (() => path.join(os.tmpdir(), 'codey-browser-profiles'))
-    // Hidden page used to apply a profile's localStorage for origins that are
-    // not currently open in a tab. Shares the browser's persistent partition,
-    // so it reads and writes the same storage the visible tabs use.
+    // Hidden page used to read or apply a profile's localStorage for origins
+    // that are not currently open in a tab. The caller picks the partition, so
+    // the page reads and writes the same storage that profile's tabs use.
     this.createHiddenView = options.createHiddenView ?? ((partition: string) => new WebContentsView({
       webPreferences: {
         partition,

@@ -343,6 +343,30 @@ describe('BrowserController agent controls', () => {
     })
   })
 
+  it('opens a popup in the same profile as the tab that spawned it', () => {
+    let openHandler: ((details: { url: string; disposition: string; features: string }) => any) | undefined
+    const openerContents = {
+      on: vi.fn(),
+      setWindowOpenHandler: vi.fn((handler: (details: { url: string; disposition: string; features: string }) => any) => { openHandler = handler }),
+    }
+    const opener = { webContents: openerContents }
+    const parent = { isDestroyed: vi.fn(() => false) }
+    const controller = new BrowserController(() => parent as any, vi.fn())
+    ;(controller as any).tabs = [{ id: 't1', view: opener, profile: 'work' }]
+    ;(controller as any).view = opener
+    ;(controller as any).bindEvents(openerContents, 'work')
+
+    // An OAuth popup that landed in the default jar while its opener was in
+    // "work" would sign the user in to the wrong identity.
+    const response = openHandler!({
+      url: 'https://accounts.google.com/o/oauth2/auth',
+      disposition: 'new-window',
+      features: 'width=520,height=640',
+    })
+    expect(response.overrideBrowserWindowOptions.webPreferences.partition).toBe('persist:codey-profile-work')
+    expect(response.overrideBrowserWindowOptions.webPreferences.partition).not.toBe(BROWSER_PARTITION)
+  })
+
   it('detaches without closing child contents during native app shutdown', () => {
     const close = vi.fn()
     const view = { webContents: { isDestroyed: vi.fn(() => false), close } }
