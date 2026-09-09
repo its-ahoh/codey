@@ -594,7 +594,40 @@ describe('BrowserController profiles', () => {
     }
   })
 
-  it('migrates a legacy profile session into its partition exactly once', async () => {
+  it('never replays a jar at startup, so a login made in the browser survives', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-persist-'))
+    try {
+      const removed: string[] = []
+      const clearStorageData = vi.fn(async () => {})
+      const controller = new BrowserController(
+        () => null,
+        vi.fn(),
+        vi.fn(),
+        undefined,
+        (_partition: string) => ({
+          cookies: {
+            get: vi.fn(async () => []),
+            set: vi.fn(async () => {}),
+            remove: vi.fn(async (url: string, name: string) => { removed.push(`${url}|${name}`) }),
+          },
+          clearStorageData,
+        }) as any,
+        { getProfilesDir: () => dir },
+      )
+      new BrowserProfileStore(dir).writeMeta('work', null)
+
+      // Startup only migrates schema-1 files. A current profile's persistent
+      // partition is already the source of truth and must remain untouched.
+      await expect(controller.migrateProfilesToPartitions()).resolves.toEqual({ migrated: [] })
+      await controller.setDefaultProfile('work')
+      expect(removed).toEqual([])
+      expect(clearStorageData).not.toHaveBeenCalled()
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('migrates a pre-upgrade profile into its own jar exactly once', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-migrate-'))
     try {
       fs.writeFileSync(path.join(dir, 'work.json'), JSON.stringify({
