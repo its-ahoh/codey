@@ -13,9 +13,11 @@ import {
   assertProfileName,
   BrowserProfileStore,
   cookieMatchesUrl,
+  DEFAULT_BROWSER_PARTITION,
   mergeProfileSites,
   parseProfileJsonText,
   profileConflict,
+  profilePartition,
   summarizeProfileSites,
   readProfileJson,
   type BrowserProfile,
@@ -26,7 +28,10 @@ import {
   type BrowserProfileSummary,
 } from './browser-profiles'
 
-export const BROWSER_PARTITION = 'persist:codey-browser'
+// Re-exported (not `export { X as Y } from ...`) so the name stays usable as
+// a local binding within this file, e.g. in the `partition:` webPreferences
+// fields below.
+export const BROWSER_PARTITION = DEFAULT_BROWSER_PARTITION
 
 export interface BrowserBounds {
   x: number
@@ -255,7 +260,8 @@ export class BrowserController {
     private readonly onState: (state: BrowserState) => void,
     private readonly onDownload: (download: BrowserDownload) => void = () => {},
     private readonly getDownloadDirectory: () => string = () => path.join(os.tmpdir(), 'codey-downloads'),
-    private readonly getBrowserSession: () => Session = () => session.fromPartition(BROWSER_PARTITION, { cache: true }),
+    private readonly getBrowserSession: (partition: string) => Session =
+      (partition: string) => session.fromPartition(partition, { cache: true }),
     options: BrowserControllerOptions = {},
   ) {
     this.random = options.random ?? Math.random
@@ -285,10 +291,17 @@ export class BrowserController {
     return this.profileStore
   }
 
+  /** The session that holds one profile's login state. `null` is the default
+   *  jar, used by tabs that belong to no profile. Electron returns the same
+   *  Session object for a partition string it has already seen, so this is
+   *  cheap to call. */
+  private sessionFor(profileName: string | null): Session {
+    return this.getBrowserSession(profilePartition(profileName))
+  }
+
   setSitePermissionManager(manager: BrowserSitePermissionManager): void {
     this.sitePermissionManager = manager
-    const browserSession = this.getBrowserSession()
-    this.bindSitePermissions(browserSession)
+    this.bindSitePermissions(this.sessionFor(null))
   }
 
   getState(): BrowserState {
@@ -927,7 +940,7 @@ export class BrowserController {
   async resetSession(): Promise<BrowserState> {
     this.destroy()
     this.downloads = []
-    const browserSession = this.getBrowserSession()
+    const browserSession = this.sessionFor(null)
     await browserSession.clearStorageData()
     await browserSession.clearCache()
     await browserSession.clearAuthCache()
@@ -1253,7 +1266,7 @@ export class BrowserController {
   private async captureProfileData(): Promise<BrowserProfileData> {
     let cookies: BrowserProfileCookie[] = []
     try {
-      const found = await this.getBrowserSession().cookies.get({})
+      const found = await this.sessionFor(null).cookies.get({})
       cookies = found.map(cookie => ({
         name: cookie.name,
         value: cookie.value,
@@ -1322,7 +1335,7 @@ export class BrowserController {
    *  activating a profile an identity switch: leftovers from the previous
    *  profile cannot leak into the new one. */
   private async applyProfileData(profile: BrowserProfile): Promise<void> {
-    const browserSession = this.getBrowserSession()
+    const browserSession = this.sessionFor(null)
     let existing: Electron.Cookie[] = []
     try {
       existing = await browserSession.cookies.get({})
@@ -1581,7 +1594,7 @@ export class BrowserController {
   }
 
   private createTab(activate: boolean): BrowserTabRecord {
-    const browserSession = this.getBrowserSession()
+    const browserSession = this.sessionFor(null)
     this.bindSitePermissions(browserSession)
     this.bindDownloads(browserSession)
 

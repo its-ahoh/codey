@@ -484,13 +484,44 @@ describe('BrowserController profiles', () => {
       vi.fn(),
       vi.fn(),
       undefined,
-      () => session as any,
+      (_partition: string) => session as any,
       { getProfilesDir: () => dir, ...(overrides.options ?? {}) },
     )
     ;(controller as any).tabs = tabs
     ;(controller as any).view = tabs[0]?.view ?? null
     return { controller, session, contents, cookiesGet, cookiesSet, cookiesRemove, clearStorage }
   }
+
+  it('asks for a different session per profile', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-partitions-'))
+    try {
+      const asked: string[] = []
+      const makeSession = () => ({
+        cookies: { get: vi.fn(async () => []), set: vi.fn(async () => {}), remove: vi.fn(async () => {}) },
+        clearStorageData: vi.fn(async () => {}),
+      })
+      const sessions = new Map<string, any>()
+      const controller = new BrowserController(
+        () => null,
+        vi.fn(),
+        vi.fn(),
+        undefined,
+        (partition: string) => {
+          asked.push(partition)
+          if (!sessions.has(partition)) sessions.set(partition, makeSession())
+          return sessions.get(partition)
+        },
+        { getProfilesDir: () => dir },
+      )
+      expect((controller as any).sessionFor('work')).not.toBe((controller as any).sessionFor('personal'))
+      expect((controller as any).sessionFor('work')).toBe((controller as any).sessionFor('work'))
+      expect(asked).toContain('persist:codey-profile-work')
+      expect(asked).toContain('persist:codey-profile-personal')
+      expect((controller as any).sessionFor(null)).toBe(sessions.get('persist:codey-browser'))
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
 
   it('saves the live session into a named profile file', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
