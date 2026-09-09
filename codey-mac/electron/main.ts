@@ -75,6 +75,29 @@ let workspaceManager: WorkspaceManager | null = null
 let coreConfigManager: ConfigManager | null = null
 let apiServer: ApiServer | null = null
 let activeApiPort: number | null = null
+/** Every partition already given its own passkey handler. Extensions dedupe on
+ *  their own side, but `select-webauthn-account` would stack one listener per
+ *  tab without this. */
+const configuredWebAuthn = new WeakSet<Electron.Session>()
+let warnedWebAuthnUnavailable = false
+/** Everything a profile's jar needs the first time the browser opens it:
+ *  the user's extensions, and the native Touch ID authenticator. */
+const onBrowserSessionOpened = (target: Electron.Session) => {
+  void browserExtensionManager?.attach(target)
+  if (configuredWebAuthn.has(target)) return
+  configuredWebAuthn.add(target)
+  if (!canConfigureBrowserWebAuthn()) {
+    if (warnedWebAuthnUnavailable) return
+    warnedWebAuthnUnavailable = true
+    console.warn('[browser] Native Touch ID disabled: Codey is not signed with the required keychain entitlement')
+    return
+  }
+  configureBrowserWebAuthn(app, target, pickBrowserPasskey, error => {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[browser] WebAuthn unavailable: ${message}`)
+    sendToRenderer('gateway-log', `[browser] WebAuthn unavailable: ${message}`)
+  })
+}
 const browserController = new BrowserController(
   () => mainWindow,
   state => sendToRenderer('browser:state', state),
@@ -83,7 +106,10 @@ const browserController = new BrowserController(
   undefined,
   // Named browser profiles (saved/imported sessions) live in the app's own
   // data directory, next to the browser-control permission store.
-  { getProfilesDir: () => join(app.getPath('userData'), 'browser-profiles') },
+  {
+    getProfilesDir: () => join(app.getPath('userData'), 'browser-profiles'),
+    onSessionOpened: onBrowserSessionOpened,
+  },
 )
 let browserAgentBridge: BrowserAgentBridge | null = null
 let browserControlPermission: BrowserControlPermissionGate | null = null
@@ -2039,7 +2065,6 @@ app.whenReady().then(async () => {
     await syncCodeyGlobalSkills()
   } catch { /* best-effort: skills stay listed even if linking fails */ }
 
-  const browserSession = session.fromPartition(BROWSER_PARTITION, { cache: true })
   browserSitePermissions = new BrowserSitePermissionManager(
     join(app.getPath('userData'), 'browser-site-permissions.json'),
     state => sendToRenderer('browser:sitePermission', state),
@@ -2061,6 +2086,9 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.warn(`[browser] extensions unavailable: ${error instanceof Error ? error.message : String(error)}`)
   }
+  // The default jar is ready before any tab exists, so serve it now; every
+  // other partition is served the first time the browser opens a tab in it.
+  onBrowserSessionOpened(session.fromPartition(BROWSER_PARTITION, { cache: true }))
   const chromeWorkspaceName = () => {
     if (!workspaceManager) throw new Error('Codey is still starting — try again in a moment')
     const name = workspaceManager.getCurrentWorkspace() || workspaceManager.listWorkspaces()[0]
@@ -2310,16 +2338,6 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.warn(`[browser] Chrome companion unavailable: ${error instanceof Error ? error.message : String(error)}`)
   }
-  if (canConfigureBrowserWebAuthn()) {
-    configureBrowserWebAuthn(app, browserSession, pickBrowserPasskey, error => {
-      const message = error instanceof Error ? error.message : String(error)
-      console.warn(`[browser] WebAuthn unavailable: ${message}`)
-      sendToRenderer('gateway-log', `[browser] WebAuthn unavailable: ${message}`)
-    })
-  } else {
-    console.warn('[browser] Native Touch ID disabled: Codey is not signed with the required keychain entitlement')
-  }
-
   protocol.handle('codey-asset', async (request) => {
     try {
       const url = new URL(request.url)
