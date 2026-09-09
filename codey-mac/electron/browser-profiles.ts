@@ -280,58 +280,6 @@ export function cookieMatchesUrl(cookie: BrowserProfileCookie, url: URL): boolea
     || requestPath[cookiePath.length] === '/'
 }
 
-/** The first cookie two profiles both hold with different values, or null when
- *  they can safely be enabled together. Same key and same value is not a
- *  conflict - honouring either one gives the same live session. */
-export function conflictingCookie(
-  left: BrowserProfileData,
-  right: BrowserProfileData,
-): BrowserProfileCookie | null {
-  const key = (cookie: BrowserProfileCookie) => `${cookie.domain}\u0000${cookie.path}\u0000${cookie.name}`
-  const held = new Map(left.cookies.map(cookie => [key(cookie), cookie]))
-  for (const cookie of right.cookies) {
-    const other = held.get(key(cookie))
-    if (other && other.value !== cookie.value) return cookie
-  }
-  return null
-}
-
-/** The first localStorage key two profiles both hold for the same origin with
- *  different values, or null. Cookies are not the only place a login lives, so
- *  the "one value would silently win" rule has to cover storage too. */
-export function conflictingStorageKey(
-  left: BrowserProfileData,
-  right: BrowserProfileData,
-): { origin: string; key: string } | null {
-  const held = new Map<string, string>()
-  for (const origin of left.origins) {
-    for (const item of origin.localStorage) {
-      held.set(`${origin.origin} ${item.name}`, item.value)
-    }
-  }
-  for (const origin of right.origins) {
-    for (const item of origin.localStorage) {
-      const other = held.get(`${origin.origin} ${item.name}`)
-      if (other !== undefined && other !== item.value) return { origin: origin.origin, key: item.name }
-    }
-  }
-  return null
-}
-
-/** Why two profiles cannot be live at the same time, or null when they can.
- *  One shared check so enabling, re-syncing and importing all refuse the same
- *  overlaps instead of each path missing a different one. */
-export function profileConflict(
-  left: BrowserProfileData,
-  right: BrowserProfileData,
-): string | null {
-  const cookie = conflictingCookie(left, right)
-  if (cookie) return `a different ${cookie.name} cookie for ${cookie.domain}`
-  const storage = conflictingStorageKey(left, right)
-  if (storage) return `different site storage (${storage.key}) for ${storage.origin}`
-  return null
-}
-
 /** Does `site` (a registrable domain, as Chrome grouped it) cover `host`?
  *  Used to decide which of a profile's cookies a refresh of that site speaks
  *  for, without needing the public-suffix guesswork on this side: the sites
@@ -340,33 +288,6 @@ export function siteCoversHost(site: string, host: string): boolean {
   const left = site.replace(/^\./, '').toLowerCase()
   const right = host.replace(/^\./, '').toLowerCase()
   return !!left && (right === left || right.endsWith(`.${left}`))
-}
-
-/** Fold a fresh multi-site export into a profile. Only the sites the export
- *  covers are replaced - everything else the profile holds is left alone, so
- *  refreshing what Chrome knows about cannot delete a login that came from
- *  somewhere else. Replacing rather than layering means a cookie the site has
- *  dropped disappears instead of lingering as a stale credential. */
-export function mergeProfileSites(
-  existing: BrowserProfileData,
-  incoming: BrowserProfileData,
-  sites: readonly string[],
-): BrowserProfileData {
-  const covers = (host: string) => sites.some(site => siteCoversHost(site, host));
-  const originHost = (origin: string) => {
-    try {
-      return new URL(origin).hostname
-    } catch {
-      return ''
-    }
-  }
-  return {
-    cookies: [...existing.cookies.filter(cookie => !covers(cookie.domain)), ...incoming.cookies],
-    origins: [
-      ...existing.origins.filter(origin => !covers(originHost(origin.origin))),
-      ...incoming.origins,
-    ],
-  }
 }
 
 /** What one site inside a profile holds, described without the secrets. Cookie
@@ -616,14 +537,13 @@ export class BrowserProfileStore {
     return this.activeNames()[0] ?? null
   }
 
-  setActive(names: string | string[] | null): void {
-    const list = names === null ? [] : (Array.isArray(names) ? names : [names])
-    if (list.length === 0) {
+  setActive(name: string | null): void {
+    if (name === null) {
       try { fs.unlinkSync(this.activeFile()) } catch { /* already absent */ }
       return
     }
-    for (const name of list) assertProfileName(name)
+    assertProfileName(name)
     fs.mkdirSync(this.dir, { recursive: true })
-    fs.writeFileSync(this.activeFile(), `${list.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 })
+    fs.writeFileSync(this.activeFile(), `${name}\n`, { encoding: 'utf8', mode: 0o600 })
   }
 }

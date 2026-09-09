@@ -673,11 +673,9 @@ declare global {
         closeTab: (id: string) => Promise<IpcResult<BrowserState>>
         resetSession: () => Promise<IpcResult<BrowserState>>
         profiles: {
-          list: () => Promise<IpcResult<{ active: string | null; activeNames: string[]; profiles: BrowserProfileSummary[] }>>
+          list: () => Promise<IpcResult<{ active: string | null; profiles: BrowserProfileSummary[] }>>
           save: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
-          activate: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
-          enable: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
-          disable: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
+          setDefault: (name: string | null) => Promise<IpcResult<BrowserProfileSummary | null>>
           setAvatar: (name: string, avatar: string) => Promise<IpcResult<BrowserProfileSummary>>
           setAutoSync: (name: string, enabled: boolean) => Promise<IpcResult<BrowserProfileSummary>>
           delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>

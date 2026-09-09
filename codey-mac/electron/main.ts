@@ -2428,7 +2428,6 @@ app.whenReady().then(async () => {
   // and Settings) manages through the same controller the agents use.
   ipcMain.handle('browser:profiles:list', event => browserCall(event, async () => ({
     active: browserController.activeProfileName(),
-    activeNames: browserController.activeProfileNames(),
     profiles: await browserController.listProfiles(),
   })))
   ipcMain.handle('browser:profiles:save', (event, name: string) =>
@@ -2437,14 +2436,10 @@ app.whenReady().then(async () => {
       await refreshWatchDomains()
       return result
     }))
-  ipcMain.handle('browser:profiles:activate', (event, name: string) =>
-    browserCall(event, () => browserController.activateProfile(String(name || ''))))
-  // Enabling adds a profile to the live session instead of replacing it, so the
-  // browser can hold several logins at once.
-  ipcMain.handle('browser:profiles:enable', (event, name: string) =>
-    browserCall(event, () => browserController.enableProfile(String(name || ''))))
-  ipcMain.handle('browser:profiles:disable', (event, name: string) =>
-    browserCall(event, () => browserController.disableProfile(String(name || ''))))
+  // Which profile new tabs open under. Open tabs keep the jar they were born
+  // on, so this disturbs nothing that is already on screen.
+  ipcMain.handle('browser:profiles:setDefault', (event, name: string | null) =>
+    browserCall(event, () => browserController.setDefaultProfile(name === null ? null : String(name || ''))))
   // The Sync button in the browser toolbar: pull the login Chrome holds for the
   // page Codey Browser is showing into the profile that already owns this site.
   // It is scoped to that one site, so a profile carrying several logins keeps

@@ -1108,48 +1108,16 @@ export class BrowserController {
     return this.summaryOf(name)
   }
 
-  /** Names of every enabled profile, in the order they were enabled. */
-  activeProfileNames(): string[] {
-    return this.profiles().activeNames()
-  }
-
-  /** Switch the live session to a single saved profile, replacing whatever was
-   *  enabled. This is the identity switch: leftovers from the profiles that
-   *  were enabled cannot leak into the new one. Use `enableProfile` to add a
-   *  profile alongside the ones already on. */
-  async activateProfile(name: string): Promise<BrowserProfileSummary> {
-    assertProfileName(name)
-    const enabled = this.profiles().activeNames()
-    if (enabled.length === 1 && enabled[0] === name) {
-      const current = this.profiles().list().find(profile => profile.name === name)
-      if (current) return this.withJarCounts(current)
-      throw new Error(`Profile ${name} is enabled but missing on disk`)
+  /** Which profile new tabs open under. Nothing is replayed and no open tab
+   *  changes identity - a tab keeps the jar it was created on for life. */
+  async setDefaultProfile(name: string | null): Promise<BrowserProfileSummary | null> {
+    if (name === null) {
+      this.profiles().setActive(null)
+      return null
     }
-    this.profiles().read(name)
-    await this.setEnabledProfiles([name])
-    return this.summaryOf(name)
-  }
-
-  /** Turn a profile on alongside the ones already enabled, so a browser can
-   *  hold several logins at once (a GitHub profile and a Jira one, say). The
-   *  live session becomes the union of every enabled profile. */
-  async enableProfile(name: string): Promise<BrowserProfileSummary> {
     assertProfileName(name)
-    const enabled = this.profiles().activeNames()
-    if (enabled.includes(name)) return this.summaryOf(name)
     this.profiles().read(name)
-    await this.setEnabledProfiles([...enabled, name])
-    return this.summaryOf(name)
-  }
-
-  /** Turn one profile off and leave the rest enabled. The live session is
-   *  rebuilt from what remains rather than having cookies picked out of it, so
-   *  nothing of the disabled profile can survive by accident. */
-  async disableProfile(name: string): Promise<BrowserProfileSummary> {
-    assertProfileName(name)
-    const enabled = this.profiles().activeNames()
-    if (!enabled.includes(name)) return this.summaryOf(name)
-    await this.setEnabledProfiles(enabled.filter(entry => entry !== name))
+    this.profiles().setActive(name)
     return this.summaryOf(name)
   }
 
@@ -1205,31 +1173,6 @@ export class BrowserController {
     return { migrated }
   }
 
-  /** Record the enabled set and make the live session match it. */
-  private async setEnabledProfiles(names: string[]): Promise<void> {
-    this.profiles().setActive(names)
-    await this.applyLiveProfiles()
-  }
-
-  /** Rebuild the default jar from every enabled profile. This is the last
-   *  piece of the pre-partition model; until Task 8 retires it, read the live
-   *  jars rather than the metadata-only files so enabling cannot erase the
-   *  browser's session. */
-  private async applyLiveProfiles(): Promise<void> {
-    const cookies: BrowserProfileCookie[] = []
-    const origins: BrowserProfileStorageOrigin[] = []
-    for (const name of this.profiles().activeNames()) {
-      try {
-        const data = await this.captureProfileData(name)
-        cookies.push(...data.cookies)
-        origins.push(...data.origins)
-      } catch {
-        // One unreadable jar must not prevent the others from being applied.
-      }
-    }
-    await this.writeJar(null, { cookies, origins })
-  }
-
   setProfileAvatar(name: string, avatar: string): BrowserProfileSummary {
     return this.profiles().setAvatar(name, avatar)
   }
@@ -1239,13 +1182,18 @@ export class BrowserController {
     return this.profiles().setAutoSync(name, enabled)
   }
 
-  /** Remove a saved profile. Deleting an enabled profile turns it off and
-   *  rebuilds the live session from whichever profiles are still on. */
+  /** Remove a profile: its metadata record and its whole storage jar. Tabs
+   *  still open on that jar keep working until they are closed; the storage
+   *  behind them is gone, so they are signed out on the next load. */
   async deleteProfile(name: string): Promise<{ deleted: boolean }> {
     assertProfileName(name)
-    const enabled = this.profiles().activeNames()
+    try {
+      await this.sessionFor(name).clearStorageData()
+    } catch {
+      // A jar that will not clear must not block removing the profile.
+    }
     this.profiles().remove(name)
-    if (enabled.includes(name)) await this.setEnabledProfiles(enabled.filter(entry => entry !== name))
+    if (this.profiles().active() === name) this.profiles().setActive(null)
     return { deleted: true }
   }
 

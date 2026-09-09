@@ -733,46 +733,60 @@ describe('BrowserController profiles', () => {
     }
   })
 
-  it('keeps several profiles enabled and rebuilds from their jars, not metadata files', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+  it('lets two profiles hold different cookies for the same site', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-isolation-'))
     try {
-      const { controller, cookiesSet } = makeFixture(dir)
-      const store = new BrowserProfileStore(dir)
-      store.writeMeta('gh', null)
-      store.writeMeta('jira', null)
+      const jars: Record<string, any[]> = {}
+      const controller = new BrowserController(
+        () => null,
+        vi.fn(),
+        vi.fn(),
+        undefined,
+        (partition: string) => ({
+          cookies: {
+            get: vi.fn(async () => jars[partition] ?? []),
+            set: vi.fn(async (cookie: any) => {
+              jars[partition] = [...(jars[partition] ?? []).filter((entry: any) => entry.name !== cookie.name), {
+                name: cookie.name, value: cookie.value, domain: cookie.domain ?? 'github.com',
+                path: '/', secure: true, httpOnly: true, sameSite: 'lax',
+              }]
+            }),
+            remove: vi.fn(async () => {}),
+          },
+          clearStorageData: vi.fn(async () => {}),
+        }) as any,
+        { getProfilesDir: () => dir },
+      )
+      const snapshot = (value: string) => JSON.stringify({
+        cookies: [{
+          name: 'session', value, domain: 'github.com', path: '/', expires: -1,
+          httpOnly: true, secure: true, sameSite: 'lax',
+        }],
+        origins: [],
+      })
+      await controller.importProfile('work', { json: snapshot('work-token') })
+      await controller.importProfile('personal', { json: snapshot('personal-token') })
 
-      await controller.enableProfile('gh')
-      await controller.enableProfile('jira')
-      expect(controller.activeProfileNames()).toEqual(['gh', 'jira'])
-      expect((await controller.listProfiles()).filter(profile => profile.active).map(profile => profile.name)).toEqual(['gh', 'jira'])
-
-      // The fixture exposes one live cookie in each jar. Metadata has no
-      // session payload, so these writes prove the jars were read instead.
-      const applied = cookiesSet.mock.calls.map(call => (call as any[])[0].name)
-      expect(applied).toEqual(['sid', 'sid', 'sid'])
-
-      // Turning one off rebuilds the session from what is left.
-      cookiesSet.mockClear()
-      await controller.disableProfile('gh')
-      expect(controller.activeProfileNames()).toEqual(['jira'])
-      expect(cookiesSet.mock.calls.map(call => (call as any[])[0].name)).toEqual(['sid'])
+      expect(jars['persist:codey-profile-work'].map(cookie => cookie.value)).toEqual(['work-token'])
+      expect(jars['persist:codey-profile-personal'].map(cookie => cookie.value)).toEqual(['personal-token'])
+      expect(await controller.profileSites('work')).toEqual(['github.com'])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
 
-  it('leaves the other profiles enabled when one is deleted', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
+  it('sets which profile new tabs open under, without touching open tabs', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-default-'))
     try {
-      const { controller } = makeFixture(dir)
-      const store = new BrowserProfileStore(dir)
-      store.writeMeta('gh', null)
-      store.writeMeta('jira', null)
-      await controller.enableProfile('gh')
-      await controller.enableProfile('jira')
-
-      await controller.deleteProfile('gh')
-      expect(controller.activeProfileNames()).toEqual(['jira'])
+      const { controller, cookiesSet } = makeFixture(dir)
+      new BrowserProfileStore(dir).writeMeta('work', null)
+      cookiesSet.mockClear()
+      await controller.setDefaultProfile('work')
+      expect(controller.activeProfileName()).toBe('work')
+      // Nothing was replayed into any jar: existing tabs keep their identity.
+      expect(cookiesSet).not.toHaveBeenCalled()
+      await controller.setDefaultProfile(null)
+      expect(controller.activeProfileName()).toBeNull()
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -935,7 +949,7 @@ describe('BrowserController profiles', () => {
     try {
       const { controller } = makeFixture(dir)
       await expect(controller.saveProfile('../evil')).rejects.toThrow(/Profile names/)
-      await expect(controller.activateProfile('.hidden')).rejects.toThrow(/Profile names/)
+      await expect(controller.setDefaultProfile('.hidden')).rejects.toThrow(/Profile names/)
       await expect(controller.deleteProfile('a/b')).rejects.toThrow(/Profile names/)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
@@ -1053,7 +1067,7 @@ describe('BrowserController profiles', () => {
     }
   })
 
-  it('activate is a no-op when the profile is already active, and delete clears it', async () => {
+  it('re-picking the current default changes nothing, and delete clears it', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
     try {
       const { controller, cookiesSet, cookiesRemove } = makeFixture(dir)
@@ -1061,8 +1075,8 @@ describe('BrowserController profiles', () => {
       expect(controller.activeProfileName()).toBe('work')
       cookiesRemove.mockClear()
       cookiesSet.mockClear()
-      const summary = await controller.activateProfile('work')
-      expect(summary.active).toBe(true)
+      const summary = await controller.setDefaultProfile('work')
+      expect(summary?.active).toBe(true)
       expect(cookiesRemove).not.toHaveBeenCalled()
       await controller.deleteProfile('work')
       expect(controller.activeProfileName()).toBeNull()

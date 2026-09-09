@@ -7,16 +7,12 @@ import {
   assertProfileName,
   BrowserProfileStore,
   availableProfileName,
-  conflictingCookie,
-  conflictingStorageKey,
   cookieMatchesUrl,
-  mergeProfileSites,
   siteCoversHost,
   summarizeProfileSites,
   deriveProfileNameFromFile,
   parseProfileData,
   parseProfileJsonText,
-  profileConflict,
   profileFileName,
   profilePartition,
   readProfileJson,
@@ -186,10 +182,10 @@ describe('BrowserProfileStore', () => {
       expect(store.active()).toBe('work')
       expect(fs.readFileSync(path.join(dir, ACTIVE_PROFILE_FILE), 'utf8')).toBe('work\n')
 
-      // Several at once, in the order they were enabled.
-      store.setActive(['work', 'personal'])
-      expect(store.activeNames()).toEqual(['work', 'personal'])
-      expect(store.active()).toBe('work')
+      // Setting another name replaces the default; only ever one at a time.
+      store.setActive('personal')
+      expect(store.activeNames()).toEqual(['personal'])
+      expect(store.active()).toBe('personal')
 
       store.setActive(null)
       expect(store.activeNames()).toEqual([])
@@ -233,9 +229,9 @@ describe('BrowserProfileStore', () => {
       expect(summaries.find(profile => profile.name === 'b')?.active).toBe(true)
       expect(summaries.find(profile => profile.name === 'a')?.active).toBe(false)
 
-      // Both flagged once both are enabled.
-      store.setActive(['a', 'b'])
-      expect(store.list().filter(profile => profile.active).map(profile => profile.name)).toEqual(['a', 'b'])
+      // Only one default at a time.
+      store.setActive('a')
+      expect(store.list().filter(profile => profile.active).map(profile => profile.name)).toEqual(['a'])
     } finally {
       // store() dir cleanup handled by each test's own dir; nothing to do.
     }
@@ -309,69 +305,7 @@ describe('cookieMatchesUrl', () => {
   })
 })
 
-describe('conflictingCookie', () => {
-  const withValue = (value: string) => ({
-    cookies: [{
-      name: 'session', value, domain: 'github.com', path: '/', expires: -1,
-      httpOnly: true, secure: true, sameSite: 'lax' as const,
-    }],
-    origins: [],
-  })
-
-  it('finds the cookie two profiles disagree about', () => {
-    const clash = conflictingCookie(withValue('work'), withValue('personal'))
-    expect(clash).toMatchObject({ name: 'session', domain: 'github.com' })
-  })
-
-  it('is not a conflict when both hold the same value', () => {
-    expect(conflictingCookie(withValue('same'), withValue('same'))).toBeNull()
-  })
-
-  it('is not a conflict when the cookies are for different scopes', () => {
-    const other = {
-      cookies: [{
-        name: 'session', value: 'x', domain: 'gitlab.com', path: '/', expires: -1,
-        httpOnly: true, secure: true, sameSite: 'lax' as const,
-      }],
-      origins: [],
-    }
-    expect(conflictingCookie(withValue('work'), other)).toBeNull()
-    expect(conflictingCookie({ cookies: [], origins: [] }, withValue('work'))).toBeNull()
-  })
-})
-
-describe('conflictingStorageKey / profileConflict', () => {
-  const withToken = (value: string, origin = 'https://app.example.com') => ({
-    cookies: [],
-    origins: [{ origin, localStorage: [{ name: 'token', value }] }],
-  })
-
-  it('finds the storage key two profiles disagree about', () => {
-    expect(conflictingStorageKey(withToken('work'), withToken('personal')))
-      .toEqual({ origin: 'https://app.example.com', key: 'token' })
-  })
-
-  it('is not a conflict when the value or the origin differs harmlessly', () => {
-    expect(conflictingStorageKey(withToken('same'), withToken('same'))).toBeNull()
-    expect(conflictingStorageKey(withToken('work'), withToken('personal', 'https://other.example.com'))).toBeNull()
-    expect(conflictingStorageKey({ cookies: [], origins: [] }, withToken('work'))).toBeNull()
-  })
-
-  it('profileConflict names cookie clashes first, then storage clashes', () => {
-    const cookie = (value: string) => ({
-      cookies: [{
-        name: 'session', value, domain: 'github.com', path: '/', expires: -1,
-        httpOnly: true, secure: true, sameSite: 'lax' as const,
-      }],
-      origins: [],
-    })
-    expect(profileConflict(cookie('a'), cookie('b'))).toMatch(/session cookie for github\.com/)
-    expect(profileConflict(withToken('a'), withToken('b'))).toMatch(/site storage \(token\) for https:\/\/app\.example\.com/)
-    expect(profileConflict(cookie('same'), cookie('same'))).toBeNull()
-  })
-})
-
-describe('siteCoversHost / mergeProfileSites', () => {
+describe('siteCoversHost', () => {
   it('covers a site and its subdomains, and nothing that merely ends alike', () => {
     expect(siteCoversHost('github.com', 'github.com')).toBe(true)
     expect(siteCoversHost('github.com', 'api.github.com')).toBe(true)
@@ -380,38 +314,6 @@ describe('siteCoversHost / mergeProfileSites', () => {
     expect(siteCoversHost('', 'github.com')).toBe(false)
   })
 
-  const cookie = (domain: string, value: string) => ({
-    name: 'session', value, domain, path: '/', expires: -1,
-    httpOnly: true, secure: true, sameSite: 'lax' as const,
-  })
-
-  it('replaces only the sites the refresh covers', () => {
-    const existing = {
-      cookies: [cookie('github.com', 'old'), cookie('api.github.com', 'old'), cookie('gitlab.com', 'keep')],
-      origins: [
-        { origin: 'https://github.com', localStorage: [{ name: 'token', value: 'old' }] },
-        { origin: 'https://gitlab.com', localStorage: [{ name: 'token', value: 'keep' }] },
-      ],
-    }
-    const incoming = {
-      cookies: [cookie('github.com', 'fresh')],
-      origins: [{ origin: 'https://github.com', localStorage: [{ name: 'token', value: 'fresh' }] }],
-    }
-    const merged = mergeProfileSites(existing, incoming, ['github.com'])
-    expect(merged.cookies.map(entry => [entry.domain, entry.value])).toEqual([
-      ['gitlab.com', 'keep'],
-      ['github.com', 'fresh'],
-    ])
-    expect(merged.origins).toEqual([
-      { origin: 'https://gitlab.com', localStorage: [{ name: 'token', value: 'keep' }] },
-      { origin: 'https://github.com', localStorage: [{ name: 'token', value: 'fresh' }] },
-    ])
-  })
-
-  it('leaves a profile untouched when the refresh covered nothing', () => {
-    const existing = { cookies: [cookie('gitlab.com', 'keep')], origins: [] }
-    expect(mergeProfileSites(existing, { cookies: [], origins: [] }, [])).toEqual(existing)
-  })
 })
 
 describe('summarizeProfileSites', () => {
