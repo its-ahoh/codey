@@ -910,6 +910,33 @@ describe('BrowserController profiles', () => {
     }
   })
 
+  it('applies an empty localStorage snapshot so Chrome can clear stale keys', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-storage-clear-'))
+    try {
+      const hidden = {
+        webContents: {
+          isDestroyed: vi.fn(() => false),
+          executeJavaScript: vi.fn(async (_script: string) => true),
+          once: vi.fn((event: string, cb: () => void) => { if (event === 'did-finish-load') cb() }),
+          loadURL: vi.fn(async () => {}),
+          close: vi.fn(),
+        },
+      }
+      const { controller } = makeFixture(dir, { options: { createHiddenView: () => hidden } })
+      new BrowserProfileStore(dir).writeMeta('work', null)
+
+      await controller.resyncProfileSites('work', { json: JSON.stringify({
+        cookies: [],
+        origins: [{ origin: 'https://example.com', localStorage: [] }],
+      }) }, ['example.com'])
+
+      expect(hidden.webContents.executeJavaScript).toHaveBeenCalledOnce()
+      expect(hidden.webContents.executeJavaScript.mock.calls[0][0]).toContain('localStorage.clear()')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('counts storage-only origins among a profile’s sites to refresh', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
     try {

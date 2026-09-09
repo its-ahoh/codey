@@ -582,7 +582,7 @@ async function exportSessionForSites(requested, openMissing = false) {
     seen.add(origin)
     try {
       const storage = await readTabStorage(tab.id)
-      if (storage?.localStorage?.length > 0) origins.push({ origin, localStorage: storage.localStorage })
+      if (storage?.origin) origins.push({ origin: storage.origin, localStorage: storage.localStorage || [] })
     } catch {
       // A tab that refuses injection costs us its storage, not its cookies.
     }
@@ -595,9 +595,9 @@ async function exportSessionForSites(requested, openMissing = false) {
     const plan = storageVisitPlan([...wanted], cookies.map(cookie => cookie.domain), [...seen])
     const visited = await Promise.all(plan.map(entry => visitForStorage(entry.url, deadline)))
     for (const storage of visited) {
-      if (!storage?.origin || !(storage.localStorage?.length > 0) || seen.has(storage.origin)) continue
+      if (!storage?.origin || seen.has(storage.origin)) continue
       seen.add(storage.origin)
-      origins.push({ origin: storage.origin, localStorage: storage.localStorage })
+      origins.push({ origin: storage.origin, localStorage: storage.localStorage || [] })
     }
     // Those visits were real navigations, and sites rotate session cookies on
     // load. Re-read the jar so the export carries what the sites hold *now*,

@@ -104,7 +104,6 @@ export const BrowserPanel: React.FC<Props> = ({
   const [activeProfile, setActiveProfile] = useState<string | null>(null)
   const [profileBusy, setProfileBusy] = useState(false)
   const [profilePickerOpen, setProfilePickerOpen] = useState(false)
-  const [syncNote, setSyncNote] = useState<string | null>(null)
   const [panelWidth, setPanelWidth] = useState(900)
 
   const browserCovered = browserMenuOpen || profileMenuOpen || activeSettingsSection !== null
@@ -308,32 +307,6 @@ export const BrowserPanel: React.FC<Props> = ({
       setProfileBusy(false)
     }
   }
-
-  // Refresh one profile's saved logins from Chrome, whether or not it is in
-  // use. The menu stays open: this is maintenance, not a choice.
-  const syncProfile = async (name: string) => {
-    setProfileBusy(true)
-    setSyncNote(null)
-    try {
-      const result = await window.codey.browser.profiles.syncProfile(name)
-      if (!result.ok) {
-        setLocalError(result.error)
-        return
-      }
-      setLocalError(null)
-      setSyncNote(`Refreshed “${name}”: ${result.data.cookieCount} cookies from ${result.data.siteCount} site${result.data.siteCount === 1 ? '' : 's'}`)
-      await refreshProfiles()
-      await run(() => window.codey.browser.reload())
-    } finally {
-      setProfileBusy(false)
-    }
-  }
-
-  useEffect(() => {
-    if (!syncNote) return
-    const timer = setTimeout(() => setSyncNote(null), 6000)
-    return () => clearTimeout(timer)
-  }, [syncNote])
 
   const navigate = async () => {
     const next = unwrapResult(await window.codey.browser.navigate(address))
@@ -637,14 +610,6 @@ export const BrowserPanel: React.FC<Props> = ({
                 <span style={styles.profileMenuName}>{profile.name}</span>
                 <span aria-hidden="true" style={styles.profileMenuCheck}>{profile.active ? '✓' : ''}</span>
               </button>
-              <button
-                type="button"
-                style={styles.profileMenuSync}
-                disabled={profileBusy}
-                title={`Refresh every login in ${profile.name} from Chrome`}
-                aria-label={`Refresh ${profile.name} from Chrome`}
-                onClick={() => void syncProfile(profile.name)}
-              ><UIIcon name="refresh" size={12} /></button>
             </div>
           ))}
           <div style={styles.profileMenuDivider} />
@@ -1055,13 +1020,6 @@ export const BrowserPanel: React.FC<Props> = ({
         </div>
       )}
 
-      {syncNote && !displayedError && (
-        <div style={styles.syncBar} role="status">
-          <span>{syncNote}</span>
-          <button type="button" onClick={() => setSyncNote(null)} style={styles.dismissError}>Dismiss</button>
-        </div>
-      )}
-
       {displayedError && (
         <div style={styles.errorBar} role="status">
           <span>{displayedError}</span>
@@ -1145,7 +1103,6 @@ const styles: Record<string, React.CSSProperties> = {
   profileMenuAvatar: { width: 20, flexShrink: 0, textAlign: 'center', fontSize: 15 },
   profileMenuName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   profileMenuRow: { display: 'flex', alignItems: 'center', gap: 2 },
-  profileMenuSync: { flexShrink: 0, display: 'flex', alignItems: 'center', marginRight: 4, padding: '3px 6px', border: 'none', borderRadius: 6, background: 'transparent', color: C.fg3, cursor: 'pointer' },
   profileMenuNote: { padding: '4px 10px 6px', color: C.fg3, fontSize: 10, lineHeight: 1.4 },
   profileMenuDivider: { height: 1, margin: '4px 0', background: C.border },
   contextButton: { height: 31, padding: '0 10px', border: `1px solid ${C.accent}66`, borderRadius: 7, display: 'flex', alignItems: 'center', gap: 6, background: C.accentDim, color: C.accent, cursor: 'pointer', fontSize: 11, fontWeight: 650, whiteSpace: 'nowrap' },
@@ -1209,7 +1166,6 @@ const styles: Record<string, React.CSSProperties> = {
   extensionWarning: { color: C.warningFg, fontSize: 9.5, lineHeight: 1.35, marginTop: 3 },
   extensionPath: { color: C.fg3, fontSize: 9.5, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   extensionError: { color: C.red, fontSize: 9.5, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  syncBar: { minHeight: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '5px 12px', background: `${C.green}18`, color: C.green, borderBottom: `1px solid ${C.green}55`, fontSize: 11 },
   errorBar: { minHeight: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '5px 12px', background: `${C.red}18`, color: C.red, borderBottom: `1px solid ${C.red}55`, fontSize: 11 },
   downloadBar: { minHeight: 30, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '5px 12px', background: `${C.green}12`, color: C.green, borderBottom: `1px solid ${C.green}44`, fontSize: 11 },
   downloadName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },

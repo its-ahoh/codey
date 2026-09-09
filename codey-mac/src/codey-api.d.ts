@@ -203,6 +203,8 @@ export interface BrowserProfileSummary {
   avatar: string | null
   /** This profile keeps itself in sync with Chrome. */
   autoSync: boolean
+  /** Sites that automatic Chrome mirroring must leave untouched. */
+  excludedSites: string[]
   createdAt: number
   updatedAt: number
   cookieCount: number
@@ -680,6 +682,7 @@ declare global {
           setDefault: (name: string | null) => Promise<IpcResult<BrowserProfileSummary | null>>
           setAvatar: (name: string, avatar: string) => Promise<IpcResult<BrowserProfileSummary>>
           setAutoSync: (name: string, enabled: boolean) => Promise<IpcResult<BrowserProfileSummary>>
+          setExcludedSites: (name: string, sites: string[]) => Promise<IpcResult<BrowserProfileSummary>>
           delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>
           import: () => Promise<IpcResult<{ imported: boolean; profile: BrowserProfileSummary | null }>>
           export: (name: string) => Promise<IpcResult<{ exported: boolean; path: string | null }>>

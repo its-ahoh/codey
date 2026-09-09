@@ -1364,7 +1364,6 @@ export class BrowserController {
     origin: string,
     items: Array<{ name: string; value: string }>,
   ): Promise<void> {
-    if (items.length === 0) return
     const open = this.tabs.find(tab => {
       if (tab.profile !== profileName) return false
       try { return new URL(tab.view.webContents.getURL()).origin === origin } catch { return false }

@@ -33,7 +33,7 @@ import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
-import { assertProfileName, availableProfileName, deriveProfileNameFromFile } from './browser-profiles'
+import { assertProfileName, availableProfileName, deriveProfileNameFromFile, siteCoversHost } from './browser-profiles'
 import { BrowserControlPermissionGate } from './browser-control-permission'
 import { BrowserSitePermissionManager } from './browser-site-permissions'
 import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLabel, type BrowserPasskeyPickerRequest } from './browser-webauthn'
@@ -2461,19 +2461,12 @@ app.whenReady().then(async () => {
   // on, so this disturbs nothing that is already on screen.
   ipcMain.handle('browser:profiles:setDefault', (event, name: string | null) =>
     browserCall(event, () => browserController.setDefaultProfile(name === null ? null : String(name || ''))))
-  // The Sync button in the browser toolbar: pull the login Chrome holds for the
-  // page Codey Browser is showing into the profile that already owns this site.
-  // It is scoped to that one site, so a profile carrying several logins keeps
-  // the rest, and it names the URL rather than using Chrome's front tab - the
-  // user is looking at the signed-out page here, not over there.
   // What a profile holds, for the disclosure in Settings > Profiles. Cookie and
   // storage values never come back - the window has no use for them.
   ipcMain.handle('browser:profiles:contents', (event, name: string) =>
     browserCall(event, async () => browserController.profileContents(String(name || ''))))
-  // Refresh every site a profile holds from Chrome in one go. Shared by the
-  // profile's own Sync button and by auto-sync; works for a profile that is
-  // not even enabled - a saved identity can be brought up to date before it
-  // is switched on.
+  // Compatibility endpoint for older renderers that still expose a manual
+  // refresh. Current UI uses the automatic whole-Chrome mirror below.
   const refreshProfileFromChrome = async (name: string) => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
     if (!chromeCompanion.status().connected) throw new Error('Connect the Codey extension in Chrome first')
@@ -2493,126 +2486,116 @@ app.whenReady().then(async () => {
   ipcMain.handle('browser:profiles:syncProfile', (event, name: string) =>
     browserCall(event, () => refreshProfileFromChrome(name)))
 
-  // Auto-sync: Chrome reports which cookie domains changed (never the values),
-  // and the profiles holding those domains refresh themselves through the same
-  // pull path the Sync button uses. The switch lives on each profile - "this
-  // profile mirrors Chrome" is a property of the profile, not of the app - so
-  // a personal/work pair sharing a site can sync exactly one of the two.
-  const autoSyncProfileNames = async () =>
-    (await browserController.listProfiles()).filter(profile => profile.autoSync).map(profile => profile.name)
-  // The watch list has to be handed to Chrome synchronously, but reading a
-  // profile's jar is async - so it is computed ahead of time and cached. It is
-  // refreshed on every path that writes a profile, and on a slow timer because
-  // the list now comes from a live jar: simply signing into a new site in a
-  // profile tab changes it with no mutation for us to hook.
-  let watchDomainCache: string[] = []
-  let autoSyncProfileCache: string[] = []
-  // Two refreshes can overlap (a manual sync during an auto-sync pass); without
-  // this the slower one would finish last and install the older list.
-  let watchDomainGeneration = 0
+  // Auto-sync profiles mirror the whole Chrome session, including sites first
+  // visited after the switch was enabled. An exclusion belongs to a profile,
+  // so isolated personal/work jars may deliberately mirror different subsets.
+  type AutoSyncProfile = { name: string; excludedSites: string[] }
+  let autoSyncProfileCache: AutoSyncProfile[] = []
+  let sharedExclusionCache: string[] = []
+  let autoSyncRevision = 0
+  let autoSyncFingerprint = ''
+  let autoSyncConfigGeneration = 0
   const refreshWatchDomains = async () => {
-    const generation = (watchDomainGeneration += 1)
-    const domains = new Set<string>()
-    const names = await autoSyncProfileNames()
-    for (const name of names) {
-      try { for (const site of await browserController.profileSites(name)) domains.add(site) }
-      catch { /* an unreadable profile just is not watched */ }
+    const generation = (autoSyncConfigGeneration += 1)
+    const profiles = (await browserController.listProfiles())
+      .filter(profile => profile.autoSync)
+      .map(profile => ({ name: profile.name, excludedSites: profile.excludedSites }))
+    if (generation !== autoSyncConfigGeneration) return
+    const fingerprint = JSON.stringify(profiles)
+    if (fingerprint !== autoSyncFingerprint) {
+      autoSyncFingerprint = fingerprint
+      autoSyncRevision += 1
+      pendingFullSync = profiles.length > 0
     }
-    if (generation !== watchDomainGeneration) return
-    autoSyncProfileCache = names
-    watchDomainCache = [...domains]
+    autoSyncProfileCache = profiles
+    // The extension may suppress an event only if every syncing profile would
+    // suppress it. Exact intersection is intentionally conservative: broader
+    // parent/subdomain combinations are filtered again per profile below.
+    sharedExclusionCache = profiles.length === 0
+      ? []
+      : profiles[0].excludedSites.filter(site => profiles.every(profile => profile.excludedSites.includes(site)))
   }
-  const domainsTouch = (left: string, right: string): boolean => {
-    const a = left.replace(/^\./, '').toLowerCase()
-    const b = right.replace(/^\./, '').toLowerCase()
-    return !!a && !!b && (a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`))
-  }
+  const profileExcludes = (profile: AutoSyncProfile, domain: string): boolean =>
+    profile.excludedSites.some(site => siteCoversHost(site, domain) || siteCoversHost(domain, site))
   const pendingAutoSyncDomains = new Set<string>()
+  let pendingFullSync = false
+  let completedFullSyncRevision = 0
   let autoSyncBusy = false
   let autoSyncTimer: NodeJS.Timeout | null = null
+  const scheduleAutoSync = (delay = 1500) => {
+    if (autoSyncTimer) clearTimeout(autoSyncTimer)
+    autoSyncTimer = setTimeout(() => { autoSyncTimer = null; void runAutoSync() }, delay)
+  }
   const runAutoSync = async () => {
     if (autoSyncBusy) return
     const changed = [...pendingAutoSyncDomains]
     pendingAutoSyncDomains.clear()
-    if (changed.length === 0 || !chromeCompanion?.status().connected) return
-
-    // Chrome exposes only one identity per site, so a site that lives in more
-    // than one syncing profile is ambiguous - refreshing "work" from Chrome
-    // while you are signed in there as "personal" would overwrite work's
-    // login. Each changed site is refreshed only when exactly one profile
-    // with the sync switch on owns it, and only that site is touched (not the
-    // profile's other, unrelated logins). Profiles with the switch off are
-    // never written to, and never block the one that has it on.
-    const targets = new Map<string, Set<string>>()  // profile -> its changed sites
-    // Each profileSites call reads a whole jar and injects script into every
-    // live page of that profile, so it is done once per profile up front - not
-    // once per (changed domain x profile) pair.
-    const sitesByProfile = new Map<string, string[]>()
-    for (const name of await autoSyncProfileNames()) {
-      try { sitesByProfile.set(name, await browserController.profileSites(name)) }
-      catch { /* an unreadable profile does not own anything */ }
-    }
-    for (const domain of changed) {
-      const owners: string[] = []
-      for (const [name, sites] of sitesByProfile) {
-        if (sites.some(site => domainsTouch(site, domain))) owners.push(name)
-      }
-      if (owners.length !== 1) {
-        if (owners.length > 1) {
-          sendToRenderer('gateway-log', `[browser] auto-sync skipped ${domain}: ${owners.join(' and ')} both sync it - leave the switch on for only one`)
-        }
-        continue
-      }
-      const set = targets.get(owners[0]) ?? new Set<string>()
-      set.add(domain)
-      targets.set(owners[0], set)
-    }
-    if (targets.size === 0) return
+    const doFullSync = pendingFullSync && completedFullSyncRevision < autoSyncRevision
+    pendingFullSync = false
+    if ((!doFullSync && changed.length === 0) || !chromeCompanion?.status().connected) return
 
     autoSyncBusy = true
     try {
-      for (const [name, sites] of targets) {
+      let allChromeSites: string[] = []
+      let fullSyncSucceeded = true
+      if (doFullSync) {
+        try {
+          allChromeSites = (await chromeCompanion.listSessionSites()).sites.map(entry => entry.site)
+        } catch (error) {
+          fullSyncSucceeded = false
+          pendingFullSync = true
+          sendToRenderer('gateway-log', `[browser] initial Chrome mirror failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+      for (const profile of autoSyncProfileCache) {
+        const sites = doFullSync
+          ? allChromeSites.filter(site => !profileExcludes(profile, site))
+          : changed.filter(domain => !profileExcludes(profile, domain))
+        if (sites.length === 0) continue
         try {
           const session = await chromeCompanion.exportSessionForSites([...sites])
-          await browserController.resyncProfileSites(name, {
+          await browserController.resyncProfileSites(profile.name, {
             json: JSON.stringify({ cookies: session.cookies, origins: session.origins }),
           }, session.sites)
         } catch (error) {
-          // A refused refresh (a conflict with another enabled profile, say) is
-          // a log line, not a crash - the next manual sync will surface it.
-          sendToRenderer('gateway-log', `[browser] auto-sync of "${name}" failed: ${error instanceof Error ? error.message : String(error)}`)
+          if (doFullSync) fullSyncSucceeded = false
+          sendToRenderer('gateway-log', `[browser] auto-sync of "${profile.name}" failed: ${error instanceof Error ? error.message : String(error)}`)
         }
       }
-      // A refresh can add or drop sites, so the watch list follows it.
-      await refreshWatchDomains()
+      if (doFullSync && fullSyncSucceeded) completedFullSyncRevision = autoSyncRevision
+      else if (doFullSync) pendingFullSync = true
     } finally {
       autoSyncBusy = false
-      // Anything that changed while a refresh was running gets its own pass.
-      if (pendingAutoSyncDomains.size > 0 && !autoSyncTimer) {
-        autoSyncTimer = setTimeout(() => { autoSyncTimer = null; void runAutoSync() }, 1500)
-      }
+      if ((pendingFullSync || pendingAutoSyncDomains.size > 0) && !autoSyncTimer) scheduleAutoSync()
     }
   }
   chromeCompanion?.setAutoSync({
-    watchDomains: () => (autoSyncProfileCache.length === 0 ? null : watchDomainCache),
+    watchDomains: () => (autoSyncProfileCache.length === 0 ? null : ['*']),
+    excludedDomains: () => sharedExclusionCache,
+    revision: () => autoSyncRevision,
+    onPoll: () => {
+      if (autoSyncProfileCache.length > 0 && completedFullSyncRevision < autoSyncRevision) {
+        pendingFullSync = true
+        if (!autoSyncTimer) scheduleAutoSync(100)
+      }
+    },
     onSessionChanged: domains => {
       for (const domain of domains) pendingAutoSyncDomains.add(domain)
-      // One burst of cookie churn (a login flow sets a handful) becomes one
-      // refresh, not one per cookie.
-      if (autoSyncTimer) clearTimeout(autoSyncTimer)
-      autoSyncTimer = setTimeout(() => { autoSyncTimer = null; void runAutoSync() }, 1500)
+      scheduleAutoSync()
     },
   })
   void refreshWatchDomains()
-  // The jar changes without going through us whenever a profile tab signs into
-  // a new site, so the watch list is also re-derived periodically. Cheap when
-  // nothing syncs: autoSyncProfileNames() is empty and no jar is read.
-  const watchDomainTimer = setInterval(() => { void refreshWatchDomains() }, 5 * 60 * 1000)
-  watchDomainTimer.unref?.()
   ipcMain.handle('browser:profiles:setAutoSync', (event, name: string, enabled: boolean) =>
     browserCall(event, async () => {
       const result = await browserController.setProfileAutoSync(String(name || ''), enabled === true)
-      // Turning the switch on adds that profile's sites to what Chrome watches.
+      // Turning the switch on changes the extension from idle to whole-Chrome
+      // watching and schedules an initial catch-up pass.
+      await refreshWatchDomains()
+      return result
+    }))
+  ipcMain.handle('browser:profiles:setExcludedSites', (event, name: string, sites: string[]) =>
+    browserCall(event, async () => {
+      const result = browserController.setProfileExcludedSites(String(name || ''), Array.isArray(sites) ? sites : [])
       await refreshWatchDomains()
       return result
     }))

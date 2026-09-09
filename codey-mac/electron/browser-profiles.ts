@@ -46,8 +46,8 @@ export interface BrowserProfile extends BrowserProfileData {
   name: string
   /** User-selected visual marker shown in the browser profile switcher. */
   avatar?: string | null
-  /** This profile mirrors Chrome: when one of its sites' logins changes
-   *  there, the profile refreshes itself. Off unless the user turned it on. */
+  /** This profile mirrors Chrome, including newly visited sites, except for
+   *  its explicit exclusions. Off unless the user turned it on. */
   autoSync?: boolean
   createdAt: number
   updatedAt: number

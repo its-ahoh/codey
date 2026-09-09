@@ -40,7 +40,7 @@ The extension communicates only with Codey's loopback bridge. HTTP and HTTPS
 site access is granted once during extension installation. It does not read
 saved passwords, payment methods, autofill records, or browser history.
 
-When an active Codey Browser profile mirrors Chrome, the extension watches all
+When a Codey Browser profile is set to mirror Chrome, the extension watches all
 HTTP(S) sites except the profile's exclusion list. Cookie changes are reported
 by domain only. Every ten seconds at most, it also fingerprints localStorage in
 open tabs and reports a site when non-empty storage first appears or changes.

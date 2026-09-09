@@ -513,6 +513,7 @@ contextBridge.exposeInMainWorld('codey', {
       export: (name: string) => ipcRenderer.invoke('browser:profiles:export', name),
       syncProfile: (name: string) => ipcRenderer.invoke('browser:profiles:syncProfile', name),
       setAutoSync: (name: string, enabled: boolean) => ipcRenderer.invoke('browser:profiles:setAutoSync', name, enabled === true),
+      setExcludedSites: (name: string, sites: string[]) => ipcRenderer.invoke('browser:profiles:setExcludedSites', name, sites),
       contents: (name: string) => ipcRenderer.invoke('browser:profiles:contents', name),
     },
     extensions: {

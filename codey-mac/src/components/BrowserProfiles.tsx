@@ -34,7 +34,6 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [synced, setSynced] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [contents, setContents] = useState<Record<string, BrowserProfileContents>>({})
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
@@ -68,7 +67,6 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
   const run = async (action: () => Promise<IpcLike>) => {
     setBusy(true)
     setError(null)
-    setSynced(null)
     try {
       const result = await action()
       if (!result.ok) setError(result.error ?? 'Something went wrong')
@@ -142,12 +140,6 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
         <div style={{
           background: C.red + '22', color: C.red, padding: '8px 10px', borderRadius: 8, fontSize: compact ? 11 : 12,
         }}>{error}</div>
-      )}
-
-      {synced && !error && (
-        <div style={{
-          background: C.green + '22', color: C.green, padding: '8px 10px', borderRadius: 8, fontSize: compact ? 11 : 12,
-        }}>{synced}. Chrome was not changed.</div>
       )}
 
       <div style={compact ? styles.compactComposer : styles.composer}>
@@ -277,22 +269,6 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               <span aria-hidden="true">{profile.active ? '●' : '○'}</span>
               {profile.active ? 'New tabs open here' : 'Use for new tabs'}
             </button>
-            {/* Logins expire. Refreshing the whole profile from Chrome is one
-                click here, and works whether or not it is currently in use. */}
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void run(async () => {
-                const result = await window.codey.browser.profiles.syncProfile(profile.name)
-                if (result.ok) {
-                  setSynced(`\u201c${profile.name}\u201d refreshed: ${result.data.cookieCount} cookies from ${result.data.siteCount} site${result.data.siteCount === 1 ? '' : 's'}`)
-                }
-                return result
-              })}
-              style={buttonStyle(compact)}
-              title={`Refresh every login in ${profile.name} from Chrome`}
-              aria-label={`Refresh ${profile.name} from Chrome`}
-            ><UIIcon name="refresh" size={12} /></button>
             <button
               type="button"
               disabled={busy}
@@ -326,16 +302,35 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               before trusting it with a task - and before handing it to an
               agent - without ever putting the values on screen. */}
           {expanded === profile.name && (
-            <div style={styles.syncRow}>
-              <span style={styles.syncCopy}>
-                Keep in sync with Chrome — when one of this profile’s logins changes there, it refreshes itself.
-              </span>
-              <Toggle
-                on={profile.autoSync}
-                disabled={busy}
-                onChange={next => void run(() => window.codey.browser.profiles.setAutoSync(profile.name, next))}
-                label={`Keep ${profile.name} in sync with Chrome`}
-              />
+            <div style={styles.syncBox}>
+              <label style={styles.exclusionLabel}>
+                <span>Never sync these sites (comma-separated)</span>
+                <input
+                  key={`${profile.name}:${profile.excludedSites.join(',')}`}
+                  defaultValue={profile.excludedSites.join(', ')}
+                  disabled={busy}
+                  placeholder="bank.example, private.example"
+                  aria-label={`Sites excluded from Chrome sync for ${profile.name}`}
+                  onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }}
+                  onBlur={event => {
+                    const sites = event.currentTarget.value.split(',').map(site => site.trim()).filter(Boolean)
+                    if (JSON.stringify(sites.map(site => site.replace(/^\.+/, '').toLowerCase())) === JSON.stringify(profile.excludedSites)) return
+                    void run(() => window.codey.browser.profiles.setExcludedSites(profile.name, sites))
+                  }}
+                  style={styles.exclusionInput}
+                />
+              </label>
+              <div style={styles.syncRow}>
+                <span style={styles.syncCopy}>
+                  Mirror Chrome automatically — new sites, cookie changes, and localStorage from open Chrome tabs flow into this profile.
+                </span>
+                <Toggle
+                  on={profile.autoSync}
+                  disabled={busy}
+                  onChange={next => void run(() => window.codey.browser.profiles.setAutoSync(profile.name, next))}
+                  label={`Keep ${profile.name} in sync with Chrome`}
+                />
+              </div>
             </div>
           )}
           {expanded === profile.name && (
@@ -376,8 +371,11 @@ function buttonStyle(compact: boolean): React.CSSProperties {
 const styles: Record<string, React.CSSProperties> = {
   defaultChoice: { display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', padding: '5px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.fg2, cursor: 'pointer', fontSize: 11 },
   defaultChoiceActive: { borderColor: C.accent, background: C.accentDim, color: C.accent },
-  syncRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
+  syncBox: { display: 'flex', flexDirection: 'column', gap: 8, padding: '7px 8px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
+  syncRow: { display: 'flex', alignItems: 'center', gap: 10 },
   syncCopy: { flex: 1, minWidth: 0, color: C.fg2, fontSize: 11, lineHeight: 1.45 },
+  exclusionLabel: { display: 'flex', flexDirection: 'column', gap: 5, color: C.fg3, fontSize: 10 },
+  exclusionInput: { width: '100%', boxSizing: 'border-box', border: `1px solid ${C.border2}`, borderRadius: 7, background: C.surface, color: C.fg, padding: '6px 8px', fontSize: 11, outline: 'none' },
   contents: { display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 200, overflowY: 'auto', padding: '5px 6px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
   contentsRow: { display: 'flex', alignItems: 'baseline', gap: 8, padding: '2px 4px' },
   contentsDomain: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.fg2, fontSize: 11 },
