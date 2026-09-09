@@ -476,13 +476,15 @@ describe('sanitizeBounds', () => {
 
 describe('BrowserController profiles', () => {
   function makeFixture(dir: string, overrides: {
-    tabs?: Array<{ id: string; view: { webContents: any } }>
+    tabs?: Array<{ id: string; view: { webContents: any }; profile?: string | null }>
     session?: any
+    cookies?: any[]
     options?: any
   } = {}) {
-    const cookiesGet = vi.fn(async () => [
+    const jar = overrides.cookies ?? [
       { name: 'sid', value: 'abc', domain: 'example.com', path: '/', secure: true, httpOnly: true, sameSite: 'lax', hostOnly: false },
-    ])
+    ]
+    const cookiesGet = vi.fn(async () => jar)
     const cookiesSet = vi.fn(async () => {})
     const cookiesRemove = vi.fn(async () => {})
     const clearStorage = vi.fn(async () => {})
@@ -502,7 +504,7 @@ describe('BrowserController profiles', () => {
       once: vi.fn(),
       loadURL: vi.fn(async () => {}),
     }
-    const tabs = overrides.tabs ?? [{ id: 't1', view: { webContents: contents } }]
+    const tabs = overrides.tabs ?? [{ id: 't1', view: { webContents: contents }, profile: null }]
     const controller = new BrowserController(
       () => null,
       vi.fn(),
@@ -542,6 +544,49 @@ describe('BrowserController profiles', () => {
       expect(asked).toContain('persist:codey-profile-work')
       expect(asked).toContain('persist:codey-profile-personal')
       expect((controller as any).sessionFor(null)).toBe(sessions.get('persist:codey-browser'))
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads a profile\'s sites from its own jar, not from a file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-jarread-'))
+    try {
+      const jars: Record<string, any[]> = {
+        'persist:codey-profile-work': [
+          { name: 'sid', value: 'w', domain: 'github.com', path: '/', secure: true, httpOnly: true, sameSite: 'lax' },
+        ],
+        'persist:codey-profile-personal': [
+          { name: 'sid', value: 'p', domain: 'github.com', path: '/', secure: true, httpOnly: true, sameSite: 'lax' },
+          { name: 'x', value: 'y', domain: 'news.example.com', path: '/', secure: true, httpOnly: false, sameSite: 'lax' },
+        ],
+      }
+      const controller = new BrowserController(
+        () => null,
+        vi.fn(),
+        vi.fn(),
+        undefined,
+        (partition: string) => ({
+          cookies: {
+            get: vi.fn(async () => jars[partition] ?? []),
+            set: vi.fn(async () => {}),
+            remove: vi.fn(async () => {}),
+          },
+          clearStorageData: vi.fn(async () => {}),
+        }) as any,
+        { getProfilesDir: () => dir },
+      )
+      new BrowserProfileStore(dir).write('work', { cookies: [], origins: [] }, null)
+      new BrowserProfileStore(dir).write('personal', { cookies: [], origins: [] }, null)
+
+      await expect(controller.profileSites('work')).resolves.toEqual(['github.com'])
+      await expect(controller.profileSites('personal')).resolves.toEqual(
+        expect.arrayContaining(['github.com', 'news.example.com']),
+      )
+      const contents = await controller.profileContents('work')
+      expect(contents.sites.map(site => site.domain)).toEqual(['github.com'])
+      // Values never come back.
+      expect(JSON.stringify(contents)).not.toContain('"w"')
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -665,19 +710,21 @@ describe('BrowserController profiles', () => {
   it('refreshes a whole profile from a multi-site export, in use or not', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
     try {
-      const { controller, cookiesSet } = makeFixture(dir)
-      const store = new BrowserProfileStore(dir)
       const cookie = (domain: string, value: string) => ({
         name: 'session', value, domain, path: '/', expires: -1,
         httpOnly: true, secure: true, sameSite: 'lax' as const,
       })
+      const { controller, cookiesSet } = makeFixture(dir, {
+        cookies: [cookie('github.com', 'old'), cookie('jira.example.com', 'keep')],
+      })
+      const store = new BrowserProfileStore(dir)
       store.write('work', {
         cookies: [cookie('github.com', 'old'), cookie('jira.example.com', 'keep')],
         origins: [],
       }, null)
 
-      // Every domain the profile holds is what a refresh has to ask about.
-      expect(controller.profileSites('work').sort()).toEqual(['github.com', 'jira.example.com'])
+      // Every domain the profile's jar holds is what a refresh has to ask about.
+      expect((await controller.profileSites('work')).sort()).toEqual(['github.com', 'jira.example.com'])
 
       // Chrome answered for github.com only; the other site must survive.
       const refreshed = await controller.resyncProfileSites('work', {
@@ -799,14 +846,25 @@ describe('BrowserController profiles', () => {
   it('counts storage-only origins among a profile’s sites to refresh', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
     try {
-      const { controller } = makeFixture(dir)
-      new BrowserProfileStore(dir).write('spa', {
+      const { controller } = makeFixture(dir, {
         cookies: [],
-        origins: [{ origin: 'https://app.notion.example', localStorage: [{ name: 'token', value: 't' }] }],
-      }, null)
+        tabs: [{
+          id: 't1',
+          profile: 'spa',
+          view: { webContents: {
+            isDestroyed: vi.fn(() => false),
+            getURL: vi.fn(() => 'https://app.notion.example/app'),
+            executeJavaScript: vi.fn(async () => ({
+              origin: 'https://app.notion.example',
+              entries: [{ name: 'token', value: 't' }],
+            })),
+          } },
+        }],
+      })
+      new BrowserProfileStore(dir).write('spa', { cookies: [], origins: [] }, null)
       // A SPA login can be storage-only; a refresh that skipped it would claim
       // the profile "holds no logins".
-      expect(controller.profileSites('spa')).toEqual(['app.notion.example'])
+      expect(await controller.profileSites('spa')).toEqual(['app.notion.example'])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -815,16 +873,28 @@ describe('BrowserController profiles', () => {
   it('describes what a profile holds without handing over its secrets', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
     try {
-      const { controller } = makeFixture(dir)
-      new BrowserProfileStore(dir).write('work', {
+      const { controller } = makeFixture(dir, {
         cookies: [{
-          name: 'session', value: 'SUPER-SECRET', domain: 'github.com', path: '/', expires: -1,
-          httpOnly: true, secure: true, sameSite: 'lax' as const,
+          name: 'session', value: 'SUPER-SECRET', domain: 'github.com', path: '/',
+          httpOnly: true, secure: true, sameSite: 'lax',
         }],
-        origins: [{ origin: 'https://github.com', localStorage: [{ name: 'token', value: 'ALSO-SECRET' }] }],
-      }, 'https://github.com/')
+        tabs: [{
+          id: 't1',
+          profile: 'work',
+          view: { webContents: {
+            isDestroyed: vi.fn(() => false),
+            getURL: vi.fn(() => 'https://github.com/codey'),
+            executeJavaScript: vi.fn(async () => ({
+              origin: 'https://github.com',
+              entries: [{ name: 'token', value: 'ALSO-SECRET' }],
+            })),
+          } },
+        }],
+      })
+      // Only the metadata still comes from the file; the sites come from the jar.
+      new BrowserProfileStore(dir).write('work', { cookies: [], origins: [] }, 'https://github.com/')
 
-      const contents = controller.profileContents('work')
+      const contents = await controller.profileContents('work')
       expect(contents).toMatchObject({ name: 'work', sourceUrl: 'https://github.com/' })
       expect(contents.sites).toEqual([{
         domain: 'github.com',
@@ -943,7 +1013,7 @@ describe('BrowserController profiles', () => {
         },
       }
       const { controller } = makeFixture(dir, {
-        tabs: [{ id: 't1', view: { webContents: { ...hidden.webContents } } }],
+        tabs: [{ id: 't1', view: { webContents: { ...hidden.webContents } }, profile: null }],
         options: { createHiddenView: () => hidden },
       })
       await controller.importProfile('work', { json: JSON.stringify({

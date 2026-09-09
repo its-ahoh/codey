@@ -986,7 +986,7 @@ export class BrowserController {
         + 'Save to a new name, or leave only that profile enabled first.',
       )
     }
-    const data = await this.captureProfileData()
+    const data = await this.captureProfileData(null)
     const sourceUrl = this.view?.webContents.getURL() || null
     return this.profiles().write(name, data, sourceUrl)
   }
@@ -1060,38 +1060,37 @@ export class BrowserController {
     }
   }
 
-  /** What a saved profile actually holds, site by site, so it can be looked at
-   *  before it is trusted or refreshed. Values are left behind on purpose -
-   *  the caller wants to know which logins are in there, not what they are. */
-  profileContents(name: string): {
+  /** What a profile's jar actually holds, site by site, so it can be looked at
+   *  before it is trusted. Values are left behind on purpose - the caller wants
+   *  to know which logins are in there, not what they are. */
+  async profileContents(name: string): Promise<{
     name: string
     updatedAt: number
     sourceUrl: string | null
     sites: BrowserProfileSiteSummary[]
-  } {
+  }> {
     assertProfileName(name)
-    const profile = this.profiles().read(name)
+    const meta = this.profiles().read(name)
+    const data = await this.readJar(name)
     return {
       name,
-      updatedAt: profile.updatedAt,
-      sourceUrl: profile.sourceUrl,
-      sites: summarizeProfileSites(profile),
+      updatedAt: meta.updatedAt,
+      sourceUrl: meta.sourceUrl,
+      sites: summarizeProfileSites(data),
     }
   }
 
-  /** The domains a profile holds logins for - what a refresh of the whole
-   *  profile has to ask Chrome about. Storage origins count too: a SPA that
-   *  keeps its token in localStorage may have no cookie here at all, and a
-   *  refresh that skipped it would claim the profile "holds no logins". */
-  profileSites(name: string): string[] {
+  /** The domains a profile's jar holds logins for. Storage origins count too:
+   *  a SPA that keeps its token in localStorage may have no cookie at all. */
+  async profileSites(name: string): Promise<string[]> {
     assertProfileName(name)
-    const profile = this.profiles().read(name)
+    const data = await this.readJar(name)
     const seen = new Set<string>()
-    for (const cookie of profile.cookies) {
+    for (const cookie of data.cookies) {
       const domain = cookie.domain.replace(/^\./, '').toLowerCase()
       if (domain) seen.add(domain)
     }
-    for (const origin of profile.origins) {
+    for (const origin of data.origins) {
       try {
         seen.add(new URL(origin.origin).hostname.toLowerCase())
       } catch { /* an unparseable origin has no host to refresh */ }
@@ -1265,13 +1264,19 @@ export class BrowserController {
     return { path: file }
   }
 
-  /** Collect the live session's cookies and the localStorage of every open
-   *  http(s) tab (unique origins). Page text and fields are never read — only
-   *  the storage that holds login state. */
-  private async captureProfileData(): Promise<BrowserProfileData> {
+  /** Everything a profile's jar holds, in the portable profile shape. Used by
+   *  export, by the contents disclosure, and by the Chrome-sync site list. */
+  private async readJar(profileName: string | null): Promise<BrowserProfileData> {
+    return this.captureProfileData(profileName)
+  }
+
+  /** Collect one profile jar's cookies and the localStorage of every open
+   *  http(s) tab that belongs to it (unique origins). Page text and fields are
+   *  never read — only the storage that holds login state. */
+  private async captureProfileData(profileName: string | null): Promise<BrowserProfileData> {
     let cookies: BrowserProfileCookie[] = []
     try {
-      const found = await this.sessionFor(null).cookies.get({})
+      const found = await this.sessionFor(profileName).cookies.get({})
       cookies = found.map(cookie => ({
         name: cookie.name,
         value: cookie.value,
@@ -1291,6 +1296,9 @@ export class BrowserController {
 
     const origins = new Map<string, BrowserProfileStorageOrigin>()
     for (const tab of this.tabs) {
+      // A tab on another profile reads another jar's storage; counting it here
+      // would attribute a stranger's login to this profile.
+      if (tab.profile !== profileName) continue
       const contents = tab.view.webContents
       if (contents.isDestroyed()) continue
       const url = contents.getURL()
@@ -1380,7 +1388,9 @@ export class BrowserController {
       }
     }
     for (const origin of profile.origins) {
-      await this.applyLocalStorage(origin.origin, origin.localStorage)
+      // Task 6 moves this write into the profile's own jar; until then the
+      // whole of applyProfileData still lands in the default one.
+      await this.applyLocalStorage(null, origin.origin, origin.localStorage)
     }
   }
 
@@ -1389,9 +1399,14 @@ export class BrowserController {
    *  origin. Best-effort — a site that refuses to load just keeps its storage
    *  untouched (cookies, the part that matters most for logins, are applied
    *  unconditionally). */
-  private async applyLocalStorage(origin: string, items: Array<{ name: string; value: string }>): Promise<void> {
+  private async applyLocalStorage(
+    profileName: string | null,
+    origin: string,
+    items: Array<{ name: string; value: string }>,
+  ): Promise<void> {
     if (items.length === 0) return
     const open = this.tabs.find(tab => {
+      if (tab.profile !== profileName) return false
       try { return new URL(tab.view.webContents.getURL()).origin === origin } catch { return false }
     })
     if (open && !open.view.webContents.isDestroyed()) {
@@ -1402,7 +1417,7 @@ export class BrowserController {
         // Fall through to a hidden page.
       }
     }
-    const view = this.createHiddenView?.(profilePartition(null))
+    const view = this.createHiddenView?.(profilePartition(profileName))
     if (!view) return
     try {
       await new Promise<void>((resolve, reject) => {
