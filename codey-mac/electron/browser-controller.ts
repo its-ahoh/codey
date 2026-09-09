@@ -244,8 +244,8 @@ export class BrowserController {
   private zoom = 1
   private state: BrowserState = { ...EMPTY_STATE }
   private downloads: BrowserDownload[] = []
-  private downloadSessionBound = false
-  private permissionSessionBound = false
+  private readonly permissionBoundSessions = new WeakSet<Session>()
+  private readonly downloadBoundSessions = new WeakSet<Session>()
   private downloadWaiters: Array<(download: BrowserDownload) => void> = []
   private downloadSequence = 0
   private sitePermissionManager: BrowserSitePermissionManager | null = null
@@ -1635,8 +1635,8 @@ export class BrowserController {
   }
 
   private bindSitePermissions(browserSession: Session): void {
-    if (this.permissionSessionBound) return
-    this.permissionSessionBound = true
+    if (this.permissionBoundSessions.has(browserSession)) return
+    this.permissionBoundSessions.add(browserSession)
     browserSession.setPermissionCheckHandler((_contents, permission, requestingOrigin, details) => {
       return this.sitePermissionManager?.check(
         permission,
@@ -1740,8 +1740,8 @@ export class BrowserController {
   }
 
   private bindDownloads(browserSession: Session): void {
-    if (this.downloadSessionBound) return
-    this.downloadSessionBound = true
+    if (this.downloadBoundSessions.has(browserSession)) return
+    this.downloadBoundSessions.add(browserSession)
     browserSession.on('will-download', (_event, item) => {
       const directory = this.getDownloadDirectory()
       fs.mkdirSync(directory, { recursive: true })

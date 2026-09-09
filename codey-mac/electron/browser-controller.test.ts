@@ -1010,4 +1010,49 @@ describe('BrowserController profiles', () => {
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('binds permission and download handlers on every partition it opens', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-bind-'))
+    try {
+      const made = new Map<string, any>()
+      const controller = new BrowserController(
+        () => null,
+        vi.fn(),
+        vi.fn(),
+        undefined,
+        (partition: string) => {
+          if (!made.has(partition)) {
+            made.set(partition, {
+              cookies: { get: vi.fn(async () => []), set: vi.fn(async () => {}), remove: vi.fn(async () => {}) },
+              clearStorageData: vi.fn(async () => {}),
+              setPermissionCheckHandler: vi.fn(),
+              setPermissionRequestHandler: vi.fn(),
+              on: vi.fn(),
+            })
+          }
+          return made.get(partition)
+        },
+        { getProfilesDir: () => dir },
+      )
+      const work = (controller as any).sessionFor('work')
+      const personal = (controller as any).sessionFor('personal')
+      ;(controller as any).bindSitePermissions(work)
+      ;(controller as any).bindDownloads(work)
+      ;(controller as any).bindSitePermissions(personal)
+      ;(controller as any).bindDownloads(personal)
+
+      expect(work.setPermissionCheckHandler).toHaveBeenCalledTimes(1)
+      expect(personal.setPermissionCheckHandler).toHaveBeenCalledTimes(1)
+      expect(work.on).toHaveBeenCalledTimes(1)
+      expect(personal.on).toHaveBeenCalledTimes(1)
+
+      // Binding the same session twice must not stack handlers.
+      ;(controller as any).bindSitePermissions(work)
+      ;(controller as any).bindDownloads(work)
+      expect(work.setPermissionCheckHandler).toHaveBeenCalledTimes(1)
+      expect(work.on).toHaveBeenCalledTimes(1)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
