@@ -52,6 +52,22 @@ function domainsTouch(left, right) {
   return !!a && !!b && (a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`))
 }
 
+/**
+ * Whether a host belongs to the current auto-sync scope. `*` is the new
+ * whole-Chrome mode; explicit domains remain supported for older Codey builds.
+ * Exclusions always win and use the same parent/subdomain semantics as the
+ * watch list so excluding `example.com` also excludes `login.example.com`.
+ */
+function watchesDomain(host, watchedDomains, excludedDomains = []) {
+  const cleaned = String(host || '').replace(/^\./, '').toLowerCase()
+  if (!cleaned) return false
+  const excluded = (Array.isArray(excludedDomains) ? excludedDomains : [])
+    .some(domain => domainsTouch(cleaned, domain))
+  if (excluded) return false
+  return (Array.isArray(watchedDomains) ? watchedDomains : [])
+    .some(domain => domain === '*' || domainsTouch(cleaned, domain))
+}
+
 // Opening at most this many pages for one copy. Each one is a real navigation
 // in the user's Chrome, so the ceiling is low on purpose - and the command has
 // to come back inside Codey's timeout.

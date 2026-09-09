@@ -17,6 +17,9 @@ const source = fs.readFileSync(
 ;(globalThis as any).tldts = require('tldts')
 const siteOfHost = new Function(`${source}; return siteOfHost`)() as (host: string) => string
 const domainsTouch = new Function(`${source}; return domainsTouch`)() as (a: string, b: string) => boolean
+const watchesDomain = new Function(`${source}; return watchesDomain`)() as (
+  host: string, watched: string[], excluded?: string[],
+) => boolean
 type VisitPlan = Array<{ site: string; url: string }>
 const storageVisitPlan = new Function(`${source}; return storageVisitPlan`)() as (
   wanted: string[],
@@ -84,6 +87,19 @@ describe('domainsTouch', () => {
     expect(domainsTouch('github.com.evil.example', 'github.com')).toBe(false)
     expect(domainsTouch('gitlab.com', 'github.com')).toBe(false)
     expect(domainsTouch('', 'github.com')).toBe(false)
+  })
+})
+
+describe('watchesDomain', () => {
+  it('supports the all-sites wildcard while exclusions always win', () => {
+    expect(watchesDomain('login.github.com', ['*'])).toBe(true)
+    expect(watchesDomain('login.github.com', ['*'], ['github.com'])).toBe(false)
+    expect(watchesDomain('gitlab.com', ['*'], ['github.com'])).toBe(true)
+  })
+
+  it('keeps explicit legacy watch lists working', () => {
+    expect(watchesDomain('api.github.com', ['github.com'])).toBe(true)
+    expect(watchesDomain('gitlab.com', ['github.com'])).toBe(false)
   })
 })
 

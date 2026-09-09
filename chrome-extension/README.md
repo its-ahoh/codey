@@ -39,3 +39,11 @@ Development installation from this repository:
 The extension communicates only with Codey's loopback bridge. HTTP and HTTPS
 site access is granted once during extension installation. It does not read
 saved passwords, payment methods, autofill records, or browser history.
+
+When an active Codey Browser profile mirrors Chrome, the extension watches all
+HTTP(S) sites except the profile's exclusion list. Cookie changes are reported
+by domain only. Every ten seconds at most, it also fingerprints localStorage in
+open tabs and reports a site when non-empty storage first appears or changes.
+The fingerprint is a short one-way SHA-256 digest kept only in extension memory;
+localStorage names and values are transferred only during Codey's authenticated
+session-export command.

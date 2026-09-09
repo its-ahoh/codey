@@ -171,17 +171,30 @@ describe('ChromeCompanionBridge', () => {
     const token = await connect(endpoint)
     const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
     const poll = () => fetch(`${endpoint}/v1/poll`, { method: 'POST', headers, body: '{}' })
-      .then(response => response.json() as Promise<{ watchDomains: string[] | null }>)
+      .then(response => response.json() as Promise<{
+        watchDomains: string[] | null; excludedDomains: string[]; syncRevision: number
+      }>)
 
     // Off (no hooks): explicit null, so the extension can drop a stale list.
-    await expect(poll()).resolves.toMatchObject({ watchDomains: null })
+    await expect(poll()).resolves.toMatchObject({ watchDomains: null, excludedDomains: [], syncRevision: 0 })
 
     const reported: string[][] = []
+    let polls = 0
     bridge.setAutoSync({
-      watchDomains: () => ['github.com', 'jira.example.com'],
+      watchDomains: () => ['*'],
+      excludedDomains: () => ['bank.example'],
+      revision: () => 7,
+      onPoll: () => { polls += 1 },
       onSessionChanged: domains => reported.push(domains),
     })
-    await expect(poll()).resolves.toMatchObject({ watchDomains: ['github.com', 'jira.example.com'] })
+    await expect(poll()).resolves.toMatchObject({
+      watchDomains: ['*'], excludedDomains: ['bank.example'], syncRevision: 7,
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(polls).toBe(1)
+    await expect(poll()).resolves.toMatchObject({ syncRevision: 7 })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(polls).toBe(2)
 
     // The report names domains only - never cookie values - and junk entries
     // are dropped before they reach the app.
