@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatWarmElapsed, warmTooltip, warmShortLabel } from './voiceWarmStatus'
+import { formatWarmElapsed, warmBlocksPress, warmTooltip, warmShortLabel } from './voiceWarmStatus'
 
 describe('formatWarmElapsed', () => {
   it('stays in seconds under a minute', () => {
@@ -34,6 +34,21 @@ describe('warmTooltip', () => {
 
   it('works at zero, which is what the first render shows', () => {
     expect(warmTooltip(0)).toContain('0s so far')
+  })
+})
+
+describe('warmBlocksPress', () => {
+  it('blocks for WhisperKit, whose cold compile runs for minutes', () => {
+    expect(warmBlocksPress('openai_whisper-large-v3-v20240930_turbo')).toBe(true)
+    // An unknown/empty name is treated as WhisperKit: refusing is the safe
+    // side of the guess, since recording into a missing pipeline strands the
+    // user after they have spoken.
+    expect(warmBlocksPress('')).toBe(true)
+  })
+
+  it('does not block for the streaming models', () => {
+    expect(warmBlocksPress('nemotron/multilingual/480ms')).toBe(false)
+    expect(warmBlocksPress('nemotron/latin/960ms')).toBe(false)
   })
 })
 

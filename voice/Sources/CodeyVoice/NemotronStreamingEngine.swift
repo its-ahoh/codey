@@ -195,9 +195,9 @@ final class NemotronStreamingEngine: TranscriptionEngineProtocol, @unchecked Sen
 
     // MARK: - Session
 
-    /// Open a decode session for a new utterance. Loads the model if needed
-    /// (the coordinator normally refuses the press until `isReady`, so this
-    /// is a fast path in practice).
+    /// Open a decode session for a new utterance. Loads the model if needed.
+    /// A startup prewarm and the first recording share `ensureManager`'s task,
+    /// so a hotkey arriving during the short resident-load window is not lost.
     func startSession(language: String) {
         let generation = sessionLock.withLock { () -> Int in
             _sessionGeneration += 1

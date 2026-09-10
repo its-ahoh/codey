@@ -126,23 +126,25 @@ final class VoiceCoordinator {
         }
     }
 
-    /// Whichever on-device engine the config selects, or nil for the API
-    /// providers. Only one of the two is ever loaded: switching providers
-    /// unloads the other (see `applyConfig`), which is what keeps the memory
-    /// cost of offering both engines at "one model", not two.
-    private var onDeviceReady: Bool {
-        switch config.provider {
-        case .local: return localEngine.isReady
-        case .localStreaming: return streamingEngine.isReady
-        case .api, .realtime: return true
-        }
-    }
-
     private func prewarmOnDevice() {
         switch config.provider {
         case .local: localEngine.prewarm()
         case .localStreaming: streamingEngine.prewarm()
         case .api, .realtime: break
+        }
+    }
+
+    /// Whether the engine that would serve this press can serve it now.
+    ///
+    /// Only WhisperKit is gated. Its load is minutes-long on a cold CoreML
+    /// compile, so recording anyway looks like it worked and then stalls
+    /// *after* the user has finished talking — the worst moment to discover
+    /// the wait. The streaming engine loads in seconds, so making the user
+    /// press twice for it costs more than it saves.
+    private var pressBlockedByLoad: Bool {
+        switch config.provider {
+        case .local: return !localEngine.isReady
+        case .localStreaming, .api, .realtime: return false
         }
     }
 
@@ -328,15 +330,13 @@ final class VoiceCoordinator {
         }
     }
 
-    /// Refuse a press the on-device pipeline can't serve yet, and say so.
+    /// Refuse a press WhisperKit can't serve yet, and say so.
     ///
-    /// The load is lazy: a few seconds cold, minutes on the first press after
-    /// an app update while CoreML recompiles for the Neural Engine. Recording
-    /// anyway looked like it worked and then stalled *after* the user had
-    /// finished talking, which is the worst moment to discover the wait. Say
-    /// "not yet" up front, kick the load, and let them press again.
+    /// Say "not yet" up front, kick the load, and let them press again, rather
+    /// than recording into a pipeline that will not be there when they stop.
+    /// `pressBlockedByLoad` decides which engines this applies to.
     private func localModelReady(for destination: CaptureDestination) -> Bool {
-        guard config.provider.isOnDevice, !onDeviceReady else { return true }
+        guard pressBlockedByLoad else { return true }
         print("handleToggle: refused — the on-device model is not loaded yet")
         prewarmOnDevice()
         let message = "Preparing the speech model"
