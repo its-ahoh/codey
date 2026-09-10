@@ -9,7 +9,7 @@ export type BrowserControlSurface = 'browser' | 'chrome'
 /** How far a command reaches.
  *  - `write` adds or changes something (click, fill, upload, submit).
  *  - `full` also destroys or replaces state that cannot be typed back in
- *    (deleting a saved profile, swapping the live session's cookies). */
+ *    (deleting a saved profile and the jar of logins inside it). */
 export type BrowserControlLevel = 'write' | 'full'
 
 /** What the user has granted for one surface, `none` meaning view-only. */
@@ -19,7 +19,7 @@ const GRANT_RANK: Record<BrowserControlGrant, number> = { none: 0, write: 1, ful
 
 /** Commands that reach past "add or change" and so need `full`. Everything
  *  else that mutates is `write`; reads are never gated at all. */
-const FULL_ACCESS_COMMANDS = new Set(['delete-profile', 'activate-profile'])
+const FULL_ACCESS_COMMANDS = new Set(['delete-profile'])
 
 export function levelForCommand(command: string): BrowserControlLevel {
   return FULL_ACCESS_COMMANDS.has(command) ? 'full' : 'write'

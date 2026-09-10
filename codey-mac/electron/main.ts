@@ -33,7 +33,7 @@ import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
-import { assertProfileName, availableProfileName, deriveProfileNameFromFile } from './browser-profiles'
+import { assertProfileName, availableProfileName, deriveProfileNameFromFile, siteCoversHost } from './browser-profiles'
 import { BrowserControlPermissionGate } from './browser-control-permission'
 import { BrowserSitePermissionManager } from './browser-site-permissions'
 import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLabel, type BrowserPasskeyPickerRequest } from './browser-webauthn'
@@ -75,6 +75,29 @@ let workspaceManager: WorkspaceManager | null = null
 let coreConfigManager: ConfigManager | null = null
 let apiServer: ApiServer | null = null
 let activeApiPort: number | null = null
+/** Every partition already given its own passkey handler. Extensions dedupe on
+ *  their own side, but `select-webauthn-account` would stack one listener per
+ *  tab without this. */
+const configuredWebAuthn = new WeakSet<Electron.Session>()
+let warnedWebAuthnUnavailable = false
+/** Everything a profile's jar needs the first time the browser opens it:
+ *  the user's extensions, and the native Touch ID authenticator. */
+const onBrowserSessionOpened = (target: Electron.Session) => {
+  void browserExtensionManager?.attach(target)
+  if (configuredWebAuthn.has(target)) return
+  configuredWebAuthn.add(target)
+  if (!canConfigureBrowserWebAuthn()) {
+    if (warnedWebAuthnUnavailable) return
+    warnedWebAuthnUnavailable = true
+    console.warn('[browser] Native Touch ID disabled: Codey is not signed with the required keychain entitlement')
+    return
+  }
+  configureBrowserWebAuthn(app, target, pickBrowserPasskey, error => {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[browser] WebAuthn unavailable: ${message}`)
+    sendToRenderer('gateway-log', `[browser] WebAuthn unavailable: ${message}`)
+  })
+}
 const browserController = new BrowserController(
   () => mainWindow,
   state => sendToRenderer('browser:state', state),
@@ -83,7 +106,10 @@ const browserController = new BrowserController(
   undefined,
   // Named browser profiles (saved/imported sessions) live in the app's own
   // data directory, next to the browser-control permission store.
-  { getProfilesDir: () => join(app.getPath('userData'), 'browser-profiles') },
+  {
+    getProfilesDir: () => join(app.getPath('userData'), 'browser-profiles'),
+    onSessionOpened: onBrowserSessionOpened,
+  },
 )
 let browserAgentBridge: BrowserAgentBridge | null = null
 let browserControlPermission: BrowserControlPermissionGate | null = null
@@ -2039,14 +2065,20 @@ app.whenReady().then(async () => {
     await syncCodeyGlobalSkills()
   } catch { /* best-effort: skills stay listed even if linking fails */ }
 
-  const browserSession = session.fromPartition(BROWSER_PARTITION, { cache: true })
   browserSitePermissions = new BrowserSitePermissionManager(
     join(app.getPath('userData'), 'browser-site-permissions.json'),
     state => sendToRenderer('browser:sitePermission', state),
   )
   browserController.setSitePermissionManager(browserSitePermissions)
+  try {
+    const { migrated } = await browserController.migrateProfilesToPartitions()
+    if (migrated.length > 0) {
+      console.log(`[browser] moved ${migrated.length} profile(s) into their own partitions: ${migrated.join(', ')}`)
+    }
+  } catch (error) {
+    console.warn(`[browser] profile migration failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
   browserExtensionManager = new BrowserExtensionManager(
-    browserSession,
     join(app.getPath('userData'), 'browser-extensions.json'),
   )
   try {
@@ -2054,6 +2086,9 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.warn(`[browser] extensions unavailable: ${error instanceof Error ? error.message : String(error)}`)
   }
+  // The default jar is ready before any tab exists, so serve it now; every
+  // other partition is served the first time the browser opens a tab in it.
+  onBrowserSessionOpened(session.fromPartition(BROWSER_PARTITION, { cache: true }))
   const chromeWorkspaceName = () => {
     if (!workspaceManager) throw new Error('Codey is still starting — try again in a moment')
     const name = workspaceManager.getCurrentWorkspace() || workspaceManager.listWorkspaces()[0]
@@ -2232,13 +2267,13 @@ app.whenReady().then(async () => {
         return { id: cryptoMod.randomUUID(), name, path: filePath, mimeType, size: data.length }
       },
       suggestProfileName: async hostname => ({
-        name: availableProfileName(hostname, browserController.listProfiles().map(profile => profile.name)),
-        existing: browserController.profilesForUrl(`https://${hostname}/`),
+        name: availableProfileName(hostname, (await browserController.listProfiles()).map(profile => profile.name)),
+        existing: await browserController.profilesForUrl(`https://${hostname}/`),
       }),
       profilesOverview: async hostname => {
-        const holds = new Set(hostname ? browserController.profilesForUrl(`https://${hostname}/`) : [])
+        const holds = new Set(hostname ? await browserController.profilesForUrl(`https://${hostname}/`) : [])
         return {
-          profiles: browserController.listProfiles().map(profile => ({
+          profiles: (await browserController.listProfiles()).map(profile => ({
             name: profile.name,
             active: profile.active,
             autoSync: profile.autoSync,
@@ -2251,7 +2286,7 @@ app.whenReady().then(async () => {
         const sessionState = await chromeCompanion.exportSession()
         const tabUrl = new URL(sessionState.tab.url)
         const json = JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins })
-        const taken = browserController.listProfiles().map(profile => profile.name)
+        const taken = (await browserController.listProfiles()).map(profile => profile.name)
         let name: string
         if (requested) {
           // The user typed this name, so a collision is a real mistake worth
@@ -2303,16 +2338,6 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.warn(`[browser] Chrome companion unavailable: ${error instanceof Error ? error.message : String(error)}`)
   }
-  if (canConfigureBrowserWebAuthn()) {
-    configureBrowserWebAuthn(app, browserSession, pickBrowserPasskey, error => {
-      const message = error instanceof Error ? error.message : String(error)
-      console.warn(`[browser] WebAuthn unavailable: ${message}`)
-      sendToRenderer('gateway-log', `[browser] WebAuthn unavailable: ${message}`)
-    })
-  } else {
-    console.warn('[browser] Native Touch ID disabled: Codey is not signed with the required keychain entitlement')
-  }
-
   protocol.handle('codey-asset', async (request) => {
     try {
       const url = new URL(request.url)
@@ -2407,7 +2432,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('browser:getPageContext', event => browserCall(event, () => browserController.getPageContext()))
   ipcMain.handle('browser:downloads', event => browserCall(event, () => browserController.listDownloads()))
   ipcMain.handle('browser:tabs', event => browserCall(event, () => browserController.listTabs()))
-  ipcMain.handle('browser:newTab', (event, url?: string) => browserCall(event, () => browserController.newTab(url)))
+  ipcMain.handle('browser:newTab', (event, url?: string, profile?: string | null) =>
+    browserCall(event, () => browserController.newTab(
+      url,
+      profile === undefined ? browserController.activeProfileName() : profile,
+    )))
   ipcMain.handle('browser:switchTab', (event, id: string) => browserCall(event, () => browserController.switchTab(id)))
   ipcMain.handle('browser:closeTab', (event, id: string) => browserCall(event, () => browserController.closeTab(id)))
   ipcMain.handle('browser:resetSession', event => browserCall(event, async () => {
@@ -2418,146 +2447,211 @@ app.whenReady().then(async () => {
   }))
   // Browser profiles: saved/imported sessions the renderer (browser toolbar
   // and Settings) manages through the same controller the agents use.
-  ipcMain.handle('browser:profiles:list', event => browserCall(event, () => ({
+  ipcMain.handle('browser:profiles:list', event => browserCall(event, async () => ({
     active: browserController.activeProfileName(),
-    activeNames: browserController.activeProfileNames(),
-    profiles: browserController.listProfiles(),
+    profiles: await browserController.listProfiles(),
   })))
   ipcMain.handle('browser:profiles:save', (event, name: string) =>
-    browserCall(event, () => browserController.saveProfile(String(name || ''))))
-  ipcMain.handle('browser:profiles:activate', (event, name: string) =>
-    browserCall(event, () => browserController.activateProfile(String(name || ''))))
-  // Enabling adds a profile to the live session instead of replacing it, so the
-  // browser can hold several logins at once.
-  ipcMain.handle('browser:profiles:enable', (event, name: string) =>
-    browserCall(event, () => browserController.enableProfile(String(name || ''))))
-  ipcMain.handle('browser:profiles:disable', (event, name: string) =>
-    browserCall(event, () => browserController.disableProfile(String(name || ''))))
-  // The Sync button in the browser toolbar: pull the login Chrome holds for the
-  // page Codey Browser is showing into the profile that already owns this site.
-  // It is scoped to that one site, so a profile carrying several logins keeps
-  // the rest, and it names the URL rather than using Chrome's front tab - the
-  // user is looking at the signed-out page here, not over there.
+    browserCall(event, async () => {
+      const result = await browserController.saveProfile(String(name || ''))
+      await refreshWatchDomains()
+      return result
+    }))
+  // Which profile new tabs open under. Open tabs keep the jar they were born
+  // on, so this disturbs nothing that is already on screen.
+  ipcMain.handle('browser:profiles:setDefault', (event, name: string | null) =>
+    browserCall(event, () => browserController.setDefaultProfile(name === null ? null : String(name || ''))))
   // What a profile holds, for the disclosure in Settings > Profiles. Cookie and
   // storage values never come back - the window has no use for them.
   ipcMain.handle('browser:profiles:contents', (event, name: string) =>
-    browserCall(event, () => browserController.profileContents(String(name || ''))))
-  // Refresh every site a profile holds from Chrome in one go. Shared by the
-  // profile's own Sync button and by auto-sync; works for a profile that is
-  // not even enabled - a saved identity can be brought up to date before it
-  // is switched on.
+    browserCall(event, async () => browserController.profileContents(String(name || ''))))
+  // Compatibility endpoint for older renderers that still expose a manual
+  // refresh. Current UI uses the automatic whole-Chrome mirror below.
   const refreshProfileFromChrome = async (name: string) => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
     if (!chromeCompanion.status().connected) throw new Error('Connect the Codey extension in Chrome first')
     const requested = String(name || '').trim()
     assertProfileName(requested)
-    const sites = browserController.profileSites(requested)
+    const sites = await browserController.profileSites(requested)
     if (sites.length === 0) throw new Error(`"${requested}" holds no logins yet - there is nothing to refresh`)
     const session = await chromeCompanion.exportSessionForSites(sites)
-    await browserController.resyncProfileSites(requested, {
+    const profile = await browserController.resyncProfileSites(requested, {
       json: JSON.stringify({ cookies: session.cookies, origins: session.origins }),
     }, session.sites)
-    const profile = browserController.listProfiles().find(item => item.name === requested)
-    if (!profile) throw new Error(`"${requested}" was refreshed but could not be read back`)
+    // A refresh can add sites the profile had no login for, so the watch list
+    // has to be recomputed from the jar it just changed.
+    await refreshWatchDomains()
     return { profile, siteCount: session.sites.length, cookieCount: session.cookies.length }
   }
   ipcMain.handle('browser:profiles:syncProfile', (event, name: string) =>
     browserCall(event, () => refreshProfileFromChrome(name)))
 
-  // Auto-sync: Chrome reports which cookie domains changed (never the values),
-  // and the profiles holding those domains refresh themselves through the same
-  // pull path the Sync button uses. The switch lives on each profile - "this
-  // profile mirrors Chrome" is a property of the profile, not of the app - so
-  // a personal/work pair sharing a site can sync exactly one of the two.
-  const autoSyncProfileNames = () =>
-    browserController.listProfiles().filter(profile => profile.autoSync).map(profile => profile.name)
-  const domainsTouch = (left: string, right: string): boolean => {
-    const a = left.replace(/^\./, '').toLowerCase()
-    const b = right.replace(/^\./, '').toLowerCase()
-    return !!a && !!b && (a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`))
+  // Auto-sync profiles mirror the whole Chrome session, including sites first
+  // visited after the switch was enabled. An exclusion belongs to a profile,
+  // so isolated personal/work jars may deliberately mirror different subsets.
+  type AutoSyncProfile = { name: string; excludedSites: string[] }
+  let autoSyncProfileCache: AutoSyncProfile[] = []
+  let sharedExclusionCache: string[] = []
+  let autoSyncRevision = 0
+  let autoSyncFingerprint = ''
+  let autoSyncConfigGeneration = 0
+  const refreshWatchDomains = async () => {
+    const generation = (autoSyncConfigGeneration += 1)
+    const profiles = (await browserController.listProfiles())
+      .filter(profile => profile.autoSync)
+      .map(profile => ({ name: profile.name, excludedSites: profile.excludedSites }))
+    if (generation !== autoSyncConfigGeneration) return
+    const fingerprint = JSON.stringify(profiles)
+    if (fingerprint !== autoSyncFingerprint) {
+      autoSyncFingerprint = fingerprint
+      autoSyncRevision += 1
+      pendingFullSync = profiles.length > 0
+    }
+    autoSyncProfileCache = profiles
+    // The extension may suppress an event only if every syncing profile would
+    // suppress it. Exact intersection is intentionally conservative: broader
+    // parent/subdomain combinations are filtered again per profile below.
+    sharedExclusionCache = profiles.length === 0
+      ? []
+      : profiles[0].excludedSites.filter(site => profiles.every(profile => profile.excludedSites.includes(site)))
   }
+  const profileExcludes = (profile: AutoSyncProfile, domain: string): boolean =>
+    profile.excludedSites.some(site => siteCoversHost(site, domain) || siteCoversHost(domain, site))
   const pendingAutoSyncDomains = new Set<string>()
+  let pendingFullSync = false
+  let completedFullSyncRevision = 0
   let autoSyncBusy = false
   let autoSyncTimer: NodeJS.Timeout | null = null
+  const scheduleAutoSync = (delay = 1500) => {
+    if (autoSyncTimer) clearTimeout(autoSyncTimer)
+    autoSyncTimer = setTimeout(() => { autoSyncTimer = null; void runAutoSync() }, delay)
+  }
   const runAutoSync = async () => {
     if (autoSyncBusy) return
     const changed = [...pendingAutoSyncDomains]
-    pendingAutoSyncDomains.clear()
-    if (changed.length === 0 || !chromeCompanion?.status().connected) return
-
-    // Chrome exposes only one identity per site, so a site that lives in more
-    // than one syncing profile is ambiguous - refreshing "work" from Chrome
-    // while you are signed in there as "personal" would overwrite work's
-    // login. Each changed site is refreshed only when exactly one profile
-    // with the sync switch on owns it, and only that site is touched (not the
-    // profile's other, unrelated logins). Profiles with the switch off are
-    // never written to, and never block the one that has it on.
-    const targets = new Map<string, Set<string>>()  // profile -> its changed sites
-    for (const domain of changed) {
-      const owners = autoSyncProfileNames()
-        .filter(name => {
-          try { return browserController.profileSites(name).some(site => domainsTouch(site, domain)) }
-          catch { return false }
-        })
-      if (owners.length !== 1) {
-        if (owners.length > 1) {
-          sendToRenderer('gateway-log', `[browser] auto-sync skipped ${domain}: ${owners.join(' and ')} both sync it - leave the switch on for only one`)
-        }
-        continue
-      }
-      const set = targets.get(owners[0]) ?? new Set<string>()
-      set.add(domain)
-      targets.set(owners[0], set)
-    }
-    if (targets.size === 0) return
+    // Freeze the generation and profile set this pass is actually syncing.
+    // Settings can change while Chrome is answering; success for the old
+    // generation must not accidentally acknowledge the newer one.
+    const passRevision = autoSyncRevision
+    const passProfiles = autoSyncProfileCache.map(profile => ({
+      name: profile.name,
+      excludedSites: [...profile.excludedSites],
+    }))
+    const doFullSync = pendingFullSync && completedFullSyncRevision < passRevision
+    if ((!doFullSync && changed.length === 0) || !chromeCompanion?.status().connected) return
+    // Keep new notifications distinct from this in-flight batch. Failed work
+    // is merged back below; successful work cannot erase a later same-domain
+    // change that arrived while Chrome was exporting.
+    for (const domain of changed) pendingAutoSyncDomains.delete(domain)
 
     autoSyncBusy = true
+    let retryDelay = 1500
     try {
-      for (const [name, sites] of targets) {
+      let allChromeSites: string[] = []
+      let fullSyncSucceeded = true
+      let syncSucceeded = true
+      if (doFullSync) {
+        try {
+          allChromeSites = (await chromeCompanion.listSessionSites()).sites.map(entry => entry.site)
+        } catch (error) {
+          fullSyncSucceeded = false
+          pendingFullSync = true
+          sendToRenderer('gateway-log', `[browser] initial Chrome mirror failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+      for (const profile of passProfiles) {
+        let sites: string[]
+        if (doFullSync) {
+          try {
+            // Include sites already held by Codey. If Chrome deleted their
+            // final cookie while the extension was offline, they no longer
+            // appear in listSessionSites; requesting them explicitly lets the
+            // empty Chrome result clear those stale cookies on reconnect.
+            const existingSites = await browserController.profileSites(profile.name)
+            sites = [...new Set([...allChromeSites, ...existingSites])]
+              .filter(site => !profileExcludes(profile, site))
+          } catch (error) {
+            fullSyncSucceeded = false
+            syncSucceeded = false
+            sendToRenderer('gateway-log', `[browser] could not inspect "${profile.name}" before Chrome sync: ${error instanceof Error ? error.message : String(error)}`)
+            continue
+          }
+        } else {
+          sites = changed.filter(domain => !profileExcludes(profile, domain))
+        }
+        if (sites.length === 0) continue
         try {
           const session = await chromeCompanion.exportSessionForSites([...sites])
-          await browserController.resyncProfileSites(name, {
+          await browserController.resyncProfileSites(profile.name, {
             json: JSON.stringify({ cookies: session.cookies, origins: session.origins }),
           }, session.sites)
         } catch (error) {
-          // A refused refresh (a conflict with another enabled profile, say) is
-          // a log line, not a crash - the next manual sync will surface it.
-          sendToRenderer('gateway-log', `[browser] auto-sync of "${name}" failed: ${error instanceof Error ? error.message : String(error)}`)
+          syncSucceeded = false
+          if (doFullSync) fullSyncSucceeded = false
+          sendToRenderer('gateway-log', `[browser] auto-sync of "${profile.name}" failed: ${error instanceof Error ? error.message : String(error)}`)
         }
+      }
+      if (doFullSync && fullSyncSucceeded) completedFullSyncRevision = Math.max(completedFullSyncRevision, passRevision)
+      else if (doFullSync) {
+        pendingFullSync = true
+        retryDelay = 5000
+      }
+      if (syncSucceeded && fullSyncSucceeded) {
+        if (doFullSync) pendingFullSync = completedFullSyncRevision < autoSyncRevision
+      } else {
+        for (const domain of changed) pendingAutoSyncDomains.add(domain)
+        retryDelay = 5000
       }
     } finally {
       autoSyncBusy = false
-      // Anything that changed while a refresh was running gets its own pass.
-      if (pendingAutoSyncDomains.size > 0 && !autoSyncTimer) {
-        autoSyncTimer = setTimeout(() => { autoSyncTimer = null; void runAutoSync() }, 1500)
-      }
+      if ((pendingFullSync || pendingAutoSyncDomains.size > 0) && !autoSyncTimer) scheduleAutoSync(retryDelay)
     }
   }
   chromeCompanion?.setAutoSync({
-    watchDomains: () => {
-      const syncing = autoSyncProfileNames()
-      if (syncing.length === 0) return null
-      const domains = new Set<string>()
-      for (const name of syncing) {
-        try { for (const site of browserController.profileSites(name)) domains.add(site) }
-        catch { /* an unreadable profile just is not watched */ }
+    watchDomains: () => (autoSyncProfileCache.length === 0 ? null : ['*']),
+    excludedDomains: () => sharedExclusionCache,
+    revision: () => autoSyncRevision,
+    onConnected: () => {
+      if (autoSyncProfileCache.length === 0) return
+      completedFullSyncRevision = Math.min(completedFullSyncRevision, autoSyncRevision - 1)
+      pendingFullSync = true
+      if (!autoSyncTimer) scheduleAutoSync(100)
+    },
+    onPoll: () => {
+      if (autoSyncProfileCache.length > 0 && completedFullSyncRevision < autoSyncRevision) {
+        pendingFullSync = true
+        if (!autoSyncTimer) scheduleAutoSync(100)
       }
-      return [...domains]
     },
     onSessionChanged: domains => {
       for (const domain of domains) pendingAutoSyncDomains.add(domain)
-      // One burst of cookie churn (a login flow sets a handful) becomes one
-      // refresh, not one per cookie.
-      if (autoSyncTimer) clearTimeout(autoSyncTimer)
-      autoSyncTimer = setTimeout(() => { autoSyncTimer = null; void runAutoSync() }, 1500)
+      scheduleAutoSync()
     },
   })
+  void refreshWatchDomains()
   ipcMain.handle('browser:profiles:setAutoSync', (event, name: string, enabled: boolean) =>
-    browserCall(event, () => browserController.setProfileAutoSync(String(name || ''), enabled === true)))
+    browserCall(event, async () => {
+      const result = await browserController.setProfileAutoSync(String(name || ''), enabled === true)
+      // Turning the switch on changes the extension from idle to whole-Chrome
+      // watching and schedules an initial catch-up pass.
+      await refreshWatchDomains()
+      return result
+    }))
+  ipcMain.handle('browser:profiles:setExcludedSites', (event, name: string, sites: string[]) =>
+    browserCall(event, async () => {
+      const result = browserController.setProfileExcludedSites(String(name || ''), Array.isArray(sites) ? sites : [])
+      await refreshWatchDomains()
+      return result
+    }))
   ipcMain.handle('browser:profiles:setAvatar', (event, name: string, avatar: string) =>
     browserCall(event, () => browserController.setProfileAvatar(String(name || ''), String(avatar || ''))))
   ipcMain.handle('browser:profiles:delete', (event, name: string) =>
-    browserCall(event, () => browserController.deleteProfile(String(name || ''))))
+    browserCall(event, async () => {
+      const result = await browserController.deleteProfile(String(name || ''))
+      // A deleted profile's sites are nobody's to watch any more.
+      await refreshWatchDomains()
+      return result
+    }))
   ipcMain.handle('browser:profiles:import', event => browserCall(event, async () => {
     const result = await dialog.showOpenDialog(mainWindow ?? (undefined as any), {
       title: 'Import browser profile',
@@ -2571,9 +2665,11 @@ app.whenReady().then(async () => {
     if (result.canceled || result.filePaths.length === 0) return { imported: false, profile: null }
     const filePath = result.filePaths[0]
     const name = deriveProfileNameFromFile(filePath)
-    // Importing activates by default — "import then enable" in one step — and
-    // the identity switch prompts the user like any mutating browser command.
+    // The import lands in the profile's own jar; making it the default for new
+    // tabs is the usual next step, so it is the default here too.
     const profile = await browserController.importProfile(name, { path: filePath })
+    // An import can bring in sites a syncing profile now holds.
+    await refreshWatchDomains()
     return { imported: true, profile }
   }))
   ipcMain.handle('browser:profiles:export', (event, name: string) => browserCall(event, async () => {
@@ -2655,7 +2751,7 @@ app.whenReady().then(async () => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
     const requested = String(name || '').trim()
     assertProfileName(requested)
-    if (browserController.listProfiles().some(profile => profile.name === requested)) {
+    if ((await browserController.listProfiles()).some(profile => profile.name === requested)) {
       throw new Error(`A Codey Browser profile named "${requested}" already exists — choose another name`)
     }
     const picked = (Array.isArray(sites) ? sites : [])
@@ -2685,7 +2781,7 @@ app.whenReady().then(async () => {
     await browserController.importProfile(requested, {
       json: JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins }),
     }, true, null)
-    const profile = browserController.listProfiles().find(item => item.name === requested)
+    const profile = (await browserController.listProfiles()).find(item => item.name === requested)
     if (!profile) throw new Error('Chrome sessions were imported but the Codey Browser profile could not be found')
     return { imported: true, profile, cookieCount: sessionState.cookies.length, sites: sessionState.sites }
   }))

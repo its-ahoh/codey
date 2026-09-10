@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CHROME_COMPANION_EXTENSION_ID,
   ChromeCompanionBridge,
@@ -171,17 +171,30 @@ describe('ChromeCompanionBridge', () => {
     const token = await connect(endpoint)
     const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
     const poll = () => fetch(`${endpoint}/v1/poll`, { method: 'POST', headers, body: '{}' })
-      .then(response => response.json() as Promise<{ watchDomains: string[] | null }>)
+      .then(response => response.json() as Promise<{
+        watchDomains: string[] | null; excludedDomains: string[]; syncRevision: number
+      }>)
 
     // Off (no hooks): explicit null, so the extension can drop a stale list.
-    await expect(poll()).resolves.toMatchObject({ watchDomains: null })
+    await expect(poll()).resolves.toMatchObject({ watchDomains: null, excludedDomains: [], syncRevision: 0 })
 
     const reported: string[][] = []
+    let polls = 0
     bridge.setAutoSync({
-      watchDomains: () => ['github.com', 'jira.example.com'],
+      watchDomains: () => ['*'],
+      excludedDomains: () => ['bank.example'],
+      revision: () => 7,
+      onPoll: () => { polls += 1 },
       onSessionChanged: domains => reported.push(domains),
     })
-    await expect(poll()).resolves.toMatchObject({ watchDomains: ['github.com', 'jira.example.com'] })
+    await expect(poll()).resolves.toMatchObject({
+      watchDomains: ['*'], excludedDomains: ['bank.example'], syncRevision: 7,
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(polls).toBe(1)
+    await expect(poll()).resolves.toMatchObject({ syncRevision: 7 })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(polls).toBe(2)
 
     // The report names domains only - never cookie values - and junk entries
     // are dropped before they reach the app.
@@ -197,6 +210,39 @@ describe('ChromeCompanionBridge', () => {
     })
     expect(anonymous.status).toBe(401)
     expect(reported).toHaveLength(1)
+  })
+
+  it('notifies auto-sync when an authorized client reconnects after the heartbeat expires', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    const reconnected = vi.fn()
+    bridge.setAutoSync({
+      watchDomains: () => ['*'],
+      onConnected: reconnected,
+      onSessionChanged: () => {},
+    })
+    ;(bridge as any).lastSeenAt = Date.now() - 60_000
+
+    await fetch(`${endpoint}/v1/poll`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    await vi.waitFor(() => expect(reconnected).toHaveBeenCalledOnce())
+  })
+
+  it('notifies auto-sync when the extension establishes a new pairing', async () => {
+    const { bridge, endpoint } = await setup()
+    const connected = vi.fn()
+    bridge.setAutoSync({
+      watchDomains: () => ['*'],
+      onConnected: connected,
+      onSessionChanged: () => {},
+    })
+
+    await connect(endpoint)
+
+    await vi.waitFor(() => expect(connected).toHaveBeenCalledOnce())
   })
 
   it('lists Chrome\'s signed-in sites and exports only the ones picked', async () => {

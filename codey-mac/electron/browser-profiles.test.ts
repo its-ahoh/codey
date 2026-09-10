@@ -7,17 +7,14 @@ import {
   assertProfileName,
   BrowserProfileStore,
   availableProfileName,
-  conflictingCookie,
-  conflictingStorageKey,
   cookieMatchesUrl,
-  mergeProfileSites,
   siteCoversHost,
   summarizeProfileSites,
   deriveProfileNameFromFile,
   parseProfileData,
   parseProfileJsonText,
-  profileConflict,
   profileFileName,
+  profilePartition,
   readProfileJson,
 } from './browser-profiles'
 
@@ -122,26 +119,23 @@ describe('BrowserProfileStore', () => {
     try {
       expect(store.list()).toEqual([])
       const before = Date.now()
-      const written = store.write('work', {
-        cookies: [{ name: 'sid', value: 'abc', domain: 'example.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'lax' }],
-        origins: [],
-      }, 'https://example.com/')
+      const written = store.writeMeta('work', 'https://example.com/')
       expect(written.name).toBe('work')
       expect(written.avatar).toBeNull()
+      expect(written.excludedSites).toEqual([])
       expect(written.createdAt).toBeGreaterThanOrEqual(before)
       expect(written.sourceUrl).toBe('https://example.com/')
 
       const read = store.read('work')
-      expect(read.cookies).toHaveLength(1)
-      expect(read.cookies[0].value).toBe('abc')
+      expect(read.name).toBe('work')
 
       // Re-writing keeps the original createdAt and refreshes updatedAt.
-      const again = store.write('work', { cookies: [], origins: [] }, null)
+      const again = store.writeMeta('work', null)
       expect(again.createdAt).toBe(written.createdAt)
       expect(again.updatedAt).toBeGreaterThanOrEqual(written.updatedAt)
       expect(again.sourceUrl).toBe('https://example.com/')
 
-      store.write('zebra', { cookies: [], origins: [] }, null)
+      store.writeMeta('zebra', null)
       const summaries = store.list()
       expect(summaries.map(profile => profile.name)).toEqual(['work', 'zebra'])
       expect(summaries[0]).toMatchObject({ name: 'work', cookieCount: 0, originCount: 0, active: false })
@@ -163,17 +157,99 @@ describe('BrowserProfileStore', () => {
   it('keeps the per-profile auto-sync switch across re-saves', () => {
     const { dir, store } = makeStore()
     try {
-      store.write('work', { cookies: [], origins: [] }, null)
+      store.writeMeta('work', null)
       expect(store.list()[0].autoSync).toBe(false)
 
       expect(store.setAutoSync('work', true).autoSync).toBe(true)
-      // A refresh rewrites the profile's data; the switch must survive it,
+      // A refresh rewrites the profile's metadata; the switch must survive it,
       // or auto-sync would turn itself off on its own first run.
-      store.write('work', { cookies: [], origins: [] }, null)
+      store.writeMeta('work', null)
       expect(store.read('work').autoSync).toBe(true)
 
       expect(store.setAutoSync('work', false).autoSync).toBe(false)
       expect(store.read('work').autoSync).toBe(false)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('normalizes and preserves per-profile Chrome exclusions', () => {
+    const { dir, store } = makeStore()
+    try {
+      store.writeMeta('work', null)
+      const updated = store.setExcludedSites('work', [
+        ' GitHub.COM ', '.google.com', '..GITHUB.com', '', '   ', '.Google.COM',
+      ])
+      expect(updated.excludedSites).toEqual(['github.com', 'google.com'])
+
+      // Every metadata-only rewrite must keep the exclusion list.
+      store.writeMeta('work', 'https://github.com/')
+      store.setAvatar('work', '💼')
+      store.setAutoSync('work', true)
+      store.touch('work')
+      expect(store.read('work').excludedSites).toEqual(['github.com', 'google.com'])
+      expect(store.list()[0].excludedSites).toEqual(['github.com', 'google.com'])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('safely normalizes exclusions read from existing schema-2 metadata', () => {
+    const { dir, store } = makeStore()
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, 'work.json'), JSON.stringify({
+        schema: 2,
+        name: 'work',
+        excludedSites: [' Example.COM ', '.example.com', 42, null, '', '...GitHub.COM'],
+        createdAt: 1,
+        updatedAt: 2,
+        sourceUrl: null,
+      }))
+      expect(store.read('work').excludedSites).toEqual(['example.com', 'github.com'])
+      expect(store.pendingMigrations()).toEqual([])
+
+      fs.writeFileSync(path.join(dir, 'work.json'), JSON.stringify({
+        schema: 2,
+        name: 'work',
+        excludedSites: 'example.com',
+      }))
+      expect(store.read('work').excludedSites).toEqual([])
+      expect(store.pendingMigrations()).toEqual([])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('normalizes and preserves the localStorage origin index', () => {
+    const { dir, store } = makeStore()
+    try {
+      store.writeMeta('work', null)
+      store.rememberOrigins('work', [
+        'https://app.example.com/path',
+        'https://app.example.com/other',
+        'http://localhost:3000/login',
+        'file:///tmp/not-web',
+        'not a url',
+      ])
+      expect(store.read('work').knownOrigins).toEqual([
+        'https://app.example.com',
+        'http://localhost:3000',
+      ])
+
+      // Metadata-only edits must not drop the index used by closed-tab export.
+      store.setAvatar('work', '💼')
+      store.setAutoSync('work', true)
+      store.setExcludedSites('work', ['example.com'])
+      store.touch('work')
+      store.writeMeta('work', null)
+      expect(store.read('work').knownOrigins).toEqual([
+        'https://app.example.com',
+        'http://localhost:3000',
+      ])
+
+      store.replaceKnownOrigins('work', ['https://replacement.example/path'])
+      expect(store.read('work').knownOrigins).toEqual(['https://replacement.example'])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -189,10 +265,10 @@ describe('BrowserProfileStore', () => {
       expect(store.active()).toBe('work')
       expect(fs.readFileSync(path.join(dir, ACTIVE_PROFILE_FILE), 'utf8')).toBe('work\n')
 
-      // Several at once, in the order they were enabled.
-      store.setActive(['work', 'personal'])
-      expect(store.activeNames()).toEqual(['work', 'personal'])
-      expect(store.active()).toBe('work')
+      // Setting another name replaces the default; only ever one at a time.
+      store.setActive('personal')
+      expect(store.activeNames()).toEqual(['personal'])
+      expect(store.active()).toBe('personal')
 
       store.setActive(null)
       expect(store.activeNames()).toEqual([])
@@ -229,16 +305,16 @@ describe('BrowserProfileStore', () => {
   it('flags the active profile in list()', () => {
     const { store } = makeStore()
     try {
-      store.write('a', { cookies: [], origins: [] }, null)
-      store.write('b', { cookies: [], origins: [] }, null)
+      store.writeMeta('a', null)
+      store.writeMeta('b', null)
       store.setActive('b')
       const summaries = store.list()
       expect(summaries.find(profile => profile.name === 'b')?.active).toBe(true)
       expect(summaries.find(profile => profile.name === 'a')?.active).toBe(false)
 
-      // Both flagged once both are enabled.
-      store.setActive(['a', 'b'])
-      expect(store.list().filter(profile => profile.active).map(profile => profile.name)).toEqual(['a', 'b'])
+      // Only one default at a time.
+      store.setActive('a')
+      expect(store.list().filter(profile => profile.active).map(profile => profile.name)).toEqual(['a'])
     } finally {
       // store() dir cleanup handled by each test's own dir; nothing to do.
     }
@@ -248,7 +324,7 @@ describe('BrowserProfileStore', () => {
     const { dir, store } = makeStore()
     try {
       expect(() => store.read('ghost')).toThrow(/missing or unreadable/)
-      store.write('bad', { cookies: [], origins: [] }, null)
+      store.writeMeta('bad', null)
       fs.writeFileSync(path.join(dir, 'bad.json'), '{corrupt')
       expect(() => store.read('bad')).toThrow(/missing or unreadable|corrupt/)
       // list() still returns a zeroed summary for the corrupt file.
@@ -312,69 +388,7 @@ describe('cookieMatchesUrl', () => {
   })
 })
 
-describe('conflictingCookie', () => {
-  const withValue = (value: string) => ({
-    cookies: [{
-      name: 'session', value, domain: 'github.com', path: '/', expires: -1,
-      httpOnly: true, secure: true, sameSite: 'lax' as const,
-    }],
-    origins: [],
-  })
-
-  it('finds the cookie two profiles disagree about', () => {
-    const clash = conflictingCookie(withValue('work'), withValue('personal'))
-    expect(clash).toMatchObject({ name: 'session', domain: 'github.com' })
-  })
-
-  it('is not a conflict when both hold the same value', () => {
-    expect(conflictingCookie(withValue('same'), withValue('same'))).toBeNull()
-  })
-
-  it('is not a conflict when the cookies are for different scopes', () => {
-    const other = {
-      cookies: [{
-        name: 'session', value: 'x', domain: 'gitlab.com', path: '/', expires: -1,
-        httpOnly: true, secure: true, sameSite: 'lax' as const,
-      }],
-      origins: [],
-    }
-    expect(conflictingCookie(withValue('work'), other)).toBeNull()
-    expect(conflictingCookie({ cookies: [], origins: [] }, withValue('work'))).toBeNull()
-  })
-})
-
-describe('conflictingStorageKey / profileConflict', () => {
-  const withToken = (value: string, origin = 'https://app.example.com') => ({
-    cookies: [],
-    origins: [{ origin, localStorage: [{ name: 'token', value }] }],
-  })
-
-  it('finds the storage key two profiles disagree about', () => {
-    expect(conflictingStorageKey(withToken('work'), withToken('personal')))
-      .toEqual({ origin: 'https://app.example.com', key: 'token' })
-  })
-
-  it('is not a conflict when the value or the origin differs harmlessly', () => {
-    expect(conflictingStorageKey(withToken('same'), withToken('same'))).toBeNull()
-    expect(conflictingStorageKey(withToken('work'), withToken('personal', 'https://other.example.com'))).toBeNull()
-    expect(conflictingStorageKey({ cookies: [], origins: [] }, withToken('work'))).toBeNull()
-  })
-
-  it('profileConflict names cookie clashes first, then storage clashes', () => {
-    const cookie = (value: string) => ({
-      cookies: [{
-        name: 'session', value, domain: 'github.com', path: '/', expires: -1,
-        httpOnly: true, secure: true, sameSite: 'lax' as const,
-      }],
-      origins: [],
-    })
-    expect(profileConflict(cookie('a'), cookie('b'))).toMatch(/session cookie for github\.com/)
-    expect(profileConflict(withToken('a'), withToken('b'))).toMatch(/site storage \(token\) for https:\/\/app\.example\.com/)
-    expect(profileConflict(cookie('same'), cookie('same'))).toBeNull()
-  })
-})
-
-describe('siteCoversHost / mergeProfileSites', () => {
+describe('siteCoversHost', () => {
   it('covers a site and its subdomains, and nothing that merely ends alike', () => {
     expect(siteCoversHost('github.com', 'github.com')).toBe(true)
     expect(siteCoversHost('github.com', 'api.github.com')).toBe(true)
@@ -383,38 +397,6 @@ describe('siteCoversHost / mergeProfileSites', () => {
     expect(siteCoversHost('', 'github.com')).toBe(false)
   })
 
-  const cookie = (domain: string, value: string) => ({
-    name: 'session', value, domain, path: '/', expires: -1,
-    httpOnly: true, secure: true, sameSite: 'lax' as const,
-  })
-
-  it('replaces only the sites the refresh covers', () => {
-    const existing = {
-      cookies: [cookie('github.com', 'old'), cookie('api.github.com', 'old'), cookie('gitlab.com', 'keep')],
-      origins: [
-        { origin: 'https://github.com', localStorage: [{ name: 'token', value: 'old' }] },
-        { origin: 'https://gitlab.com', localStorage: [{ name: 'token', value: 'keep' }] },
-      ],
-    }
-    const incoming = {
-      cookies: [cookie('github.com', 'fresh')],
-      origins: [{ origin: 'https://github.com', localStorage: [{ name: 'token', value: 'fresh' }] }],
-    }
-    const merged = mergeProfileSites(existing, incoming, ['github.com'])
-    expect(merged.cookies.map(entry => [entry.domain, entry.value])).toEqual([
-      ['gitlab.com', 'keep'],
-      ['github.com', 'fresh'],
-    ])
-    expect(merged.origins).toEqual([
-      { origin: 'https://gitlab.com', localStorage: [{ name: 'token', value: 'keep' }] },
-      { origin: 'https://github.com', localStorage: [{ name: 'token', value: 'fresh' }] },
-    ])
-  })
-
-  it('leaves a profile untouched when the refresh covered nothing', () => {
-    const existing = { cookies: [cookie('gitlab.com', 'keep')], origins: [] }
-    expect(mergeProfileSites(existing, { cookies: [], origins: [] }, [])).toEqual(existing)
-  })
 })
 
 describe('summarizeProfileSites', () => {
@@ -457,5 +439,88 @@ describe('summarizeProfileSites', () => {
     expect(sites).toEqual([
       { domain: 'app.example.com', cookieCount: 0, cookieNames: [], storage: [{ origin: 'https://app.example.com', keys: 1 }] },
     ])
+  })
+})
+
+describe('profilePartition', () => {
+  it('gives each profile its own partition and the default jar to none', () => {
+    expect(profilePartition(null)).toBe('persist:codey-browser')
+    expect(profilePartition('work')).toBe('persist:codey-profile-work')
+    expect(profilePartition('personal')).toBe('persist:codey-profile-personal')
+  })
+
+  it('never collides two profiles onto one partition', () => {
+    expect(profilePartition('work')).not.toBe(profilePartition('work2'))
+  })
+
+  it('refuses a name that is not a valid profile name', () => {
+    expect(() => profilePartition('../escape')).toThrow(/Profile names must be/)
+  })
+})
+
+describe('BrowserProfileStore metadata records', () => {
+  it('writes metadata without cookies and marks the schema', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-store-meta-'))
+    try {
+      const store = new BrowserProfileStore(dir)
+      store.writeMeta('work', 'https://github.com/')
+      const raw = JSON.parse(fs.readFileSync(path.join(dir, 'work.json'), 'utf8'))
+      expect(raw.schema).toBe(2)
+      expect(raw.cookies).toBeUndefined()
+      expect(raw.origins).toBeUndefined()
+      expect(raw.sourceUrl).toBe('https://github.com/')
+      expect(raw.excludedSites).toEqual([])
+      expect(store.read('work').name).toBe('work')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports a pre-upgrade file as needing migration, once', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-store-migrate-'))
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, 'work.json'), JSON.stringify({
+        name: 'work',
+        cookies: [{
+          name: 'sid', value: 'w', domain: 'github.com', path: '/', expires: -1,
+          httpOnly: true, secure: true, sameSite: 'lax',
+        }],
+        origins: [],
+        createdAt: 1,
+        updatedAt: 2,
+        sourceUrl: null,
+      }))
+      const store = new BrowserProfileStore(dir)
+      const pending = store.pendingMigrations()
+      expect(pending.map(entry => entry.name)).toEqual(['work'])
+      expect(pending[0].data.cookies.map(cookie => cookie.value)).toEqual(['w'])
+
+      store.markMigrated('work')
+      expect(store.pendingMigrations()).toEqual([])
+      const raw = JSON.parse(fs.readFileSync(path.join(dir, 'work.json'), 'utf8'))
+      expect(raw.cookies).toBeUndefined()
+      expect(raw.createdAt).toBe(1)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the touch timestamp moving without touching other metadata', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-store-touch-'))
+    try {
+      const store = new BrowserProfileStore(dir)
+      store.writeMeta('work', null)
+      store.setAutoSync('work', true)
+      store.setExcludedSites('work', ['GitHub.com'])
+      const before = store.read('work').updatedAt
+      store.touch('work', before + 1000)
+      const after = store.read('work')
+      expect(after.updatedAt).toBe(before + 1000)
+      expect(after.autoSync).toBe(true)
+      expect(after.excludedSites).toEqual(['github.com'])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

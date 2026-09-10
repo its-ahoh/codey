@@ -78,9 +78,8 @@ export interface ChromeSessionExport {
   }>
 }
 
-/** One site this Chrome profile holds cookies for, as offered to the user to
- *  pick from. `openTabs` is how many tabs are on it right now, which decides
- *  whether its localStorage can come along at all. */
+/** One site this Chrome profile holds cookies for or has open, as offered to
+ *  the user to pick from. Storage-only sites legitimately have zero cookies. */
 export interface ChromeSessionSite {
   site: string
   cookieCount: number
@@ -177,6 +176,10 @@ export interface ChromeSessionHandoff {
  *  way; Codey pulls a fresh export through the normal command channel. */
 export interface ChromeAutoSyncHooks {
   watchDomains: () => string[] | null
+  excludedDomains?: () => string[]
+  revision?: () => number
+  onPoll?: () => void
+  onConnected?: () => void
   onSessionChanged: (domains: string[]) => void
 }
 
@@ -386,7 +389,7 @@ export class ChromeCompanionBridge {
     this.autoSync = hooks
   }
 
-  /** Every site this Chrome profile has cookies for, most first. */
+  /** Every site this Chrome profile has cookies for or currently has open. */
   async listSessionSites(): Promise<{ sites: ChromeSessionSite[] }> {
     return await this.command<{ sites: ChromeSessionSite[] }>('listSessionSites', {})
   }
@@ -508,8 +511,15 @@ export class ChromeCompanionBridge {
   }
 
   private touch(): void {
+    const wasConnected = this.status().connected
     this.lastSeenAt = Date.now()
     this.emitStatus()
+    if (!wasConnected) this.notifyConnected()
+  }
+
+  private notifyConnected(): void {
+    if (!this.autoSync?.onConnected) return
+    void Promise.resolve().then(() => this.autoSync?.onConnected?.()).catch(() => { /* advisory hook */ })
   }
 
   private async handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
@@ -557,6 +567,7 @@ export class ChromeCompanionBridge {
         this.lastSeenAt = Date.now()
         this.persistPairing()
         this.emitStatus()
+        this.notifyConnected()
         this.reply(request, response, 200, {
           ok: true,
           token: this.token,
@@ -585,6 +596,12 @@ export class ChromeCompanionBridge {
         }
         const command = this.queue.shift()
         const watchDomains = this.autoSync?.watchDomains() ?? null
+        const excludedDomains = this.autoSync?.excludedDomains?.() ?? []
+        const syncRevision = this.autoSync?.revision?.() ?? 0
+        // A poll is a heartbeat from the authorized extension. Let consumers
+        // notice config revisions without delaying (or risking) the response.
+        const onPoll = this.autoSync?.onPoll
+        if (onPoll) void Promise.resolve().then(() => onPoll()).catch(() => { /* advisory hook */ })
         const base = {
           ok: true,
           accent: this.accent,
@@ -592,6 +609,8 @@ export class ChromeCompanionBridge {
           // null (not absent) when auto-sync is off, so the extension can drop
           // a stale watch list instead of reporting changes forever.
           watchDomains: watchDomains ? watchDomains.slice(0, 500) : null,
+          excludedDomains: excludedDomains.slice(0, 500),
+          syncRevision: Number.isSafeInteger(syncRevision) ? syncRevision : 0,
         }
         this.reply(request, response, 200, command
           ? { ...base, command: { id: command.id, command: command.command, input: command.input } }

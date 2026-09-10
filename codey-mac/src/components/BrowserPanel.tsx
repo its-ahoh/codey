@@ -103,7 +103,7 @@ export const BrowserPanel: React.FC<Props> = ({
   const [profiles, setProfiles] = useState<BrowserProfileSummary[]>([])
   const [activeProfile, setActiveProfile] = useState<string | null>(null)
   const [profileBusy, setProfileBusy] = useState(false)
-  const [syncNote, setSyncNote] = useState<string | null>(null)
+  const [profilePickerOpen, setProfilePickerOpen] = useState(false)
   const [panelWidth, setPanelWidth] = useState(900)
 
   const browserCovered = browserMenuOpen || profileMenuOpen || activeSettingsSection !== null
@@ -290,50 +290,23 @@ export const BrowserPanel: React.FC<Props> = ({
     setActiveProfile(result.data.active)
   }
 
-  useEffect(() => { void refreshProfiles() }, [])
+  useEffect(() => { void refreshProfiles() }, [tabs.length])
 
-  // Several profiles can be on at once, so the menu toggles rather than picks.
-  // The menu stays open: turning on a working set is usually more than one
-  // click, and closing after each would make that tedious.
-  const toggleProfile = async (name: string, enabled: boolean) => {
+  // A jar per profile means one identity per tab, so this is a pick, not a set
+  // of toggles: it chooses which profile new tabs open under. Tabs already on
+  // screen keep the jar they were born on, so nothing visible changes.
+  const chooseDefaultProfile = async (name: string | null) => {
     setProfileBusy(true)
     try {
-      const result = enabled
-        ? await window.codey.browser.profiles.disable(name)
-        : await window.codey.browser.profiles.enable(name)
+      const result = await window.codey.browser.profiles.setDefault(name)
       if (!result.ok) setLocalError(result.error)
       else setLocalError(null)
       await refreshProfiles()
+      setProfileMenuOpen(false)
     } finally {
       setProfileBusy(false)
     }
   }
-
-  // Refresh one profile's saved logins from Chrome, whether or not it is in
-  // use. The menu stays open: this is maintenance, not a choice.
-  const syncProfile = async (name: string) => {
-    setProfileBusy(true)
-    setSyncNote(null)
-    try {
-      const result = await window.codey.browser.profiles.syncProfile(name)
-      if (!result.ok) {
-        setLocalError(result.error)
-        return
-      }
-      setLocalError(null)
-      setSyncNote(`Refreshed “${name}”: ${result.data.cookieCount} cookies from ${result.data.siteCount} site${result.data.siteCount === 1 ? '' : 's'}`)
-      await refreshProfiles()
-      await run(() => window.codey.browser.reload())
-    } finally {
-      setProfileBusy(false)
-    }
-  }
-
-  useEffect(() => {
-    if (!syncNote) return
-    const timer = setTimeout(() => setSyncNote(null), 6000)
-    return () => clearTimeout(timer)
-  }, [syncNote])
 
   const navigate = async () => {
     const next = unwrapResult(await window.codey.browser.navigate(address))
@@ -352,11 +325,10 @@ export const BrowserPanel: React.FC<Props> = ({
 
   const displayedError = localError ?? state.error
   const secure = state.url.startsWith('https://')
-  const enabledProfiles = profiles.filter(profile => profile.active)
   const currentProfile = profiles.find(profile => profile.name === activeProfile)
-  const profileLabel = enabledProfiles.length === 0
-    ? 'No profile'
-    : enabledProfiles.length === 1 ? enabledProfiles[0].name : `${enabledProfiles.length} profiles`
+  const profileLabel = activeProfile ?? 'No profile'
+  const avatarOf = (name: string | null) =>
+    name === null ? null : (profiles.find(profile => profile.name === name)?.avatar ?? null)
 
   const sendPageToChat = async () => {
     if (!chatId) return
@@ -566,9 +538,9 @@ export const BrowserPanel: React.FC<Props> = ({
           ref={profileButtonRef}
           type="button"
           style={{ ...styles.profileButton, ...(profileMenuOpen ? styles.profileButtonActive : null) }}
-          title={enabledProfiles.length > 0
-            ? `Browser profiles in use: ${enabledProfiles.map(profile => profile.name).join(', ')} — click to change`
-            : 'No browser profile active — click to pick one'}
+          title={activeProfile
+            ? `New tabs open in “${activeProfile}” — click to change`
+            : 'New tabs open without a profile — click to pick one'}
           aria-label="Browser profile"
           aria-haspopup="menu"
           aria-expanded={profileMenuOpen}
@@ -609,39 +581,37 @@ export const BrowserPanel: React.FC<Props> = ({
 
       {profileMenuOpen && (
         <div ref={profileMenuRef} style={styles.profileMenu} role="menu" aria-label="Browser profiles">
-          <div style={styles.profileMenuHeading}>Profiles in use</div>
+          <div style={styles.profileMenuHeading}>New tabs open in</div>
           {profiles.length === 0 && (
             <div style={styles.profileMenuEmpty}>No profiles saved yet.</div>
           )}
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={activeProfile === null}
+            disabled={profileBusy}
+            style={{ ...styles.menuButton, ...(activeProfile === null ? styles.profileMenuItemActive : null) }}
+            onClick={() => void chooseDefaultProfile(null)}
+          >
+            <span style={styles.profileMenuName}>No profile</span>
+            <span aria-hidden="true" style={styles.profileMenuCheck}>{activeProfile === null ? '✓' : ''}</span>
+          </button>
           {profiles.map(profile => (
             <div key={profile.name} style={styles.profileMenuRow}>
               <button
                 type="button"
-                role="menuitemcheckbox"
+                role="menuitemradio"
                 aria-checked={profile.active}
                 disabled={profileBusy}
                 style={{ ...styles.menuButton, flex: 1, ...(profile.active ? styles.profileMenuItemActive : null) }}
-                onClick={() => void toggleProfile(profile.name, profile.active)}
+                onClick={() => void chooseDefaultProfile(profile.name)}
               >
                 <span aria-hidden="true" style={styles.profileMenuAvatar}>{browserProfileAvatar(profile)}</span>
                 <span style={styles.profileMenuName}>{profile.name}</span>
                 <span aria-hidden="true" style={styles.profileMenuCheck}>{profile.active ? '✓' : ''}</span>
               </button>
-              <button
-                type="button"
-                style={styles.profileMenuSync}
-                disabled={profileBusy}
-                title={`Refresh every login in ${profile.name} from Chrome`}
-                aria-label={`Refresh ${profile.name} from Chrome`}
-                onClick={() => void syncProfile(profile.name)}
-              ><UIIcon name="refresh" size={12} /></button>
             </div>
           ))}
-          {enabledProfiles.length > 1 && (
-            <div style={styles.profileMenuNote}>
-              The browser is carrying all {enabledProfiles.length} logins at once.
-            </div>
-          )}
           <div style={styles.profileMenuDivider} />
           <button type="button" style={styles.menuButton} onClick={() => { setProfileMenuOpen(false); openProfiles() }}>
             <UIIcon name="settings" size={13} /> Manage profiles…
@@ -700,6 +670,11 @@ export const BrowserPanel: React.FC<Props> = ({
               if (event.key === 'Enter' || event.key === ' ') void showWebTab(() => window.codey.browser.switchTab(tab.id))
             }}
           >
+            {tab.profile && (
+              <span style={styles.tabProfile} title={`Profile: ${tab.profile}`} aria-label={`Profile ${tab.profile}`}>
+                {avatarOf(tab.profile) ?? tab.profile.slice(0, 1).toUpperCase()}
+              </span>
+            )}
             <span style={styles.tabTitle}>{tab.title || 'New tab'}</span>
             <button
               type="button"
@@ -736,11 +711,40 @@ export const BrowserPanel: React.FC<Props> = ({
         <button
           type="button"
           style={styles.newTabButton}
-          title="New tab"
+          title={profiles.length > 0 ? 'New tab (alt-click to pick a profile)' : 'New tab'}
           aria-label="New tab"
-          onClick={() => void showWebTab(() => window.codey.browser.newTab())}
+          onClick={event => {
+            if (!event.altKey || profiles.length === 0) {
+              void showWebTab(() => window.codey.browser.newTab())
+              return
+            }
+            setProfilePickerOpen(true)
+          }}
         >+</button>
       </div>
+
+      {profilePickerOpen && (
+        <div style={styles.profilePicker} role="menu" aria-label="Open a new tab in a profile">
+          <button
+            style={styles.profilePickerItem}
+            role="menuitem"
+            type="button"
+            onClick={() => { setProfilePickerOpen(false); void showWebTab(() => window.codey.browser.newTab(undefined, null)) }}
+          >No profile</button>
+          {profiles.map(profile => (
+            <button
+              key={profile.name}
+              type="button"
+              style={styles.profilePickerItem}
+              role="menuitem"
+              onClick={() => {
+                setProfilePickerOpen(false)
+                void showWebTab(() => window.codey.browser.newTab(undefined, profile.name))
+              }}
+            >{profile.avatar ?? ''} {profile.name}</button>
+          ))}
+        </div>
+      )}
 
       {activeSettingsSection !== null && (
         <aside style={settingsSidebarStyle} aria-label="Browser settings sections">
@@ -1016,13 +1020,6 @@ export const BrowserPanel: React.FC<Props> = ({
         </div>
       )}
 
-      {syncNote && !displayedError && (
-        <div style={styles.syncBar} role="status">
-          <span>{syncNote}</span>
-          <button type="button" onClick={() => setSyncNote(null)} style={styles.dismissError}>Dismiss</button>
-        </div>
-      )}
-
       {displayedError && (
         <div style={styles.errorBar} role="status">
           <span>{displayedError}</span>
@@ -1077,6 +1074,9 @@ const styles: Record<string, React.CSSProperties> = {
   tabTitle: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' },
   tabClose: { width: 16, height: 16, padding: 0, flexShrink: 0, display: 'grid', placeItems: 'center', border: 'none', borderRadius: 4, background: 'transparent', color: C.fg3, cursor: 'pointer', fontSize: 14, lineHeight: 1 },
   newTabButton: { width: 27, height: 27, flexShrink: 0, border: 'none', borderRadius: 6, background: 'transparent', color: C.fg2, cursor: 'pointer', fontSize: 18 },
+  tabProfile: { flexShrink: 0, marginRight: 4, fontSize: 11, lineHeight: '11px', opacity: 0.9 },
+  profilePicker: { position: 'absolute', top: 34, right: 8, zIndex: 5, display: 'flex', flexDirection: 'column', minWidth: 160, padding: 4, borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}`, boxShadow: '0 6px 20px rgba(0,0,0,0.35)' },
+  profilePickerItem: { textAlign: 'left', padding: '6px 8px', border: 'none', borderRadius: 6, background: 'transparent', color: C.fg, cursor: 'pointer', fontSize: 12 },
   navGroup: { display: 'flex', alignItems: 'center', gap: 3 },
   iconButton: { width: 31, height: 31, padding: 0, border: 'none', borderRadius: 7, display: 'grid', placeItems: 'center', background: 'transparent', color: C.fg2, cursor: 'pointer', fontSize: 21, lineHeight: 1 },
   iconButtonActive: { background: C.accentDim, color: C.accent },
@@ -1103,7 +1103,6 @@ const styles: Record<string, React.CSSProperties> = {
   profileMenuAvatar: { width: 20, flexShrink: 0, textAlign: 'center', fontSize: 15 },
   profileMenuName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   profileMenuRow: { display: 'flex', alignItems: 'center', gap: 2 },
-  profileMenuSync: { flexShrink: 0, display: 'flex', alignItems: 'center', marginRight: 4, padding: '3px 6px', border: 'none', borderRadius: 6, background: 'transparent', color: C.fg3, cursor: 'pointer' },
   profileMenuNote: { padding: '4px 10px 6px', color: C.fg3, fontSize: 10, lineHeight: 1.4 },
   profileMenuDivider: { height: 1, margin: '4px 0', background: C.border },
   contextButton: { height: 31, padding: '0 10px', border: `1px solid ${C.accent}66`, borderRadius: 7, display: 'flex', alignItems: 'center', gap: 6, background: C.accentDim, color: C.accent, cursor: 'pointer', fontSize: 11, fontWeight: 650, whiteSpace: 'nowrap' },
@@ -1167,7 +1166,6 @@ const styles: Record<string, React.CSSProperties> = {
   extensionWarning: { color: C.warningFg, fontSize: 9.5, lineHeight: 1.35, marginTop: 3 },
   extensionPath: { color: C.fg3, fontSize: 9.5, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   extensionError: { color: C.red, fontSize: 9.5, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  syncBar: { minHeight: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '5px 12px', background: `${C.green}18`, color: C.green, borderBottom: `1px solid ${C.green}55`, fontSize: 11 },
   errorBar: { minHeight: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '5px 12px', background: `${C.red}18`, color: C.red, borderBottom: `1px solid ${C.red}55`, fontSize: 11 },
   downloadBar: { minHeight: 30, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '5px 12px', background: `${C.green}12`, color: C.green, borderBottom: `1px solid ${C.green}44`, fontSize: 11 },
   downloadName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },

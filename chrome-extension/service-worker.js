@@ -13,6 +13,9 @@ const CONTROLLED_GROUP_TITLE = 'Codey'
 // How long one opt-in "open the missing sites" pass may take in total. Kept
 // under the bridge's own timeout for that command so Codey hears an answer.
 const STORAGE_VISIT_BUDGET_MS = 25_000
+// Polls are frequent while the worker is awake. Storage inspection is not:
+// at most once per ten seconds, regardless of the long-poll cadence.
+const STORAGE_SCAN_INTERVAL_MS = 10_000
 // Stamped on interactive elements by `snapshot` so click/fill can address the
 // same element later. Renumbered on every snapshot.
 const REF_ATTR = 'data-codey-ref'
@@ -461,10 +464,9 @@ function toExportedCookie(cookie) {
 }
 
 /**
- * Every site this Chrome profile holds a login-shaped cookie for, so Codey can
- * show the user a list to pick from instead of copying the whole cookie jar.
- * Counts come from the cookie store, and `openTabs` says whether localStorage
- * would come along - it can only be read from a page that is actually open.
+ * Every site this Chrome profile holds cookies for or currently has open, so
+ * storage-only sessions can be selected too. Counts come from the cookie store,
+ * and `openTabs` says whether localStorage can come along.
  */
 async function listSessionSites() {
   const cookies = await chrome.cookies.getAll({})
@@ -480,8 +482,11 @@ async function listSessionSites() {
   for (const tab of tabs) {
     if (!/^https?:\/\//i.test(tab.url || '')) continue
     try {
-      const entry = sites.get(siteOfHost(new URL(tab.url).hostname))
-      if (entry) entry.openTabs += 1
+      const site = siteOfHost(new URL(tab.url).hostname)
+      if (!site) continue
+      const entry = sites.get(site) || { site, cookieCount: 0, openTabs: 0 }
+      entry.openTabs += 1
+      sites.set(site, entry)
     } catch { /* a URL Chrome accepted but we cannot parse is not a site */ }
   }
   // Most cookies first: that is roughly "most signed in", and it puts the
@@ -562,7 +567,6 @@ async function exportSessionForSites(requested, openMissing = false) {
   if (wanted.size === 0) throw new Error('Pick at least one site to copy')
   const cookies = (await chrome.cookies.getAll({}))
     .filter(cookie => wanted.has(siteOfHost(cookie.domain)))
-  if (cookies.length === 0) throw new Error('Chrome has no cookies for the sites you picked')
   const origins = []
   const seen = new Set()
   for (const tab of await chrome.tabs.query({})) {
@@ -578,7 +582,7 @@ async function exportSessionForSites(requested, openMissing = false) {
     seen.add(origin)
     try {
       const storage = await readTabStorage(tab.id)
-      if (storage?.localStorage?.length > 0) origins.push({ origin, localStorage: storage.localStorage })
+      if (storage?.origin) origins.push({ origin: storage.origin, localStorage: storage.localStorage || [] })
     } catch {
       // A tab that refuses injection costs us its storage, not its cookies.
     }
@@ -591,16 +595,15 @@ async function exportSessionForSites(requested, openMissing = false) {
     const plan = storageVisitPlan([...wanted], cookies.map(cookie => cookie.domain), [...seen])
     const visited = await Promise.all(plan.map(entry => visitForStorage(entry.url, deadline)))
     for (const storage of visited) {
-      if (!storage?.origin || !(storage.localStorage?.length > 0) || seen.has(storage.origin)) continue
+      if (!storage?.origin || seen.has(storage.origin)) continue
       seen.add(storage.origin)
-      origins.push({ origin: storage.origin, localStorage: storage.localStorage })
+      origins.push({ origin: storage.origin, localStorage: storage.localStorage || [] })
     }
     // Those visits were real navigations, and sites rotate session cookies on
     // load. Re-read the jar so the export carries what the sites hold *now*,
     // not the snapshot from before the pages ran.
     finalCookies = (await chrome.cookies.getAll({}))
       .filter(cookie => wanted.has(siteOfHost(cookie.domain)))
-    if (finalCookies.length === 0) finalCookies = cookies
   }
   return { sites: [...wanted], cookies: finalCookies.map(toExportedCookie), origins }
 }
@@ -752,25 +755,157 @@ async function noteExpectedVersion(expected) {
 // nothing else - it then pulls a fresh export through the normal command
 // channel. No cookie values ride this path.
 let watchDomains = []
+let excludedDomains = []
+let syncRevision = 0
 let changedDomains = new Set()
+let changedDomainVersions = new Map()
 let changedFlushTimer = null
+let changedRetryDelay = 2000
+let changedReportInFlight = false
+let changedPersistQueue = Promise.resolve()
+let lastStorageScanAt = 0
+const storageFingerprints = new Map()
 
-async function noteWatchDomains(domains) {
+async function noteAutoSyncConfig(domains, exclusions, revision) {
   const next = Array.isArray(domains) ? domains.filter(entry => typeof entry === 'string' && entry) : []
+  const nextExcluded = Array.isArray(exclusions)
+    ? exclusions.filter(entry => typeof entry === 'string' && entry)
+    : []
+  const nextRevision = Number.isSafeInteger(revision) ? revision : 0
+  const changed = JSON.stringify([watchDomains, excludedDomains, syncRevision]) !==
+    JSON.stringify([next, nextExcluded, nextRevision])
   watchDomains = next
-  const saved = await chrome.storage.local.get({ watchDomains: [] })
-  if (JSON.stringify(saved.watchDomains) !== JSON.stringify(next)) {
-    await chrome.storage.local.set({ watchDomains: next })
+  excludedDomains = nextExcluded
+  syncRevision = nextRevision
+  if (changed) storageFingerprints.clear()
+  const saved = await chrome.storage.local.get({ watchDomains: [], excludedDomains: [], syncRevision: 0 })
+  if (JSON.stringify([saved.watchDomains, saved.excludedDomains, saved.syncRevision]) !==
+      JSON.stringify([next, nextExcluded, nextRevision])) {
+    await chrome.storage.local.set({ watchDomains: next, excludedDomains: nextExcluded, syncRevision: nextRevision })
   }
 }
 
+async function restoreAutoSyncConfig() {
+  const saved = await chrome.storage.local.get({
+    watchDomains: [], excludedDomains: [], syncRevision: 0, pendingChangedDomains: [],
+  })
+  watchDomains = Array.isArray(saved.watchDomains) ? saved.watchDomains : []
+  excludedDomains = Array.isArray(saved.excludedDomains) ? saved.excludedDomains : []
+  syncRevision = Number.isSafeInteger(saved.syncRevision) ? saved.syncRevision : 0
+  for (const domain of Array.isArray(saved.pendingChangedDomains) ? saved.pendingChangedDomains : []) {
+    if (typeof domain !== 'string' || !domain) continue
+    changedDomains.add(domain)
+    if (!changedDomainVersions.has(domain)) changedDomainVersions.set(domain, 1)
+  }
+}
+
+function persistChangedDomains() {
+  const pendingChangedDomains = [...changedDomains]
+  // Cookie and storage listeners may overlap. Serialize snapshots so an older
+  // write cannot finish last and overwrite a newer queue.
+  changedPersistQueue = changedPersistQueue
+    .catch(() => {})
+    .then(() => chrome.storage.local.set({ pendingChangedDomains }))
+  return changedPersistQueue
+}
+
+async function noteChangedDomain(domain) {
+  changedDomains.add(domain)
+  changedDomainVersions.set(domain, (changedDomainVersions.get(domain) || 0) + 1)
+  // A Manifest V3 worker can be suspended between retry timers. Persist before
+  // reporting so an unavailable Codey app cannot turn suspension into loss.
+  await persistChangedDomains()
+}
+
+function scheduleChangedReport(delay = 2000) {
+  if (changedFlushTimer) clearTimeout(changedFlushTimer)
+  changedFlushTimer = setTimeout(() => {
+    changedFlushTimer = null
+    runSafely(reportChangedDomains)
+  }, delay)
+}
+
 async function reportChangedDomains() {
-  const domains = [...changedDomains]
-  changedDomains.clear()
-  if (domains.length === 0) return
-  const { endpoint, token } = await settings()
-  if (!token) return
-  await call(endpoint, '/v1/session/changed', { token, body: { domains } })
+  if (changedReportInFlight) return
+  const batch = [...changedDomains].map(domain => [domain, changedDomainVersions.get(domain) || 0])
+  if (batch.length === 0) return
+  changedReportInFlight = true
+  const acknowledged = []
+  try {
+    const { endpoint, token } = await settings()
+    if (!token) throw new Error('Chrome companion is not connected')
+    await call(endpoint, '/v1/session/changed', { token, body: { domains: batch.map(([domain]) => domain) } })
+    // A second change can arrive while the request is in flight. Acknowledge
+    // only the exact version sent; the newer one stays queued for another pass.
+    for (const [domain, version] of batch) {
+      if (changedDomainVersions.get(domain) !== version) continue
+      changedDomains.delete(domain)
+      changedDomainVersions.delete(domain)
+      acknowledged.push([domain, version])
+    }
+    await persistChangedDomains()
+    changedRetryDelay = 2000
+  } catch (error) {
+    // If acknowledging the durable queue failed after the HTTP request, keep
+    // the batch in memory too. A duplicate report is safe; a lost report is not.
+    for (const [domain, version] of acknowledged) {
+      if (changedDomains.has(domain)) continue
+      changedDomains.add(domain)
+      changedDomainVersions.set(domain, version)
+    }
+    if (acknowledged.length > 0) void persistChangedDomains().catch(() => {})
+    changedRetryDelay = Math.min(changedRetryDelay * 2, 30000)
+    throw error
+  } finally {
+    changedReportInFlight = false
+    if (changedDomains.size > 0) scheduleChangedReport(changedRetryDelay)
+  }
+}
+
+/** Return only an origin, item count and a truncated SHA-256 fingerprint.
+ * localStorage names and values never leave the page and no reversible copy is
+ * retained by the extension. */
+async function readTabStorageFingerprint(tabId) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: async () => {
+      const entries = Array.from({ length: localStorage.length }, (_, index) => {
+        const name = localStorage.key(index)
+        return name === null ? null : [name, localStorage.getItem(name) || '']
+      }).filter(Boolean).sort((a, b) => a[0].localeCompare(b[0]))
+      const bytes = new TextEncoder().encode(JSON.stringify(entries))
+      const digest = await crypto.subtle.digest('SHA-256', bytes)
+      const fingerprint = Array.from(new Uint8Array(digest).slice(0, 12))
+        .map(byte => byte.toString(16).padStart(2, '0')).join('')
+      return { origin: location.origin, count: entries.length, fingerprint }
+    },
+  })
+  return results[0]?.result ?? null
+}
+
+async function scanOpenTabStorage() {
+  if (Date.now() - lastStorageScanAt < STORAGE_SCAN_INTERVAL_MS) return
+  lastStorageScanAt = Date.now()
+  const seenOrigins = new Set()
+  const changedSites = new Set()
+  for (const tab of await chrome.tabs.query({})) {
+    if (typeof tab.id !== 'number' || !/^https?:\/\//i.test(tab.url || '')) continue
+    let parsed
+    try { parsed = new URL(tab.url) } catch { continue }
+    if (seenOrigins.has(parsed.origin) || !watchesDomain(parsed.hostname, watchDomains, excludedDomains)) continue
+    seenOrigins.add(parsed.origin)
+    try {
+      const current = await readTabStorageFingerprint(tab.id)
+      if (!current?.origin) continue
+      const previous = storageFingerprints.get(current.origin)
+      storageFingerprints.set(current.origin, current.fingerprint)
+      if ((previous === undefined && current.count > 0) || (previous !== undefined && previous !== current.fingerprint)) {
+        changedSites.add(siteOfHost(parsed.hostname))
+      }
+    } catch { /* protected pages and tabs closed mid-scan are simply skipped */ }
+  }
+  for (const site of changedSites) await noteChangedDomain(site)
+  if (changedDomains.size > 0) scheduleChangedReport()
 }
 
 chrome.cookies.onChanged.addListener(({ cookie }) => {
@@ -778,18 +913,11 @@ chrome.cookies.onChanged.addListener(({ cookie }) => {
   if (!host) return
   runSafely(async () => {
     // The worker may have restarted since the last poll delivered the list.
-    if (watchDomains.length === 0) {
-      const saved = await chrome.storage.local.get({ watchDomains: [] })
-      watchDomains = Array.isArray(saved.watchDomains) ? saved.watchDomains : []
-    }
-    if (!watchDomains.some(domain => domainsTouch(host, domain))) return
-    changedDomains.add(host)
+    if (watchDomains.length === 0) await restoreAutoSyncConfig()
+    if (!watchesDomain(host, watchDomains, excludedDomains)) return
+    await noteChangedDomain(host)
     // A login flow sets a burst of cookies; report the burst once.
-    if (changedFlushTimer) clearTimeout(changedFlushTimer)
-    changedFlushTimer = setTimeout(() => {
-      changedFlushTimer = null
-      runSafely(reportChangedDomains)
-    }, 2000)
+    scheduleChangedReport()
   })
 })
 
@@ -807,7 +935,11 @@ async function pollOnce() {
   }
   await noteExpectedVersion(response.expectedVersion)
   if (response.accent) await applyAccent(response.accent)
-  if (response.watchDomains !== undefined) await noteWatchDomains(response.watchDomains)
+  if (response.watchDomains !== undefined) {
+    await noteAutoSyncConfig(response.watchDomains, response.excludedDomains, response.syncRevision)
+  }
+  await scanOpenTabStorage()
+  if (changedDomains.size > 0 && !changedFlushTimer) scheduleChangedReport(0)
   if (!response.command) return true
   const command = response.command
   try {
@@ -909,6 +1041,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true
 })
 
-runSafely(async () => { await restoreAccent(); await restoreControlledTab() })
+runSafely(async () => {
+  await restoreAccent()
+  await restoreControlledTab()
+  await restoreAutoSyncConfig()
+  if (changedDomains.size > 0) scheduleChangedReport(0)
+})
 runSafely(configureSidePanel)
 runSafely(pollLoop)

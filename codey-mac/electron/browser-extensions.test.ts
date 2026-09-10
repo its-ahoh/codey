@@ -73,20 +73,22 @@ describe('BrowserExtensionManager', () => {
     const loadExtension = vi.fn(async () => ({ id: 'runtime-id' }))
     const removeExtension = vi.fn()
     const session = { extensions: { loadExtension, removeExtension } }
-    const manager = new BrowserExtensionManager(session, stateFile)
+    const manager = new BrowserExtensionManager(stateFile)
+    await manager.attach(session)
 
     await expect(manager.install(directory)).resolves.toEqual([
-      expect.objectContaining({ name: 'Local Notes', enabled: true, runtimeId: 'runtime-id', error: null }),
+      expect.objectContaining({ name: 'Local Notes', enabled: true, loaded: true, error: null }),
     ])
     expect(loadExtension).toHaveBeenCalledWith(fs.realpathSync(directory))
 
     const key = manager.list()[0].key
     await manager.setEnabled(key, false)
     expect(removeExtension).toHaveBeenCalledWith('runtime-id')
-    expect(manager.list()[0]).toMatchObject({ enabled: false, runtimeId: null })
+    expect(manager.list()[0]).toMatchObject({ enabled: false, loaded: false })
 
     const restoredLoad = vi.fn(async () => ({ id: 'restored-id' }))
-    const restored = new BrowserExtensionManager({ extensions: { loadExtension: restoredLoad, removeExtension: vi.fn() } }, stateFile)
+    const restored = new BrowserExtensionManager(stateFile)
+    await restored.attach({ extensions: { loadExtension: restoredLoad, removeExtension: vi.fn() } })
     await restored.initialize()
     expect(restoredLoad).not.toHaveBeenCalled()
     expect(restored.list()[0]).toMatchObject({ name: 'Local Notes', enabled: false })
@@ -96,15 +98,16 @@ describe('BrowserExtensionManager', () => {
     const directory = makeExtension({ manifest_version: 3, name: 'Unsupported', version: '1.0.0' })
     const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-extension-state-'))
     temporaryDirectories.push(stateDirectory)
-    const manager = new BrowserExtensionManager({
+    const manager = new BrowserExtensionManager(path.join(stateDirectory, 'extensions.json'))
+    await manager.attach({
       extensions: {
         loadExtension: vi.fn(async () => { throw new Error('Unsupported manifest key') }),
         removeExtension: vi.fn(),
       },
-    }, path.join(stateDirectory, 'extensions.json'))
+    })
 
     const entries = await manager.install(directory)
-    expect(entries[0]).toMatchObject({ enabled: true, runtimeId: null, error: 'Unsupported manifest key' })
+    expect(entries[0]).toMatchObject({ enabled: true, loaded: false, error: 'Unsupported manifest key' })
   })
 
   it('discovers the newest installed Chrome version and imports a managed copy', async () => {
@@ -142,10 +145,10 @@ describe('BrowserExtensionManager', () => {
 
     const loadExtension = vi.fn(async () => ({ id: extensionId }))
     const manager = new BrowserExtensionManager(
-      { extensions: { loadExtension, removeExtension: vi.fn() } },
       path.join(stateDirectory, 'extensions.json'),
       [chromeRoot],
     )
+    await manager.attach({ extensions: { loadExtension, removeExtension: vi.fn() } })
     const entries = await manager.importFromChrome(discovered[0].path)
     const managedPath = fs.realpathSync(path.join(stateDirectory, 'browser-extensions', extensionId))
     expect(entries[0]).toMatchObject({ name: 'Page Helper', path: managedPath, enabled: true })
@@ -169,7 +172,6 @@ describe('BrowserExtensionManager', () => {
       { manifest_version: 2, name: 'Desktop Bridge', version: '1.0.0', permissions: ['nativeMessaging'] },
     )
     const manager = new BrowserExtensionManager(
-      { extensions: { loadExtension: vi.fn(), removeExtension: vi.fn() } },
       path.join(stateDirectory, 'extensions.json'),
       [chromeRoot],
     )
@@ -177,4 +179,41 @@ describe('BrowserExtensionManager', () => {
     expect(manager.discoverChrome()[0]).toMatchObject({ compatible: false })
     await expect(manager.importFromChrome(fs.realpathSync(sourcePath))).rejects.toThrow('native messaging')
   })
+
+  it('loads every enabled extension into each session it is attached to', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ext-multi-'))
+    temporaryDirectories.push(dir)
+    const extensionDir = path.join(dir, 'ext')
+    fs.mkdirSync(extensionDir, { recursive: true })
+    fs.writeFileSync(path.join(extensionDir, 'manifest.json'), JSON.stringify({
+      manifest_version: 3, name: 'Demo', version: '1.0.0',
+    }))
+    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify([{ path: extensionDir, enabled: true }]))
+
+    const makeSession = (id: string) => ({
+      extensions: {
+        loadExtension: vi.fn(async () => ({ id })),
+        removeExtension: vi.fn(),
+      },
+    })
+    const a = makeSession('id-a')
+    const b = makeSession('id-b')
+    const manager = new BrowserExtensionManager(path.join(dir, 'state.json'), [])
+    await manager.initialize()
+
+    await manager.attach(a)
+    await manager.attach(b)
+    expect(a.extensions.loadExtension).toHaveBeenCalledWith(fs.realpathSync(extensionDir))
+    expect(b.extensions.loadExtension).toHaveBeenCalledWith(fs.realpathSync(extensionDir))
+
+    // Attaching the same session twice must not load it twice.
+    await manager.attach(a)
+    expect(a.extensions.loadExtension).toHaveBeenCalledTimes(1)
+
+    // Disabling unloads from every attached session, using each one's own id.
+    await manager.setEnabled(manager.list()[0].key, false)
+    expect(a.extensions.removeExtension).toHaveBeenCalledWith('id-a')
+    expect(b.extensions.removeExtension).toHaveBeenCalledWith('id-b')
+  })
+
 })

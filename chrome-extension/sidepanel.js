@@ -578,10 +578,10 @@ async function openHandoffForm() {
   handoffFormNode.hidden = false
   handoffNameNode.value = suggestion
   // If a profile already holds this site, say so - refreshing it happens in
-  // the Codey Browser (its Sync button, or auto-sync), not from here. The
+  // the Codey Browser's automatic profile sync, not from here. The
   // side panel only creates.
   handoffExistingNode.textContent = existing.length > 0
-    ? `Already saved in ${existing.join(', ')} - refresh it from the Codey Browser instead of saving a copy.`
+    ? `Already saved in ${existing.join(', ')} - enable Chrome mirroring in Codey Browser instead of saving a copy.`
     : ''
   handoffExistingNode.hidden = existing.length === 0
   handoffNameNode.focus()

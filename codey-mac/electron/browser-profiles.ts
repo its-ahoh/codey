@@ -46,8 +46,8 @@ export interface BrowserProfile extends BrowserProfileData {
   name: string
   /** User-selected visual marker shown in the browser profile switcher. */
   avatar?: string | null
-  /** This profile mirrors Chrome: when one of its sites' logins changes
-   *  there, the profile refreshes itself. Off unless the user turned it on. */
+  /** This profile mirrors Chrome, including newly visited sites, except for
+   *  its explicit exclusions. Off unless the user turned it on. */
   autoSync?: boolean
   createdAt: number
   updatedAt: number
@@ -55,10 +55,28 @@ export interface BrowserProfile extends BrowserProfileData {
   sourceUrl: string | null
 }
 
+/** A profile record on disk: everything about a profile except its session,
+ *  which lives in the profile's partition. */
+export interface BrowserProfileMeta {
+  name: string
+  avatar?: string | null
+  autoSync?: boolean
+  /** Chrome sites this profile must never refresh from automatically. */
+  excludedSites: string[]
+  /** Origins whose localStorage belongs to this partition. Electron exposes
+   *  no API for enumerating them, so this index lets exports read origins
+   *  again after their tabs have closed. Empty storage is indexed too. */
+  knownOrigins: string[]
+  createdAt: number
+  updatedAt: number
+  sourceUrl: string | null
+}
+
 export interface BrowserProfileSummary {
   name: string
   avatar?: string | null
   autoSync: boolean
+  excludedSites: string[]
   createdAt: number
   updatedAt: number
   cookieCount: number
@@ -71,6 +89,11 @@ export interface BrowserProfileSummary {
  *  It used to hold a single name; that reads back as a one-profile set, so an
  *  existing install keeps its browser signed in across the upgrade. */
 export const ACTIVE_PROFILE_FILE = '.active'
+
+/** Bumped when a profile file's shape changes. Schema 1 carried the session
+ *  itself; schema 2 carries metadata only, because the partition holds the
+ *  session now. A file with no marker is schema 1 and needs migrating. */
+export const PROFILE_SCHEMA = 2
 
 export const BROWSER_PROFILE_AVATARS = [
   '👤', '💼', '🏠', '🚀', '🧑‍💻', '🎨', '🌟', '🦊',
@@ -97,6 +120,21 @@ export function assertProfileName(name: unknown): asserts name is string {
   ) {
     throw new Error('Profile names must be 1-64 characters of letters, digits, dots, dashes or underscores, and must not start with a dot')
   }
+}
+
+/** The default storage jar, used by tabs that belong to no profile. This is
+ *  the partition the browser used before profiles were isolated, so an
+ *  existing install keeps whatever it was signed into. */
+export const DEFAULT_BROWSER_PARTITION = 'persist:codey-browser'
+
+/** The Electron partition that holds a profile's session. Each profile gets
+ *  its own Chromium storage bucket - cookies, localStorage, IndexedDB, cache -
+ *  so two profiles signed into the same site cannot see or overwrite each
+ *  other. `null` means "no profile", which is the default jar. */
+export function profilePartition(name: string | null): string {
+  if (name === null) return DEFAULT_BROWSER_PARTITION
+  assertProfileName(name)
+  return `persist:codey-profile-${name}`
 }
 
 /** Derive a safe profile name from an import file's name, so importing
@@ -249,58 +287,6 @@ export function cookieMatchesUrl(cookie: BrowserProfileCookie, url: URL): boolea
     || requestPath[cookiePath.length] === '/'
 }
 
-/** The first cookie two profiles both hold with different values, or null when
- *  they can safely be enabled together. Same key and same value is not a
- *  conflict - honouring either one gives the same live session. */
-export function conflictingCookie(
-  left: BrowserProfileData,
-  right: BrowserProfileData,
-): BrowserProfileCookie | null {
-  const key = (cookie: BrowserProfileCookie) => `${cookie.domain}\u0000${cookie.path}\u0000${cookie.name}`
-  const held = new Map(left.cookies.map(cookie => [key(cookie), cookie]))
-  for (const cookie of right.cookies) {
-    const other = held.get(key(cookie))
-    if (other && other.value !== cookie.value) return cookie
-  }
-  return null
-}
-
-/** The first localStorage key two profiles both hold for the same origin with
- *  different values, or null. Cookies are not the only place a login lives, so
- *  the "one value would silently win" rule has to cover storage too. */
-export function conflictingStorageKey(
-  left: BrowserProfileData,
-  right: BrowserProfileData,
-): { origin: string; key: string } | null {
-  const held = new Map<string, string>()
-  for (const origin of left.origins) {
-    for (const item of origin.localStorage) {
-      held.set(`${origin.origin} ${item.name}`, item.value)
-    }
-  }
-  for (const origin of right.origins) {
-    for (const item of origin.localStorage) {
-      const other = held.get(`${origin.origin} ${item.name}`)
-      if (other !== undefined && other !== item.value) return { origin: origin.origin, key: item.name }
-    }
-  }
-  return null
-}
-
-/** Why two profiles cannot be live at the same time, or null when they can.
- *  One shared check so enabling, re-syncing and importing all refuse the same
- *  overlaps instead of each path missing a different one. */
-export function profileConflict(
-  left: BrowserProfileData,
-  right: BrowserProfileData,
-): string | null {
-  const cookie = conflictingCookie(left, right)
-  if (cookie) return `a different ${cookie.name} cookie for ${cookie.domain}`
-  const storage = conflictingStorageKey(left, right)
-  if (storage) return `different site storage (${storage.key}) for ${storage.origin}`
-  return null
-}
-
 /** Does `site` (a registrable domain, as Chrome grouped it) cover `host`?
  *  Used to decide which of a profile's cookies a refresh of that site speaks
  *  for, without needing the public-suffix guesswork on this side: the sites
@@ -311,31 +297,34 @@ export function siteCoversHost(site: string, host: string): boolean {
   return !!left && (right === left || right.endsWith(`.${left}`))
 }
 
-/** Fold a fresh multi-site export into a profile. Only the sites the export
- *  covers are replaced - everything else the profile holds is left alone, so
- *  refreshing what Chrome knows about cannot delete a login that came from
- *  somewhere else. Replacing rather than layering means a cookie the site has
- *  dropped disappears instead of lingering as a stale credential. */
-export function mergeProfileSites(
-  existing: BrowserProfileData,
-  incoming: BrowserProfileData,
-  sites: readonly string[],
-): BrowserProfileData {
-  const covers = (host: string) => sites.some(site => siteCoversHost(site, host));
-  const originHost = (origin: string) => {
+/** Normalize the user-maintained Chrome-sync exclusion list. Older metadata
+ *  has no field, and hand-edited files may contain mixed values, so reads are
+ *  deliberately forgiving while still returning one canonical shape. */
+function normalizeExcludedSites(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const sites: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue
+    const site = entry.trim().replace(/^\.+/, '').trim().toLowerCase()
+    if (!site || sites.includes(site)) continue
+    sites.push(site)
+  }
+  return sites
+}
+
+function normalizeKnownOrigins(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const origins: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue
     try {
-      return new URL(origin).hostname
-    } catch {
-      return ''
-    }
+      const parsed = new URL(entry)
+      if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && !origins.includes(parsed.origin)) {
+        origins.push(parsed.origin)
+      }
+    } catch { /* ignore damaged metadata */ }
   }
-  return {
-    cookies: [...existing.cookies.filter(cookie => !covers(cookie.domain)), ...incoming.cookies],
-    origins: [
-      ...existing.origins.filter(origin => !covers(originHost(origin.origin))),
-      ...incoming.origins,
-    ],
-  }
+  return origins
 }
 
 /** What one site inside a profile holds, described without the secrets. Cookie
@@ -407,27 +396,30 @@ export class BrowserProfileStore {
     return names.sort().map(name => this.summary(name, active))
   }
 
+  /** The counts stay on the summary because the UI shows them, but only the
+   *  partition can fill them in now - the controller does that. */
   private summary(name: string, activeNames: readonly string[]): BrowserProfileSummary {
-    let profile: BrowserProfile | null = null
+    let meta: BrowserProfileMeta | null = null
     try {
-      profile = this.read(name)
+      meta = this.read(name)
     } catch {
-      // A half-written file still shows up; counts read as zero.
+      // A half-written file still shows up.
     }
     return {
       name,
-      avatar: profile?.avatar ?? null,
-      autoSync: profile?.autoSync === true,
-      createdAt: profile?.createdAt ?? 0,
-      updatedAt: profile?.updatedAt ?? 0,
-      cookieCount: profile?.cookies.length ?? 0,
-      originCount: profile?.origins.length ?? 0,
+      avatar: meta?.avatar ?? null,
+      autoSync: meta?.autoSync === true,
+      excludedSites: meta?.excludedSites ?? [],
+      createdAt: meta?.createdAt ?? 0,
+      updatedAt: meta?.updatedAt ?? 0,
+      cookieCount: 0,
+      originCount: 0,
       active: activeNames.includes(name),
-      sourceUrl: profile?.sourceUrl ?? null,
+      sourceUrl: meta?.sourceUrl ?? null,
     }
   }
 
-  read(name: string): BrowserProfile {
+  read(name: string): BrowserProfileMeta {
     assertProfileName(name)
     let parsed: unknown
     try {
@@ -437,55 +429,129 @@ export class BrowserProfileStore {
     }
     if (typeof parsed !== 'object' || parsed === null) throw new Error(`Profile ${name} is corrupt`)
     const record = parsed as Record<string, unknown>
-    const data = parseProfileData(record)
     return {
-      ...data,
       name,
       avatar: typeof record.avatar === 'string' && (BROWSER_PROFILE_AVATARS as readonly string[]).includes(record.avatar)
         ? record.avatar
         : null,
       autoSync: record.autoSync === true,
+      excludedSites: normalizeExcludedSites(record.excludedSites),
+      knownOrigins: normalizeKnownOrigins(record.knownOrigins),
       createdAt: typeof record.createdAt === 'number' ? record.createdAt : 0,
       updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : 0,
       sourceUrl: typeof record.sourceUrl === 'string' ? record.sourceUrl : null,
     }
   }
 
-  /** Write (or overwrite) a profile. Keeps the original createdAt so re-saving
-   *  a profile updates its snapshot without pretending it is new. */
-  write(name: string, data: BrowserProfileData, sourceUrl: string | null, now = Date.now()): BrowserProfile {
+  /** Write (or update) a profile's metadata record. Keeps createdAt, the
+   *  avatar and the Chrome-sync switch when the profile already exists. */
+  writeMeta(name: string, sourceUrl: string | null, now = Date.now()): BrowserProfileMeta {
     assertProfileName(name)
-    let existing: BrowserProfile | null = null
+    let existing: BrowserProfileMeta | null = null
     try {
       existing = this.read(name)
     } catch {
       // New profile.
     }
-    const profile: BrowserProfile = {
-      ...data,
+    const meta: BrowserProfileMeta & { schema: number } = {
+      schema: PROFILE_SCHEMA,
       name,
       avatar: existing?.avatar ?? null,
       autoSync: existing?.autoSync === true,
+      excludedSites: existing?.excludedSites ?? [],
+      knownOrigins: existing?.knownOrigins ?? [],
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       sourceUrl: sourceUrl ?? existing?.sourceUrl ?? null,
     }
+    this.writeRecord(name, meta)
+    return meta
+  }
+
+  /** Move a profile's updatedAt without changing anything else - what a
+   *  refresh of its jar reports back to the UI. */
+  touch(name: string, now = Date.now()): BrowserProfileMeta {
+    const meta = this.read(name)
+    const next = { ...meta, schema: PROFILE_SCHEMA, updatedAt: now }
+    this.writeRecord(name, next)
+    return next
+  }
+
+  /** Remember origins without moving updatedAt: maintaining the storage index
+   *  is bookkeeping, not a user-visible session refresh. */
+  rememberOrigins(name: string, origins: readonly string[]): BrowserProfileMeta {
+    const meta = this.read(name)
+    const knownOrigins = normalizeKnownOrigins([...meta.knownOrigins, ...origins])
+    if (knownOrigins.length === meta.knownOrigins.length
+      && knownOrigins.every((origin, index) => origin === meta.knownOrigins[index])) return meta
+    const next = { ...meta, schema: PROFILE_SCHEMA, knownOrigins }
+    this.writeRecord(name, next)
+    return next
+  }
+
+  /** Replace the index after a whole-jar import. Origins absent from that
+   *  snapshot were cleared from the partition and must not linger as sites. */
+  replaceKnownOrigins(name: string, origins: readonly string[]): BrowserProfileMeta {
+    const meta = this.read(name)
+    const knownOrigins = normalizeKnownOrigins(origins)
+    const next = { ...meta, schema: PROFILE_SCHEMA, knownOrigins }
+    this.writeRecord(name, next)
+    return next
+  }
+
+  /** Profiles still holding a schema-1 session, with the session to replay
+   *  into their partition. Empty once every profile has been migrated. */
+  pendingMigrations(): Array<{ name: string; data: BrowserProfileData }> {
+    const pending: Array<{ name: string; data: BrowserProfileData }> = []
+    let names: string[] = []
+    try {
+      names = fs.readdirSync(this.dir)
+        .filter(file => file.endsWith('.json'))
+        .map(file => file.slice(0, -'.json'.length))
+    } catch {
+      return []
+    }
+    for (const name of names.sort()) {
+      let record: Record<string, unknown>
+      try {
+        const parsed: unknown = JSON.parse(fs.readFileSync(this.file(name), 'utf8'))
+        if (typeof parsed !== 'object' || parsed === null) continue
+        record = parsed as Record<string, unknown>
+      } catch {
+        continue
+      }
+      if (record.schema === PROFILE_SCHEMA) continue
+      try {
+        pending.push({ name, data: parseProfileData(record) })
+      } catch {
+        // A malformed payload cannot be replayed; leave the file alone.
+      }
+    }
+    return pending
+  }
+
+  /** Rewrite a migrated profile as a metadata-only record, dropping the
+   *  session it used to carry. Called only after the session has been written
+   *  into the partition, so a crash in between simply migrates again. */
+  markMigrated(name: string): void {
+    assertProfileName(name)
+    const meta = this.read(name)
+    this.writeRecord(name, { ...meta, schema: PROFILE_SCHEMA })
+  }
+
+  private writeRecord(name: string, record: object): void {
     fs.mkdirSync(this.dir, { recursive: true })
     const file = this.file(name)
-    fs.writeFileSync(file, JSON.stringify(profile, null, 2), { encoding: 'utf8', mode: 0o600 })
+    fs.writeFileSync(file, JSON.stringify(record, null, 2), { encoding: 'utf8', mode: 0o600 })
     try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
-    return profile
   }
 
   /** Update only presentation metadata; the saved browser session is untouched. */
   setAvatar(name: string, avatar: string): BrowserProfileSummary {
     assertProfileName(name)
     assertProfileAvatar(avatar)
-    const profile = this.read(name)
-    const next: BrowserProfile = { ...profile, avatar }
-    const file = this.file(name)
-    fs.writeFileSync(file, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 })
-    try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
+    const meta = this.read(name)
+    this.writeRecord(name, { ...meta, schema: PROFILE_SCHEMA, avatar })
     return this.summary(name, this.activeNames())
   }
 
@@ -493,11 +559,21 @@ export class BrowserProfileStore {
    *  saved session is untouched, and the snapshot does not read as newer. */
   setAutoSync(name: string, enabled: boolean): BrowserProfileSummary {
     assertProfileName(name)
-    const profile = this.read(name)
-    const next: BrowserProfile = { ...profile, autoSync: enabled === true }
-    const file = this.file(name)
-    fs.writeFileSync(file, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 })
-    try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
+    const meta = this.read(name)
+    this.writeRecord(name, { ...meta, schema: PROFILE_SCHEMA, autoSync: enabled === true })
+    return this.summary(name, this.activeNames())
+  }
+
+  /** Replace the sites omitted from this profile's automatic Chrome refresh.
+   *  Like the auto-sync switch, this changes metadata only. */
+  setExcludedSites(name: string, sites: readonly string[]): BrowserProfileSummary {
+    assertProfileName(name)
+    const meta = this.read(name)
+    this.writeRecord(name, {
+      ...meta,
+      schema: PROFILE_SCHEMA,
+      excludedSites: normalizeExcludedSites(sites),
+    })
     return this.summary(name, this.activeNames())
   }
 
@@ -538,14 +614,13 @@ export class BrowserProfileStore {
     return this.activeNames()[0] ?? null
   }
 
-  setActive(names: string | string[] | null): void {
-    const list = names === null ? [] : (Array.isArray(names) ? names : [names])
-    if (list.length === 0) {
+  setActive(name: string | null): void {
+    if (name === null) {
       try { fs.unlinkSync(this.activeFile()) } catch { /* already absent */ }
       return
     }
-    for (const name of list) assertProfileName(name)
+    assertProfileName(name)
     fs.mkdirSync(this.dir, { recursive: true })
-    fs.writeFileSync(this.activeFile(), `${list.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 })
+    fs.writeFileSync(this.activeFile(), `${name}\n`, { encoding: 'utf8', mode: 0o600 })
   }
 }

@@ -194,6 +194,7 @@ export interface BrowserTab {
   title: string
   url: string
   active: boolean
+  profile: string | null
 }
 
 /** A saved browser session ("profile") as listed by the profiles manager. */
@@ -202,6 +203,8 @@ export interface BrowserProfileSummary {
   avatar: string | null
   /** This profile keeps itself in sync with Chrome. */
   autoSync: boolean
+  /** Sites that automatic Chrome mirroring must leave untouched. */
+  excludedSites: string[]
   createdAt: number
   updatedAt: number
   cookieCount: number
@@ -234,7 +237,8 @@ export interface BrowserExtensionCandidate {
 export interface BrowserExtensionEntry extends BrowserExtensionCandidate {
   key: string
   enabled: boolean
-  runtimeId: string | null
+  /** True when the extension is loaded into at least one profile partition. */
+  loaded: boolean
   error: string | null
 }
 
@@ -668,18 +672,17 @@ declare global {
         getPageContext: () => Promise<IpcResult<BrowserPageContext>>
         downloads: () => Promise<IpcResult<BrowserDownload[]>>
         tabs: () => Promise<IpcResult<BrowserTab[]>>
-        newTab: (url?: string) => Promise<IpcResult<BrowserState>>
+        newTab: (url?: string, profile?: string | null) => Promise<IpcResult<BrowserState>>
         switchTab: (id: string) => Promise<IpcResult<BrowserState>>
         closeTab: (id: string) => Promise<IpcResult<BrowserState>>
         resetSession: () => Promise<IpcResult<BrowserState>>
         profiles: {
-          list: () => Promise<IpcResult<{ active: string | null; activeNames: string[]; profiles: BrowserProfileSummary[] }>>
+          list: () => Promise<IpcResult<{ active: string | null; profiles: BrowserProfileSummary[] }>>
           save: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
-          activate: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
-          enable: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
-          disable: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
+          setDefault: (name: string | null) => Promise<IpcResult<BrowserProfileSummary | null>>
           setAvatar: (name: string, avatar: string) => Promise<IpcResult<BrowserProfileSummary>>
           setAutoSync: (name: string, enabled: boolean) => Promise<IpcResult<BrowserProfileSummary>>
+          setExcludedSites: (name: string, sites: string[]) => Promise<IpcResult<BrowserProfileSummary>>
           delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>
           import: () => Promise<IpcResult<{ imported: boolean; profile: BrowserProfileSummary | null }>>
           export: (name: string) => Promise<IpcResult<{ exported: boolean; path: string | null }>>
