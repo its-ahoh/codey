@@ -1253,30 +1253,10 @@ export class BrowserController {
     return { deleted: true }
   }
 
-  /** Write a profile's jar to an arbitrary path, so a session can be handed to
-   *  another machine (or another profile-enabled tool). The jar is the source
-   *  of truth, so the export is what the profile can actually sign in with. */
-  async exportProfile(name: string, targetPath: string): Promise<{ path: string }> {
-    const meta = this.profiles().read(name)
-    const data = await this.captureProfileData(name)
-    const file = path.resolve(String(targetPath))
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    const payload = {
-      ...data,
-      name,
-      createdAt: meta.createdAt,
-      updatedAt: meta.updatedAt,
-      sourceUrl: meta.sourceUrl,
-    }
-    fs.writeFileSync(file, JSON.stringify(payload, null, 2), { encoding: 'utf8', mode: 0o600 })
-    try { fs.chmodSync(file, 0o600) } catch { /* best-effort */ }
-    return { path: file }
-  }
-
   /** Everything a profile's jar holds, in the portable profile shape: its
    *  cookies plus the localStorage of every indexed origin. Open tabs are read
    *  directly; closed origins use a hidden page on the same partition. This is
-   *  the read side of profile export and the detailed contents disclosure.
+   *  the read side of saving a profile and the detailed contents disclosure.
    *  Page text and fields are never read — only the storage that holds login
    *  state. */
   private async captureProfileData(profileName: string | null): Promise<BrowserProfileData> {

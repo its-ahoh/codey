@@ -62,8 +62,7 @@ function usage() {
     '  profile list               List saved profiles and the active one',
     '  profile save <name>        Snapshot the current session into a profile',
     '  profile import <path> [name]  Import a session file into a profile',
-    '  profile default <name>     Choose which profile new tabs open under',
-    '  profile export <name> <path>  Write a profile to a shareable JSON file',
+    '  profile default <name>     Choose the active profile',
     '  profile delete <name>      Remove a profile',
     '  chrome status              Read Chrome Companion connection state',
     '  chrome tab                 Read the active real-Chrome tab',
@@ -271,9 +270,6 @@ async function main() {
           ...(rest[2] ? { name: rest[2] } : {}),
           source: { path: rest[1] },
         })
-      } else if (sub === 'export') {
-        if (!rest[1] || !rest[2]) throw new Error(`profile export needs a profile name and an output path\n${usage()}`)
-        value = await request('POST', '/profile/export', { name: rest[1], path: rest[2] })
       } else {
         throw new Error(`Unknown profile command: ${sub || ''}\n${usage()}`)
       }

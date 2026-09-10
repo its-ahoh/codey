@@ -17,7 +17,7 @@ type BridgeController = Pick<
   | 'waitFor' | 'upload' | 'listDownloads' | 'waitForDownload' | 'submit'
   | 'getLoginStatus'
   | 'getState' | 'back' | 'forward' | 'reload' | 'listTabs' | 'newTab' | 'switchTab' | 'closeTab'
-  | 'listProfiles' | 'activeProfileName' | 'saveProfile' | 'importProfile' | 'setDefaultProfile' | 'deleteProfile' | 'exportProfile'
+  | 'listProfiles' | 'activeProfileName' | 'saveProfile' | 'importProfile' | 'setDefaultProfile' | 'deleteProfile'
 >
 
 type CompanionController = Pick<ChromeCompanionBridge, 'status' | 'activeTab' | 'snapshot' | 'navigate' | 'act'>
@@ -428,11 +428,6 @@ export class BrowserAgentBridge {
       if (req.method === 'POST' && route === '/profile/delete') {
         const body = await readJson(req)
         json(res, 200, await this.controlled('delete-profile', () => this.controller.deleteProfile(String(body.name || ''))))
-        return
-      }
-      if (req.method === 'POST' && route === '/profile/export') {
-        const body = await readJson(req)
-        json(res, 200, await this.exclusive(() => this.controller.exportProfile(String(body.name || ''), String(body.path || ''))))
         return
       }
       json(res, 404, { error: 'Unknown browser command' })

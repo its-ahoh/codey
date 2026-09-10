@@ -1234,24 +1234,8 @@ describe('BrowserController profiles', () => {
     }
   })
 
-  it('exportProfile writes the profile to an arbitrary path', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
-    try {
-      const { controller } = makeFixture(dir)
-      await controller.importProfile('work', { json: '{"cookies":[]}' }, false)
-      const out = path.join(dir, '..', 'exported-work.json')
-      const result = await controller.exportProfile('work', out)
-      expect(result.path).toBe(path.resolve(out))
-      expect(JSON.parse(fs.readFileSync(out, 'utf8')).name).toBe('work')
-      fs.rmSync(out, { force: true })
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
-  it('exports localStorage from indexed origins after their tabs are closed', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-export-storage-'))
-    const out = path.join(dir, '..', 'exported-storage.json')
+  it('reads localStorage from indexed origins after their tabs are closed', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-read-storage-'))
     try {
       const hidden = {
         webContents: {
@@ -1277,23 +1261,23 @@ describe('BrowserController profiles', () => {
       store.writeMeta('work', null)
       store.rememberOrigins('work', ['https://app.example.com'])
 
-      await controller.exportProfile('work', out)
+      const contents = await controller.profileContents('work')
 
-      expect(JSON.parse(fs.readFileSync(out, 'utf8')).origins).toEqual([{
-        origin: 'https://app.example.com',
-        localStorage: [{ name: 'token', value: 'persisted' }],
+      expect(contents.sites).toEqual([{
+        domain: 'app.example.com',
+        cookieCount: 0,
+        cookieNames: [],
+        storage: [{ origin: 'https://app.example.com', keys: 1 }],
       }])
       expect(hidden.webContents.loadURL).toHaveBeenCalledWith('https://app.example.com/')
       expect(hidden.webContents.close).toHaveBeenCalled()
     } finally {
-      fs.rmSync(out, { force: true })
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
 
-  it('does not export localStorage from a cross-origin sign-in redirect', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-export-redirect-'))
-    const out = path.join(dir, '..', 'exported-redirect.json')
+  it('does not read localStorage from a cross-origin sign-in redirect', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-read-redirect-'))
     try {
       const hidden = {
         webContents: {
@@ -1319,12 +1303,11 @@ describe('BrowserController profiles', () => {
       store.writeMeta('work', null)
       store.rememberOrigins('work', ['https://app.example.com'])
 
-      await controller.exportProfile('work', out)
+      const contents = await controller.profileContents('work')
 
-      expect(JSON.parse(fs.readFileSync(out, 'utf8')).origins).toEqual([])
+      expect(contents.sites).toEqual([])
       expect(hidden.webContents.close).toHaveBeenCalled()
     } finally {
-      fs.rmSync(out, { force: true })
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })

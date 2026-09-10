@@ -293,8 +293,8 @@ export const BrowserPanel: React.FC<Props> = ({
   useEffect(() => { void refreshProfiles() }, [tabs.length])
 
   // A jar per profile means one identity per tab, so this is a pick, not a set
-  // of toggles: it chooses which profile new tabs open under. Tabs already on
-  // screen keep the jar they were born on, so nothing visible changes.
+  // of toggles: it chooses the active profile. Tabs already on screen keep the
+  // jar they were born on, so nothing visible changes.
   const chooseDefaultProfile = async (name: string | null) => {
     setProfileBusy(true)
     try {
@@ -539,8 +539,8 @@ export const BrowserPanel: React.FC<Props> = ({
           type="button"
           style={{ ...styles.profileButton, ...(profileMenuOpen ? styles.profileButtonActive : null) }}
           title={activeProfile
-            ? `New tabs open in “${activeProfile}” — click to change`
-            : 'New tabs open without a profile — click to pick one'}
+            ? `Browsing as “${activeProfile}” — click to change`
+            : 'Browsing without a profile — click to pick one'}
           aria-label="Browser profile"
           aria-haspopup="menu"
           aria-expanded={profileMenuOpen}
@@ -581,7 +581,7 @@ export const BrowserPanel: React.FC<Props> = ({
 
       {profileMenuOpen && (
         <div ref={profileMenuRef} style={styles.profileMenu} role="menu" aria-label="Browser profiles">
-          <div style={styles.profileMenuHeading}>New tabs open in</div>
+          <div style={styles.profileMenuHeading}>Active profile</div>
           {profiles.length === 0 && (
             <div style={styles.profileMenuEmpty}>No profiles saved yet.</div>
           )}
