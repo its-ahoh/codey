@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import { UIIcon } from './UIIcons'
-import type { BrowserProfileSiteSummary, BrowserProfileSummary } from '../codey-api'
+import type { BrowserProfileSiteSummary, BrowserProfileSummary, ChromeClientInfo } from '../codey-api'
 import { BROWSER_PROFILE_AVATARS, browserProfileAvatar } from './browserProfileAvatars'
 import { Toggle } from './settingsAtoms'
 
@@ -41,6 +41,14 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
   // out hid what was missing, so say it and mark the field instead.
   const [nameMissing, setNameMissing] = useState(false)
   const [avatarPicker, setAvatarPicker] = useState<string | null>(null)
+  const [chromeClients, setChromeClients] = useState<ChromeClientInfo[]>([])
+  const [bindingPicker, setBindingPicker] = useState<string | null>(null)
+
+  const refreshChromeClients = useCallback(async () => {
+    if (!window.codey?.chromeCompanion?.clients) return
+    const result = await window.codey.chromeCompanion.clients()
+    if (result.ok) setChromeClients(result.data)
+  }, [])
 
   const refresh = useCallback(async () => {
     // A stale preload (app not restarted since the profiles bridge was added)
@@ -63,6 +71,7 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
   }, [])
 
   useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => { void refreshChromeClients() }, [refreshChromeClients])
 
   const run = async (action: () => Promise<IpcLike>) => {
     setBusy(true)
@@ -77,6 +86,7 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
       setContents({})
       if (expanded) void toggleContentsAgain(expanded)
       void refresh()
+      void refreshChromeClients()
     }
   }
 
@@ -256,6 +266,19 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
                 </span>
                 {meta(profile) || (profile.sourceUrl ? 'saved session' : 'empty profile')}
               </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setBindingPicker(current => current === profile.name ? null : profile.name)}
+                aria-expanded={bindingPicker === profile.name}
+                style={styles.bindingLink}
+                title="Choose which Chrome profile this Codey profile mirrors"
+              >
+                <UIIcon name="link" size={9} />
+                {profile.chromeProfileId
+                  ? `Chrome: ${profile.chromeProfileLabel ?? 'Chrome profile'}`
+                  : 'Not linked to Chrome'}
+              </button>
             </div>
             <button
               type="button"
@@ -297,6 +320,54 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               ><UIIcon name="trash" size={12} /></button>
             )}
           </div>
+
+          {bindingPicker === profile.name && (
+            <div style={styles.bindingPicker} role="menu" aria-label={`Chrome profile for ${profile.name}`}>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={!profile.chromeProfileId}
+                disabled={busy}
+                style={{ ...styles.bindingOption, ...(!profile.chromeProfileId ? styles.bindingOptionActive : null) }}
+                onClick={() => {
+                  setBindingPicker(null)
+                  void run(() => window.codey.browser.profiles.setChromeBinding(profile.name, null))
+                }}
+              >
+                <span style={styles.bindingOptionName}>None</span>
+                <span aria-hidden="true">{!profile.chromeProfileId ? '✓' : ''}</span>
+              </button>
+              {chromeClients.filter(client => client.profileId).map(client => {
+                const owner = profiles.find(profile => profile.chromeProfileId === client.profileId)
+                const moved = !!owner && owner.name !== profile.name
+                return (
+                  <button
+                    key={client.profileId}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={profile.chromeProfileId === client.profileId}
+                    disabled={busy}
+                    style={{ ...styles.bindingOption, ...(profile.chromeProfileId === client.profileId ? styles.bindingOptionActive : null) }}
+                    title={moved ? `Now linked to "${owner!.name}" — picking this moves it here` : undefined}
+                    onClick={() => {
+                      setBindingPicker(null)
+                      void run(() => window.codey.browser.profiles.setChromeBinding(profile.name, client.profileId))
+                    }}
+                  >
+                    <span style={styles.bindingOptionName}>
+                      {client.label}
+                      {client.connected ? '' : ' · offline'}
+                    </span>
+                    {moved && <span style={styles.bindingOptionNote}>from {owner!.name}</span>}
+                    <span aria-hidden="true">{profile.chromeProfileId === client.profileId ? '✓' : ''}</span>
+                  </button>
+                )
+              })}
+              {chromeClients.filter(client => client.profileId).length === 0 && (
+                <div style={styles.bindingEmpty}>No Chrome profiles paired yet — install the Codey extension in Chrome and it appears here.</div>
+              )}
+            </div>
+          )}
 
           {/* What this profile actually holds. Worth being able to look at
               before trusting it with a task - and before handing it to an
@@ -382,6 +453,13 @@ const styles: Record<string, React.CSSProperties> = {
   contentsMeta: { flexShrink: 0, color: C.fg3, fontSize: 10 },
   contentsEmpty: { color: C.fg3, fontSize: 11, padding: '4px 4px' },
   contentsNote: { marginTop: 4, paddingTop: 5, borderTop: `1px solid ${C.border}`, color: C.fg3, fontSize: 10, lineHeight: 1.4 },
+  bindingLink: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: 0, border: 'none', background: 'none', color: C.fg3, fontSize: 10, cursor: 'pointer', textAlign: 'left' },
+  bindingPicker: { display: 'flex', flexDirection: 'column', gap: 2, padding: 6, borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
+  bindingOption: { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 7px', border: 'none', borderRadius: 6, background: 'transparent', color: C.fg2, cursor: 'pointer', fontSize: 11, textAlign: 'left' },
+  bindingOptionActive: { background: C.accentDim, color: C.accent },
+  bindingOptionName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  bindingOptionNote: { flexShrink: 0, color: C.fg3, fontSize: 10 },
+  bindingEmpty: { padding: '5px 7px', color: C.fg3, fontSize: 10.5, lineHeight: 1.4 },
   avatarControl: { position: 'relative', flexShrink: 0 },
   avatarButton: { width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, cursor: 'pointer', fontSize: 18 },
   avatarButtonActive: { borderColor: C.green, background: `${C.green}14` },

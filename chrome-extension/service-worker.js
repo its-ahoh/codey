@@ -125,7 +125,17 @@ async function voiceCommand(message) {
 }
 
 async function settings() {
-  return await chrome.storage.local.get({ endpoint: DEFAULT_ENDPOINT, token: '', clientName: 'Chrome' })
+  const saved = await chrome.storage.local.get({
+    endpoint: DEFAULT_ENDPOINT,
+    token: '',
+    tokenProfileId: '',
+    profileId: '',
+  })
+  if (!saved.profileId) {
+    saved.profileId = crypto.randomUUID()
+    await chrome.storage.local.set({ profileId: saved.profileId })
+  }
+  return saved
 }
 
 async function call(endpoint, path, options = {}) {
@@ -185,14 +195,19 @@ async function autoConnect() {
         extensionIdentity: true,
         discovery: true,
         body: secret
-          ? { clientName, nonce, proof: await hmacHex(secret, `codey-client:${nonce}`) }
-          : { clientName },
+          ? { profileId: current.profileId, clientName, nonce, proof: await hmacHex(secret, `codey-client:${nonce}`) }
+          : { profileId: current.profileId, clientName },
       })
       if (secret) {
         const expected = await hmacHex(secret, `codey-server:${nonce}:${value.token}`)
         if (value.serverProof !== expected) throw new Error('The endpoint could not prove it is Codey')
       }
-      await chrome.storage.local.set({ endpoint, token: value.token, lastError: '' })
+      await chrome.storage.local.set({
+        endpoint,
+        token: value.token,
+        tokenProfileId: current.profileId,
+        lastError: '',
+      })
       return { endpoint, token: value.token }
     } catch { /* Codey may be on the next port in the local discovery range. */ }
   }
@@ -922,8 +937,10 @@ chrome.cookies.onChanged.addListener(({ cookie }) => {
 })
 
 async function pollOnce() {
-  let { endpoint, token } = await settings()
-  if (!token) ({ endpoint, token } = await autoConnect())
+  let { endpoint, token, profileId, tokenProfileId } = await settings()
+  // A token created before per-profile identity existed belongs to the legacy
+  // slot. Re-pair once so this Chrome profile can be bound and routed.
+  if (!token || tokenProfileId !== profileId) ({ endpoint, token } = await autoConnect())
   const body = { version: ownVersion() }
   let response
   try {

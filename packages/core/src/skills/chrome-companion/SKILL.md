@@ -22,6 +22,13 @@ Chrome Companion extension. Every command is one shell call:
 ELECTRON_RUN_AS_NODE=1 "$CODEY_BROWSER_RUNTIME" "$CODEY_BROWSER_CLI" chrome <command> [args]
 ```
 
+Every command targets exactly one Chrome profile: the one bound to the Codey
+Browser profile that is currently active. Activate a different Codey profile
+(in Browser settings) and the same command goes to a different Chrome. If no
+profile is active, or the active profile is not linked to Chrome, the command
+fails with a named error that says what to change - relay it to the user
+rather than guessing.
+
 ### Reading
 
 - `chrome status` checks whether the extension is connected.

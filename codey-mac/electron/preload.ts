@@ -468,7 +468,9 @@ contextBridge.exposeInMainWorld('codey', {
   },
   chromeCompanion: {
     status: () => ipcRenderer.invoke('chromeCompanion:status'),
-    disconnect: () => ipcRenderer.invoke('chromeCompanion:disconnect'),
+    disconnect: (profileId?: string | null) => ipcRenderer.invoke('chromeCompanion:disconnect', profileId ?? null),
+    clients: () => ipcRenderer.invoke('browser:chrome:clients'),
+    renameClient: (profileId: string, label: string) => ipcRenderer.invoke('browser:chrome:renameClient', profileId, label),
     activeTab: () => ipcRenderer.invoke('chromeCompanion:activeTab'),
     snapshot: () => ipcRenderer.invoke('chromeCompanion:snapshot'),
     listSessionSites: () => ipcRenderer.invoke('chromeCompanion:listSessionSites'),
@@ -514,6 +516,7 @@ contextBridge.exposeInMainWorld('codey', {
       syncProfile: (name: string) => ipcRenderer.invoke('browser:profiles:syncProfile', name),
       setAutoSync: (name: string, enabled: boolean) => ipcRenderer.invoke('browser:profiles:setAutoSync', name, enabled === true),
       setExcludedSites: (name: string, sites: string[]) => ipcRenderer.invoke('browser:profiles:setExcludedSites', name, sites),
+      setChromeBinding: (name: string, chromeProfileId: string | null) => ipcRenderer.invoke('browser:profiles:setChromeBinding', name, chromeProfileId),
       contents: (name: string) => ipcRenderer.invoke('browser:profiles:contents', name),
     },
     extensions: {

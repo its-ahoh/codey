@@ -63,6 +63,12 @@ export interface BrowserProfileMeta {
   autoSync?: boolean
   /** Chrome sites this profile must never refresh from automatically. */
   excludedSites: string[]
+  /** The Chrome profile this one mirrors, as reported by the extension. The
+   *  relationship is one-to-one: no two profiles may name the same Chrome. */
+  chromeProfileId: string | null
+  /** That Chrome profile's display name, cached so the binding still reads as
+   *  something human when Chrome is not running. */
+  chromeProfileLabel: string | null
   /** Origins whose localStorage belongs to this partition. Electron exposes
    *  no API for enumerating them, so this index lets exports read origins
    *  again after their tabs have closed. Empty storage is indexed too. */
@@ -77,6 +83,8 @@ export interface BrowserProfileSummary {
   avatar?: string | null
   autoSync: boolean
   excludedSites: string[]
+  chromeProfileId: string | null
+  chromeProfileLabel: string | null
   createdAt: number
   updatedAt: number
   cookieCount: number
@@ -312,6 +320,14 @@ function normalizeExcludedSites(value: unknown): string[] {
   return sites
 }
 
+/** A Chrome profile ID as the extension reports it: an opaque UUID. Kept
+ *  forgiving on read so a hand-edited file cannot break the whole listing. */
+function normalizeChromeProfileId(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const id = value.trim().slice(0, 100)
+  return id || null
+}
+
 function normalizeKnownOrigins(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   const origins: string[] = []
@@ -410,6 +426,8 @@ export class BrowserProfileStore {
       avatar: meta?.avatar ?? null,
       autoSync: meta?.autoSync === true,
       excludedSites: meta?.excludedSites ?? [],
+      chromeProfileId: meta?.chromeProfileId ?? null,
+      chromeProfileLabel: meta?.chromeProfileLabel ?? null,
       createdAt: meta?.createdAt ?? 0,
       updatedAt: meta?.updatedAt ?? 0,
       cookieCount: 0,
@@ -436,6 +454,10 @@ export class BrowserProfileStore {
         : null,
       autoSync: record.autoSync === true,
       excludedSites: normalizeExcludedSites(record.excludedSites),
+      chromeProfileId: normalizeChromeProfileId(record.chromeProfileId),
+      chromeProfileLabel: typeof record.chromeProfileLabel === 'string' && record.chromeProfileLabel.trim()
+        ? record.chromeProfileLabel.trim().slice(0, 80)
+        : null,
       knownOrigins: normalizeKnownOrigins(record.knownOrigins),
       createdAt: typeof record.createdAt === 'number' ? record.createdAt : 0,
       updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : 0,
@@ -459,6 +481,8 @@ export class BrowserProfileStore {
       avatar: existing?.avatar ?? null,
       autoSync: existing?.autoSync === true,
       excludedSites: existing?.excludedSites ?? [],
+      chromeProfileId: existing?.chromeProfileId ?? null,
+      chromeProfileLabel: existing?.chromeProfileLabel ?? null,
       knownOrigins: existing?.knownOrigins ?? [],
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -575,6 +599,45 @@ export class BrowserProfileStore {
       excludedSites: normalizeExcludedSites(sites),
     })
     return this.summary(name, this.activeNames())
+  }
+
+  /** Bind one Codey jar to one Chrome profile. Both sides are unique: moving a
+   * Chrome profile to a new jar clears its former owner in the same operation. */
+  setChromeBinding(name: string, profileId: string | null, label: string | null): BrowserProfileSummary {
+    assertProfileName(name)
+    const target = this.read(name)
+    const normalizedId = normalizeChromeProfileId(profileId)
+    const normalizedLabel = normalizedId && typeof label === 'string' && label.trim()
+      ? label.trim().slice(0, 80)
+      : null
+
+    if (normalizedId) {
+      for (const profile of this.list()) {
+        if (profile.name === name || profile.chromeProfileId !== normalizedId) continue
+        const previous = this.read(profile.name)
+        this.writeRecord(profile.name, {
+          ...previous,
+          schema: PROFILE_SCHEMA,
+          chromeProfileId: null,
+          chromeProfileLabel: null,
+        })
+      }
+    }
+
+    this.writeRecord(name, {
+      ...target,
+      schema: PROFILE_SCHEMA,
+      chromeProfileId: normalizedId,
+      chromeProfileLabel: normalizedLabel,
+    })
+    return this.summary(name, this.activeNames())
+  }
+
+  /** The Codey profile currently owning a Chrome profile ID, if any. */
+  profileForChrome(profileId: string | null): BrowserProfileSummary | null {
+    const normalizedId = normalizeChromeProfileId(profileId)
+    if (!normalizedId) return null
+    return this.list().find(profile => profile.chromeProfileId === normalizedId) ?? null
   }
 
   remove(name: string): void {

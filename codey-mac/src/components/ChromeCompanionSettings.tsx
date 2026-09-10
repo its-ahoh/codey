@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import type { ChromeCompanionStatus, ChromeSessionSite } from '../codey-api'
+import type { BrowserProfileSummary, ChromeClientInfo, ChromeCompanionStatus, ChromeSessionSite } from '../codey-api'
 import { C } from '../theme'
 
 const EMPTY: ChromeCompanionStatus = {
@@ -53,6 +53,10 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
   // Off by default: reading a site's storage means Chrome actually opening it,
   // and quietly loading eight pages is not something a copy should assume.
   const [openMissing, setOpenMissing] = useState(false)
+  const [clients, setClients] = useState<ChromeClientInfo[]>([])
+  const [profiles, setProfiles] = useState<BrowserProfileSummary[]>([])
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
 
   const section = useRef('status')
 
@@ -72,6 +76,19 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
     })
     return () => { cancelled = true; off() }
   }, [])
+
+  const refreshChromeClients = async () => {
+    if (!window.codey?.chromeCompanion?.clients) return
+    const next = await window.codey.chromeCompanion.clients()
+    if (next.ok) setClients(next.data)
+    const listed = await window.codey.browser.profiles.list()
+    if (listed.ok) setProfiles(listed.data.profiles)
+  }
+
+  useEffect(() => { void refreshChromeClients() }, [status.paired, status.connected])
+
+  const boundProfileFor = (profileId: string | null): BrowserProfileSummary | undefined =>
+    profiles.find(profile => profile.chromeProfileId === profileId)
 
 
   const run = async (at: string, operation: () => Promise<void>) => {
@@ -110,6 +127,78 @@ export const ChromeCompanionSettings: React.FC<{ compact?: boolean }> = ({ compa
           <button style={styles.secondary} disabled={busy} onClick={() => void run('status', async () => {
             unwrapResult(await window.codey.chromeCompanion.openExtensionsPage())
           })}>Open extensions</button>
+        </div>
+      )}
+
+      {status.paired && clients.length > 0 && (
+        <div style={styles.card}>
+          <div>
+            <div style={styles.title}>Connected Chrome profiles</div>
+            <div style={styles.copy}>
+              Each Chrome profile is bound to one Codey Browser profile. A change in Chrome updates only the profile bound to it.
+            </div>
+          </div>
+          {clients.map(client => {
+            const bound = boundProfileFor(client.profileId)
+            return (
+              <div key={client.profileId ?? 'legacy'} style={styles.clientRow}>
+                <span style={{ ...styles.dot, background: client.connected ? C.green : C.warningFg }} />
+                <div style={styles.clientCopy}>
+                  {renamingId === client.profileId ? (
+                    <input
+                      autoFocus
+                      value={renameValue}
+                      onChange={event => setRenameValue(event.target.value)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') event.currentTarget.blur()
+                        if (event.key === 'Escape') setRenamingId(null)
+                      }}
+                      onBlur={() => {
+                        const label = renameValue.trim()
+                        setRenamingId(null)
+                        if (!label || label === client.label) return
+                        void run('clients', async () => {
+                          const next = unwrapResult(await window.codey.chromeCompanion.renameClient(client.profileId!, label))
+                          if (next) setClients(next)
+                        })
+                      }}
+                      style={styles.input}
+                      aria-label="Chrome profile name"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      style={styles.clientName}
+                      title="Rename this Chrome profile"
+                      onClick={() => {
+                        if (!client.profileId) return
+                        setRenamingId(client.profileId)
+                        setRenameValue(client.label)
+                      }}
+                    >{client.label}</button>
+                  )}
+                  <div style={styles.clientMeta}>
+                    {client.connected ? 'Connected' : 'Not running'}
+                    {bound ? ` · Codey profile “${bound.name}”` : client.profileId ? ' · not linked to a Codey profile' : ' · update the extension to link it'}
+                  </div>
+                </div>
+                {client.profileId && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    style={{ ...styles.secondary, color: C.red }}
+                    title={`Forget this Chrome profile's pairing`}
+                    onClick={() => void run('clients', async () => {
+                      const next = unwrapResult(await window.codey.chromeCompanion.disconnect(client.profileId))
+                      if (next) { setStatus(next); await refreshChromeClients() }
+                    })}
+                  >Disconnect</button>
+                )}
+              </div>
+            )
+          })}
+          {failure('clients')}
         </div>
       )}
 
@@ -283,6 +372,10 @@ const styles: Record<string, React.CSSProperties> = {
   secondary: { minHeight: 31, padding: '0 11px', border: `1px solid ${C.border2}`, borderRadius: 7, background: C.surface2, color: C.fg2, cursor: 'pointer', fontSize: 10.5 },
   error: { padding: '9px 11px', borderRadius: 8, color: C.red, background: `${C.red}18`, border: `1px solid ${C.red}55`, fontSize: 11 },
   success: { padding: '9px 11px', borderRadius: 8, color: C.green, background: `${C.green}18`, border: `1px solid ${C.green}55`, fontSize: 11 },
+  clientRow: { display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
+  clientCopy: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 },
+  clientName: { padding: 0, border: 'none', background: 'none', color: C.fg, cursor: 'pointer', fontSize: 11.5, fontWeight: 650, textAlign: 'left' },
+  clientMeta: { color: C.fg3, fontSize: 10.5, lineHeight: 1.4 },
   noticeRow: { display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 8, background: C.surface, border: `1px solid ${C.border}` },
   noticeCopy: { flex: 1, minWidth: 0, color: C.fg3, fontSize: 10.5 },
   navigate: { display: 'flex', alignItems: 'flex-end', gap: 8 },
