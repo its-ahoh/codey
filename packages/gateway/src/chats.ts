@@ -300,11 +300,10 @@ export class ChatManager {
     return chat;
   }
 
-  /** Find the warm CLI session belonging to one exact agent/model identity. */
+  /** Find the warm CLI session belonging to an agent, regardless of model. */
   getSessionAnchor(
     chatId: string,
     agent: NonNullable<Chat['sessionAnchor']>['agent'],
-    model?: string,
   ): NonNullable<Chat['sessionAnchor']> | undefined {
     const chat = this.get(chatId);
     if (!chat) return undefined;
@@ -321,40 +320,49 @@ export class ChatManager {
           ?? chat.messages[chat.messages.length - 1]?.id,
       };
       const pooled = [...(chat.sessionAnchors ?? [])]
-        .filter(item => item.agent !== legacy.agent || item.model !== legacy.model)
+        .filter(item => item.agent !== legacy.agent)
         .concat(legacy);
       chat.sessionAnchors = pooled;
       delete chat.sessionAnchor;
       this.persist(chat);
     }
 
-    const pooled = chat.sessionAnchors?.find(anchor => anchor.agent === agent && anchor.model === model);
-    return pooled;
+    // Older pool data may contain one entry per model. Array order reflects
+    // replacement order, so the final matching entry is the agent's current
+    // session. Compact it lazily to keep future reads unambiguous.
+    const matches = chat.sessionAnchors?.filter(anchor => anchor.agent === agent) ?? [];
+    const current = matches[matches.length - 1];
+    if (current && matches.length > 1) {
+      chat.sessionAnchors = chat.sessionAnchors!
+        .filter(anchor => anchor.agent !== agent)
+        .concat(current);
+      this.persist(chat);
+    }
+    return current;
   }
 
-  /** Persist or advance the warm CLI session for one agent/model identity. */
+  /** Persist or advance the warm CLI session for one agent. */
   setSessionAnchor(chatId: string, anchor: NonNullable<Chat['sessionAnchor']>): void {
     const chat = this.cache.get(chatId);
     if (!chat) return;
     const migrated = [...(chat.sessionAnchors ?? [])];
     if (chat.sessionAnchor && !migrated.some(item =>
-      item.agent === chat.sessionAnchor!.agent && item.model === chat.sessionAnchor!.model
+      item.agent === chat.sessionAnchor!.agent
     )) {
       migrated.push(chat.sessionAnchor);
     }
     chat.sessionAnchors = migrated
-      .filter(item => item.agent !== anchor.agent || item.model !== anchor.model)
+      .filter(item => item.agent !== anchor.agent)
       .concat(anchor);
     delete chat.sessionAnchor;
     chat.updatedAt = Date.now();
     this.persist(chat);
   }
 
-  /** Drop one identity's session, or every session when no identity is given. */
+  /** Drop one agent's session, or every session when no agent is given. */
   clearSessionAnchor(
     chatId: string,
     agent?: NonNullable<Chat['sessionAnchor']>['agent'],
-    model?: string,
   ): void {
     const chat = this.cache.get(chatId);
     if (!chat) return;
@@ -364,9 +372,9 @@ export class ChatManager {
       delete chat.sessionAnchors;
     } else {
       const before = chat.sessionAnchors?.length ?? 0;
-      chat.sessionAnchors = chat.sessionAnchors?.filter(item => item.agent !== agent || item.model !== model);
+      chat.sessionAnchors = chat.sessionAnchors?.filter(item => item.agent !== agent);
       if (chat.sessionAnchors?.length === 0) delete chat.sessionAnchors;
-      if (chat.sessionAnchor?.agent === agent && chat.sessionAnchor.model === model) delete chat.sessionAnchor;
+      if (chat.sessionAnchor?.agent === agent) delete chat.sessionAnchor;
       if (before === (chat.sessionAnchors?.length ?? 0) && chat.sessionAnchor) return;
     }
     chat.updatedAt = Date.now();
@@ -383,8 +391,9 @@ export class ChatManager {
     else chat.agent = agent;
     if (model === null || model === undefined || model === '') delete chat.model;
     else chat.model = model;
-    // Keep every agent/model session. The next turn selects the matching
-    // anchor and incrementally synchronizes only the messages it has missed.
+    // Keep every agent session. A model change continues the same session;
+    // switching back to another agent resumes that agent's own anchor and
+    // incrementally synchronizes only the messages it has missed.
     chat.updatedAt = Date.now();
     this.persist(chat);
     return chat;
@@ -395,7 +404,7 @@ export class ChatManager {
    * clear and fall back to the worker/global tiers.
    *
    * Deliberately separate from updateAgentModel: that setter's session-anchor
-   * behavior is tied to agent/model identity, and changing effort must NOT
+   * behavior is tied to agent identity, and changing effort must NOT
    * rotate the session — raising effort and continuing the same thread is the
    * primary use case, and rotating would drop the conversation context.
    */

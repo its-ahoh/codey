@@ -240,7 +240,8 @@ export interface Chat {
     }[];
     inducedFrom?: string[];
   };
-  /** Warm CLI sessions retained independently for each agent/model identity. */
+  /** Warm CLI sessions retained independently for each agent. `model` records
+   *  the most recently used model but is not part of the session identity. */
   sessionAnchors?: Array<{
     agent: CodingAgent;
     model?: string;

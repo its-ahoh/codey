@@ -36,17 +36,19 @@ describe('ChatManager.updateAgentModel', () => {
 
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-  it('retains the previous model session when the selection changes', () => {
+  it('reuses the agent session when the model changes', () => {
     const chat = mgr.create({ workspaceName: 'ws', agent: 'codex', model: 'model-a' });
     mgr.setSessionAnchor(chat.id, { agent: 'codex', model: 'model-a', sessionId: 'session-a' });
 
     const updated = mgr.updateAgentModel(chat.id, 'codex', 'model-b');
 
     expect(updated.model).toBe('model-b');
-    expect(mgr.getSessionAnchor(chat.id, 'codex', 'model-a')?.sessionId).toBe('session-a');
+    expect(mgr.getSessionAnchor(chat.id, 'codex')).toMatchObject({
+      model: 'model-a', sessionId: 'session-a',
+    });
   });
 
-  it('stores independent warm sessions for each agent/model identity', () => {
+  it('stores independent warm sessions for each agent', () => {
     const chat = mgr.create({ workspaceName: 'ws' });
     mgr.setSessionAnchor(chat.id, {
       agent: 'codex', model: 'model-a', sessionId: 'session-a', syncedThroughMessageId: 'a1',
@@ -55,10 +57,10 @@ describe('ChatManager.updateAgentModel', () => {
       agent: 'claude-code', model: 'model-b', sessionId: 'session-b', syncedThroughMessageId: 'b1',
     });
 
-    expect(mgr.getSessionAnchor(chat.id, 'codex', 'model-a')).toMatchObject({
+    expect(mgr.getSessionAnchor(chat.id, 'codex')).toMatchObject({
       sessionId: 'session-a', syncedThroughMessageId: 'a1',
     });
-    expect(mgr.getSessionAnchor(chat.id, 'claude-code', 'model-b')).toMatchObject({
+    expect(mgr.getSessionAnchor(chat.id, 'claude-code')).toMatchObject({
       sessionId: 'session-b', syncedThroughMessageId: 'b1',
     });
   });
@@ -68,10 +70,10 @@ describe('ChatManager.updateAgentModel', () => {
     mgr.setSessionAnchor(chat.id, { agent: 'codex', model: 'model-a', sessionId: 'session-a' });
     mgr.setSessionAnchor(chat.id, { agent: 'claude-code', model: 'model-b', sessionId: 'session-b' });
 
-    mgr.clearSessionAnchor(chat.id, 'codex', 'model-a');
+    mgr.clearSessionAnchor(chat.id, 'codex');
 
-    expect(mgr.getSessionAnchor(chat.id, 'codex', 'model-a')).toBeUndefined();
-    expect(mgr.getSessionAnchor(chat.id, 'claude-code', 'model-b')?.sessionId).toBe('session-b');
+    expect(mgr.getSessionAnchor(chat.id, 'codex')).toBeUndefined();
+    expect(mgr.getSessionAnchor(chat.id, 'claude-code')?.sessionId).toBe('session-b');
   });
 
   it('migrates a legacy anchor with the current transcript cursor', () => {
@@ -82,10 +84,39 @@ describe('ChatManager.updateAgentModel', () => {
     stored.sessionAnchor = { agent: 'codex', model: 'model-a', sessionId: 'legacy-session' };
     delete stored.sessionAnchors;
 
-    expect(mgr.getSessionAnchor(chat.id, 'codex', 'model-a')).toMatchObject({
+    expect(mgr.getSessionAnchor(chat.id, 'codex')).toMatchObject({
       sessionId: 'legacy-session', syncedThroughMessageId: 'a1',
     });
     expect(mgr.get(chat.id)?.sessionAnchor).toBeUndefined();
+  });
+
+  it('collapses old per-model anchors to the most recently stored agent session', () => {
+    const chat = mgr.create({ workspaceName: 'ws' });
+    const stored = mgr.get(chat.id)!;
+    stored.sessionAnchors = [
+      { agent: 'codex', model: 'model-a', sessionId: 'session-a' },
+      { agent: 'claude-code', model: 'model-x', sessionId: 'session-x' },
+      { agent: 'codex', model: 'model-b', sessionId: 'session-b' },
+    ];
+
+    expect(mgr.getSessionAnchor(chat.id, 'codex')).toMatchObject({
+      model: 'model-b', sessionId: 'session-b',
+    });
+    expect(mgr.get(chat.id)?.sessionAnchors).toEqual([
+      { agent: 'claude-code', model: 'model-x', sessionId: 'session-x' },
+      { agent: 'codex', model: 'model-b', sessionId: 'session-b' },
+    ]);
+  });
+
+  it('replaces an agent session instead of creating one session per model', () => {
+    const chat = mgr.create({ workspaceName: 'ws' });
+    mgr.setSessionAnchor(chat.id, { agent: 'codex', model: 'model-a', sessionId: 'session-a' });
+    mgr.setSessionAnchor(chat.id, { agent: 'codex', model: 'model-b', sessionId: 'session-b' });
+
+    expect(mgr.getSessionAnchor(chat.id, 'codex')).toMatchObject({
+      model: 'model-b', sessionId: 'session-b',
+    });
+    expect(mgr.get(chat.id)?.sessionAnchors).toHaveLength(1);
   });
 });
 

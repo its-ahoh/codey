@@ -306,13 +306,21 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       let askUserInputJson = '';
       let collectingAskUser = false;
       let timeoutTimer: NodeJS.Timeout | undefined;
+      let timeoutShutdownTimer: NodeJS.Timeout | undefined;
       let abortHandler: (() => void) | undefined;
+      let timedOut = false;
+      // Keep this invocation's session separate from the adapter-level value:
+      // adapters can be used concurrently, and timeout recovery must resume
+      // only a session that this particular CLI process actually announced.
+      let startedSessionId: string | undefined;
 
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
           resolved = true;
           if (timeoutTimer) clearTimeout(timeoutTimer);
+          if (timeoutShutdownTimer) clearTimeout(timeoutShutdownTimer);
           if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
+          response.startedSessionId = startedSessionId;
           resolve(response);
         }
       };
@@ -356,6 +364,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
 
         if (event.type === 'system' && event.session_id) {
           this.sessionId = event.session_id;
+          startedSessionId = event.session_id;
         } else if (event.type === 'stream_event' && event.event?.type === 'content_block_start') {
           const cb = event.event.content_block;
           if (cb?.type === 'tool_use' && cb.name === 'AskUserQuestion') {
@@ -460,6 +469,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         } else if (event.type === 'result') {
           if (event.session_id) {
             this.sessionId = event.session_id;
+            startedSessionId = event.session_id;
           }
           if (event.result) {
             result = event.result;
@@ -530,6 +540,22 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         // Fall back to wall-clock duration if the result event didn't include one
         const finalDuration = durationSec ?? Math.round((Date.now() - startTime) / 1000);
 
+        // Do not release the caller until the terminated Claude process has
+        // actually closed. Its session lock can outlive the SIGTERM briefly;
+        // starting --resume before this point recreates the exact
+        // "Session ID is already in use" failure timeout recovery prevents.
+        if (timedOut) {
+          safeResolve(this.createResponse(
+            `Timeout after ${Math.round(timeout / 60000)} minutes`,
+            false,
+            undefined,
+            finalDuration,
+            statusUpdates,
+            states,
+          ));
+          return;
+        }
+
         // Fallback: parse AskUserQuestion JSON from streamed text if the
         // tool_use block detection didn't fire (e.g. assistant event never
         // arrived because CLI blocked on interactive input).
@@ -590,9 +616,23 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // Timeout (default 15 minutes)
       timeoutTimer = setTimeout(() => {
         if (!resolved) {
+          timedOut = true;
           terminateProcessTree(childProcess);
-          const duration = Math.round((Date.now() - startTime) / 1000);
-          safeResolve(this.createResponse(`Timeout after ${Math.round(timeout / 60000)} minutes`, false, undefined, duration));
+          // terminateProcessTree escalates to SIGKILL after 1.5s. Retain a
+          // bounded escape hatch in case the platform never emits `close`.
+          timeoutShutdownTimer = setTimeout(() => {
+            const duration = Math.round((Date.now() - startTime) / 1000);
+            mcpCleanup?.();
+            safeResolve(this.createResponse(
+              `Timeout after ${Math.round(timeout / 60000)} minutes`,
+              false,
+              undefined,
+              duration,
+              statusUpdates,
+              states,
+            ));
+          }, 3_000);
+          timeoutShutdownTimer.unref?.();
         }
       }, timeout);
 
