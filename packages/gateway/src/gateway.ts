@@ -82,6 +82,16 @@ export function isRetryableNetworkFailure(response: AgentResponse): boolean {
   return /(?:\btimeout\b|timed out|deadline exceeded|etimedout|econnreset|econnrefused|enotfound|eai_again|socket hang up|fetch failed|network (?:error|unavailable)|connection (?:closed|lost|reset|refused|error)|temporarily unavailable|service unavailable|gateway timeout|\b(?:408|429|500|502|503|504)\b)/i.test(text);
 }
 
+/** Only discard a persisted anchor when the CLI explicitly says the session
+ *  cannot be found. Other resume failures (including execution timeouts) must
+ *  surface as-is so the outer bootstrap path cannot grant another retry
+ *  window or repeat work that may already have completed. */
+export function isMissingSessionFailure(response: AgentResponse): boolean {
+  if (response.success) return false;
+  const text = `${response.error ?? ''}\n${response.output ?? ''}`;
+  return /(?:\bno conversation found with session id\b|\b(?:conversation|session)(?: id)?(?:\s+["']?[\w-]+["']?)?\s+(?:was )?(?:not found|does not exist)\b|\b(?:could not|unable to|failed to) (?:find|load|resume) (?:the )?(?:conversation|session)\b)/i.test(text);
+}
+
 export interface AgentRetryPlan {
   retry: boolean;
   request: AgentRequest;
@@ -133,19 +143,29 @@ export function planAgentRetry(
   return { retry: true, request, resumedAfterTimeout: false };
 }
 
-/** Strip source-agent session state before entering a fallback route. */
+/** Keep session state within an agent, but never carry it across agents. */
 export function rebaseForFallbackAgent(
   request: AgentRequest,
-  _fromAgent: CodingAgent,
+  fromAgent: CodingAgent,
   toAgent: CodingAgent,
-  _response: AgentResponse,
+  response: AgentResponse,
 ): AgentRequest {
+  if (fromAgent === toAgent) {
+    const resumeSessionId = response.startedSessionId ?? request.resumeSessionId;
+    return {
+      ...request,
+      agent: toAgent,
+      prompt: resumeSessionId && isOwnTimeoutFailure(response) ? TIMEOUT_RESUME_PROMPT : request.prompt,
+      resumeSessionId,
+      newSessionId: resumeSessionId ? undefined : request.newSessionId,
+    };
+  }
+
   return {
     ...request,
     agent: toAgent,
     resumeSessionId: undefined,
-    // A Claude fallback needs its own id. In particular, another Claude model
-    // must not receive the id already opened by the failed primary model.
+    // A different Claude agent needs an independent pre-allocated id.
     newSessionId: toAgent === 'claude-code' ? randomUUID() : undefined,
   };
 }
@@ -399,7 +419,11 @@ export class Codey {
         });
         return { response: resp, usedResume: true };
       }
-      // Resume failed — drop anchor and fall through to bootstrap.
+      // Only a definitively missing session makes the anchor stale. A timeout
+      // or any other failure must not fall through to a second execution.
+      if (!isMissingSessionFailure(resp)) {
+        return { response: resp, usedResume: true };
+      }
       this.logger.warn(`[worker:${opts.workerName}] resume of ${existing.sessionId} failed; bootstrapping fresh`);
       await this.contextManager.clearWorkerAnchor(ctxWindow.id, opts.workerName);
     } else if (existing && existing.agent !== opts.codingAgent) {
@@ -2572,7 +2596,7 @@ export class Codey {
 
     // Resume failed (CLI may have GC'd the session) — drop the anchor and
     // retry once with a full-history bootstrap so we recover transparently.
-    if (!response.success && prep.resumeSessionId) {
+    if (prep.resumeSessionId && isMissingSessionFailure(response)) {
       this.logger.warn(`[${agent}] Resume of ${prep.resumeSessionId} failed; retrying with bootstrap`);
       await this.contextManager.clearSessionAnchor(ctxWindow.id);
       prep = this.prepareAgentTurn(ctxWindow, agent, runPrompt, memoryContext);
@@ -5878,7 +5902,7 @@ Example: /model gpt-4.1 write a Python script`;
     const initialResume = prep.resumeSessionId;
     let response = await this.runWithFallback(agent, buildHttpRequest(prep));
 
-    if (!response.success && prep.resumeSessionId) {
+    if (prep.resumeSessionId && isMissingSessionFailure(response)) {
       this.logger.warn(`[${agent}] Resume of ${prep.resumeSessionId} failed; retrying with bootstrap`);
       await this.contextManager.clearSessionAnchor(ctxWindow.id);
       prep = this.prepareAgentTurn(ctxWindow, agent, prompt, memoryContext);
@@ -6679,9 +6703,9 @@ Example: /model gpt-4.1 write a Python script`;
           resumeSessionId,
           newSessionId,
         });
-        // If resume failed (stale session id on disk, or agent rejected it),
-        // drop the anchor and retry once with a full bootstrap prompt.
-        if (resumeSessionId && !response?.success && !abortController.signal.aborted) {
+        // If the CLI explicitly reports a stale session id, drop the anchor
+        // and retry once with a full bootstrap prompt.
+        if (resumeSessionId && response && isMissingSessionFailure(response) && !abortController.signal.aborted) {
           this.logger.warn(`[chat ${chatId}] resume of ${resumeSessionId} failed; bootstrapping`);
           this.chatManager.clearSessionAnchor(chatId, agent);
           streamedText = '';
@@ -6863,7 +6887,7 @@ Example: /model gpt-4.1 write a Python script`;
           // A fallback response belongs to the fallback adapter's emitted
           // session, never the primary adapter's resume/new session id.
           const anchorId = singleAgentResponse.fallback
-            ? (singleAgentResponse as any)?.sessionId
+            ? singleAgentResponse.startedSessionId ?? singleAgentResponse.sessionId
             : resumeSessionId ?? newSessionId ?? (singleAgentResponse as any)?.sessionId;
           if (anchorId) {
             this.chatManager.setSessionAnchor(chatId, {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentRequest, AgentResponse } from '@codey/core';
 import {
   isOwnTimeoutFailure,
+  isMissingSessionFailure,
   planAgentRetry,
   rebaseForFallbackAgent,
   MAX_TIMEOUT_RESUMES,
@@ -27,6 +28,25 @@ describe('own-timeout classification', () => {
       expect(isOwnTimeoutFailure(failed(text))).toBe(false);
     },
   );
+});
+
+describe('missing-session classification', () => {
+  it.each([
+    'No conversation found with session ID: sess-1',
+    'Session sess-1 does not exist',
+    'Unable to resume conversation because it was not found',
+  ])('recognises an explicitly missing session: %s', text => {
+    expect(isMissingSessionFailure(failed(text))).toBe(true);
+  });
+
+  it.each([
+    'Timeout after 15 minutes',
+    'Session ID sess-1 is already in use',
+    'Request timed out',
+    'Unknown model name',
+  ])('does not discard an anchor for another failure: %s', text => {
+    expect(isMissingSessionFailure(failed(text))).toBe(false);
+  });
 });
 
 describe('planAgentRetry', () => {
@@ -85,15 +105,47 @@ describe('rebaseForFallbackAgent', () => {
     expect(out.newSessionId).toBeUndefined();
   });
 
-  it('mints a fresh id when retrying claude-code on another model', () => {
+  it('resumes the opened session when falling back to another model of the same agent', () => {
     const out = rebaseForFallbackAgent(
       req({ newSessionId: 'sess-1' }),
       'claude-code',
       'claude-code',
       failed('boom', { startedSessionId: 'sess-1' }),
     );
+    expect(out.resumeSessionId).toBe('sess-1');
+    expect(out.newSessionId).toBeUndefined();
+  });
+
+  it('uses a continuation prompt for same-agent fallback after a timeout', () => {
+    const out = rebaseForFallbackAgent(
+      req({ resumeSessionId: 'sess-1' }),
+      'claude-code',
+      'claude-code',
+      failed('Timeout after 15 minutes', { startedSessionId: 'sess-1' }),
+    );
+    expect(out.resumeSessionId).toBe('sess-1');
+    expect(out.prompt).not.toBe('do the thing');
+  });
+
+  it('keeps an existing resume id when falling back within the same agent', () => {
+    const out = rebaseForFallbackAgent(
+      req({ resumeSessionId: 'sess-1' }),
+      'claude-code',
+      'claude-code',
+      failed('boom'),
+    );
+    expect(out.resumeSessionId).toBe('sess-1');
+    expect(out.newSessionId).toBeUndefined();
+  });
+
+  it('keeps an unopened pinned id when falling back within the same agent', () => {
+    const out = rebaseForFallbackAgent(
+      req({ newSessionId: 'sess-1' }),
+      'claude-code',
+      'claude-code',
+      failed('boom'),
+    );
     expect(out.resumeSessionId).toBeUndefined();
-    expect(out.newSessionId).toBeTruthy();
-    expect(out.newSessionId).not.toBe('sess-1');
+    expect(out.newSessionId).toBe('sess-1');
   });
 });
