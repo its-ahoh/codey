@@ -35,7 +35,7 @@ async function setup(
   return { bridge, endpoint: status.endpoint!, stateFile }
 }
 
-async function connect(endpoint: string): Promise<string> {
+async function connect(endpoint: string, profileId?: string): Promise<string> {
   const response = await fetch(`${endpoint}/v1/connect`, {
     method: 'POST',
     headers: {
@@ -43,7 +43,7 @@ async function connect(endpoint: string): Promise<string> {
       Origin: `chrome-extension://${CHROME_COMPANION_EXTENSION_ID}`,
       'X-Codey-Extension-Id': CHROME_COMPANION_EXTENSION_ID,
     },
-    body: JSON.stringify({ clientName: 'Test Chrome' }),
+    body: JSON.stringify({ clientName: 'Test Chrome', ...(profileId ? { profileId } : {}) }),
   })
   const value = await response.json() as { ok: boolean; token: string }
   expect(response.status).toBe(200)
@@ -59,7 +59,7 @@ describe('ChromeCompanionBridge', () => {
     expect(bridge.status()).toMatchObject({ paired: true, connected: true, clientName: 'Test Chrome' })
 
     const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
-    expect(state.token).toBe(token)
+    expect(state.clients).toEqual([expect.objectContaining({ token, profileId: null })])
 
     const disconnected = await fetch(`${endpoint}/v1/disconnect`, {
       method: 'POST',
@@ -185,7 +185,7 @@ describe('ChromeCompanionBridge', () => {
       excludedDomains: () => ['bank.example'],
       revision: () => 7,
       onPoll: () => { polls += 1 },
-      onSessionChanged: domains => reported.push(domains),
+      onSessionChanged: (_profileId, domains) => reported.push(domains),
     })
     await expect(poll()).resolves.toMatchObject({
       watchDomains: ['*'], excludedDomains: ['bank.example'], syncRevision: 7,
@@ -221,7 +221,7 @@ describe('ChromeCompanionBridge', () => {
       onConnected: reconnected,
       onSessionChanged: () => {},
     })
-    ;(bridge as any).lastSeenAt = Date.now() - 60_000
+    ;[...(bridge as any).clientsByKey.values()][0].lastSeenAt = Date.now() - 60_000
 
     await fetch(`${endpoint}/v1/poll`, {
       method: 'POST',
@@ -243,6 +243,40 @@ describe('ChromeCompanionBridge', () => {
     await connect(endpoint)
 
     await vi.waitFor(() => expect(connected).toHaveBeenCalledOnce())
+  })
+
+  it('keeps two Chrome profiles connected and isolates their command queues and results', async () => {
+    const { bridge, endpoint } = await setup()
+    const tokenA = await connect(endpoint, 'chrome-a')
+    const tokenB = await connect(endpoint, 'chrome-b')
+    expect(bridge.clients()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ profileId: 'chrome-a', connected: true }),
+      expect.objectContaining({ profileId: 'chrome-b', connected: true }),
+    ]))
+
+    const commandA = bridge.activeTab('chrome-a')
+    const poll = async (token: string) => fetch(`${endpoint}/v1/poll`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    }).then(response => response.json() as Promise<{ command: { id: string; command: string } | null }>)
+    expect((await poll(tokenB)).command).toBeNull()
+    const workA = await poll(tokenA)
+    expect(workA.command?.command).toBe('activeTab')
+
+    const wrong = await fetch(`${endpoint}/v1/result`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenB}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: workA.command?.id, ok: true, data: { id: 2 } }),
+    })
+    expect(wrong.status).toBe(404)
+    const right = await fetch(`${endpoint}/v1/result`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenA}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: workA.command?.id, ok: true, data: { id: 1 } }),
+    })
+    expect(right.status).toBe(200)
+    await expect(commandA).resolves.toMatchObject({ id: 1 })
   })
 
   it('lists Chrome\'s signed-in sites and exports only the ones picked', async () => {

@@ -205,6 +205,10 @@ export interface BrowserProfileSummary {
   autoSync: boolean
   /** Sites that automatic Chrome mirroring must leave untouched. */
   excludedSites: string[]
+  /** The Chrome profile this one mirrors (null when linked to none). */
+  chromeProfileId: string | null
+  /** The linked Chrome profile's display name, cached for when Chrome is off. */
+  chromeProfileLabel: string | null
   createdAt: number
   updatedAt: number
   cookieCount: number
@@ -259,6 +263,17 @@ export interface ChromeCompanionStatus {
   clientVersion: string | null
   expectedVersion: string | null
   updateAvailable: boolean
+}
+
+/** One Chrome profile paired with Codey, as listed in the Chrome settings. */
+export interface ChromeClientInfo {
+  profileId: string | null
+  label: string
+  clientName: string
+  clientVersion: string | null
+  pairedAt: number
+  lastSeenAt: number | null
+  connected: boolean
 }
 
 export interface ChromeTabInfo {
@@ -642,7 +657,9 @@ declare global {
       }
       chromeCompanion: {
         status: () => Promise<IpcResult<ChromeCompanionStatus>>
-        disconnect: () => Promise<IpcResult<ChromeCompanionStatus>>
+        disconnect: (profileId?: string | null) => Promise<IpcResult<ChromeCompanionStatus>>
+        clients: () => Promise<IpcResult<ChromeClientInfo[]>>
+        renameClient: (profileId: string, label: string) => Promise<IpcResult<ChromeClientInfo[]>>
         activeTab: () => Promise<IpcResult<ChromeTabInfo>>
         snapshot: () => Promise<IpcResult<ChromePageSnapshot>>
         listSessionSites: () => Promise<IpcResult<{ sites: ChromeSessionSite[] }>>
@@ -683,6 +700,7 @@ declare global {
           setAvatar: (name: string, avatar: string) => Promise<IpcResult<BrowserProfileSummary>>
           setAutoSync: (name: string, enabled: boolean) => Promise<IpcResult<BrowserProfileSummary>>
           setExcludedSites: (name: string, sites: string[]) => Promise<IpcResult<BrowserProfileSummary>>
+          setChromeBinding: (name: string, chromeProfileId: string | null) => Promise<IpcResult<BrowserProfileSummary>>
           delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>
           import: () => Promise<IpcResult<{ imported: boolean; profile: BrowserProfileSummary | null }>>
           export: (name: string) => Promise<IpcResult<{ exported: boolean; path: string | null }>>

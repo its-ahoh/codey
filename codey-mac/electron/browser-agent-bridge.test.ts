@@ -94,15 +94,15 @@ describe('BrowserAgentBridge', () => {
       listProfiles: vi.fn(async () => []),
       activeProfileName: vi.fn(() => null),
       saveProfile: vi.fn(async name => ({
-        name, active: false, autoSync: false, excludedSites: [], cookieCount: 0, originCount: 0,
+        name, active: false, autoSync: false, excludedSites: [], chromeProfileId: null, chromeProfileLabel: null, cookieCount: 0, originCount: 0,
         createdAt: 1, updatedAt: 1, sourceUrl: null,
       })),
       importProfile: vi.fn(async name => ({
-        name, active: false, autoSync: false, excludedSites: [], cookieCount: 0, originCount: 0,
+        name, active: false, autoSync: false, excludedSites: [], chromeProfileId: null, chromeProfileLabel: null, cookieCount: 0, originCount: 0,
         createdAt: 1, updatedAt: 1, sourceUrl: null,
       })),
       setDefaultProfile: vi.fn(async (name: string | null) => name === null ? null : ({
-        name, active: true, autoSync: false, excludedSites: [], cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null,
+        name, active: true, autoSync: false, excludedSites: [], chromeProfileId: null, chromeProfileLabel: null, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null,
       })),
       deleteProfile: vi.fn(async () => ({ deleted: true })),
       exportProfile: vi.fn(async () => ({ path: '/tmp/exported.json' })),

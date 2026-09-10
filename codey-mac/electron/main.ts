@@ -2270,7 +2270,7 @@ app.whenReady().then(async () => {
         name: availableProfileName(hostname, (await browserController.listProfiles()).map(profile => profile.name)),
         existing: await browserController.profilesForUrl(`https://${hostname}/`),
       }),
-      profilesOverview: async hostname => {
+      profilesOverview: async (hostname, profileId) => {
         const holds = new Set(hostname ? await browserController.profilesForUrl(`https://${hostname}/`) : [])
         return {
           profiles: (await browserController.listProfiles()).map(profile => ({
@@ -2278,12 +2278,13 @@ app.whenReady().then(async () => {
             active: profile.active,
             autoSync: profile.autoSync,
             holdsSite: holds.has(profile.name),
+            linked: profile.chromeProfileId === profileId,
           })),
         }
       },
-      handoffSession: async requested => {
+      handoffSession: async (requested, profileId) => {
         if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
-        const sessionState = await chromeCompanion.exportSession()
+        const sessionState = await chromeCompanion.exportSession(profileId)
         const tabUrl = new URL(sessionState.tab.url)
         const json = JSON.stringify({ cookies: sessionState.cookies, origins: sessionState.origins })
         const taken = (await browserController.listProfiles()).map(profile => profile.name)
@@ -2338,6 +2339,20 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.warn(`[browser] Chrome companion unavailable: ${error instanceof Error ? error.message : String(error)}`)
   }
+  // Commands Codey starts - screenshots, navigation, agent `chrome` actions -
+  // go to the Chrome profile linked to the currently active Codey browser
+  // profile. The named failures say what to fix instead of a generic error.
+  chromeCompanion.setTargetResolver(() => {
+    const name = browserController.activeProfileName()
+    if (!name) throw new Error('Activate a browser profile first')
+    const binding = browserController.chromeBindingForProfile(name)
+    if (!binding) throw new Error(`Profile "${name}" is not linked to a Chrome profile`)
+    const client = chromeCompanion!.clients().find(entry => entry.profileId === binding.profileId)
+    if (!client || !client.connected) {
+      throw new Error(`Chrome profile "${binding.label}" (linked to "${name}") is not running`)
+    }
+    return binding.profileId
+  })
   protocol.handle('codey-asset', async (request) => {
     try {
       const url = new URL(request.url)
@@ -2486,146 +2501,165 @@ app.whenReady().then(async () => {
   ipcMain.handle('browser:profiles:syncProfile', (event, name: string) =>
     browserCall(event, () => refreshProfileFromChrome(name)))
 
-  // Auto-sync profiles mirror the whole Chrome session, including sites first
-  // visited after the switch was enabled. An exclusion belongs to a profile,
-  // so isolated personal/work jars may deliberately mirror different subsets.
-  type AutoSyncProfile = { name: string; excludedSites: string[] }
-  let autoSyncProfileCache: AutoSyncProfile[] = []
-  let sharedExclusionCache: string[] = []
-  let autoSyncRevision = 0
-  let autoSyncFingerprint = ''
+  // Each Chrome profile owns its own sync state. A slow or disconnected work
+  // Chrome must neither block nor write into the personal Codey jar.
+  type ClientSyncState = {
+    profileName: string
+    excludedSites: string[]
+    revision: number
+    fingerprint: string
+    pendingDomains: Set<string>
+    pendingFullSync: boolean
+    completedFullSyncRevision: number
+    busy: boolean
+    timer: NodeJS.Timeout | null
+  }
+  const clientSyncStates = new Map<string, ClientSyncState>()
   let autoSyncConfigGeneration = 0
   const refreshWatchDomains = async () => {
     const generation = (autoSyncConfigGeneration += 1)
     const profiles = (await browserController.listProfiles())
-      .filter(profile => profile.autoSync)
-      .map(profile => ({ name: profile.name, excludedSites: profile.excludedSites }))
+      .filter(profile => profile.autoSync && !!profile.chromeProfileId)
     if (generation !== autoSyncConfigGeneration) return
-    const fingerprint = JSON.stringify(profiles)
-    if (fingerprint !== autoSyncFingerprint) {
-      autoSyncFingerprint = fingerprint
-      autoSyncRevision += 1
-      pendingFullSync = profiles.length > 0
+    const liveIds = new Set<string>()
+    for (const profile of profiles) {
+      const profileId = profile.chromeProfileId!
+      liveIds.add(profileId)
+      const fingerprint = JSON.stringify([profile.name, profile.excludedSites])
+      const current = clientSyncStates.get(profileId)
+      if (!current) {
+        clientSyncStates.set(profileId, {
+          profileName: profile.name,
+          excludedSites: [...profile.excludedSites],
+          revision: 1,
+          fingerprint,
+          pendingDomains: new Set(),
+          pendingFullSync: true,
+          completedFullSyncRevision: 0,
+          busy: false,
+          timer: null,
+        })
+      } else {
+        current.profileName = profile.name
+        current.excludedSites = [...profile.excludedSites]
+        if (current.fingerprint !== fingerprint) {
+          current.fingerprint = fingerprint
+          current.revision += 1
+          current.pendingFullSync = true
+        }
+      }
     }
-    autoSyncProfileCache = profiles
-    // The extension may suppress an event only if every syncing profile would
-    // suppress it. Exact intersection is intentionally conservative: broader
-    // parent/subdomain combinations are filtered again per profile below.
-    sharedExclusionCache = profiles.length === 0
-      ? []
-      : profiles[0].excludedSites.filter(site => profiles.every(profile => profile.excludedSites.includes(site)))
+    for (const [profileId, state] of clientSyncStates) {
+      if (liveIds.has(profileId)) continue
+      if (state.timer) clearTimeout(state.timer)
+      clientSyncStates.delete(profileId)
+    }
   }
-  const profileExcludes = (profile: AutoSyncProfile, domain: string): boolean =>
-    profile.excludedSites.some(site => siteCoversHost(site, domain) || siteCoversHost(domain, site))
-  const pendingAutoSyncDomains = new Set<string>()
-  let pendingFullSync = false
-  let completedFullSyncRevision = 0
-  let autoSyncBusy = false
-  let autoSyncTimer: NodeJS.Timeout | null = null
-  const scheduleAutoSync = (delay = 1500) => {
-    if (autoSyncTimer) clearTimeout(autoSyncTimer)
-    autoSyncTimer = setTimeout(() => { autoSyncTimer = null; void runAutoSync() }, delay)
+  const scheduleAutoSync = (profileId: string, delay = 1500) => {
+    const state = clientSyncStates.get(profileId)
+    if (!state) return
+    if (state.timer) clearTimeout(state.timer)
+    state.timer = setTimeout(() => {
+      state.timer = null
+      void runAutoSync(profileId)
+    }, delay)
   }
-  const runAutoSync = async () => {
-    if (autoSyncBusy) return
-    const changed = [...pendingAutoSyncDomains]
-    // Freeze the generation and profile set this pass is actually syncing.
-    // Settings can change while Chrome is answering; success for the old
-    // generation must not accidentally acknowledge the newer one.
-    const passRevision = autoSyncRevision
-    const passProfiles = autoSyncProfileCache.map(profile => ({
-      name: profile.name,
-      excludedSites: [...profile.excludedSites],
-    }))
-    const doFullSync = pendingFullSync && completedFullSyncRevision < passRevision
-    if ((!doFullSync && changed.length === 0) || !chromeCompanion?.status().connected) return
+  const runAutoSync = async (profileId: string) => {
+    const state = clientSyncStates.get(profileId)
+    if (!state || state.busy) return
+    const changed = [...state.pendingDomains]
+    const passRevision = state.revision
+    const passProfileName = state.profileName
+    const passExcludedSites = [...state.excludedSites]
+    const doFullSync = state.pendingFullSync && state.completedFullSyncRevision < passRevision
+    const connected = chromeCompanion?.clients().some(client => client.profileId === profileId && client.connected) === true
+    if ((!doFullSync && changed.length === 0) || !connected) return
     // Keep new notifications distinct from this in-flight batch. Failed work
     // is merged back below; successful work cannot erase a later same-domain
     // change that arrived while Chrome was exporting.
-    for (const domain of changed) pendingAutoSyncDomains.delete(domain)
+    for (const domain of changed) state.pendingDomains.delete(domain)
 
-    autoSyncBusy = true
+    state.busy = true
     let retryDelay = 1500
     try {
-      let allChromeSites: string[] = []
-      let fullSyncSucceeded = true
-      let syncSucceeded = true
+      let sites: string[]
       if (doFullSync) {
         try {
-          allChromeSites = (await chromeCompanion.listSessionSites()).sites.map(entry => entry.site)
+          const allChromeSites = (await chromeCompanion!.listSessionSites(profileId)).sites.map(entry => entry.site)
+          const existingSites = await browserController.profileSites(passProfileName)
+          sites = [...new Set([...allChromeSites, ...existingSites])]
+            .filter(site => !passExcludedSites.some(excluded =>
+              siteCoversHost(excluded, site) || siteCoversHost(site, excluded)))
         } catch (error) {
-          fullSyncSucceeded = false
-          pendingFullSync = true
+          state.pendingFullSync = true
+          retryDelay = 5000
           sendToRenderer('gateway-log', `[browser] initial Chrome mirror failed: ${error instanceof Error ? error.message : String(error)}`)
+          return
         }
-      }
-      for (const profile of passProfiles) {
-        let sites: string[]
-        if (doFullSync) {
-          try {
-            // Include sites already held by Codey. If Chrome deleted their
-            // final cookie while the extension was offline, they no longer
-            // appear in listSessionSites; requesting them explicitly lets the
-            // empty Chrome result clear those stale cookies on reconnect.
-            const existingSites = await browserController.profileSites(profile.name)
-            sites = [...new Set([...allChromeSites, ...existingSites])]
-              .filter(site => !profileExcludes(profile, site))
-          } catch (error) {
-            fullSyncSucceeded = false
-            syncSucceeded = false
-            sendToRenderer('gateway-log', `[browser] could not inspect "${profile.name}" before Chrome sync: ${error instanceof Error ? error.message : String(error)}`)
-            continue
-          }
-        } else {
-          sites = changed.filter(domain => !profileExcludes(profile, domain))
-        }
-        if (sites.length === 0) continue
-        try {
-          const session = await chromeCompanion.exportSessionForSites([...sites])
-          await browserController.resyncProfileSites(profile.name, {
-            json: JSON.stringify({ cookies: session.cookies, origins: session.origins }),
-          }, session.sites)
-        } catch (error) {
-          syncSucceeded = false
-          if (doFullSync) fullSyncSucceeded = false
-          sendToRenderer('gateway-log', `[browser] auto-sync of "${profile.name}" failed: ${error instanceof Error ? error.message : String(error)}`)
-        }
-      }
-      if (doFullSync && fullSyncSucceeded) completedFullSyncRevision = Math.max(completedFullSyncRevision, passRevision)
-      else if (doFullSync) {
-        pendingFullSync = true
-        retryDelay = 5000
-      }
-      if (syncSucceeded && fullSyncSucceeded) {
-        if (doFullSync) pendingFullSync = completedFullSyncRevision < autoSyncRevision
       } else {
-        for (const domain of changed) pendingAutoSyncDomains.add(domain)
-        retryDelay = 5000
+        sites = changed.filter(domain => !passExcludedSites.some(excluded =>
+          siteCoversHost(excluded, domain) || siteCoversHost(domain, excluded)))
       }
+      if (sites.length > 0) {
+        const session = await chromeCompanion!.exportSessionForSites(sites, false, profileId)
+        await browserController.resyncProfileSites(passProfileName, {
+          json: JSON.stringify({ cookies: session.cookies, origins: session.origins }),
+        }, session.sites)
+      }
+      if (doFullSync) {
+        state.completedFullSyncRevision = Math.max(state.completedFullSyncRevision, passRevision)
+        state.pendingFullSync = state.completedFullSyncRevision < state.revision
+      }
+    } catch (error) {
+      for (const domain of changed) state.pendingDomains.add(domain)
+      if (doFullSync) state.pendingFullSync = true
+      retryDelay = 5000
+      sendToRenderer('gateway-log', `[browser] auto-sync of "${passProfileName}" failed: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
-      autoSyncBusy = false
-      if ((pendingFullSync || pendingAutoSyncDomains.size > 0) && !autoSyncTimer) scheduleAutoSync(retryDelay)
+      state.busy = false
+      if ((state.pendingFullSync || state.pendingDomains.size > 0) && !state.timer) scheduleAutoSync(profileId, retryDelay)
     }
   }
+  const ensureClientBinding = async (profileId: string | null) => {
+    if (!profileId || !chromeCompanion) return null
+    const client = chromeCompanion.clients().find(entry => entry.profileId === profileId)
+    if (!client) return null
+    const existing = browserController.profileForChrome(profileId)
+    const profile = existing ?? browserController.ensureProfileForChrome(profileId, client.label)
+    if (profile.chromeProfileLabel !== client.label) {
+      browserController.setProfileChromeBinding(profile.name, profileId, client.label)
+    }
+    await refreshWatchDomains()
+    return profile
+  }
   chromeCompanion?.setAutoSync({
-    watchDomains: () => (autoSyncProfileCache.length === 0 ? null : ['*']),
-    excludedDomains: () => sharedExclusionCache,
-    revision: () => autoSyncRevision,
-    onConnected: () => {
-      if (autoSyncProfileCache.length === 0) return
-      completedFullSyncRevision = Math.min(completedFullSyncRevision, autoSyncRevision - 1)
-      pendingFullSync = true
-      if (!autoSyncTimer) scheduleAutoSync(100)
+    watchDomains: profileId => profileId && clientSyncStates.has(profileId) ? ['*'] : null,
+    excludedDomains: profileId => profileId ? clientSyncStates.get(profileId)?.excludedSites ?? [] : [],
+    revision: profileId => profileId ? clientSyncStates.get(profileId)?.revision ?? 0 : 0,
+    onConnected: async profileId => {
+      await ensureClientBinding(profileId)
+      if (!profileId) return
+      const state = clientSyncStates.get(profileId)
+      if (!state) return
+      state.completedFullSyncRevision = Math.min(state.completedFullSyncRevision, state.revision - 1)
+      state.pendingFullSync = true
+      if (!state.timer) scheduleAutoSync(profileId, 100)
     },
-    onPoll: () => {
-      if (autoSyncProfileCache.length > 0 && completedFullSyncRevision < autoSyncRevision) {
-        pendingFullSync = true
-        if (!autoSyncTimer) scheduleAutoSync(100)
+    onPoll: async profileId => {
+      await ensureClientBinding(profileId)
+      if (!profileId) return
+      const state = clientSyncStates.get(profileId)
+      if (state && state.completedFullSyncRevision < state.revision) {
+        state.pendingFullSync = true
+        if (!state.timer) scheduleAutoSync(profileId, 100)
       }
     },
-    onSessionChanged: domains => {
-      for (const domain of domains) pendingAutoSyncDomains.add(domain)
-      scheduleAutoSync()
+    onSessionChanged: (profileId, domains) => {
+      if (!profileId) return
+      const state = clientSyncStates.get(profileId)
+      if (!state) return
+      for (const domain of domains) state.pendingDomains.add(domain)
+      scheduleAutoSync(profileId)
     },
   })
   void refreshWatchDomains()
@@ -2640,6 +2674,21 @@ app.whenReady().then(async () => {
   ipcMain.handle('browser:profiles:setExcludedSites', (event, name: string, sites: string[]) =>
     browserCall(event, async () => {
       const result = browserController.setProfileExcludedSites(String(name || ''), Array.isArray(sites) ? sites : [])
+      await refreshWatchDomains()
+      return result
+    }))
+  // Which Chrome profile a Codey profile mirrors. The label is only a display
+  // string; the binding is keyed by the Chrome-reported ID, so a rename never
+  // changes where syncing routes. Rebinding to another Chrome (or to none)
+  // re-routes the watch list on the next poll.
+  ipcMain.handle('browser:profiles:setChromeBinding', (event, name: string, chromeProfileId: string | null) =>
+    browserCall(event, async () => {
+      const requested = String(name || '')
+      const profileId = chromeProfileId === null || chromeProfileId === undefined ? null : String(chromeProfileId)
+      const label = profileId
+        ? chromeCompanion?.clients().find(entry => entry.profileId === profileId)?.label ?? null
+        : null
+      const result = browserController.setProfileChromeBinding(requested, profileId, label)
       await refreshWatchDomains()
       return result
     }))
@@ -2726,9 +2775,19 @@ app.whenReady().then(async () => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
     return chromeCompanion.status()
   }))
-  ipcMain.handle('chromeCompanion:disconnect', event => browserCall(event, () => {
+  ipcMain.handle('chromeCompanion:disconnect', (event, profileId?: string | null) => browserCall(event, () => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
-    return chromeCompanion.disconnect()
+    return chromeCompanion.disconnect(profileId ?? null)
+  }))
+  // The paired Chrome profiles, for the Settings list and the per-profile
+  // binding picker. Connected ones are marked so a stale pairing is visible.
+  ipcMain.handle('browser:chrome:clients', event => browserCall(event, () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    return chromeCompanion.clients()
+  }))
+  ipcMain.handle('browser:chrome:renameClient', (event, profileId: string, label: string) => browserCall(event, () => {
+    if (!chromeCompanion) throw new Error('Chrome companion is unavailable')
+    return chromeCompanion.renameClient(String(profileId || ''), String(label || ''))
   }))
   ipcMain.handle('chromeCompanion:activeTab', event => browserCall(event, () => {
     if (!chromeCompanion) throw new Error('Chrome companion is unavailable')

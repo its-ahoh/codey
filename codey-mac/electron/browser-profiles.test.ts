@@ -194,6 +194,28 @@ describe('BrowserProfileStore', () => {
     }
   })
 
+  it('keeps Chrome bindings one-to-one and preserves them across metadata writes', () => {
+    const { dir, store } = makeStore()
+    try {
+      store.writeMeta('work', null)
+      store.writeMeta('personal', null)
+      expect(store.setChromeBinding('work', 'chrome-a', 'Work Chrome')).toMatchObject({
+        chromeProfileId: 'chrome-a', chromeProfileLabel: 'Work Chrome',
+      })
+      store.writeMeta('work', null)
+      expect(store.read('work')).toMatchObject({ chromeProfileId: 'chrome-a', chromeProfileLabel: 'Work Chrome' })
+
+      store.setChromeBinding('personal', 'chrome-a', 'Renamed Chrome')
+      expect(store.read('work')).toMatchObject({ chromeProfileId: null, chromeProfileLabel: null })
+      expect(store.profileForChrome('chrome-a')?.name).toBe('personal')
+
+      store.setChromeBinding('personal', null, null)
+      expect(store.profileForChrome('chrome-a')).toBeNull()
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('safely normalizes exclusions read from existing schema-2 metadata', () => {
     const { dir, store } = makeStore()
     try {

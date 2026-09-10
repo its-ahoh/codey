@@ -13,6 +13,7 @@ import {
   assertProfileName,
   BrowserProfileStore,
   DEFAULT_BROWSER_PARTITION,
+  availableProfileName,
   parseProfileJsonText,
   profilePartition,
   siteCoversHost,
@@ -1150,6 +1151,8 @@ export class BrowserController {
         avatar: profile.avatar ?? null,
         autoSync: profile.autoSync === true,
         excludedSites: profile.excludedSites,
+        chromeProfileId: profile.chromeProfileId,
+        chromeProfileLabel: profile.chromeProfileLabel,
         createdAt: profile.createdAt,
         updatedAt: profile.updatedAt,
         cookieCount: 0,
@@ -1204,6 +1207,32 @@ export class BrowserController {
   /** Replace the sites this profile excludes from automatic Chrome refresh. */
   setProfileExcludedSites(name: string, sites: readonly string[]): BrowserProfileSummary {
     return this.profiles().setExcludedSites(name, sites)
+  }
+
+  setProfileChromeBinding(name: string, profileId: string | null, label: string | null): BrowserProfileSummary {
+    return this.profiles().setChromeBinding(name, profileId, label)
+  }
+
+  profileForChrome(profileId: string | null): BrowserProfileSummary | null {
+    return this.profiles().profileForChrome(profileId)
+  }
+
+  chromeBindingForProfile(name: string): { profileId: string; label: string } | null {
+    const profile = this.profiles().read(name)
+    if (!profile.chromeProfileId) return null
+    return { profileId: profile.chromeProfileId, label: profile.chromeProfileLabel || 'Chrome profile' }
+  }
+
+  /** Create and bind the first Codey jar for a newly seen Chrome profile. */
+  ensureProfileForChrome(profileId: string, label: string): BrowserProfileSummary {
+    const existing = this.profiles().profileForChrome(profileId)
+    if (existing) return existing
+    const taken = this.profiles().list().map(profile => profile.name)
+    const seed = label.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+|\.+$/g, '') || 'Chrome-profile'
+    const name = availableProfileName(seed.slice(0, 64), taken)
+    this.profiles().writeMeta(name, null)
+    this.profiles().setAutoSync(name, true)
+    return this.profiles().setChromeBinding(name, profileId, label)
   }
 
   /** Remove a profile: its metadata record and its whole storage jar. Tabs
