@@ -25,6 +25,7 @@ import { isTaskBriefStale, extractSidecarBrief } from './taskHudView'
 import { onTeamsChanged } from './teamsChanged'
 import { formatHeadline, normalizeTool, ToolDetail, hasDetail } from './toolFormat'
 import { defaultThinkingExpanded } from './thinkingState'
+import { getThinkingToggles, rememberThinkingToggle } from './thinkingToggles'
 import { formatTokens } from './turnHeaderModel'
 import {
   TurnHeader, MESSAGE_ROW_INSET, TURN_RAIL_WIDTH, TURN_TEXT_PADDING, TURN_TEXT_INSET,
@@ -362,7 +363,18 @@ const ThinkingBlock: React.FC<{
         <span>{expanded ? 'Hide thinking' : 'Show thinking'}</span>
       </div>
       {expanded && (
-        <div style={styles.thinkingBody}>{thinking}</div>
+        <div style={styles.thinkingWrap}>
+          <div style={{ ...styles.thinkingBody, marginLeft: 0, marginBottom: 0, paddingBottom: 40 }}>{thinking}</div>
+          <div style={styles.thinkingFade}>
+            <button
+              type="button"
+              style={styles.thinkingFadeBtn}
+              onClick={() => setUserToggled(false)}
+            >
+              Hide thinking ▲
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -586,8 +598,10 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // The turn header owns the thinking chevron, so the disclosure state has to
   // live above it. Only a user's explicit toggle is stored; `undefined` means
   // fall back to defaultThinkingExpanded, which auto-opens thinking while the
-  // agent is still working and has produced no answer yet.
-  const [thinkingToggles, setThinkingToggles] = useState<Record<string, boolean>>({})
+  // agent is still working and has produced no answer yet. Seeded from the
+  // module store (thinkingToggles.ts) so an explicit toggle survives the
+  // remount that happens when switching chats.
+  const [thinkingToggles, setThinkingToggles] = useState<Record<string, boolean>>(() => getThinkingToggles())
   const [taskBriefLoading, setTaskBriefLoading] = useState(false)
   // This is a single app-wide display preference, not chat state. ChatTab is
   // remounted on chat switches, so seed it from localStorage and write changes
@@ -2199,6 +2213,10 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                       hasAnswer: !!msg.content.trim(),
                       isComplete: msg.isComplete ?? false,
                     })
+                  const setThinkingExpanded = (next: boolean) => {
+                    rememberThinkingToggle(msg.id, next)
+                    setThinkingToggles(p => ({ ...p, [msg.id]: next }))
+                  }
                   return (
                     <>
                       <TurnHeader
@@ -2206,7 +2224,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         hasThinking={!!thinking}
                         turnComplete={!streaming}
                         expanded={expanded}
-                        onToggle={() => setThinkingToggles(p => ({ ...p, [msg.id]: !expanded }))}
+                        onToggle={() => setThinkingExpanded(!expanded)}
                         onAskAgentAboutFallback={(detail, fb) => { void askAgentAboutFallback(detail, fb) }}
                         leftAvatar={isWorkerMessage ? (
                           <WorkerAvatar name={msg.worker!} config={member?.config.avatar} state={memberState} />
@@ -2215,7 +2233,18 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         messageHovered={hoveredMsgId === msg.id}
                       />
                       {!!thinking && expanded && (
-                        <div style={styles.thinkingBody}>{thinking}</div>
+                        <div style={styles.thinkingWrap}>
+                          <div style={{ ...styles.thinkingBody, marginLeft: 0, marginBottom: 0, paddingBottom: 40 }}>{thinking}</div>
+                          <div style={styles.thinkingFade}>
+                            <button
+                              type="button"
+                              style={styles.thinkingFadeBtn}
+                              onClick={() => setThinkingExpanded(false)}
+                            >
+                              Hide thinking ▲
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </>
                   )
@@ -3580,6 +3609,28 @@ const styles: Record<string, React.CSSProperties> = {
     borderLeft: `2px solid ${C.border2}`, opacity: 0.85,
     color: C.fg2, fontSize: 12, lineHeight: 1.55,
     whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const,
+  },
+  // Thinking block (single-agent and team-step alike). Carries the 17px indent
+  // the body used to own, so the bottom fade anchors to the same left edge.
+  // The fade is a soft gradient into the page background with a frosted
+  // collapse pill on top, so a long block can be folded from the bottom
+  // instead of scrolling back up to the collapse affordance.
+  thinkingWrap: {
+    position: 'relative' as const,
+    marginLeft: 17, marginBottom: 8,
+  },
+  thinkingFade: {
+    position: 'absolute', left: 0, right: 0, bottom: 0, height: 40,
+    background: `linear-gradient(to bottom, transparent, ${C.bg})`,
+    display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+    paddingBottom: 6, pointerEvents: 'none' as const,
+  },
+  thinkingFadeBtn: {
+    pointerEvents: 'auto' as const,
+    appearance: 'none', background: 'rgba(128, 128, 128, 0.14)',
+    backdropFilter: 'blur(4px)', border: `1px solid ${C.border2}`,
+    color: C.fg2, fontSize: 11, padding: '3px 10px', borderRadius: 999,
+    cursor: 'pointer',
   },
   // Reads as one quiet line of the transcript rather than a boxed callout: same
   // typography as the tool rows in `ToolCallList` (minimal), no fill, no border.

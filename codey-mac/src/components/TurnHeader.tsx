@@ -99,6 +99,11 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
   // the containing assistant turn's hover state to cover the reply body too.
   const [headerActive, setHeaderActive] = React.useState(false)
   const identityVisible = messageHovered || headerActive
+  // The thinking chevron is part of the same on-demand metadata as the
+  // identity, so it hides with the name instead of dangling alone on an
+  // un-hovered turn. With no identity to reveal it stays visible — it is then
+  // the only affordance for the thinking it discloses.
+  const chevronOpacity = meta.identity && !identityVisible ? 0 : 1
   // A worker's avatar/name makes the row worth drawing even when there's
   // otherwise nothing to show.
   const isEmpty = (leftAvatar || leftLabel) ? false : meta.isEmpty
@@ -130,7 +135,7 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
                 title={expanded ? 'Hide thinking' : 'Show thinking'}
               >
                 {meta.identity && <IdentityLabel identity={meta.identity} visible={identityVisible} />}
-                <span style={{ ...styles.chevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                <span style={{ ...styles.chevron, opacity: chevronOpacity, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
                   <UIIcon name="chevron" size={14} strokeWidth={2} />
                 </span>
               </button>
@@ -278,7 +283,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   chevron: {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    flexShrink: 0, userSelect: 'none', transition: 'transform 0.15s ease',
+    flexShrink: 0, userSelect: 'none',
+    transition: 'transform 0.15s ease, opacity 0.1s ease',
   },
   stats: { fontVariantNumeric: 'tabular-nums', opacity: 0.55 },
   fallbackWrap: { position: 'relative', display: 'inline-flex', flexShrink: 0 },
