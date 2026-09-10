@@ -512,7 +512,6 @@ contextBridge.exposeInMainWorld('codey', {
       setAvatar: (name: string, avatar: string) => ipcRenderer.invoke('browser:profiles:setAvatar', name, avatar),
       delete: (name: string) => ipcRenderer.invoke('browser:profiles:delete', name),
       import: () => ipcRenderer.invoke('browser:profiles:import'),
-      export: (name: string) => ipcRenderer.invoke('browser:profiles:export', name),
       syncProfile: (name: string) => ipcRenderer.invoke('browser:profiles:syncProfile', name),
       setAutoSync: (name: string, enabled: boolean) => ipcRenderer.invoke('browser:profiles:setAutoSync', name, enabled === true),
       setExcludedSites: (name: string, sites: string[]) => ipcRenderer.invoke('browser:profiles:setExcludedSites', name, sites),

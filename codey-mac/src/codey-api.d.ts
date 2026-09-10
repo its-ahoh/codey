@@ -703,7 +703,6 @@ declare global {
           setChromeBinding: (name: string, chromeProfileId: string | null) => Promise<IpcResult<BrowserProfileSummary>>
           delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>
           import: () => Promise<IpcResult<{ imported: boolean; profile: BrowserProfileSummary | null }>>
-          export: (name: string) => Promise<IpcResult<{ exported: boolean; path: string | null }>>
           syncProfile: (name: string) => Promise<IpcResult<{
             profile: BrowserProfileSummary
             siteCount: number

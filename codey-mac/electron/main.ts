@@ -2721,18 +2721,6 @@ app.whenReady().then(async () => {
     await refreshWatchDomains()
     return { imported: true, profile }
   }))
-  ipcMain.handle('browser:profiles:export', (event, name: string) => browserCall(event, async () => {
-    const requested = String(name || '')
-    const result = await dialog.showSaveDialog(mainWindow ?? (undefined as any), {
-      title: 'Export browser profile',
-      buttonLabel: 'Export',
-      defaultPath: requested ? `${requested}.json` : 'profile.json',
-      filters: [{ name: 'Browser profile (JSON)', extensions: ['json'] }],
-    })
-    if (result.canceled || !result.filePath) return { exported: false, path: null }
-    const out = await browserController.exportProfile(requested, result.filePath)
-    return { exported: true, path: out.path }
-  }))
   ipcMain.handle('browser:extensions:list', event => browserCall(event, () => {
     if (!browserExtensionManager) throw new Error('Browser extensions are unavailable')
     return browserExtensionManager.list()

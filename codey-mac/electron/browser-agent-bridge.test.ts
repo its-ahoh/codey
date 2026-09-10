@@ -105,7 +105,6 @@ describe('BrowserAgentBridge', () => {
         name, active: true, autoSync: false, excludedSites: [], chromeProfileId: null, chromeProfileLabel: null, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null,
       })),
       deleteProfile: vi.fn(async () => ({ deleted: true })),
-      exportProfile: vi.fn(async () => ({ path: '/tmp/exported.json' })),
     }
     const onOpen = vi.fn()
     const requestControl = vi.fn(async () => true)
@@ -227,10 +226,6 @@ describe('BrowserAgentBridge', () => {
       const madeDefault = await call(info, 'POST', '/profile/default', { name: 'work' })
       expect(madeDefault.status).toBe(200)
       expect(controller.setDefaultProfile).toHaveBeenCalledWith('work')
-
-      const exported = await call(info, 'POST', '/profile/export', { name: 'work', path: '/tmp/work.json' })
-      expect(exported.body).toEqual({ path: '/tmp/exported.json' })
-      expect(controller.exportProfile).toHaveBeenCalledWith('work', '/tmp/work.json')
 
       const deleted = await call(info, 'POST', '/profile/delete', { name: 'work' })
       expect(deleted.body).toEqual({ deleted: true })

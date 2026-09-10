@@ -57,12 +57,11 @@ there without a save step. The user chooses which profile new tabs open under
 by default - you can see the set and open your own tab in one, but you cannot
 change their default for them.
 
-- `profile list` - saved profiles, with the default one flagged
+- `profile list` - saved profiles, with the active one flagged
 - `profile save <name>` - snapshot the current session into a named profile
 - `profile import <path> [name]` - import a session file (a Codey profile or
   a Playwright storageState JSON) into a profile's jar
-- `profile default <name>` - choose which profile new tabs open under
-- `profile export <name> <path>` - write a saved profile to a shareable file
+- `profile default <name>` - choose the active profile
 - `profile delete <name>` - remove a saved profile
 
 To open a tab in a specific profile, put `--profile <name>` before a command

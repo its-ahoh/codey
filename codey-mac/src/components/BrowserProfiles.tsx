@@ -26,8 +26,8 @@ function formatWhen(timestamp: number): string {
 
 /** The browser-profiles manager, shared by the browser toolbar (compact) and
  *  the Settings tab (full width). List, save the current session, import a
- *  session file, choose the default for new tabs, export and delete profiles
- *  through the main process's `window.codey.browser.profiles` bridge. */
+ *  session file, pick which profile is active, and delete profiles through the
+ *  main process's `window.codey.browser.profiles` bridge. */
 export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   // Derived from the list itself, so it cannot disagree with the rows shown.
   const [profiles, setProfiles] = useState<BrowserProfileSummary[]>([])
@@ -132,7 +132,7 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
     const when = formatWhen(profile.updatedAt)
     if (when) bits.push(`updated ${when}`)
     if (profile.autoSync) bits.push('syncs with Chrome')
-    if (profile.active) bits.push('new tabs open here')
+    if (profile.active) bits.push('active')
     return bits.join(' · ')
   }
 
@@ -204,10 +204,10 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
             ...styles.defaultChoice,
             ...(!profiles.some(profile => profile.active) ? styles.defaultChoiceActive : null),
           }}
-          title="Open new tabs without a saved profile"
+          title="Browse without a saved profile"
         >
           <span aria-hidden="true">{profiles.some(profile => profile.active) ? '○' : '●'}</span>
-          New tabs open without a profile
+          No profile
         </button>
       )}
 
@@ -246,9 +246,9 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               )}
             </div>
             <div style={{ flex: 1, minWidth: compact ? 180 : 0 }}>
-              {/* No "IN USE" pill next to the name: the toggle on this same
-                  row already says "In use" in the same green, so the pill was
-                  the same word twice with nothing extra to tell. */}
+              {/* No "IN USE" pill next to the name: the radio on this same row
+                  already says "Active", so the pill was the same word twice
+                  with nothing extra to tell. */}
               <div style={{ color: C.fg, fontSize: compact ? 12 : 13, fontWeight: 600 }}>{profile.name}</div>
               <button
                 type="button"
@@ -287,18 +287,11 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               disabled={busy}
               onClick={() => void run(() => window.codey.browser.profiles.setDefault(profile.name))}
               style={{ ...styles.defaultChoice, ...(profile.active ? styles.defaultChoiceActive : null) }}
-              title={`Open new tabs in ${profile.name}`}
+              title={`Browse as ${profile.name}`}
             >
               <span aria-hidden="true">{profile.active ? '●' : '○'}</span>
-              {profile.active ? 'New tabs open here' : 'Use for new tabs'}
+              {profile.active ? 'Active' : 'Activate'}
             </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void run(() => window.codey.browser.profiles.export(profile.name))}
-              style={buttonStyle(compact)}
-              title="Write this profile to a shareable JSON file"
-            ><UIIcon name="copy" size={12} /></button>
             {confirmDelete === profile.name ? (
               <button
                 type="button"
