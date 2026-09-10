@@ -140,7 +140,9 @@ export class CodexAdapter extends BaseAgentAdapter {
       if (request.model?.model) {
         args.push('--model', request.model.model);
       }
-      if (request.context?.workingDir) {
+      // `--cd` only exists on a fresh `codex exec`; `codex exec resume` rejects
+      // it. The spawn `cwd` below already puts the run in the right directory.
+      if (request.context?.workingDir && !request.resumeSessionId) {
         args.push('--cd', request.context.workingDir);
       }
       if (request.mcpServers && Object.keys(request.mcpServers).length > 0) {
