@@ -1713,13 +1713,14 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   }, [input]) // eslint-disable-line react-hooks/exhaustive-deps
 
 
-  // The model is compiling for the Neural Engine. Voice cannot start until it
-  // finishes, so the controls say so rather than accepting a press that would
-  // sit on "transcribing" for minutes.
+  // The model is compiling for the Neural Engine. For WhisperKit that runs for
+  // minutes and voice cannot start until it finishes, so the controls say so
+  // rather than accepting a press that would sit on "transcribing".
   const { warming: voiceWarming, model: voiceWarmModel, elapsedSeconds: voiceWarmElapsed } = useVoiceWarm()
-  const voiceWarmTitle = warmTooltip(voiceWarmElapsed, voiceWarmModel)
-  // Only a WhisperKit warm takes the controls away; a streaming warm dims them
-  // but still accepts the press, matching what the hotkey does.
+  const voiceWarmTitle = warmTooltip(voiceWarmElapsed)
+  // Only a WhisperKit warm takes the controls away. A streaming warm is over
+  // in seconds and the press is served mid-load, exactly as the hotkey does,
+  // so it changes nothing here.
   const voiceWarmBlocking = voiceWarming && warmBlocksPress(voiceWarmModel)
   const voiceActiveHere = voice.ownerChatId === chatId && voice.state !== 'idle'
   const voiceActiveElsewhere = voice.state !== 'idle' && voice.ownerChatId !== chatId
@@ -2760,7 +2761,6 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   : voiceActiveElsewhere ? 'Voice is active in another chat'
                   : voiceBusy && voice.mode === 'dictate'
                     ? (voice.state === 'transcribing' ? 'Transcribing… (Esc to cancel)' : 'Stop — text goes to the box')
-                    : voiceWarming ? voiceWarmTitle
                     : 'Dictate into the message box'
                 }
               ><button
@@ -2770,7 +2770,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 style={{
                   ...styles.voiceButton,
                   background: voiceBusy && voice.mode === 'dictate' ? C.red : 'transparent',
-                  opacity: voiceWarmBlocking ? 0.4 : voiceWarming ? 0.6 : 1,
+                  opacity: voiceWarmBlocking ? 0.4 : 1,
                   cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarmBlocking ? 'pointer' : 'default',
                   // A disabled button still hit-tests, so it swallows the hover
                   // and the wrapper's title never fires - which is precisely the
@@ -2808,7 +2808,6 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   : voiceActiveHere && voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
                   : voiceBusy && voice.mode === 'converse'
                     ? (voice.state === 'transcribing' ? 'Transcribing… (Esc to cancel)' : 'Stop and send')
-                    : voiceWarming ? voiceWarmTitle
                     : 'Talk to this chat — the reply is read back'
                 }
               ><button
@@ -2820,7 +2819,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   background: voiceActiveHere && voice.state === 'recording' && voice.mode === 'converse' ? C.red
                     : voiceActiveHere && voice.state === 'speaking' ? C.accent
                     : 'transparent',
-                  opacity: voiceWarmBlocking ? 0.4 : voiceWarming ? 0.6 : 1,
+                  opacity: voiceWarmBlocking ? 0.4 : 1,
                   cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarmBlocking ? 'pointer' : 'default',
                   // A disabled button still hit-tests, so it swallows the hover
                   // and the wrapper's title never fires - which is precisely the

@@ -32,20 +32,6 @@ describe('warmTooltip', () => {
     expect(text).toContain('about 5 minutes')
   })
 
-  it('quotes seconds, not minutes, for the small streaming models', () => {
-    const text = warmTooltip(5, 'nemotron/multilingual/480ms')
-    expect(text).toContain('a few seconds')
-    expect(text).not.toContain('minutes')
-  })
-
-  it('tells the user the control still works while a streaming model warms', () => {
-    expect(warmTooltip(10, 'nemotron/multilingual/480ms')).toContain('start talking now')
-  })
-
-  it('does not invite a WhisperKit user to talk into a control that is off', () => {
-    expect(warmTooltip(10)).not.toContain('start talking now')
-  })
-
   it('works at zero, which is what the first render shows', () => {
     expect(warmTooltip(0)).toContain('0s so far')
   })
