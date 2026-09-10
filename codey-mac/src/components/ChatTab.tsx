@@ -50,7 +50,7 @@ import { BranchPicker } from './BranchPicker'
 import { CreatePrModal } from './CreatePrModal'
 import { UIIcon } from './UIIcons'
 import { useVoiceWarm } from './useVoiceWarm'
-import { warmTooltip } from './voiceWarmStatus'
+import { warmBlocksPress, warmTooltip } from './voiceWarmStatus'
 import { chatInputHistory, moveInInputHistory } from './chatInputHistory'
 import vscodeLogo from '../assets/editors/vscode.svg'
 import cursorLogo from '../assets/editors/cursor.svg'
@@ -1716,8 +1716,11 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // The model is compiling for the Neural Engine. Voice cannot start until it
   // finishes, so the controls say so rather than accepting a press that would
   // sit on "transcribing" for minutes.
-  const { warming: voiceWarming, elapsedSeconds: voiceWarmElapsed } = useVoiceWarm()
-  const voiceWarmTitle = warmTooltip(voiceWarmElapsed)
+  const { warming: voiceWarming, model: voiceWarmModel, elapsedSeconds: voiceWarmElapsed } = useVoiceWarm()
+  const voiceWarmTitle = warmTooltip(voiceWarmElapsed, voiceWarmModel)
+  // Only a WhisperKit warm takes the controls away; a streaming warm dims them
+  // but still accepts the press, matching what the hotkey does.
+  const voiceWarmBlocking = voiceWarming && warmBlocksPress(voiceWarmModel)
   const voiceActiveHere = voice.ownerChatId === chatId && voice.state !== 'idle'
   const voiceActiveElsewhere = voice.state !== 'idle' && voice.ownerChatId !== chatId
   const voiceBusy = voiceActiveHere && (voice.state === 'recording' || voice.state === 'transcribing')
@@ -2747,32 +2750,33 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
               {/* The tooltip lives on the wrapper, not the button: a disabled
                   button takes no mouse events in Chromium, so its own `title`
                   never appears - and disabled is exactly when the explanation
-                  is needed (gateway down, model still warming). */}
+                  is needed (gateway down, a WhisperKit warm still running). */}
               {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'converse') && <span
                 style={styles.voiceButtonWrap}
                 title={
-                  voiceWarming ? voiceWarmTitle
+                  voiceWarmBlocking ? voiceWarmTitle
                   : !isGatewayRunning ? 'Start the gateway to use voice'
                   : coreFailed ? 'Voice is unavailable while the gateway is failing'
                   : voiceActiveElsewhere ? 'Voice is active in another chat'
                   : voiceBusy && voice.mode === 'dictate'
                     ? (voice.state === 'transcribing' ? 'Transcribing… (Esc to cancel)' : 'Stop — text goes to the box')
+                    : voiceWarming ? voiceWarmTitle
                     : 'Dictate into the message box'
                 }
               ><button
                 onClick={() => voice.toggle('dictate')}
                 aria-label="Dictate into the message box"
-                disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarming}
+                disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarmBlocking}
                 style={{
                   ...styles.voiceButton,
                   background: voiceBusy && voice.mode === 'dictate' ? C.red : 'transparent',
-                  opacity: voiceWarming ? 0.4 : 1,
-                  cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarming ? 'pointer' : 'default',
+                  opacity: voiceWarmBlocking ? 0.4 : voiceWarming ? 0.6 : 1,
+                  cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarmBlocking ? 'pointer' : 'default',
                   // A disabled button still hit-tests, so it swallows the hover
                   // and the wrapper's title never fires - which is precisely the
                   // state the explanation exists for. Hand the hover to the
                   // wrapper instead.
-                  pointerEvents: !isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarming ? 'none' : 'auto',
+                  pointerEvents: !isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarmBlocking ? 'none' : 'auto',
                 }}
               >
                 {voice.state === 'recording' && voice.mode === 'dictate'
@@ -2797,31 +2801,32 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
               {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'dictate') && <span
                 style={styles.voiceButtonWrap}
                 title={
-                  voiceWarming ? voiceWarmTitle
+                  voiceWarmBlocking ? voiceWarmTitle
                   : !isGatewayRunning ? 'Start the gateway to use voice'
                   : coreFailed ? 'Voice is unavailable while the gateway is failing'
                   : voiceActiveElsewhere ? 'Voice is active in another chat'
                   : voiceActiveHere && voice.state === 'speaking' ? 'Speaking — click to interrupt and talk'
                   : voiceBusy && voice.mode === 'converse'
                     ? (voice.state === 'transcribing' ? 'Transcribing… (Esc to cancel)' : 'Stop and send')
+                    : voiceWarming ? voiceWarmTitle
                     : 'Talk to this chat — the reply is read back'
                 }
               ><button
                 onClick={() => voice.toggle('converse')}
                 aria-label="Talk to this chat"
-                disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarming}
+                disabled={!isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarmBlocking}
                 style={{
                   ...styles.voiceButton,
                   background: voiceActiveHere && voice.state === 'recording' && voice.mode === 'converse' ? C.red
                     : voiceActiveHere && voice.state === 'speaking' ? C.accent
                     : 'transparent',
-                  opacity: voiceWarming ? 0.4 : 1,
-                  cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarming ? 'pointer' : 'default',
+                  opacity: voiceWarmBlocking ? 0.4 : voiceWarming ? 0.6 : 1,
+                  cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarmBlocking ? 'pointer' : 'default',
                   // A disabled button still hit-tests, so it swallows the hover
                   // and the wrapper's title never fires - which is precisely the
                   // state the explanation exists for. Hand the hover to the
                   // wrapper instead.
-                  pointerEvents: !isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarming ? 'none' : 'auto',
+                  pointerEvents: !isGatewayRunning || !!coreFailed || voiceActiveElsewhere || voiceWarmBlocking ? 'none' : 'auto',
                 }}
               >
                 {voice.state === 'recording' && voice.mode === 'converse'
