@@ -12,7 +12,6 @@ import type { BrowserSitePermissionDetails, BrowserSitePermissionManager } from 
 import {
   assertProfileName,
   BrowserProfileStore,
-  cookieMatchesUrl,
   DEFAULT_BROWSER_PARTITION,
   parseProfileJsonText,
   profilePartition,
@@ -950,10 +949,19 @@ export class BrowserController {
   async resetSession(): Promise<BrowserState> {
     this.destroy()
     this.downloads = []
-    const browserSession = this.sessionFor(null)
-    await browserSession.clearStorageData()
-    await browserSession.clearCache()
-    await browserSession.clearAuthCache()
+    const profileNames = this.profiles().list().map(profile => profile.name)
+    const clears = ([null, ...profileNames] as Array<string | null>).map(async profileName => {
+      const browserSession = this.sessionFor(profileName)
+      const results = await Promise.allSettled([
+        browserSession.clearStorageData(),
+        browserSession.clearCache(),
+        browserSession.clearAuthCache(),
+      ])
+      if (profileName !== null) this.profiles().replaceKnownOrigins(profileName, [])
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+      if (failed) throw failed.reason
+    })
+    await Promise.all(clears)
     return this.patchState({ ...EMPTY_STATE })
   }
 
@@ -1024,8 +1032,8 @@ export class BrowserController {
     const names: string[] = []
     for (const summary of this.profiles().list()) {
       try {
-        const data = await this.captureProfileData(summary.name)
-        if (data.cookies.some(cookie => cookieMatchesUrl(cookie, parsed))) names.push(summary.name)
+        const found = await this.sessionFor(summary.name).cookies.get({ url: parsed.toString() })
+        if (found.length > 0) names.push(summary.name)
       } catch { /* an unreadable jar is simply not offered */ }
     }
     return names
@@ -1157,8 +1165,11 @@ export class BrowserController {
    *  jar leaves the zeroes the store wrote rather than failing the listing. */
   private async withJarCounts(base: BrowserProfileSummary): Promise<BrowserProfileSummary> {
     try {
-      const data = await this.captureProfileData(base.name)
-      return { ...base, cookieCount: data.cookies.length, originCount: data.origins.length }
+      const [cookies, meta] = await Promise.all([
+        this.sessionFor(base.name).cookies.get({}),
+        Promise.resolve(this.profiles().read(base.name)),
+      ])
+      return { ...base, cookieCount: cookies.length, originCount: meta.knownOrigins.length }
     } catch {
       return base
     }
@@ -1200,11 +1211,14 @@ export class BrowserController {
    *  behind them is gone, so they are signed out on the next load. */
   async deleteProfile(name: string): Promise<{ deleted: boolean }> {
     assertProfileName(name)
-    try {
-      await this.sessionFor(name).clearStorageData()
-    } catch {
-      // A jar that will not clear must not block removing the profile.
-    }
+    const browserSession = this.sessionFor(name)
+    // Removal is best-effort, but cover the entire partition: Chromium keeps
+    // cache and HTTP auth outside clearStorageData's default storage list.
+    await Promise.allSettled([
+      browserSession.clearStorageData(),
+      browserSession.clearCache(),
+      browserSession.clearAuthCache(),
+    ])
     this.profiles().remove(name)
     if (this.profiles().active() === name) this.profiles().setActive(null)
     return { deleted: true }
@@ -1231,9 +1245,9 @@ export class BrowserController {
   }
 
   /** Everything a profile's jar holds, in the portable profile shape: its
-   *  cookies plus the localStorage of every open http(s) tab that belongs to
-   *  it (unique origins). This is the read side of a profile - export, the
-   *  contents disclosure and the Chrome-sync site list all come through here.
+   *  cookies plus the localStorage of every indexed origin. Open tabs are read
+   *  directly; closed origins use a hidden page on the same partition. This is
+   *  the read side of profile export and the detailed contents disclosure.
    *  Page text and fields are never read — only the storage that holds login
    *  state. */
   private async captureProfileData(profileName: string | null): Promise<BrowserProfileData> {
@@ -1258,6 +1272,10 @@ export class BrowserController {
     }
 
     const origins = new Map<string, BrowserProfileStorageOrigin>()
+    let knownOrigins: string[] = []
+    if (profileName !== null) {
+      try { knownOrigins = this.profiles().read(profileName).knownOrigins } catch { /* source jar may not be a saved profile */ }
+    }
     for (const tab of this.tabs) {
       // A tab on another profile reads another jar's storage; counting it here
       // would attribute a stranger's login to this profile.
@@ -1298,12 +1316,71 @@ export class BrowserController {
             })
             .filter((entry): entry is { name: string; value: string } => !!entry && !!entry.name)
           : []
-        if (entries.length > 0) origins.set(originName, { origin: originName, localStorage: entries })
+        if (entries.length > 0 || knownOrigins.includes(originName)) {
+          origins.set(originName, { origin: originName, localStorage: entries })
+        }
       } catch {
         // Page context unavailable — skip this tab's storage.
       }
     }
+    for (const origin of knownOrigins) {
+      if (origins.has(origin)) continue
+      const captured = await this.readHiddenLocalStorage(profileName, origin)
+      if (captured) origins.set(captured.origin, captured)
+    }
+    if (profileName !== null && origins.size > 0) {
+      this.profiles().rememberOrigins(profileName, [...origins.keys()])
+    }
     return { cookies, origins: Array.from(origins.values()) }
+  }
+
+  private async readHiddenLocalStorage(
+    profileName: string | null,
+    origin: string,
+  ): Promise<BrowserProfileStorageOrigin | null> {
+    const view = this.createHiddenView?.(profilePartition(profileName))
+    if (!view) return null
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('timeout')), 10000)
+        view.webContents.once('did-finish-load', () => { clearTimeout(timer); resolve() })
+        view.webContents.once('did-fail-load', (_event, errorCode, errorDescription) => {
+          clearTimeout(timer)
+          reject(new Error(errorDescription || String(errorCode)))
+        })
+        void view.webContents.loadURL(origin + '/').catch(error => {
+          clearTimeout(timer)
+          reject(error)
+        })
+      })
+      const result = await view.webContents.executeJavaScript(`(() => {
+        const entries = []
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const key = localStorage.key(i)
+          if (key === null) continue
+          try { entries.push({ name: key, value: localStorage.getItem(key) || '' }) } catch { /* skip */ }
+        }
+        return { origin: location.origin, entries }
+      })()`, true) as { origin?: unknown; entries?: unknown }
+      const resultOrigin = typeof result?.origin === 'string' && result.origin ? result.origin : origin
+      // Sites commonly redirect signed-out requests to a central identity
+      // provider. That page belongs to another storage bucket and must never
+      // be attributed to (or exported as) the requested origin.
+      if (resultOrigin !== origin) return null
+      const entries = Array.isArray(result?.entries)
+        ? result.entries.flatMap(entry => {
+          if (typeof entry !== 'object' || entry === null) return []
+          const record = entry as Record<string, unknown>
+          if (typeof record.name !== 'string' || !record.name) return []
+          return [{ name: record.name, value: typeof record.value === 'string' ? record.value : String(record.value ?? '') }]
+        })
+        : []
+      return { origin: resultOrigin, localStorage: entries }
+    } catch {
+      return null
+    } finally {
+      if (!view.webContents.isDestroyed()) view.webContents.close({ waitForBeforeUnload: false })
+    }
   }
 
   /** Replace a profile's jar with this data: cookies wholesale, then
@@ -1352,6 +1429,9 @@ export class BrowserController {
     for (const origin of data.origins) {
       await this.applyLocalStorage(profileName, origin.origin, origin.localStorage)
     }
+    if (profileName !== null) {
+      this.profiles().replaceKnownOrigins(profileName, data.origins.map(origin => origin.origin))
+    }
   }
 
   /** Write localStorage entries for one origin: through a tab that is already
@@ -1364,13 +1444,14 @@ export class BrowserController {
     origin: string,
     items: Array<{ name: string; value: string }>,
   ): Promise<void> {
+    if (profileName !== null) this.profiles().rememberOrigins(profileName, [origin])
     const open = this.tabs.find(tab => {
       if (tab.profile !== profileName) return false
       try { return new URL(tab.view.webContents.getURL()).origin === origin } catch { return false }
     })
     if (open && !open.view.webContents.isDestroyed()) {
       try {
-        await open.view.webContents.executeJavaScript(this.localStorageApplyScript(items), true)
+        await open.view.webContents.executeJavaScript(this.localStorageApplyScript(origin, items), true)
         return
       } catch {
         // Fall through to a hidden page.
@@ -1386,9 +1467,12 @@ export class BrowserController {
           clearTimeout(timer)
           reject(new Error(errorDescription || String(errorCode)))
         })
-        void view.webContents.loadURL(origin + '/').catch(() => {})
+        void view.webContents.loadURL(origin + '/').catch(error => {
+          clearTimeout(timer)
+          reject(error)
+        })
       })
-      await view.webContents.executeJavaScript(this.localStorageApplyScript(items), true)
+      await view.webContents.executeJavaScript(this.localStorageApplyScript(origin, items), true)
     } catch {
       // Best-effort per origin.
     } finally {
@@ -1396,8 +1480,9 @@ export class BrowserController {
     }
   }
 
-  private localStorageApplyScript(items: Array<{ name: string; value: string }>): string {
+  private localStorageApplyScript(origin: string, items: Array<{ name: string; value: string }>): string {
     return `(() => {
+      if (location.origin !== ${JSON.stringify(origin)}) return false
       const items = ${JSON.stringify(items)}
       // Replace, don't layer: a page already open keeps its in-memory copy of
       // whatever storage the previous identity wrote, and a key the profile

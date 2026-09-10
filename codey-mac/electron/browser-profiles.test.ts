@@ -221,6 +221,40 @@ describe('BrowserProfileStore', () => {
     }
   })
 
+  it('normalizes and preserves the localStorage origin index', () => {
+    const { dir, store } = makeStore()
+    try {
+      store.writeMeta('work', null)
+      store.rememberOrigins('work', [
+        'https://app.example.com/path',
+        'https://app.example.com/other',
+        'http://localhost:3000/login',
+        'file:///tmp/not-web',
+        'not a url',
+      ])
+      expect(store.read('work').knownOrigins).toEqual([
+        'https://app.example.com',
+        'http://localhost:3000',
+      ])
+
+      // Metadata-only edits must not drop the index used by closed-tab export.
+      store.setAvatar('work', '💼')
+      store.setAutoSync('work', true)
+      store.setExcludedSites('work', ['example.com'])
+      store.touch('work')
+      store.writeMeta('work', null)
+      expect(store.read('work').knownOrigins).toEqual([
+        'https://app.example.com',
+        'http://localhost:3000',
+      ])
+
+      store.replaceKnownOrigins('work', ['https://replacement.example/path'])
+      expect(store.read('work').knownOrigins).toEqual(['https://replacement.example'])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('tracks the enabled profiles in a dot-file, one per line', () => {
     const { dir, store } = makeStore()
     try {

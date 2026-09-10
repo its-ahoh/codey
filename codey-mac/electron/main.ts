@@ -2529,15 +2529,27 @@ app.whenReady().then(async () => {
   const runAutoSync = async () => {
     if (autoSyncBusy) return
     const changed = [...pendingAutoSyncDomains]
-    pendingAutoSyncDomains.clear()
-    const doFullSync = pendingFullSync && completedFullSyncRevision < autoSyncRevision
-    pendingFullSync = false
+    // Freeze the generation and profile set this pass is actually syncing.
+    // Settings can change while Chrome is answering; success for the old
+    // generation must not accidentally acknowledge the newer one.
+    const passRevision = autoSyncRevision
+    const passProfiles = autoSyncProfileCache.map(profile => ({
+      name: profile.name,
+      excludedSites: [...profile.excludedSites],
+    }))
+    const doFullSync = pendingFullSync && completedFullSyncRevision < passRevision
     if ((!doFullSync && changed.length === 0) || !chromeCompanion?.status().connected) return
+    // Keep new notifications distinct from this in-flight batch. Failed work
+    // is merged back below; successful work cannot erase a later same-domain
+    // change that arrived while Chrome was exporting.
+    for (const domain of changed) pendingAutoSyncDomains.delete(domain)
 
     autoSyncBusy = true
+    let retryDelay = 1500
     try {
       let allChromeSites: string[] = []
       let fullSyncSucceeded = true
+      let syncSucceeded = true
       if (doFullSync) {
         try {
           allChromeSites = (await chromeCompanion.listSessionSites()).sites.map(entry => entry.site)
@@ -2547,10 +2559,26 @@ app.whenReady().then(async () => {
           sendToRenderer('gateway-log', `[browser] initial Chrome mirror failed: ${error instanceof Error ? error.message : String(error)}`)
         }
       }
-      for (const profile of autoSyncProfileCache) {
-        const sites = doFullSync
-          ? allChromeSites.filter(site => !profileExcludes(profile, site))
-          : changed.filter(domain => !profileExcludes(profile, domain))
+      for (const profile of passProfiles) {
+        let sites: string[]
+        if (doFullSync) {
+          try {
+            // Include sites already held by Codey. If Chrome deleted their
+            // final cookie while the extension was offline, they no longer
+            // appear in listSessionSites; requesting them explicitly lets the
+            // empty Chrome result clear those stale cookies on reconnect.
+            const existingSites = await browserController.profileSites(profile.name)
+            sites = [...new Set([...allChromeSites, ...existingSites])]
+              .filter(site => !profileExcludes(profile, site))
+          } catch (error) {
+            fullSyncSucceeded = false
+            syncSucceeded = false
+            sendToRenderer('gateway-log', `[browser] could not inspect "${profile.name}" before Chrome sync: ${error instanceof Error ? error.message : String(error)}`)
+            continue
+          }
+        } else {
+          sites = changed.filter(domain => !profileExcludes(profile, domain))
+        }
         if (sites.length === 0) continue
         try {
           const session = await chromeCompanion.exportSessionForSites([...sites])
@@ -2558,21 +2586,37 @@ app.whenReady().then(async () => {
             json: JSON.stringify({ cookies: session.cookies, origins: session.origins }),
           }, session.sites)
         } catch (error) {
+          syncSucceeded = false
           if (doFullSync) fullSyncSucceeded = false
           sendToRenderer('gateway-log', `[browser] auto-sync of "${profile.name}" failed: ${error instanceof Error ? error.message : String(error)}`)
         }
       }
-      if (doFullSync && fullSyncSucceeded) completedFullSyncRevision = autoSyncRevision
-      else if (doFullSync) pendingFullSync = true
+      if (doFullSync && fullSyncSucceeded) completedFullSyncRevision = Math.max(completedFullSyncRevision, passRevision)
+      else if (doFullSync) {
+        pendingFullSync = true
+        retryDelay = 5000
+      }
+      if (syncSucceeded && fullSyncSucceeded) {
+        if (doFullSync) pendingFullSync = completedFullSyncRevision < autoSyncRevision
+      } else {
+        for (const domain of changed) pendingAutoSyncDomains.add(domain)
+        retryDelay = 5000
+      }
     } finally {
       autoSyncBusy = false
-      if ((pendingFullSync || pendingAutoSyncDomains.size > 0) && !autoSyncTimer) scheduleAutoSync()
+      if ((pendingFullSync || pendingAutoSyncDomains.size > 0) && !autoSyncTimer) scheduleAutoSync(retryDelay)
     }
   }
   chromeCompanion?.setAutoSync({
     watchDomains: () => (autoSyncProfileCache.length === 0 ? null : ['*']),
     excludedDomains: () => sharedExclusionCache,
     revision: () => autoSyncRevision,
+    onConnected: () => {
+      if (autoSyncProfileCache.length === 0) return
+      completedFullSyncRevision = Math.min(completedFullSyncRevision, autoSyncRevision - 1)
+      pendingFullSync = true
+      if (!autoSyncTimer) scheduleAutoSync(100)
+    },
     onPoll: () => {
       if (autoSyncProfileCache.length > 0 && completedFullSyncRevision < autoSyncRevision) {
         pendingFullSync = true

@@ -758,7 +758,11 @@ let watchDomains = []
 let excludedDomains = []
 let syncRevision = 0
 let changedDomains = new Set()
+let changedDomainVersions = new Map()
 let changedFlushTimer = null
+let changedRetryDelay = 2000
+let changedReportInFlight = false
+let changedPersistQueue = Promise.resolve()
 let lastStorageScanAt = 0
 const storageFingerprints = new Map()
 
@@ -782,27 +786,80 @@ async function noteAutoSyncConfig(domains, exclusions, revision) {
 }
 
 async function restoreAutoSyncConfig() {
-  const saved = await chrome.storage.local.get({ watchDomains: [], excludedDomains: [], syncRevision: 0 })
+  const saved = await chrome.storage.local.get({
+    watchDomains: [], excludedDomains: [], syncRevision: 0, pendingChangedDomains: [],
+  })
   watchDomains = Array.isArray(saved.watchDomains) ? saved.watchDomains : []
   excludedDomains = Array.isArray(saved.excludedDomains) ? saved.excludedDomains : []
   syncRevision = Number.isSafeInteger(saved.syncRevision) ? saved.syncRevision : 0
+  for (const domain of Array.isArray(saved.pendingChangedDomains) ? saved.pendingChangedDomains : []) {
+    if (typeof domain !== 'string' || !domain) continue
+    changedDomains.add(domain)
+    if (!changedDomainVersions.has(domain)) changedDomainVersions.set(domain, 1)
+  }
 }
 
-function scheduleChangedReport() {
+function persistChangedDomains() {
+  const pendingChangedDomains = [...changedDomains]
+  // Cookie and storage listeners may overlap. Serialize snapshots so an older
+  // write cannot finish last and overwrite a newer queue.
+  changedPersistQueue = changedPersistQueue
+    .catch(() => {})
+    .then(() => chrome.storage.local.set({ pendingChangedDomains }))
+  return changedPersistQueue
+}
+
+async function noteChangedDomain(domain) {
+  changedDomains.add(domain)
+  changedDomainVersions.set(domain, (changedDomainVersions.get(domain) || 0) + 1)
+  // A Manifest V3 worker can be suspended between retry timers. Persist before
+  // reporting so an unavailable Codey app cannot turn suspension into loss.
+  await persistChangedDomains()
+}
+
+function scheduleChangedReport(delay = 2000) {
   if (changedFlushTimer) clearTimeout(changedFlushTimer)
   changedFlushTimer = setTimeout(() => {
     changedFlushTimer = null
     runSafely(reportChangedDomains)
-  }, 2000)
+  }, delay)
 }
 
 async function reportChangedDomains() {
-  const domains = [...changedDomains]
-  changedDomains.clear()
-  if (domains.length === 0) return
-  const { endpoint, token } = await settings()
-  if (!token) return
-  await call(endpoint, '/v1/session/changed', { token, body: { domains } })
+  if (changedReportInFlight) return
+  const batch = [...changedDomains].map(domain => [domain, changedDomainVersions.get(domain) || 0])
+  if (batch.length === 0) return
+  changedReportInFlight = true
+  const acknowledged = []
+  try {
+    const { endpoint, token } = await settings()
+    if (!token) throw new Error('Chrome companion is not connected')
+    await call(endpoint, '/v1/session/changed', { token, body: { domains: batch.map(([domain]) => domain) } })
+    // A second change can arrive while the request is in flight. Acknowledge
+    // only the exact version sent; the newer one stays queued for another pass.
+    for (const [domain, version] of batch) {
+      if (changedDomainVersions.get(domain) !== version) continue
+      changedDomains.delete(domain)
+      changedDomainVersions.delete(domain)
+      acknowledged.push([domain, version])
+    }
+    await persistChangedDomains()
+    changedRetryDelay = 2000
+  } catch (error) {
+    // If acknowledging the durable queue failed after the HTTP request, keep
+    // the batch in memory too. A duplicate report is safe; a lost report is not.
+    for (const [domain, version] of acknowledged) {
+      if (changedDomains.has(domain)) continue
+      changedDomains.add(domain)
+      changedDomainVersions.set(domain, version)
+    }
+    if (acknowledged.length > 0) void persistChangedDomains().catch(() => {})
+    changedRetryDelay = Math.min(changedRetryDelay * 2, 30000)
+    throw error
+  } finally {
+    changedReportInFlight = false
+    if (changedDomains.size > 0) scheduleChangedReport(changedRetryDelay)
+  }
 }
 
 /** Return only an origin, item count and a truncated SHA-256 fingerprint.
@@ -830,6 +887,7 @@ async function scanOpenTabStorage() {
   if (Date.now() - lastStorageScanAt < STORAGE_SCAN_INTERVAL_MS) return
   lastStorageScanAt = Date.now()
   const seenOrigins = new Set()
+  const changedSites = new Set()
   for (const tab of await chrome.tabs.query({})) {
     if (typeof tab.id !== 'number' || !/^https?:\/\//i.test(tab.url || '')) continue
     let parsed
@@ -842,10 +900,11 @@ async function scanOpenTabStorage() {
       const previous = storageFingerprints.get(current.origin)
       storageFingerprints.set(current.origin, current.fingerprint)
       if ((previous === undefined && current.count > 0) || (previous !== undefined && previous !== current.fingerprint)) {
-        changedDomains.add(siteOfHost(parsed.hostname))
+        changedSites.add(siteOfHost(parsed.hostname))
       }
     } catch { /* protected pages and tabs closed mid-scan are simply skipped */ }
   }
+  for (const site of changedSites) await noteChangedDomain(site)
   if (changedDomains.size > 0) scheduleChangedReport()
 }
 
@@ -856,7 +915,7 @@ chrome.cookies.onChanged.addListener(({ cookie }) => {
     // The worker may have restarted since the last poll delivered the list.
     if (watchDomains.length === 0) await restoreAutoSyncConfig()
     if (!watchesDomain(host, watchDomains, excludedDomains)) return
-    changedDomains.add(host)
+    await noteChangedDomain(host)
     // A login flow sets a burst of cookies; report the burst once.
     scheduleChangedReport()
   })
@@ -880,6 +939,7 @@ async function pollOnce() {
     await noteAutoSyncConfig(response.watchDomains, response.excludedDomains, response.syncRevision)
   }
   await scanOpenTabStorage()
+  if (changedDomains.size > 0 && !changedFlushTimer) scheduleChangedReport(0)
   if (!response.command) return true
   const command = response.command
   try {
@@ -981,6 +1041,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true
 })
 
-runSafely(async () => { await restoreAccent(); await restoreControlledTab() })
+runSafely(async () => {
+  await restoreAccent()
+  await restoreControlledTab()
+  await restoreAutoSyncConfig()
+  if (changedDomains.size > 0) scheduleChangedReport(0)
+})
 runSafely(configureSidePanel)
 runSafely(pollLoop)

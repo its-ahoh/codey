@@ -431,6 +431,40 @@ describe('BrowserController agent controls', () => {
     expect(onState).toHaveBeenCalledWith(expect.objectContaining({ url: '', title: 'New tab' }))
   })
 
+  it('clears the default jar and every saved profile jar during a session reset', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-reset-jars-'))
+    try {
+      const store = new BrowserProfileStore(dir)
+      store.writeMeta('work', null)
+      store.writeMeta('personal', null)
+      store.rememberOrigins('work', ['https://app.example.com'])
+      const cleared: string[] = []
+      const controller = new BrowserController(
+        () => null,
+        vi.fn(),
+        vi.fn(),
+        undefined,
+        (partition: string) => ({
+          clearStorageData: vi.fn(async () => { cleared.push(`${partition}:storage`) }),
+          clearCache: vi.fn(async () => { cleared.push(`${partition}:cache`) }),
+          clearAuthCache: vi.fn(async () => { cleared.push(`${partition}:auth`) }),
+        }) as any,
+        { getProfilesDir: () => dir },
+      )
+
+      await controller.resetSession()
+
+      expect(new Set(cleared)).toEqual(new Set([
+        'persist:codey-browser:storage', 'persist:codey-browser:cache', 'persist:codey-browser:auth',
+        'persist:codey-profile-work:storage', 'persist:codey-profile-work:cache', 'persist:codey-profile-work:auth',
+        'persist:codey-profile-personal:storage', 'persist:codey-profile-personal:cache', 'persist:codey-profile-personal:auth',
+      ]))
+      expect(store.read('work').knownOrigins).toEqual([])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('delegates Electron website permission checks and requests to the per-site gate', async () => {
     let checkHandler: ((...args: any[]) => boolean) | undefined
     let requestHandler: ((...args: any[]) => void) | undefined
@@ -507,9 +541,13 @@ describe('BrowserController profiles', () => {
     const cookiesSet = vi.fn(async () => {})
     const cookiesRemove = vi.fn(async () => {})
     const clearStorage = vi.fn(async () => {})
+    const clearCache = vi.fn(async () => {})
+    const clearAuthCache = vi.fn(async () => {})
     const session = overrides.session ?? {
       cookies: { get: cookiesGet, set: cookiesSet, remove: cookiesRemove },
       clearStorageData: clearStorage,
+      clearCache,
+      clearAuthCache,
     }
     const contents = {
       isDestroyed: vi.fn(() => false),
@@ -534,7 +572,10 @@ describe('BrowserController profiles', () => {
     )
     ;(controller as any).tabs = tabs
     ;(controller as any).view = tabs[0]?.view ?? null
-    return { controller, session, contents, cookiesGet, cookiesSet, cookiesRemove, clearStorage }
+    return {
+      controller, session, contents, cookiesGet, cookiesSet, cookiesRemove,
+      clearStorage, clearCache, clearAuthCache,
+    }
   }
 
   it('asks for a different session per profile', async () => {
@@ -930,8 +971,9 @@ describe('BrowserController profiles', () => {
         origins: [{ origin: 'https://example.com', localStorage: [] }],
       }) }, ['example.com'])
 
-      expect(hidden.webContents.executeJavaScript).toHaveBeenCalledOnce()
+      expect(hidden.webContents.executeJavaScript).toHaveBeenCalled()
       expect(hidden.webContents.executeJavaScript.mock.calls[0][0]).toContain('localStorage.clear()')
+      expect(new BrowserProfileStore(dir).read('work').knownOrigins).toEqual(['https://example.com'])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -1171,7 +1213,9 @@ describe('BrowserController profiles', () => {
   it('re-picking the current default changes nothing, and delete clears it', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-profiles-'))
     try {
-      const { controller, cookiesSet, cookiesRemove } = makeFixture(dir)
+      const {
+        controller, cookiesSet, cookiesRemove, clearStorage, clearCache, clearAuthCache,
+      } = makeFixture(dir)
       await controller.importProfile('work', { json: '{"cookies":[]}' }, true)
       expect(controller.activeProfileName()).toBe('work')
       cookiesRemove.mockClear()
@@ -1180,6 +1224,9 @@ describe('BrowserController profiles', () => {
       expect(summary?.active).toBe(true)
       expect(cookiesRemove).not.toHaveBeenCalled()
       await controller.deleteProfile('work')
+      expect(clearStorage).toHaveBeenCalled()
+      expect(clearCache).toHaveBeenCalled()
+      expect(clearAuthCache).toHaveBeenCalled()
       expect(controller.activeProfileName()).toBeNull()
       expect(await controller.listProfiles()).toEqual([])
     } finally {
@@ -1198,6 +1245,86 @@ describe('BrowserController profiles', () => {
       expect(JSON.parse(fs.readFileSync(out, 'utf8')).name).toBe('work')
       fs.rmSync(out, { force: true })
     } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('exports localStorage from indexed origins after their tabs are closed', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-export-storage-'))
+    const out = path.join(dir, '..', 'exported-storage.json')
+    try {
+      const hidden = {
+        webContents: {
+          isDestroyed: vi.fn(() => false),
+          once: vi.fn((event: string, cb: () => void) => { if (event === 'did-finish-load') cb() }),
+          loadURL: vi.fn(async () => {}),
+          executeJavaScript: vi.fn(async () => ({
+            origin: 'https://app.example.com',
+            entries: [{ name: 'token', value: 'persisted' }],
+          })),
+          close: vi.fn(),
+        },
+      }
+      const controller = new BrowserController(
+        () => null,
+        vi.fn(),
+        vi.fn(),
+        undefined,
+        () => ({ cookies: { get: vi.fn(async () => []) } }) as any,
+        { getProfilesDir: () => dir, createHiddenView: () => hidden as any },
+      )
+      const store = new BrowserProfileStore(dir)
+      store.writeMeta('work', null)
+      store.rememberOrigins('work', ['https://app.example.com'])
+
+      await controller.exportProfile('work', out)
+
+      expect(JSON.parse(fs.readFileSync(out, 'utf8')).origins).toEqual([{
+        origin: 'https://app.example.com',
+        localStorage: [{ name: 'token', value: 'persisted' }],
+      }])
+      expect(hidden.webContents.loadURL).toHaveBeenCalledWith('https://app.example.com/')
+      expect(hidden.webContents.close).toHaveBeenCalled()
+    } finally {
+      fs.rmSync(out, { force: true })
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not export localStorage from a cross-origin sign-in redirect', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-export-redirect-'))
+    const out = path.join(dir, '..', 'exported-redirect.json')
+    try {
+      const hidden = {
+        webContents: {
+          isDestroyed: vi.fn(() => false),
+          once: vi.fn((event: string, cb: () => void) => { if (event === 'did-finish-load') cb() }),
+          loadURL: vi.fn(async () => {}),
+          executeJavaScript: vi.fn(async () => ({
+            origin: 'https://login.example.net',
+            entries: [{ name: 'token', value: 'not-the-requested-site' }],
+          })),
+          close: vi.fn(),
+        },
+      }
+      const controller = new BrowserController(
+        () => null,
+        vi.fn(),
+        vi.fn(),
+        undefined,
+        () => ({ cookies: { get: vi.fn(async () => []) } }) as any,
+        { getProfilesDir: () => dir, createHiddenView: () => hidden as any },
+      )
+      const store = new BrowserProfileStore(dir)
+      store.writeMeta('work', null)
+      store.rememberOrigins('work', ['https://app.example.com'])
+
+      await controller.exportProfile('work', out)
+
+      expect(JSON.parse(fs.readFileSync(out, 'utf8')).origins).toEqual([])
+      expect(hidden.webContents.close).toHaveBeenCalled()
+    } finally {
+      fs.rmSync(out, { force: true })
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })

@@ -179,6 +179,7 @@ export interface ChromeAutoSyncHooks {
   excludedDomains?: () => string[]
   revision?: () => number
   onPoll?: () => void
+  onConnected?: () => void
   onSessionChanged: (domains: string[]) => void
 }
 
@@ -510,8 +511,15 @@ export class ChromeCompanionBridge {
   }
 
   private touch(): void {
+    const wasConnected = this.status().connected
     this.lastSeenAt = Date.now()
     this.emitStatus()
+    if (!wasConnected) this.notifyConnected()
+  }
+
+  private notifyConnected(): void {
+    if (!this.autoSync?.onConnected) return
+    void Promise.resolve().then(() => this.autoSync?.onConnected?.()).catch(() => { /* advisory hook */ })
   }
 
   private async handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
@@ -559,6 +567,7 @@ export class ChromeCompanionBridge {
         this.lastSeenAt = Date.now()
         this.persistPairing()
         this.emitStatus()
+        this.notifyConnected()
         this.reply(request, response, 200, {
           ok: true,
           token: this.token,

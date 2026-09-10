@@ -63,6 +63,10 @@ export interface BrowserProfileMeta {
   autoSync?: boolean
   /** Chrome sites this profile must never refresh from automatically. */
   excludedSites: string[]
+  /** Origins whose localStorage belongs to this partition. Electron exposes
+   *  no API for enumerating them, so this index lets exports read origins
+   *  again after their tabs have closed. Empty storage is indexed too. */
+  knownOrigins: string[]
   createdAt: number
   updatedAt: number
   sourceUrl: string | null
@@ -308,6 +312,21 @@ function normalizeExcludedSites(value: unknown): string[] {
   return sites
 }
 
+function normalizeKnownOrigins(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const origins: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue
+    try {
+      const parsed = new URL(entry)
+      if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && !origins.includes(parsed.origin)) {
+        origins.push(parsed.origin)
+      }
+    } catch { /* ignore damaged metadata */ }
+  }
+  return origins
+}
+
 /** What one site inside a profile holds, described without the secrets. Cookie
  *  and localStorage *values* are deliberately absent: the point is to let
  *  someone see which logins a profile carries, not to hand the logins to a
@@ -417,6 +436,7 @@ export class BrowserProfileStore {
         : null,
       autoSync: record.autoSync === true,
       excludedSites: normalizeExcludedSites(record.excludedSites),
+      knownOrigins: normalizeKnownOrigins(record.knownOrigins),
       createdAt: typeof record.createdAt === 'number' ? record.createdAt : 0,
       updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : 0,
       sourceUrl: typeof record.sourceUrl === 'string' ? record.sourceUrl : null,
@@ -439,6 +459,7 @@ export class BrowserProfileStore {
       avatar: existing?.avatar ?? null,
       autoSync: existing?.autoSync === true,
       excludedSites: existing?.excludedSites ?? [],
+      knownOrigins: existing?.knownOrigins ?? [],
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       sourceUrl: sourceUrl ?? existing?.sourceUrl ?? null,
@@ -452,6 +473,28 @@ export class BrowserProfileStore {
   touch(name: string, now = Date.now()): BrowserProfileMeta {
     const meta = this.read(name)
     const next = { ...meta, schema: PROFILE_SCHEMA, updatedAt: now }
+    this.writeRecord(name, next)
+    return next
+  }
+
+  /** Remember origins without moving updatedAt: maintaining the storage index
+   *  is bookkeeping, not a user-visible session refresh. */
+  rememberOrigins(name: string, origins: readonly string[]): BrowserProfileMeta {
+    const meta = this.read(name)
+    const knownOrigins = normalizeKnownOrigins([...meta.knownOrigins, ...origins])
+    if (knownOrigins.length === meta.knownOrigins.length
+      && knownOrigins.every((origin, index) => origin === meta.knownOrigins[index])) return meta
+    const next = { ...meta, schema: PROFILE_SCHEMA, knownOrigins }
+    this.writeRecord(name, next)
+    return next
+  }
+
+  /** Replace the index after a whole-jar import. Origins absent from that
+   *  snapshot were cleared from the partition and must not linger as sites. */
+  replaceKnownOrigins(name: string, origins: readonly string[]): BrowserProfileMeta {
+    const meta = this.read(name)
+    const knownOrigins = normalizeKnownOrigins(origins)
+    const next = { ...meta, schema: PROFILE_SCHEMA, knownOrigins }
     this.writeRecord(name, next)
     return next
   }

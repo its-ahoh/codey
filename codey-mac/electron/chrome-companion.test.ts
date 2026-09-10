@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CHROME_COMPANION_EXTENSION_ID,
   ChromeCompanionBridge,
@@ -210,6 +210,39 @@ describe('ChromeCompanionBridge', () => {
     })
     expect(anonymous.status).toBe(401)
     expect(reported).toHaveLength(1)
+  })
+
+  it('notifies auto-sync when an authorized client reconnects after the heartbeat expires', async () => {
+    const { bridge, endpoint } = await setup()
+    const token = await connect(endpoint)
+    const reconnected = vi.fn()
+    bridge.setAutoSync({
+      watchDomains: () => ['*'],
+      onConnected: reconnected,
+      onSessionChanged: () => {},
+    })
+    ;(bridge as any).lastSeenAt = Date.now() - 60_000
+
+    await fetch(`${endpoint}/v1/poll`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    await vi.waitFor(() => expect(reconnected).toHaveBeenCalledOnce())
+  })
+
+  it('notifies auto-sync when the extension establishes a new pairing', async () => {
+    const { bridge, endpoint } = await setup()
+    const connected = vi.fn()
+    bridge.setAutoSync({
+      watchDomains: () => ['*'],
+      onConnected: connected,
+      onSessionChanged: () => {},
+    })
+
+    await connect(endpoint)
+
+    await vi.waitFor(() => expect(connected).toHaveBeenCalledOnce())
   })
 
   it('lists Chrome\'s signed-in sites and exports only the ones picked', async () => {
