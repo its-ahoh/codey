@@ -131,7 +131,6 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
     if (profile.originCount > 0) bits.push(`${profile.originCount} site${profile.originCount === 1 ? '' : 's'}`)
     const when = formatWhen(profile.updatedAt)
     if (when) bits.push(`updated ${when}`)
-    if (profile.autoSync) bits.push('syncs with Chrome')
     if (profile.active) bits.push('active')
     return bits.join(' · ')
   }
@@ -191,24 +190,6 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
           {!compact && <div style={styles.emptyIcon}><UIIcon name="users" size={16} /></div>}
           <span>No profiles yet — save this session or import a session file to get started.</span>
         </div>
-      )}
-
-      {profiles.length > 0 && (
-        <button
-          type="button"
-          role="radio"
-          aria-checked={!profiles.some(profile => profile.active)}
-          disabled={busy}
-          onClick={() => void run(() => window.codey.browser.profiles.setDefault(null))}
-          style={{
-            ...styles.defaultChoice,
-            ...(!profiles.some(profile => profile.active) ? styles.defaultChoiceActive : null),
-          }}
-          title="Browse without a saved profile"
-        >
-          <span aria-hidden="true">{profiles.some(profile => profile.active) ? '○' : '●'}</span>
-          No profile
-        </button>
       )}
 
       {profiles.map(profile => (
@@ -280,18 +261,15 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
                   : 'Not linked to Chrome'}
               </button>
             </div>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={profile.active}
-              disabled={busy}
-              onClick={() => void run(() => window.codey.browser.profiles.setDefault(profile.name))}
-              style={{ ...styles.defaultChoice, ...(profile.active ? styles.defaultChoiceActive : null) }}
-              title={`Browse as ${profile.name}`}
-            >
-              <span aria-hidden="true">{profile.active ? '●' : '○'}</span>
-              {profile.active ? 'Active' : 'Activate'}
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }} title="Enabled profiles can be invoked by an agent and opened in tabs">
+              <span style={{ color: C.fg3, fontSize: 10 }}>Active</span>
+              <Toggle
+                on={profile.active}
+                disabled={busy}
+                onChange={next => void run(() => window.codey.browser.profiles.setActive(profile.name, next))}
+                label={`Enable ${profile.name}`}
+              />
+            </div>
             {confirmDelete === profile.name ? (
               <button
                 type="button"
@@ -386,14 +364,8 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               </label>
               <div style={styles.syncRow}>
                 <span style={styles.syncCopy}>
-                  Mirror Chrome automatically — new sites, cookie changes, and localStorage from open Chrome tabs flow into this profile.
+                  Active profiles mirror their linked Chrome automatically — new sites, cookie changes, and localStorage from open Chrome tabs flow into this profile.
                 </span>
-                <Toggle
-                  on={profile.autoSync}
-                  disabled={busy}
-                  onChange={next => void run(() => window.codey.browser.profiles.setAutoSync(profile.name, next))}
-                  label={`Keep ${profile.name} in sync with Chrome`}
-                />
               </div>
             </div>
           )}

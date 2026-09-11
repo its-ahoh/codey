@@ -53,29 +53,32 @@ a task or carry a session to another machine.
 
 Profiles are isolated: each one has its own cookie jar, so two profiles can be
 signed into the same site at once and a login made inside a profile stays
-there without a save step. The user chooses which profile new tabs open under
-by default - you can see the set and open your own tab in one, but you cannot
-change their default for them.
+there without a save step. A profile is **active** when the user has enabled
+it; active profiles also mirror their linked Chrome automatically. Several can
+be active at once - you can read the set but you cannot enable or disable one
+for the user.
 
-- `profile list` - saved profiles, with the active one flagged
+- `profile list` - saved profiles, with the active ones flagged
 - `profile save <name>` - snapshot the current session into a named profile
 - `profile import <path> [name]` - import a session file (a Codey profile or
   a Playwright storageState JSON) into a profile's jar
-- `profile default <name>` - choose the active profile
+- `profile activate <name> [on|off]` - enable or disable a profile
 - `profile delete <name>` - remove a saved profile
 
-To open a tab in a specific profile, put `--profile <name>` before a command
-that opens a tab. That tab runs on that profile's jar alone, so a task meant
-for one identity cannot reach for another's cookies. No other tab changes, so
-nothing needs approving:
+To act as a specific profile, put `--profile <name>` before the command. The
+tab you open runs on that profile's jar alone, and Chrome commands (`chrome
+…`) target the Chrome linked to it. No other tab changes, so nothing needs
+approving:
 
 ```
 ELECTRON_RUN_AS_NODE=1 "$CODEY_BROWSER_RUNTIME" "$CODEY_BROWSER_CLI" --profile work new-tab "https://github.com"
 ```
 
 Every command after that acts on whichever tab is visible, so keep working in
-the tab you just opened. `state` reports the default profile, and `tabs`
-reports the profile each tab belongs to.
+the tab you just opened. `state` reports the current tab's profile, and
+`tabs` reports the profile each tab belongs to. With no `--profile`, a Chrome
+command targets the Chrome linked to the current tab's profile; with no tab
+or an inactive/unlinked profile it fails with a named error.
 
 ## Rules
 

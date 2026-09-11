@@ -2276,7 +2276,6 @@ app.whenReady().then(async () => {
           profiles: (await browserController.listProfiles()).map(profile => ({
             name: profile.name,
             active: profile.active,
-            autoSync: profile.autoSync,
             holdsSite: holds.has(profile.name),
             linked: profile.chromeProfileId === profileId,
           })),
@@ -2340,11 +2339,12 @@ app.whenReady().then(async () => {
     console.warn(`[browser] Chrome companion unavailable: ${error instanceof Error ? error.message : String(error)}`)
   }
   // Commands Codey starts - screenshots, navigation, agent `chrome` actions -
-  // go to the Chrome profile linked to the currently active Codey browser
-  // profile. The named failures say what to fix instead of a generic error.
+  // go to the Chrome profile linked to the profile of the tab currently on
+  // screen. The named failures say what to fix instead of a generic error.
   chromeCompanion.setTargetResolver(() => {
-    const name = browserController.activeProfileName()
+    const name = browserController.currentTabProfile()
     if (!name) throw new Error('Activate a browser profile first')
+    if (!browserController.isActiveProfile(name)) throw new Error(`Profile "${name}" is not active`)
     const binding = browserController.chromeBindingForProfile(name)
     if (!binding) throw new Error(`Profile "${name}" is not linked to a Chrome profile`)
     const client = chromeCompanion!.clients().find(entry => entry.profileId === binding.profileId)
@@ -2450,7 +2450,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('browser:newTab', (event, url?: string, profile?: string | null) =>
     browserCall(event, () => browserController.newTab(
       url,
-      profile === undefined ? browserController.activeProfileName() : profile,
+      profile === undefined ? browserController.currentTabProfile() : profile,
     )))
   ipcMain.handle('browser:switchTab', (event, id: string) => browserCall(event, () => browserController.switchTab(id)))
   ipcMain.handle('browser:closeTab', (event, id: string) => browserCall(event, () => browserController.closeTab(id)))
@@ -2463,7 +2463,6 @@ app.whenReady().then(async () => {
   // Browser profiles: saved/imported sessions the renderer (browser toolbar
   // and Settings) manages through the same controller the agents use.
   ipcMain.handle('browser:profiles:list', event => browserCall(event, async () => ({
-    active: browserController.activeProfileName(),
     profiles: await browserController.listProfiles(),
   })))
   ipcMain.handle('browser:profiles:save', (event, name: string) =>
@@ -2472,10 +2471,16 @@ app.whenReady().then(async () => {
       await refreshWatchDomains()
       return result
     }))
-  // Which profile new tabs open under. Open tabs keep the jar they were born
-  // on, so this disturbs nothing that is already on screen.
-  ipcMain.handle('browser:profiles:setDefault', (event, name: string | null) =>
-    browserCall(event, () => browserController.setDefaultProfile(name === null ? null : String(name || ''))))
+  // Enable or disable a profile. Enabled profiles can be invoked; several can
+  // be on at once. Open tabs keep the jar they were born on, so this disturbs
+  // nothing that is already on screen.
+  ipcMain.handle('browser:profiles:setActive', (event, name: string, enabled: boolean) =>
+    browserCall(event, async () => {
+      const result = await browserController.setActiveProfile(String(name || ''), enabled === true)
+      // Activating a bound profile starts mirroring it; deactivating stops.
+      await refreshWatchDomains()
+      return result
+    }))
   // What a profile holds, for the disclosure in Settings > Profiles. Cookie and
   // storage values never come back - the window has no use for them.
   ipcMain.handle('browser:profiles:contents', (event, name: string) =>
@@ -2519,7 +2524,7 @@ app.whenReady().then(async () => {
   const refreshWatchDomains = async () => {
     const generation = (autoSyncConfigGeneration += 1)
     const profiles = (await browserController.listProfiles())
-      .filter(profile => profile.autoSync && !!profile.chromeProfileId)
+      .filter(profile => profile.active && !!profile.chromeProfileId)
     if (generation !== autoSyncConfigGeneration) return
     const liveIds = new Set<string>()
     for (const profile of profiles) {
@@ -2663,14 +2668,6 @@ app.whenReady().then(async () => {
     },
   })
   void refreshWatchDomains()
-  ipcMain.handle('browser:profiles:setAutoSync', (event, name: string, enabled: boolean) =>
-    browserCall(event, async () => {
-      const result = await browserController.setProfileAutoSync(String(name || ''), enabled === true)
-      // Turning the switch on changes the extension from idle to whole-Chrome
-      // watching and schedules an initial catch-up pass.
-      await refreshWatchDomains()
-      return result
-    }))
   ipcMain.handle('browser:profiles:setExcludedSites', (event, name: string, sites: string[]) =>
     browserCall(event, async () => {
       const result = browserController.setProfileExcludedSites(String(name || ''), Array.isArray(sites) ? sites : [])

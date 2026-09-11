@@ -178,7 +178,7 @@ export interface ChromeCompanionFeatures {
    * that asked. Names and flags only - never session contents.
    */
   profilesOverview: (hostname: string | undefined, profileId: string | null) => Promise<{
-    profiles: Array<{ name: string; active: boolean; autoSync: boolean; holdsSite: boolean; linked: boolean }>
+    profiles: Array<{ name: string; active: boolean; holdsSite: boolean; linked: boolean }>
   }>
 }
 

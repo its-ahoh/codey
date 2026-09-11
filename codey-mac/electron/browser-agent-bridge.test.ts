@@ -42,7 +42,7 @@ function call(
 
 describe('BrowserAgentBridge', () => {
   it('authenticates agent commands and controls the shared browser', async () => {
-    const state = { url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, error: null }
+    const state = { url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, error: null, profile: null }
     const page = {
       url: state.url, title: state.title, description: '', text: 'Hello from the page',
       performance: { domContentLoadedMs: 20, loadMs: 30, transferBytes: 100 },
@@ -92,17 +92,19 @@ describe('BrowserAgentBridge', () => {
       closeTab: vi.fn(() => state),
       submit: vi.fn(async ref => ({ ok: true as const, url: state.url, message: `Submitted ${ref}` })),
       listProfiles: vi.fn(async () => []),
-      activeProfileName: vi.fn(() => null),
+      currentTabProfile: vi.fn(() => null),
+      isActiveProfile: vi.fn(() => false),
+      chromeBindingForProfile: vi.fn(() => null),
       saveProfile: vi.fn(async name => ({
-        name, active: false, autoSync: false, excludedSites: [], chromeProfileId: null, chromeProfileLabel: null, cookieCount: 0, originCount: 0,
+        name, active: false, excludedSites: [], chromeProfileId: null, chromeProfileLabel: null, cookieCount: 0, originCount: 0,
         createdAt: 1, updatedAt: 1, sourceUrl: null,
       })),
       importProfile: vi.fn(async name => ({
-        name, active: false, autoSync: false, excludedSites: [], chromeProfileId: null, chromeProfileLabel: null, cookieCount: 0, originCount: 0,
+        name, active: false, excludedSites: [], chromeProfileId: null, chromeProfileLabel: null, cookieCount: 0, originCount: 0,
         createdAt: 1, updatedAt: 1, sourceUrl: null,
       })),
-      setDefaultProfile: vi.fn(async (name: string | null) => name === null ? null : ({
-        name, active: true, autoSync: false, excludedSites: [], chromeProfileId: null, chromeProfileLabel: null, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null,
+      setActiveProfile: vi.fn(async name => ({
+        name, active: true, excludedSites: [], chromeProfileId: null, chromeProfileLabel: null, cookieCount: 0, originCount: 0, createdAt: 1, updatedAt: 1, sourceUrl: null,
       })),
       deleteProfile: vi.fn(async () => ({ deleted: true })),
     }
@@ -152,20 +154,20 @@ describe('BrowserAgentBridge', () => {
       expect(chromeViewed.body.text).toBe('Signed in through Chrome')
       const chromeOpened = await call(info, 'POST', '/chrome/open', { url: 'https://github.com' }, info.chromeToken)
       expect(chromeOpened.body.url).toBe('https://github.com')
-      expect(companion.navigate).toHaveBeenCalledWith('https://github.com')
+      expect(companion.navigate).toHaveBeenCalledWith('https://github.com', null)
 
       // Acting on the real Chrome page asks about Chrome's URL, not the
       // embedded browser's, so the approval prompt names the page being changed.
       const chromeClicked = await call(info, 'POST', '/chrome/click', { ref: 'e4' }, info.chromeToken)
       expect(chromeClicked.status).toBe(200)
-      expect(companion.act).toHaveBeenCalledWith('click', 'e4', undefined)
+      expect(companion.act).toHaveBeenCalledWith('click', 'e4', undefined, null)
       expect(requestControl).toHaveBeenLastCalledWith({
         command: 'chrome click', url: 'https://example.com/account', surface: 'chrome', level: 'write',
       })
 
       const chromeFilled = await call(info, 'POST', '/chrome/fill', { ref: 'e5', value: 'hello' }, info.chromeToken)
       expect(chromeFilled.status).toBe(200)
-      expect(companion.act).toHaveBeenLastCalledWith('fill', 'e5', 'hello')
+      expect(companion.act).toHaveBeenLastCalledWith('fill', 'e5', 'hello', null)
 
       // A denied action must never reach Chrome.
       requestControl.mockResolvedValueOnce(false)
@@ -223,9 +225,9 @@ describe('BrowserAgentBridge', () => {
       // The import lands in that profile's own jar, so there is nothing to approve.
       expect(requestControl).not.toHaveBeenCalledWith(expect.objectContaining({ command: 'activate-profile' }))
 
-      const madeDefault = await call(info, 'POST', '/profile/default', { name: 'work' })
-      expect(madeDefault.status).toBe(200)
-      expect(controller.setDefaultProfile).toHaveBeenCalledWith('work')
+      const activated = await call(info, 'POST', '/profile/activate', { name: 'work' })
+      expect(activated.status).toBe(200)
+      expect(controller.setActiveProfile).toHaveBeenCalledWith('work', true)
 
       const deleted = await call(info, 'POST', '/profile/delete', { name: 'work' })
       expect(deleted.body).toEqual({ deleted: true })
@@ -291,7 +293,7 @@ describe('BrowserAgentBridge', () => {
         },
       })
       expect(JSON.parse(profileCli.stdout).text).toBe('Hello from the page')
-      expect(controller.setDefaultProfile).not.toHaveBeenCalledWith('cli')
+      expect(controller.setActiveProfile).not.toHaveBeenCalledWith('cli')
       expect(requestControl).not.toHaveBeenCalledWith(expect.objectContaining({ command: 'activate-profile' }))
 
       const profileListCli = await execFileAsync(process.execPath, [cli, 'profile', 'list'], {
@@ -335,7 +337,7 @@ describe('BrowserAgentBridge', () => {
     const release: Array<() => void> = []
     const controller = {
       getState: vi.fn(() => ({ url: 'https://example.com/' })),
-      activeProfileName: vi.fn(() => null),
+      currentTabProfile: vi.fn(() => null),
       listTabs: vi.fn(() => []),
       // Parks until the test releases it, so the two tab requests really do
       // pile up behind one another the way two busy agents would make them.
