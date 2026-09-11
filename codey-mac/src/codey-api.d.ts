@@ -142,6 +142,7 @@ export interface BrowserState {
   canGoBack: boolean
   canGoForward: boolean
   error: string | null
+  profile: string | null
 }
 
 export interface BrowserPageContext {
@@ -201,8 +202,6 @@ export interface BrowserTab {
 export interface BrowserProfileSummary {
   name: string
   avatar: string | null
-  /** This profile keeps itself in sync with Chrome. */
-  autoSync: boolean
   /** Sites that automatic Chrome mirroring must leave untouched. */
   excludedSites: string[]
   /** The Chrome profile this one mirrors (null when linked to none). */
@@ -694,11 +693,10 @@ declare global {
         closeTab: (id: string) => Promise<IpcResult<BrowserState>>
         resetSession: () => Promise<IpcResult<BrowserState>>
         profiles: {
-          list: () => Promise<IpcResult<{ active: string | null; profiles: BrowserProfileSummary[] }>>
+          list: () => Promise<IpcResult<{ profiles: BrowserProfileSummary[] }>>
           save: (name: string) => Promise<IpcResult<BrowserProfileSummary>>
-          setDefault: (name: string | null) => Promise<IpcResult<BrowserProfileSummary | null>>
+          setActive: (name: string, enabled: boolean) => Promise<IpcResult<BrowserProfileSummary>>
           setAvatar: (name: string, avatar: string) => Promise<IpcResult<BrowserProfileSummary>>
-          setAutoSync: (name: string, enabled: boolean) => Promise<IpcResult<BrowserProfileSummary>>
           setExcludedSites: (name: string, sites: string[]) => Promise<IpcResult<BrowserProfileSummary>>
           setChromeBinding: (name: string, chromeProfileId: string | null) => Promise<IpcResult<BrowserProfileSummary>>
           delete: (name: string) => Promise<IpcResult<{ deleted: boolean }>>

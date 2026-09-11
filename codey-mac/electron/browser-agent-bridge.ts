@@ -17,7 +17,7 @@ type BridgeController = Pick<
   | 'waitFor' | 'upload' | 'listDownloads' | 'waitForDownload' | 'submit'
   | 'getLoginStatus'
   | 'getState' | 'back' | 'forward' | 'reload' | 'listTabs' | 'newTab' | 'switchTab' | 'closeTab'
-  | 'listProfiles' | 'activeProfileName' | 'saveProfile' | 'importProfile' | 'setDefaultProfile' | 'deleteProfile'
+  | 'listProfiles' | 'currentTabProfile' | 'isActiveProfile' | 'chromeBindingForProfile' | 'saveProfile' | 'importProfile' | 'setActiveProfile' | 'deleteProfile'
 >
 
 type CompanionController = Pick<ChromeCompanionBridge, 'status' | 'activeTab' | 'snapshot' | 'navigate' | 'act'>
@@ -95,6 +95,18 @@ export class BrowserAgentBridge {
     private readonly loginPollIntervalMs = 2000,
     private readonly companion?: CompanionController,
   ) {}
+
+  /** The Chrome profile ID a `--profile <name>` command targets, or null when
+   *  the caller passed no `--profile` (the companion then falls back to the
+   *  current tab). An inactive or unbound profile fails with a named error. */
+  private chromeTarget(): string | null {
+    const name = this.profileScope.getStore()?.name
+    if (!name) return null
+    if (!this.controller.isActiveProfile(name)) throw new Error(`Profile "${name}" is not active`)
+    const binding = this.controller.chromeBindingForProfile(name)
+    if (!binding) throw new Error(`Profile "${name}" is not linked to a Chrome profile`)
+    return binding.profileId
+  }
 
   async start(): Promise<BrowserAgentBridgeInfo> {
     if (this.info) return this.info
@@ -209,7 +221,7 @@ export class BrowserAgentBridge {
         return
       }
       if (req.method === 'GET' && route === '/state') {
-        json(res, 200, { ...this.controller.getState(), profile: this.controller.activeProfileName() })
+        json(res, 200, { ...this.controller.getState(), profile: this.controller.currentTabProfile() })
         return
       }
       if (req.method === 'POST' && route === '/wait-login') {
@@ -234,7 +246,7 @@ export class BrowserAgentBridge {
         const url = String(body.url || 'about:blank')
         json(res, 200, await this.exclusive(async () => {
           this.onAgentOpen(url)
-          return await this.controller.newTab(url, this.profileScope.getStore()?.name ?? null)
+          return await this.controller.newTab(url, this.profileScope.getStore()?.name ?? this.controller.currentTabProfile())
         }))
         return
       }
@@ -360,18 +372,21 @@ export class BrowserAgentBridge {
       }
       if (req.method === 'GET' && route === '/chrome/tab') {
         if (!this.companion) throw new Error('Chrome companion is unavailable')
-        json(res, 200, await this.companion.activeTab())
+        const target = this.chromeTarget()
+        json(res, 200, await this.companion.activeTab(target))
         return
       }
       if (req.method === 'GET' && route === '/chrome/view') {
         if (!this.companion) throw new Error('Chrome companion is unavailable')
-        json(res, 200, await this.companion.snapshot())
+        const target = this.chromeTarget()
+        json(res, 200, await this.companion.snapshot(target))
         return
       }
       if (req.method === 'POST' && route === '/chrome/open') {
         if (!this.companion) throw new Error('Chrome companion is unavailable')
         const body = await readJson(req)
-        json(res, 200, await this.companion.navigate(String(body.url || '')))
+        const target = this.chromeTarget()
+        json(res, 200, await this.companion.navigate(String(body.url || ''), target))
         return
       }
       // Acting on the real Chrome page. Navigation above only moves the tab;
@@ -381,13 +396,14 @@ export class BrowserAgentBridge {
           const body = await readJson(req)
           const ref = String(body.ref || '')
           const value = body.value === undefined ? undefined : String(body.value)
-          json(res, 200, await this.controlledChrome(action, () => this.companion!.act(action, ref, value)))
+          const target = this.chromeTarget()
+          json(res, 200, await this.controlledChrome(action, () => this.companion!.act(action, ref, value, target)))
           return
         }
       }
       // ── Profiles ──────────────────────────────────────────────────────
       if (req.method === 'GET' && route === '/profiles') {
-        json(res, 200, { active: this.controller.activeProfileName(), profiles: await this.controller.listProfiles() })
+        json(res, 200, { active: this.controller.currentTabProfile(), profiles: await this.controller.listProfiles() })
         return
       }
       if (req.method === 'POST' && route === '/profile/save') {
@@ -399,30 +415,29 @@ export class BrowserAgentBridge {
         const body = await readJson(req)
         const source = body.source
         const name = String(body.name || '')
-        const makeDefault = body.makeDefault !== false
+        const activate = body.activate !== false
         const operation = async () => {
           if (typeof source === 'object' && source !== null && 'path' in source) {
             const filePath = String((source as Record<string, unknown>).path || '')
             if (!filePath) throw new Error('A profile source path is required')
             const derived = name || path.basename(filePath).replace(/\.json$/i, '')
-            return await this.controller.importProfile(derived, { path: filePath }, makeDefault)
+            return await this.controller.importProfile(derived, { path: filePath }, activate)
           }
           if (typeof source === 'object' && source !== null && 'json' in source) {
             if (!name) throw new Error('A profile name is required when importing JSON text')
-            return await this.controller.importProfile(name, { json: String((source as Record<string, unknown>).json || '') }, makeDefault)
+            return await this.controller.importProfile(name, { json: String((source as Record<string, unknown>).json || '') }, activate)
           }
           throw new Error('profile import needs a source: { path } or { json }')
         }
         // An import lands in that profile's own jar, so it replaces nothing a
-        // user can see and needs no approval; `makeDefault` only decides which
-        // jar new tabs open under.
+        // user can see and needs no approval; `activate` only adds it to the
+        // enabled set.
         json(res, 200, await this.exclusive(operation))
         return
       }
-      if (req.method === 'POST' && route === '/profile/default') {
+      if (req.method === 'POST' && route === '/profile/activate') {
         const body = await readJson(req)
-        const name = body.name === null ? null : String(body.name || '')
-        json(res, 200, await this.controller.setDefaultProfile(name))
+        json(res, 200, await this.controller.setActiveProfile(String(body.name || ''), body.enabled !== false))
         return
       }
       if (req.method === 'POST' && route === '/profile/delete') {

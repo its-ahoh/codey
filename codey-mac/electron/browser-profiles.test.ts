@@ -154,25 +154,6 @@ describe('BrowserProfileStore', () => {
     }
   })
 
-  it('keeps the per-profile auto-sync switch across re-saves', () => {
-    const { dir, store } = makeStore()
-    try {
-      store.writeMeta('work', null)
-      expect(store.list()[0].autoSync).toBe(false)
-
-      expect(store.setAutoSync('work', true).autoSync).toBe(true)
-      // A refresh rewrites the profile's metadata; the switch must survive it,
-      // or auto-sync would turn itself off on its own first run.
-      store.writeMeta('work', null)
-      expect(store.read('work').autoSync).toBe(true)
-
-      expect(store.setAutoSync('work', false).autoSync).toBe(false)
-      expect(store.read('work').autoSync).toBe(false)
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
   it('normalizes and preserves per-profile Chrome exclusions', () => {
     const { dir, store } = makeStore()
     try {
@@ -185,7 +166,7 @@ describe('BrowserProfileStore', () => {
       // Every metadata-only rewrite must keep the exclusion list.
       store.writeMeta('work', 'https://github.com/')
       store.setAvatar('work', '💼')
-      store.setAutoSync('work', true)
+      store.setActive('work', true)
       store.touch('work')
       expect(store.read('work').excludedSites).toEqual(['github.com', 'google.com'])
       expect(store.list()[0].excludedSites).toEqual(['github.com', 'google.com'])
@@ -261,7 +242,7 @@ describe('BrowserProfileStore', () => {
 
       // Metadata-only edits must not drop the index used by closed-tab export.
       store.setAvatar('work', '💼')
-      store.setAutoSync('work', true)
+      store.setActive('work', true)
       store.setExcludedSites('work', ['example.com'])
       store.touch('work')
       store.writeMeta('work', null)
@@ -281,18 +262,18 @@ describe('BrowserProfileStore', () => {
     const { dir, store } = makeStore()
     try {
       expect(store.activeNames()).toEqual([])
-      expect(store.active()).toBeNull()
-      store.setActive('work')
+      store.setActive('work', true)
       expect(store.activeNames()).toEqual(['work'])
-      expect(store.active()).toBe('work')
       expect(fs.readFileSync(path.join(dir, ACTIVE_PROFILE_FILE), 'utf8')).toBe('work\n')
 
-      // Setting another name replaces the default; only ever one at a time.
-      store.setActive('personal')
-      expect(store.activeNames()).toEqual(['personal'])
-      expect(store.active()).toBe('personal')
+      // Several can be enabled at once; disabling removes only that one.
+      store.setActive('personal', true)
+      expect(store.activeNames()).toEqual(['work', 'personal'])
 
-      store.setActive(null)
+      store.setActive('work', false)
+      expect(store.activeNames()).toEqual(['personal'])
+
+      store.setActive('personal', false)
       expect(store.activeNames()).toEqual([])
       expect(fs.existsSync(path.join(dir, ACTIVE_PROFILE_FILE))).toBe(false)
     } finally {
@@ -324,19 +305,20 @@ describe('BrowserProfileStore', () => {
     }
   })
 
-  it('flags the active profile in list()', () => {
+  it('flags enabled profiles in list()', () => {
     const { store } = makeStore()
     try {
       store.writeMeta('a', null)
       store.writeMeta('b', null)
-      store.setActive('b')
+      store.setActive('b', true)
+      store.setActive('a', true)
       const summaries = store.list()
       expect(summaries.find(profile => profile.name === 'b')?.active).toBe(true)
-      expect(summaries.find(profile => profile.name === 'a')?.active).toBe(false)
+      expect(summaries.find(profile => profile.name === 'a')?.active).toBe(true)
 
-      // Only one default at a time.
-      store.setActive('a')
-      expect(store.list().filter(profile => profile.active).map(profile => profile.name)).toEqual(['a'])
+      // Disabling one leaves the other enabled.
+      store.setActive('a', false)
+      expect(store.list().filter(profile => profile.active).map(profile => profile.name)).toEqual(['b'])
     } finally {
       // store() dir cleanup handled by each test's own dir; nothing to do.
     }
@@ -533,13 +515,13 @@ describe('BrowserProfileStore metadata records', () => {
     try {
       const store = new BrowserProfileStore(dir)
       store.writeMeta('work', null)
-      store.setAutoSync('work', true)
+      store.setActive('work', true)
       store.setExcludedSites('work', ['GitHub.com'])
       const before = store.read('work').updatedAt
       store.touch('work', before + 1000)
       const after = store.read('work')
       expect(after.updatedAt).toBe(before + 1000)
-      expect(after.autoSync).toBe(true)
+      expect(store.activeNames()).toEqual(['work'])
       expect(after.excludedSites).toEqual(['github.com'])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })

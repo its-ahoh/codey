@@ -46,9 +46,6 @@ export interface BrowserProfile extends BrowserProfileData {
   name: string
   /** User-selected visual marker shown in the browser profile switcher. */
   avatar?: string | null
-  /** This profile mirrors Chrome, including newly visited sites, except for
-   *  its explicit exclusions. Off unless the user turned it on. */
-  autoSync?: boolean
   createdAt: number
   updatedAt: number
   /** The page that was showing when the profile was saved; null for imports. */
@@ -60,7 +57,6 @@ export interface BrowserProfile extends BrowserProfileData {
 export interface BrowserProfileMeta {
   name: string
   avatar?: string | null
-  autoSync?: boolean
   /** Chrome sites this profile must never refresh from automatically. */
   excludedSites: string[]
   /** The Chrome profile this one mirrors, as reported by the extension. The
@@ -81,7 +77,6 @@ export interface BrowserProfileMeta {
 export interface BrowserProfileSummary {
   name: string
   avatar?: string | null
-  autoSync: boolean
   excludedSites: string[]
   chromeProfileId: string | null
   chromeProfileLabel: string | null
@@ -424,7 +419,6 @@ export class BrowserProfileStore {
     return {
       name,
       avatar: meta?.avatar ?? null,
-      autoSync: meta?.autoSync === true,
       excludedSites: meta?.excludedSites ?? [],
       chromeProfileId: meta?.chromeProfileId ?? null,
       chromeProfileLabel: meta?.chromeProfileLabel ?? null,
@@ -452,7 +446,6 @@ export class BrowserProfileStore {
       avatar: typeof record.avatar === 'string' && (BROWSER_PROFILE_AVATARS as readonly string[]).includes(record.avatar)
         ? record.avatar
         : null,
-      autoSync: record.autoSync === true,
       excludedSites: normalizeExcludedSites(record.excludedSites),
       chromeProfileId: normalizeChromeProfileId(record.chromeProfileId),
       chromeProfileLabel: typeof record.chromeProfileLabel === 'string' && record.chromeProfileLabel.trim()
@@ -479,7 +472,6 @@ export class BrowserProfileStore {
       schema: PROFILE_SCHEMA,
       name,
       avatar: existing?.avatar ?? null,
-      autoSync: existing?.autoSync === true,
       excludedSites: existing?.excludedSites ?? [],
       chromeProfileId: existing?.chromeProfileId ?? null,
       chromeProfileLabel: existing?.chromeProfileLabel ?? null,
@@ -579,15 +571,6 @@ export class BrowserProfileStore {
     return this.summary(name, this.activeNames())
   }
 
-  /** Turn a profile's "mirror Chrome" flag on or off. Metadata only - the
-   *  saved session is untouched, and the snapshot does not read as newer. */
-  setAutoSync(name: string, enabled: boolean): BrowserProfileSummary {
-    assertProfileName(name)
-    const meta = this.read(name)
-    this.writeRecord(name, { ...meta, schema: PROFILE_SCHEMA, autoSync: enabled === true })
-    return this.summary(name, this.activeNames())
-  }
-
   /** Replace the sites omitted from this profile's automatic Chrome refresh.
    *  Like the auto-sync switch, this changes metadata only. */
   setExcludedSites(name: string, sites: readonly string[]): BrowserProfileSummary {
@@ -671,19 +654,18 @@ export class BrowserProfileStore {
     return names
   }
 
-  /** First enabled profile, or null. Kept for the callers that only ever
-   *  needed one name (the agent bridge's status lines). */
-  active(): string | null {
-    return this.activeNames()[0] ?? null
-  }
-
-  setActive(name: string | null): void {
-    if (name === null) {
+  /** Add or remove a name from the enabled set. Enabling is idempotent and
+   *  several profiles may be enabled at once; disabling removes only that one. */
+  setActive(name: string, enabled: boolean): void {
+    assertProfileName(name)
+    const current = this.activeNames()
+    const next = current.filter(existing => existing !== name)
+    if (enabled) next.push(name)
+    if (next.length === 0) {
       try { fs.unlinkSync(this.activeFile()) } catch { /* already absent */ }
       return
     }
-    assertProfileName(name)
     fs.mkdirSync(this.dir, { recursive: true })
-    fs.writeFileSync(this.activeFile(), `${name}\n`, { encoding: 'utf8', mode: 0o600 })
+    fs.writeFileSync(this.activeFile(), `${next.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 })
   }
 }

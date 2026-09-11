@@ -62,7 +62,7 @@ function usage() {
     '  profile list               List saved profiles and the active one',
     '  profile save <name>        Snapshot the current session into a profile',
     '  profile import <path> [name]  Import a session file into a profile',
-    '  profile default <name>     Choose the active profile',
+    '  profile activate <name> [on|off]  Enable or disable a profile',
     '  profile delete <name>      Remove a profile',
     '  chrome status              Read Chrome Companion connection state',
     '  chrome tab                 Read the active real-Chrome tab',
@@ -258,9 +258,9 @@ async function main() {
       } else if (sub === 'save') {
         if (!rest[1]) throw new Error(`Missing profile name\n${usage()}`)
         value = await request('POST', '/profile/save', { name: rest[1] })
-      } else if (sub === 'default') {
+      } else if (sub === 'activate') {
         if (!rest[1]) throw new Error(`Missing profile name\n${usage()}`)
-        value = await request('POST', '/profile/default', { name: rest[1] === 'none' ? null : rest[1] })
+        value = await request('POST', '/profile/activate', { name: rest[1], enabled: rest[2] !== 'off' })
       } else if (sub === 'delete') {
         if (!rest[1]) throw new Error(`Missing profile name\n${usage()}`)
         value = await request('POST', '/profile/delete', { name: rest[1] })

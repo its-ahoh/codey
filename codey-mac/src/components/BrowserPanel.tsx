@@ -36,6 +36,7 @@ const EMPTY_STATE: BrowserState = {
   canGoBack: false,
   canGoForward: false,
   error: null,
+  profile: null,
 }
 
 const VIEW_ONLY: BrowserControlPermissionState = { granted: { browser: 'none', chrome: 'none' }, pending: null }
@@ -76,8 +77,6 @@ export const BrowserPanel: React.FC<Props> = ({
   const hostRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
-  const profileMenuRef = useRef<HTMLDivElement>(null)
-  const profileButtonRef = useRef<HTMLButtonElement>(null)
   const shownRef = useRef(false)
   const browserCoveredRef = useRef(false)
   const addressFocusedRef = useRef(false)
@@ -99,14 +98,11 @@ export const BrowserPanel: React.FC<Props> = ({
   const [chromeScanComplete, setChromeScanComplete] = useState(false)
   const [extensionBusy, setExtensionBusy] = useState(false)
   const [browserMenuOpen, setBrowserMenuOpen] = useState(false)
-  const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const [profiles, setProfiles] = useState<BrowserProfileSummary[]>([])
-  const [activeProfile, setActiveProfile] = useState<string | null>(null)
-  const [profileBusy, setProfileBusy] = useState(false)
   const [profilePickerOpen, setProfilePickerOpen] = useState(false)
   const [panelWidth, setPanelWidth] = useState(900)
 
-  const browserCovered = browserMenuOpen || profileMenuOpen || activeSettingsSection !== null
+  const browserCovered = browserMenuOpen || activeSettingsSection !== null
   browserCoveredRef.current = browserCovered
   const browserPageVisible = !browserCovered && !!state.url
 
@@ -259,26 +255,8 @@ export const BrowserPanel: React.FC<Props> = ({
     }
   }, [browserMenuOpen])
 
-  useEffect(() => {
-    if (!profileMenuOpen) return
-    const closeMenu = (event: MouseEvent) => {
-      const target = event.target as Node
-      if (!profileMenuRef.current?.contains(target) && !profileButtonRef.current?.contains(target)) setProfileMenuOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setProfileMenuOpen(false)
-    }
-    document.addEventListener('mousedown', closeMenu)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('mousedown', closeMenu)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [profileMenuOpen])
-
-  // The toolbar's profile chip. There is no profile-changed event, so refresh
-  // on mount and every time the menu opens — the Settings ▸ Profiles page can
-  // have activated a different one behind our back.
+  // The toolbar's profile chip reads the current tab's profile; the Settings ▸
+  // Profiles page is where profiles are enabled, disabled and synced.
   const refreshProfiles = async () => {
     if (!window.codey?.browser?.profiles) return
     const result = await window.codey.browser.profiles.list()
@@ -287,26 +265,9 @@ export const BrowserPanel: React.FC<Props> = ({
       return
     }
     setProfiles(result.data.profiles)
-    setActiveProfile(result.data.active)
   }
 
   useEffect(() => { void refreshProfiles() }, [tabs.length])
-
-  // A jar per profile means one identity per tab, so this is a pick, not a set
-  // of toggles: it chooses the active profile. Tabs already on screen keep the
-  // jar they were born on, so nothing visible changes.
-  const chooseDefaultProfile = async (name: string | null) => {
-    setProfileBusy(true)
-    try {
-      const result = await window.codey.browser.profiles.setDefault(name)
-      if (!result.ok) setLocalError(result.error)
-      else setLocalError(null)
-      await refreshProfiles()
-      setProfileMenuOpen(false)
-    } finally {
-      setProfileBusy(false)
-    }
-  }
 
   const navigate = async () => {
     const next = unwrapResult(await window.codey.browser.navigate(address))
@@ -325,8 +286,8 @@ export const BrowserPanel: React.FC<Props> = ({
 
   const displayedError = localError ?? state.error
   const secure = state.url.startsWith('https://')
-  const currentProfile = profiles.find(profile => profile.name === activeProfile)
-  const profileLabel = activeProfile ?? 'No profile'
+  const currentProfile = profiles.find(profile => profile.name === state.profile)
+  const profileLabel = state.profile ?? 'No profile'
   const avatarOf = (name: string | null) =>
     name === null ? null : (profiles.find(profile => profile.name === name)?.avatar ?? null)
 
@@ -534,26 +495,14 @@ export const BrowserPanel: React.FC<Props> = ({
           {state.loading && <span style={styles.loadingDot} aria-label="Loading" />}
         </form>
 
-        <button
-          ref={profileButtonRef}
-          type="button"
-          style={{ ...styles.profileButton, ...(profileMenuOpen ? styles.profileButtonActive : null) }}
-          title={activeProfile
-            ? `Browsing as “${activeProfile}” — click to change`
-            : 'Browsing without a profile — click to pick one'}
+        <div
+          style={styles.profileButton}
+          title={state.profile ? `Browsing as “${state.profile}”` : 'Browsing without a profile'}
           aria-label="Browser profile"
-          aria-haspopup="menu"
-          aria-expanded={profileMenuOpen}
-          onClick={() => {
-            setProfileMenuOpen(current => {
-              if (!current) void refreshProfiles()
-              return !current
-            })
-          }}
         >
           <span aria-hidden="true" style={styles.profileAvatarSmall}>{browserProfileAvatar(currentProfile)}</span>
           {panelWidth >= 640 && <span style={styles.profileButtonLabel}>{profileLabel}</span>}
-        </button>
+        </div>
         <button
           type="button"
           style={{ ...styles.contextButton, opacity: chatId && state.url && !activeSettingsSection ? 1 : 0.5 }}
@@ -578,46 +527,6 @@ export const BrowserPanel: React.FC<Props> = ({
           <UIIcon name="close" size={15} />
         </button>}
       </div>
-
-      {profileMenuOpen && (
-        <div ref={profileMenuRef} style={styles.profileMenu} role="menu" aria-label="Browser profiles">
-          <div style={styles.profileMenuHeading}>Active profile</div>
-          {profiles.length === 0 && (
-            <div style={styles.profileMenuEmpty}>No profiles saved yet.</div>
-          )}
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked={activeProfile === null}
-            disabled={profileBusy}
-            style={{ ...styles.menuButton, ...(activeProfile === null ? styles.profileMenuItemActive : null) }}
-            onClick={() => void chooseDefaultProfile(null)}
-          >
-            <span style={styles.profileMenuName}>No profile</span>
-            <span aria-hidden="true" style={styles.profileMenuCheck}>{activeProfile === null ? '✓' : ''}</span>
-          </button>
-          {profiles.map(profile => (
-            <div key={profile.name} style={styles.profileMenuRow}>
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={profile.active}
-                disabled={profileBusy}
-                style={{ ...styles.menuButton, flex: 1, ...(profile.active ? styles.profileMenuItemActive : null) }}
-                onClick={() => void chooseDefaultProfile(profile.name)}
-              >
-                <span aria-hidden="true" style={styles.profileMenuAvatar}>{browserProfileAvatar(profile)}</span>
-                <span style={styles.profileMenuName}>{profile.name}</span>
-                <span aria-hidden="true" style={styles.profileMenuCheck}>{profile.active ? '✓' : ''}</span>
-              </button>
-            </div>
-          ))}
-          <div style={styles.profileMenuDivider} />
-          <button type="button" style={styles.menuButton} onClick={() => { setProfileMenuOpen(false); openProfiles() }}>
-            <UIIcon name="settings" size={13} /> Manage profiles…
-          </button>
-        </div>
-      )}
 
       {browserMenuOpen && (
         <div ref={menuRef} style={styles.browserMenu} role="menu" aria-label="Browser actions">
@@ -731,7 +640,7 @@ export const BrowserPanel: React.FC<Props> = ({
             type="button"
             onClick={() => { setProfilePickerOpen(false); void showWebTab(() => window.codey.browser.newTab(undefined, null)) }}
           >No profile</button>
-          {profiles.map(profile => (
+          {profiles.filter(profile => profile.active).map(profile => (
             <button
               key={profile.name}
               type="button"

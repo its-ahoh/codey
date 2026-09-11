@@ -677,7 +677,7 @@ describe('BrowserController profiles', () => {
       // Startup only migrates schema-1 files. A current profile's persistent
       // partition is already the source of truth and must remain untouched.
       await expect(controller.migrateProfilesToPartitions()).resolves.toEqual({ migrated: [] })
-      await controller.setDefaultProfile('work')
+      await controller.setActiveProfile('work', true)
       expect(removed).toEqual([])
       expect(clearStorageData).not.toHaveBeenCalled()
     } finally {
@@ -866,24 +866,28 @@ describe('BrowserController profiles', () => {
     }
   })
 
-  it('sets which profile new tabs open under, without touching open tabs', async () => {
+  it('enables and disables a profile without touching open tabs', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-default-'))
     try {
       const { controller, cookiesSet } = makeFixture(dir)
       new BrowserProfileStore(dir).writeMeta('work', null)
+      new BrowserProfileStore(dir).writeMeta('personal', null)
       cookiesSet.mockClear()
-      await controller.setDefaultProfile('work')
-      expect(controller.activeProfileName()).toBe('work')
+      await controller.setActiveProfile('work', true)
+      await controller.setActiveProfile('personal', true)
+      expect(controller.isActiveProfile('work')).toBe(true)
+      expect(controller.isActiveProfile('personal')).toBe(true)
       // Nothing was replayed into any jar: existing tabs keep their identity.
       expect(cookiesSet).not.toHaveBeenCalled()
-      await controller.setDefaultProfile(null)
-      expect(controller.activeProfileName()).toBeNull()
+      await controller.setActiveProfile('work', false)
+      expect(controller.isActiveProfile('work')).toBe(false)
+      expect(controller.isActiveProfile('personal')).toBe(true)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
 
-  it('uses the default profile when it creates the first browser tab', () => {
+  it('creates the first browser tab with no profile', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ctl-first-tab-'))
     try {
       const controller = new BrowserController(
@@ -896,12 +900,12 @@ describe('BrowserController profiles', () => {
       )
       const store = new BrowserProfileStore(dir)
       store.writeMeta('work', null)
-      store.setActive('work')
+      store.setActive('work', true)
       const view = { webContents: { loadURL: vi.fn(async () => {}) } }
-      const createTab = vi.spyOn(controller as any, 'createTab').mockReturnValue({ id: 't1', view, profile: 'work' })
+      const createTab = vi.spyOn(controller as any, 'createTab').mockReturnValue({ id: 't1', view, profile: null })
 
       expect((controller as any).ensureView()).toBe(view)
-      expect(createTab).toHaveBeenCalledWith(true, 'work')
+      expect(createTab).toHaveBeenCalledWith(true, null)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -1092,7 +1096,7 @@ describe('BrowserController profiles', () => {
     try {
       const { controller } = makeFixture(dir)
       await expect(controller.saveProfile('../evil')).rejects.toThrow(/Profile names/)
-      await expect(controller.setDefaultProfile('.hidden')).rejects.toThrow(/Profile names/)
+      await expect(controller.setActiveProfile('.hidden', true)).rejects.toThrow(/Profile names/)
       await expect(controller.deleteProfile('a/b')).rejects.toThrow(/Profile names/)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
@@ -1137,7 +1141,7 @@ describe('BrowserController profiles', () => {
         httpOnly: true,
         sameSite: 'lax',
       }))
-      expect(controller.activeProfileName()).toBe('gh')
+      expect(controller.isActiveProfile('gh')).toBe(true)
       expect((await controller.listProfiles()).find(profile => profile.name === 'gh')?.active).toBe(true)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
@@ -1149,7 +1153,7 @@ describe('BrowserController profiles', () => {
     try {
       const { controller, cookiesSet } = makeFixture(dir)
       await controller.importProfile('work', { json: '{"cookies":[]}' }, false)
-      expect(controller.activeProfileName()).toBeNull()
+      expect(controller.isActiveProfile('work')).toBe(false)
       expect(cookiesSet).not.toHaveBeenCalled()
       expect(await controller.listProfiles()).toHaveLength(1)
     } finally {
@@ -1217,17 +1221,17 @@ describe('BrowserController profiles', () => {
         controller, cookiesSet, cookiesRemove, clearStorage, clearCache, clearAuthCache,
       } = makeFixture(dir)
       await controller.importProfile('work', { json: '{"cookies":[]}' }, true)
-      expect(controller.activeProfileName()).toBe('work')
+      expect(controller.isActiveProfile('work')).toBe(true)
       cookiesRemove.mockClear()
       cookiesSet.mockClear()
-      const summary = await controller.setDefaultProfile('work')
-      expect(summary?.active).toBe(true)
+      const summary = await controller.setActiveProfile('work', true)
+      expect(summary.active).toBe(true)
       expect(cookiesRemove).not.toHaveBeenCalled()
       await controller.deleteProfile('work')
       expect(clearStorage).toHaveBeenCalled()
       expect(clearCache).toHaveBeenCalled()
       expect(clearAuthCache).toHaveBeenCalled()
-      expect(controller.activeProfileName()).toBeNull()
+      expect(controller.isActiveProfile('work')).toBe(false)
       expect(await controller.listProfiles()).toEqual([])
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })

@@ -45,6 +45,8 @@ export interface BrowserState {
   canGoBack: boolean
   canGoForward: boolean
   error: string | null
+  /** The profile of the tab currently on screen, or null. */
+  profile: string | null
 }
 
 export interface BrowserPageContext {
@@ -160,6 +162,7 @@ const EMPTY_STATE: BrowserState = {
   canGoBack: false,
   canGoForward: false,
   error: null,
+  profile: null,
 }
 
 /** Convert address-bar input into a safe browser URL. */
@@ -358,7 +361,7 @@ export class BrowserController {
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false })
     if (wasActive) {
       const next = this.tabs[Math.min(index, this.tabs.length - 1)]
-        ?? this.createTab(false, this.activeProfileName())
+        ?? this.createTab(false, tab.profile)
       if (!next.view.webContents.getURL()) {
         void next.view.webContents.loadURL('about:blank').catch(() => {})
       }
@@ -981,9 +984,16 @@ export class BrowserController {
     return filled
   }
 
-  /** Name of the enabled profile, or null when none is enabled. */
-  activeProfileName(): string | null {
-    return this.profiles().active()
+  /** The profile of the tab currently on screen, or null when there is no tab
+   *  or the tab has no profile. This is the manual target for commands. */
+  currentTabProfile(): string | null {
+    return this.tabs.find(tab => tab.view === this.view)?.profile ?? null
+  }
+
+  /** Whether a profile is enabled (and therefore invocable). Synchronous so a
+   *  command target can be resolved without awaiting jar counts. */
+  isActiveProfile(name: string): boolean {
+    return this.profiles().activeNames().includes(name)
   }
 
   /** Snapshot the current tab's jar into a named profile. Used to turn "I am
@@ -1002,12 +1012,12 @@ export class BrowserController {
 
   /** Import a session snapshot from a file path or raw JSON (our profile
    *  format or a Playwright storageState) into a profile's jar. The import
-   *  always lands in that jar - no other profile can see it - so `makeDefault`
-   *  only decides whether new tabs open under it. */
+   *  always lands in that jar - no other profile can see it - so `activate`
+   *  only decides whether it becomes one of the enabled profiles. */
   async importProfile(
     name: string,
     source: { path: string } | { json: string },
-    makeDefault = true,
+    activate = true,
     sourceUrl: string | null = null,
   ): Promise<BrowserProfileSummary> {
     assertProfileName(name)
@@ -1016,7 +1026,7 @@ export class BrowserController {
       : parseProfileJsonText(source.json)
     this.profiles().writeMeta(name, sourceUrl)
     await this.writeJar(name, data)
-    if (makeDefault) this.profiles().setActive(name)
+    if (activate) this.profiles().setActive(name, true)
     return this.summaryOf(name)
   }
 
@@ -1124,16 +1134,12 @@ export class BrowserController {
     return this.summaryOf(name)
   }
 
-  /** Which profile new tabs open under. Nothing is replayed and no open tab
-   *  changes identity - a tab keeps the jar it was created on for life. */
-  async setDefaultProfile(name: string | null): Promise<BrowserProfileSummary | null> {
-    if (name === null) {
-      this.profiles().setActive(null)
-      return null
-    }
+  /** Enable or disable a profile. Enabled profiles may be invoked (`--profile`,
+   *  new tabs); several can be enabled at once. */
+  async setActiveProfile(name: string, enabled: boolean): Promise<BrowserProfileSummary> {
     assertProfileName(name)
     this.profiles().read(name)
-    this.profiles().setActive(name)
+    this.profiles().setActive(name, enabled === true)
     return this.summaryOf(name)
   }
 
@@ -1149,7 +1155,6 @@ export class BrowserController {
       base = {
         name,
         avatar: profile.avatar ?? null,
-        autoSync: profile.autoSync === true,
         excludedSites: profile.excludedSites,
         chromeProfileId: profile.chromeProfileId,
         chromeProfileLabel: profile.chromeProfileLabel,
@@ -1199,11 +1204,6 @@ export class BrowserController {
     return this.profiles().setAvatar(name, avatar)
   }
 
-  /** Turn "keep this profile in sync with Chrome" on or off for one profile. */
-  setProfileAutoSync(name: string, enabled: boolean): BrowserProfileSummary {
-    return this.profiles().setAutoSync(name, enabled)
-  }
-
   /** Replace the sites this profile excludes from automatic Chrome refresh. */
   setProfileExcludedSites(name: string, sites: readonly string[]): BrowserProfileSummary {
     return this.profiles().setExcludedSites(name, sites)
@@ -1231,7 +1231,7 @@ export class BrowserController {
     const seed = label.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^\.+|\.+$/g, '') || 'Chrome-profile'
     const name = availableProfileName(seed.slice(0, 64), taken)
     this.profiles().writeMeta(name, null)
-    this.profiles().setAutoSync(name, true)
+    this.profiles().setActive(name, true)
     return this.profiles().setChromeBinding(name, profileId, label)
   }
 
@@ -1249,7 +1249,7 @@ export class BrowserController {
       browserSession.clearAuthCache(),
     ])
     this.profiles().remove(name)
-    if (this.profiles().active() === name) this.profiles().setActive(null)
+    this.profiles().setActive(name, false)
     return { deleted: true }
   }
 
@@ -1658,7 +1658,7 @@ export class BrowserController {
   private ensureView(): WebContentsView {
     if (this.view && !this.view.webContents.isDestroyed()) return this.view
 
-    const tab = this.createTab(true, this.activeProfileName())
+    const tab = this.createTab(true, this.currentTabProfile())
     void tab.view.webContents.loadURL('about:blank').catch(() => {
       // A caller may immediately navigate elsewhere and abort this initial
       // blank load; the real navigation owns any user-visible error state.
@@ -1881,6 +1881,7 @@ export class BrowserController {
       loading: contents.isLoading(),
       canGoBack: contents.canGoBack(),
       canGoForward: contents.canGoForward(),
+      profile: this.currentTabProfile(),
     })
   }
 
