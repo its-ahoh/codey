@@ -27,31 +27,34 @@ targets.
 
 ## Goal
 
-Two concepts, fully separated:
+Two per-profile concepts, fully separated from "which profile a command runs
+against":
 
-- **Activation** = `autoSync`. A profile is "active" when it auto-syncs with
-  Chrome. It is per-profile and many can be on at once.
-- **Target** = decided at the moment a command runs: the agent's
+- **active** = the profile is enabled and can be invoked. Per-profile, many at
+  once. This is the intuitive master switch.
+- **autoSync** = this active profile mirrors Chrome. Per-profile, unchanged
+  from #432. It only means something for an active profile.
+- **target** = decided at the moment a command runs: the agent's
   `--profile <name>`, else the browser tab currently on screen. No global
   "default/active" selection survives.
 
 ## Design
 
-### 1. Delete the single "active/default" profile
+### 1. `active` becomes per-profile "enabled", `autoSync` stays
 
-The `.active` file and everything that treated it as one-of-N goes away.
+The `.active` file already stores one name per line, so multi-enable is the
+format's native shape; only the writers and readers collapsed it to one.
 
-- `browser-profiles.ts`: remove `activeFile()`, `activeNames()`, `active()`,
-  `setActive()`, and the `active` field on `BrowserProfileSummary`.
-- `browser-controller.ts`: remove `activeProfileName()` and
-  `setDefaultProfile()`. `importProfile` drops its `makeDefault` parameter.
-- `main.ts`: remove the `browser:profiles:setDefault` IPC handler and the
-  `active` field from the profiles-list reply.
-- The side-panel `handoffSession` and any other `importProfile(…, true, …)`
-  callers drop the flag.
-
-"Which profiles are enabled" is now simply "which profiles have `autoSync`
-on", which the store already knows and #432 already drives per Chrome client.
+- `browser-profiles.ts`: `setActive(name, enabled)` adds/removes a name instead
+  of overwriting the file with one. `activeNames()` and the `active` summary
+  field stay (they already describe a set). `active()` (the first-name helper)
+  is removed — nothing should quietly take "the first" any more.
+- `browser-controller.ts`: `setDefaultProfile(name)` becomes
+  `setActiveProfile(name, enabled)`. `activeProfileName()` is removed.
+  `importProfile`'s `makeDefault` flag is renamed `activate` and now adds the
+  profile to the active set instead of making it the sole one.
+- `autoSync` is untouched: a profile mirrors Chrome only when it is both active
+  and autoSync (and bound, per #432).
 
 ### 2. Target = current tab, or `--profile`
 
@@ -62,14 +65,14 @@ Chrome commands and the `+` new-tab button act on the profile the user is
 looking at.
 
 **New-tab default follows the current tab.** `createTab` / `newTab` use
-`currentTabProfile()` instead of the removed `activeProfileName()`, so a new
-tab opened while viewing a `personal` tab opens in `personal`.
+`currentTabProfile()` instead of the removed `activeProfileName()`.
 
 **`targetResolver`** (set in `main.ts`) resolves the current tab's profile to
-its bound Chrome, exactly as today but from `currentTabProfile()` rather than
-`activeProfileName()`. Named failures stay:
+its bound Chrome. The resolution chain is: tab profile → must be active → must
+be bound → its Chrome is connected. Named failures:
 
 - no tab / tab has no profile → `Activate a browser profile first`
+- profile not active → `Profile "X" is not active`
 - profile not linked → `Profile "X" is not linked to a Chrome profile`
 - linked Chrome not running → `Chrome profile "Y" (linked to "X") is not running`
 
@@ -79,53 +82,56 @@ its bound Chrome, exactly as today but from `currentTabProfile()` rather than
 it only steers `newTab`. It now also steers every Chrome companion call.
 
 - Add `chromeTarget(): string | null` to the bridge: if `profileScope` holds a
-  name, resolve `controller.chromeBindingForProfile(name)` and return its
-  `profileId` (throw the "not linked" error when unbound). With no `--profile`
-  it returns `null` so the companion's `targetResolver` falls back to the
-  current tab.
+  name, check it is an active profile, resolve
+  `controller.chromeBindingForProfile(name)` and return its `profileId` (throw
+  the named "not active" / "not linked" error). With no `--profile` it returns
+  `null` so the companion's `targetResolver` falls back to the current tab.
 - The companion routes pass that target explicitly:
   `companion.activeTab(this.chromeTarget())`, `snapshot(…)`, `navigate(…,
   target)`, `act(…, target)`.
 - `getState().profile` and the `/profiles` reply report
   `controller.currentTabProfile()` instead of `activeProfileName()`.
 
-`--profile` names a Codey profile; the binding (#432) is what maps it to the
-Chrome that gets the command. No new mapping table is needed.
+`--profile` names a Codey profile; the binding (#432) maps it to the Chrome
+that gets the command. No new mapping table is needed.
 
 ### 4. UI
 
-- `BrowserProfiles.tsx`: remove the "No profile" radio and the per-profile
-  "Active / Activate" radio. The existing `autoSync` toggle is the activation,
-  so it moves out of the collapsed sync box to sit on the profile row (always
-  visible), labelled "Sync with Chrome".
-- `BrowserPanel.tsx`: the toolbar chip stops being a picker. It shows the
-  current tab's profile (already available as `state.profile`); the "Active
-  profile" menu goes away. The alt-click `+` picker stays — it explicitly
-  chooses a profile for *that* tab.
-- `browser/SKILL.md`: drop `profile default`, fold the notion of "the profile
-  you are looking at / `--profile`" into the command semantics.
+- `BrowserProfiles.tsx`: the single "No profile / Active / Activate" radio goes
+  away. Each profile row gets an **Active** toggle (per-profile, many on) and
+  keeps its **Sync with Chrome** (autoSync) toggle. Both always visible on the
+  row.
+- `BrowserPanel.tsx`: the toolbar chip stops being a picker — it shows the
+  current tab's profile (`state.profile`). The "Active profile" menu goes away.
+  The alt-click `+` picker stays; it chooses a profile for *that* tab and the
+  chosen profile must be active.
+- `browser/SKILL.md`: drop `profile default`; document that `--profile` names
+  an active profile and routes the command to that profile's bound Chrome.
 
 ### 5. IPC surface
 
-Removed: `browser:profiles:setDefault`.
-
-The `chromeCompanion:*` command handlers keep working unchanged — their
-resolution now goes through the current-tab `targetResolver`.
+- Removed: `browser:profiles:setDefault`.
+- Added: `browser:profiles:setActive(name, enabled)`.
+- `browser:profiles:list` still reports each profile's `active` flag (now
+  "enabled", multi) plus `autoSync`.
 
 ### 6. Testing
 
 **`browser-profiles.test.ts`**
-- the active-file store is gone: no `setActive`/`activeNames` assertions remain.
+- `setActive(name, true)` adds to the set; a second `setActive(other, true)`
+  leaves the first enabled; `setActive(name, false)` removes only that name.
+- a pre-existing `.active` file with several lines reads back as several active.
 
 **`browser-controller.test.ts`**
-- `newTab()` with no profile opens in the current tab's profile, not a global
-  default.
+- `newTab()` with no profile opens in the current tab's profile.
 - `currentTabProfile()` is null with no tab and matches the focused tab's
   profile with tabs open.
+- `setActiveProfile` / `importProfile(activate)` add to the active set instead
+  of replacing it.
 
 **`browser-agent-bridge.test.ts`**
 - `--profile personal` resolves to `personal`'s bound Chrome and is passed to
-  the companion call; an unbound profile throws the named error.
+  the companion call; an inactive or unbound profile throws the named error.
 - no `--profile` falls through (companion resolves the current tab).
 - `/profiles` and `getState().profile` report the current tab's profile.
 
@@ -136,12 +142,12 @@ null result as "fall back".
 
 | File | Change |
 | --- | --- |
-| `codey-mac/electron/browser-profiles.ts` | remove active-file store + `active` field |
-| `codey-mac/electron/browser-controller.ts` | `currentTabProfile()`, remove `activeProfileName`/`setDefaultProfile`, new-tab default, `importProfile` flag |
+| `codey-mac/electron/browser-profiles.ts` | `setActive(name, enabled)` toggle; drop `active()` |
+| `codey-mac/electron/browser-controller.ts` | `currentTabProfile()`, `setActiveProfile`, remove `activeProfileName`/`setDefaultProfile`, new-tab default, `importProfile(activate)` |
 | `codey-mac/electron/browser-agent-bridge.ts` | `chromeTarget()`, route Chrome calls, report current-tab profile |
-| `codey-mac/electron/main.ts` | `targetResolver` from current tab, drop `setDefault` IPC, drop `active` in list |
-| `codey-mac/electron/preload.ts`, `src/codey-api.d.ts` | drop `setDefault`/`active` |
-| `codey-mac/src/components/BrowserProfiles.tsx` | remove radio, promote autoSync toggle |
+| `codey-mac/electron/main.ts` | `targetResolver` from current tab, `setActive` IPC, drop `setDefault` |
+| `codey-mac/electron/preload.ts`, `src/codey-api.d.ts` | `setActive` replaces `setDefault` |
+| `codey-mac/src/components/BrowserProfiles.tsx` | Active toggle + autoSync toggle per row |
 | `codey-mac/src/components/BrowserPanel.tsx` | chip becomes read-only current-tab profile |
 | `packages/core/src/skills/browser/SKILL.md` | drop `profile default`, document targeting |
 
