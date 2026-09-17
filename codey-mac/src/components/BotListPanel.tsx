@@ -1,6 +1,6 @@
-import { botConversationList, readBotPins } from './botConversationList'
+import { BotMessageSearchCache, botConversationList, readBotPins } from './botConversationList'
 import { SidebarNavigation, SidebarFooter, SidebarAction, type SidebarCommonProps } from './SidebarNavigation'
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { apiService, type WorkerDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
@@ -19,6 +19,15 @@ export function BotListPanel(props: Props) {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const [bots, setBots] = useState<WorkerDto[]>([])
   const [search, setSearch] = useState('')
+  const [settledSearch, setSettledSearch] = useState('')
+  const [composing, setComposing] = useState(false)
+  const [searchCache] = useState(() => new BotMessageSearchCache())
+  useEffect(() => {
+    if (composing) return
+    const timer = window.setTimeout(() => setSettledSearch(search), 200)
+    return () => window.clearTimeout(timer)
+  }, [search, composing])
+  const searchQuery = search.trim() ? settledSearch : ''
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState<'bot' | null>(null)
@@ -70,8 +79,8 @@ export function BotListPanel(props: Props) {
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
   }
-  const chats = state.order.map(id => state.chats[id]).filter(Boolean)
-  const rows = botConversationList(bots, chats, pins, search)
+  const chats = useMemo(() => state.order.map(id => state.chats[id]).filter(Boolean), [state.order, state.chats])
+  const rows = useMemo(() => botConversationList(bots, chats, pins, searchQuery, searchCache), [bots, chats, pins, searchQuery, searchCache])
   const togglePin = async (key: string, botName?: string) => {
     try {
       const id = botName ? (await openBot(botName, false)).id : key
@@ -86,7 +95,7 @@ export function BotListPanel(props: Props) {
   const field = { width: '100%', background: C.bg, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 9, fontFamily: 'inherit', fontSize: 12 } as const
   return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, padding: 8, gap: 8, background: C.sidebarBg }}>
     <SidebarNavigation {...props} />
-    <input type="search" aria-label="Search chats and messages" placeholder="Search chats and messages" value={search} onChange={e => setSearch(e.target.value)} style={field} />
+    <input type="search" aria-label="Search chats and messages" placeholder="Search chats and messages" value={search} onChange={e => setSearch(e.target.value)} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} style={field} />
     {error && <div role="alert" style={{ color: C.red, fontSize: 12 }}>{error}</div>}
     <div style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}>
       {form && <form onSubmit={e => { e.preventDefault(); void create() }} style={{ display: 'grid', gap: 8, padding: 10, marginBottom: 14, border: `1px solid ${C.border}`, borderRadius: 10 }}>

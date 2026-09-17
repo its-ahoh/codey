@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Chat } from '../types'
 import type { WorkerDto } from '../services/api'
-import { botConversationList, readBotPins } from './botConversationList'
+import { BotMessageSearchCache, botConversationList, readBotPins } from './botConversationList'
 const bot = { name: 'Alice', personality: { role: 'Designer' }, config: {} } as WorkerDto
 const chat = (id: string, kind: 'direct' | 'group', timestamp: number): Chat => ({
   id, title: id, workspaceName: '.bot-chats', selection: { type: 'none' }, createdAt: 1, updatedAt: 999,
@@ -9,6 +9,33 @@ const chat = (id: string, kind: 'direct' | 'group', timestamp: number): Chat => 
   messages: [{ id: `${id}-message`, role: 'user', content: 'Hello', timestamp }],
 })
 describe('unified Bot chat list', () => {
+  it('reuses normalized messages and refreshes matches for new queries and edited content', () => {
+    const cache = new BotMessageSearchCache()
+    const message = chat('Alice', 'direct', 20).messages[0]
+    message.content = 'AI\nNEWS digest'
+    const first = cache.find(message, 'ai news')
+    expect(first.index).toBe(0)
+    expect(cache.find(message, 'ai news')).toBe(first)
+    expect(cache.find(message, 'digest').index).toBe(8)
+    message.content = 'Updated report'
+    expect(cache.find(message, 'ai news').index).toBe(-1)
+    expect(cache.find(message, 'report').content).toBe('Updated report')
+  })
+  it('keeps cached results current when messages are replaced, appended, or removed', () => {
+    const cache = new BotMessageSearchCache()
+    const direct = chat('Alice', 'direct', 20)
+    const search = (query = 'news') => botConversationList([bot], [direct], [], query, cache)
+    expect(search()).toHaveLength(0)
+    direct.messages = [{ ...direct.messages[0], content: 'First news' }]
+    expect(search()[0].messageMatch).toEqual({ count: 1, snippet: 'First news' })
+    direct.messages.push({ id: 'reply', role: 'assistant', content: 'Latest news', timestamp: 30 })
+    expect(search()[0].messageMatch).toEqual({ count: 2, snippet: 'Latest news' })
+    direct.messages.pop()
+    expect(search()[0].messageMatch).toEqual({ count: 1, snippet: 'First news' })
+    expect(search('')[0].messageMatch).toBeUndefined()
+    expect(search('latest')).toHaveLength(0)
+    expect(search()[0].messageMatch?.count).toBe(1)
+  })
   it('finds user and Bot messages across private and group chats', () => {
     const direct = chat('Alice', 'direct', 20), group = chat('Team', 'group', 30)
     direct.messages[0].content = 'Discuss AI news'

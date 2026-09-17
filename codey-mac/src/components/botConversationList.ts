@@ -1,16 +1,37 @@
-import type { Chat } from '../types'
+import type { Chat, ChatMessage } from '../types'
 import type { WorkerDto } from '../services/api'
 
 export interface BotConversationRow { key: string; title: string; chat?: Chat; bot?: WorkerDto; activity: number; messageMatch?: { snippet: string; count: number } }
-export function botConversationList(bots: WorkerDto[], chats: Chat[], pins: string[], query = ''): BotConversationRow[] {
+export class BotMessageSearchCache {
+  // Weak keys release deleted/replaced messages; no growing query-history cache.
+  private messages = new WeakMap<ChatMessage, { source: string; content: string; lower: string; term: string; index: number }>()
+  find(message: ChatMessage, term: string) {
+    let cached = this.messages.get(message)
+    if (!cached || cached.source !== message.content) {
+      const content = message.content.replace(/\s+/g, ' ')
+      const lower = content.toLowerCase()
+      cached = { source: message.content, content, lower, term, index: lower.indexOf(term) }
+      this.messages.set(message, cached)
+    } else if (cached.term !== term) {
+      cached.term = term
+      cached.index = cached.lower.indexOf(term)
+    }
+    return cached
+  }
+}
+
+export function botConversationList(bots: WorkerDto[], chats: Chat[], pins: string[], query = '', cache = new BotMessageSearchCache()): BotConversationRow[] {
   const global = chats.filter(chat => chat.botChat)
+  const botsByName = new Map(bots.map(bot => [bot.name.toLowerCase(), bot]))
+  const directNames = new Set(global.filter(chat => chat.botChat!.kind === 'direct').map(chat => chat.botChat!.members[0]?.toLowerCase()))
+  const pinned = new Set(pins)
   const rows: BotConversationRow[] = global.map(chat => ({
     key: chat.id, title: chat.title, chat,
-    bot: chat.botChat!.kind === 'direct' ? bots.find(bot => bot.name.toLowerCase() === chat.botChat!.members[0]?.toLowerCase()) : undefined,
+    bot: chat.botChat!.kind === 'direct' ? botsByName.get(chat.botChat!.members[0]?.toLowerCase()) : undefined,
     activity: chat.messages.length ? chat.messages.reduce((latest, message) => Math.max(latest, message.timestamp), 0) : chat.createdAt,
   }))
   for (const bot of bots) {
-    if (!global.some(chat => chat.botChat!.kind === 'direct' && chat.botChat!.members[0]?.toLowerCase() === bot.name.toLowerCase())) {
+    if (!directNames.has(bot.name.toLowerCase())) {
       rows.push({ key: `bot:${bot.name}`, title: bot.name, bot, activity: 0 })
     }
   }
@@ -20,8 +41,7 @@ export function botConversationList(bots: WorkerDto[], chats: Chat[], pins: stri
     let count = 0
     let snippet = ''
     for (const message of row.chat?.messages ?? []) {
-      const content = message.content.replace(/\s+/g, ' ')
-      const index = content.toLowerCase().indexOf(term)
+      const { content, index } = cache.find(message, term)
       if (index < 0) continue
       count++
       const start = Math.max(0, index - 35)
@@ -31,7 +51,7 @@ export function botConversationList(bots: WorkerDto[], chats: Chat[], pins: stri
     if (count) row.messageMatch = { snippet, count }
     return count > 0 || `${row.title} ${row.bot?.personality.role ?? ''} ${row.chat?.botChat?.members.join(' ') ?? ''}`.toLowerCase().includes(term)
   })
-    .sort((a, b) => Number(pins.includes(b.key)) - Number(pins.includes(a.key)) || b.activity - a.activity || a.title.localeCompare(b.title) || a.key.localeCompare(b.key))
+    .sort((a, b) => Number(pinned.has(b.key)) - Number(pinned.has(a.key)) || b.activity - a.activity || a.title.localeCompare(b.title) || a.key.localeCompare(b.key))
 }
 
 export function readBotPins(raw: string | null): string[] {
