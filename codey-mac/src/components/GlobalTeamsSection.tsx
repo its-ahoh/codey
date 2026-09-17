@@ -16,9 +16,9 @@ interface TeamState { members: string[]; dispatch: DispatchMode; graph?: TeamGra
 type TeamsState = Record<string, TeamState>
 
 const DISPATCH: { id: DispatchMode; label: string; desc: string; detail: string; icon: 'activity' | 'sparkle' | 'users' }[] = [
-  { id: 'sequential', label: 'Sequential', desc: 'Best for ordered handoffs.', detail: 'Workers run in a deliberate order. Each worker receives the work produced before it, and an optional workflow can add branches or loops.', icon: 'activity' },
-  { id: 'auto', label: 'Auto', desc: 'Best when the right specialists vary.', detail: 'The Advisor chooses the relevant workers for each task and can send work back for another pass when a revision is needed.', icon: 'sparkle' },
-  { id: 'roundtable', label: 'Roundtable', desc: 'Best for multiple perspectives.', detail: 'Workers contribute concurrently while the Advisor moderates the discussion, tracks shared progress, and decides when the team is done.', icon: 'users' },
+  { id: 'sequential', label: 'Sequential', desc: 'Best for ordered handoffs.', detail: 'Bots run in a deliberate order. Each bot receives the work produced before it, and an optional workflow can add branches or loops.', icon: 'activity' },
+  { id: 'auto', label: 'Auto', desc: 'Best when the right specialists vary.', detail: 'The Advisor chooses the relevant bots for each task and can send work back for another pass when a revision is needed.', icon: 'sparkle' },
+  { id: 'roundtable', label: 'Roundtable', desc: 'Best for multiple perspectives.', detail: 'Bots contribute concurrently while the Advisor moderates the discussion, tracks shared progress, and decides when the team is done.', icon: 'users' },
 ]
 
 const labelStyle: CSSProperties = { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: C.fg3, marginBottom: 6 }
@@ -141,7 +141,7 @@ export default function GlobalTeamsSection() {
         </div>
       </div>
       {error && <div style={styles.error}>{error}</div>}
-      {Object.keys(teams).length === 0 && <div style={styles.empty}><span style={styles.emptyIcon}><UIIcon name="users" size={24} /></span><div style={styles.emptyTitle}>Build a specialist team</div><div style={styles.emptyText}>Add workers, choose how they collaborate, then reuse the team in any workspace.</div><button onClick={addTeam} style={{ ...styles.newTeamBtn, marginTop: 15 }}><UIIcon name="add" size={15} />Create a team</button></div>}
+      {Object.keys(teams).length === 0 && <div style={styles.empty}><span style={styles.emptyIcon}><UIIcon name="users" size={24} /></span><div style={styles.emptyTitle}>Build a specialist team</div><div style={styles.emptyText}>Add bots, choose how they collaborate, then reuse the team in any workspace.</div><button onClick={addTeam} style={{ ...styles.newTeamBtn, marginTop: 15 }}><UIIcon name="add" size={15} />Create a team</button></div>}
       {Object.entries(teams).map(([name, team]) => {
         const showOrder = team.dispatch === 'sequential' && !team.graph
         return (
@@ -236,9 +236,9 @@ export default function GlobalTeamsSection() {
                   e.target.value = ''
                 }}
                 style={{ background: C.accentDim, color: C.accent, border: `1px dashed ${C.accent}`, borderRadius: 16, padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}>
-                <option value="">+ add worker</option>
+                <option value="">+ add bot</option>
                 {available(name).map(w => <option key={w.name} value={w.name}>{w.name}</option>)}
-                <option value="__create__">+ Create new worker…</option>
+                <option value="__create__">+ Create new bot…</option>
               </select>
             </div>
 
@@ -262,7 +262,7 @@ export default function GlobalTeamsSection() {
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div onClick={e => e.stopPropagation()}
             style={{ width: 520, padding: 20, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>New worker for "{creatingFor}"</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>New bot for "{creatingFor}"</div>
             <div style={{ fontSize: 12, color: C.fg3, marginBottom: 10 }}>The active coding agent will generate a personality and config from your description.</div>
             {createError && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{createError}</div>}
             <textarea value={createPrompt} onChange={e => setCreatePrompt(e.target.value)} disabled={createBusy}
@@ -294,7 +294,7 @@ export default function GlobalTeamsSection() {
             <div style={styles.dispatchHelpHeader}>
               <div>
                 <div id="dispatch-help-title" style={styles.dispatchHelpTitle}>Dispatch modes</div>
-                <div style={styles.dispatchHelpIntro}>Choose how workers collaborate on a team task.</div>
+                <div style={styles.dispatchHelpIntro}>Choose how bots collaborate on a team task.</div>
               </div>
               <button type="button" onClick={() => setDispatchHelpOpen(false)} aria-label="Close" style={styles.modalCloseBtn}><UIIcon name="close" size={15} /></button>
             </div>

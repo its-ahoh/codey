@@ -230,7 +230,7 @@ const WhiteboardSection: React.FC<{
   return (
     <Section title="Whiteboard">
       {groups.length === 0 ? (
-        <div style={styles.emptyHint}>Workers have not added anything yet.</div>
+        <div style={styles.emptyHint}>Bots have not added anything yet.</div>
       ) : groups.map(group => (
         <div key={group.label} style={styles.whiteboardGroup}>
           <div style={{ ...styles.whiteboardGroupTitle, color: group.color }}>{group.label}</div>

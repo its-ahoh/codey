@@ -72,7 +72,23 @@ export interface TeamRunSummary {
   finalizedAt: number;
 }
 
+export interface ConversationTask {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  compaction?: ChatCompaction;
+}
+
+/** undefined selects automatically; null explicitly selects general conversation. */
+export interface ChatTaskRoute {
+  taskId?: string | null;
+  replyToMessageId?: string;
+}
+
 export interface ChatMessage {
+  taskId?: string;
+  replyToMessageId?: string;
   id: string;
   role: 'user' | 'assistant';
   content: string;
@@ -163,6 +179,9 @@ export interface DiscussionMeta {
 }
 
 export interface Chat {
+  /** Global Bot conversations are independent of project workspace navigation. */
+  botChat?: { kind: 'direct' | 'group'; members: string[]; homeDir: string; sourceChatId?: string; membershipRevision?: number };
+  tasks?: ConversationTask[];
   id: string;
   title: string;
   workspaceName: string;
@@ -246,6 +265,8 @@ export interface Chat {
     agent: CodingAgent;
     model?: string;
     sessionId: string;
+    /** Task, Bot profile, and execution directory identity. */
+    scopeKey?: string;
     /** Last Codey transcript message already visible inside this CLI session. */
     syncedThroughMessageId?: string;
   }>;
@@ -254,6 +275,8 @@ export interface Chat {
     agent: CodingAgent;
     model?: string;
     sessionId: string;
+    /** Task, Bot profile, and execution directory identity. */
+    scopeKey?: string;
     syncedThroughMessageId?: string;
   };
   /**

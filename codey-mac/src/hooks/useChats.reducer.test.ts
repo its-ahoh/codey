@@ -311,3 +311,37 @@ describe('member identity and failure delivery', () => {
     expect(s.chats.c1.messages.at(-1)?.content).toBe('Team interrupted by an error')
     expect(s.inFlight.c1).toBeUndefined()
   })
+
+describe('task identity through the conversation UI', () => {
+  it('adopts the server-matched task for both messages and later replies', () => {
+    let state: State = { ...emptyState(), chats: { c1: makeChat({ messages: [] }) }, order: ['c1'] }
+    state = reducer(state, { type: 'startSend', chatId: 'c1', assistantMessageId: 'a1', userMessage: {
+      id: 'u1', role: 'user', content: 'Build a homepage', timestamp: 1,
+    } })
+    const tasks = [{ id: 'website', title: 'Website', createdAt: 1, updatedAt: 1 }]
+    state = reducer(state, { type: 'completeSend', chatId: 'c1', assistantMessageId: 'a1', content: 'Done', taskId: 'website', tasks })
+    expect(state.chats.c1.messages.map(message => message.taskId)).toEqual(['website', 'website'])
+    expect(state.chats.c1.tasks).toEqual(tasks)
+  })
+  it('keeps task identity on the streaming reply and queued delivery', () => {
+    const chat = makeChat({ messages: [], selection: { type: 'none' } })
+    let state: State = { ...emptyState(), chats: { c1: chat }, order: ['c1'] }
+    state = reducer(state, { type: 'startSend', chatId: 'c1', assistantMessageId: 'a1', userMessage: {
+      id: 'u1', role: 'user', content: 'Website', timestamp: 1, taskId: 'website',
+    } })
+    expect(state.chats.c1.messages[1].taskId).toBe('website')
+    state = reducer(state, { type: 'enqueueMessage', chatId: 'c1', message: {
+      id: 'q1', text: 'Icon', taskRoute: { taskId: 'icon' },
+    } })
+    state = reducer(state, { type: 'tasksUpdated', chatId: 'c1', tasks: [
+      { id: 'website', title: 'Website', createdAt: 1, updatedAt: 1 },
+      { id: 'icon', title: 'Icon', createdAt: 1, updatedAt: 1 },
+    ] })
+    expect(state.chats.c1.messages[1].isComplete).toBe(false)
+    expect(state.inFlight.c1.assistantMessageId).toBe('a1')
+    expect(readyDeliveries(state.queuedMessages, {}, new Set(), {})[0].message.taskRoute?.taskId).toBe('icon')
+    state = reducer(state, { type: 'stoppedSend', chatId: 'c1', text: 'Website' })
+    expect(state.pendingRestoreTasks?.c1).toBe('website')
+    expect(state.queuedMessages.c1[0].taskRoute?.taskId).toBe('icon')
+  })
+})

@@ -23,7 +23,7 @@ const TABS: { key: Tab; label: string; icon: IconName; description: string }[] =
   { key: 'memory',     label: 'Memory',     icon: 'book', description: 'Global & workspace memory' },
   { key: 'whisper',    label: 'Voice',      icon: 'mic', description: 'Voice input & hotkeys' },
   { key: 'workspaces', label: 'Workspaces', icon: 'workspace', description: 'Project directories' },
-  { key: 'workers',    label: 'Workers',    icon: 'users', description: 'Personalities' },
+  { key: 'workers',    label: 'Bots',    icon: 'bot', description: 'Personalities' },
   { key: 'teams',      label: 'Teams',      icon: 'users', description: 'Team library' },
   { key: 'status',     label: 'Gateway',    icon: 'server', description: 'Service health & logs' },
 ]
@@ -32,7 +32,7 @@ interface Props { onClose: () => void; initialTab?: string }
 
 export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
   const [tab, setTab] = useState<Tab>(
-    (initialTab && TABS.some(t => t.key === initialTab)) ? (initialTab as Tab) : 'settings'
+    initialTab?.startsWith('bot:') ? 'workers' : (initialTab && TABS.some(t => t.key === initialTab)) ? (initialTab as Tab) : 'settings'
   )
   const [apiKeyCreateIntent, setApiKeyCreateIntent] = useState<'voice' | undefined>()
   const { isRunning, status, logs } = useGateway()
@@ -87,7 +87,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
               )}
               {tab === 'status'     && <StatusTab status={status} logs={logs} isRunning={isRunning} />}
               {tab === 'workspaces' && <WorkspacesTab isGatewayRunning={isRunning} />}
-              {tab === 'workers'    && <WorkersTab />}
+              {tab === 'workers'    && <WorkersTab initialName={initialTab?.startsWith('bot:') ? initialTab.slice(4) : undefined} />}
               {tab === 'teams'      && <TeamsTab />}
               {tab === 'settings'   && <SettingsTab isGatewayRunning={isRunning} />}
               {tab === 'agents'     && <AgentsTab isGatewayRunning={isRunning} />}

@@ -3632,6 +3632,7 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!workerManager) throw new Error('Workers are not loaded yet')
       await workerManager.renameWorker(oldName, newName)
+      inProcessGateway?.renameBotChats(oldName, newName)
       inProcessGateway?.invalidateWorkerSessions(oldName)
       // Cascade: every team member list and flow-graph node that pointed at
       // the old name now points at the new one.
@@ -5451,7 +5452,31 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('chats:send', async (_e, payload: { chatId: string; text: string; attachments?: any[] }) =>
+  ipcMain.handle('chats:open-bot', async (_e, name: string) => wrap(async () => {
+    if (!inProcessGateway) throw new Error('Gateway not initialized')
+    return inProcessGateway.openBotChat(name)
+  }))
+  ipcMain.handle('chats:update-bot-group', async (_e, chatId: string, members: string[]) => wrap(async () => {
+    if (!inProcessGateway) throw new Error('Gateway not initialized')
+    return inProcessGateway.updateBotGroup(chatId, members)
+  }))
+  ipcMain.handle('chats:invite-bots', async (_e, chatId: string, title: string, members: string[], context: string) => wrap(async () => {
+    if (!inProcessGateway) throw new Error('Gateway not initialized')
+    return inProcessGateway.inviteBotsToGroup(chatId, title, members, context)
+  }))
+  ipcMain.handle('chats:create-bot-group', async (_e, title: string, members: string[]) => wrap(async () => {
+    if (!inProcessGateway) throw new Error('Gateway not initialized')
+    return inProcessGateway.createBotGroup(title, members)
+  }))
+
+  ipcMain.handle('chats:create-task', async (_e, chatId: string, title: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.createChatTask(chatId, title)
+    })
+  )
+
+  ipcMain.handle('chats:send', async (_e, payload: { chatId: string; text: string; attachments?: any[]; taskRoute?: import("@codey/core").ChatTaskRoute }) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       // No-op sink: events flow to the renderer via the global chatEventListener
@@ -5462,7 +5487,7 @@ app.whenReady().then(async () => {
       // server's persisted version (with a different UUID), making selectedTurnId
       // point at nothing and the right Context Panel go blank.
       const sink = () => { /* no-op */ }
-      return inProcessGateway.sendToChat(payload.chatId, payload.text, sink, payload.attachments)
+      return inProcessGateway.sendToChat(payload.chatId, payload.text, sink, payload.attachments, undefined, payload.taskRoute)
     })
   )
 

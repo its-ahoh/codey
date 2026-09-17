@@ -263,7 +263,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
               <div style={rowStyle}>
                 <div>
                   <div style={rowLabelStyle}>Effort</div>
-                  <div style={rowHintStyle}>Used when neither the chat nor a worker overrides it.</div>
+                  <div style={rowHintStyle}>Used when neither the chat nor a bot overrides it.</div>
                 </div>
                 <select
                   value={agents[a]?.defaultEffort ?? 'medium'}

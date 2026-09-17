@@ -39,3 +39,5 @@ export * from './voice-polish';
 export * from './voice-converse';
 
 export * from './member-avatars';
+
+export * from './chat-tasks';

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { ChatTab } from './components/ChatTab'
+import { BotListPanel } from './components/BotListPanel'
+import { SIDEBAR_MODE_KEY, readSidebarMode, nextChatForSidebar, chatInSidebarMode, type SidebarMode } from './components/sidebarMode'
 import { ChatListPanel } from './components/ChatListPanel'
 import { SettingsOverlay } from './components/SettingsOverlay'
 import { VoiceRecorder } from './components/VoiceRecorder'
@@ -34,9 +36,18 @@ const clampLeftPanelWidth = (width: number) => {
 
 const Shell: React.FC = () => {
   const { isRunning, coreState, relaunchApp } = useGateway()
-  const { state, createChat, selectChat, openChatById, refreshWorkspaces, sendMessage } = useChats()
+  const { state, createChat, selectChat, openChatById, refreshWorkspaces, refreshChats, sendMessage } = useChats()
   // Keeps the ChatList PR badges current for chats the user isn't looking at.
   usePullRequestWatcher()
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>(() => readSidebarMode(localStorage.getItem(SIDEBAR_MODE_KEY)))
+  const [newBotRequested, setNewBotRequested] = useState(false)
+  const switchSidebarMode = (mode: SidebarMode) => {
+    if (mode === sidebarMode) return
+    if (state.selectedChatId) localStorage.setItem(`codey.sidebarChat.${sidebarMode}`, state.selectedChatId)
+    setSidebarMode(mode)
+    localStorage.setItem(SIDEBAR_MODE_KEY, mode)
+    selectChat(nextChatForSidebar(state.chats, state.order, mode, localStorage.getItem(`codey.sidebarChat.${mode}`)))
+  }
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
   const [automationsOpen, setAutomationsOpen] = useState(false)
@@ -110,6 +121,7 @@ const Shell: React.FC = () => {
     await sendMessage(
       event.chatId,
       'I have finished signing in to the Codey Browser. Re-check the current page, retry the blocked website step, and continue the previous task.',
+      undefined, undefined, { taskId: [...(state.chats[event.chatId]?.messages ?? [])].reverse().find(m => m.role === 'user')?.taskId ?? null },
     )
     setBrowserLoginWait(current => current?.id === event.id ? null : current)
   }
@@ -165,8 +177,13 @@ const Shell: React.FC = () => {
       if (!isMeta) return
       if (e.key === 'n') {
         e.preventDefault()
-        const ws = localStorage.getItem('codey.lastWorkspace') ?? state.workspaces[0]
-        if (ws) createChat(ws)
+        if (sidebarMode === 'bots') {
+          setLeftCollapsed(false)
+          setNewBotRequested(true)
+        } else {
+          const ws = localStorage.getItem('codey.lastWorkspace') ?? state.workspaces[0]
+          if (ws) createChat(ws)
+        }
       } else if (e.key === ',') {
         e.preventDefault()
         openSettings()
@@ -178,13 +195,13 @@ const Shell: React.FC = () => {
         selectRightTool(rightTool === 'browser' ? null : 'browser')
       } else if (/^[1-9]$/.test(e.key)) {
         const idx = parseInt(e.key, 10) - 1
-        const id = state.order[idx]
+        const id = state.order.filter(id => state.chats[id] && chatInSidebarMode(state.chats[id], sidebarMode))[idx]
         if (id) { e.preventDefault(); selectChat(id) }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.order, state.workspaces, createChat, selectChat, activeChat, rightTool, selectRightTool])
+  }, [state.order, state.chats, state.workspaces, sidebarMode, createChat, selectChat, activeChat, rightTool, selectRightTool])
 
   useEffect(() => {
     const off = window.codey.notify.onOpenSettings(() => {
@@ -264,6 +281,14 @@ const Shell: React.FC = () => {
     return () => mql.removeEventListener('change', onChange)
   }, [])
 
+  const sidebarActions = {
+    onOpenSettings: openSettings,
+    onOpenAutomations: openAutomations,
+    onOpenBrowser: openBrowser,
+    onOpenTools: () => { setRightTool(null); setToolsOpen(true) },
+    automationsUnseenCount: unseenRunKeys.size,
+  }
+
   return (
     <div style={styles.root}>
       <div style={styles.titleBar}>
@@ -295,15 +320,22 @@ const Shell: React.FC = () => {
       <div style={styles.body}>
         {!leftCollapsed && (
           <div style={{ ...styles.sidebarShell, width: leftPanelWidth }}>
-            <ChatListPanel
-              onOpenSettings={openSettings}
-              onOpenAutomations={openAutomations}
-              onOpenBrowser={openBrowser}
-              onOpenTools={() => { setRightTool(null); setToolsOpen(true) }}
+            <div role="group" aria-label="Navigation mode" style={{ display: 'flex', gap: 3, padding: 5, margin: '10px 12px 4px', background: C.surface2, borderRadius: 10 }}>
+              {(['bots', 'workspaces'] as const).map(mode => <button key={mode} type="button" aria-pressed={sidebarMode === mode}
+                onClick={() => switchSidebarMode(mode)} style={{ flex: 1, display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center', padding: '7px 5px', border: `1px solid ${sidebarMode === mode ? C.accent : 'transparent'}`, borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: sidebarMode === mode ? 750 : 500, background: sidebarMode === mode ? C.accent : 'transparent', color: sidebarMode === mode ? C.onAccent : C.fg2 }}>
+                <UIIcon name={mode === 'bots' ? 'bot' : 'workspace'} size={14} />{mode === 'bots' ? 'Bots' : 'Workspaces'}
+              </button>)}
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            {sidebarMode === 'bots' ? <BotListPanel
+              newBotRequested={newBotRequested} onNewBotHandled={() => setNewBotRequested(false)}
+              {...sidebarActions}
+            /> : <ChatListPanel
+              {...sidebarActions}
               onSelectChat={() => { /* keep the selected workspace tool open across chats */ }}
-              automationsUnseenCount={unseenRunKeys.size}
               activeChatId={state.selectedChatId}
-            />
+            />}
+            </div>
             <div
               role="separator"
               aria-label="Resize sidebar"
@@ -346,13 +378,13 @@ const Shell: React.FC = () => {
             <div style={styles.emptyMain}>
               <div style={styles.emptyCard}>
                 <div style={styles.emptyIcon}><UIIcon name="chat" size={30} /></div>
-                <div style={styles.emptyTitle}>{state.order.length === 0 ? 'Start your first chat' : 'Pick up where you left off'}</div>
-                <div style={styles.emptyCopy}>{state.order.length === 0 ? 'Create a chat from the sidebar to give Codey a task.' : 'Choose a conversation from the sidebar.'}</div>
+                <div style={styles.emptyTitle}>{sidebarMode === 'bots' ? 'Meet your Bots' : state.order.length === 0 ? 'Start your first chat' : 'Pick up where you left off'}</div>
+                <div style={styles.emptyCopy}>{sidebarMode === 'bots' ? 'Choose a Bot to chat, or create a group to work together.' : state.order.length === 0 ? 'Create a chat from the sidebar to give Codey a task.' : 'Choose a conversation from the sidebar.'}</div>
               </div>
             </div>
           )}
         </div>
-        {settingsOpen && <SettingsOverlay initialTab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); refreshWorkspaces() }} />}
+        {settingsOpen && <SettingsOverlay initialTab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); refreshWorkspaces(); refreshChats(); window.dispatchEvent(new Event('codey:workers-changed')) }} />}
         {automationsOpen && (
           <AutomationsView
             onClose={() => setAutomationsOpen(false)}
@@ -437,7 +469,7 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitAppRegion: 'no-drag',
   },
   body: { flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' },
-  sidebarShell: { position: 'relative', height: '100%', flexShrink: 0 },
+  sidebarShell: { position: 'relative', height: '100%', flexShrink: 0, display: 'flex', flexDirection: 'column', background: C.sidebarBg },
   sidebarResizeHandle: {
     position: 'absolute', top: 0, right: -7, width: 14, height: '100%', zIndex: 5,
     cursor: 'col-resize',

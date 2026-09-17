@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { observeAvatarVisibility } from './avatarVisibility'
 import { resolveWorkerAvatar, avatarStateLabels, type AvatarState, type WorkerAvatarConfig } from './workerAvatarModel'
 import './workerAvatar.css'
 
@@ -5,8 +7,18 @@ export function WorkerAvatar({ name, config, state = 'idle', size = 36 }: {
   name: string; config?: Partial<WorkerAvatarConfig>; state?: AvatarState; size?: number
 }) {
   const { shape, color } = resolveWorkerAvatar(name, config)
+  const avatarRef = useRef<SVGSVGElement>(null)
+  useEffect(() => {
+    if (state === 'working' && avatarRef.current) return observeAvatarVisibility(avatarRef.current)
+  }, [state])
+  // Each mounted face has its own rhythm; streaming updates do not restart it.
+  const [rhythm] = useState(() => ({
+    '--avatar-blink-period': `${5 + Math.random() * 4}s`,
+    '--avatar-delay': `${-Math.random() * 15}s`,
+    '--avatar-work-period': `${1.8 + Math.random() * .6}s`,
+  } as CSSProperties))
   const resting = state === 'idle' || state === 'stopped'
-  return <svg className={`worker-avatar worker-avatar--${state}`} width={size} height={size} viewBox="0 0 100 100" role="img" aria-label={`${name}: ${avatarStateLabels[state]}`} style={{ flexShrink: 0 }}>
+  return <svg ref={avatarRef} className={`worker-avatar worker-avatar--${state}`} width={size} height={size} viewBox="0 0 100 100" role="img" aria-label={`${name}: ${avatarStateLabels[state]}`} style={{ ...rhythm, flexShrink: 0 }}>
     <g className="worker-avatar-body">
       {shape === 'circle' && <path d="M50 7 C76 5 94 27 94 53 C94 80 75 94 49 93 C22 95 6 78 6 53 C5 27 23 8 50 7Z" fill={color} />}
       {shape === 'square' && <path d="M29 9 Q50 6 72 9 Q90 11 91 30 L93 70 Q92 90 72 92 L29 92 Q8 91 8 71 L9 31 Q9 11 29 9Z" fill={color} />}
@@ -29,7 +41,7 @@ export function WorkerAvatar({ name, config, state = 'idle', size = 36 }: {
                 <ellipse className="worker-avatar-pupil" cx={x + (i === 0 ? 2 : -2)} cy="51" rx="5" ry="7" fill="#303C42"/>
               </> : <>
                 <ellipse cx={x} cy="48" rx="12" ry={resting ? 12 : 16} fill="#FFFDF5"/>
-                <ellipse cx={x + (state === 'reply' ? 3 : 0)} cy={resting ? 51 : 49} rx="5.5" ry={resting ? 6 : 8} fill="#303C42"/>
+                <ellipse className="worker-avatar-pupil" cx={x + (state === 'reply' ? 3 : 0)} cy={resting ? 51 : 49} rx="5.5" ry={resting ? 6 : 8} fill="#303C42"/>
               </>}
 
             </g>)}
