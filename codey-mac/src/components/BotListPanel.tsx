@@ -86,7 +86,7 @@ export function BotListPanel(props: Props) {
   const field = { width: '100%', background: C.bg, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 9, fontFamily: 'inherit', fontSize: 12 } as const
   return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, padding: 8, gap: 8, background: C.sidebarBg }}>
     <SidebarNavigation {...props} />
-    <input aria-label="Search chats" placeholder="Search chats" value={search} onChange={e => setSearch(e.target.value)} style={field} />
+    <input type="search" aria-label="Search chats and messages" placeholder="Search chats and messages" value={search} onChange={e => setSearch(e.target.value)} style={field} />
     {error && <div role="alert" style={{ color: C.red, fontSize: 12 }}>{error}</div>}
     <div style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}>
       {form && <form onSubmit={e => { e.preventDefault(); void create() }} style={{ display: 'grid', gap: 8, padding: 10, marginBottom: 14, border: `1px solid ${C.border}`, borderRadius: 10 }}>
@@ -97,7 +97,7 @@ export function BotListPanel(props: Props) {
       </form>}
       {loading && <p style={{ color: C.fg3, fontSize: 12 }}>Loading chats…</p>}
       {!loading && !rows.length && <p style={{ color: C.fg3, fontSize: 12 }}>{search ? 'No matching chats.' : 'Create a Bot to start chatting. Invite other Bots from the chat to form a group.'}</p>}
-      {rows.map(({ key, title, chat, bot }) => {
+      {rows.map(({ key, title, chat, bot, messageMatch }) => {
         const active = chat?.id === state.selectedChatId
         const running = !!chat && !!state.inFlight[chat.id]
         const queued = !!chat && !!state.inFlight[chat.id]?.queuedPosition
@@ -109,7 +109,8 @@ export function BotListPanel(props: Props) {
             {chat?.botChat?.kind === 'group' ? <span style={{ width: 34, flexShrink: 0, display: 'grid', placeItems: 'center' }}><UIIcon name="users" size={26} /></span> : <WorkerAvatar name={title} config={bot?.config.avatar} size={34} state={queued ? 'waiting' : running ? 'working' : awaiting ? 'reply' : 'idle'} />}
             <span style={{ minWidth: 0, flex: 1 }}>
               <strong style={{ display: 'block', color: C.fg, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}{chat && state.unreadChats[chat.id] ? ' ·' : ''}</strong>
-              <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: C.fg3, marginTop: 4 }}>{opening === bot?.name ? 'Opening…' : queued ? 'Queued' : running ? 'Working' : awaiting ? 'Waiting for you' : last?.content || bot?.personality.role.split('\n')[0] || chat?.botChat?.members.join(', ') || 'Ready to chat'}</span>
+              <span title={messageMatch?.snippet} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: C.fg3, marginTop: 4 }}>{messageMatch?.snippet ?? (opening === bot?.name ? 'Opening…' : queued ? 'Queued' : running ? 'Working' : awaiting ? 'Waiting for you' : last?.content || bot?.personality.role.split('\n')[0] || chat?.botChat?.members.join(', ') || 'Ready to chat')}</span>
+              {messageMatch && <span style={{ display: 'block', fontSize: 10, color: C.accent, marginTop: 3 }}>{messageMatch.count} matching {messageMatch.count === 1 ? 'message' : 'messages'}</span>}
             </span>
           </button>
           <button style={{ ...textButton, color: pinned ? C.accent : C.fg3 }} aria-label={`${pinned ? 'Unpin' : 'Pin'} ${title}`} title={pinned ? 'Unpin chat' : 'Pin chat'} aria-pressed={pinned} onClick={() => void togglePin(key, chat ? undefined : bot?.name)}>
