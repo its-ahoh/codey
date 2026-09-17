@@ -1,13 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { Chat, ChatCompaction, ChatMessage, ChatSelection, ChatRoute, ChannelKind, ChecklistItem, TaskBrief, ThinkingEffort } from '@codey/core';
+import { chatTaskContext, Chat, ChatCompaction, ChatMessage, ChatSelection, ChatRoute, ChannelKind, ChecklistItem, TaskBrief, ThinkingEffort } from '@codey/core';
 import { Logger } from './logger';
 
 const log = Logger.getInstance();
 
 export interface CreateChatInput {
   workspaceName: string;
+  botChat?: Chat['botChat'];
   selection?: ChatSelection;
   title?: string;
   /** 'automation' = hidden system chat (excluded from list() by default). */
@@ -77,12 +78,28 @@ export class ChatManager {
     return path.resolve(this.transcriptFile(chat.workspaceName, chat.id));
   }
 
+  /** Materialize only this task's history; line offsets match its filtered view. */
+  taskTranscriptPath(chatId: string, taskId?: string): string | undefined {
+    const chat = this.get(chatId);
+    if (!chat) return undefined;
+    const view = chatTaskContext(chat, taskId);
+    const dir = path.join(this.chatsDir(chat.workspaceName), `${chat.id}.tasks`);
+    fs.mkdirSync(dir, { recursive: true });
+    // Use the validated task's array index, never a caller-controlled path segment.
+    const index = taskId ? chat.tasks!.findIndex(t => t.id === taskId) : 'general';
+    const file = path.resolve(dir, `${index}.jsonl`);
+    fs.writeFileSync(`${file}.tmp`, view.messages.map(m => this.transcriptLine(m)).join('\n') + '\n', 'utf8');
+    fs.renameSync(`${file}.tmp`, file);
+    return file;
+  }
+
   /** Lean projection — the fields a catching-up agent needs, nothing else.
    *  Tool calls and thinking are deliberately omitted: they dominate the byte
    *  count and add nothing to "what did I miss". */
   private transcriptLine(message: ChatMessage): string {
     return JSON.stringify({
       id: message.id,
+      ...(message.taskId ? { taskId: message.taskId } : {}),
       role: message.role,
       timestamp: message.timestamp,
       ...(message.agent ? { agent: message.agent } : {}),
@@ -264,6 +281,7 @@ export class ChatManager {
       id: randomUUID(),
       title: input.title ?? 'New Chat',
       workspaceName: input.workspaceName,
+      ...(input.botChat ? { botChat: input.botChat } : {}),
       selection: input.selection ?? { type: 'none' },
       messages: [],
       createdAt: now,
@@ -278,6 +296,55 @@ export class ChatManager {
     return chat;
   }
 
+  createTask(chatId: string, title: string): Chat {
+    const chat = this.requireChat(chatId);
+    title = title.trim();
+    if (!title || title.length > 120) throw new Error('Task title must contain 1 to 120 characters.');
+    if (chat.selection.type === 'team' || chat.botChat?.kind === 'group' || chat.pendingTeam || chat.kind === 'automation') {
+      throw new Error('Tasks are currently supported in direct chats only.');
+    }
+    if (chat.tasks?.some(t => t.title.toLowerCase() === title.toLowerCase())) {
+      throw new Error('A task with this name already exists in this chat.');
+    }
+    const now = Date.now();
+    (chat.tasks ??= []).push({ id: randomUUID(), title, createdAt: now, updatedAt: now });
+    chat.updatedAt = now;
+    this.persist(chat);
+    return chat;
+  }
+
+  updateBotGroup(chatId: string, members: string[]): Chat {
+    const chat = this.requireChat(chatId);
+    if (chat.botChat?.kind !== 'group') throw new Error('This conversation is not a Bot group.');
+    if (chat.pendingTeam) throw new Error('Finish the paused group task before changing members.');
+    const previous = chat.botChat.members;
+    if (previous.length === members.length && previous.every((name, i) => name === members[i])) return chat;
+    chat.botChat.members = members;
+    chat.botChat.membershipRevision = (chat.botChat.membershipRevision ?? 0) + 1;
+    delete chat.sessionAnchor;
+    delete chat.sessionAnchors;
+    const added = members.filter(name => !previous.includes(name));
+    const removed = previous.filter(name => !members.includes(name));
+    this.appendMessage(chatId, { id: randomUUID(), role: 'assistant', timestamp: Date.now(), isComplete: true,
+      content: `Group membership updated.${added.length ? ` Added: ${added.join(', ')}.` : ''}${removed.length ? ` Removed: ${removed.join(', ')}.` : ''}` });
+    return chat;
+  }
+
+  renameBot(oldName: string, newName: string): void {
+    this.ensureLoaded();
+    for (const chat of this.cache.values()) {
+      if (!chat.botChat?.members.some(n => n.toLowerCase() === oldName.toLowerCase())) continue;
+      chat.botChat.members = chat.botChat.members.map(n => n.toLowerCase() === oldName.toLowerCase() ? newName : n);
+      if (chat.botChat.kind === 'direct') {
+        chat.selection = { type: 'worker', name: newName };
+        chat.title = newName;
+      }
+      delete chat.sessionAnchor;
+      delete chat.sessionAnchors;
+      this.persist(chat);
+    }
+  }
+
   rename(chatId: string, title: string): Chat {
     const chat = this.requireChat(chatId);
     chat.title = title;
@@ -288,6 +355,12 @@ export class ChatManager {
 
   updateSelection(chatId: string, selection: ChatSelection): Chat {
     const chat = this.requireChat(chatId);
+    if (chat.tasks?.length && selection.type === 'team') {
+      throw new Error('Open a separate group chat for this team. This chat contains independent direct-chat tasks.');
+    }
+    if (chat.botChat && (selection.type !== chat.selection.type || selection.name !== chat.selection.name)) {
+      throw new Error('Use the Bot roster to open another Bot conversation.');
+    }
     const changedKind = chat.selection.type !== selection.type
       || (chat.selection.type === selection.type && (chat.selection as { name?: string }).name !== (selection as { name?: string }).name);
     chat.selection = selection;
@@ -304,6 +377,7 @@ export class ChatManager {
   getSessionAnchor(
     chatId: string,
     agent: NonNullable<Chat['sessionAnchor']>['agent'],
+    scopeKey?: string,
   ): NonNullable<Chat['sessionAnchor']> | undefined {
     const chat = this.get(chatId);
     if (!chat) return undefined;
@@ -320,7 +394,7 @@ export class ChatManager {
           ?? chat.messages[chat.messages.length - 1]?.id,
       };
       const pooled = [...(chat.sessionAnchors ?? [])]
-        .filter(item => item.agent !== legacy.agent)
+        .filter(item => item.agent !== legacy.agent || item.scopeKey !== legacy.scopeKey)
         .concat(legacy);
       chat.sessionAnchors = pooled;
       delete chat.sessionAnchor;
@@ -330,11 +404,11 @@ export class ChatManager {
     // Older pool data may contain one entry per model. Array order reflects
     // replacement order, so the final matching entry is the agent's current
     // session. Compact it lazily to keep future reads unambiguous.
-    const matches = chat.sessionAnchors?.filter(anchor => anchor.agent === agent) ?? [];
+    const matches = chat.sessionAnchors?.filter(anchor => anchor.agent === agent && anchor.scopeKey === scopeKey) ?? [];
     const current = matches[matches.length - 1];
     if (current && matches.length > 1) {
       chat.sessionAnchors = chat.sessionAnchors!
-        .filter(anchor => anchor.agent !== agent)
+        .filter(anchor => anchor.agent !== agent || anchor.scopeKey !== scopeKey)
         .concat(current);
       this.persist(chat);
     }
@@ -347,12 +421,12 @@ export class ChatManager {
     if (!chat) return;
     const migrated = [...(chat.sessionAnchors ?? [])];
     if (chat.sessionAnchor && !migrated.some(item =>
-      item.agent === chat.sessionAnchor!.agent
+      item.agent === chat.sessionAnchor!.agent && item.scopeKey === chat.sessionAnchor!.scopeKey
     )) {
       migrated.push(chat.sessionAnchor);
     }
     chat.sessionAnchors = migrated
-      .filter(item => item.agent !== anchor.agent)
+      .filter(item => item.agent !== anchor.agent || item.scopeKey !== anchor.scopeKey)
       .concat(anchor);
     delete chat.sessionAnchor;
     chat.updatedAt = Date.now();
@@ -363,6 +437,7 @@ export class ChatManager {
   clearSessionAnchor(
     chatId: string,
     agent?: NonNullable<Chat['sessionAnchor']>['agent'],
+    scopeKey?: string,
   ): void {
     const chat = this.cache.get(chatId);
     if (!chat) return;
@@ -372,9 +447,9 @@ export class ChatManager {
       delete chat.sessionAnchors;
     } else {
       const before = chat.sessionAnchors?.length ?? 0;
-      chat.sessionAnchors = chat.sessionAnchors?.filter(item => item.agent !== agent);
+      chat.sessionAnchors = chat.sessionAnchors?.filter(item => item.agent !== agent || (scopeKey !== undefined && item.scopeKey !== scopeKey));
       if (chat.sessionAnchors?.length === 0) delete chat.sessionAnchors;
-      if (chat.sessionAnchor?.agent === agent) delete chat.sessionAnchor;
+      if (chat.sessionAnchor?.agent === agent && scopeKey === undefined) delete chat.sessionAnchor;
       if (before === (chat.sessionAnchors?.length ?? 0) && chat.sessionAnchor) return;
     }
     chat.updatedAt = Date.now();
@@ -605,6 +680,7 @@ export class ChatManager {
     if (fs.existsSync(file)) fs.unlinkSync(file);
     const transcript = this.transcriptFile(chat.workspaceName, chat.id);
     if (fs.existsSync(transcript)) fs.unlinkSync(transcript);
+    fs.rmSync(path.join(this.chatsDir(chat.workspaceName), `${chat.id}.tasks`), { recursive: true, force: true });
     this.transcriptLines.delete(chatId);
     const chatDir = path.join(this.workspacesRoot, chat.workspaceName, 'chats', chatId);
     if (fs.existsSync(chatDir)) {
@@ -633,15 +709,18 @@ export class ChatManager {
   /** Append a message and persist. Called at message completion. */
   appendMessage(chatId: string, message: ChatMessage): Chat {
     const chat = this.requireChat(chatId);
+    if (message.taskId && !chat.tasks?.some(t => t.id === message.taskId)) throw new Error('Task not found in this chat.');
     chat.messages.push(message);
+    const task = chat.tasks?.find(t => t.id === message.taskId);
+    if (task) task.updatedAt = Date.now();
     chat.updatedAt = Date.now();
     // Automation chats keep their authoritative "Automation: <name>" title.
-    if (chat.messages.length === 1 && message.role === 'user' && chat.kind !== 'automation') {
+    if (chat.messages.length === 1 && message.role === 'user' && chat.kind !== 'automation' && !chat.botChat) {
       chat.title = deriveTitle(message.content);
     }
     this.persist(chat);
     this.appendTranscript(chat);
-    this.maybeScheduleCompaction(chat);
+    this.maybeScheduleCompaction(chat, message.taskId);
     return chat;
   }
 
@@ -670,28 +749,37 @@ export class ChatManager {
    * user-visible turn. The next turn after success picks up the new summary
    * via `buildChatBootstrapPrompt`.
    */
-  private maybeScheduleCompaction(chat: Chat): void {
+  private maybeScheduleCompaction(source: Chat, taskId?: string): void {
     if (!this.compactionRunner) return;
+    const chat = chatTaskContext(source, taskId);
+    const key = `${chat.id}:${taskId ?? 'general'}`;
+    const snapshot = { ...chat, messages: [...chat.messages] };
     const already = chat.compaction?.summarizedUpTo ?? 0;
     const unsummarized = chat.messages.length - already;
     if (unsummarized < COMPACTION_TRIGGER_UNSUMMARIZED) return;
-    if (this.compactingChats.has(chat.id)) return;
-    this.compactingChats.add(chat.id);
+    if (this.compactingChats.has(key)) return;
+    this.compactingChats.add(key);
     // Run in a microtask so the caller (turn completion) returns immediately.
     queueMicrotask(async () => {
       try {
-        const next = await this.compactionRunner!(chat);
+        const next = await this.compactionRunner!(snapshot);
         if (next) {
           const current = this.cache.get(chat.id);
           if (current) {
-            current.compaction = next;
+            // Do not apply a summary if a message was removed/reordered while it ran.
+            const messages = chatTaskContext(current, taskId).messages;
+            if (!snapshot.messages.every((m, i) => messages[i]?.id === m.id)) return;
+            const task = current.tasks?.find(t => t.id === taskId);
+            if (taskId && !task) return;
+            if (task) task.compaction = next;
+            else current.compaction = next;
             this.persist(current);
           }
         }
       } catch (err) {
         log.warn(`ChatManager: compaction failed for ${chat.id}: ${(err as Error).message}`);
       } finally {
-        this.compactingChats.delete(chat.id);
+        this.compactingChats.delete(key);
       }
     });
   }

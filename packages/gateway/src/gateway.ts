@@ -1,3 +1,5 @@
+import { matchAutomaticChatTask } from './automatic-chat-task';
+import { chatTaskContext, chatSessionScope, runAideJson, type ChatTaskRoute } from '@codey/core';
 import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloMentionRun, parseTeamResultLines, teamStepRecords, TeamStepRecord } from './team-finalizer';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -468,7 +470,7 @@ export class Codey {
    * workspace-scoped). Returns empty string when memory is disabled or
    * neither store has anything relevant.
    */
-  private buildMergedMemoryContext(query: string, forWorker?: string): string {
+  private buildMergedMemoryContext(query: string, forWorker?: string, globalOnly = false): string {
     if (this.config.memory?.enabled === false) return '';
     const sections: string[] = [];
     // With sharing on, the same global entries are already in every agent's
@@ -483,15 +485,15 @@ export class Codey {
       // Re-label so the agent can distinguish global vs workspace facts.
       sections.push(globalCtx.replace(/^## Project Memory/, '## User-Global Memory'));
     }
-    const workspaceCtx = this.workspaceManager.getMemoryStore().buildContext(
+    const workspaceCtx = globalOnly ? '' : this.workspaceManager.getMemoryStore().buildContext(
       query, undefined, undefined, forWorker,
     );
     if (workspaceCtx) sections.push(workspaceCtx);
     return sections.join('\n\n');
   }
 
-  private wrapPromptWithMemory(prompt: string, query: string, forWorker?: string): string {
-    const ctx = this.buildMergedMemoryContext(query, forWorker);
+  private wrapPromptWithMemory(prompt: string, query: string, forWorker?: string, globalOnly = false): string {
+    const ctx = this.buildMergedMemoryContext(query, forWorker, globalOnly);
     return ctx ? `${ctx}\n\n${prompt}` : prompt;
   }
 
@@ -722,8 +724,10 @@ export class Codey {
    * file that contains exactly the missing messages removes the two ways a
    * line range goes wrong — reading too much, or miscounting the range.
    */
-  private historyDelivery(chatId: string): { transcriptPath?: string; writeSlice?: (first: number, last: number) => TranscriptSlice | undefined } {
-    const transcriptPath = this.chatManager.transcriptPath(chatId);
+  private historyDelivery(chatId: string, taskId?: string): { transcriptPath?: string; writeSlice?: (first: number, last: number) => TranscriptSlice | undefined } {
+    const transcriptPath = this.chatManager.get(chatId)?.tasks?.length
+      ? this.chatManager.taskTranscriptPath(chatId, taskId)
+      : this.chatManager.transcriptPath(chatId);
     if (!transcriptPath) return {};
     return {
       transcriptPath,
@@ -899,6 +903,68 @@ export class Codey {
    *  the explicit Branch Selector action or when the running agent opts in. */
   public async createChat(input: CreateChatInput): Promise<Chat> {
     return this.chatManager.create({ ...input, executionMode: 'shared-checkout' });
+  }
+
+  public async openBotChat(botName: string): Promise<Chat> {
+    const bot = this.workspaceManager.getWorkerManager().getWorker(botName);
+    if (!bot) throw new Error(`Bot not found: ${botName}`);
+    const existing = this.chatManager.list().find(c => c.botChat?.kind === 'direct'
+      && c.botChat.members[0]?.toLowerCase() === bot.name.toLowerCase());
+    if (existing) return existing;
+    return this.createGlobalBotConversation(bot.name, [bot.name], 'direct');
+  }
+
+  private resolveBotGroupMembers(names: string[]): string[] {
+    const members = [...new Set(names.map(name => name.toLowerCase()))].map(name => {
+      const bot = this.workspaceManager.getWorkerManager().getWorker(name);
+      if (!bot) throw new Error(`Bot not found: ${name}`);
+      return bot.name;
+    });
+    if (members.length < 2) throw new Error('Choose at least two Bots for a group.');
+    return members;
+  }
+
+  public async updateBotGroup(chatId: string, names: string[]): Promise<Chat> {
+    if (this.chatAborts.has(chatId)) throw new Error('Wait for the current group turn to finish before changing members.');
+    return this.chatManager.updateBotGroup(chatId, this.resolveBotGroupMembers(names));
+  }
+
+  public async inviteBotsToGroup(sourceChatId: string, title: string, names: string[], sharedContext: string): Promise<Chat> {
+    const source = this.chatManager.get(sourceChatId);
+    if (source?.botChat?.kind !== 'direct') throw new Error('Start an invitation from a Bot direct chat.');
+    if (sharedContext.length > 16000) throw new Error('Shared context must be at most 16000 characters.');
+    const members = this.resolveBotGroupMembers([...source.botChat.members, ...names]);
+    title = title.trim();
+    if (!title || title.length > 120) throw new Error('Group name must contain 1 to 120 characters.');
+    const group = this.createGlobalBotConversation(title, members, 'group', sourceChatId);
+    this.chatManager.appendMessage(group.id, { id: randomUUID(), role: 'user', timestamp: Date.now(), isComplete: true,
+      content: sharedContext.trim() ? `Context shared when creating this group:\n\n${sharedContext.trim()}` : 'Group created. No private conversation history was shared.' });
+    return group;
+  }
+
+  public async createBotGroup(title: string, names: string[]): Promise<Chat> {
+    const members = this.resolveBotGroupMembers(names);
+    title = title.trim();
+    if (!title || title.length > 120) throw new Error('Group name must contain 1 to 120 characters.');
+    return this.createGlobalBotConversation(title, members, 'group');
+  }
+
+  private createGlobalBotConversation(title: string, members: string[], kind: 'direct' | 'group', sourceChatId?: string): Chat {
+    // This storage namespace has no workspace.json and never appears as a project.
+    const namespace = '.bot-chats';
+    const homeDir = path.resolve(this.workspaceManager.getWorkspacesRoot(), namespace, 'files', randomUUID());
+    fs.mkdirSync(homeDir, { recursive: true });
+    return this.chatManager.create({ workspaceName: namespace, title,
+      selection: kind === 'direct' ? { type: 'worker', name: members[0] } : { type: 'none' },
+      executionMode: 'shared-checkout', botChat: { kind, members, homeDir, ...(sourceChatId ? { sourceChatId } : {}) } });
+  }
+
+  public renameBotChats(oldName: string, newName: string): void {
+    this.chatManager.renameBot(oldName, newName);
+  }
+
+  public async createChatTask(chatId: string, title: string): Promise<Chat> {
+    return this.chatManager.createTask(chatId, title);
   }
 
   public async listChats(workspaceName?: string): Promise<Chat[]> {
@@ -2099,6 +2165,10 @@ export class Codey {
     if (chat.workingDirOverride) {
       if (fs.existsSync(chat.workingDirOverride)) return chat.workingDirOverride;
       throw new Error(`Selected checkout is no longer available: ${chat.workingDirOverride}. Choose another branch or worktree before continuing.`);
+    }
+    if (chat.botChat) {
+      fs.mkdirSync(chat.botChat.homeDir, { recursive: true });
+      return chat.botChat.homeDir;
     }
     return this.resolveWorkspaceWorkingDir(chat.workspaceName);
   }
@@ -3944,6 +4014,7 @@ Example: /model gpt-4.1 write a Python script`;
     ) => void | Promise<void>,
     runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
     onStepDone?: (d: { step: number; worker: string; failed: boolean; error?: string }) => void,
+    coordinator?: { agent: CodingAgent; model?: ModelConfig },
   ): Promise<
     | { fallback: true; fallbackReason: string }
     | {
@@ -3985,7 +4056,7 @@ Example: /model gpt-4.1 write a Python script`;
     const blackboard = new TeamBlackboard();
     const thinkingByStep: Record<number, string> = {};
 
-    const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
+    const { agent: mAgent, model: mModel } = coordinator ?? this.getAdvisorAgentAndModel();
     const seenWorkers = new Set<string>();
 
     // When set, skip the next Advisor call and run this worker directly
@@ -4431,6 +4502,7 @@ Example: /model gpt-4.1 write a Python script`;
     emitter: TeamEmitter,
     signal?: AbortSignal,
   ): Promise<string> {
+    const globalBotChat = this.chatManager.get(chatId)?.botChat;
     const nextResumeStep = Math.max(
       0,
       ...(this.chatManager.get(chatId)?.messages
@@ -4444,8 +4516,10 @@ Example: /model gpt-4.1 write a Python script`;
     // An ad-hoc team built from @mentions has no registry entry; its member
     // list travels with the pending state instead.
     const adHocMembers = 'members' in pending && pending.members?.length ? pending.members : undefined;
-    const team: TeamConfig | undefined = this.workspaceManager.getTeam(pending.teamName)
-      ?? (adHocMembers ? { members: adHocMembers, dispatch: pending.mode === 'auto' ? 'auto' : 'sequential' } : undefined);
+    const team: TeamConfig | undefined = globalBotChat
+      ? { members: adHocMembers ?? globalBotChat.members, dispatch: pending.mode === 'auto' ? 'auto' : 'sequential' }
+      : this.workspaceManager.getTeam(pending.teamName)
+        ?? (adHocMembers ? { members: adHocMembers, dispatch: pending.mode === 'auto' ? 'auto' : 'sequential' } : undefined);
     if (!team) {
       recordResumeFailure('Team', `Team "${pending.teamName}" no longer exists`);
       await emitter.notify(`Team \`${pending.teamName}\` no longer exists; the paused run was dropped.`);
@@ -4470,14 +4544,15 @@ Example: /model gpt-4.1 write a Python script`;
         blackboard,
         codingAgent,
         modelConfig,
-        buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, pending.task, workerName),
+        buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, pending.task, workerName, !!globalBotChat),
         onStream: (text: string) => emitter.onStream(text),
         onThinking: onThinking ?? ((text: string) => emitter.onThinking(text, 0)),
         signal,
+        workingDir: globalBotChat ? this.resolveChatWorkingDir(this.chatManager.get(chatId)!) : undefined,
         interactive: this.tuiMode,
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       });
-      this.extractWorkerMemories(workerName, pending.task, codingAgent, response);
+      if (!globalBotChat) this.extractWorkerMemories(workerName, pending.task, codingAgent, response);
       return response.success
         ? { success: true, output: response.output, thinking: response.thinking || undefined }
         : { success: false, output: '', error: response.error };
@@ -4567,7 +4642,8 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // mode === 'auto'
-    const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
+    const { agent: mAgent, model: mModel } = this.chatManager.get(chatId)?.botChat?.kind === 'group'
+      ? this.getAideAgentAndModel() : this.getAdvisorAgentAndModel();
     const wm = this.workspaceManager.getWorkerManager();
     const turn = await runAdvisor(
       {
@@ -4670,7 +4746,7 @@ Example: /model gpt-4.1 write a Python script`;
       },
       { agent: mAgent, model: mModel, runner: this.advisorRunner, signal },
     );
-    this.persistBlackboardDecisions(resumeBoard, pending.teamName);
+    if (!this.chatManager.get(chatId)?.botChat) this.persistBlackboardDecisions(resumeBoard, pending.teamName);
     await this.notifyTeamFinal(emitter, pending.teamName, pending.task, newParts, signal);
     return emitter.transcript;
   }
@@ -4772,7 +4848,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     await this.notifyTeamFinal(emitter, teamName, task, parseTeamResultLines(results), opts.signal);
-    this.persistBlackboardDecisions(blackboard, teamName);
+    if (!this.chatManager.get(chatId)?.botChat) this.persistBlackboardDecisions(blackboard, teamName);
     return { thinkingByStep };
   }
 
@@ -5011,7 +5087,7 @@ Example: /model gpt-4.1 write a Python script`;
       await emitter.status(`⚠️ Flow hit the max-hops cap (${graph.maxHops}); reporting partial result.`);
     }
     await this.notifyTeamFinal(emitter, teamName, task, parseTeamResultLines(results), opts?.signal);
-    this.persistBlackboardDecisions(blackboard, teamName);
+    if (!this.chatManager.get(chatId)?.botChat) this.persistBlackboardDecisions(blackboard, teamName);
     return emitter.transcript;
   }
 
@@ -5072,7 +5148,7 @@ Example: /model gpt-4.1 write a Python script`;
       throw new Error(`Team not found or empty: ${teamName}`);
     }
 
-    const baseConv = `chat-${chat.id}`;
+    const baseConv = `chat-${chat.id}${chat.botChat?.membershipRevision ? `-members-${chat.botChat.membershipRevision}` : ''}`;
     const teamConv = this.workerConversationId(baseConv, { team: teamName });
 
     const teamTurnId = randomUUID();
@@ -5126,7 +5202,7 @@ Example: /model gpt-4.1 write a Python script`;
         blackboard,
         codingAgent,
         modelConfig,
-        buildBootstrapPrompt: () => this.wrapPromptWithMemory(workerPrompt, prompt, workerName),
+        buildBootstrapPrompt: () => this.wrapPromptWithMemory(workerPrompt, prompt, workerName, !!chat.botChat),
         onStream: (text: string) => workerMsgs.onStream(text),
         onThinking,
         onStatus: (update: any) => {
@@ -5163,7 +5239,7 @@ Example: /model gpt-4.1 write a Python script`;
       });
       // endWorker is about to freeze this worker's toolCalls into its message.
       await teamStatusChain;
-      if (response) this.extractWorkerMemories(workerName, prompt, codingAgent, response);
+      if (response && !chat.botChat) this.extractWorkerMemories(workerName, prompt, codingAgent, response);
       return response?.success
         ? { success: true, output: this.formatAgentResponse(response), thinking: response.thinking || undefined }
         : { success: false, output: '', error: response?.error };
@@ -5377,6 +5453,7 @@ Example: /model gpt-4.1 write a Python script`;
         },
         runOneWorker,
         (d) => workerMsgs.endWorker(d.failed ? 'failed' : 'done', d.failed ? { failureReason: d.error ?? 'Worker failed without an error message' } : undefined),
+        chat.botChat?.kind === 'group' ? this.getAideAgentAndModel() : undefined,
       );
 
       if (result.fallback) {
@@ -5437,7 +5514,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
         // Chat renders the whiteboard in the context panel, so the reply
         // carries only the Advisor summary.
-        this.persistBlackboardDecisions(result.blackboard, teamName);
+        if (!chat.botChat) this.persistBlackboardDecisions(result.blackboard, teamName);
         const response = summary;
         return { response, thinkingByStep: result.thinkingByStep, teamTurnId };
       }
@@ -6105,13 +6182,47 @@ Example: /model gpt-4.1 write a Python script`;
       channelUserId?: string;
       skillInvoke?: SkillInvoke;
     },
+    taskRoute?: ChatTaskRoute,
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     let chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
+    const directTaskChat = chat.selection.type !== 'team' && chat.botChat?.kind !== 'group' && !chat.pendingTeam && chat.kind !== 'automation';
+    let taskId: string | undefined;
+    if (directTaskChat) {
+      const matchingAbort = new AbortController();
+      const ownsMatchingAbort = !this.chatAborts.has(chatId);
+      if (ownsMatchingAbort) this.chatAborts.set(chatId, matchingAbort);
+      try {
+        const decision = await matchAutomaticChatTask(chat, userTextParam, taskRoute,
+          this.isAideConfigured() && !/^\s*(?:\/|@(?!["/~]))/.test(userTextParam)
+            ? prompt => runAideJson(prompt, { ...this.getAideOptions(matchingAbort.signal, false), timeoutMs: 8000, retries: 0 })
+            : undefined);
+        if (matchingAbort.signal.aborted) {
+          sinkParam({ type: 'stopped', chatId, userMessageId: '', text: userTextParam });
+          return { response: '', chatId };
+        }
+        taskId = decision.taskId;
+        if (decision.newTitle) {
+          const updated = this.chatManager.createTask(chatId, decision.newTitle);
+          taskId = updated.tasks![updated.tasks!.length - 1].id;
+        }
+      } finally {
+        if (ownsMatchingAbort && this.chatAborts.get(chatId) === matchingAbort) this.chatAborts.delete(chatId);
+      }
+    } else if (taskRoute?.taskId) {
+      taskId = taskRoute.taskId;
+    }
+    if (taskId && (chat.selection.type === 'team' || chat.botChat?.kind === 'group' || chat.pendingTeam || chat.kind === 'automation')) {
+      throw new Error('Task routing is currently supported in direct chats only.');
+    }
+    if (chat.botChat) {
+      const missing = chat.botChat.members.filter(name => !this.workspaceManager.getWorkerManager().hasWorker(name));
+      if (missing.length) throw new Error(`These Bots are no longer available: ${missing.join(', ')}. Restore them in Bot settings.`);
+    }
     let workspaceAdoptedBeforeTurn = false;
     // Recover a checkout created during a previous interrupted turn before
     // selecting this turn's cwd.
-    if (!chat.chatWorkspace) {
+    if (!chat.botChat && !chat.chatWorkspace) {
       const adopted = await this.adoptAgentCreatedWorktree(chatId);
       if (adopted) {
         chat = adopted;
@@ -6134,6 +6245,10 @@ Example: /model gpt-4.1 write a Python script`;
     // handler: Mac-origin turns call sendToChat directly and bypass
     // handleMessage's choice mapping.
     const pendingTeam = chat.pendingTeam;
+    const lastTaskMessage = chatTaskContext(chat, taskId).messages.slice(-1)[0];
+    const pendingOptions = chat.tasks?.length
+      ? (lastTaskMessage?.role === 'assistant' ? lastTaskMessage.choices : undefined)
+      : chat.lastAskedOptions?.options;
     // A channel-origin explicit `/skill` invoke arrives with userText already
     // rewritten to the raw task (handleMessage stripped the slash), so count
     // it as a slash turn here: it must cancel a paused team like any other
@@ -6146,8 +6261,8 @@ Example: /model gpt-4.1 write a Python script`;
         const resolved = resolveChoiceDigit(userText, pendingTeam.options);
         if (resolved !== null) userText = resolved;
       }
-    } else if (!isSlashTurn && chat.lastAskedOptions?.options.length) {
-      const resolved = resolveChoiceDigit(userText, chat.lastAskedOptions.options);
+    } else if (!isSlashTurn && pendingOptions?.length) {
+      const resolved = resolveChoiceDigit(userText, pendingOptions);
       if (resolved !== null) userText = resolved;
     }
 
@@ -6213,7 +6328,17 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
     }
-    const isTeamTurn = chat.selection.type === 'team' || adHocTeam !== undefined;
+    if (chat.botChat?.kind === 'group' && !pendingTeam && !adHocTeam) {
+      adHocTeam = { name: chat.title, team: { members: [...chat.botChat.members], dispatch: 'auto' }, named: true };
+    }
+    if (chat.botChat?.kind === 'group' && adHocTeam) {
+      const members = chat.botChat.members.map(n => n.toLowerCase());
+      if (adHocTeam.team.members.some(n => !members.includes(n.toLowerCase()))) {
+        throw new Error('Only members of this group can be addressed here. Create a group with those Bots to collaborate.');
+      }
+    }
+    const isTeamTurn = chat.selection.type === 'team' || chat.botChat?.kind === 'group' || adHocTeam !== undefined;
+    if (chat.tasks?.length && (isTeamTurn || pendingTeam)) throw new Error('Use a separate group chat for team dispatch while this chat contains independent tasks.');
     let activeTeamId = pendingTeam?.teamTurnId || (isTeamTurn ? randomUUID() : undefined);
     let activeTeamName = pendingTeam?.teamName ?? (chat.selection.type === 'team' ? chat.selection.name : adHocTeam?.name);
     let teamTermination: string | undefined;
@@ -6230,6 +6355,7 @@ Example: /model gpt-4.1 write a Python script`;
     // events come from team-mode orchestration via direct sink calls and
     // never go through onStatus, so they would otherwise vanish on persist).
     const sink: ChatStreamSink = (ev) => {
+      if (ev.type === 'done') ev = { ...ev, taskId: taskId ?? null, tasks: chat.tasks };
       if (ev.type === 'team_start') { activeTeamId = ev.teamTurnId; activeTeamName = ev.teamName; }
       if (ev.type === 'team_termination') teamTermination = ev.reason;
       if (ev.type === 'info') {
@@ -6250,10 +6376,10 @@ Example: /model gpt-4.1 write a Python script`;
     const finishSkillReply = (responseText: string): { response: string; chatId: string } => {
       const now = Date.now();
       this.chatManager.appendMessage(chatId, {
-        id: randomUUID(), role: 'user', content: userTextParam, timestamp: now, isComplete: true,
+        id: randomUUID(), taskId, role: 'user', content: userTextParam, timestamp: now, isComplete: true,
       });
       this.chatManager.appendMessage(chatId, {
-        id: randomUUID(), role: 'assistant', content: responseText, timestamp: now, isComplete: true,
+        id: randomUUID(), taskId, role: 'assistant', content: responseText, timestamp: now, isComplete: true,
       });
       sink({ type: 'done', chatId, response: responseText });
       return { response: responseText, chatId };
@@ -6266,7 +6392,7 @@ Example: /model gpt-4.1 write a Python script`;
     // untouched — it can still be answered after the team resumes/finishes.
     // Automation chats never resolve suggestions: an unattended brief starting
     // with "yes"/"no" must not be consumed as a suggestion reply.
-    if (chat.pendingSkillSuggestion && !isSlashTurn && !pendingTeam && chat.kind !== 'automation') {
+    if (!chat.tasks?.length && chat.pendingSkillSuggestion && !isSlashTurn && !pendingTeam && chat.kind !== 'automation') {
       const s = chat.pendingSkillSuggestion;
       const reply = userText.trim().toLowerCase();
       const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
@@ -6379,7 +6505,7 @@ Example: /model gpt-4.1 write a Python script`;
           chatWorkspaceTeamNames = Object.keys(wsConfig.teams);
         }
       } catch { /* use default */ }
-    } else {
+    } else if (!chat.botChat) {
       this.chatSemaphore.release();
       const msg = `Workspace not found: ${chat.workspaceName}`;
       sink({ type: 'error', chatId, message: msg });
@@ -6389,12 +6515,15 @@ Example: /model gpt-4.1 write a Python script`;
     workingDir = this.resolveChatWorkingDir(chat);
 
     // Per-chat override takes precedence over the gateway default.
-    const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
-    const chatEffort = resolveEffort({ chat: chat.effort });
+    const selectedBot = chat.selection.type === 'worker'
+      ? this.workspaceManager.getWorkerManager().getWorker(chat.selection.name) : undefined;
+    const agent = (chat.agent ?? selectedBot?.config.codingAgent ?? this.getDefaultAgent()) as CodingAgent;
+    const chatEffort = resolveEffort({ chat: chat.effort, worker: selectedBot?.config.effort });
     let model: ModelConfig | undefined;
     try {
-      model = chat.model
-        ? this.getModelConfig(agent, chat.model)
+      const modelId = chat.model ?? (selectedBot?.config.codingAgent === agent ? selectedBot.config.model : undefined);
+      model = modelId
+        ? this.getModelConfig(agent, modelId)
         : this.getDefaultModelConfig(agent);
     } catch (err) {
       // getModelConfig throws when a model's apiKeyRef references a missing key
@@ -6410,10 +6539,18 @@ Example: /model gpt-4.1 write a Python script`;
     // own session memory. Bootstrap mode sends a one-shot "prior conversation"
     // block. Team mode always uses the legacy bootstrap path (no session
     // resume) because team dispatch builds worker prompts internally.
-    const selPrefix = assistantPrefixForSelection(chat);
+    // Snapshot before appending the new user message; retry bootstraps use the same view.
+    const contextChat = chatTaskContext(chat, taskId);
+    const task = chat.tasks?.find(t => t.id === taskId);
+    const scopeKey = chat.tasks?.length || chat.botChat ? chatSessionScope(chat, taskId, workingDir, selectedBot) : undefined;
+    const historyOptions = this.historyDelivery(chatId, taskId);
+    const selPrefix = (selectedBot
+      ? this.workspaceManager.getWorkerManager().buildWorkerPrompt(selectedBot.name, '') + '\n\n'
+      : assistantPrefixForSelection(chat))
+      + (task ? `[Current task: ${task.title}]\n` : '');
     const canResume = !isTeamTurn;
     const warmAnchor = canResume
-      ? this.chatManager.getSessionAnchor(chatId, agent)
+      ? this.chatManager.getSessionAnchor(chatId, agent, scopeKey)
       : undefined;
 
     let prompt: string;
@@ -6421,10 +6558,12 @@ Example: /model gpt-4.1 write a Python script`;
     let newSessionId: string | undefined;
     // Named, not created: `git worktree add` makes the leading directories, and
     // pre-creating them would leave empty folders inside the user's project.
-    const agentWorktreeParent = chat.executionMode !== 'isolated-worktree' && !chat.chatWorkspace
+    const agentWorktreeParent = !chat.botChat && chat.executionMode !== 'isolated-worktree' && !chat.chatWorkspace
       ? chatWorktreeParent(this.resolveWorkspaceWorkingDir(chat.workspaceName))
       : undefined;
-    const chatWorkspaceInstruction = chat.executionMode === 'isolated-worktree'
+    const chatWorkspaceInstruction = chat.botChat
+      ? `\n\n[Conversation files]\nYour current working directory is ${JSON.stringify(workingDir)}. This conversation is not restricted to a project workspace. Use task-relevant folders within the user's permissions; clarify the target if it is ambiguous.`
+      : chat.executionMode === 'isolated-worktree'
       ? '\n\n[Codey chat workspace]\nThis chat owns the current worktree and starts on its own same-named branch. You may rename or switch branches as the task evolves; do not operate in another chat’s worktree.'
       : agentWorktreeParent
         ? `\n\n[Codey chat workspace]\nThis chat uses the shared checkout. Work there; do not create a worktree on your own initiative. Only when the user explicitly asks for one, choose a short semantic lower-kebab name with no slash, then run \`git worktree add -b <name> ${JSON.stringify(path.join(agentWorktreeParent, '<name>'))} HEAD\` and perform all subsequent work in that new directory. Create it only as a direct child of ${JSON.stringify(agentWorktreeParent)} so Codey can bind and display it.`
@@ -6433,15 +6572,15 @@ Example: /model gpt-4.1 write a Python script`;
       // Resume the agent's own session. If other agents produced messages
       // while it was inactive, replay only that unseen gap before the new turn.
       prompt = selPrefix + (warmAnchor.syncedThroughMessageId
-        ? buildChatCatchupPrompt(chat, warmAnchor.syncedThroughMessageId, userText, attachments,
-            this.historyDelivery(chatId))
-        : buildChatResumePrompt(chat, userText, attachments));
+        ? buildChatCatchupPrompt(contextChat, warmAnchor.syncedThroughMessageId, userText, attachments,
+            historyOptions)
+        : buildChatResumePrompt(contextChat, userText, attachments));
       resumeSessionId = warmAnchor.sessionId;
     } else {
       // Bootstrap turn: include prior history once. For claude-code, pre-allocate
       // a session id so we can resume on the next turn without parsing CLI output.
-      prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments, CHAT_CONTEXT_WINDOW,
-        this.historyDelivery(chatId));
+      prompt = selPrefix + buildChatBootstrapPrompt(contextChat, userText, attachments, CHAT_CONTEXT_WINDOW,
+        historyOptions);
       if (canResume && agent === 'claude-code') {
         newSessionId = randomUUID();
       }
@@ -6482,6 +6621,8 @@ Example: /model gpt-4.1 write a Python script`;
     const userMessage: ChatMessage = {
       id: randomUUID(),
       role: 'user',
+      taskId,
+      replyToMessageId: taskRoute?.replyToMessageId,
       content: historyText ?? userText,
       timestamp: started,
       isComplete: true,
@@ -6497,7 +6638,7 @@ Example: /model gpt-4.1 write a Python script`;
     // Automation chats keep their authoritative "Automation: <name>" title —
     // no LLM title generation.
     const titlePromise: Promise<string> | undefined =
-      afterUser.messages.length === 1 && this.isAideConfigured() && chat.kind !== 'automation'
+      afterUser.messages.length === 1 && this.isAideConfigured() && chat.kind !== 'automation' && !chat.botChat
         ? this.generateChatTitleSafe(userText)
         : undefined;
 
@@ -6624,7 +6765,7 @@ Example: /model gpt-4.1 write a Python script`;
           }
         }
         const emitter = new ChatEmitter(sink, chatId, workerMsgs);
-        output = await this.resumeTeamFromAnswer(chatId, `chat-${chatId}`, pendingTeam, userText, emitter, abortController.signal);
+        output = await this.resumeTeamFromAnswer(chatId, `chat-${chatId}${chat.botChat?.membershipRevision ? `-members-${chat.botChat.membershipRevision}` : ''}`, pendingTeam, userText, emitter, abortController.signal);
         teamChoices = emitter.choices;
       } else if (adHocTeam) {
         const { name: teamName, team } = adHocTeam;
@@ -6707,12 +6848,12 @@ Example: /model gpt-4.1 write a Python script`;
         // and retry once with a full bootstrap prompt.
         if (resumeSessionId && response && isMissingSessionFailure(response) && !abortController.signal.aborted) {
           this.logger.warn(`[chat ${chatId}] resume of ${resumeSessionId} failed; bootstrapping`);
-          this.chatManager.clearSessionAnchor(chatId, agent);
+          this.chatManager.clearSessionAnchor(chatId, agent, scopeKey);
           streamedText = '';
           resumeSessionId = undefined;
           newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
-          prompt = selPrefix + buildChatBootstrapPrompt(chat, userText, attachments, CHAT_CONTEXT_WINDOW,
-            this.historyDelivery(chatId)) + chatWorkspaceInstruction;
+          prompt = selPrefix + buildChatBootstrapPrompt(contextChat, userText, attachments, CHAT_CONTEXT_WINDOW,
+            historyOptions) + chatWorkspaceInstruction;
           // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
           // the one that carried it (still exactly once per prompt build).
           if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);
@@ -6804,7 +6945,7 @@ Example: /model gpt-4.1 write a Python script`;
         // it into the input box. Don't append a "Stopped" assistant message
         // and don't fan out to other routes.
         this.chatManager.removeMessage(chatId, userMessage.id);
-        const adoptedWorkspace = await this.adoptAgentCreatedWorktree(chatId);
+        const adoptedWorkspace = chat.botChat ? undefined : await this.adoptAgentCreatedWorktree(chatId);
         if (adoptedWorkspace) sink({ type: 'workspace_ready', chatId });
         sink({ type: 'stopped', chatId, userMessageId: userMessage.id, text: userText });
         return { response: '', chatId };
@@ -6850,6 +6991,7 @@ Example: /model gpt-4.1 write a Python script`;
       const assistantMessage: ChatMessage = {
         id: randomUUID(),
         role: 'assistant',
+        taskId,
         content: output,
         ...(!teamTurnId && chat.selection.type === 'worker' ? { worker: chat.selection.name, workerStatus: agentUserQuestion ? 'askedUser' as const : singleAgentResponse?.success === false ? 'failed' as const : 'done' as const } : {}),
         thinking: singleAgentResponse?.thinking,
@@ -6894,6 +7036,7 @@ Example: /model gpt-4.1 write a Python script`;
               agent: responseAgent,
               model: responseModel,
               sessionId: anchorId,
+              scopeKey,
               syncedThroughMessageId: assistantMessage.id,
             });
           }
@@ -6940,7 +7083,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
 
-      const adoptedWorkspace = await this.adoptAgentCreatedWorktree(chatId);
+      const adoptedWorkspace = chat.botChat ? undefined : await this.adoptAgentCreatedWorktree(chatId);
       if (adoptedWorkspace) sink({ type: 'workspace_ready', chatId });
       // The Mac app turns a non-empty team response into a footer bubble, so
       // it only travels when a footer was actually persisted.
@@ -7001,7 +7144,7 @@ Example: /model gpt-4.1 write a Python script`;
           // a structured AskUserQuestion) must not get a skill suggestion
           // stacked on top — the user's "yes" would resolve the suggestion
           // instead of the agent's question. Trace/evolve still run.
-          suppressSuggestion: unattended || !!surfacedChoices || !!agentUserQuestion,
+          suppressSuggestion: !!chat.tasks?.length || unattended || !!surfacedChoices || !!agentUserQuestion,
           notify: (text) => { sink({ type: 'info', chatId, message: text, skillNotice: true }); },
           setPending: (s) => { this.chatManager.setPendingSkillSuggestion(chatId, s); },
         });
@@ -7029,7 +7172,7 @@ Example: /model gpt-4.1 write a Python script`;
         // Same rollback as the abort branch above — agent runners surface
         // aborts as thrown errors, but we still want to restore the prompt.
         this.chatManager.removeMessage(chatId, userMessage.id);
-        const adoptedWorkspace = await this.adoptAgentCreatedWorktree(chatId);
+        const adoptedWorkspace = chat.botChat ? undefined : await this.adoptAgentCreatedWorktree(chatId);
         if (adoptedWorkspace) sink({ type: 'workspace_ready', chatId });
         sink({ type: 'stopped', chatId, userMessageId: userMessage.id, text: userText });
         return { response: '', chatId };
@@ -7044,6 +7187,7 @@ Example: /model gpt-4.1 write a Python script`;
       const assistantMessage: ChatMessage = {
         id: randomUUID(),
         role: 'assistant',
+        taskId,
         content: message,
         timestamp: Date.now(),
         toolCalls,
@@ -7052,7 +7196,7 @@ Example: /model gpt-4.1 write a Python script`;
         ...(model?.model ? { model: model.model } : {}),
       };
       this.chatManager.appendMessage(chatId, assistantMessage);
-      const adoptedWorkspace = await this.adoptAgentCreatedWorktree(chatId);
+      const adoptedWorkspace = chat.botChat ? undefined : await this.adoptAgentCreatedWorktree(chatId);
       if (adoptedWorkspace) sink({ type: 'workspace_ready', chatId });
       sink({ type: 'error', chatId, message });
       throw err;

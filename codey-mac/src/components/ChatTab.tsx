@@ -1,3 +1,5 @@
+import { ChatHeaderActions } from './ChatHeaderActions'
+import { BotMembers } from './BotMembers'
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { chatOwnedPrUrl } from './chatPrUrl'
@@ -505,6 +507,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const [resourceIndex, setResourceIndex] = useState<MentionEntry[]>([])
   const [mention, setMention] = useState<ActiveMention | null>(null)
   const [mentionIdx, setMentionIdx] = useState(0)
+  const [taskError, setTaskError] = useState('')
+  useEffect(() => { setTaskError('') }, [chat.id])
   const [workers, setWorkers] = useState<WorkerDto[]>([])
   // The full global team library — names drive the picker, members the "@" menu.
   const [teamLib, setTeamLib] = useState<Record<string, TeamConfigRaw>>({})
@@ -736,11 +740,12 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   }, [chat?.workspaceName])
   const [workspaceDir, setWorkspaceDir] = useState<string | undefined>(undefined)
   useEffect(() => {
+    if (chat.botChat) { setWorkspaceDir(chat.botChat.homeDir); return }
     if (!chat?.workspaceName) return
     apiService.getWorkspaceInfo(chat.workspaceName)
       .then(info => setWorkspaceDir(info.workingDir))
       .catch(() => setWorkspaceDir(undefined))
-  }, [chat?.workspaceName])
+  }, [chat?.workspaceName, chat.botChat?.homeDir])
   // The effective working dir is the chat's per-chat override (a bound
   // worktree) when set, otherwise the workspace's repo root. Git status and the
   // header BranchPicker both operate on this effective dir.
@@ -1339,8 +1344,11 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // Scoring touches every indexed entry, so keep it tied to the query rather
   // than to render count — this component re-renders on every streamed token.
   const mentionMatches = React.useMemo(
-    () => (mention ? filterEntries([...resourceIndex, ...fileIndex], mention.query) : []),
-    [mention?.query, fileIndex, resourceIndex], // eslint-disable-line react-hooks/exhaustive-deps
+    () => mention ? [
+      ...filterEntries([...resourceIndex, ...fileIndex], mention.query),
+      ...(chat.botChat ? [{ path: '__pick_folder__', name: 'Choose folder…', isDir: true, detail: 'Reference a folder on your computer' }] : []),
+    ] : [],
+    [mention?.query, fileIndex, resourceIndex, !!chat.botChat], // eslint-disable-line react-hooks/exhaustive-deps
   )
   const showMentionMenu = mentionMatches.length > 0
   useEffect(() => { setMentionIdx(0) }, [mention?.query, mention?.start])
@@ -1370,8 +1378,16 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     [input, knownPaths],
   )
 
-  const chooseMention = (entry: MentionEntry) => {
+  const chooseMention = async (entry: MentionEntry) => {
     if (!mention) return
+    if (entry.path === '__pick_folder__') {
+      try {
+        const folder = await apiService.pickDirectory()
+        if (!folder) return
+        entry = { path: folder, name: folder.split('/').filter(Boolean).pop() ?? folder, isDir: true }
+        setFileIndex(current => [...current.filter(item => item.path !== folder), entry])
+      } catch (error) { setTaskError((error as Error).message); return }
+    }
     const next = applyMention(input, mention, entry.path, entry.isDir)
     setInputHistoryIndex(null)
     setInput(next.text)
@@ -1550,6 +1566,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     // enabled or configured — it is a hint the agent may ignore.
     const typed = input
     const text = appendMentionContext(typed, findResourceMentions(typed, p => mentionByPath.get(p)))
+    setTaskError('')
     const dictated = dictatedPendingRef.current
     dictatedPendingRef.current = []
     // Fire-and-forget: a dictionary update must never delay or fail the send.
@@ -1577,7 +1594,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const askAgentAboutFallback = async (detail: string, fallback: { from: string; to: string }) => {
     if (!chat) return
     try {
-      const fresh = await createChat(chat.workspaceName)
+      const fresh = chat.botChat ? chat : await createChat(chat.workspaceName)
       const prompt = [
         'A Codey fallback occurred.',
         `Failed agent/model: \`${fallback.from}\``,
@@ -1590,7 +1607,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         detail,
         '```',
       ].join('\n')
-      await sendMessage(fresh.id, prompt)
+      await sendMessage(fresh.id, prompt, undefined, undefined, { taskId: null })
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Failed to open a chat for this error')
     }
@@ -1740,17 +1757,17 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const voiceActiveElsewhere = voice.state !== 'idle' && voice.ownerChatId !== chatId
   const voiceBusy = voiceActiveHere && (voice.state === 'recording' || voice.state === 'transcribing')
   const isSending = !!flight
-  const orphaned = state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
+  const orphaned = !chat.botChat && state.workspaces.length > 0 && !state.workspaces.includes(chat.workspaceName)
   const canSend = isGatewayRunning && !coreFailed && (!!input.trim() || pendingAttachments.length > 0) && !orphaned
   // Retry and edit-and-resend both re-run a past user message. They append a
   // new turn rather than rewriting history: the agent keeps the whole
   // conversation as context, and the transcript stays an honest record.
   const canResend = isGatewayRunning && !coreFailed && !isSending && !orphaned
-  const resendMessage = async (text: string, attachments?: FileAttachment[]) => {
+  const resendMessage = async (text: string, attachments?: FileAttachment[], taskId?: string) => {
     if (!canResend) return
     if (!text.trim() && !attachments?.length) return
     setFollowLatest(true)
-    await sendMessage(chat.id, text, attachments, turnIdentity)
+    await sendMessage(chat.id, text, attachments, turnIdentity, { taskId: taskId ?? null })
   }
   const copyMessage = async (msg: ChatMessage) => {
     try {
@@ -1768,7 +1785,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const saveEdit = async (msg: ChatMessage) => {
     const text = editDraft
     setEditingMsgId(null)
-    await resendMessage(text, msg.attachments)
+    await resendMessage(text, msg.attachments, msg.taskId)
   }
   // Three layers when the agent gave us its task list: what it is on, the tool
   // it is running right now, and how far through it is — a bare "Editing…"
@@ -1835,10 +1852,15 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         </div>
       )}
       <div style={styles.header}>
-        <div style={styles.headerIdentity}>
-          <span style={styles.workspaceTag}><UIIcon name="workspace" size={13} />{chat.workspaceName}</span>
+        <div style={{ ...styles.headerIdentity, ...(containerWidth > 0 && containerWidth < 760 ? { flex: 1, overflow: 'hidden' } : {}) }}>
+          <span style={styles.workspaceTag}>{chat.botChat?.kind === 'direct'
+            ? <WorkerAvatar name={chat.botChat.members[0]} config={workers.find(worker => worker.name === chat.botChat!.members[0])?.config.avatar} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} size={30} />
+            : <UIIcon name={chat.botChat ? 'users' : 'workspace'} size={13} />}{chat.botChat ? chat.title : chat.workspaceName}</span>
+          {chat.botChat?.kind === 'direct' && isSending && <span role="status" style={{ fontSize: 11, color: C.fg3 }}>{flight?.queuedPosition ? 'Queued' : 'Working…'}</span>}
+          {chat.botChat && <BotMembers key={chat.id} chat={chat} running={isSending} />}
         </div>
-        <BranchPicker
+        <ChatHeaderActions compact={containerWidth > 0 && containerWidth < 760} onDismiss={() => { setEditorMenuOpen(false); setLinkMenuOpen(false); setRunSettingsOpen(false) }}>
+        {!chat.botChat && <div data-action-label="Checkout"><BranchPicker
           workingDir={workingDir}
           repositoryDir={workspaceDir}
           chatWorktree={chat.chatWorkspace ? {
@@ -1849,8 +1871,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
           onCreateWorktree={async name => { await createWorktree(chat.id, name) }}
           onExecutionModeChange={async mode => { await setExecutionMode(chat.id, mode) }}
           onSelectWorktree={async (path, expectedBranch) => { await bindWorktree(chat.id, path, expectedBranch) }}
-        />
-        <div style={{ ...styles.openInWrap, marginLeft: 'auto' }}>
+        /></div>}
+        <div data-action-label="Open in IDE" style={styles.openInWrap}>
           <div style={styles.openInSplit}>
             <button
               onClick={() => void openPreferredEditor()}
@@ -1906,12 +1928,12 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
             </>
           )}
         </div>
-        <div style={styles.runSettingsWrap}>
+        <div data-action-label="Run settings" style={styles.runSettingsWrap}>
           <button
             ref={runSettingsButtonRef}
             onClick={() => setRunSettingsOpen(open => !open)}
             style={styles.runSettingsButton}
-            title="Configure worker, agent, model, and advisor"
+            title="Configure bot, agent, model, and advisor"
           >
             <span style={styles.runSettingsButtonSummary}>{runSettingsSummary}</span>
             <span style={{ display: 'inline-flex', transform: runSettingsOpen ? 'rotate(-90deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={12} /></span>
@@ -1930,16 +1952,16 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 onClick={event => event.stopPropagation()}
               >
                 <label style={styles.runSettingGroup}>
-                  <span style={styles.runSettingLabel}>Worker</span>
-                  <select value={selectionValue} onChange={e => void onSelectionChange(e.target.value)} style={styles.runSettingSelect}>
-                    <option value="none">No worker</option>
+                  <span style={styles.runSettingLabel}>Bot</span>
+                  <select disabled={!!chat.botChat} value={selectionValue} onChange={e => void onSelectionChange(e.target.value)} style={styles.runSettingSelect}>
+                    <option value="none">{chat.botChat?.kind === 'group' ? 'Group members' : 'No bot'}</option>
                     {workers.length > 0 && (
-                      <optgroup label="Workers">
+                      <optgroup label="Bots">
                         {workers.map(w => <option key={w.name} value={`worker:${w.name}`}>{w.name}</option>)}
                       </optgroup>
                     )}
                     {teamNames.length > 0 && (
-                      <optgroup label="Teams">
+                      <optgroup label="Teams" disabled={!!chat.tasks?.length}>
                         {teamNames.map(n => <option key={n} value={`team:${n}`}>{n}</option>)}
                       </optgroup>
                     )}
@@ -1955,7 +1977,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         value={chat.agent ?? ''}
                         onChange={e => void onAgentChange(e.target.value)}
                         style={styles.runSettingSelect}
-                        title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : workerAgent ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
+                        title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : workerAgent ? ` (bot: ${selectedWorker!.name})` : ' (default)'}`}
                       >
                         <option value="">{inheritedAgent ? `${inheritedAgent} (default)` : 'default agent'}</option>
                         {AGENT_NAMES.filter(n => n !== inheritedAgent || n === chat.agent).map(n => (
@@ -1969,7 +1991,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         value={chat.model ?? ''}
                         onChange={e => void onModelChange(e.target.value)}
                         style={styles.runSettingSelect}
-                        title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : workerModel ? ` (worker: ${selectedWorker!.name})` : ' (default)'}`}
+                        title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : workerModel ? ` (bot: ${selectedWorker!.name})` : ' (default)'}`}
                         disabled={modelsForAgent.length === 0}
                       >
                         <option value="">{inheritedModel ? `${inheritedModel} (default)` : 'agent default'}</option>
@@ -1984,7 +2006,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         value={chat.effort ?? ''}
                         onChange={e => void onEffortChange(e.target.value)}
                         style={styles.runSettingSelect}
-                        title={`Effort: ${effectiveEffort}${chat.effort ? ' (override)' : workerEffort ? ` (worker: ${selectedWorker!.name})` : ''}`}
+                        title={`Effort: ${effectiveEffort}${chat.effort ? ' (override)' : workerEffort ? ` (bot: ${selectedWorker!.name})` : ''}`}
                       >
                         <option value="">{inheritedEffort}</option>
                         {['low', 'medium', 'high', 'xhigh', 'max']
@@ -2013,14 +2035,14 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
             </>, document.body)
           )}
         </div>
-        <div style={{ position: 'relative' }}>
+        <div data-action-label="Channels" style={{ position: 'relative' }}>
           <button
             onClick={() => setLinkMenuOpen(o => !o)}
             style={styles.linkBtn}
             title={chat.routes?.length ? 'Manage channel links' : 'Link to a channel'}
-            aria-label="More actions"
+            aria-label="Connect channels"
           >
-            <UIIcon name="more" size={17} />
+            <UIIcon name="phone" size={17} />
           </button>
           {linkMenuOpen && (
             <>
@@ -2082,7 +2104,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
             </>
           )}
         </div>
-        <button
+        <button data-action-label="Terminal"
           onClick={() => bottomTerminalOpen ? setBottomTerminalOpen(false) : openChatTerminal()}
           style={{ ...styles.linkBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px' }}
           title={bottomTerminalOpen
@@ -2093,7 +2115,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         >
           <UIIcon name="terminal" color={C.fg} filled={bottomTerminalOpen} />
         </button>
-        <button
+        <button data-action-label="Context panel"
           onClick={() => changeRightPanelMode(panelOpen ? null : 'overview')}
           style={{ ...styles.linkBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px' }}
           title={panelOpen ? 'Hide context panel (⌘\\)' : 'Show context panel (⌘\\)'}
@@ -2101,6 +2123,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         >
           <UIIcon name="panel" color={C.fg} filled={panelOpen} />
         </button>
+        </ChatHeaderActions>
       </div>
 
       <div style={styles.transcriptShell}>
@@ -2380,7 +2403,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                           cursor: multiChoice.length === 0 ? 'default' : 'pointer',
                         }}
                         disabled={isSending || !!flight || multiChoice.length === 0}
-                        onClick={() => { void sendMessage(chat.id, multiChoice.join(', '), undefined, turnIdentity) }}
+                        onClick={() => { void sendMessage(chat.id, multiChoice.join(', '), undefined, turnIdentity, { taskId: msg.taskId ?? null }) }}
                       >
                         Submit{multiChoice.length > 0 ? ` (${multiChoice.length})` : ''}
                       </button>
@@ -2392,7 +2415,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                           key={i}
                           style={styles.choiceButton}
                           disabled={isSending || !!flight}
-                          onClick={() => { void sendMessage(chat.id, opt.label, undefined, turnIdentity) }}
+                          onClick={() => { void sendMessage(chat.id, opt.label, undefined, turnIdentity, { taskId: msg.taskId ?? null }) }}
                         >
                           <span style={styles.choiceLabel}>{opt.label}</span>
                           {opt.description && <span style={styles.choiceDesc}>{opt.description}</span>}
@@ -2415,7 +2438,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         key={i}
                         style={styles.choiceButton}
                         disabled={isSending || !!flight}
-                        onClick={() => { void sendMessage(chat.id, label, undefined, turnIdentity) }}
+                        onClick={() => { void sendMessage(chat.id, label, undefined, turnIdentity, { taskId: msg.taskId ?? null }) }}
                       >
                         {label}
                       </button>
@@ -2475,7 +2498,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     <button
                       style={{ ...styles.msgActionBtn, opacity: canResend ? 1 : 0.4, cursor: canResend ? 'pointer' : 'default' }}
                       disabled={!canResend}
-                      onClick={() => { void resendMessage(msg.content, msg.attachments) }}
+                      onClick={() => { void resendMessage(msg.content, msg.attachments, msg.taskId) }}
                       title={canResend ? 'Send this message again' : 'Wait for the current turn to finish'}
                       aria-label="Retry message"
                     >
@@ -2512,6 +2535,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         />
       </div>
 
+      {taskError && <div role="alert" style={{ color: C.red, padding: 8 }}>{taskError}</div>}
       {orphaned && (
         <div style={styles.orphanBanner}>
           Workspace "{chat.workspaceName}" no longer exists. Sending is disabled.
@@ -3061,7 +3085,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: 'wrap', rowGap: 8, background: C.surface,
   },
   headerIdentity: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
-  workspaceTag: { color: C.fg2, fontSize: 11, fontWeight: 650, flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 5 },
+  workspaceTag: { color: C.fg2, fontSize: 11, fontWeight: 650, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', flexShrink: 1, display: 'inline-flex', alignItems: 'center', gap: 5 },
   gitBadge: {
     color: C.fg3, fontSize: 11, flexShrink: 0,
     background: C.surface3, border: `1px solid ${C.border2}`,

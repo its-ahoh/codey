@@ -273,7 +273,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
               <Field label="Run as" required>
                 <select value={draft.target?.kind ?? 'prompt'} disabled={locked} style={wideSelect} onChange={e => setTargetKind(e.target.value as 'prompt' | 'team')}>
                   <option value="prompt">Single agent</option>
-                  <option value="team" disabled={context.teams.length === 0}>Worker team</option>
+                  <option value="team" disabled={context.teams.length === 0}>Bot team</option>
                 </select>
               </Field>
               <Field label="Workspace" required>

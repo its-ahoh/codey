@@ -76,7 +76,7 @@ function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, group, o
       <div onClick={e => e.stopPropagation()} style={{ width: '90vw', height: '85vh', background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 16, boxShadow: '0 30px 90px rgba(0,0,0,0.48)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface2 }}>
           <span style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="activity" size={16} /></span>
-          <div style={{ flex: 1 }}><div style={{ fontWeight: 750, color: C.fg }}>Team run</div><div style={{ fontSize: 11, color: C.fg3, marginTop: 2 }}>{runs.length} worker {runs.length === 1 ? 'step' : 'steps'} captured</div></div>
+          <div style={{ flex: 1 }}><div style={{ fontWeight: 750, color: C.fg }}>Team run</div><div style={{ fontSize: 11, color: C.fg3, marginTop: 2 }}>{runs.length} bot {runs.length === 1 ? 'step' : 'steps'} captured</div></div>
           <button onClick={onClose} style={secondaryBtn}>Close</button>
         </div>
         <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
@@ -109,7 +109,7 @@ function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingWorker, group, o
                 )}
               </>
             ) : (
-              <div style={{ fontSize: 12, color: C.fg3 }}>Select a worker to see its output.</div>
+              <div style={{ fontSize: 12, color: C.fg3 }}>Select a bot to see its output.</div>
             )}
           </div>
         </div>

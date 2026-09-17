@@ -81,13 +81,13 @@ describe('buildChatHoverCard', () => {
   it('describes worker and team selections', () => {
     const worker = buildChatHoverCard(chat({ selection: { type: 'worker', name: 'Aide' } }), { now: NOW })
     const team = buildChatHoverCard(chat({ selection: { type: 'team', name: 'Squad' } }), { now: NOW })
-    expect(rowValue(worker, 'Worker')).toBe('Aide')
-    expect(worker.rows.find(row => row.label === 'Worker')?.icon).toBe('code')
+    expect(rowValue(worker, 'Bot')).toBe('Aide')
+    expect(worker.rows.find(row => row.label === 'Bot')?.icon).toBe('code')
     expect(rowValue(team, 'Team')).toBe('Squad')
     expect(team.rows.find(row => row.label === 'Team')?.icon).toBe('users')
     expect(worker.rows.some(row => /\b(?:worker|team|agent)\b/i.test(row.value))).toBe(false)
     expect(team.rows.some(row => /\b(?:worker|team|agent)\b/i.test(row.value))).toBe(false)
-    expect(buildChatHoverCard(chat(), { now: NOW }).rows.some(row => row.label === 'Worker' || row.label === 'Team')).toBe(false)
+    expect(buildChatHoverCard(chat(), { now: NOW }).rows.some(row => row.label === 'Bot' || row.label === 'Team')).toBe(false)
   })
 
   it('shows the live branch and worktree instead of a checkout-mode label', () => {

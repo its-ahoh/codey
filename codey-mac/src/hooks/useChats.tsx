@@ -1,3 +1,6 @@
+import { SIDEBAR_MODE_KEY, readSidebarMode, nextChatForSidebar } from '../components/sidebarMode'
+import { resolveChatTask } from '../../../packages/core/src/chat-tasks'
+import type { ChatTaskRoute } from '@codey/core'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react'
 import { apiService } from '../services/api'
 import type { Chat, ChatSelection, ChatMessage, ChecklistItem, ToolCallEntry, FileAttachment, TaskBrief, TeamRunSummary } from '../types'
@@ -23,6 +26,7 @@ export interface QueuedMessage {
   text: string
   attachments?: FileAttachment[]
   identity?: { agent?: ChatMessage['agent']; model?: string }
+  taskRoute?: ChatTaskRoute
 }
 
 export interface State {
@@ -35,6 +39,7 @@ export interface State {
   // When a turn is interrupted, the prompt text is stashed here so ChatTab
   // can repopulate the input box for the matching chat.
   pendingRestores: Record<string, string>
+  pendingRestoreTasks?: Record<string, string | null>
   // Unread chats, tagged with how the turn ended so the UI can reserve red for
   // failures and use a neutral marker for a plain completion.
   unreadChats: Record<string, UnreadKind>
@@ -51,6 +56,7 @@ export interface State {
 type Action =
   | { type: 'teamFinal'; chatId: string; message: ChatMessage }
   | { type: 'loaded'; chats: Chat[] }
+  | { type: 'tasksUpdated'; chatId: string; tasks: Chat['tasks'] }
   | { type: 'setWorkspaces'; workspaces: string[] }
   | { type: 'upsert'; chat: Chat }
   // Adopt a turn that was started outside the renderer (quick-capture or a
@@ -67,7 +73,7 @@ type Action =
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: AgentActivity; messageId?: string }
   | { type: 'patchChecklist'; chatId: string; items: ChecklistItem[] }
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'completeSend'; worker?: string; workerStatus?: ChatMessage['workerStatus']; chatId: string; assistantMessageId: string; content: string; thinking?: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; teamTurnId?: string }
+  | { type: 'completeSend'; taskId?: string | null; tasks?: Chat['tasks']; worker?: string; workerStatus?: ChatMessage['workerStatus']; chatId: string; assistantMessageId: string; content: string; thinking?: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; teamTurnId?: string }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
@@ -205,6 +211,7 @@ export function reducer(state: State, action: Action): State {
       const assistantStub: ChatMessage = {
         id: action.assistantMessageId,
         role: 'assistant',
+        taskId: [...action.chat.messages].reverse().find(m => m.role === 'user')?.taskId,
         content: '',
         timestamp: Date.now(),
         toolCalls: [],
@@ -328,12 +335,18 @@ export function reducer(state: State, action: Action): State {
       delete collapsed[action.workspaceName]
       return { ...state, collapsedWorkspaces: collapsed }
     }
+    case 'tasksUpdated': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, tasks: action.tasks } } }
+    }
     case 'startSend': {
       const chat = state.chats[action.chatId]
       if (!chat) return state
       const assistantStub: ChatMessage = {
         id: action.assistantMessageId,
         role: 'assistant',
+        taskId: action.userMessage.taskId,
         content: '',
         timestamp: Date.now(),
         toolCalls: [],
@@ -565,7 +578,12 @@ export function reducer(state: State, action: Action): State {
           fallback: action.fallback,
         }]
       }
-      const updatedChat: Chat = { ...chat, messages, updatedAt: Date.now() }
+      if (action.taskId !== undefined) {
+        const userId = state.inFlight[action.chatId]?.userMessageId
+        messages = messages.map(message => message.id === userId || message.id === action.assistantMessageId
+          ? { ...message, taskId: action.taskId ?? undefined } : message)
+      }
+      const updatedChat: Chat = { ...chat, messages, ...(action.tasks ? { tasks: action.tasks } : {}), updatedAt: Date.now() }
       if (action.title) updatedChat.title = action.title
       const inFlight = { ...state.inFlight }
       delete inFlight[action.chatId]
@@ -604,6 +622,7 @@ export function reducer(state: State, action: Action): State {
         // are kept; the user resumes them or drops them one by one.
         pausedQueues: paused,
         pendingRestores: { ...state.pendingRestores, [action.chatId]: action.text },
+        pendingRestoreTasks: { ...state.pendingRestoreTasks, [action.chatId]: chat.messages.find(m => m.id === fl.userMessageId)?.taskId ?? null },
       }
     }
     case 'clearInFlight': {
@@ -620,7 +639,9 @@ export function reducer(state: State, action: Action): State {
       if (!(action.chatId in state.pendingRestores)) return state
       const pendingRestores = { ...state.pendingRestores }
       delete pendingRestores[action.chatId]
-      return { ...state, pendingRestores }
+      const pendingRestoreTasks = { ...state.pendingRestoreTasks }
+      delete pendingRestoreTasks[action.chatId]
+      return { ...state, pendingRestores, pendingRestoreTasks }
     }
     case 'errorSend': {
       const chat = state.chats[action.chatId]
@@ -653,6 +674,8 @@ export function reducer(state: State, action: Action): State {
 
 interface ChatsContextValue {
   state: State
+  openBot: (name: string, select?: boolean) => Promise<Chat>
+  createBotGroup: (title: string, members: string[], select?: boolean) => Promise<Chat>
   createChat: (workspaceName: string) => Promise<Chat>
   selectChat: (chatId: string | null) => void
   /** Fetch a chat by id (works for hidden automation chats) and select it. */
@@ -675,7 +698,8 @@ interface ChatsContextValue {
   /** `identity` is the agent/model the caller resolved for this chat; it seeds
    *  the turn header while the reply streams. Omit it and the chat's own
    *  overrides are used instead. */
-  sendMessage: (chatId: string, text: string, attachments?: FileAttachment[], identity?: { agent?: ChatMessage['agent']; model?: string }) => Promise<void>
+  sendMessage: (chatId: string, text: string, attachments?: FileAttachment[], identity?: { agent?: ChatMessage['agent']; model?: string }, taskRoute?: ChatTaskRoute) => Promise<void>
+  createTask: (chatId: string, title: string) => Promise<string>
   stopChat: (chatId: string) => Promise<void>
   /** Drop a prompt that is still waiting behind the running turn. */
   removeQueuedMessage: (chatId: string, id: string) => void
@@ -724,19 +748,20 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ])
       dispatch({ type: 'loaded', chats })
       dispatch({ type: 'setWorkspaces', workspaces })
-      const stored = localStorage.getItem(LS_ACTIVE)
-      if (stored && chats.some(c => c.id === stored)) {
-        dispatch({ type: 'select', chatId: stored })
-      } else if (chats.length > 0) {
-        dispatch({ type: 'select', chatId: chats[0].id })
-      }
+      const mode = readSidebarMode(localStorage.getItem(SIDEBAR_MODE_KEY))
+      const stored = localStorage.getItem(`codey.sidebarChat.${mode}`) ?? localStorage.getItem(LS_ACTIVE)
+      const initial = nextChatForSidebar(Object.fromEntries(chats.map(chat => [chat.id, chat])), chats.map(chat => chat.id), mode, stored)
+      if (initial) dispatch({ type: 'select', chatId: initial })
     })()
   }, [])
 
+  const selectedSidebarMode = state.selectedChatId && state.chats[state.selectedChatId]?.botChat ? 'bots' : 'workspaces'
   useEffect(() => {
-    if (state.selectedChatId) localStorage.setItem(LS_ACTIVE, state.selectedChatId)
-    else localStorage.removeItem(LS_ACTIVE)
-  }, [state.selectedChatId])
+    if (state.selectedChatId) {
+      localStorage.setItem(LS_ACTIVE, state.selectedChatId)
+      localStorage.setItem(`codey.sidebarChat.${selectedSidebarMode}`, state.selectedChatId)
+    } else localStorage.removeItem(LS_ACTIVE)
+  }, [state.selectedChatId, selectedSidebarMode])
 
   useEffect(() => {
     localStorage.setItem(LS_COLLAPSED, JSON.stringify(state.collapsedWorkspaces))
@@ -850,6 +875,8 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (asstId) {
             dispatch({
               type: 'completeSend',
+              taskId: ev.taskId,
+              tasks: ev.tasks,
               chatId: ev.chatId,
               assistantMessageId: asstId,
               content: ev.response,
@@ -927,11 +954,14 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     text: string,
     attachments?: FileAttachment[],
     identity?: { agent?: ChatMessage['agent']; model?: string },
+    taskRoute?: ChatTaskRoute,
   ) => {
     const assistantMessageId = `asst-${Date.now()}-${Math.random()}`
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}-${Math.random()}`,
       role: 'user',
+      taskId: taskRoute?.taskId ?? undefined,
+      replyToMessageId: taskRoute?.replyToMessageId,
       content: text,
       timestamp: Date.now(),
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
@@ -940,7 +970,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     pendingAssistantId.current[chatId] = assistantMessageId
     dispatch({ type: 'startSend', chatId, userMessage, assistantMessageId, agent: identity?.agent, model: identity?.model })
     try {
-      await apiService.chats.send(chatId, text, attachments)
+      await apiService.chats.send(chatId, text, attachments, taskRoute)
     } catch (err) {
       dispatch({ type: 'errorSend', chatId, assistantMessageId, error: `Error: ${(err as Error).message}` })
       delete pendingAssistantId.current[chatId]
@@ -954,7 +984,16 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     text: string,
     attachments?: FileAttachment[],
     identity?: { agent?: ChatMessage['agent']; model?: string },
+    taskRoute?: ChatTaskRoute,
   ) => {
+    const chat = stateRef.current.chats[chatId]
+    if (!chat) throw new Error('Chat not found.')
+    // Automatic routing happens when the queued message runs, using the latest context.
+    // Explicit reply/retry routes retain their original destination.
+    if (taskRoute?.taskId !== undefined || taskRoute?.replyToMessageId) {
+      const resolved = resolveChatTask(chat, text, taskRoute)
+      if (resolved.kind === 'invalid') throw new Error(resolved.message)
+    }
     const busy = !!stateRef.current.inFlight[chatId] || (stateRef.current.queuedMessages[chatId]?.length ?? 0) > 0
     // Sending again is how you say "carry on": a queue paused by a stop starts
     // moving once more, with the new prompt at the back of it.
@@ -963,11 +1002,11 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       dispatch({
         type: 'enqueueMessage',
         chatId,
-        message: { id: `q-${Date.now()}-${Math.random()}`, text, attachments, identity },
+        message: { id: `q-${Date.now()}-${Math.random()}`, text, attachments, identity, taskRoute },
       })
       return
     }
-    await deliverMessage(chatId, text, attachments, identity)
+    await deliverMessage(chatId, text, attachments, identity, taskRoute)
   }, [deliverMessage])
 
   // Drain: one queued prompt per idle chat, per pass. `draining` guards against
@@ -977,13 +1016,31 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     for (const { chatId, message } of readyDeliveries(state.queuedMessages, state.inFlight, draining.current, state.pausedQueues)) {
       draining.current.add(chatId)
       dispatch({ type: 'dequeueMessage', chatId })
-      void deliverMessage(chatId, message.text, message.attachments, message.identity)
+      void deliverMessage(chatId, message.text, message.attachments, message.identity, message.taskRoute)
         .finally(() => { draining.current.delete(chatId) })
     }
   }, [state.queuedMessages, state.inFlight, state.pausedQueues, deliverMessage])
 
   const value = useMemo<ChatsContextValue>(() => ({
     state,
+    async createTask(chatId, title) {
+      const chat = await apiService.chats.createTask(chatId, title)
+      dispatch({ type: 'tasksUpdated', chatId, tasks: chat.tasks })
+      return chat.tasks![chat.tasks!.length - 1].id
+    },
+    async openBot(name, select = true) {
+      const chat = await apiService.chats.openBot(name)
+      // Fetching an existing live chat must not replace its streaming placeholder.
+      if (!stateRef.current.inFlight[chat.id]) dispatch({ type: 'upsert', chat })
+      if (select) dispatch({ type: 'select', chatId: chat.id })
+      return chat
+    },
+    async createBotGroup(title, members, select = true) {
+      const chat = await apiService.chats.createBotGroup(title, members)
+      dispatch({ type: 'upsert', chat })
+      if (select) dispatch({ type: 'select', chatId: chat.id })
+      return chat
+    },
     async createChat(workspaceName) {
       const chat = await apiService.chats.create({ workspaceName })
       dispatch({ type: 'upsert', chat })
@@ -1110,7 +1167,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         dispatch({ type: 'dismissPermission', chatId })
         // Claude Code has already ended the denied turn. Resume its warm session
         // with an explicit continuation after the allow-list write completes.
-        await sendMessage(chatId, 'Continue the previous task now that the requested permissions have been granted.')
+        await sendMessage(chatId, 'Continue the previous task now that the requested permissions have been granted.', undefined, undefined, { taskId: [...(stateRef.current.chats[chatId]?.messages ?? [])].reverse().find(m => m.role === 'user')?.taskId ?? null })
       } finally {
         resolvingPermissions.current.delete(chatId)
       }

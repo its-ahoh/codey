@@ -1,7 +1,7 @@
 import React from 'react'
 
 export type IconName =
-  | 'activity' | 'add' | 'alert' | 'archive' | 'bell' | 'book' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
+  | 'phone' | 'activity' | 'add' | 'alert' | 'archive' | 'bell' | 'book' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
   | 'clock' | 'code' | 'copy' | 'edit' | 'file' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
   | 'waveform' | 'git-branch' | 'git-merge' | 'pull-request' | 'globe' | 'match-case' | 'overview' | 'refresh' | 'search' | 'server' | 'settings' | 'sparkle' | 'split' | 'terminal' | 'tools' | 'trash' | 'users' | 'workspace'
   | 'telegram' | 'discord' | 'imessage' | 'undo' | 'download' | 'download-all'
@@ -61,6 +61,7 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     // Symmetric bars rising toward the centre — reads as sound at 16px, where
     // a literal sine wave collapses into a smudge.
     waveform: <><path {...common} d="M3 11v2M7 8v8M11 4v16M15 7v10M19 10v4" /></>,
+    phone: <><rect {...common} x="6" y="2" width="12" height="20" rx="3" /><path {...common} d="M10 5h4M11 19h2" /></>,
     more: <><circle fill="currentColor" cx="5" cy="12" r="1.5" /><circle fill="currentColor" cx="12" cy="12" r="1.5" /><circle fill="currentColor" cx="19" cy="12" r="1.5" /></>,
     overview: <><rect {...common} x="3" y="4" width="18" height="16" rx="2" /><path {...common} d="M3 10h18M10 10v10" /><path {...common} d="M7 7h.01M13 14h5M13 17h3" /></>,
     panel: <><rect {...common} x="3" y="3" width="18" height="18" rx="2" /><path {...common} d="M15 3v18" />{filled && <path fill="currentColor" stroke="none" d="M15 3h6v18h-6z" />}</>,

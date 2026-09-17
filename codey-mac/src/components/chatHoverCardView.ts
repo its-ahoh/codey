@@ -71,7 +71,7 @@ function resolveRunner(chat: Chat): HoverCardRow | undefined {
     return { icon: 'users', label: 'Team', value: chat.selection.name?.trim() || 'Default' }
   }
   if (chat.selection?.type === 'worker') {
-    return { icon: 'code', label: 'Worker', value: chat.selection.name }
+    return { icon: 'code', label: 'Bot', value: chat.selection.name }
   }
   return undefined
 }

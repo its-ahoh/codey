@@ -1,3 +1,4 @@
+import { SidebarNavigation, SidebarFooter, SidebarAction, type SidebarCommonProps } from './SidebarNavigation'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useChats } from '../hooks/useChats'
 import { pollWhileVisible } from '../hooks/pollWhileVisible'
@@ -5,7 +6,6 @@ import { apiService } from '../services/api'
 import type { Chat } from '../types'
 import { C } from '../theme'
 import { RouteIcons } from './RouteIcons'
-import { UpdateButton } from './UpdateButton'
 import { setPendingPairing } from './pendingPairing'
 import { onWorkspacesChanged } from './workspacesChanged'
 import { UIIcon } from './UIIcons'
@@ -27,13 +27,8 @@ const CHATS_PER_WORKSPACE = 8
  *  unrolls in readable steps instead of flooding the sidebar at once. */
 const CHATS_PER_SHOW_MORE = 10
 
-interface Props {
-  onOpenSettings: (tab?: string) => void
-  onOpenAutomations: () => void
-  onOpenBrowser: () => void
-  onOpenTools: () => void
+interface Props extends SidebarCommonProps {
   onSelectChat: () => void
-  automationsUnseenCount: number
   activeChatId: string | null
 }
 
@@ -66,6 +61,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces, refreshChats, linkChannel, unlinkChannel } = useChats()
   const voice = useVoiceTurn()
   const [addingWorkspace, setAddingWorkspace] = useState(false)
+  const [search, setSearch] = useState('')
   const [workspaces, setWorkspaces] = useState<string[]>([])
   const [lastWorkspace, setLastWorkspace] = useState<string>('')
   const [gatewayWorkspace, setGatewayWorkspace] = useState<string>('')
@@ -199,7 +195,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
 
   const hoverCardChat = hoverCard ? state.chats[hoverCard.chatId] : undefined
 
-  const selectedWorkspace = activeChatId ? state.chats[activeChatId]?.workspaceName : undefined
+  const selectedWorkspace = activeChatId && !state.chats[activeChatId]?.botChat ? state.chats[activeChatId]?.workspaceName : undefined
   const newChatWorkspace = selectedWorkspace || lastWorkspace
 
   const handleNewChat = async (workspaceName?: string) => {
@@ -344,13 +340,17 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
   }
 
   const groups: Record<string, Chat[]> = {}
+  let totalChats = 0
+  const searchTerm = search.trim().toLowerCase()
   for (const id of state.order) {
     const c = state.chats[id]
-    if (!c) continue
+    if (!c || c.botChat) continue
+    totalChats++
+    if (searchTerm && !`${c.title} ${c.workspaceName}`.toLowerCase().includes(searchTerm)) continue
     ;(groups[c.workspaceName] ??= []).push(c)
   }
   for (const ws of workspaces) {
-    if (!groups[ws]) groups[ws] = []
+    if (!searchTerm && !groups[ws]) groups[ws] = []
   }
   // The backend supplies the newest-added-first default. wsOrder preserves any
   // drag override, while reconciliation inserts newly added workspaces on top.
@@ -379,32 +379,19 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
           {newChatWorkspace && <span style={styles.newChatWorkspace}>{newChatWorkspace}</span>}
         </button>
       </div>
-      <div style={styles.functionSection}>
-        <div style={styles.topNav}>
-        <button style={styles.navButton} onClick={onOpenAutomations}>
-          <span style={styles.navIcon}><UIIcon name="activity" size={16} /></span>
-          <span>Automations</span>
-          {automationsUnseenCount > 0 && (
-            <span style={styles.navBadge}>{automationsUnseenCount > 9 ? '9+' : automationsUnseenCount}</span>
-          )}
-        </button>
-        <button style={styles.navButton} onClick={onOpenBrowser} title="Browse the web in Codey">
-          <span style={styles.navIcon}><UIIcon name="globe" size={16} /></span><span>Browser</span>
-        </button>
-        <button style={styles.navButton} onClick={onOpenTools} title="Skills & playbooks">
-          <span style={styles.navIcon}><UIIcon name="tools" size={16} /></span><span>Tools</span>
-        </button>
-        </div>
-      </div>
+        <SidebarNavigation onOpenAutomations={onOpenAutomations} onOpenBrowser={onOpenBrowser} onOpenTools={onOpenTools} automationsUnseenCount={automationsUnseenCount} />
+      <input type="search" aria-label="Search chats" placeholder={`search in ${totalChats} chats`} value={search}
+        onChange={e => { setSearch(e.target.value); closeHoverCard() }}
+        onKeyDown={e => { if (e.key === 'Escape') setSearch('') }}
+        style={{ width: '100%', boxSizing: 'border-box', flexShrink: 0, background: C.bg, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 9px', fontFamily: 'inherit', fontSize: 12 }} />
       <div style={styles.chatSection}>
-        <div style={styles.chatSectionHeader}><span>Chats</span><span>{state.order.length}</span></div>
         <div style={styles.scroll} onScroll={closeHoverCard}>
         {groupNames.length === 0 && (
-          <div style={styles.empty}>No chats yet. Click "New Chat".</div>
+          <div style={styles.empty}>{searchTerm ? 'No matching chats.' : 'No chats yet. Click "New Chat".'}</div>
         )}
         {groupNames.map(ws => {
-          const collapsed = !!state.collapsedWorkspaces[ws]
-          const shown = visibleChatCount(groups[ws], CHATS_PER_WORKSPACE, revealedChatGroups[ws] ?? 0, activeChatId)
+          const collapsed = !searchTerm && !!state.collapsedWorkspaces[ws]
+          const shown = searchTerm ? groups[ws].length : visibleChatCount(groups[ws], CHATS_PER_WORKSPACE, revealedChatGroups[ws] ?? 0, activeChatId)
           const hidden = groups[ws].length - shown
           const unreadCount = groups[ws].reduce(
             (count, chat) => count + (state.unreadChats[chat.id] ? 1 : 0),
@@ -621,7 +608,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                   </div>
                 )
               })}
-              {!collapsed && (hidden > 0 || (revealedChatGroups[ws] ?? 0) > 0) && (
+              {!searchTerm && !collapsed && (hidden > 0 || (revealedChatGroups[ws] ?? 0) > 0) && (
                 <button
                   style={styles.showMoreBtn}
                   onClick={() => setRevealedChatGroups(prev => (
@@ -640,18 +627,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
         })}
         </div>
       </div>
-      <div style={styles.manageSection}>
-        <div style={styles.footer}>
-        <UpdateButton />
-        <button
-          style={styles.footerButton}
-          onClick={handleAddWorkspace}
-          disabled={addingWorkspace}
-          title="Pick a folder and create a new workspace + chat"
-        ><UIIcon name="workspace" size={15} />{addingWorkspace ? 'Picking…' : 'Add workspace'}</button>
-        <button style={styles.footerButton} onClick={() => onOpenSettings()}><UIIcon name="settings" size={15} />Settings</button>
-        </div>
-      </div>
+      <SidebarFooter onOpenSettings={onOpenSettings}>
+        <SidebarAction icon="workspace" onClick={handleAddWorkspace} disabled={addingWorkspace}
+          title="Pick a folder and create a new workspace + chat">{addingWorkspace ? 'Picking…' : 'Add workspace'}</SidebarAction>
+      </SidebarFooter>
       {hoverCard && hoverCardChat && !wsMenu && !chatMenu && renamingId !== hoverCard.chatId && (
         <ChatHoverCard
           view={buildChatHoverCard(hoverCardChat, {
@@ -808,9 +787,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 12,
   },
-  functionSection: { padding: 8, borderRadius: 12, background: C.surface2, border: `1px solid ${C.sidebarBorder}` },
   chatSection: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 12, background: C.surface2, border: `1px solid ${C.sidebarBorder}` },
-  chatSectionHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 11px 7px', color: C.fg3, fontSize: 10, fontWeight: 750, letterSpacing: 0.75, textTransform: 'uppercase', borderBottom: `1px solid ${C.border}` },
   scroll: { flex: 1, overflowY: 'auto', padding: 6 },
   empty: { color: C.fg3, fontSize: 12, padding: 12, textAlign: 'center' },
   groupHeader: {
@@ -876,21 +853,6 @@ const styles: Record<string, React.CSSProperties> = {
   xBtn: {
     background: 'transparent', border: 'none', color: C.fg3,
     cursor: 'pointer', padding: 3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4,
-  },
-  manageSection: { padding: 8, borderRadius: 12, background: C.surface2, border: `1px solid ${C.sidebarBorder}` },
-  footer: { display: 'flex', flexDirection: 'column', gap: 2 },
-  topNav: { display: 'flex', flexDirection: 'column', gap: 2 },
-  navButton: {
-    width: '100%', padding: '8px 9px', border: 'none', background: 'transparent', color: C.fg2,
-    cursor: 'pointer', textAlign: 'left', borderRadius: 7, fontSize: 12, fontWeight: 600,
-    display: 'flex', alignItems: 'center', gap: 8,
-  },
-  navIcon: { width: 25, height: 25, borderRadius: 7, background: C.surface3, color: C.accent, display: 'grid', placeItems: 'center' },
-  footerButton: { width: '100%', padding: '7px 8px', border: 'none', background: 'transparent', color: C.fg2, cursor: 'pointer', textAlign: 'left', borderRadius: 7, fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 },
-  navBadge: {
-    marginLeft: 'auto', minWidth: 16, height: 16, padding: '0 4px',
-    borderRadius: 8, background: '#E5484D', color: '#fff',
-    fontSize: 10, fontWeight: 700, lineHeight: '16px', textAlign: 'center',
   },
   menu: {
     position: 'fixed', zIndex: 1000,

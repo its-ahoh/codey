@@ -38,21 +38,35 @@ const SCHEMA_INSTRUCTION = `You are generating a Codey worker definition. Given 
 }
 
 Rules:
+- role, soul, and instructions must be non-empty strings. Write instruction steps inside one string, separated by newline characters; do not return an array or object.
 - name must match /^[a-z][a-z0-9-]*$/ and NOT be one of: architect, executor (unless the user explicitly asks to replace one — then confirm by echoing it in name).
 - Output ONLY the JSON object. No markdown fences, no prose before or after.
 - If the user's description is ambiguous, make reasonable defaults.`;
 
-function tryParse(raw: string): GeneratedWorker | null {
-  try { return JSON.parse(stripCodeFences(raw)); } catch { return null; }
+function tryParse(raw: string): unknown {
+  try {
+    const value: unknown = JSON.parse(stripCodeFences(raw));
+    // Some models express the requested steps as a list instead of a string.
+    // Preserve that useful content, but never stringify arbitrary objects.
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const record = value as Record<string, unknown>;
+      if (Array.isArray(record.instructions) && record.instructions.every(step => typeof step === 'string')) {
+        record.instructions = record.instructions.map(step => step.trim()).filter(Boolean).map(step => `- ${step}`).join('\n');
+      }
+    }
+    return value;
+  } catch { return null; }
 }
 
-function validate(g: GeneratedWorker | null): string | null {
-  if (!g) return 'Response was not valid JSON';
-  if (!/^[a-z][a-z0-9-]*$/.test(g.name || '')) return `name "${g.name}" is not a valid lowercase-kebab-case identifier`;
-  if (!CODING_AGENTS.includes(g.codingAgent)) return `codingAgent "${g.codingAgent}" is invalid`;
-  if (!g.model || typeof g.model !== 'string') return 'model must be a non-empty string';
-  if (!Array.isArray(g.tools)) return 'tools must be an array';
-  if (!g.role || !g.soul || !g.instructions) return 'role, soul, and instructions are all required';
+function validate(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'Response must be a JSON object';
+  const g = value as Record<string, unknown>;
+  if (typeof g.name !== 'string' || !/^[a-z][a-z0-9-]*$/.test(g.name)) return 'name must be a lowercase-kebab-case identifier';
+  if (!CODING_AGENTS.includes(g.codingAgent as CodingAgent)) return 'codingAgent is invalid';
+  for (const field of ['model', 'role', 'soul', 'instructions']) {
+    if (typeof g[field] !== 'string' || !g[field].trim()) return `${field} must be a non-empty string`;
+  }
+  if (!Array.isArray(g.tools) || !g.tools.every(tool => typeof tool === 'string' && tool.trim())) return 'tools must be an array of non-empty strings';
   return null;
 }
 
@@ -81,9 +95,10 @@ export async function generateWorker(
   const composed = `${SCHEMA_INSTRUCTION}\n\nUser description:\n${userPrompt.trim()}`;
 
   let lastRaw = '';
+  let lastError = '';
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await deps.agentFactory.run(deps.activeAgent, {
-      prompt: attempt === 0 ? composed : `${composed}\n\nReminder: return ONLY the JSON object. No prose, no code fences.`,
+      prompt: attempt === 0 ? composed : `${composed}\n\nThe previous response failed validation: ${lastError}. Correct it and return ONLY the JSON object. No prose, no code fences.`,
       agent: deps.activeAgent,
       model: deps.activeModel,
       interactive: false,
@@ -94,9 +109,11 @@ export async function generateWorker(
     if (!response.success) return { ok: false, status: 502, error: `Agent failed: ${response.error}` };
     lastRaw = response.output;
 
-    const parsed = tryParse(response.output);
-    const err = validate(parsed);
-    if (!err && parsed) {
+    const value = tryParse(response.output);
+    const err = validate(value);
+    lastError = err ?? '';
+    if (!err) {
+      const parsed = value as GeneratedWorker;
       // Consult the loaded map rather than just `fs.existsSync` on the
       // directory: an orphaned empty `<name>/` (left behind by an interrupted
       // create or a manual edit) wouldn't load as a worker but would still
@@ -117,5 +134,5 @@ export async function generateWorker(
     }
   }
 
-  return { ok: false, status: 500, error: 'Agent returned unparseable output after 2 attempts', raw: lastRaw };
+  return { ok: false, status: 500, error: `Could not create Bot after 2 attempts: ${lastError}`, raw: lastRaw };
 }

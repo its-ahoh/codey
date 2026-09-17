@@ -11,9 +11,9 @@ interface ModelEntry { apiType: ApiType; model: string }
 
 type Mode = { kind: 'idle' } | { kind: 'select'; name: string } | { kind: 'create' }
 
-export default function WorkersTab() {
+export default function WorkersTab({ initialName }: { initialName?: string }) {
   const [workers, setWorkers] = useState<WorkerDto[]>([])
-  const [mode, setMode] = useState<Mode>({ kind: 'idle' })
+  const [mode, setMode] = useState<Mode>(initialName ? { kind: 'select', name: initialName } : { kind: 'idle' })
   const [loading, setLoading] = useState(false)
 
   const reload = useCallback(async () => {
@@ -37,7 +37,7 @@ export default function WorkersTab() {
             </button>
           ))}
         </div>
-        <button onClick={() => setMode({ kind: 'create' })} style={{ margin: 12, padding: '8px 12px', background: C.accent, color: C.onAccent, border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>+ New Worker</button>
+        <button onClick={() => setMode({ kind: 'create' })} style={{ margin: 12, padding: '8px 12px', background: C.accent, color: C.onAccent, border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>+ New Bot</button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -52,7 +52,7 @@ export default function WorkersTab() {
 }
 
 function EmptyState() {
-  return <div style={{ padding: 40, color: C.fg3 }}>Select a worker on the left, or create a new one.</div>
+  return <div style={{ padding: 40, color: C.fg3 }}>Select a bot on the left, or create a new one.</div>
 }
 
 function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: boolean; setLoading: (b: boolean) => void; onCreated: (w: WorkerDto) => void; onCancel: () => void }) {
@@ -74,7 +74,7 @@ function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: bo
 
   return (
     <div style={{ padding: 20, maxWidth: 640 }}>
-      <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Describe the worker</div>
+      <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Describe the bot</div>
       <div style={{ fontSize: 12, color: C.fg3, marginBottom: 12 }}>The active coding agent will generate a personality and config from your description.</div>
       {error && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 12 }}>{error}</div>}
       <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="e.g. A reviewer that audits PRs for security issues, leans on Opus, uses file-system and git tools."
@@ -156,7 +156,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
   }
 
   const confirmDelete = async () => {
-    if (!confirm(`Delete worker "${worker.name}"? This also removes it from any team that references it.`)) return
+    if (!confirm(`Delete bot "${worker.name}"? This also removes it from any team that references it.`)) return
     try { await apiService.deleteWorker(worker.name); onDeleted() } catch (err: any) { setError(err.message || String(err)) }
   }
 
@@ -169,7 +169,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
           <AvatarPicker name={name.trim() || worker.name} value={avatar} onChange={setAvatar} />
           {editingName
-            ? <input autoFocus value={name} aria-label="Worker name"
+            ? <input autoFocus value={name} aria-label="Bot name"
                 onChange={e => setName(e.target.value)}
                 onBlur={() => { setEditingName(false); if (!name.trim()) setName(worker.name) }}
                 onKeyDown={e => {
