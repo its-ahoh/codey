@@ -370,6 +370,8 @@ export class Codey {
     blackboard: TeamBlackboard;
     codingAgent: CodingAgent;
     modelConfig: ModelConfig | undefined;
+    /** The chat's explicit effort; undefined lets runWithFallback supply the agent default. */
+    effort?: ThinkingEffort;
     buildBootstrapPrompt: () => string;
     onStream?: (text: string) => void;
     onThinking?: (text: string) => void;
@@ -390,7 +392,9 @@ export class Codey {
     const baseReq = {
       agent: opts.codingAgent,
       model: opts.modelConfig,
-      // Execution settings belong to the run; runWithFallback supplies the agent effort.
+      // Execution settings belong to the run: the chat's effort when set,
+      // otherwise runWithFallback supplies the agent default.
+      effort: opts.effort,
       context: { workingDir: opts.workingDir ?? this.workingDir },
       browserTools: true,
       browserChatId: opts.browserChatId,
@@ -4534,6 +4538,7 @@ Example: /model gpt-4.1 write a Python script`;
         blackboard,
         codingAgent,
         modelConfig,
+        effort: resolveEffort({ chat: resumedChat?.effort }),
         buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, pending.task, workerName, !!globalBotChat),
         onStream: (text: string) => emitter.onStream(text),
         onThinking: onThinking ?? ((text: string) => emitter.onThinking(text, 0)),
@@ -5184,6 +5189,7 @@ Example: /model gpt-4.1 write a Python script`;
         blackboard,
         codingAgent,
         modelConfig,
+        effort: resolveEffort({ chat: chat.effort }),
         buildBootstrapPrompt: () => this.wrapPromptWithMemory(workerPrompt, prompt, workerName, !!chat.botChat),
         onStream: (text: string) => workerMsgs.onStream(text),
         onThinking,

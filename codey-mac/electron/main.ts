@@ -3832,7 +3832,7 @@ app.whenReady().then(async () => {
   // ── Workers generate IPC ──────────────────────────────────────────
   ipcMain.handle('workers:generate', async (_e, prompt: string) =>
     wrap(async () => {
-      const { generateWorker, AgentFactory, runAide } = await import('@codey/core')
+      const { generateWorker, AgentFactory } = await import('@codey/core')
       const factory = new AgentFactory()
       const root = resolveDataRoot()
       if (!inProcessGateway) throw new Error('Gateway is not ready')
@@ -3844,7 +3844,10 @@ app.whenReady().then(async () => {
           workersDir: join(root, 'workers'),
           activeAgent: aide.agent,
           activeModel: aide.model,
-          runner: async request => ({ success: true, output: await runAide(request.prompt, aide) }),
+          // Call the Aide runner directly, not runAide: generating a full Bot
+          // definition can exceed runAide's 30s per-attempt timeout, and the
+          // request must keep its workingDir.
+          runner: aide.runner,
           workingDir: root,
         },
         prompt,
