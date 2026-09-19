@@ -40,7 +40,7 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 
 // Type aliases for the shapes returned by core
 export interface WorkerPersonality { role: string; soul: string; instructions: string }
-export interface WorkerConfig { avatar?: import('../components/workerAvatarModel').WorkerAvatarConfig; codingAgent: 'claude-code' | 'opencode' | 'codex' | 'pi'; model: string; tools: string[]; effort?: string; dispatchHint?: string }
+export interface WorkerConfig { avatar?: import('../components/workerAvatarModel').WorkerAvatarConfig; tools: string[]; dispatchHint?: string }
 export interface WorkerDto {
   name: string
   personality: WorkerPersonality

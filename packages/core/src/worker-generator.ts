@@ -1,8 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { AgentFactory } from './agents';
-import { CODING_AGENTS } from './types';
-import type { CodingAgent, ModelConfig } from './types';
+import type { CodingAgent, ModelConfig, AgentRequest, AgentResponse } from './types';
 import { WorkerManager } from './workers';
 import { stripCodeFences } from './utils/json';
 
@@ -11,7 +10,8 @@ export interface GenerateDeps {
   workerManager: WorkerManager;
   workersDir: string;
   activeAgent: CodingAgent;
-  activeModel: ModelConfig;
+  activeModel?: ModelConfig;
+  runner?: (request: AgentRequest) => Promise<AgentResponse>;
   workingDir: string;
 }
 
@@ -20,8 +20,6 @@ interface GeneratedWorker {
   role: string;
   soul: string;
   instructions: string;
-  codingAgent: CodingAgent;
-  model: string;
   tools: string[];
 }
 
@@ -32,8 +30,6 @@ const SCHEMA_INSTRUCTION = `You are generating a Codey worker definition. Given 
   "role": "one or two sentences describing what this worker does",
   "soul": "two to four sentences describing the worker's personality and working style",
   "instructions": "numbered or bulleted steps the worker follows when given a task",
-  "codingAgent": "claude-code" | "opencode" | "codex" | "pi",
-  "model": "a model id like claude-opus-4-6 or claude-sonnet-4-6",
   "tools": ["array", "of", "tool-tokens"]
 }
 
@@ -62,8 +58,7 @@ function validate(value: unknown): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'Response must be a JSON object';
   const g = value as Record<string, unknown>;
   if (typeof g.name !== 'string' || !/^[a-z][a-z0-9-]*$/.test(g.name)) return 'name must be a lowercase-kebab-case identifier';
-  if (!CODING_AGENTS.includes(g.codingAgent as CodingAgent)) return 'codingAgent is invalid';
-  for (const field of ['model', 'role', 'soul', 'instructions']) {
+  for (const field of ['role', 'soul', 'instructions']) {
     if (typeof g[field] !== 'string' || !g[field].trim()) return `${field} must be a non-empty string`;
   }
   if (!Array.isArray(g.tools) || !g.tools.every(tool => typeof tool === 'string' && tool.trim())) return 'tools must be an array of non-empty strings';
@@ -94,15 +89,15 @@ export async function generateWorker(
 
   const composed = `${SCHEMA_INSTRUCTION}\n\nUser description:\n${userPrompt.trim()}`;
 
+  const run = deps.runner ?? ((request: AgentRequest) => deps.agentFactory.run(deps.activeAgent, request));
   let lastRaw = '';
   let lastError = '';
   for (let attempt = 0; attempt < 2; attempt++) {
-    const response = await deps.agentFactory.run(deps.activeAgent, {
+    const response = await run({
       prompt: attempt === 0 ? composed : `${composed}\n\nThe previous response failed validation: ${lastError}. Correct it and return ONLY the JSON object. No prose, no code fences.`,
       agent: deps.activeAgent,
       model: deps.activeModel,
       interactive: false,
-      skipPermissions: true,
       context: { workingDir: deps.workingDir },
     });
 
@@ -113,7 +108,8 @@ export async function generateWorker(
     const err = validate(value);
     lastError = err ?? '';
     if (!err) {
-      const parsed = value as GeneratedWorker;
+      const { name, role, soul, instructions, tools } = value as GeneratedWorker;
+      const parsed: GeneratedWorker = { name, role, soul, instructions, tools };
       // Consult the loaded map rather than just `fs.existsSync` on the
       // directory: an orphaned empty `<name>/` (left behind by an interrupted
       // create or a manual edit) wouldn't load as a worker but would still
@@ -125,8 +121,6 @@ export async function generateWorker(
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'personality.md'), assembleMd(parsed));
       fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
-        codingAgent: parsed.codingAgent,
-        model: parsed.model,
         tools: parsed.tools,
       }, null, 2) + '\n');
       await deps.workerManager.loadWorkers();

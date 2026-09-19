@@ -6,7 +6,7 @@ import { generateWorker, type GenerateDeps } from './worker-generator';
 import { WorkerManager } from './workers';
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true })));
-const valid = { name: 'helper', role: 'Help users', soul: 'Thoughtful', instructions: 'Explain clearly', codingAgent: 'codex', model: 'test-model', tools: [] };
+const valid = { name: 'helper', role: 'Help users', soul: 'Thoughtful', instructions: 'Explain clearly', tools: [] };
 function setup(outputs: unknown[]) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-generator-'));
   roots.push(root);
@@ -31,6 +31,8 @@ describe('Bot definition generation', () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(fs.readFileSync(path.join(root, 'helper', 'personality.md'), 'utf8')).toContain('- Read the request\n- Explain clearly');
     expect(deps.workerManager.hasWorker('helper')).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'helper', 'config.json'), 'utf8'))).toEqual({ tools: [] });
+    expect(run.mock.calls[0][1].prompt).not.toContain('codingAgent');
   });
   it('retries invalid structured fields before writing anything', async () => {
     const { deps, root, run } = setup([{ ...valid, instructions: { step: 'Read' } }, valid]);
@@ -40,7 +42,7 @@ describe('Bot definition generation', () => {
   });
   it.each([
     { instructions: 4 }, { instructions: ['Read', {}] }, { instructions: [] },
-    { role: {} }, { soul: ['Friendly'] }, { model: '  ' }, { tools: [4] },
+    { role: {} }, { soul: ['Friendly'] }, { tools: [4] },
   ])('returns a validation error without leaving a partial Bot for %j', async patch => {
     const bad = { ...valid, ...patch };
     const { deps, root } = setup([bad, bad]);

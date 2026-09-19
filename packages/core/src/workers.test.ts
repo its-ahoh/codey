@@ -166,3 +166,24 @@ describe('renameWorkerInTeams', () => {
     expect(result.teams).toEqual(teams);
   });
 });
+
+
+describe('role-only bot configuration', () => {
+  it('ignores legacy execution bindings and strips them on save while keeping role metadata', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-role-only-'));
+    try {
+      seedWorkers(root, ['alice']);
+      const configPath = path.join(root, 'alice', 'config.json');
+      const legacy = { codingAgent: 'retired-agent', model: 'retired-model', effort: 'high', tools: ['git'], dispatchHint: 'Reviews changes' };
+      fs.writeFileSync(configPath, JSON.stringify(legacy));
+      const manager = new WorkerManager(root);
+      await manager.loadWorkers();
+      const bot = manager.getWorker('alice')!;
+      expect(bot.config).toEqual({ tools: ['git'], dispatchHint: 'Reviews changes' });
+      expect(manager.listWorkers()).not.toContain('retired-model');
+      await manager.saveWorker('alice', bot.personality, legacy);
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(bot.config);
+      expect(manager.getWorker('alice')!.personality).toEqual(bot.personality);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+});

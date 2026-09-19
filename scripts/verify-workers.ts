@@ -36,7 +36,7 @@ async function run() {
   section('2. Get specific worker');
   const architect = wm.getWorker('architect');
   expect(architect !== undefined, 'architect resolved');
-  expect(architect?.config.codingAgent === 'claude-code', 'architect codingAgent is claude-code');
+  expect(architect && !('codingAgent' in architect.config), 'architect has no execution binding');
   expect(typeof architect?.personality.role === 'string' && architect.personality.role.length > 0, 'architect has a role');
 
   expect(wm.getWorker('nosuch') === undefined, 'nosuch returns undefined');

@@ -3835,26 +3835,25 @@ app.whenReady().then(async () => {
       const { generateWorker, AgentFactory } = await import('@codey/core')
       const factory = new AgentFactory()
       const root = resolveDataRoot()
-      const activeAgent = (inProcessGateway as any)?.config?.defaultAgent ?? 'claude-code'
-      // Reuse the gateway's credential-aware resolver so apiKey+baseUrl
-      // from the active profile flow through. Without this, MiniMax
-      // (or any custom-endpoint routing) never receives its auth and
-      // the spawned CLI exits 1 hitting the default endpoint.
-      const activeModel = (inProcessGateway as any)?.getDefaultModelConfig?.(activeAgent)
-        ?? { provider: 'anthropic', model: 'claude-sonnet-4-5' }
+      if (!inProcessGateway) throw new Error('Gateway is not ready')
+      const aide = inProcessGateway.getAideOptions()
       const result = await generateWorker(
         {
           agentFactory: factory,
           workerManager: workerManager!,
           workersDir: join(root, 'workers'),
-          activeAgent,
-          activeModel,
+          activeAgent: aide.agent,
+          activeModel: aide.model,
+          // Call the Aide runner directly, not runAide: generating a full Bot
+          // definition can exceed runAide's 30s per-attempt timeout, and the
+          // request must keep its workingDir.
+          runner: aide.runner,
           workingDir: root,
         },
         prompt,
       )
       if (!result.ok) throw new Error(result.error)
-      return result.worker
+      return workerManager!.getWorker(result.worker.name)!
     })
   )
 
