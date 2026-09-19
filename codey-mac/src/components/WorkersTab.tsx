@@ -5,10 +5,6 @@ import { WorkerAvatar } from './WorkerAvatar'
 import { resolveWorkerAvatar } from './workerAvatarModel'
 import { C } from '../theme'
 
-import { AGENT_API_TYPE, ApiType, modelFitsApiType } from './modelApiType'
-
-interface ModelEntry { apiType: ApiType; model: string }
-
 type Mode = { kind: 'idle' } | { kind: 'select'; name: string } | { kind: 'create' }
 
 export default function WorkersTab({ initialName }: { initialName?: string }) {
@@ -33,7 +29,6 @@ export default function WorkersTab({ initialName }: { initialName?: string }) {
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: mode.kind === 'select' && mode.name === w.name ? C.surface2 : 'transparent', border: 'none', color: C.fg, cursor: 'pointer' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><WorkerAvatar name={w.name} config={w.config.avatar} /><strong>{w.name}</strong></div>
               <div style={{ fontSize: 11, color: C.fg3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.personality.role}</div>
-              <div style={{ fontSize: 10, color: C.fg3, marginTop: 2 }}>{w.config.codingAgent} · {w.config.model}{w.config.effort ? ` · ${w.config.effort}` : ''}</div>
             </button>
           ))}
         </div>
@@ -75,9 +70,9 @@ function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: bo
   return (
     <div style={{ padding: 20, maxWidth: 640 }}>
       <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Describe the bot</div>
-      <div style={{ fontSize: 12, color: C.fg3, marginBottom: 12 }}>The active coding agent will generate a personality and config from your description.</div>
+      <div style={{ fontSize: 12, color: C.fg3, marginBottom: 12 }}>Describe its role, working style, and instructions.</div>
       {error && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 12 }}>{error}</div>}
-      <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="e.g. A reviewer that audits PRs for security issues, leans on Opus, uses file-system and git tools."
+      <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="e.g. A reviewer that audits PRs for security issues and explains actionable fixes."
         style={{ width: '100%', minHeight: 160, padding: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, fontFamily: 'inherit', fontSize: 14, resize: 'vertical' }} />
       <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
         <button onClick={submit} disabled={loading || !prompt.trim()}
@@ -98,37 +93,18 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
   const [role, setRole] = useState(worker.personality.role)
   const [soul, setSoul] = useState(worker.personality.soul)
   const [instructions, setInstructions] = useState(worker.personality.instructions)
-  const [codingAgent, setCodingAgent] = useState(worker.config.codingAgent)
-  const [model, setModel] = useState(worker.config.model)
-  const [effort, setEffort] = useState(worker.config.effort ?? '')
   const [toolsText, setToolsText] = useState(worker.config.tools.join(', '))
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [models, setModels] = useState<ModelEntry[]>([])
-  const [agentEfforts, setAgentEfforts] = useState<Record<string, string | undefined>>({})
-
-  useEffect(() => {
-    window.codey.models.list().then(r => { if (r.ok) setModels(r.data as ModelEntry[]) }).catch(() => {})
-    window.codey.agents.get().then(r => {
-      if (!r.ok) return
-      const efforts: Record<string, string | undefined> = {}
-      for (const [agent, slot] of Object.entries(r.data ?? {})) efforts[agent] = slot.defaultEffort
-      setAgentEfforts(efforts)
-    }).catch(() => {})
-  }, [])
 
   useEffect(() => {
     setRole(worker.personality.role); setSoul(worker.personality.soul); setInstructions(worker.personality.instructions)
-    setCodingAgent(worker.config.codingAgent); setModel(worker.config.model); setToolsText(worker.config.tools.join(', '))
+    setToolsText(worker.config.tools.join(', '))
     setAvatar(resolveWorkerAvatar(worker.name, worker.config.avatar))
     setName(worker.name); setEditingName(false)
-    setEffort(worker.config.effort ?? '')
     setSaved(false); setError(null)
   }, [worker.name])
-
-  const filteredModels = models.filter(m => modelFitsApiType(m.apiType, AGENT_API_TYPE[codingAgent]))
-  const inheritedEffort = agentEfforts[codingAgent] ?? 'medium'
 
   const save = async () => {
     setSaving(true); setError(null)
@@ -140,10 +116,7 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
         config: {
           ...worker.config,
           avatar,
-          codingAgent,
-          model,
           tools: toolsText.split(',').map(s => s.trim()).filter(Boolean),
-          effort: effort || undefined,
         },
       })
       window.dispatchEvent(new Event('codey:workers-changed'))
@@ -193,40 +166,6 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
 
       <label style={labelStyle}>Instructions</label>
       <textarea value={instructions} onChange={e => setInstructions(e.target.value)} style={{ ...fieldStyle, minHeight: 140 }} />
-
-      <label style={labelStyle}>Coding Agent</label>
-      <select value={codingAgent} onChange={e => {
-        const next = e.target.value as any
-        setCodingAgent(next)
-        // Reset model if incompatible with the new agent
-        const want = AGENT_API_TYPE[next]
-        const compatible = models.some(m => m.model === model && modelFitsApiType(m.apiType, want))
-        if (!compatible) {
-          const first = models.find(m => modelFitsApiType(m.apiType, want))
-          setModel(first?.model ?? '')
-        }
-      }} style={fieldStyle}>
-        <option value="claude-code">claude-code</option>
-        <option value="opencode">opencode</option>
-        <option value="codex">codex</option>
-        <option value="pi">pi</option>
-      </select>
-
-      <label style={labelStyle}>Model</label>
-      <select value={model} onChange={e => setModel(e.target.value)} style={{ ...fieldStyle, cursor: 'pointer' }}>
-        {filteredModels.map(m => (
-          <option key={m.model} value={m.model}>{m.model}</option>
-        ))}
-        {filteredModels.length === 0 && <option value={model}>{model || '(no models available)'}</option>}
-      </select>
-
-      <label style={labelStyle}>Effort</label>
-      <select value={effort} onChange={e => setEffort(e.target.value)} style={fieldStyle}>
-        <option value="">{inheritedEffort}</option>
-        {['low', 'medium', 'high', 'xhigh', 'max']
-          .filter(value => value !== inheritedEffort || value === effort)
-          .map(value => <option key={value} value={value}>{value}</option>)}
-      </select>
 
       <label style={labelStyle}>Tools (comma-separated)</label>
       <input value={toolsText} onChange={e => setToolsText(e.target.value)} style={fieldStyle} />

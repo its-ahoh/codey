@@ -1,8 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { BLACKBOARD_MARKER_INSTRUCTIONS } from './team-blackboard';
-import { CODING_AGENTS } from './types';
-import type { CodingAgent, ThinkingEffort } from './types';
 
 export interface WorkerPersonality {
   role: string;
@@ -12,8 +10,6 @@ export interface WorkerPersonality {
 
 export interface WorkerConfig {
   avatar?: { shape: 'circle' | 'square' | 'triangle' | 'capsule'; color: string };
-  codingAgent: CodingAgent;
-  model: string;
   tools: string[];
   /**
    * Optional one-line summary fed to the auto-dispatcher when this worker
@@ -22,8 +18,6 @@ export interface WorkerConfig {
    * `personality.soul` and `.instructions` are never sent to the dispatcher.
    */
   dispatchHint?: string;
-  /** Optional per-worker reasoning effort. Overridden by a chat-level effort. */
-  effort?: ThinkingEffort;
 }
 
 export interface Worker {
@@ -40,7 +34,14 @@ export interface ParallelPromptInputs {
   peerOpinions: Array<{ name: string; path: string }>;
 }
 
-const VALID_CODING_AGENTS: readonly CodingAgent[] = CODING_AGENTS;
+/** Whitelist role metadata so legacy execution settings never reach callers or disk on save. */
+function roleConfig(config: WorkerConfig): WorkerConfig {
+  return {
+    ...(config.avatar ? { avatar: config.avatar } : {}),
+    tools: Array.isArray(config.tools) ? config.tools : [],
+    ...(typeof config.dispatchHint === 'string' ? { dispatchHint: config.dispatchHint } : {}),
+  };
+}
 
 export class WorkerManager {
   private workersDir: string;
@@ -113,15 +114,11 @@ export class WorkerManager {
       return null;
     }
 
-    if (!config.codingAgent || !config.model) {
-      console.error(`[Workers] Skipping ${name}: config.json missing codingAgent or model`);
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+      console.error(`[Workers] Skipping ${name}: config.json must be an object`);
       return null;
     }
-    if (!VALID_CODING_AGENTS.includes(config.codingAgent)) {
-      console.error(`[Workers] Skipping ${name}: codingAgent "${config.codingAgent}" is not one of ${VALID_CODING_AGENTS.join(', ')}`);
-      return null;
-    }
-    if (!Array.isArray(config.tools)) config.tools = [];
+    config = roleConfig(config);
 
     let personality: WorkerPersonality;
     try {
@@ -176,19 +173,6 @@ export class WorkerManager {
 
   getWorkerNames(): string[] {
     return Array.from(this.workers.keys());
-  }
-
-  getWorkerCodingAgent(name: string): WorkerConfig['codingAgent'] {
-    return this.getWorker(name)?.config.codingAgent || 'claude-code';
-  }
-
-  getWorkerModel(name: string): string {
-    return this.getWorker(name)?.config.model || '';
-  }
-
-  /** The worker's configured reasoning effort, or undefined when unset. */
-  getWorkerEffort(name: string): ThinkingEffort | undefined {
-    return this.getWorker(name)?.config.effort;
   }
 
   /**
@@ -385,7 +369,7 @@ export class WorkerManager {
   listWorkers(): string {
     const all = this.getAllWorkers();
     if (all.length === 0) return 'No workers configured. Create folders under ./workers/<name>/ with personality.md and config.json.';
-    return all.map(w => `• **${w.name}** — ${w.personality.role || '(no role)'} (${w.config.codingAgent}/${w.config.model})`).join('\n');
+    return all.map(w => `• **${w.name}** — ${w.personality.role || '(no role)'}`).join('\n');
   }
 
   async saveWorker(name: string, personality: WorkerPersonality, config: WorkerConfig): Promise<void> {
@@ -393,7 +377,7 @@ export class WorkerManager {
     await fs.promises.mkdir(dir, { recursive: true });
     const personalityContent = `# Worker: ${name}\n\n## Role\n${personality.role}\n\n## Soul\n${personality.soul}\n\n## Instructions\n${personality.instructions}\n`;
     await fs.promises.writeFile(path.join(dir, 'personality.md'), personalityContent, 'utf-8');
-    await fs.promises.writeFile(path.join(dir, 'config.json'), JSON.stringify(config, null, 2), 'utf-8');
+    await fs.promises.writeFile(path.join(dir, 'config.json'), JSON.stringify(roleConfig(config), null, 2), 'utf-8');
     await this.loadWorkers();
   }
 

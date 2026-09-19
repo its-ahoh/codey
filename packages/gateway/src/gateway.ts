@@ -390,9 +390,7 @@ export class Codey {
     const baseReq = {
       agent: opts.codingAgent,
       model: opts.modelConfig,
-      // Worker tier. No chat is in scope on this path, and the per-agent
-      // global default is filled in by runWithFallback when this is undefined.
-      effort: resolveEffort({ worker: wm.getWorkerEffort(opts.workerName) }),
+      // Execution settings belong to the run; runWithFallback supplies the agent effort.
       context: { workingDir: opts.workingDir ?? this.workingDir },
       browserTools: true,
       browserChatId: opts.browserChatId,
@@ -643,20 +641,11 @@ export class Codey {
     if (roster.length === 1) {
       return { route: 'single_worker', worker: roster[0].name, reason: 'The team has one member.' };
     }
-    const { agent, model } = this.getAdvisorAgentAndModel();
     try {
-      const response = await this.runWithFallback(agent, {
-        prompt: buildTeamFastPathPrompt(task, roster),
-        agent,
-        model,
-        context: { workingDir },
-        onStream: () => {},
-        onThinking: () => {},
-        onStatus: () => {},
-        signal,
+      const output = await runAide(buildTeamFastPathPrompt(task, roster), {
+        ...this.getAideOptions(signal, false), timeoutMs: 8000, retries: 0,
       });
-      if (!response?.success) return { route: 'full_flow', reason: 'Routing gate failed.' };
-      return parseTeamFastPathDecision(this.formatAgentResponse(response), roster);
+      return parseTeamFastPathDecision(output, roster);
     } catch {
       return { route: 'full_flow', reason: 'Routing gate failed.' };
     }
@@ -3942,9 +3931,9 @@ Example: /model gpt-4.1 write a Python script`;
       return;
     }
 
-    // Get worker config from JSON
-    const codingAgent = this.workspaceManager.getWorkerManager().getWorkerCodingAgent(workerName) as CodingAgent;
-    const model = this.workspaceManager.getWorkerManager().getWorkerModel(workerName);
+    // Roles inherit the configured execution default.
+    const codingAgent = this.getDefaultAgent();
+    const model = this.getDefaultModelName(codingAgent);
 
     await this.sendResponse({
       chatId,
@@ -3959,7 +3948,7 @@ Example: /model gpt-4.1 write a Python script`;
       return this.wrapPromptWithMemory(basePrompt, task, workerName);
     };
 
-    const modelConfig = this.getModelConfig(codingAgent, model);
+    const modelConfig = this.getDefaultModelConfig(codingAgent);
     const handler = this.handlers.get(channel);
     const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
     const baseConv = `${channel}-${chatId}`;
@@ -4144,11 +4133,8 @@ Example: /model gpt-4.1 write a Python script`;
 
       await perStep({ kind: 'route', step, worker: turnNext, reason: turnReason, isRevision });
 
-      const codingAgent = (workerManager.getWorkerCodingAgent(turnNext) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
-      const workerModelName = workerManager.getWorkerModel(turnNext);
-      const modelConfig = workerModelName
-        ? this.getModelConfig(codingAgent, workerModelName)
-        : chatModel ?? this.getDefaultModelConfig(codingAgent);
+      const codingAgent = (chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const modelConfig = chatModel ?? this.getDefaultModelConfig(codingAgent);
 
       const stepTaskBody = this.composeStepTask(task, turnInstruction, lastWorker, lastOutput);
       // Build a per-step "last did" map from Advisor history: latest entry per worker.
@@ -4502,7 +4488,11 @@ Example: /model gpt-4.1 write a Python script`;
     emitter: TeamEmitter,
     signal?: AbortSignal,
   ): Promise<string> {
-    const globalBotChat = this.chatManager.get(chatId)?.botChat;
+    const resumedChat = this.chatManager.get(chatId);
+    const globalBotChat = resumedChat?.botChat;
+    const resumeAgent = resumedChat?.agent ?? this.getDefaultAgent();
+    const resumeModel = resumedChat?.model
+      ? this.getModelConfig(resumeAgent, resumedChat.model) : this.getDefaultModelConfig(resumeAgent);
     const nextResumeStep = Math.max(
       0,
       ...(this.chatManager.get(chatId)?.messages
@@ -4561,8 +4551,8 @@ Example: /model gpt-4.1 write a Python script`;
     if (pending.mode === 'sequential') {
       const wm = this.workspaceManager.getWorkerManager();
       const memberName = team.members[pending.memberIndex];
-      const codingAgent = wm.getWorkerCodingAgent(memberName) as CodingAgent;
-      const modelConfig = this.getModelConfig(codingAgent, wm.getWorkerModel(memberName));
+      const codingAgent = resumeAgent;
+      const modelConfig = resumeModel;
       const seqRoster = team.members.map(n => ({ name: n, hint: wm.getDispatchHint(n) }));
       const seqNextName = team.members[pending.memberIndex + 1];
       const seqNextWorker = seqNextName
@@ -4620,7 +4610,7 @@ Example: /model gpt-4.1 write a Python script`;
         team.members,
         pending.task,
         runOneWorker,
-        { signal, startIndex: pending.memberIndex + 1, startStep: nextResumeStep + 1, startCarry: carryForNext, priorResults, blackboard, conversationId: teamConv, teamTurnId: pending.teamTurnId },
+        { fallbackAgent: resumeAgent, fallbackModel: resumeModel, signal, startIndex: pending.memberIndex + 1, startStep: nextResumeStep + 1, startCarry: carryForNext, priorResults, blackboard, conversationId: teamConv, teamTurnId: pending.teamTurnId },
       );
       return emitter.transcript;
     }
@@ -4636,14 +4626,13 @@ Example: /model gpt-4.1 write a Python script`;
       await this.continueGraphRun(
         emitter, chatId, convBase,
         pending.teamName, pending.teamTurnId, team.graph, pending.task, state, blackboard, pending.results,
-        runOneWorker, { signal, resume: { question: pending.question, answer } },
+        runOneWorker, { fallbackAgent: resumeAgent, fallbackModel: resumeModel, signal, resume: { question: pending.question, answer } },
       );
       return emitter.transcript;
     }
 
     // mode === 'auto'
-    const { agent: mAgent, model: mModel } = this.chatManager.get(chatId)?.botChat?.kind === 'group'
-      ? this.getAideAgentAndModel() : this.getAdvisorAgentAndModel();
+    const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
     const wm = this.workspaceManager.getWorkerManager();
     const turn = await runAdvisor(
       {
@@ -4675,11 +4664,8 @@ Example: /model gpt-4.1 write a Python script`;
     }
     const isRevision = pending.seenWorkers.includes(turn.next);
     await emitter.status(`🔄 Step ${pending.step}: **${turn.next}**${isRevision ? ' (revision)' : ''} — ${turn.reason}`);
-    const codingAgent = (wm.getWorkerCodingAgent(turn.next) ?? this.getDefaultAgent()) as CodingAgent;
-    const workerModelName = wm.getWorkerModel(turn.next);
-    const modelConfig = workerModelName
-      ? this.getModelConfig(codingAgent, workerModelName)
-      : this.getDefaultModelConfig(codingAgent);
+    const codingAgent = resumeAgent;
+    const modelConfig = resumeModel;
     const stepTaskBody = this.composeStepTask(pending.task, turn.instruction, pending.lastWorker, pending.lastOutput);
     // Use the team-aware builder so the resumed worker also sees the blackboard
     // and the marker protocol — keeps post-pause steps consistent with pre-pause.
@@ -4787,9 +4773,8 @@ Example: /model gpt-4.1 write a Python script`;
         emitter.endWorker?.('failed', { failureReason: `Worker "${memberName}" was not found` });
         break;
       }
-      const codingAgent = (workerManager.getWorkerCodingAgent(memberName) ?? opts.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
-      const wmModel = workerManager.getWorkerModel(memberName);
-      const modelConfig = wmModel ? this.getModelConfig(codingAgent, wmModel) : (opts.fallbackModel ?? this.getDefaultModelConfig(codingAgent));
+      const codingAgent = (opts.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const modelConfig = opts.fallbackModel ?? this.getDefaultModelConfig(codingAgent);
       await emitter.status(`🔄 Worker **${worker.name}** is working...`);
       emitter.beginWorker?.({ step: executionStep, worker: worker.name, reason: i === (opts.startIndex ?? 0) ? opts.firstReason : undefined, agent: codingAgent, model: modelConfig?.model });
       const roster = members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
@@ -5013,11 +4998,8 @@ Example: /model gpt-4.1 write a Python script`;
         break;
       }
 
-      const codingAgent = (wm.getWorkerCodingAgent(workerName) ?? opts?.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
-      const wmModel = wm.getWorkerModel(workerName);
-      const modelConfig = wmModel
-        ? this.getModelConfig(codingAgent, wmModel)
-        : (opts?.fallbackModel ?? this.getDefaultModelConfig(codingAgent));
+      const codingAgent = (opts?.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
+      const modelConfig = opts?.fallbackModel ?? this.getDefaultModelConfig(codingAgent);
       await emitter.status(`🔄 Step ${++stepIndex}: **${worker.name}** is working...`);
       emitter.beginWorker?.({ step: stepIndex, worker: worker.name, agent: codingAgent, model: modelConfig?.model });
 
@@ -5315,12 +5297,8 @@ Example: /model gpt-4.1 write a Python script`;
           prompt: req.prompt,
           agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
           model: chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent),
-          // Effort follows agent/model: this path already honours the chat's
-          // agent and model, so it honours the chat's effort too. The worker
-          // tier is deliberately skipped here — parallel mode runs every member
-          // on the chat's agent/model rather than per-worker config, so mixing
-          // in a per-worker effort would contradict that. Global default still
-          // fills in via runWithFallback when the chat has no override.
+          // Parallel members share the chat's execution settings. The global
+          // effort default is supplied by runWithFallback when no override is set.
           effort: resolveEffort({ chat: chat.effort }),
           context: { workingDir },
           browserTools: true,
@@ -5434,12 +5412,8 @@ Example: /model gpt-4.1 write a Python script`;
             // (beginWorker below). Don't also echo a "### Step N" header into the
             // turn's main message — that produced a second, redundant copy of the
             // whole run in a different format.
-            const wm = this.workspaceManager.getWorkerManager();
-            const workerAgent = (wm.getWorkerCodingAgent(msg.worker) ?? chatAgent ?? this.getDefaultAgent()) as CodingAgent;
-            const workerModelName = wm.getWorkerModel(msg.worker);
-            const workerModel = workerModelName
-              ? this.getModelConfig(workerAgent, workerModelName)
-              : (chatModel ?? this.getDefaultModelConfig(workerAgent));
+            const workerAgent = (chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+            const workerModel = chatModel ?? this.getDefaultModelConfig(workerAgent);
             workerMsgs.beginWorker({
               step: msg.step,
               worker: msg.worker,
@@ -5453,7 +5427,7 @@ Example: /model gpt-4.1 write a Python script`;
         },
         runOneWorker,
         (d) => workerMsgs.endWorker(d.failed ? 'failed' : 'done', d.failed ? { failureReason: d.error ?? 'Worker failed without an error message' } : undefined),
-        chat.botChat?.kind === 'group' ? this.getAideAgentAndModel() : undefined,
+        this.getAdvisorAgentAndModel(),
       );
 
       if (result.fallback) {
@@ -6517,11 +6491,11 @@ Example: /model gpt-4.1 write a Python script`;
     // Per-chat override takes precedence over the gateway default.
     const selectedBot = chat.selection.type === 'worker'
       ? this.workspaceManager.getWorkerManager().getWorker(chat.selection.name) : undefined;
-    const agent = (chat.agent ?? selectedBot?.config.codingAgent ?? this.getDefaultAgent()) as CodingAgent;
-    const chatEffort = resolveEffort({ chat: chat.effort, worker: selectedBot?.config.effort });
+    const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
+    const chatEffort = resolveEffort({ chat: chat.effort });
     let model: ModelConfig | undefined;
     try {
-      const modelId = chat.model ?? (selectedBot?.config.codingAgent === agent ? selectedBot.config.model : undefined);
+      const modelId = chat.model;
       model = modelId
         ? this.getModelConfig(agent, modelId)
         : this.getDefaultModelConfig(agent);

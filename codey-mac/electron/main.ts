@@ -3832,29 +3832,25 @@ app.whenReady().then(async () => {
   // ── Workers generate IPC ──────────────────────────────────────────
   ipcMain.handle('workers:generate', async (_e, prompt: string) =>
     wrap(async () => {
-      const { generateWorker, AgentFactory } = await import('@codey/core')
+      const { generateWorker, AgentFactory, runAide } = await import('@codey/core')
       const factory = new AgentFactory()
       const root = resolveDataRoot()
-      const activeAgent = (inProcessGateway as any)?.config?.defaultAgent ?? 'claude-code'
-      // Reuse the gateway's credential-aware resolver so apiKey+baseUrl
-      // from the active profile flow through. Without this, MiniMax
-      // (or any custom-endpoint routing) never receives its auth and
-      // the spawned CLI exits 1 hitting the default endpoint.
-      const activeModel = (inProcessGateway as any)?.getDefaultModelConfig?.(activeAgent)
-        ?? { provider: 'anthropic', model: 'claude-sonnet-4-5' }
+      if (!inProcessGateway) throw new Error('Gateway is not ready')
+      const aide = inProcessGateway.getAideOptions()
       const result = await generateWorker(
         {
           agentFactory: factory,
           workerManager: workerManager!,
           workersDir: join(root, 'workers'),
-          activeAgent,
-          activeModel,
+          activeAgent: aide.agent,
+          activeModel: aide.model,
+          runner: async request => ({ success: true, output: await runAide(request.prompt, aide) }),
           workingDir: root,
         },
         prompt,
       )
       if (!result.ok) throw new Error(result.error)
-      return result.worker
+      return workerManager!.getWorker(result.worker.name)!
     })
   )
 

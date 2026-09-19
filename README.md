@@ -13,7 +13,7 @@
   <a href="https://github.com/its-ahoh/codey/stargazers"><img src="https://img.shields.io/github/stars/its-ahoh/codey?style=social" alt="GitHub stars" /></a>
 </p>
 
-**A multi-agent workbench for coding agents.** Codey is one place to organize, switch between, and orchestrate Claude Code, OpenCode, Codex, pi (and more) across your projects — give each project its own workspace, build worker teams with different agents/models per role, run several agents in parallel on the same task to compare, and reach all of it from a native macOS app, chat platforms (Telegram / Discord / iMessage), or system-wide push-to-talk voice.
+**A multi-agent workbench for coding agents.** Codey is one place to organize, switch between, and orchestrate Claude Code, OpenCode, Codex, pi (and more) across your projects — give each project its own workspace, build teams of reusable worker roles, run several agents in parallel on the same task to compare, and reach all of it from a native macOS app, chat platforms (Telegram / Discord / iMessage), or system-wide push-to-talk voice.
 
 Think of it less as a chat bridge and more as **the control plane for the coding agents you already use**. It runs entirely on your own machine, using your existing agent CLIs and accounts — no proxy server, no extra subscription.
 
@@ -52,7 +52,7 @@ Builds are currently unsigned — on first launch, right-click the app → **Ope
 
 **Workspaces & workers**
 - **Multi-workspace**: Each workspace has its own working directory, memory, and workers
-- **Worker teams**: Define workers with roles, personalities, tools, and per-worker agent/model
+- **Worker teams**: Define workers with roles, personalities, and tools; execution inherits the chat or Default agent/model
 - **Flow graphs**: Draw a team as a graph on a canvas — a judge LLM picks the next edge by its condition, so runs can branch, loop back for revisions, or pause to ask you
 - **Memory**: Workspace + user-global memory that workers read on every run and write insights back to
 - **Conversation context**: Remembers previous messages within a session
@@ -172,8 +172,6 @@ Each workspace ties to a project directory via `workspace.json`:
   "workingDir": "/path/to/project",
   "workers": {
     "architect": {
-      "codingAgent": "claude-code",
-      "model": "claude-opus-4-6",
       "tools": ["file-system", "git", "web-search"]
     }
   }

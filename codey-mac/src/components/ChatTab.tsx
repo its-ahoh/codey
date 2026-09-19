@@ -1200,25 +1200,19 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   }
 
   // Resolve which agent/model are *actually* used for this chat.
-  // Priority: per-chat override → worker config → gateway fallback default.
-  const selectedWorker = chat.selection.type === 'worker'
-    ? workers.find(w => w.name === chat.selection.name)
-    : undefined
-  const workerAgent = selectedWorker?.config.codingAgent
-  const workerModel = selectedWorker?.config.model
-  const effectiveAgent: string = chat.agent ?? workerAgent ?? defaultAgent ?? 'claude-code'
-  const effectiveModel: string | undefined = chat.model ?? workerModel ?? agentDefaultModels[effectiveAgent]
-  const workerEffort = selectedWorker?.config.effort
-  const effectiveEffort: string = chat.effort ?? workerEffort ?? agentDefaultEfforts[effectiveAgent] ?? 'medium'
+  // Priority: per-chat override → gateway fallback default.
+  const effectiveAgent: string = chat.agent ?? defaultAgent ?? 'claude-code'
+  const effectiveModel: string | undefined = chat.model ?? agentDefaultModels[effectiveAgent]
+  const effectiveEffort: string = chat.effort ?? agentDefaultEfforts[effectiveAgent] ?? 'medium'
   // What each run setting resolves to with no per-chat override — the value the
   // dropdown's first entry stands for, and the entry the list below it omits so
   // the same name never shows up twice.
   // Undefined until fallback.order loads, so the dropdown says "default agent"
   // for that first render instead of naming a fallback that may not be the
   // configured default.
-  const inheritedAgent: string | undefined = workerAgent ?? defaultAgent ?? undefined
-  const inheritedModel: string | undefined = workerModel ?? agentDefaultModels[effectiveAgent]
-  const inheritedEffort: string = workerEffort ?? agentDefaultEfforts[effectiveAgent] ?? 'medium'
+  const inheritedAgent: string | undefined = defaultAgent ?? undefined
+  const inheritedModel: string | undefined = agentDefaultModels[effectiveAgent]
+  const inheritedEffort: string = agentDefaultEfforts[effectiveAgent] ?? 'medium'
   const effectiveAdvisorAgent = advisorConfig.agent ?? defaultAgent ?? 'claude-code'
   const effectiveAdvisorModel = advisorConfig.model ?? agentDefaultModels[effectiveAdvisorAgent] ?? 'Default model'
   // Seeds the streaming turn's header. A team run has no single identity — its
@@ -1977,7 +1971,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         value={chat.agent ?? ''}
                         onChange={e => void onAgentChange(e.target.value)}
                         style={styles.runSettingSelect}
-                        title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : workerAgent ? ` (bot: ${selectedWorker!.name})` : ' (default)'}`}
+                        title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : ' (default)'}`}
                       >
                         <option value="">{inheritedAgent ? `${inheritedAgent} (default)` : 'default agent'}</option>
                         {AGENT_NAMES.filter(n => n !== inheritedAgent || n === chat.agent).map(n => (
@@ -1991,7 +1985,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         value={chat.model ?? ''}
                         onChange={e => void onModelChange(e.target.value)}
                         style={styles.runSettingSelect}
-                        title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : workerModel ? ` (bot: ${selectedWorker!.name})` : ' (default)'}`}
+                        title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : ' (default)'}`}
                         disabled={modelsForAgent.length === 0}
                       >
                         <option value="">{inheritedModel ? `${inheritedModel} (default)` : 'agent default'}</option>
@@ -2006,7 +2000,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         value={chat.effort ?? ''}
                         onChange={e => void onEffortChange(e.target.value)}
                         style={styles.runSettingSelect}
-                        title={`Effort: ${effectiveEffort}${chat.effort ? ' (override)' : workerEffort ? ` (bot: ${selectedWorker!.name})` : ''}`}
+                        title={`Effort: ${effectiveEffort}${chat.effort ? ' (override)' : ''}`}
                       >
                         <option value="">{inheritedEffort}</option>
                         {['low', 'medium', 'high', 'xhigh', 'max']

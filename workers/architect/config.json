@@ -1,5 +1,3 @@
 {
-  "codingAgent": "claude-code",
-  "model": "claude-opus-4-6",
   "tools": ["file-system", "git", "web-search"]
 }

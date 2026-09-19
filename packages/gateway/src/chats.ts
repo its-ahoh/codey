@@ -476,7 +476,7 @@ export class ChatManager {
 
   /**
    * Set or clear the per-chat reasoning-effort override. Pass null/undefined to
-   * clear and fall back to the worker/global tiers.
+   * clear and fall back to the global defaults.
    *
    * Deliberately separate from updateAgentModel: that setter's session-anchor
    * behavior is tied to agent identity, and changing effort must NOT

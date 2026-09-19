@@ -87,17 +87,25 @@ describe('task execution integration', () => {
     expect(calls[1].resumeSessionId).toBe('session-1');
     expect(chat.messages.every(message => message.taskId === a)).toBe(true);
   });
-  it('uses the selected Bot personality and execution preferences', async () => {
-    const { workers, manager, chat, calls, send, a } = setup();
+  it('uses the selected Bot personality with the chat execution settings', async () => {
+    const { workers, manager, chat, calls, send, a, gateway } = setup();
+    gateway.getDefaultModelConfig = () => ({ provider: 'openai', model: 'default-model' });
     await workers.saveWorker('alice', { role: 'Design reviewer', soul: 'Concise and thoughtful', instructions: 'Explain the tradeoffs.' },
-      { codingAgent: 'pi', model: 'bot-model', tools: [], effort: 'high' });
+      { tools: [] });
     manager.updateSelection(chat.id, { type: 'worker', name: 'alice' });
     await send('Review the homepage', a);
-    expect(calls[0].agent).toBe('pi');
-    expect(calls[0].model?.model).toBe('bot-model');
-    expect(calls[0].effort).toBe('high');
+    expect(calls[0].agent).toBe('codex');
+    expect(calls[0].model?.model).toBe('default-model');
+    expect(calls[0].effort).toBeUndefined();
     expect(calls[0].prompt).toContain('Design reviewer');
     expect(calls[0].prompt).toContain('Explain the tradeoffs.');
+    expect(calls).toHaveLength(1);
+    chat.agent = 'pi';
+    chat.model = 'explicit-model';
+    chat.effort = 'high';
+    await send('Review again', a);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatchObject({ agent: 'pi', model: { model: 'explicit-model' }, effort: 'high' });
   });
 });
 
@@ -120,7 +128,7 @@ describe('global Bot conversations', () => {
     const h = setup();
     for (const name of ['alice', 'ben', 'claire']) {
       await h.workers.saveWorker(name, { role: name, soul: 'Helpful', instructions: 'Do the task.' },
-        { codingAgent: 'codex', model: 'test', tools: [] });
+        { tools: [] });
     }
     return h;
   }
@@ -203,12 +211,12 @@ describe('global Bot conversations', () => {
     await expect(gateway.createBotGroup('Wrong', ['alice', 'missing'])).rejects.toThrow('not found');
     expect(() => manager.createTask(group.id, 'Wrong')).toThrow('direct chats');
   });
-  it('uses Aide configuration for group coordination', async () => {
+  it('uses Advisor configuration for group coordination', async () => {
     const { gateway, root } = await bots();
     const group = await gateway.createBotGroup('Product', ['alice', 'ben']);
-    const coordinator = { agent: 'pi', model: { model: 'aide-model' } };
+    const coordinator = { agent: 'pi', model: { model: 'advisor-model' } };
     const loop = vi.fn(async () => ({ fallback: false, parts: [], finalSummary: 'Done', blackboard: new TeamBlackboard() }));
-    Object.assign(gateway, { runAdvisorLoop: loop, getAideAgentAndModel: () => coordinator });
+    Object.assign(gateway, { runAdvisorLoop: loop, getAdvisorAgentAndModel: () => coordinator });
     await (gateway as any).runTeamForChat('Product', { members: ['alice', 'ben'], dispatch: 'auto' },
       'Review', root, () => {}, group.id, group);
     expect(loop).toHaveBeenCalled();

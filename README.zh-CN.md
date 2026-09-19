@@ -13,7 +13,7 @@
   <a href="https://github.com/its-ahoh/codey/stargazers"><img src="https://img.shields.io/github/stars/its-ahoh/codey?style=social" alt="GitHub stars" /></a>
 </p>
 
-**面向编码 Agent 的多 Agent 工作台。** Codey 把 Claude Code、OpenCode、Codex 等编码 Agent 统一管起来：给每个项目独立的 workspace，按角色为 worker 配不同的 Agent / 模型，在同一个任务上并行跑多个 Agent 做对比；从原生 macOS 应用、聊天平台（Telegram / Discord / iMessage）或者全局语音输入都能用。
+**面向编码 Agent 的多 Agent 工作台。** Codey 把 Claude Code、OpenCode、Codex 等编码 Agent 统一管起来：给每个项目独立的 workspace，用可复用的角色定义组建 Bot 团队，在同一个任务上并行跑多个 Agent 做对比；从原生 macOS 应用、聊天平台（Telegram / Discord / iMessage）或者全局语音输入都能用。
 
 与其说它是"聊天平台到 Agent 的桥"，不如说它是**你已经在用的那些编码 Agent 的控制台**。它完全跑在你自己的机器上，直接复用你已装好、已登录的 Agent CLI —— 没有中间代理服务器，也不用额外订阅。
 
@@ -52,7 +52,7 @@
 
 **工作区与 Worker**
 - **多工作区**：每个工作区拥有独立的工作目录、记忆与工作者
-- **工作者团队**：每个 worker 可定义角色、个性、工具，以及自己的 Agent / 模型
+- **工作者团队**：每个 Bot 定义角色、个性和工具；执行使用聊天设置或 Default 的 Agent / 模型
 - **流程图**：在画布上把一个 team 画成图，由裁判 LLM 按边上的自然语言条件决定下一步 —— 可以分支、回退返工，也可以停下来问你
 - **记忆**：workspace 级 + 用户全局记忆，worker 每次运行都会读取，并把新结论写回去
 - **对话上下文**：在会话中记忆之前的消息
@@ -172,8 +172,6 @@ workspaces/
   "workingDir": "/path/to/project",
   "workers": {
     "architect": {
-      "codingAgent": "claude-code",
-      "model": "claude-opus-4-6",
       "tools": ["file-system", "git", "web-search"]
     }
   }

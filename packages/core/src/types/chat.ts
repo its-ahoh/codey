@@ -195,7 +195,7 @@ export interface Chat {
   agent?: CodingAgent;
   /** Per-chat model override (model id from the global catalog). Falls back to the agent's default model when unset. */
   model?: string;
-  /** Per-chat reasoning-effort override. Falls back to the worker's effort, then the agent's defaultEffort. */
+  /** Per-chat reasoning-effort override. Falls back to the agent's defaultEffort. */
   effort?: ThinkingEffort;
   /** Per-chat "solo advisor" backup toggle. When true and the chat is NOT a team,
    *  a stuck single agent (one that emits `[ASK_ADVISOR]: <reason>`) is escalated
