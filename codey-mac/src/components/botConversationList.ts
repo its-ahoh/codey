@@ -1,7 +1,7 @@
 import type { Chat, ChatMessage } from '../types'
-import type { WorkerDto } from '../services/api'
+import type { BotDto } from '../services/api'
 
-export interface BotConversationRow { key: string; title: string; chat?: Chat; bot?: WorkerDto; activity: number; messageMatch?: { snippet: string; count: number } }
+export interface BotConversationRow { key: string; title: string; chat?: Chat; bot?: BotDto; activity: number; messageMatch?: { snippet: string; count: number } }
 export class BotMessageSearchCache {
   // Weak keys release deleted/replaced messages; no growing query-history cache.
   private messages = new WeakMap<ChatMessage, { source: string; content: string; lower: string; term: string; index: number }>()
@@ -20,7 +20,7 @@ export class BotMessageSearchCache {
   }
 }
 
-export function botConversationList(bots: WorkerDto[], chats: Chat[], pins: string[], query = '', cache = new BotMessageSearchCache()): BotConversationRow[] {
+export function botConversationList(bots: BotDto[], chats: Chat[], pins: string[], query = '', cache = new BotMessageSearchCache()): BotConversationRow[] {
   const global = chats.filter(chat => chat.botChat)
   const botsByName = new Map(bots.map(bot => [bot.name.toLowerCase(), bot]))
   const directNames = new Set(global.filter(chat => chat.botChat!.kind === 'direct').map(chat => chat.botChat!.members[0]?.toLowerCase()))

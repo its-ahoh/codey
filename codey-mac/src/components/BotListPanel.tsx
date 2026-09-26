@@ -1,10 +1,10 @@
 import { BotMessageSearchCache, botConversationList, readBotPins } from './botConversationList'
 import { SidebarNavigation, SidebarFooter, SidebarAction, type SidebarCommonProps } from './SidebarNavigation'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { apiService, type WorkerDto } from '../services/api'
+import { apiService, type BotDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
-import { WorkerAvatar } from './WorkerAvatar'
+import { BotAvatar } from './BotAvatar'
 import { UIIcon } from './UIIcons'
 
 interface Props extends SidebarCommonProps {
@@ -17,7 +17,7 @@ export function BotListPanel(props: Props) {
   const { state, openBot, selectChat } = useChats()
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  const [bots, setBots] = useState<WorkerDto[]>([])
+  const [bots, setBots] = useState<BotDto[]>([])
   const [search, setSearch] = useState('')
   const [settledSearch, setSettledSearch] = useState('')
   const [composing, setComposing] = useState(false)
@@ -46,15 +46,15 @@ export function BotListPanel(props: Props) {
   useEffect(() => {
     let alive = true
     const refresh = () => {
-      void apiService.listWorkers().then(items => {
+      void apiService.listBots().then(items => {
         if (alive) { setBots(items); setError('') }
       }).catch(err => { if (alive) setError(String(err.message ?? err)) })
         .finally(() => { if (alive) setLoading(false) })
     }
     refresh()
-    window.addEventListener('codey:workers-changed', refresh)
+    window.addEventListener('codey:bots-changed', refresh)
     window.addEventListener('focus', refresh)
-    return () => { alive = false; window.removeEventListener('codey:workers-changed', refresh); window.removeEventListener('focus', refresh) }
+    return () => { alive = false; window.removeEventListener('codey:bots-changed', refresh); window.removeEventListener('focus', refresh) }
   }, [])
 
   const open = async (name: string) => {
@@ -69,9 +69,9 @@ export function BotListPanel(props: Props) {
     setBusy(true)
     setError('')
     try {
-      const bot = await apiService.generateWorker(description.trim())
-      setBots(await apiService.listWorkers())
-      window.dispatchEvent(new Event('codey:workers-changed'))
+      const bot = await apiService.generateBot(description.trim())
+      setBots(await apiService.listBots())
+      window.dispatchEvent(new Event('codey:bots-changed'))
       const chat = await openBot(bot.name, false)
       if (mounted.current) selectChat(chat.id)
       setDescription('')
@@ -115,7 +115,7 @@ export function BotListPanel(props: Props) {
         const pinned = pins.includes(key)
         return <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 2, background: active ? C.accentDim : 'transparent', borderRadius: 10, marginBottom: 3 }}>
           <button onClick={() => chat ? selectChat(chat.id) : bot && void open(bot.name)} disabled={!chat && opening !== null} aria-pressed={active} style={{ ...textButton, flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', textAlign: 'left', gap: 10, padding: '10px 7px' }}>
-            {chat?.botChat?.kind === 'group' ? <span style={{ width: 34, flexShrink: 0, display: 'grid', placeItems: 'center' }}><UIIcon name="users" size={26} /></span> : <WorkerAvatar name={title} config={bot?.config.avatar} size={34} state={queued ? 'waiting' : running ? 'working' : awaiting ? 'reply' : 'idle'} />}
+            {chat?.botChat?.kind === 'group' ? <span style={{ width: 34, flexShrink: 0, display: 'grid', placeItems: 'center' }}><UIIcon name="users" size={26} /></span> : <BotAvatar name={title} config={bot?.config.avatar} size={34} state={queued ? 'waiting' : running ? 'working' : awaiting ? 'reply' : 'idle'} />}
             <span style={{ minWidth: 0, flex: 1 }}>
               <strong style={{ display: 'block', color: C.fg, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}{chat && state.unreadChats[chat.id] ? ' ·' : ''}</strong>
               <span title={messageMatch?.snippet} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: C.fg3, marginTop: 4 }}>{messageMatch?.snippet ?? (opening === bot?.name ? 'Opening…' : queued ? 'Queued' : running ? 'Working' : awaiting ? 'Waiting for you' : last?.content || bot?.personality.role.split('\n')[0] || chat?.botChat?.members.join(', ') || 'Ready to chat')}</span>

@@ -414,11 +414,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
         padding: '8px 12px',
       }}>
-        <span style={{
-          color: C.fg3, fontSize: 11, fontWeight: 400,
-          width: 56, letterSpacing: 0.3,
-        }}>ADVISOR</span>
         <select
+          aria-label="Advisor agent"
           value={advisor.agent}
           onChange={e => {
             const nextAgent = e.target.value
@@ -436,6 +433,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
           ))}
         </select>
         <select
+          aria-label="Advisor model"
           value={advisor.model}
           onChange={e => updateAdvisor({ agent: advisor.agent, model: e.target.value })}
           style={{ ...selectStyle, flex: 1, minWidth: 0 }}
@@ -453,11 +451,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
         padding: '8px 12px',
       }}>
-        <span style={{
-          color: C.fg3, fontSize: 11, fontWeight: 400,
-          width: 56, letterSpacing: 0.3,
-        }}>AIDE</span>
         <select
+          aria-label="Aide agent"
           value={aide.agent}
           onChange={e => {
             const nextAgent = e.target.value
@@ -474,6 +469,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
           ))}
         </select>
         <select
+          aria-label="Aide model"
           value={aide.model}
           onChange={e => updateAide({ agent: aide.agent, model: e.target.value })}
           style={{ ...selectStyle, flex: 1, minWidth: 0 }}

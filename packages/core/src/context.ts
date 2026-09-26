@@ -62,12 +62,12 @@ export interface SessionAnchor {
 }
 
 /**
- * Per-worker warm CLI session. Lets team / worker steps `--resume` an
+ * Per-bot warm CLI session. Lets team / bot steps `--resume` an
  * existing session instead of re-sending personality + memory + blackboard
- * every turn. Keyed by worker name within a ContextWindow.
+ * every turn. Keyed by bot name within a ContextWindow.
  */
-export interface WorkerAnchor extends SessionAnchor {
-  workerName: string;
+export interface BotAnchor extends SessionAnchor {
+  botName: string;
   /** Index up to which this session has already seen blackboard entries.
    *  Next resume only sends the delta. */
   blackboardSeenCount: number;
@@ -85,8 +85,8 @@ export interface ContextWindow {
   totalTokens: number;
   /** Warm CLI session for the main chat, if any. */
   sessionAnchor?: SessionAnchor;
-  /** Warm CLI sessions for workers running in this conversation, by name. */
-  workerAnchors?: Record<string, WorkerAnchor>;
+  /** Warm CLI sessions for bots running in this conversation, by name. */
+  botAnchors?: Record<string, BotAnchor>;
   /** Lines written to the transcript sidecar so far. Line N holds the Nth turn
    *  this window ever saw — including turns already evicted from `turns`. */
   transcriptLines: number;
@@ -250,50 +250,50 @@ export class ContextManager {
   clearAllSessionAnchors(): void {
     for (const window of this.windows.values()) {
       window.sessionAnchor = undefined;
-      window.workerAnchors = undefined;
+      window.botAnchors = undefined;
     }
   }
 
-  // ── Worker session anchors ─────────────────────────────────────
+  // ── Bot session anchors ─────────────────────────────────────
 
-  getWorkerAnchor(windowId: string, workerName: string): WorkerAnchor | undefined {
-    return this.windows.get(windowId)?.workerAnchors?.[workerName];
+  getBotAnchor(windowId: string, botName: string): BotAnchor | undefined {
+    return this.windows.get(windowId)?.botAnchors?.[botName];
   }
 
-  async setWorkerAnchor(windowId: string, workerName: string, anchor: WorkerAnchor): Promise<void> {
+  async setBotAnchor(windowId: string, botName: string, anchor: BotAnchor): Promise<void> {
     return this.withLock(windowId, () => {
       let window = this.windows.get(windowId);
       if (!window) {
         window = this.createWindow(windowId);
         this.windows.set(windowId, window);
       }
-      if (!window.workerAnchors) window.workerAnchors = {};
-      window.workerAnchors[workerName] = anchor;
+      if (!window.botAnchors) window.botAnchors = {};
+      window.botAnchors[botName] = anchor;
       window.lastActive = Date.now();
     });
   }
 
-  async clearWorkerAnchor(windowId: string, workerName: string): Promise<void> {
+  async clearBotAnchor(windowId: string, botName: string): Promise<void> {
     return this.withLock(windowId, () => {
       const window = this.windows.get(windowId);
-      if (!window?.workerAnchors) return;
-      delete window.workerAnchors[workerName];
+      if (!window?.botAnchors) return;
+      delete window.botAnchors[botName];
     });
   }
 
-  async clearAllWorkerAnchorsForWindow(windowId: string): Promise<void> {
+  async clearAllBotAnchorsForWindow(windowId: string): Promise<void> {
     return this.withLock(windowId, () => {
       const window = this.windows.get(windowId);
       if (!window) return;
-      window.workerAnchors = undefined;
+      window.botAnchors = undefined;
     });
   }
 
-  /** Drop a worker's anchors from every window. Use when the worker's
+  /** Drop a bot's anchors from every window. Use when the bot's
    *  personality or config changes and existing warm sessions are stale. */
-  clearWorkerAnchorEverywhere(workerName: string): void {
+  clearBotAnchorEverywhere(botName: string): void {
     for (const window of this.windows.values()) {
-      if (window.workerAnchors) delete window.workerAnchors[workerName];
+      if (window.botAnchors) delete window.botAnchors[botName];
     }
   }
 

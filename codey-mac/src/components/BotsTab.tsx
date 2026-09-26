@@ -1,33 +1,33 @@
 import { useEffect, useState, useCallback } from 'react'
-import { apiService, WorkerDto } from '../services/api'
+import { apiService, BotDto } from '../services/api'
 import { AvatarPicker } from './AvatarPicker'
-import { WorkerAvatar } from './WorkerAvatar'
-import { resolveWorkerAvatar } from './workerAvatarModel'
+import { BotAvatar } from './BotAvatar'
+import { resolveBotAvatar } from './botAvatarModel'
 import { C } from '../theme'
 
 type Mode = { kind: 'idle' } | { kind: 'select'; name: string } | { kind: 'create' }
 
-export default function WorkersTab({ initialName }: { initialName?: string }) {
-  const [workers, setWorkers] = useState<WorkerDto[]>([])
+export default function BotsTab({ initialName }: { initialName?: string }) {
+  const [bots, setBots] = useState<BotDto[]>([])
   const [mode, setMode] = useState<Mode>(initialName ? { kind: 'select', name: initialName } : { kind: 'idle' })
   const [loading, setLoading] = useState(false)
 
   const reload = useCallback(async () => {
-    setWorkers(await apiService.listWorkers())
+    setBots(await apiService.listBots())
   }, [])
 
   useEffect(() => { reload() }, [reload])
 
-  const selected = mode.kind === 'select' ? workers.find(w => w.name === mode.name) : undefined
+  const selected = mode.kind === 'select' ? bots.find(w => w.name === mode.name) : undefined
 
   return (
     <div style={{ display: 'flex', height: '100%', background: C.bg, color: C.fg }}>
       <div style={{ width: 240, borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
         <div style={{ overflowY: 'auto', flex: 1 }}>
-          {workers.map(w => (
+          {bots.map(w => (
             <button key={w.name} onClick={() => setMode({ kind: 'select', name: w.name })}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: mode.kind === 'select' && mode.name === w.name ? C.surface2 : 'transparent', border: 'none', color: C.fg, cursor: 'pointer' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><WorkerAvatar name={w.name} config={w.config.avatar} /><strong>{w.name}</strong></div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BotAvatar name={w.name} config={w.config.avatar} /><strong>{w.name}</strong></div>
               <div style={{ fontSize: 11, color: C.fg3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.personality.role}</div>
             </button>
           ))}
@@ -38,7 +38,7 @@ export default function WorkersTab({ initialName }: { initialName?: string }) {
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {mode.kind === 'idle' && <EmptyState />}
         {mode.kind === 'create' && <CreatePanel loading={loading} setLoading={setLoading} onCreated={async (w) => { await reload(); setMode({ kind: 'select', name: w.name }) }} onCancel={() => setMode({ kind: 'idle' })} />}
-        {mode.kind === 'select' && selected && <EditorPanel key={selected.name} worker={selected}
+        {mode.kind === 'select' && selected && <EditorPanel key={selected.name} bot={selected}
           onSaved={async (name) => { await reload(); setMode({ kind: 'select', name }) }}
           onDeleted={async () => { await reload(); setMode({ kind: 'idle' }) }} />}
       </div>
@@ -50,7 +50,7 @@ function EmptyState() {
   return <div style={{ padding: 40, color: C.fg3 }}>Select a bot on the left, or create a new one.</div>
 }
 
-function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: boolean; setLoading: (b: boolean) => void; onCreated: (w: WorkerDto) => void; onCancel: () => void }) {
+function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: boolean; setLoading: (b: boolean) => void; onCreated: (w: BotDto) => void; onCancel: () => void }) {
   const [prompt, setPrompt] = useState('')
   const [error, setError] = useState<string | null>(null)
 
@@ -58,8 +58,8 @@ function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: bo
     if (!prompt.trim() || loading) return
     setLoading(true); setError(null)
     try {
-      const worker = await apiService.generateWorker(prompt)
-      onCreated(worker)
+      const bot = await apiService.generateBot(prompt)
+      onCreated(bot)
     } catch (err: any) {
       setError(err.message || String(err))
     } finally {
@@ -86,40 +86,40 @@ function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: bo
   )
 }
 
-function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSaved: (name: string) => void; onDeleted: () => void }) {
-  const [avatar, setAvatar] = useState(() => resolveWorkerAvatar(worker.name, worker.config.avatar))
-  const [name, setName] = useState(worker.name)
+function EditorPanel({ bot, onSaved, onDeleted }: { bot: BotDto; onSaved: (name: string) => void; onDeleted: () => void }) {
+  const [avatar, setAvatar] = useState(() => resolveBotAvatar(bot.name, bot.config.avatar))
+  const [name, setName] = useState(bot.name)
   const [editingName, setEditingName] = useState(false)
-  const [role, setRole] = useState(worker.personality.role)
-  const [soul, setSoul] = useState(worker.personality.soul)
-  const [instructions, setInstructions] = useState(worker.personality.instructions)
-  const [toolsText, setToolsText] = useState(worker.config.tools.join(', '))
+  const [role, setRole] = useState(bot.personality.role)
+  const [soul, setSoul] = useState(bot.personality.soul)
+  const [instructions, setInstructions] = useState(bot.personality.instructions)
+  const [toolsText, setToolsText] = useState(bot.config.tools.join(', '))
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
   useEffect(() => {
-    setRole(worker.personality.role); setSoul(worker.personality.soul); setInstructions(worker.personality.instructions)
-    setToolsText(worker.config.tools.join(', '))
-    setAvatar(resolveWorkerAvatar(worker.name, worker.config.avatar))
-    setName(worker.name); setEditingName(false)
+    setRole(bot.personality.role); setSoul(bot.personality.soul); setInstructions(bot.personality.instructions)
+    setToolsText(bot.config.tools.join(', '))
+    setAvatar(resolveBotAvatar(bot.name, bot.config.avatar))
+    setName(bot.name); setEditingName(false)
     setSaved(false); setError(null)
-  }, [worker.name])
+  }, [bot.name])
+
 
   const save = async () => {
     setSaving(true); setError(null)
     const nextName = name.trim()
     try {
-      if (nextName !== worker.name) await apiService.renameWorker(worker.name, nextName)
-      await apiService.updateWorker(nextName, {
+      if (nextName !== bot.name) await apiService.renameBot(bot.name, nextName)
+      await apiService.updateBot(nextName, {
         personality: { role, soul, instructions },
         config: {
-          ...worker.config,
+          ...bot.config,
           avatar,
           tools: toolsText.split(',').map(s => s.trim()).filter(Boolean),
         },
       })
-      window.dispatchEvent(new Event('codey:workers-changed'))
+      window.dispatchEvent(new Event('codey:bots-changed'))
       setSaved(true); setTimeout(() => setSaved(false), 1500); onSaved(nextName)
     } catch (err: any) {
       setError(err.message || String(err))
@@ -129,8 +129,8 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
   }
 
   const confirmDelete = async () => {
-    if (!confirm(`Delete bot "${worker.name}"? This also removes it from any team that references it.`)) return
-    try { await apiService.deleteWorker(worker.name); onDeleted() } catch (err: any) { setError(err.message || String(err)) }
+    if (!confirm(`Delete bot "${bot.name}"? This also removes it from any team that references it.`)) return
+    try { await apiService.deleteBot(bot.name); onDeleted() } catch (err: any) { setError(err.message || String(err)) }
   }
 
   const fieldStyle = { width: '100%', padding: 10, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, fontFamily: 'inherit', fontSize: 13, resize: 'vertical' as const }
@@ -140,14 +140,14 @@ function EditorPanel({ worker, onSaved, onDeleted }: { worker: WorkerDto; onSave
     <div style={{ padding: 20, maxWidth: 720 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
-          <AvatarPicker name={name.trim() || worker.name} value={avatar} onChange={setAvatar} />
+          <AvatarPicker name={name.trim() || bot.name} value={avatar} onChange={setAvatar} />
           {editingName
             ? <input autoFocus value={name} aria-label="Bot name"
                 onChange={e => setName(e.target.value)}
-                onBlur={() => { setEditingName(false); if (!name.trim()) setName(worker.name) }}
+                onBlur={() => { setEditingName(false); if (!name.trim()) setName(bot.name) }}
                 onKeyDown={e => {
                   if (e.key === 'Enter') e.currentTarget.blur()
-                  if (e.key === 'Escape') { setName(worker.name); setEditingName(false) }
+                  if (e.key === 'Escape') { setName(bot.name); setEditingName(false) }
                 }}
                 style={{ fontSize: 18, fontWeight: 600, padding: '2px 6px', background: C.surface2, color: C.fg, border: `1px solid ${C.accent}`, borderRadius: 6, fontFamily: 'inherit', minWidth: 0 }} />
             : <button type="button" onClick={() => setEditingName(true)} title="Rename" aria-label={`Rename ${name}`}

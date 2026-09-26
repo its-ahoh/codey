@@ -68,11 +68,11 @@ describe('ChatManager transcript sidecar', () => {
   it('refreshes the line when a stub message is filled in later', () => {
     const chat = mgr.create({ workspaceName: 'ws' });
     mgr.appendMessage(chat.id, { id: 'a1', role: 'assistant', content: '', timestamp: 1, isComplete: false });
-    mgr.updateMessage(chat.id, 'a1', { content: 'filled in by the worker', isComplete: true });
+    mgr.updateMessage(chat.id, 'a1', { content: 'filled in by the bot', isComplete: true });
 
     const rows = lines(mgr.transcriptPath(chat.id)!).map(l => JSON.parse(l));
     expect(rows).toHaveLength(1);
-    expect(rows[0].content).toBe('filled in by the worker');
+    expect(rows[0].content).toBe('filled in by the bot');
   });
 
   it('rebuilds after a mid-list removal', () => {

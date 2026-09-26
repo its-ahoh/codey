@@ -15,49 +15,49 @@ function compactOutput(text: string): string {
 
 function entry(message: ChatMessage, text: string): TeamRunSummaryEntry {
   return {
-    worker: message.worker ?? 'Team',
+    bot: message.bot ?? 'Team',
     step: message.step ?? 0,
     text,
   };
 }
 
 /**
- * Build a terminal team summary from structured worker states. Status,
+ * Build a terminal team summary from structured bot states. Status,
  * failures, and user actions are never inferred from prose: callers must have
- * recorded them on the worker message before this function runs.
+ * recorded them on the bot message before this function runs.
  */
 export function buildTeamRunSummary(messages: ChatMessage[], now: number = Date.now()): TeamRunSummary {
-  const workers = messages
-    .filter(message => !!message.worker && !message.builtinMember)
+  const bots = messages
+    .filter(message => !!message.bot && !message.builtinMember)
     .sort((a, b) => (a.step ?? 0) - (b.step ?? 0));
 
   const completed: TeamRunSummaryEntry[] = [];
   const failures: TeamRunSummaryEntry[] = [];
   const nextUserActions: TeamRunSummaryEntry[] = [];
 
-  for (const message of workers) {
-    if (message.workerStatus === 'done' && !message.workerSummaryExcluded) {
+  for (const message of bots) {
+    if (message.botStatus === 'done' && !message.botSummaryExcluded) {
       const text = compactOutput(message.content);
       if (text) completed.push(entry(message, text));
     }
-    if (message.workerStatus === 'failed') {
-      failures.push(entry(message, message.workerFailureReason?.trim() || 'Worker failed without a structured reason'));
+    if (message.botStatus === 'failed') {
+      failures.push(entry(message, message.botFailureReason?.trim() || 'Bot failed without a structured reason'));
     }
-    if (message.workerNextUserAction?.text.trim()) {
-      nextUserActions.push(entry(message, message.workerNextUserAction.text.trim()));
+    if (message.botNextUserAction?.text.trim()) {
+      nextUserActions.push(entry(message, message.botNextUserAction.text.trim()));
     }
   }
 
   return { completed, failures, nextUserActions, finalizedAt: now };
 }
 
-/** Return a summary only when at least one worker exists and every worker has
+/** Return a summary only when at least one bot exists and every bot has
  * a terminal status. This is the gate used before emitting `team_end`. */
 export function finalizeTeamRunSummary(messages: ChatMessage[], now: number = Date.now()): TeamRunSummary | null {
   // Pending messages are roster placeholders for members the router did not
   // select. They should remain visible in the UI without blocking completion.
-  const workers = messages.filter(message => !!message.worker && !message.builtinMember && message.workerStatus !== 'pending');
-  if (workers.length === 0) return null;
-  if (!workers.every(message => message.workerStatus === 'done' || message.workerStatus === 'failed')) return null;
+  const bots = messages.filter(message => !!message.bot && !message.builtinMember && message.botStatus !== 'pending');
+  if (bots.length === 0) return null;
+  if (!bots.every(message => message.botStatus === 'done' || message.botStatus === 'failed')) return null;
   return buildTeamRunSummary(messages, now);
 }

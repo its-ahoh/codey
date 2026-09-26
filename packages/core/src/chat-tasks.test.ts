@@ -3,7 +3,7 @@ import type { Chat } from './types/chat';
 import { chatSessionScope, chatTaskContext, resolveChatTask } from './chat-tasks';
 
 const chat: Chat = {
-  id: 'chat', title: 'Alice', workspaceName: 'main', selection: { type: 'worker', name: 'alice' },
+  id: 'chat', title: 'Alice', workspaceName: 'main', selection: { type: 'bot', name: 'alice' },
   createdAt: 1, updatedAt: 1,
   tasks: [
     { id: 'website', title: 'Website', createdAt: 1, updatedAt: 1 },
@@ -60,7 +60,7 @@ describe('context boundaries', () => {
       chatSessionScope(chat, 'icon', '/a', { role: 'designer' }),
       chatSessionScope(chat, 'website', '/b', { role: 'designer' }),
       chatSessionScope(chat, 'website', '/a', { role: 'engineer' }),
-      chatSessionScope({ ...chat, selection: { type: 'worker', name: 'ben' } }, 'website', '/a', { role: 'designer' }),
+      chatSessionScope({ ...chat, selection: { type: 'bot', name: 'ben' } }, 'website', '/a', { role: 'designer' }),
     ]) expect(scope).not.toBe(original);
   });
 });

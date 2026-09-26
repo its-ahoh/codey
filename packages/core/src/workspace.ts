@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CoreLogger } from './types';
-import { WorkerManager } from './workers';
+import { BotManager } from './bots';
 import { MemoryStore } from './memory';
 import { SkillStore } from './skill-crystallizer';
 import { TeamGraph, validateGraph } from './team-graph';
@@ -81,7 +81,7 @@ export class WorkspaceManager {
   private workspacesDir: string;
   private currentWorkspace: string = '';
   private config: WorkspaceJson | null = null;
-  private workerManager: WorkerManager;
+  private botManager: BotManager;
   private memoryStore: MemoryStore;
   private skillStore: SkillStore;
   /** Which workspace `skillStore` belongs to ('' until the first load()). */
@@ -92,18 +92,20 @@ export class WorkspaceManager {
   private extraSkillStores: Map<string, SkillStore> = new Map();
   /** User-global memory shared across workspaces. Lazily loaded. */
   private globalMemory: MemoryStore | null = null;
+  private extraMemoryStores = new Map<string, MemoryStore>();
+  private memoryStoreWorkspace = "";
   private teams: Map<string, TeamConfig> = new Map();
   private globalTeamsProvider: GlobalTeamsProvider;
   private logger: CoreLogger;
 
   constructor(
-    workerManager: WorkerManager,
+    botManager: BotManager,
     workspacesDir: string = './workspaces',
     logger?: CoreLogger,
     globalTeamsProvider?: GlobalTeamsProvider,
   ) {
     this.workspacesDir = workspacesDir;
-    this.workerManager = workerManager;
+    this.botManager = botManager;
     this.logger = logger || defaultLogger;
     this.memoryStore = new MemoryStore(this.getWorkspacePath());
     this.skillStore = new SkillStore(this.getWorkspacePath(), this.logger);
@@ -175,7 +177,10 @@ export class WorkspaceManager {
     // Flush the outgoing stores so a pending debounced write can't fire later
     // and recreate a ghost directory under the previous workspace path.
     try { await this.memoryStore.flush(); } catch { /* best-effort */ }
-    this.memoryStore = new MemoryStore(workspacePath);
+    if (this.memoryStoreWorkspace) this.extraMemoryStores.set(this.memoryStoreWorkspace, this.memoryStore);
+    this.memoryStore = this.extraMemoryStores.get(this.currentWorkspace) ?? new MemoryStore(workspacePath);
+    this.extraMemoryStores.delete(this.currentWorkspace);
+    this.memoryStoreWorkspace = this.currentWorkspace;
     await this.memoryStore.load();
     await this.adoptSkillStore(this.currentWorkspace);
   }
@@ -240,9 +245,9 @@ export class WorkspaceManager {
       return null;
     }
 
-    const unknown = members.filter(m => !this.workerManager.hasWorker(m));
+    const unknown = members.filter(m => !this.botManager.hasBot(m));
     if (unknown.length > 0) {
-      this.logger.error(`[Workspace] Team "${name}" references unknown workers: ${unknown.join(', ')} — skipping`);
+      this.logger.error(`[Workspace] Team "${name}" references unknown bots: ${unknown.join(', ')} — skipping`);
       return null;
     }
 
@@ -318,8 +323,24 @@ export class WorkspaceManager {
   getWorkingDir(): string { return this.config?.workingDir || process.cwd(); }
   getCurrentWorkspace(): string { return this.currentWorkspace; }
   getWorkspacesRoot(): string { return this.workspacesDir; }
-  getWorkerManager(): WorkerManager { return this.workerManager; }
+  getBotManager(): BotManager { return this.botManager; }
   getMemoryStore(): MemoryStore { return this.memoryStore; }
+
+  /** Resolve memory by the chat's project, never by whichever workspace the UI last selected. */
+  getMemoryStoreFor(name: string): MemoryStore {
+    if (name === this.currentWorkspace) return this.memoryStore;
+    let store = this.extraMemoryStores.get(name);
+    if (!store) {
+      const root = path.resolve(this.workspacesDir);
+      const target = path.resolve(root, name);
+      if (path.dirname(target) !== root || !fs.existsSync(path.join(target, 'workspace.json'))) throw new Error('Workspace not found');
+      store = new MemoryStore(target);
+      void store.load().catch(error => this.logger.warn(`Memory load failed: ${String(error)}`));
+      this.extraMemoryStores.set(name, store);
+    }
+    return store;
+  }
+
   getSkillStore(): SkillStore { return this.skillStore; }
 
   /** SkillStore for a NAMED workspace — skills are per-workspace state, so
@@ -410,6 +431,8 @@ export class WorkspaceManager {
         !path.resolve(dst).startsWith(root + path.sep)) {
       throw new Error('Refusing to rename outside of workspaces root');
     }
+    const extraMemory = this.extraMemoryStores.get(oldName);
+    if (extraMemory) { await extraMemory.flush(); this.extraMemoryStores.delete(oldName); }
     if (this.currentWorkspace === oldName) {
       // Drain pending debounced writes BEFORE the directory moves — the old
       // stores' paths point at src, so a late flush would recreate a ghost
@@ -428,6 +451,7 @@ export class WorkspaceManager {
     if (this.currentWorkspace === oldName) {
       this.currentWorkspace = trimmed;
       this.memoryStore = new MemoryStore(this.getWorkspacePath());
+      this.memoryStoreWorkspace = this.currentWorkspace;
       await this.memoryStore.load();
       this.skillStore = new SkillStore(this.getWorkspacePath(), this.logger);
       await this.skillStore.load();
@@ -449,6 +473,10 @@ export class WorkspaceManager {
       throw new Error(`Refusing to delete workspace outside of workspaces root`);
     }
     const wasActive = name === this.currentWorkspace;
+    const outgoingMemory = wasActive ? this.memoryStore : this.extraMemoryStores.get(name);
+    if (outgoingMemory) await outgoingMemory.flush();
+    this.extraMemoryStores.delete(name);
+    if (wasActive) this.memoryStoreWorkspace = '';
     await fs.promises.rm(resolved, { recursive: true, force: true });
     this.logger.info(`[Workspace] Deleted workspace: ${name}`);
 

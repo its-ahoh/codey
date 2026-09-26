@@ -24,12 +24,12 @@ interface Props {
   followLatest: boolean
   /** 1-based index of the selected assistant turn. Kept for callers; unused since the turn header was removed. */
   selectedTurnIndex?: number | null
-  /** Effective agent for this chat (resolved by ChatTab from override/worker/default). */
+  /** Effective agent for this chat (resolved by ChatTab from override/bot/default). */
   effectiveAgent: string
   /** Effective model for this chat. May be undefined when no model is resolvable. */
   effectiveModel?: string
-  /** Worker name actively bound to the selected turn, when chat selection is a worker. */
-  workerName?: string
+  /** Bot name actively bound to the selected turn, when chat selection is a bot. */
+  botName?: string
   /** Team name actively bound, when chat selection is a team. */
   teamName?: string
   /** Authored flow graph for the chat's team, if any. */
@@ -235,9 +235,9 @@ const WhiteboardSection: React.FC<{
         <div key={group.label} style={styles.whiteboardGroup}>
           <div style={{ ...styles.whiteboardGroupTitle, color: group.color }}>{group.label}</div>
           {group.entries.map((entry, index) => (
-            <div key={`${entry.worker}-${entry.step}-${index}`} style={styles.whiteboardEntry}>
+            <div key={`${entry.bot}-${entry.step}-${index}`} style={styles.whiteboardEntry}>
               <div style={styles.whiteboardText}>{entry.text}</div>
-              <div style={styles.whiteboardMeta}>{entry.worker} · step {entry.step}</div>
+              <div style={styles.whiteboardMeta}>{entry.bot} · step {entry.step}</div>
             </div>
           ))}
         </div>
@@ -363,13 +363,13 @@ const attStyles: Record<string, React.CSSProperties> = {
 
 const PendingTeamSection: React.FC<{ pending: NonNullable<Chat['pendingTeam']> }> = ({ pending }) => {
   // Both variants of PendingTeamState (mode: 'sequential' and mode: 'auto')
-  // expose askingWorker + question — see packages/core/src/types/pending-team.ts.
-  const workerName = pending.askingWorker
+  // expose askingBot + question — see packages/core/src/types/pending-team.ts.
+  const botName = pending.askingBot
   const question = pending.question
   return (
     <Section title="Pending team">
       <div style={pendStyles.callout}>
-        <div style={pendStyles.title}>Waiting on input for {workerName}</div>
+        <div style={pendStyles.title}>Waiting on input for {botName}</div>
         {question && <div style={pendStyles.body}>{question}</div>}
         <div style={pendStyles.hint}>Type a reply in the chat to resume the team.</div>
       </div>

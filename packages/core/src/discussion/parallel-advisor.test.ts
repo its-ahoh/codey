@@ -10,7 +10,7 @@ describe('buildParallelAdvisorPrompt', () => {
         { name: 'alice', text: 'rust is fast' },
         { name: 'bob', text: 'go is simple' },
       ],
-      pendingAsks: [{ worker: 'alice', question: 'what budget?' }],
+      pendingAsks: [{ bot: 'alice', question: 'what budget?' }],
       idleMs: 1234,
       revision: 3,
     });

@@ -116,8 +116,8 @@
         "to": "trayIconTemplate@2x.png"
       },
       {
-        "from": "../workers",
-        "to": "bundled-workers",
+        "from": "../bots",
+        "to": "bundled-bots",
         "filter": [
           "**/*"
         ]

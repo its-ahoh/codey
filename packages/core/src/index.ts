@@ -6,9 +6,9 @@ export * from './utils/fs';
 export * from './utils/json';
 export * from './utils/run';
 export * from './utils/ask-user';
-export * from './workers';
+export * from './bots';
 export * from './workspace';
-export * from './worker-generator';
+export * from './bot-generator';
 export * from './skill-crystallizer';
 export * from './playbook-induction';
 export * from './memory';
@@ -17,7 +17,7 @@ export * from './errors';
 export * from './context';
 export * from './transcript-slice';
 export * from './advisor';
-export * from './worker-mentions';
+export * from './bot-mentions';
 export * from './advisor-personality';
 export * from './solo-advisor';
 export * from './aide';
@@ -41,3 +41,5 @@ export * from './voice-converse';
 export * from './member-avatars';
 
 export * from './chat-tasks';
+
+export * from "./co-memo";

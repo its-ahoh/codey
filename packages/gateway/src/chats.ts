@@ -104,7 +104,7 @@ export class ChatManager {
       timestamp: message.timestamp,
       ...(message.agent ? { agent: message.agent } : {}),
       ...(message.model ? { model: message.model } : {}),
-      ...(message.worker ? { worker: message.worker } : {}),
+      ...(message.bot ? { bot: message.bot } : {}),
       content: message.content,
     });
   }
@@ -336,7 +336,7 @@ export class ChatManager {
       if (!chat.botChat?.members.some(n => n.toLowerCase() === oldName.toLowerCase())) continue;
       chat.botChat.members = chat.botChat.members.map(n => n.toLowerCase() === oldName.toLowerCase() ? newName : n);
       if (chat.botChat.kind === 'direct') {
-        chat.selection = { type: 'worker', name: newName };
+        chat.selection = { type: 'bot', name: newName };
         chat.title = newName;
       }
       delete chat.sessionAnchor;
@@ -725,7 +725,7 @@ export class ChatManager {
   }
 
   /** Shallow-merge a patch into an existing message and persist. No-op if the
-   *  message id is not found. Used by team runs to fill a worker's stub on
+   *  message id is not found. Used by team runs to fill a bot's stub on
    *  completion. Does NOT trigger compaction (that fires on appendMessage). */
   updateMessage(chatId: string, messageId: string, patch: Partial<ChatMessage>): Chat {
     const chat = this.requireChat(chatId);

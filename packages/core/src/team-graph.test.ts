@@ -7,7 +7,7 @@ function baseGraph(): TeamGraph {
     maxHops: 20,
     nodes: [
       { id: 'start', type: 'start', x: 0, y: 0 },
-      { id: 'n_coder', type: 'worker', worker: 'coder', x: 100, y: 0 },
+      { id: 'n_coder', type: 'bot', bot: 'coder', x: 100, y: 0 },
       { id: 'end', type: 'end', x: 200, y: 0 },
     ],
     edges: [
@@ -27,14 +27,14 @@ describe('validateGraph', () => {
     expect(validateGraph(g, ['coder'])).toContain('entry node "nope" does not exist');
   });
 
-  it('flags a worker node referencing an unknown worker', () => {
-    expect(validateGraph(baseGraph(), [])).toContain('node "n_coder" references unknown worker "coder"');
+  it('flags a bot node referencing an unknown bot', () => {
+    expect(validateGraph(baseGraph(), [])).toContain('node "n_coder" references unknown bot "coder"');
   });
 
-  it('flags a worker node missing its worker field', () => {
+  it('flags a bot node missing its bot field', () => {
     const g = baseGraph();
-    g.nodes[1] = { id: 'n_coder', type: 'worker', x: 100, y: 0 } as any;
-    expect(validateGraph(g, ['coder'])).toContain('worker node "n_coder" is missing a worker');
+    g.nodes[1] = { id: 'n_coder', type: 'bot', x: 100, y: 0 } as any;
+    expect(validateGraph(g, ['coder'])).toContain('bot node "n_coder" is missing a bot');
   });
 
   it('flags an edge endpoint that does not exist', () => {
@@ -42,20 +42,20 @@ describe('validateGraph', () => {
     expect(validateGraph(g, ['coder'])).toContain('edge "e2" points to missing node "ghost"');
   });
 
-  it('flags a non-terminal worker node with no outgoing edge', () => {
+  it('flags a non-terminal bot node with no outgoing edge', () => {
     const g = baseGraph(); g.edges = g.edges.filter(e => e.id !== 'e2');
-    expect(validateGraph(g, ['coder'])).toContain('worker node "n_coder" has no outgoing edge');
+    expect(validateGraph(g, ['coder'])).toContain('bot node "n_coder" has no outgoing edge');
   });
 
   it('flags an unreachable node', () => {
     const g = baseGraph();
-    g.nodes.push({ id: 'orphan', type: 'worker', worker: 'coder', x: 0, y: 99 });
+    g.nodes.push({ id: 'orphan', type: 'bot', bot: 'coder', x: 0, y: 99 });
     expect(validateGraph(g, ['coder'])).toContain('node "orphan" is unreachable from entry');
   });
 });
 
 describe('step machine', () => {
-  it('starts at the first worker node after entry', () => {
+  it('starts at the first bot node after entry', () => {
     const g = baseGraph();
     const state = startRun(g);
     expect(state.currentNodeId).toBe('n_coder');
@@ -79,7 +79,7 @@ describe('step machine', () => {
 
   it('loops back and counts hops', () => {
     const g = baseGraph();
-    g.nodes.push({ id: 'n_review', type: 'worker', worker: 'reviewer', x: 150, y: 0 });
+    g.nodes.push({ id: 'n_review', type: 'bot', bot: 'reviewer', x: 150, y: 0 });
     g.edges = [
       { id: 'e1', from: 'start', to: 'n_coder' },
       { id: 'e2', from: 'n_coder', to: 'n_review', isDefault: true },
@@ -97,7 +97,7 @@ describe('step machine', () => {
   it('stops with status "capped" when maxHops is exceeded', () => {
     const g = baseGraph();
     g.maxHops = 1;
-    g.nodes.push({ id: 'n_review', type: 'worker', worker: 'reviewer', x: 150, y: 0 });
+    g.nodes.push({ id: 'n_review', type: 'bot', bot: 'reviewer', x: 150, y: 0 });
     g.edges = [
       { id: 'e1', from: 'start', to: 'n_coder' },
       { id: 'e2', from: 'n_coder', to: 'n_review', isDefault: true },
@@ -114,9 +114,9 @@ function graphWithCondition(): TeamGraph {
     entry: 'start', maxHops: 20,
     nodes: [
       { id: 'start', type: 'start', x: 0, y: 0 },
-      { id: 'w1', type: 'worker', worker: 'coder', x: 100, y: 0 },
+      { id: 'w1', type: 'bot', bot: 'coder', x: 100, y: 0 },
       { id: 'c1', type: 'condition', condition: 'needs review?', x: 200, y: 0 },
-      { id: 'w2', type: 'worker', worker: 'reviewer', x: 300, y: 0 },
+      { id: 'w2', type: 'bot', bot: 'reviewer', x: 300, y: 0 },
       { id: 'end', type: 'end', x: 400, y: 0 },
     ],
     edges: [
@@ -140,7 +140,7 @@ describe('condition node settle', () => {
     expect(s.visited).toEqual(['w1']);
   });
 
-  it('advances from a condition node to the next worker', () => {
+  it('advances from a condition node to the next bot', () => {
     const g = graphWithCondition();
     let s = startRun(g);
     s = advance(g, s, 'e1');
@@ -151,24 +151,24 @@ describe('condition node settle', () => {
 });
 
 describe('condition node validation', () => {
-  const workers = ['coder', 'reviewer'];
+  const bots = ['coder', 'reviewer'];
 
-  it('rejects a condition node that carries a worker', () => {
+  it('rejects a condition node that carries a bot', () => {
     const g = graphWithCondition();
-    (g.nodes.find(n => n.id === 'c1') as any).worker = 'coder';
-    const problems = validateGraph(g, workers);
-    expect(problems.some(p => p.includes('c1') && p.includes('worker'))).toBe(true);
+    (g.nodes.find(n => n.id === 'c1') as any).bot = 'coder';
+    const problems = validateGraph(g, bots);
+    expect(problems.some(p => p.includes('c1') && p.includes('bot'))).toBe(true);
   });
 
   it('rejects a condition node missing a yes or no branch edge', () => {
     const g = graphWithCondition();
     g.edges = g.edges.map(e => e.id === 'e3' ? { ...e, branch: undefined } : e);
-    const problems = validateGraph(g, workers);
+    const problems = validateGraph(g, bots);
     expect(problems.some(p => p.includes('c1') && p.includes('one yes and one no'))).toBe(true);
   });
 
   it('accepts a well-formed condition node', () => {
-    expect(validateGraph(graphWithCondition(), workers)).toEqual([]);
+    expect(validateGraph(graphWithCondition(), bots)).toEqual([]);
   });
 });
 
@@ -177,7 +177,7 @@ describe('validateGraph — diamonds carry conditions', () => {
     entry: 'start', maxHops: 10,
     nodes: [
       { id: 'start', type: 'start', x: 0, y: 0 },
-      { id: 'w1', type: 'worker', worker: 'coder', x: 1, y: 0 },
+      { id: 'w1', type: 'bot', bot: 'coder', x: 1, y: 0 },
       { id: 'd1', type: 'condition', condition: 'tests pass?', x: 2, y: 0 },
       { id: 'end', type: 'end', x: 3, y: 0 },
     ],
@@ -207,13 +207,13 @@ describe('validateGraph — diamonds carry conditions', () => {
   });
 });
 
-describe('validateGraph — worker self-loops', () => {
-  it('rejects a worker self-loop with no exit edge', () => {
+describe('validateGraph — bot self-loops', () => {
+  it('rejects a bot self-loop with no exit edge', () => {
     const g: import('./team-graph').TeamGraph = {
       entry: 'start', maxHops: 10,
       nodes: [
         { id: 'start', type: 'start', x: 0, y: 0 },
-        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 3, x: 1, y: 0 },
+        { id: 'w1', type: 'bot', bot: 'coder', maxCalls: 3, x: 1, y: 0 },
       ],
       edges: [
         { id: 'e0', from: 'start', to: 'w1' },
@@ -228,7 +228,7 @@ describe('validateGraph — worker self-loops', () => {
       entry: 'start', maxHops: 10,
       nodes: [
         { id: 'start', type: 'start', x: 0, y: 0 },
-        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 0, x: 1, y: 0 },
+        { id: 'w1', type: 'bot', bot: 'coder', maxCalls: 0, x: 1, y: 0 },
         { id: 'end', type: 'end', x: 2, y: 0 },
       ],
       edges: [
@@ -244,7 +244,7 @@ describe('validateGraph — worker self-loops', () => {
       entry: 'start', maxHops: 10,
       nodes: [
         { id: 'start', type: 'start', x: 0, y: 0 },
-        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 1.5, x: 1, y: 0 },
+        { id: 'w1', type: 'bot', bot: 'coder', maxCalls: 1.5, x: 1, y: 0 },
         { id: 'end', type: 'end', x: 2, y: 0 },
       ],
       edges: [
@@ -255,12 +255,12 @@ describe('validateGraph — worker self-loops', () => {
     expect(validateGraph(g, ['coder']).some(p => p.includes('maxCalls must be >= 1'))).toBe(true);
   });
 
-  it('accepts a worker with both a self-edge and an exit edge', () => {
+  it('accepts a bot with both a self-edge and an exit edge', () => {
     const g: import('./team-graph').TeamGraph = {
       entry: 'start', maxHops: 10,
       nodes: [
         { id: 'start', type: 'start', x: 0, y: 0 },
-        { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 3, x: 1, y: 0 },
+        { id: 'w1', type: 'bot', bot: 'coder', maxCalls: 3, x: 1, y: 0 },
         { id: 'end', type: 'end', x: 2, y: 0 },
       ],
       edges: [
@@ -278,8 +278,8 @@ describe('runStreak', () => {
     entry: 'start', maxHops: 20,
     nodes: [
       { id: 'start', type: 'start', x: 0, y: 0 },
-      { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 2, x: 1, y: 0 },
-      { id: 'w2', type: 'worker', worker: 'reviewer', x: 2, y: 0 },
+      { id: 'w1', type: 'bot', bot: 'coder', maxCalls: 2, x: 1, y: 0 },
+      { id: 'w2', type: 'bot', bot: 'reviewer', x: 2, y: 0 },
       { id: 'end', type: 'end', x: 3, y: 0 },
     ],
     edges: [
@@ -314,8 +314,8 @@ describe('eligibleEdges', () => {
     entry: 'start', maxHops: 20,
     nodes: [
       { id: 'start', type: 'start', x: 0, y: 0 },
-      { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 2, x: 1, y: 0 },
-      { id: 'w2', type: 'worker', worker: 'reviewer', x: 2, y: 0 },
+      { id: 'w1', type: 'bot', bot: 'coder', maxCalls: 2, x: 1, y: 0 },
+      { id: 'w2', type: 'bot', bot: 'reviewer', x: 2, y: 0 },
     ],
     edges: [
       { id: 'e0', from: 'start', to: 'w1' },
@@ -336,7 +336,7 @@ describe('eligibleEdges', () => {
     expect(ids).toContain('e2');
   });
 
-  it('applies DEFAULT_MAX_SELF_LOOP (3) when a worker node omits maxCalls', () => {
+  it('applies DEFAULT_MAX_SELF_LOOP (3) when a bot node omits maxCalls', () => {
     // w2 has no maxCalls; default cap of 3 kicks in.
     const g2 = { ...g, edges: [...g.edges, { id: 'e3', from: 'w2', to: 'w2' }, { id: 'e4', from: 'w2', to: 'w1' }] };
     const below = eligibleEdges(g2, { ...startRun(g2), currentNodeId: 'w2', runStreak: 2 }, 'w2').map(e => e.id);
@@ -354,8 +354,8 @@ describe('resolveEdge diamond fallback', () => {
     entry: 'start', maxHops: 10,
     nodes: [
       { id: 'd1', type: 'condition', condition: 'ok?', x: 0, y: 0 },
-      { id: 'a', type: 'worker', worker: 'a', x: 1, y: 0 },
-      { id: 'b', type: 'worker', worker: 'b', x: 2, y: 0 },
+      { id: 'a', type: 'bot', bot: 'a', x: 1, y: 0 },
+      { id: 'b', type: 'bot', bot: 'b', x: 2, y: 0 },
     ],
     edges: [
       { id: 'yes', from: 'd1', to: 'a', branch: 'yes' },

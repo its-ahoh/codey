@@ -2,20 +2,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AgentFactory } from './agents';
 import type { CodingAgent, ModelConfig, AgentRequest, AgentResponse } from './types';
-import { WorkerManager } from './workers';
+import { BotManager } from './bots';
 import { stripCodeFences } from './utils/json';
 
 export interface GenerateDeps {
   agentFactory: AgentFactory;
-  workerManager: WorkerManager;
-  workersDir: string;
+  botManager: BotManager;
+  botsDir: string;
   activeAgent: CodingAgent;
   activeModel?: ModelConfig;
   runner?: (request: AgentRequest) => Promise<AgentResponse>;
   workingDir: string;
 }
 
-interface GeneratedWorker {
+interface GeneratedBot {
   name: string;
   role: string;
   soul: string;
@@ -23,13 +23,13 @@ interface GeneratedWorker {
   tools: string[];
 }
 
-const SCHEMA_INSTRUCTION = `You are generating a Codey worker definition. Given a user description, return ONE JSON object and nothing else, matching this exact schema:
+const SCHEMA_INSTRUCTION = `You are generating a Codey bot definition. Given a user description, return ONE JSON object and nothing else, matching this exact schema:
 
 {
   "name": "lowercase-kebab-case",
-  "role": "one or two sentences describing what this worker does",
-  "soul": "two to four sentences describing the worker's personality and working style",
-  "instructions": "numbered or bulleted steps the worker follows when given a task",
+  "role": "one or two sentences describing what this bot does",
+  "soul": "two to four sentences describing the bot's personality and working style",
+  "instructions": "numbered or bulleted steps the bot follows when given a task",
   "tools": ["array", "of", "tool-tokens"]
 }
 
@@ -65,9 +65,9 @@ function validate(value: unknown): string | null {
   return null;
 }
 
-function assembleMd(g: GeneratedWorker): string {
+function assembleMd(g: GeneratedBot): string {
   return [
-    `# Worker: ${g.name}`,
+    `# Bot: ${g.name}`,
     '',
     '## Role',
     g.role.trim(),
@@ -81,10 +81,10 @@ function assembleMd(g: GeneratedWorker): string {
   ].join('\n');
 }
 
-export async function generateWorker(
+export async function generateBot(
   deps: GenerateDeps,
   userPrompt: string,
-): Promise<{ ok: true; worker: GeneratedWorker } | { ok: false; status: number; error: string; raw?: string }> {
+): Promise<{ ok: true; bot: GeneratedBot } | { ok: false; status: number; error: string; raw?: string }> {
   if (!userPrompt.trim()) return { ok: false, status: 400, error: 'prompt is required' };
 
   const composed = `${SCHEMA_INSTRUCTION}\n\nUser description:\n${userPrompt.trim()}`;
@@ -108,23 +108,23 @@ export async function generateWorker(
     const err = validate(value);
     lastError = err ?? '';
     if (!err) {
-      const { name, role, soul, instructions, tools } = value as GeneratedWorker;
-      const parsed: GeneratedWorker = { name, role, soul, instructions, tools };
+      const { name, role, soul, instructions, tools } = value as GeneratedBot;
+      const parsed: GeneratedBot = { name, role, soul, instructions, tools };
       // Consult the loaded map rather than just `fs.existsSync` on the
       // directory: an orphaned empty `<name>/` (left behind by an interrupted
-      // create or a manual edit) wouldn't load as a worker but would still
+      // create or a manual edit) wouldn't load as a bot but would still
       // make the disk path exist, falsely blocking re-creation.
-      if (deps.workerManager.hasWorker(parsed.name)) {
-        return { ok: false, status: 409, error: `Worker "${parsed.name}" already exists` };
+      if (deps.botManager.hasBot(parsed.name)) {
+        return { ok: false, status: 409, error: `Bot "${parsed.name}" already exists` };
       }
-      const dir = path.join(deps.workersDir, parsed.name);
+      const dir = path.join(deps.botsDir, parsed.name);
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'personality.md'), assembleMd(parsed));
       fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
         tools: parsed.tools,
       }, null, 2) + '\n');
-      await deps.workerManager.loadWorkers();
-      return { ok: true, worker: parsed };
+      await deps.botManager.loadBots();
+      return { ok: true, bot: parsed };
     }
   }
 

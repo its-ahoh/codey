@@ -98,8 +98,8 @@ describe('signatureOf', () => {
     ] })).toEqual(['Read', 'Edit', 'Read']);
   });
 
-  it('falls back to worker names for team runs', () => {
-    expect(signatureOf({ runId: 'r', workerSequence: ['researcher', 'writer'] }))
+  it('falls back to bot names for team runs', () => {
+    expect(signatureOf({ runId: 'r', botSequence: ['researcher', 'writer'] }))
       .toEqual(['researcher', 'writer']);
   });
 
@@ -241,11 +241,11 @@ describe('clusterProcedures', () => {
     expect(clusterProcedures([run('a', ['x', 'y', 'z'])], { minMembers: 2 }).clusters).toEqual([]);
   });
 
-  it('clusters team runs on their worker sequence', () => {
+  it('clusters team runs on their bot sequence', () => {
     const report = clusterProcedures([
-      { runId: 'a', workerSequence: ['scout', 'writer', 'editor'] },
-      { runId: 'b', workerSequence: ['scout', 'writer', 'editor'] },
-      { runId: 'c', workerSequence: ['auditor', 'fixer', 'verifier'] },
+      { runId: 'a', botSequence: ['scout', 'writer', 'editor'] },
+      { runId: 'b', botSequence: ['scout', 'writer', 'editor'] },
+      { runId: 'c', botSequence: ['auditor', 'fixer', 'verifier'] },
       run('d', ['Read', 'Edit', 'Bash']),
       run('e', ['Grep', 'Write', 'Bash']),
     ], { minMembers: 2 });

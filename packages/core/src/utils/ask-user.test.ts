@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAskUser, parseAsk, normalizeWorkerOutput } from './ask-user';
+import { parseAskUser, parseAsk, normalizeBotOutput } from './ask-user';
 
 describe('parseAskUser', () => {
   it('returns null when no marker is present', () => {
@@ -144,19 +144,19 @@ describe('parseAskUser (choice variant)', () => {
   });
 });
 
-describe('normalizeWorkerOutput', () => {
+describe('normalizeBotOutput', () => {
   const INVOKE_BLOCK = `<invoke name="AskUserQuestion">
 <parameter name="questions">[{"question": "How do you want to integrate?", "header": "Integrate", "multiSelect": false, "label": "false", "options": [{"label": "Merge into my branch", "description": "Merge and rebuild."}, {"label": "Run from the worktree", "description": "Build in isolation."}, {"label": "Open a PR", "description": "Review first."}]}]</parameter>
 </invoke>`;
 
   it('converts an invoke block with multiple options into [ASK_USER:choice]', () => {
-    const result = normalizeWorkerOutput(INVOKE_BLOCK);
+    const result = normalizeBotOutput(INVOKE_BLOCK);
     expect(result).toBe('[ASK_USER:choice]: How do you want to integrate? | Merge into my branch | Run from the worktree | Open a PR');
   });
 
   it('passes through output that has no invoke block unchanged', () => {
     const plain = 'Just some plain text with no XML.';
-    expect(normalizeWorkerOutput(plain)).toBe(plain);
+    expect(normalizeBotOutput(plain)).toBe(plain);
   });
 
   it('is picked up by parseAsk when embedded in preamble text', () => {
@@ -173,14 +173,14 @@ describe('normalizeWorkerOutput', () => {
     const block = `<invoke name="AskUserQuestion">
 <parameter name="questions">[{"question": "Continue?", "options": [{"label": "Yes"}]}]</parameter>
 </invoke>`;
-    expect(normalizeWorkerOutput(block)).toBe('[ASK_USER]: Continue?');
+    expect(normalizeBotOutput(block)).toBe('[ASK_USER]: Continue?');
   });
 
   it('returns empty string when JSON is missing question field', () => {
     const block = `<invoke name="AskUserQuestion">
 <parameter name="questions">[{"options": [{"label": "a"}, {"label": "b"}]}]</parameter>
 </invoke>`;
-    expect(normalizeWorkerOutput(block)).toBe('');
+    expect(normalizeBotOutput(block)).toBe('');
   });
 });
 

@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { buildTeamRunSummary, finalizeTeamRunSummary } from './team-run-summary';
 import type { ChatMessage } from './types/chat';
 
-const worker = (id: string, extra: Partial<ChatMessage>): ChatMessage => ({
+const bot = (id: string, extra: Partial<ChatMessage>): ChatMessage => ({
   id,
   role: 'assistant',
   content: '',
   timestamp: 1,
   teamTurnId: 'tt1',
-  worker: 'worker',
+  bot: 'bot',
   step: 1,
   ...extra,
 });
@@ -16,21 +16,21 @@ const worker = (id: string, extra: Partial<ChatMessage>): ChatMessage => ({
 describe('buildTeamRunSummary', () => {
   it('uses terminal fields instead of classifying prose', () => {
     const summary = buildTeamRunSummary([
-      worker('done', { workerStatus: 'done', content: 'Implemented the requested change.' }),
-      worker('resolved-pause', { step: 4, workerStatus: 'done', content: 'Choose a target', workerSummaryExcluded: true }),
-      worker('failed', { step: 2, workerStatus: 'failed', content: 'This prose says success.', workerFailureReason: 'Build exited with code 2' }),
-      worker('ask', { step: 3, workerStatus: 'askedUser', content: 'Unstructured output', workerNextUserAction: { text: 'Choose a deployment target', options: ['A', 'B'] } }),
+      bot('done', { botStatus: 'done', content: 'Implemented the requested change.' }),
+      bot('resolved-pause', { step: 4, botStatus: 'done', content: 'Choose a target', botSummaryExcluded: true }),
+      bot('failed', { step: 2, botStatus: 'failed', content: 'This prose says success.', botFailureReason: 'Build exited with code 2' }),
+      bot('ask', { step: 3, botStatus: 'askedUser', content: 'Unstructured output', botNextUserAction: { text: 'Choose a deployment target', options: ['A', 'B'] } }),
     ], 123);
 
-    expect(summary.completed).toEqual([{ worker: 'worker', step: 1, text: 'Implemented the requested change.' }]);
-    expect(summary.failures).toEqual([{ worker: 'worker', step: 2, text: 'Build exited with code 2' }]);
-    expect(summary.nextUserActions).toEqual([{ worker: 'worker', step: 3, text: 'Choose a deployment target' }]);
+    expect(summary.completed).toEqual([{ bot: 'bot', step: 1, text: 'Implemented the requested change.' }]);
+    expect(summary.failures).toEqual([{ bot: 'bot', step: 2, text: 'Build exited with code 2' }]);
+    expect(summary.nextUserActions).toEqual([{ bot: 'bot', step: 3, text: 'Choose a deployment target' }]);
     expect(summary.finalizedAt).toBe(123);
   });
 
   it('does not finalize running messages or infer actions from their content', () => {
     const messages = [
-      worker('running', { workerStatus: 'running', content: 'Please choose production.' }),
+      bot('running', { botStatus: 'running', content: 'Please choose production.' }),
     ];
     const summary = buildTeamRunSummary(messages, 1);
     expect(summary.completed).toEqual([]);
@@ -39,21 +39,21 @@ describe('buildTeamRunSummary', () => {
     expect(finalizeTeamRunSummary(messages, 1)).toBeNull();
   });
 
-  it('finalizes only after all workers have terminal states', () => {
+  it('finalizes only after all bots have terminal states', () => {
     const messages = [
-      worker('done', { workerStatus: 'done', content: 'Finished.' }),
-      worker('failed', { step: 2, workerStatus: 'failed', workerFailureReason: 'Build failed' }),
+      bot('done', { botStatus: 'done', content: 'Finished.' }),
+      bot('failed', { step: 2, botStatus: 'failed', botFailureReason: 'Build failed' }),
     ];
     expect(finalizeTeamRunSummary(messages, 10)?.finalizedAt).toBe(10);
   });
 
   it('does not let unselected roster placeholders block finalization', () => {
     const messages = [
-      worker('done', { workerStatus: 'done', content: 'Finished.' }),
-      worker('pending', { step: 2, workerStatus: 'pending' }),
+      bot('done', { botStatus: 'done', content: 'Finished.' }),
+      bot('pending', { step: 2, botStatus: 'pending' }),
     ];
     expect(finalizeTeamRunSummary(messages, 10)?.completed).toEqual([
-      { worker: 'worker', step: 1, text: 'Finished.' },
+      { bot: 'bot', step: 1, text: 'Finished.' },
     ]);
   });
 });

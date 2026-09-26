@@ -1,11 +1,13 @@
+import { CoMemoClient } from '@codey/core';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { matchAutomaticChatTask } from './automatic-chat-task';
 import { chatTaskContext, chatSessionScope, runAideJson, type ChatTaskRoute } from '@codey/core';
 import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloMentionRun, parseTeamResultLines, teamStepRecords, TeamStepRecord } from './team-finalizer';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseWorkerMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, WorkerAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
-import { randomUUID } from 'crypto';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { randomUUID, createHash } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
 import { SchedulerLease } from './automations/lease';
@@ -26,7 +28,7 @@ import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { MemoryStore } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_ROUNDTABLE_SETTINGS, normalizeDispatchMode } from '@codey/core';
-import { WorkerManager } from '@codey/core';
+import { BotManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
 import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, ensureWorktreeContainer, isGitWorkspace, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
 import { resolveEffort } from './effort-resolve';
@@ -41,7 +43,7 @@ import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause
 import { resolveChoiceDigit } from './digit-mapping';
 import { ParallelTeamRunner, ParallelFinalEvent } from './parallel-team';
 import { ChannelEmitter, ChatEmitter, TeamEmitter } from './team-emitter';
-import { WorkerMessageEmitter } from './worker-message-emitter';
+import { BotMessageEmitter } from './bot-message-emitter';
 
 interface ParsedCommand {
   command: string;
@@ -254,7 +256,16 @@ export interface SkillInvoke {
   task: string;
 }
 
+const memoryUsageContext = new AsyncLocalStorage<Map<string, NonNullable<ChatMessage['memoryUsed']>[number]>>();
+
 export class Codey {
+  private coMemo = new CoMemoClient();
+
+  public getCoMemo(): CoMemoClient {
+    if (!this.coMemo) throw new Error('Shared memory is not initialized');
+    return this.coMemo;
+  }
+
   private config: GatewayConfig;
   private agentFactory: AgentFactory;
   private handlers: Map<string, ChannelHandler> = new Map();
@@ -331,27 +342,27 @@ export class Codey {
     return this.configManager?.getSkipPermissions() ?? true;
   }
 
-  /** Worker session TTL — after this, the next call re-bootstraps so a
+  /** Bot session TTL — after this, the next call re-bootstraps so a
    *  long-warm session doesn't drift from the latest workspace memory. */
-  private static WORKER_SESSION_TTL_MS = 30 * 60 * 1000;
+  private static BOT_SESSION_TTL_MS = 30 * 60 * 1000;
 
   /**
-   * Stable conversationId used for worker session anchors. Distinct from
+   * Stable conversationId used for bot session anchors. Distinct from
    * the chat's own conversationId so a `/team` run doesn't clobber the
-   * chat anchor; suffixed with the team or worker name so different teams
+   * chat anchor; suffixed with the team or bot name so different teams
    * keep their own session caches.
    */
-  private workerConversationId(
+  private botConversationId(
     baseConvId: string,
-    scope: { team?: string; worker?: string },
+    scope: { team?: string; bot?: string },
   ): string {
     if (scope.team) return `${baseConvId}-team-${scope.team}`;
-    if (scope.worker) return `${baseConvId}-worker-${scope.worker}`;
+    if (scope.bot) return `${baseConvId}-bot-${scope.bot}`;
     return baseConvId;
   }
 
   /**
-   * Run one worker step, transparently using a warm `--resume` session
+   * Run one bot step, transparently using a warm `--resume` session
    * when available. Falls back to a cold bootstrap (sending the full
    * personality+memory+blackboard prompt) on the first call, when the
    * agent changes, when the session is past its TTL, or when a resume
@@ -363,16 +374,16 @@ export class Codey {
    * only the blackboard delta since this session's last turn + the new
    * task body.
    */
-  private async runWorkerStep(opts: {
+  private async runBotStep(opts: {
     conversationId: string;
-    workerName: string;
+    botName: string;
     task: string;
     blackboard: TeamBlackboard;
     codingAgent: CodingAgent;
     modelConfig: ModelConfig | undefined;
     /** The chat's explicit effort; undefined lets runWithFallback supply the agent default. */
     effort?: ThinkingEffort;
-    buildBootstrapPrompt: () => string;
+    buildBootstrapPrompt: () => string | Promise<string>;
     onStream?: (text: string) => void;
     onThinking?: (text: string) => void;
     onStatus?: (update: any) => void;
@@ -383,12 +394,12 @@ export class Codey {
     skipPermissions?: boolean;
   }): Promise<{ response: AgentResponse; usedResume: boolean }> {
     const ctxWindow = await this.contextManager.getOrCreate(opts.conversationId);
-    const existing = this.contextManager.getWorkerAnchor(ctxWindow.id, opts.workerName);
+    const existing = this.contextManager.getBotAnchor(ctxWindow.id, opts.botName);
     const ttlElapsed = existing
-      ? Date.now() - existing.bootstrappedAt > Codey.WORKER_SESSION_TTL_MS
+      ? Date.now() - existing.bootstrappedAt > Codey.BOT_SESSION_TTL_MS
       : false;
 
-    const wm = this.workspaceManager.getWorkerManager();
+    const wm = this.workspaceManager.getBotManager();
     const baseReq = {
       agent: opts.codingAgent,
       model: opts.modelConfig,
@@ -408,8 +419,10 @@ export class Codey {
 
     // ── Warm path: anchor exists, same agent, within TTL ─────────
     if (existing && existing.agent === opts.codingAgent && !ttlElapsed) {
-      const delta = opts.blackboard.renderDeltaForWorker(opts.workerName, existing.blackboardSeenCount);
-      const resumePrompt = wm.buildResumeWorkerPrompt(opts.task, delta || undefined);
+      const delta = opts.blackboard.renderDeltaForBot(opts.botName, existing.blackboardSeenCount);
+      const memoryChat = opts.browserChatId ? this.chatManager.get(opts.browserChatId) : undefined;
+      const memory = await this.buildMergedMemoryContext(opts.task, opts.botName, !!memoryChat?.botChat, memoryChat?.workspaceName, opts.workingDir);
+      const resumePrompt = [memory, wm.buildResumeBotPrompt(opts.task, delta || undefined)].filter(Boolean).join('\n\n');
       const resp = await this.runWithFallback(opts.codingAgent, {
         ...baseReq,
         prompt: resumePrompt,
@@ -417,7 +430,7 @@ export class Codey {
       });
       if (resp.success) {
         // Update the seen-count snapshot so the next turn's delta is correct.
-        await this.contextManager.setWorkerAnchor(ctxWindow.id, opts.workerName, {
+        await this.contextManager.setBotAnchor(ctxWindow.id, opts.botName, {
           ...existing,
           blackboardSeenCount: opts.blackboard.totalCount(),
         });
@@ -428,154 +441,72 @@ export class Codey {
       if (!isMissingSessionFailure(resp)) {
         return { response: resp, usedResume: true };
       }
-      this.logger.warn(`[worker:${opts.workerName}] resume of ${existing.sessionId} failed; bootstrapping fresh`);
-      await this.contextManager.clearWorkerAnchor(ctxWindow.id, opts.workerName);
+      this.logger.warn(`[bot:${opts.botName}] resume of ${existing.sessionId} failed; bootstrapping fresh`);
+      await this.contextManager.clearBotAnchor(ctxWindow.id, opts.botName);
     } else if (existing && existing.agent !== opts.codingAgent) {
       // Different agent now — old anchor is unusable; drop it.
-      await this.contextManager.clearWorkerAnchor(ctxWindow.id, opts.workerName);
+      await this.contextManager.clearBotAnchor(ctxWindow.id, opts.botName);
     } else if (existing && ttlElapsed) {
       // TTL expired — drop and re-bootstrap to pick up newer memory.
-      this.logger.info(`[worker:${opts.workerName}] session TTL elapsed; bootstrapping fresh`);
-      await this.contextManager.clearWorkerAnchor(ctxWindow.id, opts.workerName);
+      this.logger.info(`[bot:${opts.botName}] session TTL elapsed; bootstrapping fresh`);
+      await this.contextManager.clearBotAnchor(ctxWindow.id, opts.botName);
     }
 
     // ── Cold path: bootstrap full prompt ─────────────────────────
     const newSessionId = opts.codingAgent === 'claude-code' ? randomUUID() : undefined;
     const resp = await this.runWithFallback(opts.codingAgent, {
       ...baseReq,
-      prompt: opts.buildBootstrapPrompt(),
+      prompt: await opts.buildBootstrapPrompt(),
       newSessionId,
     });
     if (resp.success) {
       const sid = newSessionId ?? resp.sessionId;
       if (sid) {
-        const anchor: WorkerAnchor = {
+        const anchor: BotAnchor = {
           agent: opts.codingAgent,
           sessionId: sid,
-          workerName: opts.workerName,
+          botName: opts.botName,
           blackboardSeenCount: opts.blackboard.totalCount(),
           bootstrappedAt: Date.now(),
         };
-        await this.contextManager.setWorkerAnchor(ctxWindow.id, opts.workerName, anchor);
+        await this.contextManager.setBotAnchor(ctxWindow.id, opts.botName, anchor);
       }
     }
     return { response: resp, usedResume: false };
   }
 
   /**
-   * Prefix a worker / team prompt with the workspace memory context relevant
-   * to the given query. Used everywhere workers run so they get the same
-   * `## Project Memory` block the main chat path already gets.
-   */
-  /**
    * Build the combined memory context block (user-global first, then
    * workspace-scoped). Returns empty string when memory is disabled or
    * neither store has anything relevant.
    */
-  private buildMergedMemoryContext(query: string, forWorker?: string, globalOnly = false): string {
+  private async buildMergedMemoryContext(query: string, forBot?: string, globalOnly = false, workspaceName?: string, workingDir?: string): Promise<string> {
     if (this.config.memory?.enabled === false) return '';
-    const sections: string[] = [];
-    // With sharing on, the same global entries are already in every agent's
-    // own memory file, which its CLI loads before the prompt. Injecting them
-    // here too would put each fact in the context twice.
-    const globalCtx = this.config.sharedMemory?.enabled === true
-      ? ''
-      : this.workspaceManager.getGlobalMemoryStore().buildContext(
-        query, undefined, undefined, forWorker,
-      );
-    if (globalCtx) {
-      // Re-label so the agent can distinguish global vs workspace facts.
-      sections.push(globalCtx.replace(/^## Project Memory/, '## User-Global Memory'));
-    }
-    const workspaceCtx = globalOnly ? '' : this.workspaceManager.getMemoryStore().buildContext(
-      query, undefined, undefined, forWorker,
-    );
-    if (workspaceCtx) sections.push(workspaceCtx);
-    return sections.join('\n\n');
-  }
-
-  private wrapPromptWithMemory(prompt: string, query: string, forWorker?: string, globalOnly = false): string {
-    const ctx = this.buildMergedMemoryContext(query, forWorker, globalOnly);
-    return ctx ? `${ctx}\n\n${prompt}` : prompt;
-  }
-
-  /**
-   * Run the auto-extract heuristic on a worker step's response so insights
-   * from worker runs flow into the same memory store the main chat uses.
-   * Tagged with the worker name so they can be distinguished from chat
-   * extractions later.
-   */
-  /**
-   * Persist a team's accumulated `[DECISION]` markers to the workspace
-   * memory store so future runs can recall what was decided. Skipped when
-   * memory is disabled. Idempotent thanks to MemoryStore dedup.
-   */
-  /**
-   * Persist the Advisor's final summary from a parallel discussion as a
-   * `decision` memory entry so future runs on the same topic can recall
-   * what was concluded. Best-effort — skipped when summary is empty.
-   */
-  private persistDiscussionSummary(
-    teamName: string,
-    topic: string,
-    ev: ParallelFinalEvent,
-  ): void {
-    if (this.config.memory?.autoExtract === false) return;
-    const summary = (ev.summary ?? '').replace(/^#\s+Summary\s*/i, '').trim();
-    if (!summary) return;
-    const oneLineTopic = topic.replace(/\s+/g, ' ').trim().slice(0, 80);
-    this.workspaceManager.getMemoryStore().add({
-      type: 'decision',
-      content: summary,
-      label: `Discussion (${teamName}): ${oneLineTopic}`,
-      tags: ['discussion', teamName, `reason:${ev.reason}`],
-      source: 'team',
-    });
-  }
-
-  private persistBlackboardDecisions(
-    blackboard: TeamBlackboard,
-    teamName: string,
-  ): void {
-    if (this.config.memory?.autoExtract === false) return;
-    if (blackboard.decisions.length === 0) return;
-    const store = this.workspaceManager.getMemoryStore();
-    for (const d of blackboard.decisions) {
-      store.add({
-        type: 'decision',
-        content: d.text,
-        label: `Team ${teamName} / ${d.worker}`,
-        tags: ['team', teamName, `worker:${d.worker}`],
-        source: 'team',
-        // Decisions are intentionally workspace-wide: other workers should be
-        // able to see what's been decided. If we ever want per-worker scoping
-        // for decisions, surface it as an opt-in marker.
+    try {
+      const projectName = globalOnly ? undefined : workspaceName ?? this.workspaceManager.getCurrentWorkspace();
+      const projectPath = globalOnly ? undefined : workingDir ?? (projectName ? this.resolveWorkspaceWorkingDir(projectName) : undefined);
+      const provider = this.getCoMemo();
+      const result = await provider.context(query, projectPath);
+      if (result.settings.paused) return '';
+      const context = [result.context, provider.instructions(projectPath,
+        this.config.memory?.autoExtract !== false && result.settings.saveMode === 'auto')].filter(Boolean).join('\n\n');
+      if (!context) return '';
+      const id = `co-memo:${createHash('sha256').update(context).digest('hex')}`;
+      memoryUsageContext.getStore()?.set(`${forBot}:${projectName}:${id}`, {
+        id, version: 0, content: context, botName: forBot, projectName, readOnly: true,
+        audience: projectName ? 'project' : 'global',
+        source: 'Co-memo: exact user/project context and memory instructions included in this turn.',
       });
+      return context;
+    } catch (error) {
+      this.logger.warn(`Shared memory unavailable: ${(error as Error).message}`);
+      return '';
     }
   }
 
-  private extractWorkerMemories(
-    workerName: string,
-    task: string,
-    agent: CodingAgent,
-    response: AgentResponse,
-  ): void {
-    if (this.config.memory?.autoExtract === false || !response.success) return;
-    const meta = ContextManager.extractMeta(response, agent);
-    this.workspaceManager.getMemoryStore().extractFromInteraction({
-      userPrompt: `[worker:${workerName}] ${task}`,
-      agentOutput: response.output,
-      toolCalls: meta.toolCalls?.map(tc => ({
-        tool: tc.tool,
-        input: tc.input,
-        output: tc.output,
-        status: tc.status,
-      })),
-      filesChanged: meta.filesChanged?.map(fc => ({
-        path: fc.path,
-        action: fc.action,
-      })),
-    });
+  private async wrapPromptWithMemory(prompt: string, query: string, forBot?: string, globalOnly = false, workspaceName?: string, workingDir?: string): Promise<string> {
+    const ctx = await this.buildMergedMemoryContext(query, forBot, globalOnly, workspaceName, workingDir);
+    return [ctx, prompt].filter(Boolean).join('\n\n');
   }
 
   /**
@@ -640,10 +571,10 @@ export class Codey {
     workingDir: string,
     signal?: AbortSignal,
   ): Promise<TeamFastPathDecision> {
-    const workerManager = this.workspaceManager.getWorkerManager();
-    const roster = members.map(name => ({ name, hint: workerManager.getDispatchHint(name) }));
+    const botManager = this.workspaceManager.getBotManager();
+    const roster = members.map(name => ({ name, hint: botManager.getDispatchHint(name) }));
     if (roster.length === 1) {
-      return { route: 'single_worker', worker: roster[0].name, reason: 'The team has one member.' };
+      return { route: 'single_bot', bot: roster[0].name, reason: 'The team has one member.' };
     }
     try {
       const output = await runAide(buildTeamFastPathPrompt(task, roster), {
@@ -788,7 +719,7 @@ export class Codey {
 
   private conversationCleanupInterval?: NodeJS.Timeout;
 
-  constructor(config: GatewayConfig, logger?: Logger, workspaceDir?: string, configManager?: ConfigManager, workerManager?: WorkerManager) {
+  constructor(config: GatewayConfig, logger?: Logger, workspaceDir?: string, configManager?: ConfigManager, botManager?: BotManager) {
     this.config = config;
     this.configManager = configManager;
     this.agentFactory = new AgentFactory();
@@ -813,7 +744,7 @@ export class Codey {
     if (restored > 0) {
       this.logger.info(`Restored ${restored} archived conversation(s) from disk`);
     }
-    const wm = workerManager || new WorkerManager('./workers');
+    const wm = botManager || new BotManager('./bots');
     this.workspaceManager = new WorkspaceManager(wm, workspaceDir || './workspaces', this.logger);
     this.chatManager = new ChatManager(this.workspaceManager.getWorkspacesRoot());
     this.chatManager.setCompactionRunner((chat) => this.runChatCompaction(chat));
@@ -899,7 +830,7 @@ export class Codey {
   }
 
   public async openBotChat(botName: string): Promise<Chat> {
-    const bot = this.workspaceManager.getWorkerManager().getWorker(botName);
+    const bot = this.workspaceManager.getBotManager().getBot(botName);
     if (!bot) throw new Error(`Bot not found: ${botName}`);
     const existing = this.chatManager.list().find(c => c.botChat?.kind === 'direct'
       && c.botChat.members[0]?.toLowerCase() === bot.name.toLowerCase());
@@ -909,7 +840,7 @@ export class Codey {
 
   private resolveBotGroupMembers(names: string[]): string[] {
     const members = [...new Set(names.map(name => name.toLowerCase()))].map(name => {
-      const bot = this.workspaceManager.getWorkerManager().getWorker(name);
+      const bot = this.workspaceManager.getBotManager().getBot(name);
       if (!bot) throw new Error(`Bot not found: ${name}`);
       return bot.name;
     });
@@ -948,7 +879,7 @@ export class Codey {
     const homeDir = path.resolve(this.workspaceManager.getWorkspacesRoot(), namespace, 'files', randomUUID());
     fs.mkdirSync(homeDir, { recursive: true });
     return this.chatManager.create({ workspaceName: namespace, title,
-      selection: kind === 'direct' ? { type: 'worker', name: members[0] } : { type: 'none' },
+      selection: kind === 'direct' ? { type: 'bot', name: members[0] } : { type: 'none' },
       executionMode: 'shared-checkout', botChat: { kind, members, homeDir, ...(sourceChatId ? { sourceChatId } : {}) } });
   }
 
@@ -1620,41 +1551,46 @@ export class Codey {
   }
 
   /**
-   * Drop warm CLI sessions for a worker (or all workers when name omitted)
-   * across every conversation. Call after editing/deleting a worker's
+   * Drop warm CLI sessions for a bot (or all bots when name omitted)
+   * across every conversation. Call after editing/deleting a bot's
    * personality so the next run rebuilds with the latest definition rather
    * than `--resume`-ing into a session bootstrapped with the old one.
    */
   /**
-   * Snapshot every warm worker anchor on a conversation. Used at team
+   * Snapshot every warm bot anchor on a conversation. Used at team
    * pause time so resume can re-warm without re-bootstrapping.
    */
-  private snapshotWorkerAnchors(conversationId: string): Record<string, WorkerAnchor> | undefined {
+  private snapshotBotAnchors(conversationId: string): Record<string, BotAnchor> | undefined {
     const win = this.contextManager.getWindow(conversationId);
-    const anchors = win?.workerAnchors;
+    const anchors = win?.botAnchors;
     if (!anchors || Object.keys(anchors).length === 0) return undefined;
     // Shallow clone to keep the snapshot immune to later in-memory mutation.
     return Object.fromEntries(Object.entries(anchors).map(([k, v]) => [k, { ...v }]));
   }
 
-  /** Restore previously snapshotted worker anchors onto a conversation. */
-  private async rehydrateWorkerAnchors(
+  /** Restore previously snapshotted bot anchors onto a conversation. */
+  private async rehydrateBotAnchors(
     conversationId: string,
-    snapshot: Record<string, WorkerAnchor> | undefined,
+    snapshot: Record<string, BotAnchor> | undefined,
   ): Promise<void> {
     if (!snapshot) return;
     for (const [name, anchor] of Object.entries(snapshot)) {
-      await this.contextManager.setWorkerAnchor(conversationId, name, anchor);
+      await this.contextManager.setBotAnchor(conversationId, name, anchor);
     }
   }
 
-  invalidateWorkerSessions(workerName?: string): void {
-    if (workerName) {
-      this.contextManager.clearWorkerAnchorEverywhere(workerName);
+  public invalidateMemorySessions(): void {
+    this.invalidateBotSessions();
+    for (const chat of this.chatManager.list(undefined, { includeAutomation: true })) this.chatManager.clearSessionAnchor(chat.id);
+  }
+
+  invalidateBotSessions(botName?: string): void {
+    if (botName) {
+      this.contextManager.clearBotAnchorEverywhere(botName);
     } else {
-      // No specific worker — drop all worker anchors on every window.
+      // No specific bot — drop all bot anchors on every window.
       for (const id of this.contextManager.listConversationIds()) {
-        void this.contextManager.clearAllWorkerAnchorsForWindow(id);
+        void this.contextManager.clearAllBotAnchorsForWindow(id);
       }
     }
   }
@@ -1738,7 +1674,7 @@ export class Codey {
     // there until the next one.
     pruneCodeyTmp();
 
-    // Load workspace and workers
+    // Load workspace and bots
     await this.workspaceManager.load();
     this.workingDir = this.workspaceManager.getWorkingDir();
     this.logger.setLogFile(this.workspaceManager.getLogPath());
@@ -1791,14 +1727,14 @@ export class Codey {
         const team = (this.configManager?.getTeams() ?? {})[teamName];
         if (!team) return undefined;
         const members = Array.isArray(team) ? team : team.members;
-        const wm = this.workspaceManager.getWorkerManager();
+        const wm = this.workspaceManager.getBotManager();
         const personas = members.map(m => {
-          const w = wm.getWorker(m);
+          const w = wm.getBot(m);
           return w
             ? `### ${m}\n${w.personality.role}`.trim()
-            : `### ${m}\n(worker definition not found)`;
+            : `### ${m}\n(bot definition not found)`;
         }).join('\n\n');
-        return `Team config:\n${JSON.stringify(team, null, 2)}\n\nWorker roles:\n${personas}`;
+        return `Team config:\n${JSON.stringify(team, null, 2)}\n\nBot roles:\n${personas}`;
       },
       onResult: (automationId, verdict) => this.onDryRunResult(automationId, verdict),
       log: (msg) => this.logger.info(`[automations] ${msg}`),
@@ -1863,7 +1799,7 @@ export class Codey {
       this.chatManager.setPendingTeam(chatId, null);
     }
     // Headless — the response comes from the return value, but the event
-    // stream is the run's activity log (tool calls, worker steps, errors).
+    // stream is the run's activity log (tool calls, bot steps, errors).
     const runId = opts?.runId;
     const sink: ChatStreamSink = runId
       ? (e) => {
@@ -2045,7 +1981,7 @@ export class Codey {
   markAutomationRunNotified(id: string, runId: string): void {
     this.automationStore?.markNotified(id, runId, Date.now());
   }
-  /** Per-run activity log (tool calls, worker steps), or undefined if none. */
+  /** Per-run activity log (tool calls, bot steps), or undefined if none. */
   getAutomationRunLog(id: string, runId: string): string | undefined {
     return this.automationStore?.readRunLog(id, runId);
   }
@@ -2274,7 +2210,7 @@ export class Codey {
 
     // Pre-rate-limit: detect a paused team waiting on this chat's user.
     // Resume answers must bypass the cooldown — otherwise a quick reply to a
-    // worker's question would be dropped silently.
+    // bot's question would be dropped silently.
     const pendingChat = this.chatManager.get(message.chatId);
     const pending = pendingChat?.pendingTeam;
     const isSlash = message.text.trimStart().startsWith('/');
@@ -2593,8 +2529,7 @@ export class Codey {
     const ctxWindow = await this.contextManager.getOrCreate(conversationId);
 
     // Build memory context — merges user-global + workspace stores.
-    const memoryStore = this.workspaceManager.getMemoryStore();
-    const memoryContext = this.buildMergedMemoryContext(parsed.prompt) || undefined;
+    const memoryContext = await this.buildMergedMemoryContext(parsed.prompt) || undefined;
 
     // Skip empty prompts
     if (!parsed.prompt.trim()) {
@@ -2676,23 +2611,7 @@ export class Codey {
       await this.contextManager.addAssistantTurn(ctxWindow.id, response.output, meta);
     }
 
-    // Auto-extract memories from the interaction
-    if (this.config.memory?.autoExtract !== false && response.success) {
-      memoryStore.extractFromInteraction({
-        userPrompt: parsed.prompt,
-        agentOutput: response.output,
-        toolCalls: meta.toolCalls?.map(tc => ({
-          tool: tc.tool,
-          input: tc.input,
-          output: tc.output,
-          status: tc.status,
-        })),
-        filesChanged: meta.filesChanged?.map(fc => ({
-          path: fc.path,
-          action: fc.action,
-        })),
-      });
-    }
+
 
     this.logger.info(`[OUTPUT] ${channel}/${message.username}: ${response.success ? '(streamed)' : response.error}${response.tokens ? ` [${response.tokens.total} tokens]` : ''}${response.duration ? ` [${response.duration}s]` : ''}`);
 
@@ -2918,11 +2837,11 @@ export class Codey {
       case 'config':
         await this.cmdConfig(chatId, channel);
         break;
-      case 'workers':
-        await this.cmdWorkers(chatId, channel);
+      case 'bots':
+        await this.cmdBots(chatId, channel);
         break;
-      case 'worker':
-        await this.cmdWorker(args, message, parsed.prompt);
+      case 'bot':
+        await this.cmdBot(args, message, parsed.prompt);
         break;
       case 'team': {
         const teamName = args[0] || '';
@@ -3030,9 +2949,9 @@ export class Codey {
         ``,
         `**What I can do**`,
         `- Send any message to get coding help from the active agent`,
-        `- /worker <name> <task> — run a specific worker`,
+        `- /bot <name> <task> — run a specific bot`,
         `- /teams — list teams for this workspace`,
-        `- /team <name> [--all] <task> — run a named team. With dispatch:auto the Advisor iteratively picks workers and may loop back for revisions; --all bypasses the Advisor and runs every member in declared order.`,
+        `- /team <name> [--all] <task> — run a named team. With dispatch:auto the Advisor iteratively picks bots and may loop back for revisions; --all bypasses the Advisor and runs every member in declared order.`,
         `- /parallel <prompt> — run all agents in parallel`,
         `- /agent <name> — switch agent (${agents})`,
         `- /workspace <name> — switch workspace`,
@@ -3205,11 +3124,11 @@ export class Codey {
   }
 
 
-  private async cmdWorkers(chatId: string, channel: ChannelType): Promise<void> {
+  private async cmdBots(chatId: string, channel: ChannelType): Promise<void> {
     await this.sendResponse({
       chatId,
       channel,
-      text: `👥 Available Workers\n\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
+      text: `👥 Available Bots\n\n${this.workspaceManager.getBotManager().listBots()}`,
     });
   }
 
@@ -3477,17 +3396,17 @@ export class Codey {
     }
   }
 
-  private async cmdWorker(args: string[], message: UserMessage, prompt: string): Promise<void> {
+  private async cmdBot(args: string[], message: UserMessage, prompt: string): Promise<void> {
     const { chatId, channel } = message;
     if (args.length > 0) {
-      const workerName = args[0];
+      const botName = args[0];
       const task = args.slice(1).join(' ');
-      await this.runWorker(message, workerName, task || prompt);
+      await this.runBot(message, botName, task || prompt);
     } else {
       await this.sendResponse({
         chatId,
         channel,
-        text: `Usage: /worker <name> <task>\n\nAvailable workers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
+        text: `Usage: /bot <name> <task>\n\nAvailable bots:\n${this.workspaceManager.getBotManager().listBots()}`,
       });
     }
   }
@@ -3501,7 +3420,7 @@ export class Codey {
         await this.sendResponse({
           chatId,
           channel,
-          text: `✅ Switched to workspace: **${result.workspace}**\nDir: ${result.directory}\n\nWorkers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
+          text: `✅ Switched to workspace: **${result.workspace}**\nDir: ${result.directory}\n\nBots:\n${this.workspaceManager.getBotManager().listBots()}`,
         });
       } else if (result.isWorkspaceName) {
         const success = await this.switchWorkspace(workspaceArg);
@@ -3510,7 +3429,7 @@ export class Codey {
           await this.sendResponse({
             chatId,
             channel,
-            text: `✅ Switched to workspace: **${workspaceArg}**\nDir: ${this.workingDir}\n\nWorkers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
+            text: `✅ Switched to workspace: **${workspaceArg}**\nDir: ${this.workingDir}\n\nBots:\n${this.workspaceManager.getBotManager().listBots()}`,
           });
         } else {
           const list = this.workspaceManager.listWorkspaces().join(', ');
@@ -3532,7 +3451,7 @@ export class Codey {
       await this.sendResponse({
         chatId,
         channel,
-        text: `📁 Current workspace: **${this.workspaceManager.getCurrentWorkspace()}**\nDir: ${this.workingDir}\n\nWorkers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
+        text: `📁 Current workspace: **${this.workspaceManager.getCurrentWorkspace()}**\nDir: ${this.workingDir}\n\nBots:\n${this.workspaceManager.getBotManager().listBots()}`,
       });
     }
   }
@@ -3572,128 +3491,45 @@ export class Codey {
     }
   }
 
-  private async cmdMemory(args: string[], message: UserMessage): Promise<void> {
-    const { chatId, channel } = message;
-    // Optional `--global` flag selects the user-global store instead of
-    // the current workspace's store.
-    let useGlobal = false;
-    const rest = [...args];
-    if (rest[0] === '--global') { useGlobal = true; rest.shift(); }
-    const memoryStore = useGlobal
-      ? this.workspaceManager.getGlobalMemoryStore()
-      : this.workspaceManager.getMemoryStore();
-    const scopeLabel = useGlobal ? 'Global' : 'Workspace';
+  private memoryProjectForMessage(message: UserMessage): string | undefined {
+    const id = this.resolveChatId(message.channel, message.userId);
+    const chat = id ? this.chatManager.get(id) : undefined;
+    if (chat?.botChat) return undefined;
+    return chat ? this.resolveChatWorkingDir(chat) : this.resolveWorkspaceWorkingDir(this.workspaceManager.getCurrentWorkspace());
+  }
 
-    if (rest.length === 0 || rest[0] === 'list') {
-      const memories = memoryStore.getRecent(10);
-      if (memories.length === 0) {
-        await this.sendResponse({ chatId, channel, text: `No ${scopeLabel.toLowerCase()} memories stored.` });
-        return;
-      }
-      const lines = memories.map(m =>
-        `- [${m.type}] **${m.label}**: ${m.content.substring(0, 100)}${m.content.length > 100 ? '...' : ''}`
-      );
-      await this.sendResponse({
-        chatId,
-        channel,
-        text: `\ud83e\udde0 ${scopeLabel} Memories (${memories.length})\n\n${lines.join('\n')}`,
-      });
-    } else if (rest[0] === 'search' && rest.length > 1) {
-      const query = rest.slice(1).join(' ');
-      const results = memoryStore.search(query);
-      if (results.length === 0) {
-        await this.sendResponse({ chatId, channel, text: `No ${scopeLabel.toLowerCase()} memories matching "${query}".` });
-        return;
-      }
-      const lines = results.map(m => `- [${m.type}] **${m.label}**: ${m.content.substring(0, 100)}`);
-      await this.sendResponse({
-        chatId,
-        channel,
-        text: `\ud83d\udd0d ${scopeLabel} memory search: "${query}"\n\n${lines.join('\n')}`,
-      });
-    } else if (rest[0] === 'clear') {
-      const all = memoryStore.getAll();
-      for (const m of all) memoryStore.remove(m.id);
-      await this.sendResponse({ chatId, channel, text: `\ud83d\uddd1\ufe0f All ${scopeLabel.toLowerCase()} memories cleared.` });
-    } else {
-      await this.sendResponse({
-        chatId,
-        channel,
-        text: 'Usage:\n/memory [--global] - List recent memories (workspace or global)\n/memory [--global] search <query> - Search memories\n/memory [--global] clear - Clear all memories in that store\n/remember [--global] [--worker <name>] <text> - Add a memory',
-      });
+  private async cmdMemory(args: string[], message: UserMessage): Promise<void> {
+    const rest = [...args];
+    const global = rest[0] === '--global';
+    if (global) rest.shift();
+    const scope = global ? 'user' : 'project';
+    const project = global ? undefined : this.memoryProjectForMessage(message);
+    const provider = this.getCoMemo();
+    const action = rest[0] ?? 'list';
+    if (!['list', 'search', 'clear'].includes(action)) {
+      await this.sendResponse({ ...message, text: 'Usage: /memory [--global] [list|search TEXT|clear]' });
+      return;
     }
+    const notes = await provider.list(scope, project, action === 'search' ? rest.slice(1).join(' ') : undefined);
+    if (action === 'clear') {
+      for (const note of notes) await provider.change(note.id, note.version, scope, project);
+      this.invalidateMemorySessions();
+    }
+    await this.sendResponse({ ...message, text: action === 'clear' ? `Archived ${notes.length} ${scope} memories.`
+      : notes.length ? notes.slice(0, 10).map(note => `- ${note.content}`).join('\n') : `No ${scope} memories found.` });
   }
 
   private async cmdRemember(args: string[], message: UserMessage): Promise<void> {
-    const { chatId, channel } = message;
-    if (args.length === 0) {
-      await this.sendResponse({
-        chatId,
-        channel,
-        text: 'Usage: /remember [--global] [--worker <name>] <something to remember>\n\nExamples:\n/remember This project uses PostgreSQL 15 with pgvector\n/remember --global prefer pnpm over npm in every workspace\n/remember --worker reviewer prefer explicit error chaining over swallowed exceptions',
-      });
-      return;
-    }
-
-    // Parse leading flags (--global, --worker NAME, --workers a,b,c). Any
-    // order; consumed from the head until a non-flag token appears.
-    let scope: import('@codey/core').MemoryScope | undefined;
-    let global = false;
     const rest = [...args];
-    while (rest.length > 0) {
-      if (rest[0] === '--global') {
-        global = true;
-        rest.splice(0, 1);
-        continue;
-      }
-      if (rest[0] === '--worker' && rest[1]) {
-        scope = { worker: rest[1] };
-        rest.splice(0, 2);
-        continue;
-      }
-      if (rest[0] === '--workers' && rest[1]) {
-        const list = rest[1].split(',').map(s => s.trim()).filter(Boolean);
-        if (list.length > 0) scope = { workers: list };
-        rest.splice(0, 2);
-        continue;
-      }
-      break;
-    }
-
-    if (rest.length === 0) {
-      await this.sendResponse({ chatId, channel, text: 'Missing memory text after flag.' });
+    const global = rest[0] === '--global';
+    if (global) rest.shift();
+    if (!rest.length || rest.some(arg => arg === '--bot' || arg === '--bots')) {
+      await this.sendResponse({ ...message, text: 'Usage: /remember [--global] TEXT. Memories belong to the user or project, not a Bot.' });
       return;
     }
-
-    const content = rest.join(' ');
-    const tags = ['user'];
-    if (scope && typeof scope === 'object') {
-      if ('worker' in scope) tags.push(`worker:${scope.worker}`);
-      else if ('workers' in scope) for (const w of scope.workers) tags.push(`worker:${w}`);
-    }
-    if (global) tags.push('global');
-
-    const store = global
-      ? this.workspaceManager.getGlobalMemoryStore()
-      : this.workspaceManager.getMemoryStore();
-    const entry = store.add({
-      type: 'fact',
-      content,
-      label: content.substring(0, 60),
-      tags,
-      source: global ? 'user-global' : 'user',
-      scope,
-    });
-
-    const where = global ? ' (global)' : '';
-    const scopeNote = scope && typeof scope === 'object'
-      ? ('worker' in scope ? ` (worker: ${scope.worker})` : ` (workers: ${scope.workers.join(', ')})`)
-      : '';
-    await this.sendResponse({
-      chatId,
-      channel,
-      text: `\ud83e\udde0 Remembered${where}${scopeNote}: ${entry.content}`,
-    });
+    const note = await this.getCoMemo().remember(rest.join(' '), global ? 'user' : 'project', global ? undefined : this.memoryProjectForMessage(message));
+    this.invalidateMemorySessions();
+    await this.sendResponse({ ...message, text: `Remembered (${note.scope}): ${note.content}` });
   }
 
   private isPairableChannel(channel: ChannelType): channel is 'telegram' | 'discord' | 'imessage' {
@@ -3813,11 +3649,11 @@ export class Codey {
   private getHelpText(): string {
     return `\ud83e\udd16 Codey Commands
 
-\ud83d\udc65 Workers
-/workers - List all workers in the global library
-/worker <name> <task> - Run a specific worker
+\ud83d\udc65 Bots
+/bots - List all bots in the global library
+/bot <name> <task> - Run a specific bot
 /teams - List teams declared on this workspace
-/team <name> [--all] <task> — run a named team. With dispatch:auto the Advisor iteratively picks workers and may loop back for revisions; --all bypasses the Advisor and runs every member in declared order.
+/team <name> [--all] <task> — run a named team. With dispatch:auto the Advisor iteratively picks bots and may loop back for revisions; --all bypasses the Advisor and runs every member in declared order.
 
 \ud83e\udd16 Agents (legacy)
 /parallel <prompt> - Run all agents in parallel
@@ -3840,7 +3676,7 @@ export class Codey {
 /effort <level> - Set reasoning effort (low/medium/high/xhigh/max)
 /config - Show current config
 
-Example: /worker architect design a REST API
+Example: /bot architect design a REST API
 Example: /team review audit this PR
 Example: /remember This project uses Redis for caching
 Example: /model gpt-4.1 write a Python script`;
@@ -3913,15 +3749,15 @@ Example: /model gpt-4.1 write a Python script`;
     });
   }
 
-  private async runWorker(message: UserMessage, workerName: string, task: string): Promise<void> {
+  private async runBot(message: UserMessage, botName: string, task: string): Promise<void> {
     const { chatId, channel } = message;
-    const worker = this.workspaceManager.getWorkerManager().getWorker(workerName);
+    const bot = this.workspaceManager.getBotManager().getBot(botName);
 
-    if (!worker) {
+    if (!bot) {
       await this.sendResponse({
         chatId,
         channel,
-        text: `Worker "${workerName}" not found.\n\nAvailable workers:\n${this.workspaceManager.getWorkerManager().listWorkers()}`,
+        text: `Bot "${botName}" not found.\n\nAvailable bots:\n${this.workspaceManager.getBotManager().listBots()}`,
       });
       return;
     }
@@ -3930,7 +3766,7 @@ Example: /model gpt-4.1 write a Python script`;
       await this.sendResponse({
         chatId,
         channel,
-        text: `Usage: /worker ${workerName} <task>\n\nExample: /worker ${workerName} design a REST API`,
+        text: `Usage: /bot ${botName} <task>\n\nExample: /bot ${botName} design a REST API`,
       });
       return;
     }
@@ -3942,27 +3778,27 @@ Example: /model gpt-4.1 write a Python script`;
     await this.sendResponse({
       chatId,
       channel,
-      text: `👷 Running worker: **${worker.name}** (${worker.personality.role})\n\nAgent: ${codingAgent}\nModel: ${model}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
+      text: `👷 Running bot: **${bot.name}** (${bot.personality.role})\n\nAgent: ${codingAgent}\nModel: ${model}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
 
-    // Build cold-start bootstrap prompt — runWorkerStep only invokes the
+    // Build cold-start bootstrap prompt — runBotStep only invokes the
     // closure when no warm session exists (or it expired / wrong agent).
     const buildBootstrapPrompt = () => {
-      const basePrompt = this.workspaceManager.getWorkerManager().buildWorkerPrompt(workerName, task);
-      return this.wrapPromptWithMemory(basePrompt, task, workerName);
+      const basePrompt = this.workspaceManager.getBotManager().buildBotPrompt(botName, task);
+      return this.wrapPromptWithMemory(basePrompt, task, botName);
     };
 
     const modelConfig = this.getDefaultModelConfig(codingAgent);
     const handler = this.handlers.get(channel);
     const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
     const baseConv = `${channel}-${chatId}`;
-    const workerConv = this.workerConversationId(baseConv, { worker: workerName });
+    const botConv = this.botConversationId(baseConv, { bot: botName });
 
-    // Single-worker invocation: blackboard is unused (no peers to hand off
-    // to) but runWorkerStep needs a value for delta tracking.
-    const { response } = await this.runWorkerStep({
-      conversationId: workerConv,
-      workerName,
+    // Single-bot invocation: blackboard is unused (no peers to hand off
+    // to) but runBotStep needs a value for delta tracking.
+    const { response } = await this.runBotStep({
+      conversationId: botConv,
+      botName,
       task,
       blackboard: new TeamBlackboard(),
       codingAgent,
@@ -3973,11 +3809,10 @@ Example: /model gpt-4.1 write a Python script`;
       skipPermissions: !this.tuiMode && this.getSkipPermissions(),
     });
 
-    this.extractWorkerMemories(workerName, task, codingAgent, response);
 
     const replyText = response.success
-      ? `✅ **${worker.name}** completed:\n\n${response.output}`
-      : `❌ **${worker.name}** failed: ${response.error}`;
+      ? `✅ **${bot.name}** completed:\n\n${response.output}`
+      : `❌ **${bot.name}** failed: ${response.error}`;
 
     await this.sendResponse({
       chatId,
@@ -4002,18 +3837,18 @@ Example: /model gpt-4.1 write a Python script`;
     chatAgent: CodingAgent | undefined,
     chatModel: ModelConfig | undefined,
     perStep: (msg:
-      | { kind: 'route'; step: number; worker: string; reason: string; isRevision: boolean }
-      | { kind: 'blackboard'; step: number; worker: string; summary: string; blackboard: BlackboardSnapshot }
+      | { kind: 'route'; step: number; bot: string; reason: string; isRevision: boolean }
+      | { kind: 'blackboard'; step: number; bot: string; summary: string; blackboard: BlackboardSnapshot }
     ) => void | Promise<void>,
-    runWorker: (worker: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
-    onStepDone?: (d: { step: number; worker: string; failed: boolean; error?: string }) => void,
+    runBot: (bot: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
+    onStepDone?: (d: { step: number; bot: string; failed: boolean; error?: string }) => void,
     coordinator?: { agent: CodingAgent; model?: ModelConfig },
   ): Promise<
     | { fallback: true; fallbackReason: string }
     | {
         fallback: false;
         paused?: undefined;
-        parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>;
+        parts: Array<{ step: number; bot: string; output: string; isRevision: boolean }>;
         finalSummary: string;
         fallbackMidRun?: { reason: string };
         blackboard: TeamBlackboard;
@@ -4023,41 +3858,41 @@ Example: /model gpt-4.1 write a Python script`;
         fallback: false;
         paused: {
           history: AdvisorHistoryEntry[];
-          lastWorker: string;
+          lastBot: string;
           lastOutput: string;
-          parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }>;
-          seenWorkers: string[];
+          parts: Array<{ step: number; bot: string; output: string; isRevision: boolean }>;
+          seenBots: string[];
           step: number;
-          askingWorker: string;
+          askingBot: string;
           question: string;
           options?: string[];
         };
         blackboard: TeamBlackboard;
       }
   > {
-    const workerManager = this.workspaceManager.getWorkerManager();
+    const botManager = this.workspaceManager.getBotManager();
     const members = team.members;
     const cap = Math.max(Math.min(2 * members.length, 12), 4);
     const FORWARD_HOP_CAP = 2;
 
     const history: AdvisorHistoryEntry[] = [];
-    let lastWorker: string | null = null;
+    let lastBot: string | null = null;
     let lastOutput: string | null = null;
-    const parts: Array<{ step: number; worker: string; output: string; isRevision: boolean }> = [];
+    const parts: Array<{ step: number; bot: string; output: string; isRevision: boolean }> = [];
     let finalSummary = '';
     let fallbackMidRun: { reason: string } | undefined;
     const blackboard = new TeamBlackboard();
     const thinkingByStep: Record<number, string> = {};
 
     const { agent: mAgent, model: mModel } = coordinator ?? this.getAdvisorAgentAndModel();
-    const seenWorkers = new Set<string>();
+    const seenBots = new Set<string>();
 
-    // When set, skip the next Advisor call and run this worker directly
-    // (used when a worker emits `[ASK: <teammate>]: q` to forward).
-    let directNext: { worker: string; instruction: string } | null = null;
+    // When set, skip the next Advisor call and run this bot directly
+    // (used when a bot emits `[ASK: <teammate>]: q` to forward).
+    let directNext: { bot: string; instruction: string } | null = null;
     // When set, the next Advisor turn arbitrates this pending question
-    // (used when a worker emits `[ASK_USER]:` or forwards to an unknown target).
-    let pendingArbitration: { worker: string; question: string; options?: string[] } | null = null;
+    // (used when a bot emits `[ASK_USER]:` or forwards to an unknown target).
+    let pendingArbitration: { bot: string; question: string; options?: string[] } | null = null;
     // Number of consecutive direct forwards since the last Advisor turn.
     let forwardHops = 0;
 
@@ -4070,18 +3905,18 @@ Example: /model gpt-4.1 write a Python script`;
       let isRevision: boolean;
 
       if (directNext) {
-        turnNext = directNext.worker;
+        turnNext = directNext.bot;
         turnInstruction = directNext.instruction;
-        turnReason = `Forwarded from ${lastWorker ?? 'previous worker'}`;
-        isRevision = seenWorkers.has(turnNext);
+        turnReason = `Forwarded from ${lastBot ?? 'previous bot'}`;
+        isRevision = seenBots.has(turnNext);
         directNext = null;
       } else {
         const turn: AdvisorTurn = await runAdvisor(
           {
             task,
-            members: members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
+            members: members.map(n => ({ name: n, hint: botManager.getDispatchHint(n) })),
             history,
-            lastWorker,
+            lastBot,
             lastOutput,
             pendingQuestion: pendingArbitration ?? undefined,
           },
@@ -4094,8 +3929,8 @@ Example: /model gpt-4.1 write a Python script`;
           fallbackMidRun = { reason: turn.fallbackReason ?? 'unknown' };
           break;
         }
-        if (lastWorker && turn.summary_of_last) {
-          history.push({ worker: lastWorker, summary: turn.summary_of_last });
+        if (lastBot && turn.summary_of_last) {
+          history.push({ bot: lastBot, summary: turn.summary_of_last });
         }
         if (pendingArbitration && turn.escalateToUser) {
           // Strip the [ASK_USER] marker line from the asker's persisted output
@@ -4103,7 +3938,7 @@ Example: /model gpt-4.1 write a Python script`;
           // the user replies.
           const strippedLastOutput = stripAskMarker(lastOutput ?? '');
           const strippedParts = parts.map((p, i) =>
-            i === parts.length - 1 && p.worker === pendingArbitration!.worker
+            i === parts.length - 1 && p.bot === pendingArbitration!.bot
               ? { ...p, output: stripAskMarker(p.output) }
               : p,
           );
@@ -4111,12 +3946,12 @@ Example: /model gpt-4.1 write a Python script`;
             fallback: false,
             paused: {
               history,
-              lastWorker: pendingArbitration.worker,
+              lastBot: pendingArbitration.bot,
               lastOutput: strippedLastOutput,
               parts: strippedParts,
-              seenWorkers: Array.from(seenWorkers),
+              seenBots: Array.from(seenBots),
               step,
-              askingWorker: pendingArbitration.worker,
+              askingBot: pendingArbitration.bot,
               question: pendingArbitration.question,
               options: pendingArbitration.options,
             },
@@ -4130,38 +3965,38 @@ Example: /model gpt-4.1 write a Python script`;
         turnNext = turn.next;
         turnInstruction = turn.instruction;
         turnReason = turn.reason ?? '';
-        isRevision = seenWorkers.has(turn.next);
+        isRevision = seenBots.has(turn.next);
         pendingArbitration = null;
         forwardHops = 0;
       }
 
-      await perStep({ kind: 'route', step, worker: turnNext, reason: turnReason, isRevision });
+      await perStep({ kind: 'route', step, bot: turnNext, reason: turnReason, isRevision });
 
       const codingAgent = (chatAgent ?? this.getDefaultAgent()) as CodingAgent;
       const modelConfig = chatModel ?? this.getDefaultModelConfig(codingAgent);
 
-      const stepTaskBody = this.composeStepTask(task, turnInstruction, lastWorker, lastOutput);
-      // Build a per-step "last did" map from Advisor history: latest entry per worker.
-      const lastDidByWorker = new Map<string, string>();
-      for (const h of history) lastDidByWorker.set(h.worker, h.summary);
+      const stepTaskBody = this.composeStepTask(task, turnInstruction, lastBot, lastOutput);
+      // Build a per-step "last did" map from Advisor history: latest entry per bot.
+      const lastDidByBot = new Map<string, string>();
+      for (const h of history) lastDidByBot.set(h.bot, h.summary);
       const teamRoster = members
         .filter(n => n !== turnNext)
         .map(n => ({
           name: n,
-          hint: workerManager.getDispatchHint(n),
-          lastDid: lastDidByWorker.get(n),
+          hint: botManager.getDispatchHint(n),
+          lastDid: lastDidByBot.get(n),
         }));
-      const prompt = workerManager.buildTeamWorkerPrompt(
+      const prompt = botManager.buildTeamBotPrompt(
         turnNext,
         stepTaskBody,
         teamRoster,
-        blackboard.renderForWorker(turnNext),
+        blackboard.renderForBot(turnNext),
       );
 
-      const response = await runWorker(turnNext, prompt, codingAgent, modelConfig, blackboard);
+      const response = await runBot(turnNext, prompt, codingAgent, modelConfig, blackboard);
       if (!response.success) {
-        onStepDone?.({ step, worker: turnNext, failed: true, error: response.error });
-        fallbackMidRun = { reason: `worker ${turnNext} failed: ${response.error ?? 'unknown'}` };
+        onStepDone?.({ step, bot: turnNext, failed: true, error: response.error });
+        fallbackMidRun = { reason: `bot ${turnNext} failed: ${response.error ?? 'unknown'}` };
         break;
       }
       if (response.thinking) thinkingByStep[step] = response.thinking;
@@ -4170,12 +4005,12 @@ Example: /model gpt-4.1 write a Python script`;
       const ingested = blackboard.ingest(turnNext, step, response.output);
       const cleanOutput = ingested.stripped;
       const deltaSummary = blackboard.summarizeDelta(ingested.added);
-      if (deltaSummary) await perStep({ kind: 'blackboard', step, worker: turnNext, summary: deltaSummary, blackboard: blackboard.toJSON() });
+      if (deltaSummary) await perStep({ kind: 'blackboard', step, bot: turnNext, summary: deltaSummary, blackboard: blackboard.toJSON() });
 
-      parts.push({ step, worker: turnNext, output: cleanOutput, isRevision });
-      onStepDone?.({ step, worker: turnNext, failed: false });
-      seenWorkers.add(turnNext);
-      lastWorker = turnNext;
+      parts.push({ step, bot: turnNext, output: cleanOutput, isRevision });
+      onStepDone?.({ step, bot: turnNext, failed: false });
+      seenBots.add(turnNext);
+      lastBot = turnNext;
       lastOutput = cleanOutput;
 
       const ask = parseAsk(cleanOutput);
@@ -4186,23 +4021,23 @@ Example: /model gpt-4.1 write a Python script`;
         if (targetValid && forwardHops < FORWARD_HOP_CAP) {
           forwardHops += 1;
           // Record the forward in history so the Advisor retains visibility of
-          // the asking worker's contribution despite skipping the Advisor turn.
+          // the asking bot's contribution despite skipping the Advisor turn.
           history.push({
-            worker: turnNext,
+            bot: turnNext,
             summary: `Asked ${ask.target}: "${ask.question}"`,
           });
           directNext = {
-            worker: ask.target,
+            bot: ask.target,
             instruction: `${turnNext} forwarded a question to you: "${ask.question}". Answer it concisely so the team can continue.`,
           };
           continue;
         }
         // Invalid target or hop cap exceeded → Advisor arbitrates.
-        pendingArbitration = { worker: turnNext, question: ask.question, options: undefined };
+        pendingArbitration = { bot: turnNext, question: ask.question, options: undefined };
         continue;
       }
       // kind === 'user' → Advisor arbitrates whether to route or escalate.
-      pendingArbitration = { worker: turnNext, question: ask.question, options: ask.options };
+      pendingArbitration = { bot: turnNext, question: ask.question, options: ask.options };
     }
 
     // Cap exhausted without explicit done — request a final summary.
@@ -4212,9 +4047,9 @@ Example: /model gpt-4.1 write a Python script`;
       const closing = await runAdvisor(
         {
           task,
-          members: members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) })),
+          members: members.map(n => ({ name: n, hint: botManager.getDispatchHint(n) })),
           history,
-          lastWorker,
+          lastBot,
           lastOutput,
           finalize: true,
         },
@@ -4229,14 +4064,14 @@ Example: /model gpt-4.1 write a Python script`;
   private composeStepTask(
     originalTask: string,
     instruction: string,
-    lastWorker: string | null,
+    lastBot: string | null,
     lastOutput: string | null,
   ): string {
     const sections: string[] = [];
     if (instruction.trim()) sections.push(instruction.trim());
     sections.push(`Original task: ${originalTask}`);
-    if (lastWorker && lastOutput) {
-      sections.push(`Previous worker (${lastWorker}) output:\n${lastOutput}`);
+    if (lastBot && lastOutput) {
+      sections.push(`Previous bot (${lastBot}) output:\n${lastOutput}`);
     }
     return sections.join('\n\n');
   }
@@ -4244,7 +4079,7 @@ Example: /model gpt-4.1 write a Python script`;
   /**
    * Close a team run with the Aide final and nothing else. Every surface ends
    * the same way; the only difference is who sends it. A surface with
-   * per-worker bubbles (chat) publishes the final itself from the persisted
+   * per-bot bubbles (chat) publishes the final itself from the persisted
    * member messages, so this is a no-op there. A surface without them
    * (channels) gets the same summary sent here from the in-memory steps.
    */
@@ -4255,7 +4090,7 @@ Example: /model gpt-4.1 write a Python script`;
     steps: TeamStepRecord[],
     signal?: AbortSignal,
   ): Promise<void> {
-    if (emitter.rendersWorkerBubbles) return;
+    if (emitter.rendersBotBubbles) return;
     const teamTurnId = `channel:${teamName}`;
     const final = await composeTeamFinal({
       teamTurnId,
@@ -4303,15 +4138,15 @@ Example: /model gpt-4.1 write a Python script`;
     const handler = this.handlers.get(channel);
     const { members, dispatch } = team;
     const baseConv = `${channel}-${chatId}`;
-    const teamConv = this.workerConversationId(baseConv, { team: teamName });
+    const teamConv = this.botConversationId(baseConv, { team: teamName });
     const turnTeamTurnId = randomUUID();
 
-    // Helper to run one worker once, used by both the Advisor loop and the
+    // Helper to run one bot once, used by both the Advisor loop and the
     // legacy "all members in input order" fallback. Routes through
-    // runWorkerStep so subsequent invocations of the same worker reuse
+    // runBotStep so subsequent invocations of the same bot reuse
     // the warm CLI session via --resume.
-    const runOneWorker = async (
-      workerName: string,
+    const runOneBot = async (
+      botName: string,
       prompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
@@ -4319,20 +4154,19 @@ Example: /model gpt-4.1 write a Python script`;
       onThinking?: (text: string) => void,
     ): Promise<{ success: boolean; output: string; error?: string; thinking?: string }> => {
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
-      const { response } = await this.runWorkerStep({
+      const { response } = await this.runBotStep({
         conversationId: teamConv,
-        workerName,
+        botName,
         task,
         blackboard,
         codingAgent,
         modelConfig,
-        buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, task, workerName),
+        buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, task, botName),
         onStream,
         onThinking,
         interactive: this.tuiMode,
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       });
-      this.extractWorkerMemories(workerName, task, codingAgent, response);
       return response.success
         ? { success: true, output: response.output, thinking: response.thinking || undefined }
         : { success: false, output: '', error: response.error };
@@ -4358,13 +4192,13 @@ Example: /model gpt-4.1 write a Python script`;
             await this.sendResponse({
               chatId,
               channel,
-              text: `🔄 Step ${msg.step}: **${msg.worker}**${msg.isRevision ? ' (revision)' : ''} — ${msg.reason}`,
+              text: `🔄 Step ${msg.step}: **${msg.bot}**${msg.isRevision ? ' (revision)' : ''} — ${msg.reason}`,
             });
           } else {
             await this.sendResponse({ chatId, channel, text: msg.summary });
           }
         },
-        runOneWorker,
+        runOneBot,
       );
 
       if (result.fallback) {
@@ -4374,33 +4208,33 @@ Example: /model gpt-4.1 write a Python script`;
           text: `⚠️ Auto-routing failed (${result.fallbackReason}), running all members.`,
         });
         const fbEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
-        await this.runAllMembersInOrder(fbEmitter, message.chatId, baseConv, teamName, members, task, runOneWorker, { teamTurnId: turnTeamTurnId });
+        await this.runAllMembersInOrder(fbEmitter, message.chatId, baseConv, teamName, members, task, runOneBot, { teamTurnId: turnTeamTurnId });
         return;
       }
 
       if ('paused' in result && result.paused) {
         const p = result.paused;
-        const wm = this.workspaceManager.getWorkerManager();
-        const askWorkerName = wm.getWorker(p.askingWorker)?.name ?? p.askingWorker;
+        const wm = this.workspaceManager.getBotManager();
+        const askBotName = wm.getBot(p.askingBot)?.name ?? p.askingBot;
         this.persistPendingTeam(message.chatId, {
           mode: 'auto',
           teamName,
           task,
           teamTurnId: turnTeamTurnId,
           history: p.history,
-          lastWorker: p.lastWorker,
+          lastBot: p.lastBot,
           lastOutput: p.lastOutput,
           partsSoFar: p.parts,
-          seenWorkers: p.seenWorkers,
+          seenBots: p.seenBots,
           step: p.step,
-          askingWorker: p.askingWorker,
+          askingBot: p.askingBot,
           question: p.question,
           options: p.options,
           askedAt: Date.now(),
           blackboard: result.blackboard.toJSON(),
-          workerAnchors: this.snapshotWorkerAnchors(teamConv),
+          botAnchors: this.snapshotBotAnchors(teamConv),
         });
-        const rendered1 = renderQuestion(askWorkerName, p.question, p.options);
+        const rendered1 = renderQuestion(askBotName, p.question, p.options);
         await this.sendResponse({
           chatId: message.chatId,
           channel: message.channel,
@@ -4422,32 +4256,31 @@ Example: /model gpt-4.1 write a Python script`;
       const finalEmitter = new ChannelEmitter((r) => this.sendResponse(r), undefined, chatId, channel);
       await this.notifyTeamFinal(
         finalEmitter, teamName, task,
-        result.parts.map(p => ({ step: p.step, worker: p.worker, output: p.output })),
+        result.parts.map(p => ({ step: p.step, bot: p.bot, output: p.output })),
       );
-      this.persistBlackboardDecisions(result.blackboard, teamName);
       return;
     }
 
     // Sequential/graph teams may answer a simple informational question with
-    // one worker. The routing gate fails closed to the full workflow, and
+    // one bot. The routing gate fails closed to the full workflow, and
     // `--all` always bypasses it.
     if (dispatch === 'sequential' && !opts.forceAll) {
       const fastPath = await this.decideSequentialFastPath(members, task, this.workingDir);
-      if (fastPath.route === 'single_worker') {
+      if (fastPath.route === 'single_bot') {
         await this.sendResponse({
           chatId,
           channel,
-          text: `Direct answer via **${fastPath.worker}** — ${fastPath.reason}`,
+          text: `Direct answer via **${fastPath.bot}** — ${fastPath.reason}`,
         });
         const directEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
-        await this.runAllMembersInOrder(directEmitter, message.chatId, baseConv, teamName, [fastPath.worker], task, runOneWorker, { teamTurnId: turnTeamTurnId });
+        await this.runAllMembersInOrder(directEmitter, message.chatId, baseConv, teamName, [fastPath.bot], task, runOneBot, { teamTurnId: turnTeamTurnId });
         return;
       }
     }
 
     // dispatch === 'sequential' OR forceAll: full workflow path
     if (!opts.forceAll && team.graph) {
-      await this.runSequentialGraphForChat(message, teamName, team.graph, task, runOneWorker, turnTeamTurnId);
+      await this.runSequentialGraphForChat(message, teamName, team.graph, task, runOneBot, turnTeamTurnId);
       return;
     }
     const headerSuffix = opts.forceAll ? ' [--all override]' : '';
@@ -4457,11 +4290,11 @@ Example: /model gpt-4.1 write a Python script`;
       text: `👥 Running team **${teamName}** (${members.join(' → ')})${headerSuffix}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
     const allEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
-    await this.runAllMembersInOrder(allEmitter, message.chatId, baseConv, teamName, members, task, runOneWorker, { teamTurnId: turnTeamTurnId });
+    await this.runAllMembersInOrder(allEmitter, message.chatId, baseConv, teamName, members, task, runOneBot, { teamTurnId: turnTeamTurnId });
   }
 
   /**
-   * Resume a paused team using the user's answer to a worker's [ASK_USER] question.
+   * Resume a paused team using the user's answer to a bot's [ASK_USER] question.
    * Caller (handleMessage) is responsible for clearing chat.pendingTeam BEFORE invoking this,
    * so any new pause state we set here is not stomped.
    */
@@ -4503,9 +4336,9 @@ Example: /model gpt-4.1 write a Python script`;
         .filter(message => message.teamTurnId === pending.teamTurnId)
         .map(message => message.step ?? 0) ?? []),
     ) + 1;
-    const recordResumeFailure = (worker: string, reason: string) => {
-      emitter.beginWorker?.({ step: nextResumeStep, worker });
-      emitter.endWorker?.('failed', { failureReason: reason });
+    const recordResumeFailure = (bot: string, reason: string) => {
+      emitter.beginBot?.({ step: nextResumeStep, bot });
+      emitter.endBot?.('failed', { failureReason: reason });
     };
     // An ad-hoc team built from @mentions has no registry entry; its member
     // list travels with the pending state instead.
@@ -4519,27 +4352,28 @@ Example: /model gpt-4.1 write a Python script`;
       await emitter.notify(`Team \`${pending.teamName}\` no longer exists; the paused run was dropped.`);
       return emitter.transcript;
     }
-    const teamConv = this.workerConversationId(convBase, { team: pending.teamName });
-    // Rehydrate any warm worker sessions captured at pause time so the
+    const teamConv = this.botConversationId(convBase, { team: pending.teamName });
+    // Rehydrate any warm bot sessions captured at pause time so the
     // resumed step continues `--resume`-ing instead of re-bootstrapping.
-    await this.rehydrateWorkerAnchors(teamConv, pending.workerAnchors);
-    const runOneWorker = async (
-      workerName: string,
+    await this.rehydrateBotAnchors(teamConv, pending.botAnchors);
+    const runOneBot = async (
+      botName: string,
       prompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
       onThinking?: (text: string) => void,
     ): Promise<{ success: boolean; output: string; error?: string; thinking?: string }> => {
-      const { response } = await this.runWorkerStep({
+      const { response } = await this.runBotStep({
         conversationId: teamConv,
-        workerName,
+        botName,
         task: pending.task,
+        browserChatId: resumedChat ? chatId : undefined,
         blackboard,
         codingAgent,
         modelConfig,
         effort: resolveEffort({ chat: resumedChat?.effort }),
-        buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, pending.task, workerName, !!globalBotChat),
+        buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, pending.task, botName, !!globalBotChat, resumedChat?.workspaceName, resumedChat ? this.resolveChatWorkingDir(resumedChat) : undefined),
         onStream: (text: string) => emitter.onStream(text),
         onThinking: onThinking ?? ((text: string) => emitter.onThinking(text, 0)),
         signal,
@@ -4547,36 +4381,35 @@ Example: /model gpt-4.1 write a Python script`;
         interactive: this.tuiMode,
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       });
-      if (!globalBotChat) this.extractWorkerMemories(workerName, pending.task, codingAgent, response);
       return response.success
         ? { success: true, output: response.output, thinking: response.thinking || undefined }
         : { success: false, output: '', error: response.error };
     };
 
     if (pending.mode === 'sequential') {
-      const wm = this.workspaceManager.getWorkerManager();
+      const wm = this.workspaceManager.getBotManager();
       const memberName = team.members[pending.memberIndex];
       const codingAgent = resumeAgent;
       const modelConfig = resumeModel;
       const seqRoster = team.members.map(n => ({ name: n, hint: wm.getDispatchHint(n) }));
       const seqNextName = team.members[pending.memberIndex + 1];
-      const seqNextWorker = seqNextName
+      const seqNextBot = seqNextName
         ? { name: seqNextName, hint: wm.getDispatchHint(seqNextName) }
         : null;
       const blackboard = TeamBlackboard.fromJSON(pending.blackboard);
-      const reprompt = wm.buildSequentialWorkerPrompt(
+      const reprompt = wm.buildSequentialBotPrompt(
         memberName,
         `${pending.carry}\n\n[User answer to your question "${pending.question}"]:\n${answer}`,
         seqRoster,
-        seqNextWorker,
-        blackboard.renderForWorker(memberName),
+        seqNextBot,
+        blackboard.renderForBot(memberName),
       );
       await emitter.status(`🔄 Resuming **${memberName}** with your answer…`);
-      emitter.beginWorker?.({ step: nextResumeStep, worker: memberName, agent: codingAgent, model: modelConfig?.model });
-      const response = await runOneWorker(memberName, reprompt, codingAgent, modelConfig, blackboard);
+      emitter.beginBot?.({ step: nextResumeStep, bot: memberName, agent: codingAgent, model: modelConfig?.model });
+      const response = await runOneBot(memberName, reprompt, codingAgent, modelConfig, blackboard);
       if (!response.success) {
-        emitter.endWorker?.('failed', { failureReason: response.error ?? 'Worker failed without an error message' });
-        await emitter.notify(`❌ Worker **${memberName}** failed on resume: ${response.error}`);
+        emitter.endBot?.('failed', { failureReason: response.error ?? 'Bot failed without an error message' });
+        await emitter.notify(`❌ Bot **${memberName}** failed on resume: ${response.error}`);
         return emitter.transcript;
       }
       const ingested = blackboard.ingest(memberName, pending.memberIndex + 1, response.output);
@@ -4592,20 +4425,20 @@ Example: /model gpt-4.1 write a Python script`;
         // only what this pause changed, so a new field cannot silently drop out.
         this.persistPendingTeam(chatId, {
           ...pending,
-          askingWorker: memberName,
+          askingBot: memberName,
           question: ask.question,
           options: ask.options,
           askedAt: Date.now(),
           blackboard: blackboard.toJSON(),
-          workerAnchors: this.snapshotWorkerAnchors(teamConv),
+          botAnchors: this.snapshotBotAnchors(teamConv),
         });
         const rendered2 = renderQuestion(memberName, ask.question, ask.options);
         await emitter.notify(rendered2.text, rendered2.choices);
-        emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
+        emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
         return emitter.transcript;
       }
-      emitter.endWorker?.('done');
-      const carryForNext = `Previous worker output:\n${response.output}\n\nYour task: ${pending.task}`;
+      emitter.endBot?.('done');
+      const carryForNext = `Previous bot output:\n${response.output}\n\nYour task: ${pending.task}`;
       const priorResults: string[] = [`**${memberName}**: ${response.output}`];
       await this.runAllMembersInOrder(
         emitter,
@@ -4614,7 +4447,7 @@ Example: /model gpt-4.1 write a Python script`;
         pending.teamName,
         team.members,
         pending.task,
-        runOneWorker,
+        runOneBot,
         { fallbackAgent: resumeAgent, fallbackModel: resumeModel, signal, startIndex: pending.memberIndex + 1, startStep: nextResumeStep + 1, startCarry: carryForNext, priorResults, blackboard, conversationId: teamConv, teamTurnId: pending.teamTurnId },
       );
       return emitter.transcript;
@@ -4631,23 +4464,23 @@ Example: /model gpt-4.1 write a Python script`;
       await this.continueGraphRun(
         emitter, chatId, convBase,
         pending.teamName, pending.teamTurnId, team.graph, pending.task, state, blackboard, pending.results,
-        runOneWorker, { fallbackAgent: resumeAgent, fallbackModel: resumeModel, signal, resume: { question: pending.question, answer } },
+        runOneBot, { fallbackAgent: resumeAgent, fallbackModel: resumeModel, signal, resume: { question: pending.question, answer } },
       );
       return emitter.transcript;
     }
 
     // mode === 'auto'
     const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
-    const wm = this.workspaceManager.getWorkerManager();
+    const wm = this.workspaceManager.getBotManager();
     const turn = await runAdvisor(
       {
         task: pending.task,
         members: team.members.map(n => ({ name: n, hint: wm.getDispatchHint(n) })),
         history: pending.history,
-        lastWorker: pending.lastWorker,
+        lastBot: pending.lastBot,
         lastOutput: pending.lastOutput,
         userClarification: {
-          worker: pending.askingWorker,
+          bot: pending.askingBot,
           question: pending.question,
           answer,
         },
@@ -4661,34 +4494,34 @@ Example: /model gpt-4.1 write a Python script`;
     }
     const seededHistory: AdvisorHistoryEntry[] = [
       ...pending.history,
-      { worker: pending.askingWorker, summary: `User clarified: ${pending.question} → ${answer}` },
+      { bot: pending.askingBot, summary: `User clarified: ${pending.question} → ${answer}` },
     ];
     if (turn.done || !turn.next) {
       await this.notifyTeamFinal(emitter, pending.teamName, pending.task, pending.partsSoFar, signal);
       return emitter.transcript;
     }
-    const isRevision = pending.seenWorkers.includes(turn.next);
+    const isRevision = pending.seenBots.includes(turn.next);
     await emitter.status(`🔄 Step ${pending.step}: **${turn.next}**${isRevision ? ' (revision)' : ''} — ${turn.reason}`);
     const codingAgent = resumeAgent;
     const modelConfig = resumeModel;
-    const stepTaskBody = this.composeStepTask(pending.task, turn.instruction, pending.lastWorker, pending.lastOutput);
-    // Use the team-aware builder so the resumed worker also sees the blackboard
+    const stepTaskBody = this.composeStepTask(pending.task, turn.instruction, pending.lastBot, pending.lastOutput);
+    // Use the team-aware builder so the resumed bot also sees the blackboard
     // and the marker protocol — keeps post-pause steps consistent with pre-pause.
     const resumeRoster = team.members
       .filter(n => n !== turn.next)
       .map(n => ({ name: n, hint: wm.getDispatchHint(n) }));
     const resumeBoardForPrompt = TeamBlackboard.fromJSON(pending.blackboard);
-    const stepPrompt = wm.buildTeamWorkerPrompt(
+    const stepPrompt = wm.buildTeamBotPrompt(
       turn.next,
       stepTaskBody,
       resumeRoster,
-      resumeBoardForPrompt.renderForWorker(turn.next),
+      resumeBoardForPrompt.renderForBot(turn.next),
     );
-    emitter.beginWorker?.({ step: nextResumeStep, worker: turn.next, reason: turn.reason, agent: codingAgent, model: modelConfig?.model });
-    const response = await runOneWorker(turn.next, stepPrompt, codingAgent, modelConfig, resumeBoardForPrompt);
+    emitter.beginBot?.({ step: nextResumeStep, bot: turn.next, reason: turn.reason, agent: codingAgent, model: modelConfig?.model });
+    const response = await runOneBot(turn.next, stepPrompt, codingAgent, modelConfig, resumeBoardForPrompt);
     if (!response.success) {
-      emitter.endWorker?.('failed', { failureReason: response.error ?? 'Worker failed without an error message' });
-      await emitter.notify(`❌ Worker **${turn.next}** failed on resume: ${response.error}`);
+      emitter.endBot?.('failed', { failureReason: response.error ?? 'Bot failed without an error message' });
+      await emitter.notify(`❌ Bot **${turn.next}** failed on resume: ${response.error}`);
       return emitter.transcript;
     }
     // Restore the blackboard captured at pause time so resumed step + future
@@ -4697,10 +4530,10 @@ Example: /model gpt-4.1 write a Python script`;
     const resumeIngest = resumeBoard.ingest(turn.next, pending.step, response.output);
     response.output = resumeIngest.stripped;
     const ask = parseAskUser(response.output);
-    const newParts = [...pending.partsSoFar, { step: pending.step, worker: turn.next, output: response.output, isRevision }];
-    const newSeen = Array.from(new Set([...pending.seenWorkers, turn.next]));
+    const newParts = [...pending.partsSoFar, { step: pending.step, bot: turn.next, output: response.output, isRevision }];
+    const newSeen = Array.from(new Set([...pending.seenBots, turn.next]));
     const newHistory = turn.summary_of_last
-      ? [...seededHistory, { worker: pending.askingWorker, summary: turn.summary_of_last }]
+      ? [...seededHistory, { bot: pending.askingBot, summary: turn.summary_of_last }]
       : seededHistory;
     if (ask) {
       // Same as the sequential re-pause: spread the prior state, override the
@@ -4708,36 +4541,35 @@ Example: /model gpt-4.1 write a Python script`;
       this.persistPendingTeam(chatId, {
         ...pending,
         history: newHistory,
-        lastWorker: turn.next,
+        lastBot: turn.next,
         lastOutput: response.output,
         partsSoFar: newParts,
-        seenWorkers: newSeen,
+        seenBots: newSeen,
         step: pending.step + 1,
-        askingWorker: turn.next,
+        askingBot: turn.next,
         question: ask.question,
         options: ask.options,
         blackboard: resumeBoard.toJSON(),
         askedAt: Date.now(),
-        workerAnchors: this.snapshotWorkerAnchors(teamConv),
+        botAnchors: this.snapshotBotAnchors(teamConv),
       });
       const rendered3 = renderQuestion(turn.next, ask.question, ask.options);
       await emitter.notify(rendered3.text, rendered3.choices);
-      emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
+      emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
       return emitter.transcript;
     }
-    emitter.endWorker?.('done');
+    emitter.endBot?.('done');
     const closing = await runAdvisor(
       {
         task: pending.task,
         members: team.members.map(n => ({ name: n, hint: wm.getDispatchHint(n) })),
         history: newHistory,
-        lastWorker: turn.next,
+        lastBot: turn.next,
         lastOutput: response.output,
         finalize: true,
       },
       { agent: mAgent, model: mModel, runner: this.advisorRunner, signal },
     );
-    if (!this.chatManager.get(chatId)?.botChat) this.persistBlackboardDecisions(resumeBoard, pending.teamName);
     await this.notifyTeamFinal(emitter, pending.teamName, pending.task, newParts, signal);
     return emitter.transcript;
   }
@@ -4749,8 +4581,8 @@ Example: /model gpt-4.1 write a Python script`;
     teamName: string,
     members: string[],
     task: string,
-    runOneWorker: (
-      workerName: string,
+    runOneBot: (
+      botName: string,
       prompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
@@ -4759,45 +4591,45 @@ Example: /model gpt-4.1 write a Python script`;
     ) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
     opts: { startIndex?: number; startStep?: number; startCarry?: string; priorResults?: string[]; blackboard?: TeamBlackboard; conversationId?: string; signal?: AbortSignal; fallbackAgent?: CodingAgent; fallbackModel?: ModelConfig; teamTurnId?: string; firstReason?: string } = {},
   ): Promise<{ thinkingByStep: Record<number, string> }> {
-    const workerManager = this.workspaceManager.getWorkerManager();
+    const botManager = this.workspaceManager.getBotManager();
     const results: string[] = opts.priorResults ? [...opts.priorResults] : [];
     let currentTask = opts.startCarry ?? task;
     const blackboard = opts.blackboard ?? new TeamBlackboard();
     const thinkingByStep: Record<number, string> = {};
     const teamConv = opts.conversationId
-      ?? this.workerConversationId(convBase, { team: teamName });
+      ?? this.botConversationId(convBase, { team: teamName });
     let executionStep = opts.startStep ?? ((opts.startIndex ?? 0) + 1);
 
     for (let i = opts.startIndex ?? 0; i < members.length; i++) {
       if (opts.signal?.aborted) break;
       const memberName = members[i];
-      const worker = workerManager.getWorker(memberName);
-      if (!worker) {
-        emitter.beginWorker?.({ step: executionStep, worker: memberName });
+      const bot = botManager.getBot(memberName);
+      if (!bot) {
+        emitter.beginBot?.({ step: executionStep, bot: memberName });
         results.push(`**${memberName}**: ❌ not found in global library`);
-        emitter.endWorker?.('failed', { failureReason: `Worker "${memberName}" was not found` });
+        emitter.endBot?.('failed', { failureReason: `Bot "${memberName}" was not found` });
         break;
       }
       const codingAgent = (opts.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
       const modelConfig = opts.fallbackModel ?? this.getDefaultModelConfig(codingAgent);
-      await emitter.status(`🔄 Worker **${worker.name}** is working...`);
-      emitter.beginWorker?.({ step: executionStep, worker: worker.name, reason: i === (opts.startIndex ?? 0) ? opts.firstReason : undefined, agent: codingAgent, model: modelConfig?.model });
-      const roster = members.map(n => ({ name: n, hint: workerManager.getDispatchHint(n) }));
+      await emitter.status(`🔄 Bot **${bot.name}** is working...`);
+      emitter.beginBot?.({ step: executionStep, bot: bot.name, reason: i === (opts.startIndex ?? 0) ? opts.firstReason : undefined, agent: codingAgent, model: modelConfig?.model });
+      const roster = members.map(n => ({ name: n, hint: botManager.getDispatchHint(n) }));
       const nextName = members[i + 1];
-      const nextWorker = nextName
-        ? { name: nextName, hint: workerManager.getDispatchHint(nextName) }
+      const nextBot = nextName
+        ? { name: nextName, hint: botManager.getDispatchHint(nextName) }
         : null;
-      const prompt = workerManager.buildSequentialWorkerPrompt(
+      const prompt = botManager.buildSequentialBotPrompt(
         memberName,
         currentTask,
         roster,
-        nextWorker,
-        blackboard.renderForWorker(memberName),
+        nextBot,
+        blackboard.renderForBot(memberName),
       );
-      const response = await runOneWorker(memberName, prompt, codingAgent, modelConfig, blackboard, (t) => emitter.onThinking(t, executionStep));
+      const response = await runOneBot(memberName, prompt, codingAgent, modelConfig, blackboard, (t) => emitter.onThinking(t, executionStep));
       if (!response.success) {
-        results.push(`**${worker.name}**: ❌ Failed - ${response.error}`);
-        emitter.endWorker?.('failed', { failureReason: response.error ?? 'Worker failed without an error message' });
+        results.push(`**${bot.name}**: ❌ Failed - ${response.error}`);
+        emitter.endBot?.('failed', { failureReason: response.error ?? 'Bot failed without an error message' });
         break;
       }
       if (response.thinking) thinkingByStep[i + 1] = response.thinking;
@@ -4818,27 +4650,26 @@ Example: /model gpt-4.1 write a Python script`;
           teamTurnId: opts.teamTurnId || '',
           memberIndex: i,
           carry: currentTask,
-          askingWorker: memberName,
+          askingBot: memberName,
           question: ask.question,
           options: ask.options,
           askedAt: Date.now(),
           blackboard: blackboard.toJSON(),
-          workerAnchors: this.snapshotWorkerAnchors(teamConv),
+          botAnchors: this.snapshotBotAnchors(teamConv),
         };
         this.persistPendingTeam(chatId, pending);
-        const rendered4 = renderQuestion(worker.name, ask.question, ask.options);
+        const rendered4 = renderQuestion(bot.name, ask.question, ask.options);
         await emitter.notify(rendered4.text, rendered4.choices);
-        emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
+        emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
         return { thinkingByStep };
       }
-      results.push(`**${worker.name}**: ${cleanOutput}`);
-      emitter.endWorker?.('done');
+      results.push(`**${bot.name}**: ${cleanOutput}`);
+      emitter.endBot?.('done');
       executionStep++;
-      currentTask = `Previous worker output:\n${cleanOutput}\n\nYour task: ${task}`;
+      currentTask = `Previous bot output:\n${cleanOutput}\n\nYour task: ${task}`;
     }
 
     await this.notifyTeamFinal(emitter, teamName, task, parseTeamResultLines(results), opts.signal);
-    if (!this.chatManager.get(chatId)?.botChat) this.persistBlackboardDecisions(blackboard, teamName);
     return { thinkingByStep };
   }
 
@@ -4856,7 +4687,7 @@ Example: /model gpt-4.1 write a Python script`;
     return eligibleEdges(graph, state, nodeId).map(e => ({
       id: e.id,
       condition: node?.type === 'condition' ? e.branch : e.condition,
-      targetWorker: nodeById.get(e.to)?.type === 'end' ? '(end)' : (nodeById.get(e.to)?.worker ?? e.to),
+      targetBot: nodeById.get(e.to)?.type === 'end' ? '(end)' : (nodeById.get(e.to)?.bot ?? e.to),
     }));
   }
 
@@ -4871,8 +4702,8 @@ Example: /model gpt-4.1 write a Python script`;
     currentNodeId: string,
     state: GraphRunState,
     task: string,
-    workerName: string,
-    workerOutput: string,
+    botName: string,
+    botOutput: string,
     blackboardSummary: string,
     signal?: AbortSignal,
   ): Promise<{ decision: JudgeDecision; edge: TeamGraphEdge | null }> {
@@ -4880,7 +4711,7 @@ Example: /model gpt-4.1 write a Python script`;
     const node = nodeById.get(currentNodeId);
     const { agent, model } = this.getAdvisorAgentAndModel();
     const decision = await runJudge(
-      { task, worker: workerName, workerOutput, blackboardSummary, edges,
+      { task, bot: botName, botOutput, blackboardSummary, edges,
         question: node?.type === 'condition' ? node.condition : undefined },
       { agent, model, runner: this.advisorRunner, signal },
     );
@@ -4890,18 +4721,18 @@ Example: /model gpt-4.1 write a Python script`;
 
   /**
    * Walk a Sequential team's flow graph, letting a judge LLM choose the next
-   * edge after each worker. Mirrors runAllMembersInOrder but follows graph
+   * edge after each bot. Mirrors runAllMembersInOrder but follows graph
    * topology (with loop-backs and a maxHops cap) instead of a linear list.
    * sendResponse/void variant used by runTeamTask. ([ASK_USER] pause/resume is
-   * a separate task — here a worker's [ASK_USER] text is just treated as output.)
+   * a separate task — here a bot's [ASK_USER] text is just treated as output.)
    */
   private async runSequentialGraphForChat(
     message: UserMessage,
     teamName: string,
     graph: TeamGraph,
     task: string,
-    runOneWorker: (
-      workerName: string,
+    runOneBot: (
+      botName: string,
       prompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
@@ -4924,7 +4755,7 @@ Example: /model gpt-4.1 write a Python script`;
       return;
     }
     await emitter.status(`🧭 Running flow for team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`);
-    await this.continueGraphRun(emitter, message.chatId, convBase, teamName, teamTurnId || '', graph, task, state, blackboard, [], runOneWorker);
+    await this.continueGraphRun(emitter, message.chatId, convBase, teamName, teamTurnId || '', graph, task, state, blackboard, [], runOneBot);
   }
 
   /**
@@ -4932,7 +4763,7 @@ Example: /model gpt-4.1 write a Python script`;
    * sendResponse loop from `state` until the graph finishes (or pauses on an
    * [ASK_USER]), then emits the cap warning + final results block. Shared by the
    * fresh run and the `mode:'graph'` resume path so post-pause steps behave
-   * identically. When `resume` is set, the FIRST worker's prompt is re-issued
+   * identically. When `resume` is set, the FIRST bot's prompt is re-issued
    * with the user's answer injected (matching the sequential resume format).
    */
   private async continueGraphRun(
@@ -4946,8 +4777,8 @@ Example: /model gpt-4.1 write a Python script`;
     state: GraphRunState,
     blackboard: TeamBlackboard,
     results: string[],
-    runOneWorker: (
-      workerName: string,
+    runOneBot: (
+      botName: string,
       prompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
@@ -4960,12 +4791,12 @@ Example: /model gpt-4.1 write a Python script`;
       resume?: { question: string; answer: string };
     },
   ): Promise<string> {
-    const wm = this.workspaceManager.getWorkerManager();
+    const wm = this.workspaceManager.getBotManager();
     const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
     let resumeInfo = opts?.resume;
 
-    let lastWorkerOutput = '';
-    let lastWorkerName = '';
+    let lastBotOutput = '';
+    let lastBotName = '';
     let stepIndex = Math.max(
       0,
       ...(this.chatManager.get(chatId)?.messages
@@ -4977,11 +4808,11 @@ Example: /model gpt-4.1 write a Python script`;
       const node = nodeById.get(state.currentNodeId)!;
 
       if (node.type === 'condition') {
-        // Branch point: no worker runs. The judge picks among the diamond's
-        // outgoing edges using the last worker's output for context.
+        // Branch point: no bot runs. The judge picks among the diamond's
+        // outgoing edges using the last bot's output for context.
         const { decision, edge } = await this.pickNextGraphEdge(
-          graph, nodeById, state.currentNodeId, state, task, lastWorkerName,
-          lastWorkerOutput, blackboard.renderForUser() || '', opts?.signal,
+          graph, nodeById, state.currentNodeId, state, task, lastBotName,
+          lastBotOutput, blackboard.renderForUser() || '', opts?.signal,
         );
         if (!edge) {
           emitter.termination?.('Flow stopped: no matching branch');
@@ -4993,76 +4824,76 @@ Example: /model gpt-4.1 write a Python script`;
         continue;
       }
 
-      // safe: team.graph is only set after validateGraph guarantees every worker node has a worker
-      const workerName = node.worker!;
-      const worker = wm.getWorker(workerName);
-      if (!worker) {
-        emitter.beginWorker?.({ step: stepIndex + 1, worker: workerName });
-        results.push(`**${workerName}**: ❌ not found`);
-        emitter.endWorker?.('failed', { failureReason: `Worker "${workerName}" was not found` });
+      // safe: team.graph is only set after validateGraph guarantees every bot node has a bot
+      const botName = node.bot!;
+      const bot = wm.getBot(botName);
+      if (!bot) {
+        emitter.beginBot?.({ step: stepIndex + 1, bot: botName });
+        results.push(`**${botName}**: ❌ not found`);
+        emitter.endBot?.('failed', { failureReason: `Bot "${botName}" was not found` });
         break;
       }
 
       const codingAgent = (opts?.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
       const modelConfig = opts?.fallbackModel ?? this.getDefaultModelConfig(codingAgent);
-      await emitter.status(`🔄 Step ${++stepIndex}: **${worker.name}** is working...`);
-      emitter.beginWorker?.({ step: stepIndex, worker: worker.name, agent: codingAgent, model: modelConfig?.model });
+      await emitter.status(`🔄 Step ${++stepIndex}: **${bot.name}** is working...`);
+      emitter.beginBot?.({ step: stepIndex, bot: bot.name, agent: codingAgent, model: modelConfig?.model });
 
       const roster = graph.nodes
-        .filter(n => n.type === 'worker' && n.worker)
-        .map(n => ({ name: n.worker!, hint: wm.getDispatchHint(n.worker!) }));
+        .filter(n => n.type === 'bot' && n.bot)
+        .map(n => ({ name: n.bot!, hint: wm.getDispatchHint(n.bot!) }));
       // On the first iteration of a resume, inject the user's answer into the
-      // re-issued prompt for the worker that asked; subsequent steps use `task`.
+      // re-issued prompt for the bot that asked; subsequent steps use `task`.
       const promptTask = resumeInfo
         ? `${task}\n\n[User answer to your question "${resumeInfo.question}"]:\n${resumeInfo.answer}`
         : task;
-      const prompt = wm.buildSequentialWorkerPrompt(
-        workerName, promptTask, roster, null, blackboard.renderForWorker(workerName),
+      const prompt = wm.buildSequentialBotPrompt(
+        botName, promptTask, roster, null, blackboard.renderForBot(botName),
       );
       resumeInfo = undefined;
-      const resp = await runOneWorker(workerName, prompt, codingAgent, modelConfig, blackboard);
-      if (!resp.success) { results.push(`**${worker.name}**: ❌ Failed - ${resp.error}`); emitter.endWorker?.('failed', { failureReason: resp.error ?? 'Worker failed without an error message' }); break; }
+      const resp = await runOneBot(botName, prompt, codingAgent, modelConfig, blackboard);
+      if (!resp.success) { results.push(`**${bot.name}**: ❌ Failed - ${resp.error}`); emitter.endBot?.('failed', { failureReason: resp.error ?? 'Bot failed without an error message' }); break; }
 
-      const ingested = blackboard.ingest(workerName, stepIndex, resp.output);
+      const ingested = blackboard.ingest(botName, stepIndex, resp.output);
       if (blackboard.summarizeDelta(ingested.added)) {
         emitter.updateBlackboard?.(blackboard.toJSON());
       }
-      results.push(`**${worker.name}**:\n${ingested.stripped}`);
-      lastWorkerOutput = ingested.stripped;
-      lastWorkerName = workerName;
+      results.push(`**${bot.name}**:\n${ingested.stripped}`);
+      lastBotOutput = ingested.stripped;
+      lastBotName = botName;
 
-      // Pause if this worker asked the user a question.
+      // Pause if this bot asked the user a question.
       const ask = parseAskUser(ingested.stripped);
       if (ask) {
-        const teamConv = this.workerConversationId(convBase, { team: teamName });
+        const teamConv = this.botConversationId(convBase, { team: teamName });
         this.persistPendingTeam(chatId, {
           mode: 'graph', teamName, task, teamTurnId,
           graphState: { currentNodeId: state.currentNodeId, hops: state.hops, visited: state.visited, runStreak: state.runStreak },
           results,
-          askingWorker: workerName, question: ask.question, options: ask.options,
+          askingBot: botName, question: ask.question, options: ask.options,
           askedAt: Date.now(), blackboard: blackboard.toJSON(),
-          workerAnchors: this.snapshotWorkerAnchors(teamConv),
+          botAnchors: this.snapshotBotAnchors(teamConv),
         });
-        const askWorkerName = this.workspaceManager.getWorkerManager().getWorker(workerName)?.name ?? workerName;
-        const rendered = renderQuestion(askWorkerName, ask.question, ask.options);
+        const askBotName = this.workspaceManager.getBotManager().getBot(botName)?.name ?? botName;
+        const rendered = renderQuestion(askBotName, ask.question, ask.options);
         await emitter.notify(rendered.text, rendered.choices);
-        emitter.endWorker?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
+        emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
         return emitter.transcript;
       }
 
-      emitter.endWorker?.('done');
+      emitter.endBot?.('done');
 
-      // Count this completed (non-paused) run toward the worker's self-loop cap.
+      // Count this completed (non-paused) run toward the bot's self-loop cap.
       state = { ...state, runStreak: state.runStreak + 1 };
 
       // Judge picks the next edge.
       const { decision, edge } = await this.pickNextGraphEdge(
-        graph, nodeById, state.currentNodeId, state, task, workerName,
+        graph, nodeById, state.currentNodeId, state, task, botName,
         ingested.stripped, blackboard.renderForUser() || '', opts?.signal,
       );
       if (!edge) {
-        emitter.termination?.(`Flow stopped at ${worker.name}: no matching next step`);
-        await emitter.status(`🏁 Flow stopped at **${worker.name}** (no matching next step).`);
+        emitter.termination?.(`Flow stopped at ${bot.name}: no matching next step`);
+        await emitter.status(`🏁 Flow stopped at **${bot.name}** (no matching next step).`);
         break;
       }
       await emitter.status(`↪️ ${decision.fallback ? '(default) ' : ''}${decision.reason || 'next step'}`);
@@ -5074,7 +4905,6 @@ Example: /model gpt-4.1 write a Python script`;
       await emitter.status(`⚠️ Flow hit the max-hops cap (${graph.maxHops}); reporting partial result.`);
     }
     await this.notifyTeamFinal(emitter, teamName, task, parseTeamResultLines(results), opts?.signal);
-    if (!this.chatManager.get(chatId)?.botChat) this.persistBlackboardDecisions(blackboard, teamName);
     return emitter.transcript;
   }
 
@@ -5090,9 +4920,9 @@ Example: /model gpt-4.1 write a Python script`;
     prompt: string,
     sink: ChatStreamSink,
     chatId: string,
-    runOneWorker: (
-      workerName: string,
-      workerPrompt: string,
+    runOneBot: (
+      botName: string,
+      botPrompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
@@ -5101,10 +4931,10 @@ Example: /model gpt-4.1 write a Python script`;
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
     signal?: AbortSignal,
-    workerMsgs?: WorkerMessageEmitter,
+    botMsgs?: BotMessageEmitter,
     teamTurnId?: string,
   ): Promise<{ response: string; choices?: string[]; thinkingByStep?: Record<number, string> }> {
-    const emitter = new ChatEmitter(sink, chatId, workerMsgs);
+    const emitter = new ChatEmitter(sink, chatId, botMsgs);
     const blackboard = new TeamBlackboard();
     const state = startRun(graph);
     if (state.status !== 'running') {
@@ -5113,7 +4943,7 @@ Example: /model gpt-4.1 write a Python script`;
       return { response: emitter.transcript };
     }
     await emitter.status(`Running flow for team ${teamName}`);
-    await this.continueGraphRun(emitter, chatId, `chat-${chatId}`, teamName, teamTurnId || '', graph, prompt, state, blackboard, [], runOneWorker,
+    await this.continueGraphRun(emitter, chatId, `chat-${chatId}`, teamName, teamTurnId || '', graph, prompt, state, blackboard, [], runOneBot,
       { signal, fallbackAgent: chatAgent, fallbackModel: chatModel });
     return { response: emitter.transcript, choices: emitter.choices };
   }
@@ -5136,7 +4966,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     const baseConv = `chat-${chat.id}${chat.botChat?.membershipRevision ? `-members-${chat.botChat.membershipRevision}` : ''}`;
-    const teamConv = this.workerConversationId(baseConv, { team: teamName });
+    const teamConv = this.botConversationId(baseConv, { team: teamName });
 
     const teamTurnId = randomUUID();
     const useAdvisorMode = team.dispatch === 'auto' && !opts.forceAll;
@@ -5148,18 +4978,18 @@ Example: /model gpt-4.1 write a Python script`;
           : team.dispatch === 'roundtable'
             ? 'roundtable'
             : 'sequential';
-    const workerMsgs = new WorkerMessageEmitter(
+    const botMsgs = new BotMessageEmitter(
       sink, this.chatManager, chatId,
       { teamTurnId, teamName, mode: teamMode },
     );
-    // A roundtable answer resumes the existing runner and its existing worker
+    // A roundtable answer resumes the existing runner and its existing bot
     // messages. Every new run publishes its complete roster before routing so
     // clients can show members that are still waiting for their turn.
     const isParallelResume = team.dispatch === 'roundtable' && this.parallelResumes.has(chat.id);
     if (!isParallelResume) {
-      workerMsgs.teamStart(team.members.map((worker, index) => ({
+      botMsgs.teamStart(team.members.map((bot, index) => ({
         step: index + 1,
-        worker,
+        bot,
         agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
         model: (chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent))?.model,
       })));
@@ -5167,35 +4997,35 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Serial team runs sample the working tree around each shell command, as a
     // single-agent turn does. One tracker for the whole run is right because the
-    // workers run one after another; the parallel path below shares a directory
-    // between concurrent workers, where no sample can say which one wrote what.
+    // bots run one after another; the parallel path below shares a directory
+    // between concurrent bots, where no sample can say which one wrote what.
     const teamWriteTracker = new ShellWriteTracker(workingDir, defaultGitRunner, defaultStatRunner);
     const teamDiffRecorder = new WriteDiffRecorder(workingDir, defaultGitRunner, priorBlobs(chat.messages));
     let teamStatusChain: Promise<void> = Promise.resolve();
 
-    const runOneWorker = async (
-      workerName: string,
-      workerPrompt: string,
+    const runOneBot = async (
+      botName: string,
+      botPrompt: string,
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
       onThinking?: (text: string) => void,
     ): Promise<{ success: boolean; output: string; error?: string; thinking?: string }> => {
-      const { response } = await this.runWorkerStep({
+      const { response } = await this.runBotStep({
         conversationId: teamConv,
         browserChatId: chatId,
-        workerName,
+        botName,
         task: prompt,
         blackboard,
         codingAgent,
         modelConfig,
         effort: resolveEffort({ chat: chat.effort }),
-        buildBootstrapPrompt: () => this.wrapPromptWithMemory(workerPrompt, prompt, workerName, !!chat.botChat),
-        onStream: (text: string) => workerMsgs.onStream(text),
+        buildBootstrapPrompt: () => this.wrapPromptWithMemory(botPrompt, prompt, botName, !!chat.botChat, chat.workspaceName, this.resolveChatWorkingDir(chat)),
+        onStream: (text: string) => botMsgs.onStream(text),
         onThinking,
         onStatus: (update: any) => {
-          // Forward each worker's tool events to the chat so the run-flow view
-          // can attribute them per worker (team runs here are serial; the Mac
+          // Forward each bot's tool events to the chat so the run-flow view
+          // can attribute them per bot (team runs here are serial; the Mac
           // side buckets each call under the most-recent "Step N" marker).
           // Mirrors the single-agent onStatus; step narration stays on
           // emitter.status. (Parallel path below is left untouched — its tool
@@ -5204,17 +5034,17 @@ Example: /model gpt-4.1 write a Python script`;
           try {
             parsed = typeof update === 'string' ? JSON.parse(update) : update;
           } catch { return; /* non-JSON status */ }
-          // Sampling is async; chaining keeps the worker's tool rows in order.
+          // Sampling is async; chaining keeps the bot's tool rows in order.
           teamStatusChain = teamStatusChain.then(async () => {
             if (parsed?.type === 'tool_start') {
               if (isShellTool(parsed.tool)) await teamWriteTracker.noteStart(shellCommandText(parsed.input));
-              workerMsgs.onTool({ type: 'tool_start', tool: parsed.tool, message: parsed.message ?? '', input: parsed.input });
+              botMsgs.onTool({ type: 'tool_start', tool: parsed.tool, message: parsed.message ?? '', input: parsed.input });
             } else if (parsed?.type === 'tool_end') {
               const writes = isShellTool(parsed.tool)
                 ? await teamWriteTracker.noteEnd()
                 : isFileChangeTool(parsed.tool) ? fileChangePaths(parsed.output, workingDir) : [];
               const writeDiffs = writes.length ? await teamDiffRecorder.record(writes) : [];
-              workerMsgs.onTool({
+              botMsgs.onTool({
                 type: 'tool_end', tool: parsed.tool, message: parsed.message ?? '', output: parsed.output,
                 ...(writes.length ? { writes } : {}),
                 ...(writeDiffs.length ? { writeDiffs } : {}),
@@ -5225,9 +5055,8 @@ Example: /model gpt-4.1 write a Python script`;
         signal,
         workingDir,
       });
-      // endWorker is about to freeze this worker's toolCalls into its message.
+      // endBot is about to freeze this bot's toolCalls into its message.
       await teamStatusChain;
-      if (response && !chat.botChat) this.extractWorkerMemories(workerName, prompt, codingAgent, response);
       return response?.success
         ? { success: true, output: this.formatAgentResponse(response), thinking: response.thinking || undefined }
         : { success: false, output: '', error: response?.error };
@@ -5237,20 +5066,20 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Sequential and authored-graph teams normally run their full workflow.
     // A conservative Advisor gate may route a genuinely simple informational
-    // question to one suitable worker; failures and uncertainty fall through
+    // question to one suitable bot; failures and uncertainty fall through
     // to the complete flow. `--all` remains the explicit bypass.
     if (team.dispatch === 'sequential' && !opts.forceAll) {
       const fastPath = await this.decideSequentialFastPath(team.members, opts.routingTask ?? prompt, workingDir, signal);
-      if (fastPath.route === 'single_worker' && !signal?.aborted) {
-        const emitter = new ChatEmitter(sink, chatId, workerMsgs);
+      if (fastPath.route === 'single_bot' && !signal?.aborted) {
+        const emitter = new ChatEmitter(sink, chatId, botMsgs);
         const result = await this.runAllMembersInOrder(
           emitter,
           chatId,
           baseConv,
           teamName,
-          [fastPath.worker],
+          [fastPath.bot],
           prompt,
-          runOneWorker,
+          runOneBot,
           {
             signal,
             fallbackAgent: chatAgent,
@@ -5287,9 +5116,9 @@ Example: /model gpt-4.1 write a Python script`;
         await sink({ type: 'stream', chatId, token: '⚠️ parallel team is missing settings' });
         return { response: '' };
       }
-      // Pre-create one stub message per worker so streaming events are routed
-      // per-worker. Serial modes use beginWorker; parallel pre-creates them all.
-      const workerStep = new Map<string, number>(team.members.map((w, i) => [w, i + 1]));
+      // Pre-create one stub message per bot so streaming events are routed
+      // per-bot. Serial modes use beginBot; parallel pre-creates them all.
+      const botStep = new Map<string, number>(team.members.map((w, i) => [w, i + 1]));
 
       const runner = new ParallelTeamRunner({
         workspacesRoot,
@@ -5299,8 +5128,10 @@ Example: /model gpt-4.1 write a Python script`;
         members: team.members,
         topic: prompt,
         settings: team.roundtable,
-        workerRunner: async (req, workerName) => this.runWithFallback(chatAgent ?? this.getDefaultAgent() as CodingAgent, {
-          prompt: req.prompt,
+        botRunner: async (req, botName) => {
+          const botAgent = chatAgent ?? this.getDefaultAgent() as CodingAgent;
+          const response = await this.runWithFallback(botAgent, {
+          prompt: await this.wrapPromptWithMemory(req.prompt, prompt, botName, !!chat.botChat, chat.workspaceName, this.resolveChatWorkingDir(chat)),
           agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
           model: chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent),
           // Parallel members share the chat's execution settings. The global
@@ -5309,22 +5140,24 @@ Example: /model gpt-4.1 write a Python script`;
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
-            onStream: (text: string) => workerMsgs.onStream(text, workerName),
-          onThinking: (text: string) => workerMsgs.onThinking(text, workerStep.get(workerName) ?? 0, workerName),
+            onStream: (text: string) => botMsgs.onStream(text, botName),
+          onThinking: (text: string) => botMsgs.onThinking(text, botStep.get(botName) ?? 0, botName),
           onStatus: (update: any) => {
-            // Route per-worker tool events through workerMsgs for parallel mode,
-            // matching the serial-mode routing in runOneWorker.
+            // Route per-bot tool events through botMsgs for parallel mode,
+            // matching the serial-mode routing in runOneBot.
             try {
               const parsed = typeof update === 'string' ? JSON.parse(update) : update;
               if (parsed?.type === 'tool_start') {
-                workerMsgs.onTool({ type: 'tool_start', tool: parsed.tool, message: parsed.message ?? '', input: parsed.input }, workerName);
+                botMsgs.onTool({ type: 'tool_start', tool: parsed.tool, message: parsed.message ?? '', input: parsed.input }, botName);
               } else if (parsed?.type === 'tool_end') {
-                workerMsgs.onTool({ type: 'tool_end', tool: parsed.tool, message: parsed.message ?? '', output: parsed.output }, workerName);
+                botMsgs.onTool({ type: 'tool_end', tool: parsed.tool, message: parsed.message ?? '', output: parsed.output }, botName);
               }
             } catch { /* non-JSON status */ }
           },
           signal: req.signal,
-        }),
+        });
+          return response;
+        },
         advisorRunner: async req => {
           const { agent: mAgent, model: mModel } = this.getAdvisorAgentAndModel();
           const advisorResult = await this.runWithFallback(mAgent, {
@@ -5339,15 +5172,15 @@ Example: /model gpt-4.1 write a Python script`;
           });
           return advisorResult;
         },
-        buildWorkerPrompt: (workerName: string) => {
-          const wm = this.workspaceManager.getWorkerManager();
-          return wm.buildParallelWorkerPrompt(workerName, {
+        buildBotPrompt: (botName: string) => {
+          const wm = this.workspaceManager.getBotManager();
+          return wm.buildParallelBotPrompt(botName, {
             topic: prompt,
             controlPath: controlPath(workspacesRoot, chat.workspaceName, chat.id),
             summaryPath: summaryPath(workspacesRoot, chat.workspaceName, chat.id),
-            ownOpinionPath: opinionPath(workspacesRoot, chat.workspaceName, chat.id, workerName),
+            ownOpinionPath: opinionPath(workspacesRoot, chat.workspaceName, chat.id, botName),
             peerOpinions: team.members
-              .filter(m => m !== workerName)
+              .filter(m => m !== botName)
               .map(m => ({ name: m, path: opinionPath(workspacesRoot, chat.workspaceName, chat.id, m) })),
           });
         },
@@ -5361,11 +5194,11 @@ Example: /model gpt-4.1 write a Python script`;
           this.activeParallelRuns.delete(chat.id);
           if (ev.reason !== 'consensus') sink({ type: 'team_termination', chatId, reason: `Parallel execution ended: ${ev.reason}. ${ev.message}` });
           const completedNormally = ev.reason === 'consensus';
-          for (const worker of team.members) {
-            workerMsgs.endWorker(
+          for (const bot of team.members) {
+            botMsgs.endBot(
               completedNormally ? 'done' : 'failed',
               completedNormally ? undefined : { failureReason: `Parallel discussion ended: ${ev.reason}` },
-              worker,
+              bot,
             );
           }
           const c = this.chatManager.get(chat.id);
@@ -5373,13 +5206,12 @@ Example: /model gpt-4.1 write a Python script`;
             c.discussion = { teamName, status: 'done', startedAt: c.discussion?.startedAt ?? Date.now(), terminatedReason: ev.reason };
             (c as any).updatedAt = Date.now();
           }
-          this.persistDiscussionSummary(teamName, prompt, ev);
           void sink({ type: 'stream', chatId, token: this.formatParallelFinal(ev, teamName) });
         },
-        onWorkerDone: (worker, ok, error) => workerMsgs.endWorker(
+        onBotDone: (bot, ok, error) => botMsgs.endBot(
           ok ? 'done' : 'failed',
-          ok ? undefined : { failureReason: error ?? 'Worker failed without an error message' },
-          worker,
+          ok ? undefined : { failureReason: error ?? 'Bot failed without an error message' },
+          bot,
         ),
       });
       const c0 = this.chatManager.get(chat.id);
@@ -5412,27 +5244,27 @@ Example: /model gpt-4.1 write a Python script`;
             sink({
               type: 'info',
               chatId,
-              message: `Step ${msg.step}: ${msg.worker}${msg.isRevision ? ' (revision)' : ''} — ${msg.reason}`,
+              message: `Step ${msg.step}: ${msg.bot}${msg.isRevision ? ' (revision)' : ''} — ${msg.reason}`,
             });
-            // Each worker streams its full output into its own per-worker bubble
-            // (beginWorker below). Don't also echo a "### Step N" header into the
+            // Each bot streams its full output into its own per-bot bubble
+            // (beginBot below). Don't also echo a "### Step N" header into the
             // turn's main message — that produced a second, redundant copy of the
             // whole run in a different format.
-            const workerAgent = (chatAgent ?? this.getDefaultAgent()) as CodingAgent;
-            const workerModel = chatModel ?? this.getDefaultModelConfig(workerAgent);
-            workerMsgs.beginWorker({
+            const botAgent = (chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+            const botModel = chatModel ?? this.getDefaultModelConfig(botAgent);
+            botMsgs.beginBot({
               step: msg.step,
-              worker: msg.worker,
+              bot: msg.bot,
               reason: msg.reason,
-              agent: workerAgent,
-              model: workerModel?.model,
+              agent: botAgent,
+              model: botModel?.model,
             });
           } else {
-            workerMsgs.updateBlackboard(msg.blackboard);
+            botMsgs.updateBlackboard(msg.blackboard);
           }
         },
-        runOneWorker,
-        (d) => workerMsgs.endWorker(d.failed ? 'failed' : 'done', d.failed ? { failureReason: d.error ?? 'Worker failed without an error message' } : undefined),
+        runOneBot,
+        (d) => botMsgs.endBot(d.failed ? 'failed' : 'done', d.failed ? { failureReason: d.error ?? 'Bot failed without an error message' } : undefined),
         this.getAdvisorAgentAndModel(),
       );
 
@@ -5444,8 +5276,8 @@ Example: /model gpt-4.1 write a Python script`;
         // fall through to all-members path below
       } else if (result.paused) {
         const p = result.paused;
-        const wm = this.workspaceManager.getWorkerManager();
-        const askWorkerName = wm.getWorker(p.askingWorker)?.name ?? p.askingWorker;
+        const wm = this.workspaceManager.getBotManager();
+        const askBotName = wm.getBot(p.askingBot)?.name ?? p.askingBot;
         this.persistPendingTeam(chatId, {
           mode: 'auto',
           teamName,
@@ -5453,33 +5285,33 @@ Example: /model gpt-4.1 write a Python script`;
           task: prompt,
           teamTurnId,
           history: p.history,
-          lastWorker: p.lastWorker,
+          lastBot: p.lastBot,
           lastOutput: p.lastOutput,
           partsSoFar: p.parts,
-          seenWorkers: p.seenWorkers,
+          seenBots: p.seenBots,
           step: p.step,
-          askingWorker: p.askingWorker,
+          askingBot: p.askingBot,
           question: p.question,
           options: p.options,
           blackboard: result.blackboard.toJSON(),
           askedAt: Date.now(),
-          workerAnchors: this.snapshotWorkerAnchors(teamConv),
+          botAnchors: this.snapshotBotAnchors(teamConv),
         });
         const askingMessage = this.chatManager.get(chatId)?.messages
-          .filter(message => message.teamTurnId === teamTurnId && message.worker === p.askingWorker)
+          .filter(message => message.teamTurnId === teamTurnId && message.bot === p.askingBot)
           .pop();
         if (askingMessage) {
           this.chatManager.updateMessage(chatId, askingMessage.id, {
-            workerStatus: 'askedUser',
-            workerNextUserAction: { text: p.question, options: p.options },
+            botStatus: 'askedUser',
+            botNextUserAction: { text: p.question, options: p.options },
           });
-          sink({ type: 'worker_end', chatId, messageId: askingMessage.id, step: askingMessage.step ?? p.step, status: 'askedUser' });
+          sink({ type: 'bot_end', chatId, messageId: askingMessage.id, step: askingMessage.step ?? p.step, status: 'askedUser' });
         }
-        const rendered5 = renderQuestion(askWorkerName, p.question, p.options);
+        const rendered5 = renderQuestion(askBotName, p.question, p.options);
         sink({ type: 'stream', chatId, token: rendered5.text });
         return { response: rendered5.text, choices: rendered5.choices, teamTurnId };
       } else {
-        // Per-worker bubbles already render each step's full output, so the
+        // Per-bot bubbles already render each step's full output, so the
         // turn's main message is just the Advisor's wrap-up summary (a short
         // recap when the run produced a lot of detail) plus the blackboard —
         // not a second copy of every step.
@@ -5494,7 +5326,6 @@ Example: /model gpt-4.1 write a Python script`;
         }
         // Chat renders the whiteboard in the context panel, so the reply
         // carries only the Advisor summary.
-        if (!chat.botChat) this.persistBlackboardDecisions(result.blackboard, teamName);
         const response = summary;
         return { response, thinkingByStep: result.thinkingByStep, teamTurnId };
       }
@@ -5502,11 +5333,11 @@ Example: /model gpt-4.1 write a Python script`;
 
     // dispatch === 'sequential', forceAll, or auto-routing fallback
     if (!opts.forceAll && team.graph) {
-      const g = await this.runSequentialGraphForChatSink(teamName, team.graph, prompt, sink, chatId, runOneWorker, chatAgent, chatModel, signal, workerMsgs, teamTurnId);
+      const g = await this.runSequentialGraphForChatSink(teamName, team.graph, prompt, sink, chatId, runOneBot, chatAgent, chatModel, signal, botMsgs, teamTurnId);
       return { ...g, teamTurnId };
     }
-    const emitter = new ChatEmitter(sink, chatId, workerMsgs);
-    const r = await this.runAllMembersInOrder(emitter, chatId, baseConv, teamName, team.members, prompt, runOneWorker,
+    const emitter = new ChatEmitter(sink, chatId, botMsgs);
+    const r = await this.runAllMembersInOrder(emitter, chatId, baseConv, teamName, team.members, prompt, runOneBot,
       { signal, fallbackAgent: chatAgent, fallbackModel: chatModel, teamTurnId });
     return { response: emitter.transcript, choices: emitter.choices, thinkingByStep: r.thinkingByStep, teamTurnId };
   }
@@ -5528,7 +5359,7 @@ Example: /model gpt-4.1 write a Python script`;
       summaryBody || '(empty)',
       '',
       '## Viewpoints',
-      ...ev.perWorker.map(p => `**${p.name}**: ${p.excerpt || '(empty)'}`),
+      ...ev.perBot.map(p => `**${p.name}**: ${p.excerpt || '(empty)'}`),
       '',
       ev.message,
     ].join('\n');
@@ -5556,15 +5387,15 @@ Example: /model gpt-4.1 write a Python script`;
         };
       }
 
-      // Check for worker command: /worker architect design something
-      const workerMatch = text.match(/\/worker\s+(\w+)\s+(.+)/i);
-      if (workerMatch) {
+      // Route a named bot with its task.
+      const botMatch = text.match(/^\/bot\s+([\w-]+)\s+([\s\S]+)/i);
+      if (botMatch) {
         return { 
-          command: 'worker', 
-          args: [workerMatch[1]], 
+          command: 'bot',
+          args: [botMatch[1]],
           agent: this.getDefaultAgent() as CodingAgent, 
           model: undefined, 
-          prompt: workerMatch[2] 
+          prompt: botMatch[2]
         };
       }
       
@@ -5693,7 +5524,7 @@ Example: /model gpt-4.1 write a Python script`;
   }
 
   private async runWithFallback(agent: CodingAgent, request: AgentRequest): Promise<AgentResponse> {
-    // Global tier: any caller that didn't set an explicit chat/worker effort
+    // Global tier: any caller that didn't set an explicit chat/bot effort
     // inherits the agent's configured default. Applied here rather than at each
     // of the ~20 call sites.
     if (request.effort === undefined) {
@@ -5936,8 +5767,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // Build memory context — merges user-global + workspace stores.
-    const memoryStore = this.workspaceManager.getMemoryStore();
-    const memoryContext = this.buildMergedMemoryContext(prompt) || undefined;
+    const memoryContext = await this.buildMergedMemoryContext(prompt) || undefined;
 
     const onStream = sse ? (text: string) => sse('stream', text) : undefined;
     const onStatus = sse ? (update: any) => sse('status', update) : undefined;
@@ -5977,14 +5807,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // Auto-extract memories
-    if (this.config.memory?.autoExtract !== false && response.success) {
-      memoryStore.extractFromInteraction({
-        userPrompt: prompt,
-        agentOutput: response.output,
-        toolCalls: meta.toolCalls?.map(tc => ({ tool: tc.tool, input: tc.input, output: tc.output, status: tc.status })),
-        filesChanged: meta.filesChanged?.map(fc => ({ path: fc.path, action: fc.action })),
-      });
-    }
+
 
     const formattedResponse = this.formatAgentResponse(response);
     const httpAsk = parseAskUser(formattedResponse);
@@ -6164,6 +5987,29 @@ Example: /model gpt-4.1 write a Python script`;
     },
     taskRoute?: ChatTaskRoute,
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
+    return memoryUsageContext.run(new Map(), () => this.sendToChatWithMemoryTrace(chatId, userTextParam, sinkParam, attachments, origin, taskRoute));
+  }
+
+  private async sendToChatWithMemoryTrace(
+    chatId: string,
+    userTextParam: string,
+    sinkParam: ChatStreamSink,
+    attachments?: import('@codey/core').FileAttachment[],
+    // Origin identifies which surface initiated this turn so the chat-mirror
+    // fan-out at the end of the turn can skip the originating route. Default
+    // is Mac (no route matches '__mac__'), so all attached channels receive
+    // the mirror. Channel-side callers must pass the real channel+userId so
+    // we don't echo the message back to the user who typed it.
+    // `skillInvoke` is an explicit `/skill <name> <task>` invocation threaded
+    // per-turn from the channel surface (Task 12: apply it in this method's
+    // skill pre-run pass, taking precedence over the auto-apply matcher).
+    origin?: {
+      channel?: ChannelType;
+      channelUserId?: string;
+      skillInvoke?: SkillInvoke;
+    },
+    taskRoute?: ChatTaskRoute,
+  ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     let chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
     const directTaskChat = chat.selection.type !== 'team' && chat.botChat?.kind !== 'group' && !chat.pendingTeam && chat.kind !== 'automation';
@@ -6196,7 +6042,7 @@ Example: /model gpt-4.1 write a Python script`;
       throw new Error('Task routing is currently supported in direct chats only.');
     }
     if (chat.botChat) {
-      const missing = chat.botChat.members.filter(name => !this.workspaceManager.getWorkerManager().hasWorker(name));
+      const missing = chat.botChat.members.filter(name => !this.workspaceManager.getBotManager().hasBot(name));
       if (missing.length) throw new Error(`These Bots are no longer available: ${missing.join(', ')}. Restore them in Bot settings.`);
     }
     let workspaceAdoptedBeforeTurn = false;
@@ -6232,7 +6078,7 @@ Example: /model gpt-4.1 write a Python script`;
     // A channel-origin explicit `/skill` invoke arrives with userText already
     // rewritten to the raw task (handleMessage stripped the slash), so count
     // it as a slash turn here: it must cancel a paused team like any other
-    // slash command — NOT be delivered as the answer to the paused worker.
+    // slash command — NOT be delivered as the answer to the paused bot.
     const isSlashTurn = userText.trimStart().startsWith('/') || !!origin?.skillInvoke;
     if (pendingTeam) {
       if (isSlashTurn) {
@@ -6252,19 +6098,19 @@ Example: /model gpt-4.1 write a Python script`;
       this.chatManager.clearLastAskedOptions(chatId);
     }
 
-    // "@worker" / "@team" mentions route the turn. One worker mention runs that
-    // worker alone; several form an ad-hoc `auto` team the Advisor dispatches,
+    // "@bot" / "@team" mentions route the turn. One bot mention runs that
+    // bot alone; several form an ad-hoc `auto` team the Advisor dispatches,
     // honouring any split the user wrote into the message. A lone team mention
     // runs that team with its configured dispatch (and flow graph); mixing a
-    // team with extra workers falls back to an ad-hoc `auto` team over the
+    // team with extra bots falls back to an ad-hoc `auto` team over the
     // union of members. Not parsed on slash turns, paused-team answers, or
     // chats already bound to a named team. The user message is persisted as
-    // typed; only the task the workers see has the mentions reduced to bare
+    // typed; only the task the bots see has the mentions reduced to bare
     // names.
     let adHocTeam: { name: string; team: TeamConfig; named?: boolean } | undefined;
     let historyText: string | undefined;
     if (!isSlashTurn && !pendingTeam && chat.selection.type !== 'team') {
-      const wm = this.workspaceManager.getWorkerManager();
+      const wm = this.workspaceManager.getBotManager();
       const teamLib: Record<string, TeamConfigRaw> = this.configManager?.getTeams() ?? {};
       const teamKey = (name: string) => Object.keys(teamLib).find(k => k.toLowerCase() === name.toLowerCase());
       const teamMembers = (name: string): string[] => {
@@ -6273,11 +6119,11 @@ Example: /model gpt-4.1 write a Python script`;
         const raw = teamLib[key];
         return Array.isArray(raw) ? raw : (raw?.members ?? []);
       };
-      const mentions = parseWorkerMentions(userText, n => wm.hasWorker(n), n => teamMembers(n).length > 0);
-      if (mentions.workers.length > 0 || mentions.teams.length > 0) {
+      const mentions = parseBotMentions(userText, n => wm.hasBot(n), n => teamMembers(n).length > 0);
+      if (mentions.bots.length > 0 || mentions.teams.length > 0) {
         historyText = userText;
         userText = mentions.task;
-        if (mentions.teams.length === 1 && mentions.workers.length === 0) {
+        if (mentions.teams.length === 1 && mentions.bots.length === 0) {
           // Reuse the workspace's normalized team so dispatch mode, roundtable
           // settings and any validated flow graph come along; fall back to a
           // plain sequential team built from the raw library entry.
@@ -6286,19 +6132,19 @@ Example: /model gpt-4.1 write a Python script`;
             ?? { members: teamMembers(name), dispatch: 'sequential' as const };
           adHocTeam = { name, team, named: true };
         } else {
-          // Union of every mentioned team's members plus the named workers,
+          // Union of every mentioned team's members plus the named bots,
           // deduped, in mention order. Members a team names but the workspace
           // no longer has are dropped rather than failing the turn.
           const members: string[] = [];
           const seen = new Set<string>();
           const add = (n: string) => {
             const key = n.toLowerCase();
-            if (seen.has(key) || !wm.hasWorker(key)) return;
+            if (seen.has(key) || !wm.hasBot(key)) return;
             seen.add(key);
             members.push(key);
           };
           for (const t of mentions.teams) teamMembers(t).forEach(add);
-          mentions.workers.forEach(add);
+          mentions.bots.forEach(add);
           if (members.length > 0) {
             adHocTeam = {
               name: members.join('+'),
@@ -6495,8 +6341,8 @@ Example: /model gpt-4.1 write a Python script`;
     workingDir = this.resolveChatWorkingDir(chat);
 
     // Per-chat override takes precedence over the gateway default.
-    const selectedBot = chat.selection.type === 'worker'
-      ? this.workspaceManager.getWorkerManager().getWorker(chat.selection.name) : undefined;
+    const selectedBot = chat.selection.type === 'bot'
+      ? this.workspaceManager.getBotManager().getBot(chat.selection.name) : undefined;
     const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
     const chatEffort = resolveEffort({ chat: chat.effort });
     let model: ModelConfig | undefined;
@@ -6518,14 +6364,14 @@ Example: /model gpt-4.1 write a Python script`;
     // new one. Resume mode skips the full history dump and uses the agent's
     // own session memory. Bootstrap mode sends a one-shot "prior conversation"
     // block. Team mode always uses the legacy bootstrap path (no session
-    // resume) because team dispatch builds worker prompts internally.
+    // resume) because team dispatch builds bot prompts internally.
     // Snapshot before appending the new user message; retry bootstraps use the same view.
     const contextChat = chatTaskContext(chat, taskId);
     const task = chat.tasks?.find(t => t.id === taskId);
     const scopeKey = chat.tasks?.length || chat.botChat ? chatSessionScope(chat, taskId, workingDir, selectedBot) : undefined;
     const historyOptions = this.historyDelivery(chatId, taskId);
     const selPrefix = (selectedBot
-      ? this.workspaceManager.getWorkerManager().buildWorkerPrompt(selectedBot.name, '') + '\n\n'
+      ? this.workspaceManager.getBotManager().buildBotPrompt(selectedBot.name, '') + '\n\n'
       : assistantPrefixForSelection(chat))
       + (task ? `[Current task: ${task.title}]\n` : '');
     const canResume = !isTeamTurn;
@@ -6565,6 +6411,7 @@ Example: /model gpt-4.1 write a Python script`;
         newSessionId = randomUUID();
       }
     }
+    if (!isTeamTurn) prompt = await this.wrapPromptWithMemory(prompt, userText, selectedBot?.name, !!chat.botChat, chat.workspaceName, workingDir);
     prompt += chatWorkspaceInstruction;
 
     // Solo advisor: when enabled (and not a team), tell the agent how to escalate.
@@ -6683,14 +6530,14 @@ Example: /model gpt-4.1 write a Python script`;
       // Never leave running eyes on terminal history. Pending roster entries
       // remain pending, meaning not selected rather than successful.
       for (const message of current.messages) {
-        if (message.teamTurnId === activeTeamId && !message.builtinMember && message.workerStatus === 'running') {
-          const failureReason = stopped ? 'Stopped by user' : reason || teamTermination || 'Execution ended without a terminal worker result';
-          this.chatManager.updateMessage(chatId, message.id, { workerStatus: 'failed', workerFailureReason: failureReason, isComplete: true });
-          sink({ type: 'worker_end', chatId, messageId: message.id, step: message.step ?? 0, status: 'failed', failureReason });
+        if (message.teamTurnId === activeTeamId && !message.builtinMember && message.botStatus === 'running') {
+          const failureReason = stopped ? 'Stopped by user' : reason || teamTermination || 'Execution ended without a terminal bot result';
+          this.chatManager.updateMessage(chatId, message.id, { botStatus: 'failed', botFailureReason: failureReason, isComplete: true });
+          sink({ type: 'bot_end', chatId, messageId: message.id, step: message.step ?? 0, status: 'failed', failureReason });
         }
       }
       const messages = this.chatManager.get(chatId)!.messages;
-      // A lone "@worker" mention speaks for itself; the Aide only closes a
+      // A lone "@bot" mention speaks for itself; the Aide only closes a
       // real team run (a named team, or an ad-hoc team with several members).
       if (isSoloMentionRun(messages, activeTeamId, chat.selection.type === 'team')) return null;
       const message = await publishTeamFinal({
@@ -6726,39 +6573,39 @@ Example: /model gpt-4.1 write a Python script`;
         // choices through emitter.choices → teamChoices).
         this.chatManager.setPendingTeam(chatId, null);
         teamTurnId = pendingTeam.teamTurnId;
-        const workerMsgs = new WorkerMessageEmitter(
+        const botMsgs = new BotMessageEmitter(
           sink, this.chatManager, chatId,
           { teamTurnId: teamTurnId!, teamName: pendingTeam.teamName, mode: pendingTeam.mode === 'graph' ? 'graph' : pendingTeam.mode },
         );
-        // Patch the asking worker's message from askedUser → done so the Mac
-        // UI can release the pause UI and show the worker as completed.
+        // Patch the asking bot's message from askedUser → done so the Mac
+        // UI can release the pause UI and show the bot as completed.
         const resumeChat = this.chatManager.get(chatId);
         if (resumeChat) {
-          const askingMsg = resumeChat.messages.filter(m => m.teamTurnId === teamTurnId && m.worker === pendingTeam.askingWorker).pop();
+          const askingMsg = resumeChat.messages.filter(m => m.teamTurnId === teamTurnId && m.bot === pendingTeam.askingBot).pop();
           if (askingMsg) {
             this.chatManager.updateMessage(chatId, askingMsg.id, {
-              workerStatus: 'done',
-              workerNextUserAction: undefined,
-              workerSummaryExcluded: true,
+              botStatus: 'done',
+              botNextUserAction: undefined,
+              botSummaryExcluded: true,
             });
-            sink({ type: 'worker_end', chatId, messageId: askingMsg.id, step: askingMsg.step ?? 0, status: 'done' });
+            sink({ type: 'bot_end', chatId, messageId: askingMsg.id, step: askingMsg.step ?? 0, status: 'done' });
           }
         }
-        const emitter = new ChatEmitter(sink, chatId, workerMsgs);
+        const emitter = new ChatEmitter(sink, chatId, botMsgs);
         output = await this.resumeTeamFromAnswer(chatId, `chat-${chatId}${chat.botChat?.membershipRevision ? `-members-${chat.botChat.membershipRevision}` : ''}`, pendingTeam, userText, emitter, abortController.signal);
         teamChoices = emitter.choices;
       } else if (adHocTeam) {
         const { name: teamName, team } = adHocTeam;
-        const teamPrompt = prompt + '\n\n[Addressed workers]\n'
+        const teamPrompt = prompt + '\n\n[Addressed bots]\n'
           + (adHocTeam.named
             ? `The user addressed the team "${teamName}" (${team.members.join(', ')}). `
-            : `The user addressed these workers directly: ${team.members.join(', ')}. `)
-          + 'If the message assigns work to specific workers, follow that assignment. Otherwise decide who does what.';
+            : `The user addressed these bots directly: ${team.members.join(', ')}. `)
+          + 'If the message assigns work to specific bots, follow that assignment. Otherwise decide who does what.';
         sink({ type: 'info', chatId, message: adHocTeam.named
           ? `Team "${teamName}" from mention: ${team.members.join(', ')} [${team.dispatch}]`
           : team.members.length > 1
             ? `Ad-hoc team from mentions: ${team.members.join(', ')} (Advisor dispatches)`
-            : `Routing to worker ${team.members[0]}` });
+            : `Routing to bot ${team.members[0]}` });
         const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model);
         output = r.response;
         tokens = r.tokens;
@@ -6768,8 +6615,8 @@ Example: /model gpt-4.1 write a Python script`;
       } else if (chat.selection.type === 'team') {
         // Resolve the team from the chat's workspace.json (read above), not from
         // the active workspace, so a chat in workspace B uses B's team config
-        // even if WorkspaceManager has loaded A. Worker prompt bodies still come
-        // from WorkerManager's loaded workers/ dir (a known limitation when the
+        // even if WorkspaceManager has loaded A. Bot prompt bodies still come
+        // from BotManager's loaded bots/ dir (a known limitation when the
         // active workspace differs from the chat's).
         // Only count enabled names that actually resolve in the global library.
         const teamNames = chatWorkspaceTeamNames.filter(n => globalTeams[n] !== undefined);
@@ -6935,7 +6782,7 @@ Example: /model gpt-4.1 write a Python script`;
 
       // ASK_USER:choice detection. Team flows already stripped the marker into
       // a rendered question via runTeamForChat, so reuse the choices it
-      // returned. For non-team chats, parse the worker output for the marker.
+      // returned. For non-team chats, parse the bot output for the marker.
       // Also check for structured AskUserQuestion from the agent adapter.
       let surfacedChoices: string[] | undefined;
       let plainAskOptions: string[] | undefined;
@@ -6969,11 +6816,12 @@ Example: /model gpt-4.1 write a Python script`;
         ? finalizeTeamRunSummary(terminalTeamMessages) ?? undefined
         : undefined;
       const assistantMessage: ChatMessage = {
+        memoryUsed: [...(memoryUsageContext.getStore()?.values() ?? [])],
         id: randomUUID(),
         role: 'assistant',
         taskId,
         content: output,
-        ...(!teamTurnId && chat.selection.type === 'worker' ? { worker: chat.selection.name, workerStatus: agentUserQuestion ? 'askedUser' as const : singleAgentResponse?.success === false ? 'failed' as const : 'done' as const } : {}),
+        ...(!teamTurnId && chat.selection.type === 'bot' ? { bot: chat.selection.name, botStatus: agentUserQuestion ? 'askedUser' as const : singleAgentResponse?.success === false ? 'failed' as const : 'done' as const } : {}),
         thinking: singleAgentResponse?.thinking,
         thinkingByStep: teamThinkingByStep,
         timestamp: Date.now(),
@@ -6988,10 +6836,10 @@ Example: /model gpt-4.1 write a Python script`;
         ...(singleAgentResponse?.fallback ? { fallback: singleAgentResponse.fallback } : {}),
         ...(terminalTeamSummary ? { teamSummary: terminalTeamSummary } : {}),
       };
-      // For per-worker team runs the transcript was already persisted as
-      // individual worker messages by the WorkerMessageEmitter. Persist only a
+      // For per-bot team runs the transcript was already persisted as
+      // individual bot messages by the BotMessageEmitter. Persist only a
       // group-level footer (Advisor summary / formatted blackboard), identified
-      // by teamTurnId and no worker, rather than a standalone duplicate bubble.
+      // by teamTurnId and no bot, rather than a standalone duplicate bubble.
       let teamSummaryMessageId: string | undefined;
       const footerPlan = teamTurnId ? planTeamFooter({
         hasFinal: !!finalTeamMessage,
@@ -7028,24 +6876,28 @@ Example: /model gpt-4.1 write a Python script`;
           this.chatManager.setLastAskedOptions(chatId, assistantMessage.id, plainAskOptions);
         }
       } else if (footerPlan === 'append') {
-        const workerMessage = this.chatManager.get(chatId)?.messages.find(m => m.teamTurnId === teamTurnId && m.worker);
+        const botMessage = this.chatManager.get(chatId)?.messages.find(m => m.teamTurnId === teamTurnId && m.bot);
         this.chatManager.appendMessage(chatId, {
           ...assistantMessage,
           teamTurnId,
-          teamName: workerMessage?.teamName,
-          teamMode: workerMessage?.teamMode,
+          teamName: botMessage?.teamName,
+          teamMode: botMessage?.teamMode,
         });
         teamSummaryMessageId = assistantMessage.id;
       } else if (footerPlan === 'attach') {
-        const lastWorkerMessage = this.chatManager.get(chatId)?.messages
-          .filter(message => message.teamTurnId === teamTurnId && message.worker)
+        const lastBotMessage = this.chatManager.get(chatId)?.messages
+          .filter(message => message.teamTurnId === teamTurnId && message.bot)
           .pop();
-        if (lastWorkerMessage) {
-          teamSummaryMessageId = lastWorkerMessage.id;
-          this.chatManager.updateMessage(chatId, lastWorkerMessage.id, { teamSummary: terminalTeamSummary });
+        if (lastBotMessage) {
+          teamSummaryMessageId = lastBotMessage.id;
+          this.chatManager.updateMessage(chatId, lastBotMessage.id, { teamSummary: terminalTeamSummary, memoryUsed: assistantMessage.memoryUsed });
         }
       }
 
+      if (teamTurnId && !teamSummaryMessageId && assistantMessage.memoryUsed?.length) {
+        const last = this.chatManager.get(chatId)?.messages.filter(m => m.teamTurnId === teamTurnId && m.bot).pop();
+        if (last) this.chatManager.updateMessage(chatId, last.id, { memoryUsed: assistantMessage.memoryUsed });
+      }
       if (teamTurnId && terminalTeamSummary) {
         let finalTeamSummary = terminalTeamSummary;
         let terminalTaskBrief: TaskBrief | undefined;
@@ -7068,14 +6920,14 @@ Example: /model gpt-4.1 write a Python script`;
       // The Mac app turns a non-empty team response into a footer bubble, so
       // it only travels when a footer was actually persisted.
       const doneResponse = teamTurnId && footerPlan !== 'append' ? '' : output;
-      sink({ type: 'done', chatId, response: doneResponse, worker: assistantMessage.worker, workerStatus: assistantMessage.workerStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
+      sink({ type: 'done', chatId, response: doneResponse, memoryUsed: assistantMessage.memoryUsed, bot: assistantMessage.bot, botStatus: assistantMessage.botStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
 
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
       // Skip the whole pass when this turn ended PAUSED — i.e. the team run
-      // re-set pendingTeam because a worker asked the user a question. Re-read
+      // re-set pendingTeam because a bot asked the user a question. Re-read
       // the chat: the run itself persists the pause via setPendingTeam, so the
       // freshest signal is the chat record, not the pre-run `pendingTeam` local.
-      // A paused turn's `output` is the worker's mid-run question: no trace
+      // A paused turn's `output` is the bot's mid-run question: no trace
       // (bad distillation input), no distill, no suggestion (it would collide
       // with the team's question on the next user turn), and no use/success
       // bookkeeping for an applied skill either — the run isn't finished yet.
@@ -7093,12 +6945,12 @@ Example: /model gpt-4.1 write a Python script`;
         // Failed runs still run the pass so an applied skill records a
         // correction; afterRunSkillPass skips trace/distill itself when !clean.
         const runSucceeded = singleAgentResponse ? !!singleAgentResponse.success : !!output;
-        // Worker sequence for team turns comes from the persisted per-worker
+        // Bot sequence for team turns comes from the persisted per-bot
         // messages (teamThinkingByStep only maps step → thinking text, no names).
-        const workerSequence = teamTurnId
+        const botSequence = teamTurnId
           ? this.chatManager.get(chatId)?.messages
-              .filter(m => m.teamTurnId === teamTurnId && m.worker)
-              .map(m => m.worker as string)
+              .filter(m => m.teamTurnId === teamTurnId && m.bot)
+              .map(m => m.bot as string)
           : undefined;
         // What the run DID — the procedure clustering and the distiller work
         // on. Argument VALUES stay here; only their shapes reach the trace file.
@@ -7107,7 +6959,7 @@ Example: /model gpt-4.1 write a Python script`;
           runId: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           promptSummary: userText.slice(0, 200),
           outputPreview: (output || '').slice(0, 300),
-          workerSequence: workerSequence && workerSequence.length > 0 ? workerSequence : undefined,
+          botSequence: botSequence && botSequence.length > 0 ? botSequence : undefined,
           steps,
           toolSequence: steps.map(s => s.tool),
           timestamp: Date.now(),

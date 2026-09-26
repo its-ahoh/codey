@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react'
-import { apiService, WorkerDto } from '../services/api'
+import { apiService, BotDto } from '../services/api'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 import type { TeamGraph } from '../../../packages/core/src/team-graph'
 import { C } from '../theme'
@@ -51,14 +51,14 @@ function denormalizeAll(state: TeamsState): Record<string, TeamConfigRaw> {
 
 export default function GlobalTeamsSection() {
   const [teams, setTeams] = useState<TeamsState>({})
-  const [workers, setWorkers] = useState<WorkerDto[]>([])
+  const [bots, setBots] = useState<BotDto[]>([])
   const [savedAt, setSavedAt] = useState<number>(0)
   const [error, setError] = useState<string | null>(null)
   const saveTimer = useRef<number | null>(null)
 
   const reload = useCallback(async () => {
     setTeams(normalizeAll(await apiService.getGlobalTeams()))
-    setWorkers(await apiService.listWorkers())
+    setBots(await apiService.listBots())
   }, [])
 
   useEffect(() => { reload() }, [reload])
@@ -116,10 +116,10 @@ export default function GlobalTeamsSection() {
     if (!creatingFor || !createPrompt.trim() || createBusy) return
     setCreateBusy(true); setCreateError(null)
     try {
-      const worker = await apiService.generateWorker(createPrompt)
+      const bot = await apiService.generateBot(createPrompt)
       const team = creatingFor
-      const next: TeamsState = { ...teams, [team]: { ...teams[team], members: [...teams[team].members, worker.name] } }
-      setWorkers(await apiService.listWorkers())
+      const next: TeamsState = { ...teams, [team]: { ...teams[team], members: [...teams[team].members, bot.name] } }
+      setBots(await apiService.listBots())
       queueSave(next)
       setCreatingFor(null); setCreatePrompt('')
     } catch (err: any) {
@@ -129,7 +129,7 @@ export default function GlobalTeamsSection() {
     }
   }
 
-  const available = (team: string) => workers.filter(w => !teams[team].members.includes(w.name))
+  const available = (team: string) => bots.filter(w => !teams[team].members.includes(w.name))
 
   return (
     <div>
@@ -222,7 +222,7 @@ export default function GlobalTeamsSection() {
                       {showOrder && (
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 9, background: C.accent, color: C.onAccent, fontSize: 10, fontWeight: 700 }}>{i + 1}</span>
                       )}
-                      <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}><span>{m}</span>{workers.find(w => w.name === m)?.personality.role && <span style={{ color: C.fg3, fontSize: 9, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{workers.find(w => w.name === m)?.personality.role}</span>}</span>
+                      <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}><span>{m}</span>{bots.find(w => w.name === m)?.personality.role && <span style={{ color: C.fg3, fontSize: 9, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{bots.find(w => w.name === m)?.personality.role}</span>}</span>
                       <button onClick={() => removeMember(name, i)} title="Remove" style={{ background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer', padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
                     </span>
                   </span>
@@ -246,7 +246,7 @@ export default function GlobalTeamsSection() {
             {team.dispatch === 'sequential' && (
               <div style={styles.workflowRow}>
                 <span style={styles.workflowIcon}><UIIcon name="activity" size={14} /></span>
-                <div style={{ flex: 1, minWidth: 0 }}><span style={styles.workflowTitle}>Workflow</span><span style={styles.workflowSub}> · {team.graph ? `${team.graph.nodes.filter(n => n.type === 'worker').length} steps` : 'Linear order'}</span></div>
+                <div style={{ flex: 1, minWidth: 0 }}><span style={styles.workflowTitle}>Workflow</span><span style={styles.workflowSub}> · {team.graph ? `${team.graph.nodes.filter(n => n.type === 'bot').length} steps` : 'Linear order'}</span></div>
                 <button onClick={() => setEditingFlow(name)}
                   style={styles.workflowBtn}>
                   {team.graph ? 'Edit' : 'Customize'}<UIIcon name="chevron" size={12} />
@@ -316,8 +316,8 @@ export default function GlobalTeamsSection() {
       {editingFlow && teams[editingFlow] && (
         <FlowEditor
           teamName={editingFlow}
-          workerNames={workers.map(w => w.name)}
-          workerRoles={Object.fromEntries(workers.map(w => [w.name, w.personality.role]))}
+          botNames={bots.map(w => w.name)}
+          botRoles={Object.fromEntries(bots.map(w => [w.name, w.personality.role]))}
           graph={teams[editingFlow].graph ?? emptyGraph()}
           onSave={(graph) => { queueSave({ ...teams, [editingFlow]: { ...teams[editingFlow], graph } }) }}
           onClose={() => setEditingFlow(null)}

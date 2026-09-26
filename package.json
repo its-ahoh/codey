@@ -3,9 +3,9 @@
   "private": true,
   "version": "0.13.0",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.12.0"
   },
-  "description": "Codey — a multi-agent workbench and control plane for coding agents (Claude Code, Codex, OpenCode, pi): per-project workspaces, worker teams, parallel runs, and access from a macOS app, Telegram/Discord/iMessage, or voice.",
+  "description": "Codey — a multi-agent workbench and control plane for coding agents (Claude Code, Codex, OpenCode, pi): per-project workspaces, bot teams, parallel runs, and access from a macOS app, Telegram/Discord/iMessage, or voice.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -32,7 +32,7 @@
     "set-agent": "npm run set-agent -w @codey/gateway",
     "set-model": "npm run set-model -w @codey/gateway",
     "tui": "npm run tui -w @codey/gateway",
-    "verify-workers": "npm run build && ts-node scripts/verify-workers.ts",
+    "verify-bots": "npm run build && ts-node scripts/verify-bots.ts",
     "verify-gateway": "npm run build && ts-node scripts/verify-gateway.ts",
     "api-token": "npm run api-token -w @codey/gateway --"
   },

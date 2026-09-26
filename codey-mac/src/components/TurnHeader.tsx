@@ -1,3 +1,4 @@
+import { MemoryUsageDisclosure } from './MemoryUsageDisclosure'
 import React from 'react'
 import { C } from '../theme'
 import { fallbackErrorText, turnHeaderMeta } from './turnHeaderModel'
@@ -51,11 +52,11 @@ interface Props {
    *  surface exists, which hides the "Ask Agent" action rather than offering a
    *  button that does nothing. */
   onAskAgentAboutFallback?: (detail: string, fallback: { from: string; to: string }) => void
-  /** A worker turn's avatar, rendered at the start of this row and centered
+  /** A bot turn's avatar, rendered at the start of this row and centered
    *  against it — unlike the name/identity text, it's tall enough that
    *  baseline-aligning it against them reads as misplaced. */
   leftAvatar?: React.ReactNode
-  /** A worker turn's name, rendered right before the identity so the two sit
+  /** A bot turn's name, rendered right before the identity so the two sit
    *  in the same baseline-aligned text group instead of the identity landing
    *  on a second, mostly-empty row of its own. */
   leftLabel?: React.ReactNode
@@ -104,11 +105,11 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
   // un-hovered turn. With no identity to reveal it stays visible — it is then
   // the only affordance for the thinking it discloses.
   const chevronOpacity = meta.identity && !identityVisible ? 0 : 1
-  // A worker's avatar/name makes the row worth drawing even when there's
+  // A bot's avatar/name makes the row worth drawing even when there's
   // otherwise nothing to show.
   const isEmpty = (leftAvatar || leftLabel) ? false : meta.isEmpty
   const rule = <div style={styles.rule} />
-  if (isEmpty && !hasThinking) return rule
+  if (isEmpty && !hasThinking) return <>{rule}<MemoryUsageDisclosure entries={msg.memoryUsed} /></>
 
   return (
     <div>
@@ -154,6 +155,7 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
         </div>
       </div>
       {rule}
+      <MemoryUsageDisclosure entries={msg.memoryUsed} />
     </div>
   )
 }
@@ -263,7 +265,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 10, fontSize: 11, color: C.fg3, marginBottom: 4,
   },
   left: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
-  // Baseline, not center: the worker's bold name and the monospace identity
+  // Baseline, not center: the bot's bold name and the monospace identity
   // sit at different font sizes, and centering them left the smaller text
   // looking like it floated above where it should sit. Kept separate from
   // `left` above so the (much taller) avatar still centers normally instead

@@ -1,18 +1,19 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { BLACKBOARD_MARKER_INSTRUCTIONS } from './team-blackboard';
 
-export interface WorkerPersonality {
+export interface BotPersonality {
   role: string;
   soul: string;
   instructions: string;
 }
 
-export interface WorkerConfig {
+export interface BotConfig {
   avatar?: { shape: 'circle' | 'square' | 'triangle' | 'capsule'; color: string };
   tools: string[];
   /**
-   * Optional one-line summary fed to the auto-dispatcher when this worker
+   * Optional one-line summary fed to the auto-dispatcher when this bot
    * appears in a team with `dispatch: 'auto'`. When unset, the dispatcher
    * uses the first line of `personality.role` truncated to 120 chars.
    * `personality.soul` and `.instructions` are never sent to the dispatcher.
@@ -20,10 +21,12 @@ export interface WorkerConfig {
   dispatchHint?: string;
 }
 
-export interface Worker {
+export interface Bot {
+  /** Stable across renames and execution backends. Assigned when a definition is loaded. */
+  id?: string;
   name: string;
-  personality: WorkerPersonality;
-  config: WorkerConfig;
+  personality: BotPersonality;
+  config: BotConfig;
 }
 
 export interface ParallelPromptInputs {
@@ -35,7 +38,7 @@ export interface ParallelPromptInputs {
 }
 
 /** Whitelist role metadata so legacy execution settings never reach callers or disk on save. */
-function roleConfig(config: WorkerConfig): WorkerConfig {
+function roleConfig(config: BotConfig): BotConfig {
   return {
     ...(config.avatar ? { avatar: config.avatar } : {}),
     tools: Array.isArray(config.tools) ? config.tools : [],
@@ -43,95 +46,106 @@ function roleConfig(config: WorkerConfig): WorkerConfig {
   };
 }
 
-export class WorkerManager {
-  private workersDir: string;
-  private workers: Map<string, Worker> = new Map();
-
-  constructor(workersDir: string = './workers') {
-    this.workersDir = workersDir;
+export class BotManager {
+  private botsDir: string;
+  private bots: Map<string, Bot> = new Map();
+  constructor(botsDir: string = './bots') {
+    this.botsDir = botsDir;
   }
 
-  async loadWorkers(): Promise<void> {
-    this.workers.clear();
+  async loadBots(): Promise<void> {
+    this.bots.clear();
 
-    if (!fs.existsSync(this.workersDir)) {
-      console.log(`[Workers] Library not found at ${this.workersDir} — no workers loaded`);
+    if (!fs.existsSync(this.botsDir)) {
+      console.log(`[Bots] Library not found at ${this.botsDir} — no bots loaded`);
       return;
     }
 
-    const entries = fs.readdirSync(this.workersDir, { withFileTypes: true });
+    const entries = fs.readdirSync(this.botsDir, { withFileTypes: true });
     const skipped: string[] = [];
     for (const entry of entries) {
-      // Workers are directories with personality.md + config.json. Anything
+      // Bots are directories with personality.md + config.json. Anything
       // else here (stray .json files from the old flat schema, leftover .DS_Store,
       // backups) is unloadable — surface it so the user can clean up rather
-      // than wonder why a worker they "see on disk" doesn't appear in the UI.
+      // than wonder why a bot they "see on disk" doesn't appear in the UI.
       if (!entry.isDirectory()) {
         if (!entry.name.startsWith('.')) {
-          console.warn(`[Workers] Ignoring non-directory entry: ${entry.name}`);
+          console.warn(`[Bots] Ignoring non-directory entry: ${entry.name}`);
           skipped.push(entry.name);
         }
         continue;
       }
       const name = entry.name;
-      const dir = path.join(this.workersDir, name);
+      const dir = path.join(this.botsDir, name);
       const contents = fs.readdirSync(dir);
       if (contents.length === 0) {
         // An empty <name>/ blocks re-creation under the same name — call it
         // out specifically so the user knows to remove the directory.
-        console.warn(`[Workers] Ignoring empty directory: ${name} (delete it to free the name)`);
+        console.warn(`[Bots] Ignoring empty directory: ${name} (delete it to free the name)`);
         skipped.push(name);
         continue;
       }
-      const worker = this.loadWorker(name);
-      if (worker) this.workers.set(name.toLowerCase(), worker);
+      const bot = this.loadBot(name);
+      if (bot) this.bots.set(name.toLowerCase(), bot);
       else skipped.push(name);
     }
 
-    console.log(`[Workers] Loaded ${this.workers.size} workers from ${this.workersDir}` +
+    console.log(`[Bots] Loaded ${this.bots.size} bots from ${this.botsDir}` +
       (skipped.length > 0 ? ` (skipped: ${skipped.join(', ')})` : ''));
   }
 
-  private loadWorker(name: string): Worker | null {
-    const dir = path.join(this.workersDir, name);
+  private loadBot(name: string): Bot | null {
+    const dir = path.join(this.botsDir, name);
     const mdPath = path.join(dir, 'personality.md');
     const cfgPath = path.join(dir, 'config.json');
 
     if (!fs.existsSync(mdPath)) {
-      console.error(`[Workers] Skipping ${name}: personality.md missing`);
+      console.error(`[Bots] Skipping ${name}: personality.md missing`);
       return null;
     }
     if (!fs.existsSync(cfgPath)) {
-      console.error(`[Workers] Skipping ${name}: config.json missing (required)`);
+      console.error(`[Bots] Skipping ${name}: config.json missing (required)`);
       return null;
     }
 
-    let config: WorkerConfig;
+    let config: BotConfig;
     try {
       config = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
     } catch (err) {
-      console.error(`[Workers] Skipping ${name}: config.json invalid JSON (${err})`);
+      console.error(`[Bots] Skipping ${name}: config.json invalid JSON (${err})`);
       return null;
     }
 
     if (!config || typeof config !== 'object' || Array.isArray(config)) {
-      console.error(`[Workers] Skipping ${name}: config.json must be an object`);
+      console.error(`[Bots] Skipping ${name}: config.json must be an object`);
       return null;
     }
     config = roleConfig(config);
 
-    let personality: WorkerPersonality;
+    let personality: BotPersonality;
     try {
       personality = this.parsePersonality(fs.readFileSync(mdPath, 'utf-8'));
     } catch (err) {
-      console.error(`[Workers] Skipping ${name}: failed to read personality.md (${err})`);
+      console.error(`[Bots] Skipping ${name}: failed to read personality.md (${err})`);
       return null;
     }
-    return { name, personality, config };
+    const identityPath = path.join(dir, 'identity.json');
+    try {
+      if (!fs.existsSync(identityPath)) {
+        try { fs.writeFileSync(identityPath, JSON.stringify({ id: randomUUID() }), { flag: 'wx' }); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+      }
+      const identity = JSON.parse(fs.readFileSync(identityPath, 'utf8')) as { id?: string };
+      if (typeof identity.id !== 'string' || !/^[a-f0-9-]{36}$/.test(identity.id)) throw new Error('Invalid bot identity');
+      return { id: identity.id, name, personality, config };
+    } catch (error) {
+      console.error(`[Bots] Skipping ${name}: cannot load durable identity (${error})`);
+      return null;
+    }
   }
 
-  private parsePersonality(content: string): WorkerPersonality {
-    const personality: WorkerPersonality = { role: '', soul: '', instructions: '' };
+  private parsePersonality(content: string): BotPersonality {
+    const personality: BotPersonality = { role: '', soul: '', instructions: '' };
     const lines = content.split('\n');
     let currentSection = '';
     let buffer: string[] = [];
@@ -159,30 +173,30 @@ export class WorkerManager {
     return personality;
   }
 
-  getWorker(name: string): Worker | undefined {
-    return this.workers.get(name.toLowerCase());
+  getBot(name: string): Bot | undefined {
+    return this.bots.get(name.toLowerCase());
   }
 
-  hasWorker(name: string): boolean {
-    return this.workers.has(name.toLowerCase());
+  hasBot(name: string): boolean {
+    return this.bots.has(name.toLowerCase());
   }
 
-  getAllWorkers(): Worker[] {
-    return Array.from(this.workers.values());
+  getAllBots(): Bot[] {
+    return Array.from(this.bots.values());
   }
 
-  getWorkerNames(): string[] {
-    return Array.from(this.workers.keys());
+  getBotNames(): string[] {
+    return Array.from(this.bots.keys());
   }
 
   /**
-   * Returns the one-line summary the auto-dispatcher should see for this worker.
+   * Returns the one-line summary the auto-dispatcher should see for this bot.
    * Prefers `config.dispatchHint`; otherwise falls back to the first line of
-   * `personality.role` truncated to 120 characters. Empty string if the worker
+   * `personality.role` truncated to 120 characters. Empty string if the bot
    * is unknown.
    */
   getDispatchHint(name: string): string {
-    const w = this.getWorker(name);
+    const w = this.getBot(name);
     if (!w) return '';
     if (w.config.dispatchHint && w.config.dispatchHint.trim()) {
       return w.config.dispatchHint.trim();
@@ -191,17 +205,17 @@ export class WorkerManager {
     return firstLine.length > 120 ? firstLine.slice(0, 117) + '...' : firstLine;
   }
 
-  buildWorkerPrompt(name: string, task: string): string {
-    const worker = this.getWorker(name);
-    if (!worker) return task;
+  buildBotPrompt(name: string, task: string): string {
+    const bot = this.getBot(name);
+    if (!bot) return task;
     return [
-      `# Worker: ${worker.name}`,
+      `# Bot: ${bot.name}`,
       `## Role`,
-      worker.personality.role,
+      bot.personality.role,
       `## Personality`,
-      worker.personality.soul,
+      bot.personality.soul,
       `## Instructions`,
-      worker.personality.instructions,
+      bot.personality.instructions,
       `## Pause for user input`,
       'If you cannot proceed without information from the user, output a single line `[ASK_USER]: <your question>` and stop. Do not guess. Do not continue the work.',
       'When the question is yes/no or a pick-one from a small set (≤ 8) of explicit options, prefer `[ASK_USER:choice]: <question> | <option 1> | <option 2>` so the user can answer with a tap. Use the free-text `[ASK_USER]:` form for open-ended questions.',
@@ -212,33 +226,33 @@ export class WorkerManager {
 
   /**
    * Sequential-mode variant. Includes the full team roster and (optionally) the
-   * next worker in the chain so this worker can shape its output to feed into
+   * next bot in the chain so this bot can shape its output to feed into
    * the next step. Sequential mode has no Advisor arbitration, so we keep only
    * the `[ASK_USER]:` marker (no forwarding).
    */
-  buildSequentialWorkerPrompt(
+  buildSequentialBotPrompt(
     name: string,
     task: string,
     roster: Array<{ name: string; hint: string }>,
-    nextWorker: { name: string; hint: string } | null,
+    nextBot: { name: string; hint: string } | null,
     blackboardSection?: string,
   ): string {
-    const worker = this.getWorker(name);
-    if (!worker) return task;
+    const bot = this.getBot(name);
+    if (!bot) return task;
     const rosterLines = roster.length > 0
       ? roster.map(r => `- ${r.name}: ${r.hint || '(no description)'}`).join('\n')
-      : '(you are the only worker on this team)';
-    const nextSection = nextWorker
-      ? `Next up after you: **${nextWorker.name}** — ${nextWorker.hint || '(no description)'}.\nShape your output so it gives them what they need to do their step well: be explicit about decisions, hand off open questions clearly, and avoid burying important context in passing remarks.`
-      : 'You are the last worker in this run. Aim for a complete, polished result.';
+      : '(you are the only bot on this team)';
+    const nextSection = nextBot
+      ? `Next up after you: **${nextBot.name}** — ${nextBot.hint || '(no description)'}.\nShape your output so it gives them what they need to do their step well: be explicit about decisions, hand off open questions clearly, and avoid burying important context in passing remarks.`
+      : 'You are the last bot in this run. Aim for a complete, polished result.';
     const sections = [
-      `# Worker: ${worker.name}`,
+      `# Bot: ${bot.name}`,
       `## Role`,
-      worker.personality.role,
+      bot.personality.role,
       `## Personality`,
-      worker.personality.soul,
+      bot.personality.soul,
       `## Instructions`,
-      worker.personality.instructions,
+      bot.personality.instructions,
       `## Teammates (full sequence)`,
       rosterLines,
       `## Handoff`,
@@ -254,20 +268,20 @@ export class WorkerManager {
   }
 
   /**
-   * Auto-mode variant of buildWorkerPrompt. Injects the team roster (excluding self)
-   * so the worker can address questions to a specific teammate via `[ASK: name]: q`,
+   * Auto-mode variant of buildBotPrompt. Injects the team roster (excluding self)
+   * so the bot can address questions to a specific teammate via `[ASK: name]: q`,
    * falling back to `[ASK_USER]: q` when no teammate can help.
    *
-   * `roster` should contain {name, hint} for every member except the running worker.
+   * `roster` should contain {name, hint} for every member except the running bot.
    */
-  buildTeamWorkerPrompt(
+  buildTeamBotPrompt(
     name: string,
     task: string,
     roster: Array<{ name: string; hint: string; lastDid?: string }>,
     blackboardSection?: string,
   ): string {
-    const worker = this.getWorker(name);
-    if (!worker) return task;
+    const bot = this.getBot(name);
+    if (!bot) return task;
     const rosterLines = roster.length > 0
       ? roster
           .map(r => {
@@ -275,15 +289,15 @@ export class WorkerManager {
             return r.lastDid ? `${head}\n  last did: ${r.lastDid}` : head;
           })
           .join('\n')
-      : '(you are the only worker on this team)';
+      : '(you are the only bot on this team)';
     const sections = [
-      `# Worker: ${worker.name}`,
+      `# Bot: ${bot.name}`,
       `## Role`,
-      worker.personality.role,
+      bot.personality.role,
       `## Personality`,
-      worker.personality.soul,
+      bot.personality.soul,
       `## Instructions`,
-      worker.personality.instructions,
+      bot.personality.instructions,
       `## Teammates`,
       rosterLines,
       BLACKBOARD_MARKER_INSTRUCTIONS,
@@ -302,7 +316,7 @@ export class WorkerManager {
   }
 
   /**
-   * Lean prompt for resuming a worker's warm CLI session via `--resume`.
+   * Lean prompt for resuming a bot's warm CLI session via `--resume`.
    *
    * Assumes the CLI session already has the personality, roster, marker
    * protocol, ASK markers, and the previously-injected project memory in
@@ -310,7 +324,7 @@ export class WorkerManager {
    * since this session's last turn, an optional marker-protocol reminder,
    * and the new task body.
    */
-  buildResumeWorkerPrompt(
+  buildResumeBotPrompt(
     task: string,
     blackboardDelta?: string,
     options?: { remindMarkers?: boolean; preface?: string },
@@ -325,20 +339,20 @@ export class WorkerManager {
     return sections.join('\n\n');
   }
 
-  buildParallelWorkerPrompt(name: string, inputs: ParallelPromptInputs): string {
-    const worker = this.getWorker(name);
-    if (!worker) return inputs.topic;
+  buildParallelBotPrompt(name: string, inputs: ParallelPromptInputs): string {
+    const bot = this.getBot(name);
+    if (!bot) return inputs.topic;
     const peerLines = inputs.peerOpinions.length > 0
       ? inputs.peerOpinions.map(p => `- ${p.name}'s opinion (read-only): ${p.path}`).join('\n')
       : '(no peers)';
     return [
-      `# Worker: ${worker.name} (Roundtable Mode)`,
+      `# Bot: ${bot.name} (Roundtable Mode)`,
       `## Role`,
-      worker.personality.role,
+      bot.personality.role,
       `## Personality`,
-      worker.personality.soul,
+      bot.personality.soul,
       `## Instructions`,
-      worker.personality.instructions,
+      bot.personality.instructions,
       `## Topic`,
       inputs.topic,
       `## Files (use your Read/Write tools)`,
@@ -359,68 +373,68 @@ export class WorkerManager {
       ].join('\n'),
       `## Important`,
       [
-        '- Do not touch other workers\' opinion files, the summary, or control.md — those are owned by the Advisor and peers.',
+        '- Do not touch other bots\' opinion files, the summary, or control.md — those are owned by the Advisor and peers.',
         '- Keep each appended entry concise (a few short paragraphs) so peers can absorb it quickly.',
         '- Re-read control.md before every write — the Advisor may have flipped status to terminated/finalizing/paused since your last check.',
       ].join('\n'),
     ].join('\n\n');
   }
 
-  listWorkers(): string {
-    const all = this.getAllWorkers();
-    if (all.length === 0) return 'No workers configured. Create folders under ./workers/<name>/ with personality.md and config.json.';
+  listBots(): string {
+    const all = this.getAllBots();
+    if (all.length === 0) return 'No bots configured. Create folders under ./bots/<name>/ with personality.md and config.json.';
     return all.map(w => `• **${w.name}** — ${w.personality.role || '(no role)'}`).join('\n');
   }
 
-  async saveWorker(name: string, personality: WorkerPersonality, config: WorkerConfig): Promise<void> {
-    const dir = path.join(this.workersDir, name);
+  async saveBot(name: string, personality: BotPersonality, config: BotConfig): Promise<void> {
+    const dir = path.join(this.botsDir, name);
     await fs.promises.mkdir(dir, { recursive: true });
-    const personalityContent = `# Worker: ${name}\n\n## Role\n${personality.role}\n\n## Soul\n${personality.soul}\n\n## Instructions\n${personality.instructions}\n`;
+    const personalityContent = `# Bot: ${name}\n\n## Role\n${personality.role}\n\n## Soul\n${personality.soul}\n\n## Instructions\n${personality.instructions}\n`;
     await fs.promises.writeFile(path.join(dir, 'personality.md'), personalityContent, 'utf-8');
     await fs.promises.writeFile(path.join(dir, 'config.json'), JSON.stringify(roleConfig(config), null, 2), 'utf-8');
-    await this.loadWorkers();
+    await this.loadBots();
   }
 
-  async deleteWorker(name: string): Promise<void> {
-    const dir = path.join(this.workersDir, name);
+  async deleteBot(name: string): Promise<void> {
+    const dir = path.join(this.botsDir, name);
     await fs.promises.rm(dir, { recursive: true, force: true });
-    this.workers.delete(name.toLowerCase());
+    this.bots.delete(name.toLowerCase());
   }
 
   /**
-   * Moves `<workersDir>/<oldName>` to `<workersDir>/<newName>` and rewrites the
+   * Moves `<botsDir>/<oldName>` to `<botsDir>/<newName>` and rewrites the
    * personality heading. Team references are the caller's job — see
-   * `renameWorkerInTeams`, which needs the gateway config this manager never sees.
+   * `renameBotInTeams`, which needs the gateway config this manager never sees.
    */
-  async renameWorker(oldName: string, newName: string): Promise<void> {
+  async renameBot(oldName: string, newName: string): Promise<void> {
     if (oldName === newName) return;
-    if (!WORKER_NAME_RE.test(newName)) {
-      throw new Error(`Worker name "${newName}" must be lowercase letters, digits and dashes, starting with a letter`);
+    if (!BOT_NAME_RE.test(newName)) {
+      throw new Error(`Bot name "${newName}" must be lowercase letters, digits and dashes, starting with a letter`);
     }
-    const existing = this.workers.get(oldName.toLowerCase());
-    if (!existing) throw new Error(`Worker not found: ${oldName}`);
-    if (newName.toLowerCase() !== oldName.toLowerCase() && this.workers.has(newName.toLowerCase())) {
-      throw new Error(`Worker "${newName}" already exists`);
+    const existing = this.bots.get(oldName.toLowerCase());
+    if (!existing) throw new Error(`Bot not found: ${oldName}`);
+    if (newName.toLowerCase() !== oldName.toLowerCase() && this.bots.has(newName.toLowerCase())) {
+      throw new Error(`Bot "${newName}" already exists`);
     }
-    const from = path.join(this.workersDir, existing.name);
-    const to = path.join(this.workersDir, newName);
+    const from = path.join(this.botsDir, existing.name);
+    const to = path.join(this.botsDir, newName);
     await fs.promises.rename(from, to);
     const mdPath = path.join(to, 'personality.md');
     const content = await fs.promises.readFile(mdPath, 'utf-8');
-    await fs.promises.writeFile(mdPath, content.replace(/^# .*(\r?\n|$)/, `# Worker: ${newName}$1`), 'utf-8');
-    await this.loadWorkers();
+    await fs.promises.writeFile(mdPath, content.replace(/^# .*(\r?\n|$)/, `# Bot: ${newName}$1`), 'utf-8');
+    await this.loadBots();
   }
 }
 
-const WORKER_NAME_RE = /^[a-z][a-z0-9-]*$/;
+const BOT_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
 /**
- * Pure cascade for a worker rename: swaps `oldName` for `newName` in every
- * team's member list and in every flow-graph worker node. Untouched teams keep
+ * Pure cascade for a bot rename: swaps `oldName` for `newName` in every
+ * team's member list and in every flow-graph bot node. Untouched teams keep
  * their original object identity so callers can skip a config write when
  * `changed` is false.
  */
-export function renameWorkerInTeams<T extends Record<string, any>>(
+export function renameBotInTeams<T extends Record<string, any>>(
   teams: T, oldName: string, newName: string,
 ): { teams: T; changed: boolean } {
   const swap = (name: string) => (name === oldName ? newName : name);
@@ -437,8 +451,8 @@ export function renameWorkerInTeams<T extends Record<string, any>>(
     const members: string[] = (raw.members ?? []).map(swap);
     let hit = members.some((m: string, i: number) => m !== raw.members?.[i]);
     let graph = raw.graph;
-    if (graph?.nodes?.some((n: any) => n.worker === oldName)) {
-      graph = { ...graph, nodes: graph.nodes.map((n: any) => (n.worker === oldName ? { ...n, worker: newName } : n)) };
+    if (graph?.nodes?.some((n: any) => n.bot === oldName)) {
+      graph = { ...graph, nodes: graph.nodes.map((n: any) => (n.bot === oldName ? { ...n, bot: newName } : n)) };
       hit = true;
     }
     next[teamName] = hit ? { ...raw, members, ...(graph ? { graph } : {}) } : raw;

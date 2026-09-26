@@ -524,7 +524,7 @@ describe('isLowSignalTrace', () => {
     }))).toBe(false);
     expect(isLowSignalTrace(traceWith({
       promptSummary: 'ok',
-      workerSequence: ['researcher', 'writer'],
+      botSequence: ['researcher', 'writer'],
     }))).toBe(false);
   });
 });

@@ -5,12 +5,12 @@ import { AgentResponse } from './types';
 function input(): JudgeInput {
   return {
     task: 'Add a feature',
-    worker: 'reviewer',
-    workerOutput: 'I checked the code; tests fail.',
+    bot: 'reviewer',
+    botOutput: 'I checked the code; tests fail.',
     blackboardSummary: '',
     edges: [
-      { id: 'e3', condition: 'work incomplete', targetWorker: 'coder' },
-      { id: 'e4', condition: undefined, targetWorker: '(end)' },
+      { id: 'e3', condition: 'work incomplete', targetBot: 'coder' },
+      { id: 'e4', condition: undefined, targetBot: '(end)' },
     ],
   };
 }
@@ -28,13 +28,13 @@ describe('buildJudgePrompt — decision question', () => {
   it('renders the decision question and yes/no edges', () => {
     const prompt = buildJudgePrompt({
       task: 'ship it',
-      worker: 'coder',
-      workerOutput: 'all green',
+      bot: 'coder',
+      botOutput: 'all green',
       blackboardSummary: '',
       question: 'Did the tests pass?',
       edges: [
-        { id: 'yes', condition: 'yes', targetWorker: '(end)' },
-        { id: 'no', condition: 'no', targetWorker: 'coder' },
+        { id: 'yes', condition: 'yes', targetBot: '(end)' },
+        { id: 'no', condition: 'no', targetBot: 'coder' },
       ],
     });
     expect(prompt).toContain('Did the tests pass?');
@@ -44,8 +44,8 @@ describe('buildJudgePrompt — decision question', () => {
 
   it('omits the decision section when no question is given', () => {
     const prompt = buildJudgePrompt({
-      task: 't', worker: 'w', workerOutput: 'o', blackboardSummary: '',
-      edges: [{ id: 'e1', condition: 'tests pass', targetWorker: 'reviewer' }],
+      task: 't', bot: 'w', botOutput: 'o', blackboardSummary: '',
+      edges: [{ id: 'e1', condition: 'tests pass', targetBot: 'reviewer' }],
     });
     expect(prompt).not.toContain('## Decision');
   });

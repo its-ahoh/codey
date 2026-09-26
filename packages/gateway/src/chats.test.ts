@@ -86,7 +86,7 @@ describe('ChatManager pendingTeam', () => {
     teamTurnId: 'test-turn-id',
     memberIndex: 1,
     carry: 'previous output',
-    askingWorker: 'reviewer',
+    askingBot: 'reviewer',
     question: 'should I include style nits?',
     askedAt: 1_700_000_000_000,
   };

@@ -2,14 +2,14 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { CoreState } from './core-state'
 
 contextBridge.exposeInMainWorld('codey', {
-  workers: {
-    list: () => ipcRenderer.invoke('workers:list'),
-    get: (name: string) => ipcRenderer.invoke('workers:get', name),
+  bots: {
+    list: () => ipcRenderer.invoke('bots:list'),
+    get: (name: string) => ipcRenderer.invoke('bots:get', name),
     save: (name: string, personality: any, config: any) =>
-      ipcRenderer.invoke('workers:save', name, personality, config),
-    delete: (name: string) => ipcRenderer.invoke('workers:delete', name),
-    rename: (oldName: string, newName: string) => ipcRenderer.invoke('workers:rename', oldName, newName),
-    generate: (prompt: string) => ipcRenderer.invoke('workers:generate', prompt),
+      ipcRenderer.invoke('bots:save', name, personality, config),
+    delete: (name: string) => ipcRenderer.invoke('bots:delete', name),
+    rename: (oldName: string, newName: string) => ipcRenderer.invoke('bots:rename', oldName, newName),
+    generate: (prompt: string) => ipcRenderer.invoke('bots:generate', prompt),
   },
   workspaces: {
     list: () => ipcRenderer.invoke('workspaces:list'),
@@ -151,12 +151,13 @@ contextBridge.exposeInMainWorld('codey', {
     /** Codey's own remembered entries, not the agents' files. */
     codey: {
       list: (scope: 'workspace' | 'global', workspace?: string) => ipcRenderer.invoke('codeyMemory:list', scope, workspace),
+      importLegacy: (scope: 'workspace' | 'global', workspace?: string) => ipcRenderer.invoke('codeyMemory:importLegacy', scope, workspace),
       add: (scope: 'workspace' | 'global', workspace: string | undefined, content: string, type?: string) =>
         ipcRenderer.invoke('codeyMemory:add', scope, workspace, content, type),
-      update: (scope: 'workspace' | 'global', workspace: string | undefined, id: string, content: string, type?: string) =>
-        ipcRenderer.invoke('codeyMemory:update', scope, workspace, id, content, type),
-      remove: (scope: 'workspace' | 'global', workspace: string | undefined, id: string) =>
-        ipcRenderer.invoke('codeyMemory:remove', scope, workspace, id),
+      update: (scope: 'workspace' | 'global', workspace: string | undefined, id: string, content: string, version: number) =>
+        ipcRenderer.invoke('codeyMemory:update', scope, workspace, id, content, version),
+      remove: (scope: 'workspace' | 'global', workspace: string | undefined, id: string, version: number) =>
+        ipcRenderer.invoke('codeyMemory:remove', scope, workspace, id, version),
       settings: () => ipcRenderer.invoke('codeyMemory:settings'),
       setSettings: (patch: { enabled?: boolean; autoExtract?: boolean }) =>
         ipcRenderer.invoke('codeyMemory:setSettings', patch),

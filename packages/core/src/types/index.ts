@@ -96,7 +96,7 @@ export interface ApiKeyEntry {
  */
 export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-/** Balanced baseline used when no chat, worker, or agent effort is configured. */
+/** Balanced baseline used when no chat, bot, or agent effort is configured. */
 export const DEFAULT_THINKING_EFFORT: ThinkingEffort = 'medium';
 
 /** Runtime guard for values arriving from JSON config or chat commands. */
@@ -228,7 +228,7 @@ export interface AgentRequest {
   /**
    * Advertise Codey's user-visible browser command to this agent turn when
    * the Mac app has supplied a private bridge. Set only for task-performing
-   * agents/workers, not advisors or housekeeping calls.
+   * agents/bots, not advisors or housekeeping calls.
    */
   browserTools?: boolean;
   /**

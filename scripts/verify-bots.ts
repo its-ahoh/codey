@@ -1,12 +1,12 @@
 /**
- * verify-workers.ts
+ * verify-bots.ts
  * Calls @codey/core directly — no HTTP server required.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { execSync } from 'child_process';
-import { WorkerManager, WorkspaceManager, WorkerNotFoundError } from '@codey/core';
+import { BotManager, WorkspaceManager, BotNotFoundError } from '@codey/core';
 
 const repoRoot = path.resolve(__dirname, '..');
 process.chdir(repoRoot);
@@ -21,25 +21,25 @@ function expect(condition: boolean, label: string) {
 }
 
 async function run() {
-  // ── Section 1: List workers ──────────────────────────────────────
-  section('1. List workers');
-  const wm = new WorkerManager('./workers');
-  await wm.loadWorkers();
+  // ── Section 1: List bots ──────────────────────────────────────
+  section('1. List bots');
+  const wm = new BotManager('./bots');
+  await wm.loadBots();
 
-  const allWorkers = wm.getAllWorkers();
-  expect(allWorkers.length >= 2, 'at least 2 workers loaded');
-  expect(wm.hasWorker('architect'), 'architect present');
-  expect(wm.hasWorker('executor'), 'executor present');
-  console.log(`✓ listWorkers() returns ${allWorkers.length} workers`);
+  const allBots = wm.getAllBots();
+  expect(allBots.length >= 2, 'at least 2 bots loaded');
+  expect(wm.hasBot('architect'), 'architect present');
+  expect(wm.hasBot('executor'), 'executor present');
+  console.log(`✓ listBots() returns ${allBots.length} bots`);
 
-  // ── Section 2: Get a specific worker ────────────────────────────
-  section('2. Get specific worker');
-  const architect = wm.getWorker('architect');
+  // ── Section 2: Get a specific bot ────────────────────────────
+  section('2. Get specific bot');
+  const architect = wm.getBot('architect');
   expect(architect !== undefined, 'architect resolved');
   expect(architect && !('codingAgent' in architect.config), 'architect has no execution binding');
   expect(typeof architect?.personality.role === 'string' && architect.personality.role.length > 0, 'architect has a role');
 
-  expect(wm.getWorker('nosuch') === undefined, 'nosuch returns undefined');
+  expect(wm.getBot('nosuch') === undefined, 'nosuch returns undefined');
 
   // ── Section 3: Get teams ─────────────────────────────────────────
   section('3. Get teams');
@@ -52,49 +52,49 @@ async function run() {
   const teamNames = wsm.getTeamNames();
   expect(Array.isArray(teamNames) && teamNames.includes('review'), 'getTeamNames() includes review');
 
-  // ── Section 4: PUT (update) worker ───────────────────────────────
-  section('4. PUT worker — update personality.md on disk and reload');
-  const personalityPath = path.join(repoRoot, 'workers', 'architect', 'personality.md');
+  // ── Section 4: PUT (update) bot ───────────────────────────────
+  section('4. PUT bot — update personality.md on disk and reload');
+  const personalityPath = path.join(repoRoot, 'bots', 'architect', 'personality.md');
   const originalContent = fs.readFileSync(personalityPath, 'utf-8');
 
   // Write an edited soul line into the file
   const editedContent = originalContent.replace(/## Soul[\s\S]*?(?=## |\n*$)/, '## Soul\nVerifier-edited soul.\n\n');
   fs.writeFileSync(personalityPath, editedContent, 'utf-8');
 
-  // Reload the worker manager to pick up the change
-  await wm.loadWorkers();
-  const updated = wm.getWorker('architect');
+  // Reload the bot manager to pick up the change
+  await wm.loadBots();
+  const updated = wm.getBot('architect');
   expect(updated?.personality.soul.includes('Verifier-edited') === true, 'PUT updated the soul');
 
   // Restore original file via git checkout (so the finally block is a no-op)
-  execSync('git checkout workers/architect/personality.md', { cwd: repoRoot, stdio: 'pipe' });
-  await wm.loadWorkers();
-  const restored = wm.getWorker('architect');
+  execSync('git checkout bots/architect/personality.md', { cwd: repoRoot, stdio: 'pipe' });
+  await wm.loadBots();
+  const restored = wm.getBot('architect');
   expect(restored?.personality.soul.includes('Verifier-edited') !== true, 'soul restored after git checkout');
 
-  // ── Section 5: DELETE worker (temp, then confirm gone) ───────────
-  section('5. DELETE worker');
-  const tmpWorkersDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-wm-'));
-  const tmpName = 'temp-worker';
-  const tmpDir = path.join(tmpWorkersDir, tmpName);
+  // ── Section 5: DELETE bot (temp, then confirm gone) ───────────
+  section('5. DELETE bot');
+  const tmpBotsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-wm-'));
+  const tmpName = 'temp-bot';
+  const tmpDir = path.join(tmpBotsDir, tmpName);
   fs.mkdirSync(tmpDir);
-  fs.writeFileSync(path.join(tmpDir, 'personality.md'), `# Worker: ${tmpName}\n\n## Role\nTemp.\n\n## Soul\nTemp soul.\n\n## Instructions\nDo things.\n`);
+  fs.writeFileSync(path.join(tmpDir, 'personality.md'), `# Bot: ${tmpName}\n\n## Role\nTemp.\n\n## Soul\nTemp soul.\n\n## Instructions\nDo things.\n`);
   fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({ codingAgent: 'claude-code', model: 'test', tools: [] }));
 
-  const wmTmp = new WorkerManager(tmpWorkersDir);
-  await wmTmp.loadWorkers();
-  expect(wmTmp.hasWorker(tmpName), 'temp worker loaded');
+  const wmTmp = new BotManager(tmpBotsDir);
+  await wmTmp.loadBots();
+  expect(wmTmp.hasBot(tmpName), 'temp bot loaded');
 
   // Delete by removing the directory
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  await wmTmp.loadWorkers();
-  expect(!wmTmp.hasWorker(tmpName), 'temp worker gone after deletion');
+  await wmTmp.loadBots();
+  expect(!wmTmp.hasBot(tmpName), 'temp bot gone after deletion');
 
-  // Confirm getWorker returns undefined (WorkerNotFoundError is a guard class for future use)
-  const gone = wmTmp.getWorker(tmpName);
-  expect(gone === undefined, 'getWorker returns undefined for deleted worker');
+  // Confirm getBot returns undefined (BotNotFoundError is a guard class for future use)
+  const gone = wmTmp.getBot(tmpName);
+  expect(gone === undefined, 'getBot returns undefined for deleted bot');
 
-  fs.rmSync(tmpWorkersDir, { recursive: true, force: true });
+  fs.rmSync(tmpBotsDir, { recursive: true, force: true });
 
   // ── Section 6: PUT teams ─────────────────────────────────────────
   section('6. PUT teams — write new teams into workspace.json and reload');
@@ -107,8 +107,8 @@ async function run() {
   fs.writeFileSync(workspaceJsonPath, JSON.stringify(parsed, null, 2), 'utf-8');
 
   // Fresh managers to reload
-  const wm2 = new WorkerManager('./workers');
-  await wm2.loadWorkers();
+  const wm2 = new BotManager('./bots');
+  await wm2.loadBots();
   const wsm2 = new WorkspaceManager(wm2, './workspaces');
   await wsm2.switchWorkspace('default');
 
@@ -119,17 +119,17 @@ async function run() {
   execSync('git checkout workspaces/default/workspace.json', { cwd: repoRoot, stdio: 'pipe' });
 
   // ── Section 7: Cascade delete ────────────────────────────────────
-  section('7. Cascade delete — worker removed from team when worker deleted');
-  // Build an isolated temp environment with two workers and a team referencing both.
+  section('7. Cascade delete — bot removed from team when bot deleted');
+  // Build an isolated temp environment with two bots and a team referencing both.
   const tmpWD = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-cascade-'));
   const tmpWSDir = path.join(tmpWD, 'workspaces');
-  const tmpWkDir = path.join(tmpWD, 'workers');
+  const tmpWkDir = path.join(tmpWD, 'bots');
 
-  // Create workers
+  // Create bots
   for (const name of ['alpha', 'beta']) {
     const d = path.join(tmpWkDir, name);
     fs.mkdirSync(d, { recursive: true });
-    fs.writeFileSync(path.join(d, 'personality.md'), `# Worker: ${name}\n\n## Role\n${name} role.\n\n## Soul\n${name} soul.\n\n## Instructions\nDo ${name}.\n`);
+    fs.writeFileSync(path.join(d, 'personality.md'), `# Bot: ${name}\n\n## Role\n${name} role.\n\n## Soul\n${name} soul.\n\n## Instructions\nDo ${name}.\n`);
     fs.writeFileSync(path.join(d, 'config.json'), JSON.stringify({ codingAgent: 'claude-code', model: 'test', tools: [] }));
   }
 
@@ -141,8 +141,8 @@ async function run() {
     teams: { squad: ['alpha', 'beta'] },
   }, null, 2));
 
-  const wmCascade = new WorkerManager(tmpWkDir);
-  await wmCascade.loadWorkers();
+  const wmCascade = new BotManager(tmpWkDir);
+  await wmCascade.loadBots();
   const wsmCascade = new WorkspaceManager(wmCascade, tmpWSDir);
   await wsmCascade.switchWorkspace('default');
 
@@ -159,18 +159,18 @@ async function run() {
   fs.writeFileSync(path.join(tmpDefaultWs, 'workspace.json'), JSON.stringify(wsJsonParsed, null, 2));
 
   // Reload and verify cascade
-  await wmCascade.loadWorkers();
+  await wmCascade.loadBots();
   const wsmCascade2 = new WorkspaceManager(wmCascade, tmpWSDir);
   await wsmCascade2.switchWorkspace('default');
 
-  expect(!wmCascade.hasWorker('alpha'), 'alpha no longer in worker library after deletion');
-  expect(wmCascade.hasWorker('beta'), 'beta still in worker library');
+  expect(!wmCascade.hasBot('alpha'), 'alpha no longer in bot library after deletion');
+  expect(wmCascade.hasBot('beta'), 'beta still in bot library');
   expect(wsmCascade2.getTeam('squad')?.includes('alpha') !== true, 'alpha removed from squad team');
   expect(wsmCascade2.getTeam('squad')?.includes('beta') === true, 'beta still in squad team');
 
   fs.rmSync(tmpWD, { recursive: true, force: true });
 
-  console.log('\nAll verify-workers sections passed.');
+  console.log('\nAll verify-bots sections passed.');
 }
 
 run()
@@ -178,7 +178,7 @@ run()
   .finally(() => {
     try {
       execSync(
-        'git checkout workers/architect/personality.md workers/architect/config.json workspaces/default/workspace.json',
+        'git checkout bots/architect/personality.md bots/architect/config.json workspaces/default/workspace.json',
         { cwd: repoRoot, stdio: 'inherit' }
       );
     } catch { /* ignore */ }

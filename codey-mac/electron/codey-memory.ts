@@ -1,4 +1,5 @@
-import type { MemoryEntry, MemoryStore, MemoryType } from '@codey/core'
+import type { CoMemoNote, MemoryEntry, MemoryStore, MemoryType } from '@codey/core'
+import { isSharedMemoryEntry } from '@codey/core'
 
 /**
  * Codey's own memory — the structured entries it injects into prompts,
@@ -16,6 +17,7 @@ export type MemoryStoreScope = 'workspace' | 'global'
 /** What the renderer needs to show and manage one entry. */
 export interface CodeyMemoryItem {
   id: string
+  version?: number
   type: MemoryType
   content: string
   label: string
@@ -77,5 +79,15 @@ export function validateContent(content: unknown): string {
 
 /** All entries in a store, newest first. */
 export function listStore(store: MemoryStore): CodeyMemoryItem[] {
-  return sortItems(store.getAll().map(toMemoryItem))
+  return sortItems(store.getAll().filter(isSharedMemoryEntry).map(toMemoryItem))
+}
+
+/** Adapt the public Co-memo record to the existing memory panel. */
+export function toCoMemoItem(note: CoMemoNote): CodeyMemoryItem {
+  const kind = note.metadata?.kind
+  return {
+    id: note.id, version: note.version, content: note.content, label: labelFor(note.content),
+    type: isMemoryType(kind) ? kind : 'context', createdAt: note.createdAt, updatedAt: note.updatedAt,
+    accessCount: 0, tags: [note.scope], source: 'co-memo',
+  }
 }

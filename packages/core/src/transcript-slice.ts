@@ -47,7 +47,7 @@ interface TranscriptRow {
   role?: string;
   text?: string;
   content?: string;
-  worker?: string;
+  bot?: string;
   agent?: string;
 }
 
@@ -93,7 +93,7 @@ function digestEntry(line: string, lineNumber: number): string | undefined {
   }
   const body = (row.text ?? row.content ?? '').replace(/\s+/g, ' ').trim();
   if (!body) return undefined;
-  const who = row.worker || row.agent || row.role || 'turn';
+  const who = row.bot || row.agent || row.role || 'turn';
   const clipped = body.length > DIGEST_ENTRY_CHARS
     ? `${body.slice(0, DIGEST_ENTRY_CHARS)}…`
     : body;

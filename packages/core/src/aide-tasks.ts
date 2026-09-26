@@ -147,7 +147,7 @@ function rewriteSummaryEntries(raw: unknown, source: TeamRunSummaryEntry[]): Tea
 
     const first = source[indexes[0]];
     result.push({
-      worker: indexes.length === 1 ? first.worker : 'Team',
+      bot: indexes.length === 1 ? first.bot : 'Team',
       step: indexes.length === 1 ? first.step : Math.min(...indexes.map(index => source[index].step)),
       text: rewrite.text.trim(),
     });

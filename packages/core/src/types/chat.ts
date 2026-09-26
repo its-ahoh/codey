@@ -60,7 +60,7 @@ export interface WriteDiff {
 }
 
 export interface TeamRunSummaryEntry {
-  worker: string;
+  bot: string;
   step: number;
   text: string;
 }
@@ -86,7 +86,20 @@ export interface ChatTaskRoute {
   replyToMessageId?: string;
 }
 
+/** Snapshot of a memory actually included in this turn's prompt. */
+export interface MemoryUsage {
+  readOnly?: boolean;
+  id: string;
+  version: number;
+  content: string;
+  botName?: string;
+  projectName?: string;
+  audience: 'private' | 'project' | 'global';
+  source: string;
+}
+
 export interface ChatMessage {
+  memoryUsed?: MemoryUsage[];
   taskId?: string;
   replyToMessageId?: string;
   id: string;
@@ -115,35 +128,35 @@ export interface ChatMessage {
   thinking?: string;
   /** Per-team-step extended-thinking, keyed by step number. */
   thinkingByStep?: Record<number, string>;
-  /** Groups the per-worker messages of one team run. Absent on single-agent
+  /** Groups the per-bot messages of one team run. Absent on single-agent
    *  turns and on legacy combined team turns (which use the parseTeamMessage
    *  fallback renderer). */
   teamTurnId?: string;
-  /** Built-in identity, distinct from an editable worker named Advisor. */
+  /** Built-in identity, distinct from an editable bot named Advisor. */
   builtinMember?: 'aide' | 'advisor';
   /** Authoritative terminal message; never deduplicate by its prose. */
   teamFinal?: { source: 'aide' | 'fallback'; reason: string; outcome?: 'completed' | 'partial' | 'failed' | 'stopped' | 'empty' };
-  /** Team name for a worker message (for the group header). */
+  /** Team name for a bot message (for the group header). */
   teamName?: string;
   /** Dispatch mode of the owning team run. */
   teamMode?: 'sequential' | 'graph' | 'auto' | 'roundtable';
-  /** 1-based step / run index of this worker within the team run. */
+  /** 1-based step / run index of this bot within the team run. */
   step?: number;
-  /** Worker name that produced this message. */
-  worker?: string;
-  /** Live status of this worker's run. */
-  workerStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser';
+  /** Bot name that produced this message. */
+  bot?: string;
+  /** Live status of this bot's run. */
+  botStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser';
   /** Advisor's routing reason, shown as a caption on the bubble. */
   advisorReason?: string;
   /** Structured terminal error captured by the team orchestrator. */
-  workerFailureReason?: string;
-  /** Structured user action captured when a worker pauses for input. */
-  workerNextUserAction?: { text: string; options?: string[] };
+  botFailureReason?: string;
+  /** Structured user action captured when a bot pauses for input. */
+  botNextUserAction?: { text: string; options?: string[] };
   /** A resolved pause marker; terminal but not itself a completed outcome. */
-  workerSummaryExcluded?: boolean;
+  botSummaryExcluded?: boolean;
   /** Gateway-authored terminal aggregate for this teamTurnId. */
   teamSummary?: TeamRunSummary;
-  /** Latest shared blackboard snapshot after this worker completed a step. */
+  /** Latest shared blackboard snapshot after this bot completed a step. */
   teamBlackboard?: BlackboardSnapshot;
   /** Option labels when this assistant message ended in [ASK_USER:choice]. */
   choices?: string[];
@@ -158,7 +171,7 @@ export interface ChatMessage {
 
 export type ChatSelection =
   | { type: 'none'; name?: string }
-  | { type: 'worker'; name: string }
+  | { type: 'bot'; name: string }
   /** `name` identifies which team to run. Optional only for backward compat with chats persisted before per-team selection landed; the UI always sets it. */
   | { type: 'team'; name?: string };
 
@@ -203,7 +216,7 @@ export interface Chat {
   soloAdvisor?: boolean;
   /** Attached channel routes. Absent or empty means Mac-only. */
   routes?: ChatRoute[];
-  /** Set while a /team run is paused waiting for the user to answer a worker's question. */
+  /** Set while a /team run is paused waiting for the user to answer a bot's question. */
   pendingTeam?: PendingTeamState;
   /** Per-chat preference for the right-side context panel in codey-mac.
    *  undefined = user hasn't decided; auto-open logic applies on first tool call.

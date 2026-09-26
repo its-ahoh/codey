@@ -1,0 +1,25 @@
+.bot-avatar-eyes { transform-box: fill-box; transform-origin: center; }
+.bot-avatar-body { transform-origin: 50px 86px; }
+.bot-avatar--working .bot-avatar-eyes {
+  animation: bot-blink var(--avatar-blink-period, 7s) linear var(--avatar-delay, 0s) infinite;
+}
+.bot-avatar--working .bot-avatar-pupil { animation: bot-look var(--avatar-work-period, 2s) ease-in-out infinite; }
+.bot-avatar--working .bot-avatar-body { animation: bot-bob var(--avatar-work-period, 2s) ease-in-out infinite; }
+/* Brief blinks, including an occasional double blink; most of the cycle is still. */
+@keyframes bot-blink {
+  0%, 42%, 46%, 91%, 95%, 100% { transform: scaleY(1); }
+  44%, 93% { transform: scaleY(.08); }
+  97% { transform: scaleY(.16); }
+  99% { transform: scaleY(1); }
+}
+@keyframes bot-look {
+  0%, 100% { transform: translateX(-2px); }
+  35%, 60% { transform: translateX(2px); }
+  80% { transform: translate(0, 1px); }
+}
+@keyframes bot-bob {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(-2px) scale(.98, 1.02); }
+}
+.bot-avatar:not([data-motion-visible="true"]) * { animation-play-state: paused !important; }
+@media (prefers-reduced-motion: reduce) { .bot-avatar * { animation: none !important; } }

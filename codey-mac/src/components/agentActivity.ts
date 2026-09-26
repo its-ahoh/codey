@@ -37,6 +37,6 @@ export function activityForTool(tool?: string): AgentActivity {
   if (t.includes('edit') || t.includes('write') || t.includes('patch') || t.includes('apply')) return 'editing'
   if (t.includes('read') || t.includes('view') || t.includes('cat')) return 'reading'
   if (t.includes('bash') || t.includes('shell') || t.includes('exec') || t.includes('command') || t.includes('terminal')) return 'running'
-  if (t.includes('task') || t.includes('agent') || t.includes('worker')) return 'delegating'
+  if (t.includes('task') || t.includes('agent') || t.includes('bot')) return 'delegating'
   return 'working'
 }

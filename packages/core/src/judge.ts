@@ -5,14 +5,14 @@ import { runWithTimeout } from './utils/run';
 export interface JudgeEdge {
   id: string;
   condition?: string;
-  /** Worker name of the target node, or a label like "(end)". */
-  targetWorker: string;
+  /** Bot name of the target node, or a label like "(end)". */
+  targetBot: string;
 }
 
 export interface JudgeInput {
   task: string;
-  worker: string;
-  workerOutput: string;
+  bot: string;
+  botOutput: string;
   blackboardSummary: string;
   /** Diamond decision question; when set, the judge answers it yes/no over the edges. */
   question?: string;
@@ -43,8 +43,8 @@ export function buildJudgePrompt(input: JudgeInput): string {
   lines.push('# Flow Judge');
   lines.push('## Role');
   lines.push(
-    'You route a sequential worker team along a fixed graph. You never write code. ' +
-    'Given the worker that just finished, its output, and the list of outgoing edges, ' +
+    'You route a sequential bot team along a fixed graph. You never write code. ' +
+    'Given the bot that just finished, its output, and the list of outgoing edges, ' +
     'choose exactly one edge to follow. Each edge has a natural-language condition; ' +
     'pick the edge whose condition the output best satisfies. If none clearly match, ' +
     'pick the edge marked as the default target.',
@@ -55,16 +55,16 @@ export function buildJudgePrompt(input: JudgeInput): string {
     lines.push('## Shared notes');
     lines.push(input.blackboardSummary.trim());
   }
-  lines.push(`## Worker just finished: ${input.worker}`);
-  lines.push('## Worker output');
-  lines.push(input.workerOutput || '(empty)');
+  lines.push(`## Bot just finished: ${input.bot}`);
+  lines.push('## Bot output');
+  lines.push(input.botOutput || '(empty)');
   if (input.question && input.question.trim()) {
     lines.push('## Decision');
     lines.push(`Answer this yes/no question about the latest output, then pick the matching edge: ${input.question.trim()}`);
   }
   lines.push('## Outgoing edges (choose one)');
   for (const e of input.edges) {
-    lines.push(`- id="${e.id}" → ${e.targetWorker}: ${e.condition ? `if ${e.condition}` : '(default)'}`);
+    lines.push(`- id="${e.id}" → ${e.targetBot}: ${e.condition ? `if ${e.condition}` : '(default)'}`);
   }
   lines.push('## Output format');
   lines.push('Reply with ONLY a JSON object: {"edge_id":"<one of the ids above>","reason":"<one short sentence>"}');

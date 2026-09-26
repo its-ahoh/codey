@@ -2,12 +2,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as assert from 'assert';
-import { WorkerManager } from '../../packages/core/src/workers';
+import { BotManager } from '../../packages/core/src/bots';
 
 async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-verify-'));
   try {
-    const wDir = path.join(tmp, 'workers');
+    const wDir = path.join(tmp, 'bots');
     for (const n of ['with-hint', 'no-hint', 'long-role', 'whitespace-hint', 'empty-hint']) {
       fs.mkdirSync(path.join(wDir, n), { recursive: true });
     }
@@ -38,19 +38,19 @@ async function main() {
     fs.writeFileSync(path.join(wDir, 'empty-hint', 'config.json'),
       JSON.stringify({ codingAgent: 'claude-code', model: 'm', tools: [], dispatchHint: '' }));
 
-    const wm = new WorkerManager(wDir);
-    await wm.loadWorkers();
+    const wm = new BotManager(wDir);
+    await wm.loadBots();
 
     assert.strictEqual(wm.getDispatchHint('with-hint'), 'Reviews PRs', 'trims and uses dispatchHint');
     assert.strictEqual(wm.getDispatchHint('no-hint'), 'Designs systems', 'falls back to role first line');
     const long = wm.getDispatchHint('long-role');
     assert.strictEqual(long.length, 120, 'truncates long role to 120 chars');
     assert.ok(long.endsWith('...'), 'truncated value ends with ellipsis');
-    assert.strictEqual(wm.getDispatchHint('missing'), '', 'unknown worker returns empty string');
+    assert.strictEqual(wm.getDispatchHint('missing'), '', 'unknown bot returns empty string');
     assert.strictEqual(wm.getDispatchHint('whitespace-hint'), 'Fallback used', 'whitespace-only hint falls through to role');
     assert.strictEqual(wm.getDispatchHint('empty-hint'), 'Fallback used', 'empty-string hint falls through to role');
 
-    console.log('OK workers-dispatch-hint');
+    console.log('OK bots-dispatch-hint');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

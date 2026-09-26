@@ -1,3 +1,4 @@
+import { isSharedMemoryEntry } from '@codey/core'
 import type * as Fs from 'fs'
 import type * as Path from 'path'
 import { AGENT_MEMORY, userMemoryFiles } from './memory'
@@ -33,6 +34,7 @@ export function legacySharedFilePath(pathMod: typeof Path, home: string): string
 
 /** One memory entry as the agents should read it. */
 export interface SharedMemoryEntry {
+  scope?: unknown
   content: string
 }
 
@@ -43,6 +45,7 @@ export interface SharedMemoryEntry {
  */
 export function renderSharedBody(entries: SharedMemoryEntry[]): string {
   const lines = entries
+    .filter(isSharedMemoryEntry)
     .map(e => e.content.trim())
     .filter(Boolean)
     // A multi-line memory keeps its shape, indented under its own bullet.

@@ -4,7 +4,7 @@ export interface ParallelAdvisorInput {
   topic: string;
   summary: string;
   opinions: Array<{ name: string; text: string }>;
-  pendingAsks: Array<{ worker: string; question: string }>;
+  pendingAsks: Array<{ bot: string; question: string }>;
   idleMs: number;
   revision: number;
   userAnswer?: { question: string; answer: string };
@@ -30,7 +30,7 @@ const VALID_REASONS: readonly ParallelReason[] = ['continuing', 'pending_questio
 export function buildParallelAdvisorPrompt(input: ParallelAdvisorInput): string {
   const lines: string[] = [];
   lines.push('# Role');
-  lines.push('You are the Advisor of a parallel roundtable discussion. Multiple workers are appending opinions in parallel. Read the current state, optionally update the shared summary, and decide what happens next.');
+  lines.push('You are the Advisor of a parallel roundtable discussion. Multiple bots are appending opinions in parallel. Read the current state, optionally update the shared summary, and decide what happens next.');
 
   lines.push('## Topic');
   lines.push(input.topic);
@@ -48,11 +48,11 @@ export function buildParallelAdvisorPrompt(input: ParallelAdvisorInput): string 
     }
   }
 
-  lines.push('## Pending Worker Questions');
+  lines.push('## Pending Bot Questions');
   if (input.pendingAsks.length === 0) {
     lines.push('(none)');
   } else {
-    lines.push(input.pendingAsks.map(a => `- ${a.worker}: ${a.question}`).join('\n'));
+    lines.push(input.pendingAsks.map(a => `- ${a.bot}: ${a.question}`).join('\n'));
   }
 
   lines.push('## State');
@@ -71,8 +71,8 @@ export function buildParallelAdvisorPrompt(input: ParallelAdvisorInput): string 
     '{',
     '  "action": "continue" | "ask_user" | "finalize" | "terminate",',
     '  "summary_update": "<optional new summary text to replace the shared summary>",',
-    '  "directive": "<optional short steering note for workers on the next loop>",',
-    '  "route_to": "<optional worker name to route a pending question to>",',
+    '  "directive": "<optional short steering note for bots on the next loop>",',
+    '  "route_to": "<optional bot name to route a pending question to>",',
     '  "user_question": "<required when action == ask_user>",',
     '  "user_question_choices": ["<optional>", "<pick-one>", "<choices>"] ,',
     '  "final_message": "<required when action == finalize or terminate>",',
@@ -80,8 +80,8 @@ export function buildParallelAdvisorPrompt(input: ParallelAdvisorInput): string 
     '}',
     '',
     'Guidelines:',
-    '- Use "continue" with reason "continuing" when workers should keep iterating.',
-    '- Use "ask_user" with reason "pending_question" when a worker question requires human input.',
+    '- Use "continue" with reason "continuing" when bots should keep iterating.',
+    '- Use "ask_user" with reason "pending_question" when a bot question requires human input.',
     '- Use "finalize" with reason "consensus" or "idle" when the discussion has converged or stalled.',
     '- Use "terminate" with reason "drift" when the discussion has gone off-topic and must be stopped.',
     '- "advisor_error" is reserved for parser-side fallbacks; do not emit it yourself.',

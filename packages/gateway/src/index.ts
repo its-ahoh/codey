@@ -5,7 +5,6 @@ import { handleCommand } from './cli';
 import { GatewayConfig } from '@codey/core';
 import { Codey } from './gateway';
 import { ApiServer, HealthStatusType } from './health';
-import { assertNoLegacyLayout } from './startup-guard';
 
 dotenv.config();
 
@@ -52,10 +51,9 @@ function startGateway(): void {
   };
 
   async function main() {
-    assertNoLegacyLayout('./workspaces');
-    const { WorkerManager } = await import('@codey/core');
-    const workerManager = new WorkerManager('./workers');
-    await workerManager.loadWorkers();
+    const { BotManager } = await import('@codey/core');
+    const botManager = new BotManager('./bots');
+    await botManager.loadBots();
     logger.banner('🚀 Codey');
     logger.info(`Starting on port ${configManager.getPort()}`);
     logger.info(`Default agent: ${configManager.getDefaultAgent()}`);
@@ -64,7 +62,7 @@ function startGateway(): void {
     logger.info(`Fallback: ${configManager.getFallback().enabled ? 'on' : 'off'} (${formatFallbackOrder(configManager.getFallback().order)})`);
     logger.info(`Log level: ${configManager.getLogLevel()}`);
 
-    const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager, workerManager);
+    const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager, botManager);
 
     // Start API server on the gateway port
     const apiServer = new ApiServer(
@@ -115,10 +113,9 @@ function startGateway(): void {
 }
 
 async function startTui(): Promise<void> {
-  assertNoLegacyLayout('./workspaces');
-  const { WorkerManager } = await import('@codey/core');
-  const workerManager = new WorkerManager('./workers');
-  await workerManager.loadWorkers();
+  const { BotManager } = await import('@codey/core');
+  const botManager = new BotManager('./bots');
+  await botManager.loadBots();
   const gatewayConfig: GatewayConfig = {
     port: configManager.getPort(),
     defaultAgent: configManager.getDefaultAgent() as any,
@@ -128,7 +125,7 @@ async function startTui(): Promise<void> {
     channels: {},
   };
 
-  const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager, workerManager);
+  const gateway = new Codey(gatewayConfig, logger, './workspaces', configManager, botManager);
 
   // Set working directory from CLI arg: npm run tui -- /path/to/project
   const tuiDir = args[1];

@@ -10,15 +10,15 @@ export interface QuestionRender {
   choices?: string[];
 }
 
-/** The question card a paused worker sends. It carries only the question
- *  and its options: a worker's reasoning before the question is that
- *  worker's own message, not part of the card. */
+/** The question card a paused bot sends. It carries only the question
+ *  and its options: a bot's reasoning before the question is that
+ *  bot's own message, not part of the card. */
 export function renderQuestion(
-  workerName: string,
+  botName: string,
   question: string,
   options?: string[],
 ): QuestionRender {
-  const intro = `❓ **${workerName}** needs your input:`;
+  const intro = `❓ **${botName}** needs your input:`;
   const footer = options && options.length > 0
     ? '_Tap an option below, or type your own answer._'
     : '_Reply with your answer to continue, or send a slash command to cancel._';

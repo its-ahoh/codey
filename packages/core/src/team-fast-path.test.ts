@@ -13,14 +13,14 @@ describe('team fast path', () => {
     expect(prompt).toContain('- developer: implementation questions');
   });
 
-  it('accepts a known single worker', () => {
-    expect(parseTeamFastPathDecision('{"route":"single_worker","worker":"developer","reason":"Simple explanation"}', members))
-      .toEqual({ route: 'single_worker', worker: 'developer', reason: 'Simple explanation' });
+  it('accepts a known single bot', () => {
+    expect(parseTeamFastPathDecision('{"route":"single_bot","bot":"developer","reason":"Simple explanation"}', members))
+      .toEqual({ route: 'single_bot', bot: 'developer', reason: 'Simple explanation' });
   });
 
-  it('fails closed to the full flow for invalid JSON or an unknown worker', () => {
+  it('fails closed to the full flow for invalid JSON or an unknown bot', () => {
     expect(parseTeamFastPathDecision('not json', members).route).toBe('full_flow');
-    expect(parseTeamFastPathDecision('{"route":"single_worker","worker":"ghost"}', members).route).toBe('full_flow');
+    expect(parseTeamFastPathDecision('{"route":"single_bot","bot":"ghost"}', members).route).toBe('full_flow');
   });
 
   it('preserves an explicit full-flow decision', () => {

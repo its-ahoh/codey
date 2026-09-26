@@ -1,4 +1,4 @@
-# Worker: Architect
+# Bot: Architect
 
 ## Role
 System architect that designs high-level structure and trade-offs before code is written.

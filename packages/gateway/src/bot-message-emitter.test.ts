@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { WorkerMessageEmitter } from './worker-message-emitter';
+import { BotMessageEmitter } from './bot-message-emitter';
 import type { ChatStreamEvent } from './chat-runner';
 
 function harness(mode: 'auto' | 'roundtable' = 'auto') {
@@ -12,38 +12,38 @@ function harness(mode: 'auto' | 'roundtable' = 'auto') {
   };
   let n = 0;
   const newId = () => `id-${++n}`;
-  const em = new WorkerMessageEmitter(
+  const em = new BotMessageEmitter(
     (e) => events.push(e), store, 'chat1',
     { teamTurnId: 'tt1', teamName: 'team', mode }, newId,
   );
   return { em, events, appended, patched };
 }
 
-describe('WorkerMessageEmitter — serial', () => {
-  it('pre-creates pending roster cards and promotes the selected worker in place', () => {
+describe('BotMessageEmitter — serial', () => {
+  it('pre-creates pending roster cards and promotes the selected bot in place', () => {
     const h = harness();
-    h.em.teamStart([{ step: 1, worker: 'pm' }, { step: 2, worker: 'developer' }]);
-    expect(h.appended.map(message => [message.worker, message.workerStatus])).toEqual([
+    h.em.teamStart([{ step: 1, bot: 'pm' }, { step: 2, bot: 'developer' }]);
+    expect(h.appended.map(message => [message.bot, message.botStatus])).toEqual([
       ['pm', 'pending'], ['developer', 'pending'],
     ]);
 
-    const id = h.em.beginWorker({ step: 1, worker: 'pm', reason: 'kickoff' });
+    const id = h.em.beginBot({ step: 1, bot: 'pm', reason: 'kickoff' });
     expect(id).toBe(h.appended[0].id);
     expect(h.appended).toHaveLength(2);
-    expect(h.patched.at(-1)).toMatchObject({ id, patch: { workerStatus: 'running', advisorReason: 'kickoff' } });
+    expect(h.patched.at(-1)).toMatchObject({ id, patch: { botStatus: 'running', advisorReason: 'kickoff' } });
   });
 
-  it('begin appends a running stub and emits worker_start with the same id', () => {
+  it('begin appends a running stub and emits bot_start with the same id', () => {
     const h = harness();
-    const id = h.em.beginWorker({ step: 1, worker: 'pm', reason: 'kickoff', agent: 'codex', model: 'gpt-5' });
+    const id = h.em.beginBot({ step: 1, bot: 'pm', reason: 'kickoff', agent: 'codex', model: 'gpt-5' });
     expect(id).toBe('id-1');
-    expect(h.appended[0]).toMatchObject({ id: 'id-1', role: 'assistant', workerStatus: 'running', teamTurnId: 'tt1', step: 1, worker: 'pm', advisorReason: 'kickoff', agent: 'codex', model: 'gpt-5' });
-    expect(h.events[0]).toMatchObject({ type: 'worker_start', messageId: 'id-1', step: 1, worker: 'pm', reason: 'kickoff' });
+    expect(h.appended[0]).toMatchObject({ id: 'id-1', role: 'assistant', botStatus: 'running', teamTurnId: 'tt1', step: 1, bot: 'pm', advisorReason: 'kickoff', agent: 'codex', model: 'gpt-5' });
+    expect(h.events[0]).toMatchObject({ type: 'bot_start', messageId: 'id-1', step: 1, bot: 'pm', reason: 'kickoff' });
   });
 
-  it('routes stream/thinking/tool to the active worker and tags messageId', () => {
+  it('routes stream/thinking/tool to the active bot and tags messageId', () => {
     const h = harness();
-    const id = h.em.beginWorker({ step: 1, worker: 'pm' });
+    const id = h.em.beginBot({ step: 1, bot: 'pm' });
     h.em.onStream('hello ');
     h.em.onStream('world');
     h.em.onThinking('hmm', 1);
@@ -55,39 +55,39 @@ describe('WorkerMessageEmitter — serial', () => {
 
   it('carries sampled shell writes onto the tool_end row and its event', () => {
     const h = harness();
-    h.em.beginWorker({ step: 1, worker: 'pm' });
+    h.em.beginBot({ step: 1, bot: 'pm' });
     h.em.onTool({ type: 'tool_end', tool: 'Bash', message: 'ran', writes: ['/repo/a.ts'] });
-    h.em.endWorker('done');
+    h.em.endBot('done');
     expect(h.events.find(e => e.type === 'tool_end')).toMatchObject({ writes: ['/repo/a.ts'] });
     expect(h.patched[0].patch.toolCalls[0]).toMatchObject({ type: 'tool_end', writes: ['/repo/a.ts'] });
   });
 
   it('leaves the writes field off a tool call that wrote nothing', () => {
     const h = harness();
-    h.em.beginWorker({ step: 1, worker: 'pm' });
+    h.em.beginBot({ step: 1, bot: 'pm' });
     h.em.onTool({ type: 'tool_end', tool: 'Bash', message: 'ran' });
-    h.em.endWorker('done');
+    h.em.endBot('done');
     expect('writes' in (h.patched[0].patch.toolCalls[0] as object)).toBe(false);
   });
 
-  it('end patches the message with the accumulated buffers + status and emits worker_end', () => {
+  it('end patches the message with the accumulated buffers + status and emits bot_end', () => {
     const h = harness();
-    const id = h.em.beginWorker({ step: 1, worker: 'pm' });
+    const id = h.em.beginBot({ step: 1, bot: 'pm' });
     h.em.onStream('out');
     h.em.onTool({ type: 'tool_start', tool: 'Read', message: 'Read(a)' });
-    h.em.endWorker('done', { tokens: 42, durationSec: 3 });
+    h.em.endBot('done', { tokens: 42, durationSec: 3 });
     expect(h.patched[0].id).toBe(id);
-    expect(h.patched[0].patch).toMatchObject({ content: 'out', workerStatus: 'done', isComplete: true, tokens: 42, durationSec: 3 });
+    expect(h.patched[0].patch).toMatchObject({ content: 'out', botStatus: 'done', isComplete: true, tokens: 42, durationSec: 3 });
     expect(h.patched[0].patch.toolCalls).toHaveLength(1);
-    expect(h.events.at(-1)).toMatchObject({ type: 'worker_end', messageId: id, status: 'done' });
+    expect(h.events.at(-1)).toMatchObject({ type: 'bot_end', messageId: id, status: 'done' });
   });
 
   it('persists and emits the latest team blackboard snapshot', () => {
     const h = harness();
-    const id = h.em.beginWorker({ step: 1, worker: 'pm' });
+    const id = h.em.beginBot({ step: 1, bot: 'pm' });
     const blackboard = {
       facts: [],
-      decisions: [{ worker: 'pm', step: 1, text: 'Ship the live panel' }],
+      decisions: [{ bot: 'pm', step: 1, text: 'Ship the live panel' }],
       handoffs: [],
       open: [],
     };
@@ -101,54 +101,54 @@ describe('WorkerMessageEmitter — serial', () => {
   it('persists thinking tokens without translating or normalizing them', () => {
     const h = harness();
     const source = `\n\u4FDD\u7559\u539F\u59CB\u8BED\u8A00\nEnglish follows  `;
-    h.em.beginWorker({ step: 1, worker: 'a' });
+    h.em.beginBot({ step: 1, bot: 'a' });
     h.em.onThinking(source.slice(0, 5), 1);
     h.em.onThinking(source.slice(5), 1);
-    h.em.endWorker('done');
+    h.em.endBot('done');
     expect(h.patched[0].patch.thinking).toBe(source);
     expect(h.events.filter(e => e.type === 'thinking').map(e => (e as any).token).join('')).toBe(source);
   });
 
   it('persists structured failure and user-action metadata', () => {
     const failed = harness();
-    failed.em.beginWorker({ step: 1, worker: 'a' });
-    failed.em.endWorker('failed', { failureReason: 'Compiler exited with code 2' });
-    expect(failed.patched[0].patch.workerFailureReason).toBe('Compiler exited with code 2');
+    failed.em.beginBot({ step: 1, bot: 'a' });
+    failed.em.endBot('failed', { failureReason: 'Compiler exited with code 2' });
+    expect(failed.patched[0].patch.botFailureReason).toBe('Compiler exited with code 2');
 
     const waiting = harness();
-    waiting.em.beginWorker({ step: 1, worker: 'a' });
-    waiting.em.endWorker('askedUser', { nextUserAction: { text: 'Choose a target', options: ['A', 'B'] } });
-    expect(waiting.patched[0].patch.workerNextUserAction).toEqual({ text: 'Choose a target', options: ['A', 'B'] });
+    waiting.em.beginBot({ step: 1, bot: 'a' });
+    waiting.em.endBot('askedUser', { nextUserAction: { text: 'Choose a target', options: ['A', 'B'] } });
+    expect(waiting.patched[0].patch.botNextUserAction).toEqual({ text: 'Choose a target', options: ['A', 'B'] });
   });
 
-  it('beginWorker auto-finalizes a still-active previous worker as done', () => {
+  it('beginBot auto-finalizes a still-active previous bot as done', () => {
     const h = harness();
-    h.em.beginWorker({ step: 1, worker: 'a' });
-    h.em.beginWorker({ step: 2, worker: 'b' });
-    expect(h.patched[0].patch.workerStatus).toBe('done');
+    h.em.beginBot({ step: 1, bot: 'a' });
+    h.em.beginBot({ step: 2, bot: 'b' });
+    expect(h.patched[0].patch.botStatus).toBe('done');
     expect(h.appended).toHaveLength(2);
   });
 });
 
-describe('WorkerMessageEmitter — parallel', () => {
-  it('teamStart pre-creates one stub per worker and emits team_start with their ids', () => {
+describe('BotMessageEmitter — parallel', () => {
+  it('teamStart pre-creates one stub per bot and emits team_start with their ids', () => {
     const h = harness('roundtable');
-    h.em.teamStart([{ step: 1, worker: 'a' }, { step: 2, worker: 'b' }]);
-    expect(h.appended.map(m => m.worker)).toEqual(['a', 'b']);
-    expect(h.appended.every(m => m.workerStatus === 'running')).toBe(true);
+    h.em.teamStart([{ step: 1, bot: 'a' }, { step: 2, bot: 'b' }]);
+    expect(h.appended.map(m => m.bot)).toEqual(['a', 'b']);
+    expect(h.appended.every(m => m.botStatus === 'running')).toBe(true);
     const ev = h.events.find(e => e.type === 'team_start') as any;
-    expect(ev.workers.map((w: any) => w.worker)).toEqual(['a', 'b']);
-    expect(ev.workers[0].messageId).toBe(h.appended[0].id);
+    expect(ev.bots.map((w: any) => w.bot)).toEqual(['a', 'b']);
+    expect(ev.bots[0].messageId).toBe(h.appended[0].id);
   });
 
-  it('routes events to a named worker message (concurrent-safe)', () => {
+  it('routes events to a named bot message (concurrent-safe)', () => {
     const h = harness('roundtable');
-    h.em.teamStart([{ step: 1, worker: 'a' }, { step: 2, worker: 'b' }]);
+    h.em.teamStart([{ step: 1, bot: 'a' }, { step: 2, bot: 'b' }]);
     const idA = h.appended[0].id, idB = h.appended[1].id;
     h.em.onStream('from-a', 'a');
     h.em.onStream('from-b', 'b');
-    h.em.endWorker('done', undefined, 'a');
+    h.em.endBot('done', undefined, 'a');
     expect(h.events.filter(e => e.type === 'stream').map(e => (e as any).messageId)).toEqual([idA, idB]);
-    expect(h.patched[0]).toMatchObject({ id: idA, patch: { content: 'from-a', workerStatus: 'done' } });
+    expect(h.patched[0]).toMatchObject({ id: idA, patch: { content: 'from-a', botStatus: 'done' } });
   });
 });

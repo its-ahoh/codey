@@ -1,4 +1,4 @@
-# Worker: code-reviewer
+# Bot: code-reviewer
 
 ## Role
 Reviews code changes, tests features when needed, and provides critical, fact-based feedback on quality and completeness.

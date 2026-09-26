@@ -1,13 +1,13 @@
-export type TeamGraphNodeType = 'start' | 'worker' | 'condition' | 'end';
+export type TeamGraphNodeType = 'start' | 'bot' | 'condition' | 'end';
 
 export interface TeamGraphNode {
   id: string;
   type: TeamGraphNodeType;
-  /** Worker name; required when type === 'worker'. */
-  worker?: string;
+  /** Bot name; required when type === 'bot'. */
+  bot?: string;
   /** Decision question the judge evaluates; used when type === 'condition'. */
   condition?: string;
-  /** Max consecutive runs of this (self-looping) worker before a forced exit. */
+  /** Max consecutive runs of this (self-looping) bot before a forced exit. */
   maxCalls?: number;
   x: number;
   y: number;
@@ -40,7 +40,7 @@ export interface TeamGraph {
 }
 
 export const DEFAULT_MAX_HOPS = 20;
-/** Default cap on consecutive self-loops for a worker node that doesn't set maxCalls. */
+/** Default cap on consecutive self-loops for a bot node that doesn't set maxCalls. */
 export const DEFAULT_MAX_SELF_LOOP = 3;
 
 /**
@@ -48,9 +48,9 @@ export const DEFAULT_MAX_SELF_LOOP = 3;
  * the graph is runnable. Used by both the gateway (refuse to run, report why)
  * and the Mac editor (surface inline).
  */
-export function validateGraph(graph: TeamGraph, knownWorkers: string[]): string[] {
+export function validateGraph(graph: TeamGraph, knownBots: string[]): string[] {
   const problems: string[] = [];
-  const known = new Set(knownWorkers.map(w => w.toLowerCase()));
+  const known = new Set(knownBots.map(w => w.toLowerCase()));
   const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
 
   if (!nodeById.has(graph.entry)) {
@@ -58,22 +58,22 @@ export function validateGraph(graph: TeamGraph, knownWorkers: string[]): string[
   }
 
   for (const node of graph.nodes) {
-    if (node.type === 'worker') {
-      if (!node.worker) {
-        problems.push(`worker node "${node.id}" is missing a worker`);
-      } else if (!known.has(node.worker.toLowerCase())) {
-        problems.push(`node "${node.id}" references unknown worker "${node.worker}"`);
+    if (node.type === 'bot') {
+      if (!node.bot) {
+        problems.push(`bot node "${node.id}" is missing a bot`);
+      } else if (!known.has(node.bot.toLowerCase())) {
+        problems.push(`node "${node.id}" references unknown bot "${node.bot}"`);
       }
       const outs = graph.edges.filter(e => e.from === node.id);
       if (outs.some(e => e.to === node.id) && !outs.some(e => e.to !== node.id)) {
-        problems.push(`worker node "${node.id}" self-loops with no exit edge`);
+        problems.push(`bot node "${node.id}" self-loops with no exit edge`);
       }
       if (node.maxCalls !== undefined && (!Number.isInteger(node.maxCalls) || node.maxCalls < 1)) {
-        problems.push(`worker node "${node.id}" maxCalls must be >= 1`);
+        problems.push(`bot node "${node.id}" maxCalls must be >= 1`);
       }
     } else if (node.type === 'condition') {
-      if (node.worker) {
-        problems.push(`condition node "${node.id}" must not reference a worker`);
+      if (node.bot) {
+        problems.push(`condition node "${node.id}" must not reference a bot`);
       }
       if (!node.condition || !node.condition.trim()) {
         problems.push(`condition node "${node.id}" needs a question`);
@@ -101,8 +101,8 @@ export function validateGraph(graph: TeamGraph, knownWorkers: string[]): string[
 
   for (const node of graph.nodes) {
     const hasOut = (outgoing.get(node.id)?.length ?? 0) > 0;
-    if ((node.type === 'worker' || node.type === 'start' || node.type === 'condition') && !hasOut) {
-      const label = node.type === 'start' ? 'start node' : node.type === 'condition' ? 'condition node' : 'worker node';
+    if ((node.type === 'bot' || node.type === 'start' || node.type === 'condition') && !hasOut) {
+      const label = node.type === 'start' ? 'start node' : node.type === 'condition' ? 'condition node' : 'bot node';
       problems.push(`${label} "${node.id}" has no outgoing edge`);
     }
   }
@@ -136,7 +136,7 @@ export interface GraphRunState {
   currentNodeId: string;
   hops: number;
   status: GraphRunStatus;
-  /** Node ids visited in order (worker nodes only), for progress/history. */
+  /** Node ids visited in order (bot nodes only), for progress/history. */
   visited: string[];
   /** Consecutive runs of currentNodeId; resets when settling onto a different node. */
   runStreak: number;
@@ -151,14 +151,14 @@ export function outgoingEdges(graph: TeamGraph, nodeId: string): TeamGraphEdge[]
 }
 
 /**
- * Outgoing edges the judge may choose from. Drops a worker's self-edge once its
+ * Outgoing edges the judge may choose from. Drops a bot's self-edge once its
  * consecutive-run streak has reached the node's maxCalls, forcing an exit.
- * Worker nodes that don't set maxCalls fall back to DEFAULT_MAX_SELF_LOOP.
+ * Bot nodes that don't set maxCalls fall back to DEFAULT_MAX_SELF_LOOP.
  */
 export function eligibleEdges(graph: TeamGraph, state: GraphRunState, nodeId: string): TeamGraphEdge[] {
   const edges = outgoingEdges(graph, nodeId);
   const node = nodeMap(graph).get(nodeId);
-  if (node?.type === 'worker') {
+  if (node?.type === 'bot') {
     const cap = node.maxCalls ?? DEFAULT_MAX_SELF_LOOP;
     if (state.runStreak >= cap) {
       return edges.filter(e => e.to !== nodeId);
@@ -167,7 +167,7 @@ export function eligibleEdges(graph: TeamGraph, state: GraphRunState, nodeId: st
   return edges;
 }
 
-/** Follow non-worker nodes (start) forward to the first worker/end node. */
+/** Follow non-bot nodes (start) forward to the first bot/end node. */
 function settle(graph: TeamGraph, nodeId: string, state: GraphRunState): GraphRunState {
   const nodes = nodeMap(graph);
   let cur = nodeId;
@@ -199,7 +199,7 @@ export function startRun(graph: TeamGraph): GraphRunState {
 
 /**
  * Move from the current node along `edgeId`. Increments the hop counter,
- * enforces maxHops, and settles onto the next worker/end node.
+ * enforces maxHops, and settles onto the next bot/end node.
  */
 export function advance(graph: TeamGraph, state: GraphRunState, edgeId: string): GraphRunState {
   const edge = graph.edges.find(e => e.id === edgeId && e.from === state.currentNodeId);

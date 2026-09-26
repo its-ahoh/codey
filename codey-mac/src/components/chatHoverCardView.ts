@@ -70,7 +70,7 @@ function resolveRunner(chat: Chat): HoverCardRow | undefined {
   if (chat.selection?.type === 'team') {
     return { icon: 'users', label: 'Team', value: chat.selection.name?.trim() || 'Default' }
   }
-  if (chat.selection?.type === 'worker') {
+  if (chat.selection?.type === 'bot') {
     return { icon: 'code', label: 'Bot', value: chat.selection.name }
   }
   return undefined
