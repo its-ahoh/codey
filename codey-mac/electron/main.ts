@@ -1093,7 +1093,6 @@ async function bootInProcessCore() {
         join(defaultDir, 'workspace.json'),
         JSON.stringify({ workingDir: app.getPath('home'), createdAt: new Date().toISOString(), teams: [] }, null, 2)
       )
-      fsMod.writeFileSync(join(defaultDir, 'memory.md'), '# default — Project Memory\n')
       existing = workspaceManager.listWorkspaces()
     }
     if (existing.length > 0) {

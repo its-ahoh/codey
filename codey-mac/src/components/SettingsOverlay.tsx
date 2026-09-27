@@ -20,7 +20,7 @@ const TABS: { key: Tab; label: string; icon: IconName; description: string }[] =
   { key: 'apiKeys',    label: 'API Keys',   icon: 'key', description: 'Shared credentials' },
   { key: 'settings',   label: 'AI Models',  icon: 'sparkle', description: 'Models & fallbacks' },
   { key: 'agents',     label: 'Agents',     icon: 'bot', description: 'CLI install & environment' },
-  { key: 'memory',     label: 'Memory',     icon: 'book', description: 'Global & workspace memory' },
+  { key: 'memory',     label: 'Memory',     icon: 'book', description: 'User memory & agent instructions' },
   { key: 'whisper',    label: 'Voice',      icon: 'mic', description: 'Voice input & hotkeys' },
   { key: 'workspaces', label: 'Workspaces', icon: 'workspace', description: 'Project directories' },
   { key: 'bots',    label: 'Bots',    icon: 'bot', description: 'Personalities' },

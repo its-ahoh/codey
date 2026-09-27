@@ -15,7 +15,7 @@ import type { AgentMemoryGroup, MemoryEntry } from '../codey-api'
  *            ~/.codex/AGENTS.md, …) — shown in Settings ▸ Memory, under "Your memory".
  *   project  what it knows about one repository (CLAUDE.md, AGENTS.md, Claude
  *            Code's per-project memory and subagent memory) — shown in
- *            Settings ▸ Memory, under "Workspace memory".
+ *            Settings ▸ Workspaces, alongside Co-memo project memory.
  */
 
 const MemoryRow: React.FC<{ entry: MemoryEntry; first: boolean }> = ({ entry, first }) => {
@@ -145,7 +145,7 @@ const AgentMemoryFilesCard: React.FC<{
         gap: 12, marginBottom: 12,
       }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Agent memory files</div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Agent instruction and native memory files</div>
           <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.45, marginTop: 3 }}>{description}</div>
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
             {groups.length > 1 && (
@@ -153,7 +153,7 @@ const AgentMemoryFilesCard: React.FC<{
                 value={selected}
                 onChange={e => setSelected(e.target.value)}
                 style={{ ...selectStyle, width: 148, paddingTop: 6, paddingBottom: 6 }}
-                title="Choose which agent's memory to view"
+                title="Choose which agent's files to view"
                 aria-label="Agent"
               >
                 {groups.map(g => <option key={g.agent} value={g.agent}>{g.agent}</option>)}
@@ -200,8 +200,8 @@ export const UserMemorySection: React.FC = () => {
 
   return (
     <AgentMemoryFilesCard
-      description="The global instruction file each agent loads in every project. Read-only."
-      emptyText="No agent memory files yet."
+      description="Global instruction files loaded by each agent. Managed separately from Co-memo; this view is read-only."
+      emptyText="No agent instruction files found."
       groups={groups}
       loading={loading}
       error={error}
@@ -217,8 +217,8 @@ export const ProjectMemorySection: React.FC<{ workspace: string }> = ({ workspac
 
   return (
     <AgentMemoryFilesCard
-      description="Instruction files the agents read from this project. Read-only."
-      emptyText="No agent memory in this project yet."
+      description="Project instruction files and agent-native memory, including Claude Code auto-memory. Managed separately from Co-memo; this view is read-only."
+      emptyText="No agent instruction or native memory files found for this project."
       groups={groups}
       loading={loading}
       error={error}

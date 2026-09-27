@@ -113,7 +113,7 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
       ? '\n\nThis is your only workspace. After deletion you will need to add a folder before starting a new chat.'
       : ''
     const ok = window.confirm(
-      `Delete workspace "${name}"?\n\nThis removes the workspace folder (workspace.json, memory.md, logs). The original project directory it points to is NOT touched.${extra}`
+      `Delete workspace "${name}"?\n\nThis removes the workspace folder (workspace.json, logs). The original project directory it points to is NOT touched.${extra}`
     )
     if (!ok) return
     setBusyName(name); setError('')
@@ -145,7 +145,7 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <span style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>Manage project folders and their workspace memory.</span>
+        <span style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>Manage project folders and their Co-memo project memory.</span>
         <button
           onClick={pickAndCreate}
           disabled={creating}

@@ -248,7 +248,7 @@ export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace 
       {!targets.length && <option value={workspace}>{workspace}</option>}
       {targets.map(t => <option key={t.id} value={t.id}>{t.label} — {t.path}</option>)}
     </select></label>
-    <MemoryPanel key={selected} scope="workspace" workspace={selected} title="Shared memory"
+    <MemoryPanel key={selected} scope="workspace" workspace={selected} title="Project memory"
       description={target ? `Co-memo project: ${target.path}` : 'Project facts and decisions stored in Co-memo.'} />
   </div>
 }
