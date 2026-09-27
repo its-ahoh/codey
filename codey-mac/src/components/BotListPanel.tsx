@@ -1,3 +1,4 @@
+import { BotCreationGuide } from './BotCreationGuide'
 import { BotMessageSearchCache, botConversationList, readBotPins } from './botConversationList'
 import { SidebarNavigation, SidebarFooter, SidebarAction, type SidebarCommonProps } from './SidebarNavigation'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
@@ -31,7 +32,6 @@ export function BotListPanel(props: Props) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState<'bot' | null>(null)
-  const [description, setDescription] = useState('')
   const [pins, setPins] = useState(() => readBotPins(localStorage.getItem('codey.botChatPins')))
   const [busy, setBusy] = useState(false)
   const [opening, setOpening] = useState<string | null>(null)
@@ -64,7 +64,7 @@ export function BotListPanel(props: Props) {
     catch (err) { setError((err as Error).message) }
     finally { setOpening(null) }
   }
-  const create = async () => {
+  const create = async (description: string) => {
     if (busy) return
     setBusy(true)
     setError('')
@@ -74,7 +74,6 @@ export function BotListPanel(props: Props) {
       window.dispatchEvent(new Event('codey:bots-changed'))
       const chat = await openBot(bot.name, false)
       if (mounted.current) selectChat(chat.id)
-      setDescription('')
       setForm(null)
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
@@ -96,14 +95,11 @@ export function BotListPanel(props: Props) {
   return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, padding: 8, gap: 8, background: C.sidebarBg }}>
     <SidebarNavigation {...props} />
     <input type="search" aria-label="Search chats and messages" placeholder="Search chats and messages" value={search} onChange={e => setSearch(e.target.value)} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} style={field} />
-    {error && <div role="alert" style={{ color: C.red, fontSize: 12 }}>{error}</div>}
+    {error && !form && <div role="alert" style={{ color: C.red, fontSize: 12 }}>{error}</div>}
     <div style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}>
-      {form && <form onSubmit={e => { e.preventDefault(); void create() }} style={{ display: 'grid', gap: 8, padding: 10, marginBottom: 14, border: `1px solid ${C.border}`, borderRadius: 10 }}>
-        <strong style={{ fontSize: 12 }}>Describe your Bot</strong>
-        <textarea autoFocus aria-label="Bot description" required rows={4} value={description} onChange={e => setDescription(e.target.value)} placeholder="A designer who helps me shape product ideas…" style={field} disabled={busy} />
-        <button style={{ ...textButton, background: C.accent, color: C.onAccent }} disabled={busy || !description.trim()}>{busy ? 'Creating…' : 'Create'}</button>
-        <button type="button" style={textButton} disabled={busy} onClick={() => setForm(null)}>Cancel</button>
-      </form>}
+      {form && <div style={{ padding: 10, marginBottom: 14, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+        <BotCreationGuide busy={busy} error={error} onCreate={create} onCancel={() => { setForm(null); setError('') }} />
+      </div>}
       {loading && <p style={{ color: C.fg3, fontSize: 12 }}>Loading chats…</p>}
       {!loading && !rows.length && <p style={{ color: C.fg3, fontSize: 12 }}>{search ? 'No matching chats.' : 'Create a Bot to start chatting. Invite other Bots from the chat to form a group.'}</p>}
       {rows.map(({ key, title, chat, bot, messageMatch }) => {
