@@ -1,3 +1,4 @@
+import { BotCreationGuide } from './BotCreationGuide'
 import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react'
 import { apiService, BotDto } from '../services/api'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
@@ -107,12 +108,11 @@ export default function GlobalTeamsSection() {
   const [dragOver, setDragOver] = useState<{ team: string; idx: number } | null>(null)
   const [creatingFor, setCreatingFor] = useState<string | null>(null)
   const [editingFlow, setEditingFlow] = useState<string | null>(null)
-  const [createPrompt, setCreatePrompt] = useState('')
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [dispatchHelpOpen, setDispatchHelpOpen] = useState(false)
 
-  const submitCreate = async () => {
+  const submitCreate = async (createPrompt: string) => {
     if (!creatingFor || !createPrompt.trim() || createBusy) return
     setCreateBusy(true); setCreateError(null)
     try {
@@ -121,7 +121,7 @@ export default function GlobalTeamsSection() {
       const next: TeamsState = { ...teams, [team]: { ...teams[team], members: [...teams[team].members, bot.name] } }
       setBots(await apiService.listBots())
       queueSave(next)
-      setCreatingFor(null); setCreatePrompt('')
+      setCreatingFor(null)
     } catch (err: any) {
       setCreateError(err.message || String(err))
     } finally {
@@ -231,7 +231,7 @@ export default function GlobalTeamsSection() {
               <select value="" onChange={e => {
                   const v = e.target.value
                   if (!v) return
-                  if (v === '__create__') { setCreatingFor(name); setCreatePrompt(''); setCreateError(null) }
+                  if (v === '__create__') { setCreatingFor(name); setCreateError(null) }
                   else addMember(name, v)
                   e.target.value = ''
                 }}
@@ -261,21 +261,9 @@ export default function GlobalTeamsSection() {
         <div onClick={() => !createBusy && setCreatingFor(null)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div onClick={e => e.stopPropagation()}
-            style={{ width: 520, padding: 20, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+            style={{ width: 520, maxWidth: '90vw', maxHeight: '85vh', overflowY: 'auto', padding: 20, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8 }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>New bot for "{creatingFor}"</div>
-            <div style={{ fontSize: 12, color: C.fg3, marginBottom: 10 }}>The active coding agent will generate a personality and config from your description.</div>
-            {createError && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{createError}</div>}
-            <textarea value={createPrompt} onChange={e => setCreatePrompt(e.target.value)} disabled={createBusy}
-              placeholder="e.g. A reviewer that audits PRs for security issues, leans on Opus."
-              style={{ width: '100%', minHeight: 120, padding: 10, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, fontFamily: 'inherit', fontSize: 13, resize: 'vertical' }} />
-            <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setCreatingFor(null)} disabled={createBusy}
-                style={{ padding: '6px 14px', background: 'transparent', color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>Cancel</button>
-              <button onClick={submitCreate} disabled={createBusy || !createPrompt.trim()}
-                style={{ padding: '6px 14px', background: createBusy ? C.fg3 : C.accent, color: C.onAccent, border: 'none', borderRadius: 6, cursor: createBusy ? 'wait' : 'pointer', fontSize: 12, fontWeight: 600 }}>
-                {createBusy ? 'Generating…' : 'Create & Add'}
-              </button>
-            </div>
+            <BotCreationGuide busy={createBusy} error={createError} onCreate={submitCreate} onCancel={() => setCreatingFor(null)} />
           </div>
         </div>
       )}

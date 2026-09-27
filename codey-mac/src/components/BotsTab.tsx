@@ -1,3 +1,4 @@
+import { BotCreationGuide } from './BotCreationGuide'
 import { useEffect, useState, useCallback } from 'react'
 import { apiService, BotDto } from '../services/api'
 import { AvatarPicker } from './AvatarPicker'
@@ -25,14 +26,14 @@ export default function BotsTab({ initialName }: { initialName?: string }) {
       <div style={{ width: 240, borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
         <div style={{ overflowY: 'auto', flex: 1 }}>
           {bots.map(w => (
-            <button key={w.name} onClick={() => setMode({ kind: 'select', name: w.name })}
+            <button key={w.name} disabled={loading} onClick={() => setMode({ kind: 'select', name: w.name })}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: mode.kind === 'select' && mode.name === w.name ? C.surface2 : 'transparent', border: 'none', color: C.fg, cursor: 'pointer' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BotAvatar name={w.name} config={w.config.avatar} /><strong>{w.name}</strong></div>
               <div style={{ fontSize: 11, color: C.fg3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.personality.role}</div>
             </button>
           ))}
         </div>
-        <button onClick={() => setMode({ kind: 'create' })} style={{ margin: 12, padding: '8px 12px', background: C.accent, color: C.onAccent, border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>+ New Bot</button>
+        <button disabled={loading} onClick={() => setMode({ kind: 'create' })} style={{ margin: 12, padding: '8px 12px', background: C.accent, color: C.onAccent, border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>+ New Bot</button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -51,39 +52,23 @@ function EmptyState() {
 }
 
 function CreatePanel({ loading, setLoading, onCreated, onCancel }: { loading: boolean; setLoading: (b: boolean) => void; onCreated: (w: BotDto) => void; onCancel: () => void }) {
-  const [prompt, setPrompt] = useState('')
   const [error, setError] = useState<string | null>(null)
-
-  const submit = async () => {
+  const submit = async (prompt: string) => {
     if (!prompt.trim() || loading) return
     setLoading(true); setError(null)
     try {
       const bot = await apiService.generateBot(prompt)
-      onCreated(bot)
+      window.dispatchEvent(new Event('codey:bots-changed'))
+      await onCreated(bot)
     } catch (err: any) {
       setError(err.message || String(err))
     } finally {
       setLoading(false)
     }
   }
-
-  return (
-    <div style={{ padding: 20, maxWidth: 640 }}>
-      <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Describe the bot</div>
-      <div style={{ fontSize: 12, color: C.fg3, marginBottom: 12 }}>Describe its role, working style, and instructions.</div>
-      {error && <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, color: C.dangerFg, padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 12 }}>{error}</div>}
-      <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="e.g. A reviewer that audits PRs for security issues and explains actionable fixes."
-        style={{ width: '100%', minHeight: 160, padding: 12, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, fontFamily: 'inherit', fontSize: 14, resize: 'vertical' }} />
-      <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-        <button onClick={submit} disabled={loading || !prompt.trim()}
-          style={{ padding: '8px 16px', background: loading ? C.fg3 : C.accent, color: C.onAccent, border: 'none', borderRadius: 6, cursor: loading ? 'wait' : 'pointer', fontWeight: 600 }}>
-          {loading ? 'Generating\u2026' : 'Create'}
-        </button>
-        <button onClick={onCancel} disabled={loading}
-          style={{ padding: '8px 16px', background: 'transparent', color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer' }}>Cancel</button>
-      </div>
-    </div>
-  )
+  return <div style={{ padding: 20, maxWidth: 640 }}>
+    <BotCreationGuide busy={loading} error={error} onCreate={submit} onCancel={onCancel} />
+  </div>
 }
 
 function EditorPanel({ bot, onSaved, onDeleted }: { bot: BotDto; onSaved: (name: string) => void; onDeleted: () => void }) {
