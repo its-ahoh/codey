@@ -5061,25 +5061,28 @@ app.whenReady().then(async () => {
   ipcMain.handle('codeyMemory:add', async (_e, scope: MemoryPanelScope, workspace: string | undefined, content: string) =>
     wrap(async () => {
       const target = await coMemoTarget(scope, workspace)
-      const note = await target.provider.remember(validateContent(content), target.scope, target.project)
-      await inProcessGateway?.invalidateMemorySessions()
-      return toCoMemoItem(note)
+      try {
+        const note = await target.provider.remember(validateContent(content), target.scope, target.project)
+        return toCoMemoItem(note)
+      } finally { await inProcessGateway?.invalidateMemorySessions() }
     })
   )
   ipcMain.handle('codeyMemory:update', async (_e, scope: MemoryPanelScope, workspace: string | undefined, id: string, content: string, version: number) =>
     wrap(async () => {
       const target = await coMemoTarget(scope, workspace)
-      await target.provider.change(id, version, target.scope, target.project, validateContent(content))
-      await inProcessGateway?.invalidateMemorySessions()
-      return { updated: true }
+      try {
+        await target.provider.change(id, version, target.scope, target.project, validateContent(content))
+        return { updated: true }
+      } finally { await inProcessGateway?.invalidateMemorySessions() }
     })
   )
   ipcMain.handle('codeyMemory:remove', async (_e, scope: MemoryPanelScope, workspace: string | undefined, id: string, version: number) =>
     wrap(async () => {
       const target = await coMemoTarget(scope, workspace)
-      await target.provider.change(id, version, target.scope, target.project)
-      await inProcessGateway?.invalidateMemorySessions()
-      return { removed: true }
+      try {
+        await target.provider.change(id, version, target.scope, target.project)
+        return { removed: true }
+      } finally { await inProcessGateway?.invalidateMemorySessions() }
     })
   )
 

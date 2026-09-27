@@ -9,7 +9,7 @@ export type CoMemoScope = 'user' | 'project';
 export interface CoMemoNote {
   id: string; version: number; scope: CoMemoScope; projectId: string | null;
   content: string; deleted: boolean; createdAt: number; updatedAt: number; origin: string;
-  metadata?: { kind?: string; source?: { excerpt?: string } | null };
+  metadata?: { kind?: string; source?: { agent?: string; sessionId?: string; messageId?: string; excerpt?: string } | null; module?: string | null; pinned?: boolean };
 }
 export interface CoMemoConflict {
   id: string; memoryId: string; currentVersion: number; currentContent: string | null;

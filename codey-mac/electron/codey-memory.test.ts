@@ -68,3 +68,9 @@ describe('validateContent', () => {
     expect(() => validateContent('z'.repeat(MAX_ENTRY_CHARS + 1))).toThrow(/too long/)
   })
 })
+
+it('accepts existing Co-memo notes up to its 32000-character limit', () => {
+  expect(validateContent('x'.repeat(5000))).toHaveLength(5000)
+  expect(validateContent('x'.repeat(32000))).toHaveLength(32000)
+  expect(() => validateContent('x'.repeat(32001))).toThrow(/too long/)
+})

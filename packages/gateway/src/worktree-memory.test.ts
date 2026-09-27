@@ -73,3 +73,24 @@ describe('independent worktree memory snapshots', () => {
     expect(await client.list('project', a)).toEqual([]);
   }, 30000);
 });
+
+it('preserves retrieval metadata and real evidence when copying a pinned preference', async () => {
+  const { randomUUID } = await import('node:crypto');
+  const { root, client, main, a } = await fixture();
+  const source = { agent: 'test', sessionId: 'inheritance-fixture', messageId: 'preference-1', excerpt: 'Use the invariant check' };
+  await client.call('memory_submit', { requestId: randomUUID(), intent: 'explicit', candidates: [{
+    action: 'add', scope: 'project', content: source.excerpt, kind: 'preference', pinned: true, module: 'engine', source,
+  }] }, main);
+  await inheritWorktreeMemory(client, main, a, path.join(root, 'metadata.json'));
+  const [copy] = await client.list('project', a);
+  expect(copy.metadata).toMatchObject({ kind: 'preference', pinned: true, module: 'engine', source });
+  // A manual correction can retain retrieval metadata while clearing its original evidence.
+  await client.change(copy.id, copy.version, 'project', a, 'Use the corrected invariant check');
+  const second = path.join(root, 'second'); await fs.mkdir(second);
+  const manifest = path.join(root, 'corrected.json');
+  await inheritWorktreeMemory(client, a, second, manifest);
+  const [corrected] = await client.list('project', second);
+  const saved = JSON.parse(await fs.readFile(manifest, 'utf8'));
+  expect(corrected.metadata).toMatchObject({ kind: 'preference', pinned: true, module: 'engine',
+    source: { agent: 'codey-worktree-inheritance', sessionId: saved.operationId, messageId: `${copy.id}:${copy.version + 1}` } });
+}, 30000);

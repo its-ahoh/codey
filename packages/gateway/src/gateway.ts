@@ -957,7 +957,8 @@ export class Codey {
       await inheritWorktreeMemory(this.getCoMemo(), source, workspace.workingDir, manifest);
       return this.chatManager.setChatWorkspace(chat.id, { ...workspace, memoryInheritance: 'complete' });
     } catch (error) {
-      throw new Error(`Worktree created, but memory inheritance is pending: ${(error as Error).message}. Retry by selecting this worktree.`);
+      this.logger.warn(`Worktree memory inheritance is pending: ${(error as Error).message}`);
+      return this.chatManager.get(chat.id) ?? chat;
     }
   }
 
@@ -979,7 +980,8 @@ export class Codey {
       // The agent created the checkout with plain Git, so the container may not
       // be excluded from the workspace's own status yet.
       ensureWorktreeContainer(this.resolveWorkspaceWorkingDir(chat.workspaceName));
-      const updated = this.chatManager.setChatWorkspace(chat.id, workspace);
+      const updated = this.chatManager.setChatWorkspace(chat.id, { ...workspace, memoryInheritance: 'pending' });
+      await this.initializeWorktreeMemory(updated);
       this.logger.info(`[chat ${chat.id}] adopted agent-created worktree ${workspace.name ?? workspace.worktreePath}`);
       return updated;
     } catch (error) {
@@ -3546,8 +3548,8 @@ export class Codey {
       await this.sendResponse({ ...message, text: 'Usage: /remember [--global] TEXT. Memories belong to the user or project, not a Bot.' });
       return;
     }
-    const note = await this.getCoMemo().remember(rest.join(' '), global ? 'user' : 'project', global ? undefined : this.memoryProjectForMessage(message));
-    await this.invalidateMemorySessions();
+    const note = await this.getCoMemo().remember(rest.join(' '), global ? 'user' : 'project', global ? undefined : this.memoryProjectForMessage(message))
+      .finally(() => this.invalidateMemorySessions());
     await this.sendResponse({ ...message, text: `Remembered (${note.scope}): ${note.content}` });
   }
 

@@ -9,6 +9,8 @@ export interface MemoryInheritance {
   targetPath: string;
   createdAt: number;
   complete: boolean;
+  /** Identifier of this actual inheritance operation, used as copy provenance. */
+  operationId?: string;
   entries: Array<{ source: CoMemoNote; localId?: string; localVersion?: number; skipped?: boolean }>;
 }
 const pending = new Map<string, Promise<void>>();
@@ -38,6 +40,7 @@ async function inherit(client: CoMemoClient, sourcePath: string, targetPath: str
     await fs.writeFile(temp, JSON.stringify(snapshot, null, 2), { mode: 0o600 });
     await fs.rename(temp, file);
   };
+  snapshot.operationId ??= randomUUID();
   await save();
   const target = await client.list('project', targetPath, undefined, true);
   if (target.some(note => snapshot.entries.some(entry => entry.source.id === note.id))) {
@@ -50,7 +53,26 @@ async function inherit(client: CoMemoClient, sourcePath: string, targetPath: str
     if (existing) {
       entry.localId = existing.id; entry.localVersion = existing.version; entry.skipped = existing.deleted;
     } else {
-      const copy = await client.remember(entry.source.content, 'project', targetPath, 'automatic');
+      const metadata = entry.source.metadata;
+      let copy: CoMemoNote;
+      if (metadata && (metadata.source || metadata.kind && metadata.kind !== 'note' || metadata.module || metadata.pinned)) {
+        const source = metadata.source;
+        const result = await client.call<{ results: Array<{ verified: boolean; receipt?: { id: string } }> }>('memory_submit', {
+          requestId: randomUUID(), intent: 'automatic', candidates: [{
+            action: 'add', scope: 'project', content: entry.source.content,
+            kind: metadata.kind ?? 'note', module: metadata.module ?? null, pinned: metadata.pinned ?? false,
+            source: source?.agent && source.sessionId && source.messageId && source.excerpt ? source : {
+              agent: 'codey-worktree-inheritance', sessionId: snapshot.operationId,
+              messageId: `${entry.source.id}:${entry.source.version}`, excerpt: entry.source.content.slice(0, 2000),
+            },
+          }],
+        }, targetPath);
+        const receipt = result.results[0];
+        if (!receipt?.verified || !receipt.receipt) throw new Error('Inherited memory could not be verified');
+        copy = (await client.details(receipt.receipt.id, 'project', targetPath)).memory;
+      } else {
+        copy = await client.remember(entry.source.content, 'project', targetPath, 'automatic');
+      }
       entry.localId = copy.id; entry.localVersion = copy.version;
       target.push(copy);
     }

@@ -96,3 +96,10 @@ it('invalidates sessions even when a bulk archive partially fails', async () => 
   await expect(gateway.cmdMemory(['clear'], message)).rejects.toThrow('sync failed');
   expect(gateway.invalidateMemorySessions).toHaveBeenCalledOnce();
 });
+
+it('invalidates warm sessions when remember fails after a possible central write', async () => {
+  const { gateway, coMemo, message } = fixture();
+  coMemo.remember.mockRejectedValueOnce(new Error('Synchronization failed after saving'));
+  await expect(gateway.cmdRemember(['Correction'], message)).rejects.toThrow(/Synchronization/);
+  expect(gateway.invalidateMemorySessions).toHaveBeenCalledOnce();
+});

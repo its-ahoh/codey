@@ -22,7 +22,7 @@ export interface CodeyMemoryItem {
 export const MEMORY_TYPES: MemoryType[] = ['note', 'preference', 'decision', 'constraint', 'lesson']
 
 /** Longest content the UI may submit — entries are notes, not documents. */
-export const MAX_ENTRY_CHARS = 4000
+export const MAX_ENTRY_CHARS = 32000
 
 export function isMemoryType(value: unknown): value is MemoryType {
   return typeof value === 'string' && (MEMORY_TYPES as string[]).includes(value)
