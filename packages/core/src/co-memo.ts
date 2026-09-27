@@ -125,22 +125,6 @@ export class CoMemoClient {
     const result = await this.call<{ memories: CoMemoNote[] }>('memory_recall', { ...(query ? { query } : {}), includeDeleted }, projectPath);
     return result.memories.filter(note => note.scope === scope && (includeDeleted || !note.deleted));
   }
-  /** Explicit migration never revives archives and continues after individual failures. */
-  async importLegacy(contents: string[], scope: CoMemoScope, projectPath?: string) {
-    const known = await this.list(scope, projectPath, undefined, true);
-    const seen = new Set(known.map(note => note.content.trim()));
-    let imported = 0; let skipped = 0;
-    const errors: string[] = [];
-    for (const [index, text] of contents.entries()) {
-      const content = text.trim();
-      if (!content || seen.has(content)) { skipped++; continue; }
-      try {
-        await this.remember(content, scope, projectPath);
-        seen.add(content); imported++;
-      } catch (error) { errors.push(`Entry ${index + 1}: ${(error as Error).message}`); }
-    }
-    return { imported, skipped, errors };
-  }
   async details(id: string, scope: CoMemoScope, projectPath?: string): Promise<CoMemoDetails> {
     this.requireProject(scope, projectPath);
     const result = await this.call<CoMemoDetails>('memory_get', { id, history: true }, projectPath);

@@ -5,44 +5,33 @@ import {
   isMemoryType,
   labelFor,
   sortItems,
-  toMemoryItem,
   toCoMemoItem,
   validateContent,
 } from './codey-memory'
 import type { CodeyMemoryItem } from './codey-memory'
 
 const item = (over: Partial<CodeyMemoryItem>): CodeyMemoryItem => ({
-  id: 'mem-1', type: 'fact', content: 'x', label: 'x',
+  id: 'mem-1', type: 'note', content: 'x', label: 'x',
   createdAt: 0, updatedAt: 0, accessCount: 0, tags: [], source: 'user', ...over,
 })
 
 describe('memory types', () => {
   it('accepts only the store types', () => {
-    expect(MEMORY_TYPES).toEqual(['fact', 'preference', 'lesson', 'decision', 'context'])
+    expect(MEMORY_TYPES).toEqual(['note', 'preference', 'decision', 'constraint', 'lesson'])
     expect(isMemoryType('lesson')).toBe(true)
-    expect(isMemoryType('note')).toBe(false)
+    expect(isMemoryType('note')).toBe(true)
     expect(isMemoryType(7)).toBe(false)
   })
 })
 
-describe('toMemoryItem', () => {
+describe('toCoMemoItem', () => {
   it('preserves the Co-memo version used for optimistic edits', () => {
     expect(toCoMemoItem({ id: 'shared', version: 7, scope: 'user', projectId: null,
       content: 'Concise reviews', deleted: false, createdAt: 1, updatedAt: 2, origin: 'mcp',
       metadata: { kind: 'preference' },
     })).toMatchObject({ id: 'shared', version: 7, source: 'co-memo', type: 'preference', tags: ['user'] })
   })
-  it('keeps the display fields and drops the rest', () => {
-    const entry = {
-      id: 'mem-9', type: 'decision' as const, content: 'Use tabs', label: 'Use tabs',
-      createdAt: 1, updatedAt: 2, accessCount: 3, tags: ['team'], source: 'team',
-      lastAccessedAt: 4, scope: 'workspace' as const,
-    }
-    expect(toMemoryItem(entry)).toEqual({
-      id: 'mem-9', type: 'decision', content: 'Use tabs', label: 'Use tabs',
-      createdAt: 1, updatedAt: 2, accessCount: 3, tags: ['team'], source: 'team',
-    })
-  })
+
 })
 
 describe('sortItems', () => {

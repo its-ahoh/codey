@@ -1,6 +1,7 @@
-import type { CoMemoNote, MemoryEntry, MemoryType } from '@codey/core'
+import type { CoMemoNote } from '@codey/core'
 
-/** Display adapters for Co-memo records and retained legacy data types. */
+/** Display adapters for Co-memo records. */
+export type MemoryType = 'note' | 'preference' | 'decision' | 'constraint' | 'lesson'
 
 export type MemoryPanelScope = 'workspace' | 'global'
 
@@ -18,27 +19,13 @@ export interface CodeyMemoryItem {
   source: string
 }
 
-export const MEMORY_TYPES: MemoryType[] = ['fact', 'preference', 'lesson', 'decision', 'context']
+export const MEMORY_TYPES: MemoryType[] = ['note', 'preference', 'decision', 'constraint', 'lesson']
 
 /** Longest content the UI may submit — entries are notes, not documents. */
 export const MAX_ENTRY_CHARS = 4000
 
 export function isMemoryType(value: unknown): value is MemoryType {
   return typeof value === 'string' && (MEMORY_TYPES as string[]).includes(value)
-}
-
-export function toMemoryItem(entry: MemoryEntry): CodeyMemoryItem {
-  return {
-    id: entry.id,
-    type: entry.type,
-    content: entry.content,
-    label: entry.label,
-    createdAt: entry.createdAt,
-    updatedAt: entry.updatedAt,
-    accessCount: entry.accessCount,
-    tags: entry.tags,
-    source: entry.source,
-  }
 }
 
 /** Newest first — the order a person scans a memory list in. */
@@ -73,7 +60,7 @@ export function toCoMemoItem(note: CoMemoNote): CodeyMemoryItem {
   const kind = note.metadata?.kind
   return {
     id: note.id, version: note.version, content: note.content, label: labelFor(note.content),
-    type: isMemoryType(kind) ? kind : 'context', createdAt: note.createdAt, updatedAt: note.updatedAt,
+    type: isMemoryType(kind) ? kind : 'note', createdAt: note.createdAt, updatedAt: note.updatedAt,
     accessCount: 0, tags: [note.scope], source: 'co-memo',
   }
 }

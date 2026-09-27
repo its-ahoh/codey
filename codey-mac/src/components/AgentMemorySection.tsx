@@ -227,16 +227,7 @@ export const ProjectMemorySection: React.FC<{ workspace: string }> = ({ workspac
   )
 }
 
-/**
- * Your global memory: the one knowledge base about the user.
- *
- * The entries live in Codey's user-global memory store — the same ones it
- * injects into its own prompts. Turning sharing on also renders them into
- * each agent's own global memory file, inside a marked block, so the CLIs
- * know them when run outside Codey too. One place to type, two ways to
- * deliver; Codey drops its own injection while sharing is on so no fact
- * reaches the model twice.
- */
+/** Personal memory shared through Co-memo. */
 export const GlobalMemoryPanel: React.FC = () => (
   <MemoryPanel scope="global" description="Personal preferences shared through Co-memo across your projects and connected agents." />
 )

@@ -4,7 +4,7 @@ import { C } from '../theme'
 import { Toggle, unwrap } from './settingsAtoms'
 import type { CodeyMemoryItem, MemoryPanelScope, CoMemoConflictView, CoMemoDetails } from '../codey-api'
 
-/** User/project notes are managed through Co-memo; old Codey files can be imported explicitly. */
+/** User/project notes are managed exclusively through Co-memo. */
 
 const relative = (ms: number): string => {
   const mins = Math.round((Date.now() - ms) / 60000)
@@ -106,9 +106,6 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
   const running = useRef(false)
   const request = useRef(0)
   const [draft, setDraft] = useState('')
-  const [legacyCount, setLegacyCount] = useState(0)
-  const [legacyWarnings, setLegacyWarnings] = useState<string[]>([])
-  const [notice, setNotice] = useState('')
   const [adding, setAdding] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -123,8 +120,6 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
       setEntries(result.entries)
       setArchived(result.archived)
       setConflicts(result.conflicts)
-      setLegacyCount(result.legacyCount ?? 0)
-      setLegacyWarnings(result.legacyWarnings ?? [])
     } catch (e: any) { if (generation === request.current) setError(e?.message ?? String(e)) }
     finally { if (generation === request.current) setLoading(false) }
   }, [scope, workspace])
@@ -172,7 +167,6 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
       )}
 
       {banner}
-      {legacyWarnings.map((warning, i) => <p role="alert" key={i}>{warning}</p>)}
       <button style={smallButton()} onClick={() => void run(async () => {
         unwrap(await window.codey.memory.codey.openConsole(scope, workspace))
       })}>Open Co-memo console</button>
@@ -191,18 +185,6 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
           unwrap(await window.codey.memory.codey.resolve(scope, workspace, conflict.id, conflict.revision, choice))
         })} />)}
       </section>}
-      {notice && <p role="status" style={{ fontSize: 12 }}>{notice}</p>}
-      {legacyCount > 0 && <div style={{ marginBottom: 12, color: C.fg3, fontSize: 12 }}>
-        {legacyCount} previous Codey memories are available. Original files will be kept.
-        <button disabled={loading || adding || mutating} style={smallButton()} onClick={() => void run(async () => {
-          setAdding(true)
-          try {
-            const result = unwrap(await window.codey.memory.codey.importLegacy(scope, workspace))
-            setNotice(`Imported ${result.imported}; skipped ${result.skipped}. ${result.errors.join(' ')}`)
-          } finally { setAdding(false) }
-        })}>Import into Co-memo</button>
-      </div>}
-
       {view === 'active' && <div>
         <textarea
           value={draft}

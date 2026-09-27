@@ -11,7 +11,6 @@ export * from './workspace';
 export * from './bot-generator';
 export * from './skill-crystallizer';
 export * from './playbook-induction';
-export * from './legacy-memory';
 export * from './agents';
 export * from './errors';
 export * from './context';

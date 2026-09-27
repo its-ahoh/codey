@@ -26,7 +26,6 @@ import { locateRefPath } from './file-ref'
 import { fetchLinkPreview, type LinkPreview } from './link-preview'
 import type { ScannedSkill } from './skills'
 import { AGENT_MEMORY, scanProjectMemory, scanUserMemory } from './memory'
-import { sharedMemoryTargets, syncSharedMemory } from './shared-memory'
 import { toCoMemoItem, validateContent } from './codey-memory'
 import type { MemoryPanelScope } from './codey-memory'
 import { scanSkillUsage } from './skill-usage'
@@ -1043,7 +1042,6 @@ function buildRuntimeConfig(json: any): any {
     },
     context: json?.context,
     memory: json?.memory,
-    sharedMemory: json?.sharedMemory,
     // Back-compat: old `dispatcher` block becomes `advisor`.
     advisor: json?.advisor ?? json?.dispatcher,
     aide: json?.aide,
@@ -4982,44 +4980,6 @@ app.whenReady().then(async () => {
     })
   )
 
-  // ── Sharing the global memory with the agents ─────────────────────
-  // The user-global store owns this text; sharing renders its entries into
-  // each agent's own global memory file inside a marked block. Off until the
-  // user opts in, because the sync writes into files the user owns.
-  /** Retire only Codey-managed mirror blocks; Co-memo now owns shared memory. */
-  async function applySharedMemory(): Promise<string[]> {
-    const fsMod = await import('fs')
-    const pathMod = await import('path')
-    const osMod = await import('os')
-    const home = osMod.homedir()
-    const targets = sharedMemoryTargets(pathMod, home, agentEnv)
-    return syncSharedMemory(fsMod, pathMod, targets, '').written
-  }
-
-  // Remove obsolete Codey mirror blocks so they cannot duplicate or revive archived notes.
-  try {
-    await applySharedMemory()
-  } catch { /* best-effort: a stale block must not break startup */ }
-
-  ipcMain.handle('memory:shared:get', async () =>
-    wrap(async () => {
-      const pathMod = await import('path')
-      const osMod = await import('os')
-      return {
-        enabled: false,
-        targets: sharedMemoryTargets(pathMod, osMod.homedir(), agentEnv),
-      }
-    })
-  )
-
-  ipcMain.handle('memory:shared:setEnabled', async (_e, enabled: boolean) =>
-    wrap(async () => {
-      if (!coreConfigManager) throw new Error('Config manager not initialized')
-      if (enabled) throw new Error('Memory sharing is managed by Co-memo now')
-      return { synced: await applySharedMemory() }
-    })
-  )
-
   ipcMain.handle('memory:project', async (_e, workspace?: string) =>
     wrap(async () => {
       const fsMod = await import('fs')
@@ -5037,7 +4997,7 @@ app.whenReady().then(async () => {
     })
   )
 
-  // Co-memo owns live memory. Legacy files are read only for explicit imports.
+  // Co-memo owns all user/project memory.
   async function coMemoTarget(scope: MemoryPanelScope, workspace?: string) {
     if (scope !== 'global' && scope !== 'workspace') throw new Error('Invalid memory scope')
     if (!inProcessGateway) throw new Error('Gateway not ready')
@@ -5053,21 +5013,6 @@ app.whenReady().then(async () => {
     const project = getWorkingDir(await import('fs'), await import('path'), name)
     if (!project) throw new Error('Project memory requires a working directory')
     return { provider, scope: 'project' as const, project }
-  }
-
-  async function legacyContents(scope: MemoryPanelScope, workspace?: string) {
-    const { readLegacyMemory } = await import('@codey/core')
-    const path = await import('path')
-    if (scope === 'global') {
-      const os = await import('os')
-      return readLegacyMemory(process.env.CODEY_GLOBAL_MEMORY_DIR ?? path.join(os.homedir(), '.codey'), true)
-    }
-    if (!workspaceManager) throw new Error('Workspace manager not ready')
-    const name = workspace?.startsWith('chat:')
-      ? inProcessGateway?.getChatManager().get(workspace.slice(5))?.workspaceName
-      : workspace || workspaceManager.getCurrentWorkspace()
-    if (!name || !workspaceManager.listWorkspaces().includes(name)) throw new Error('Workspace not found')
-    return readLegacyMemory(path.join(workspaceManager.getWorkspacesRoot(), name))
   }
 
   ipcMain.handle('codeyMemory:targets', async (_e, workspace: string) => wrap(async () => {
@@ -5094,20 +5039,8 @@ app.whenReady().then(async () => {
     wrap(async () => {
       const target = await coMemoTarget(scope, workspace)
       const notes = await target.provider.list(target.scope, target.project, undefined, true)
-      const old = await legacyContents(scope, workspace)
       const conflicts = await target.provider.conflicts(target.scope, target.project)
-      return { entries: notes.filter(note => !note.deleted).map(toCoMemoItem), archived: notes.filter(note => note.deleted).map(toCoMemoItem), conflicts, legacyWarnings: old.warnings, legacyCount: old.contents.filter(content => !notes.some(n => n.content.trim() === content)).length }
-    })
-  )
-  ipcMain.handle('codeyMemory:importLegacy', async (_e, scope: MemoryPanelScope, workspace?: string) =>
-    wrap(async () => {
-      const target = await coMemoTarget(scope, workspace)
-      try {
-        const legacy = await legacyContents(scope, workspace)
-        const result = await target.provider.importLegacy(legacy.contents, target.scope, target.project)
-        return { ...result, errors: [...legacy.warnings, ...result.errors] }
-      }
-      finally { await inProcessGateway?.invalidateMemorySessions() }
+      return { entries: notes.filter(note => !note.deleted).map(toCoMemoItem), archived: notes.filter(note => note.deleted).map(toCoMemoItem), conflicts }
     })
   )
   ipcMain.handle('codeyMemory:details', async (_e, scope: MemoryPanelScope, workspace: string | undefined, id: string) => wrap(async () => {
