@@ -410,3 +410,5 @@ Automatic memory saving and Playbook learning are separate settings: Co-memo con
 New Codey-created worktrees inherit a one-time copy of the workspace main directory's active, non-conflicted project notes. Every worktree keeps its own Co-memo project ID; user notes remain shared. Later parent/worktree edits do not propagate, and merging a PR does not merge memory. Existing worktrees are not backfilled automatically.
 
 Inheritance snapshots and source-note IDs/versions are retained under the Codey workspace's `memory-inheritance/` directory, outside the code checkout. Interrupted copies resume from the frozen snapshot before the first agent run. A paused or explicit-only Co-memo policy blocks automatic copying and leaves the worktree available for retry; no policy is bypassed. Already linked Co-memo projects are rejected rather than silently shared.
+
+Co-memo is the only live user/project memory store. Workspace lifecycle operations no longer create or maintain `memory.md` or a legacy index. The explicit import reads old files without modifying them; malformed data is reported, and an existing empty index never falls back to stale rendered notes.

@@ -308,3 +308,25 @@ describe('normalizeTeam graph', () => {
     expect(t.graph).toBeUndefined();
   });
 });
+
+it('does not create or migrate legacy memory during workspace lifecycle operations', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-no-memory-'));
+  try {
+    const workspaces = path.join(root, 'workspaces');
+    for (const name of ['a', 'b']) {
+      fs.mkdirSync(path.join(workspaces, name), { recursive: true });
+      fs.writeFileSync(path.join(workspaces, name, 'workspace.json'), JSON.stringify({ workingDir: root }));
+    }
+    const manager = new WorkspaceManager(new BotManager(path.join(root, 'bots')), workspaces);
+    await manager.switchWorkspace('a');
+    expect(fs.existsSync(path.join(workspaces, 'a', 'memory.md'))).toBe(false);
+    expect(fs.existsSync(path.join(workspaces, 'a', 'memory'))).toBe(false);
+    fs.writeFileSync(path.join(workspaces, 'a', 'memory.md'), '# Existing\nLeave this unchanged');
+    await manager.switchWorkspace('b');
+    await manager.switchWorkspace('a');
+    await manager.renameWorkspace('a', 'renamed');
+    expect(fs.readFileSync(path.join(workspaces, 'renamed', 'memory.md'), 'utf8')).toBe('# Existing\nLeave this unchanged');
+    expect(fs.existsSync(path.join(workspaces, 'renamed', 'memory'))).toBe(false);
+    expect(fs.existsSync(path.join(workspaces, 'b', 'memory.md'))).toBe(false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

@@ -1,18 +1,8 @@
-import type { CoMemoNote, MemoryEntry, MemoryStore, MemoryType } from '@codey/core'
-import { isSharedMemoryEntry } from '@codey/core'
+import type { CoMemoNote, MemoryEntry, MemoryType } from '@codey/core'
 
-/**
- * Codey's own memory — the structured entries it injects into prompts,
- * distinct from the agent-owned instruction files in `./memory.ts`.
- *
- * Entries live in `index.json` under a store root; the `memory.md` beside it
- * is a rendered view the store rewrites on every change. The Workspaces tab
- * used to edit that rendered file, so anything typed there was silently
- * overwritten by the next entry. These helpers back the UI with the entries
- * themselves instead.
- */
+/** Display adapters for Co-memo records and retained legacy data types. */
 
-export type MemoryStoreScope = 'workspace' | 'global'
+export type MemoryPanelScope = 'workspace' | 'global'
 
 /** What the renderer needs to show and manage one entry. */
 export interface CodeyMemoryItem {
@@ -77,10 +67,6 @@ export function validateContent(content: unknown): string {
   return trimmed
 }
 
-/** All entries in a store, newest first. */
-export function listStore(store: MemoryStore): CodeyMemoryItem[] {
-  return sortItems(store.getAll().filter(isSharedMemoryEntry).map(toMemoryItem))
-}
 
 /** Adapt the public Co-memo record to the existing memory panel. */
 export function toCoMemoItem(note: CoMemoNote): CodeyMemoryItem {

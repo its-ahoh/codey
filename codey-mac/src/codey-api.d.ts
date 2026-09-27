@@ -11,7 +11,7 @@ import type { ScannedSkill } from '../electron/skills'
 import type { SkillUsage, SkillUsageMap } from '../electron/skill-usage'
 import type { MemoryEntry } from '../electron/memory'
 import type { LinkPreview } from '../electron/link-preview'
-import type { CodeyMemoryItem, MemoryStoreScope } from '../electron/codey-memory'
+import type { CodeyMemoryItem, MemoryPanelScope } from '../electron/codey-memory'
 import type { Automation, AutomationRun, AutomationEvent } from '../../packages/core/src/types/automation'
 import type { AutomationDraft } from '../../packages/core/src/aide-automation'
 import type { ChatStep } from '../../packages/gateway/src/automations/chat'
@@ -22,7 +22,7 @@ export type { LinkPreview }
 export type SkillEntry = ScannedSkill
 export type { SkillUsage, SkillUsageMap }
 
-export type { MemoryEntry, CodeyMemoryItem, MemoryStoreScope }
+export type { MemoryEntry, CodeyMemoryItem, MemoryPanelScope }
 
 export interface CodeyMemorySettings {
   paused?: boolean
@@ -446,16 +446,16 @@ declare global {
         }
         /** Codey's own remembered entries — what it injects into prompts. */
         codey: {
-          details: (scope: MemoryStoreScope, workspace: string | undefined, id: string) => Promise<IpcResult<CoMemoDetails>>
-          restore: (scope: MemoryStoreScope, workspace: string | undefined, id: string, version: number) => Promise<IpcResult<{ restored: boolean }>>
-          resolve: (scope: MemoryStoreScope, workspace: string | undefined, id: string, revision: string, choice: { take: string } | { content: string }) => Promise<IpcResult<{ resolved: boolean }>>
+          details: (scope: MemoryPanelScope, workspace: string | undefined, id: string) => Promise<IpcResult<CoMemoDetails>>
+          restore: (scope: MemoryPanelScope, workspace: string | undefined, id: string, version: number) => Promise<IpcResult<{ restored: boolean }>>
+          resolve: (scope: MemoryPanelScope, workspace: string | undefined, id: string, revision: string, choice: { take: string } | { content: string }) => Promise<IpcResult<{ resolved: boolean }>>
           targets: (workspace: string) => Promise<IpcResult<Array<{ id: string; label: string; path: string }>>>
-          openConsole: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ opened: boolean }>>
-          list: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ entries: CodeyMemoryItem[]; archived: CodeyMemoryItem[]; conflicts: CoMemoConflictView[]; legacyCount?: number }>>
-          importLegacy: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ imported: number; skipped: number; errors: string[] }>>
-          add: (scope: MemoryStoreScope, workspace: string | undefined, content: string, type?: string) => Promise<IpcResult<CodeyMemoryItem>>
-          update: (scope: MemoryStoreScope, workspace: string | undefined, id: string, content: string, version: number) => Promise<IpcResult<{ updated: boolean }>>
-          remove: (scope: MemoryStoreScope, workspace: string | undefined, id: string, version: number) => Promise<IpcResult<{ removed: boolean }>>
+          openConsole: (scope: MemoryPanelScope, workspace?: string) => Promise<IpcResult<{ opened: boolean }>>
+          list: (scope: MemoryPanelScope, workspace?: string) => Promise<IpcResult<{ entries: CodeyMemoryItem[]; archived: CodeyMemoryItem[]; conflicts: CoMemoConflictView[]; legacyCount?: number; legacyWarnings?: string[] }>>
+          importLegacy: (scope: MemoryPanelScope, workspace?: string) => Promise<IpcResult<{ imported: number; skipped: number; errors: string[] }>>
+          add: (scope: MemoryPanelScope, workspace: string | undefined, content: string, type?: string) => Promise<IpcResult<CodeyMemoryItem>>
+          update: (scope: MemoryPanelScope, workspace: string | undefined, id: string, content: string, version: number) => Promise<IpcResult<{ updated: boolean }>>
+          remove: (scope: MemoryPanelScope, workspace: string | undefined, id: string, version: number) => Promise<IpcResult<{ removed: boolean }>>
           settings: () => Promise<IpcResult<CodeyMemorySettings>>
           setSettings: (patch: Partial<CodeyMemorySettings>) => Promise<IpcResult<CodeyMemorySettings>>
         }

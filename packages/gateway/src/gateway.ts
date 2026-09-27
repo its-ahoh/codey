@@ -27,7 +27,6 @@ import { AgentFactory, isThinkingEffort } from '@codey/core';
 import { pruneCodeyTmp } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
-import { MemoryStore } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_ROUNDTABLE_SETTINGS, normalizeDispatchMode } from '@codey/core';
 import { BotManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';

@@ -2,7 +2,7 @@ import { ArchivedMemories, MemoryConflictCard, MemoryHistory } from './MemoryMan
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { C } from '../theme'
 import { Toggle, unwrap } from './settingsAtoms'
-import type { CodeyMemoryItem, MemoryStoreScope, CoMemoConflictView, CoMemoDetails } from '../codey-api'
+import type { CodeyMemoryItem, MemoryPanelScope, CoMemoConflictView, CoMemoDetails } from '../codey-api'
 
 /** User/project notes are managed through Co-memo; old Codey files can be imported explicitly. */
 
@@ -86,7 +86,7 @@ const EntryRow: React.FC<{
 }
 
 interface PanelProps {
-  scope: MemoryStoreScope
+  scope: MemoryPanelScope
   /** Required for the workspace scope; ignored for the global one. */
   workspace?: string
   /** Optional header title; omit it when an outer section already names the panel. */
@@ -107,6 +107,7 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
   const request = useRef(0)
   const [draft, setDraft] = useState('')
   const [legacyCount, setLegacyCount] = useState(0)
+  const [legacyWarnings, setLegacyWarnings] = useState<string[]>([])
   const [notice, setNotice] = useState('')
   const [adding, setAdding] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -123,6 +124,7 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
       setArchived(result.archived)
       setConflicts(result.conflicts)
       setLegacyCount(result.legacyCount ?? 0)
+      setLegacyWarnings(result.legacyWarnings ?? [])
     } catch (e: any) { if (generation === request.current) setError(e?.message ?? String(e)) }
     finally { if (generation === request.current) setLoading(false) }
   }, [scope, workspace])
@@ -170,6 +172,7 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
       )}
 
       {banner}
+      {legacyWarnings.map((warning, i) => <p role="alert" key={i}>{warning}</p>)}
       <button style={smallButton()} onClick={() => void run(async () => {
         unwrap(await window.codey.memory.codey.openConsole(scope, workspace))
       })}>Open Co-memo console</button>
