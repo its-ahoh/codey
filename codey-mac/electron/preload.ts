@@ -145,11 +145,12 @@ contextBridge.exposeInMainWorld('codey', {
     user: () => ipcRenderer.invoke('memory:user'),
     project: (workspace?: string) => ipcRenderer.invoke('memory:project', workspace),
     codey: {
+      purge: (scope: 'workspace' | 'global', workspace: string | undefined, id: string, version: number) => ipcRenderer.invoke('codeyMemory:purge', scope, workspace, id, version),
+      setPaused: (scope: 'workspace' | 'global', workspace: string | undefined, paused: boolean) => ipcRenderer.invoke('codeyMemory:setPaused', scope, workspace, paused),
       details: (scope: 'workspace' | 'global', workspace: string | undefined, id: string) => ipcRenderer.invoke('codeyMemory:details', scope, workspace, id),
       restore: (scope: 'workspace' | 'global', workspace: string | undefined, id: string, version: number) => ipcRenderer.invoke('codeyMemory:restore', scope, workspace, id, version),
       resolve: (scope: 'workspace' | 'global', workspace: string | undefined, id: string, revision: string, choice: { take: string } | { content: string }) => ipcRenderer.invoke('codeyMemory:resolve', scope, workspace, id, revision, choice),
       targets: (workspace: string) => ipcRenderer.invoke('codeyMemory:targets', workspace),
-      openConsole: (scope: 'workspace' | 'global', workspace?: string) => ipcRenderer.invoke('codeyMemory:console', scope, workspace),
       list: (scope: 'workspace' | 'global', workspace?: string) => ipcRenderer.invoke('codeyMemory:list', scope, workspace),
       add: (scope: 'workspace' | 'global', workspace: string | undefined, content: string, type?: string) =>
         ipcRenderer.invoke('codeyMemory:add', scope, workspace, content, type),
@@ -158,7 +159,7 @@ contextBridge.exposeInMainWorld('codey', {
       remove: (scope: 'workspace' | 'global', workspace: string | undefined, id: string, version: number) =>
         ipcRenderer.invoke('codeyMemory:remove', scope, workspace, id, version),
       settings: () => ipcRenderer.invoke('codeyMemory:settings'),
-      setSettings: (patch: { enabled?: boolean; autoExtract?: boolean }) =>
+      setSettings: (patch: { enabled?: boolean; autoExtract?: boolean; paused?: boolean }) =>
         ipcRenderer.invoke('codeyMemory:setSettings', patch),
     },
   },

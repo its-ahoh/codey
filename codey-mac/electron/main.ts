@@ -5027,21 +5027,27 @@ app.whenReady().then(async () => {
     return targets
   }))
 
-  ipcMain.handle('codeyMemory:console', async (_e, scope: MemoryPanelScope, workspace?: string) => wrap(async () => {
-    const target = await coMemoTarget(scope, workspace)
-    await shell.openExternal(await target.provider.openConsole(target.project))
-    return { opened: true }
-  }))
-  app.once('before-quit', () => inProcessGateway?.getCoMemo().closeConsoles())
-
   ipcMain.handle('codeyMemory:list', async (_e, scope: MemoryPanelScope, workspace?: string) =>
     wrap(async () => {
       const target = await coMemoTarget(scope, workspace)
+      const settings = await target.provider.call<{ effective: { paused: boolean }; user: { paused?: boolean } }>('memory_settings_get', {}, target.project)
+      if (settings.effective.paused) return { entries: [], archived: [], conflicts: [], paused: true, pausedByUser: settings.user.paused === true }
       const notes = await target.provider.list(target.scope, target.project, undefined, true)
       const conflicts = await target.provider.conflicts(target.scope, target.project)
       return { entries: notes.filter(note => !note.deleted).map(toCoMemoItem), archived: notes.filter(note => note.deleted).map(toCoMemoItem), conflicts }
     })
   )
+  ipcMain.handle('codeyMemory:purge', async (_e, scope: MemoryPanelScope, workspace: string | undefined, id: string, version: number) => wrap(async () => {
+    const target = await coMemoTarget(scope, workspace)
+    try { await target.provider.purge(id, version, target.scope, target.project); return { deleted: true } }
+    finally { await inProcessGateway?.invalidateMemorySessions() }
+  }))
+  ipcMain.handle('codeyMemory:setPaused', async (_e, scope: MemoryPanelScope, workspace: string | undefined, paused: boolean) => wrap(async () => {
+    if (typeof paused !== 'boolean') throw new Error('Invalid pause setting')
+    const target = await coMemoTarget(scope, workspace)
+    try { return (await target.provider.setPaused(target.scope, paused, target.project)).effective }
+    finally { await inProcessGateway?.invalidateMemorySessions() }
+  }))
   ipcMain.handle('codeyMemory:details', async (_e, scope: MemoryPanelScope, workspace: string | undefined, id: string) => wrap(async () => {
     const target = await coMemoTarget(scope, workspace)
     return target.provider.details(id, target.scope, target.project)
@@ -5095,12 +5101,17 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('codeyMemory:setSettings', async (_e, patch: { enabled?: boolean; autoExtract?: boolean }) =>
+  ipcMain.handle('codeyMemory:setSettings', async (_e, patch: { enabled?: boolean; autoExtract?: boolean; paused?: boolean }) =>
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       if (!inProcessGateway) throw new Error('Gateway not ready')
       if (patch.autoExtract !== undefined) await inProcessGateway.getCoMemo().setSaveMode(patch.autoExtract ? 'auto' : 'explicit')
-      coreConfigManager.update({ memory: patch })
+      if (patch.paused !== undefined) {
+        if (typeof patch.paused !== 'boolean') throw new Error('Invalid pause setting')
+        await inProcessGateway.getCoMemo().setPaused('user', patch.paused)
+      }
+      const { paused: _paused, ...local } = patch
+      coreConfigManager.update({ memory: local })
       await inProcessGateway.invalidateMemorySessions()
       const memory = coreConfigManager.get().memory ?? {}
       if (!inProcessGateway) throw new Error('Gateway not ready')

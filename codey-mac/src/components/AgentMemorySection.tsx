@@ -200,7 +200,7 @@ export const UserMemorySection: React.FC = () => {
 
   return (
     <AgentMemoryFilesCard
-      description="Global instruction files loaded by each agent. Managed separately from Co-memo; this view is read-only."
+      description="Global instruction files loaded by each agent. Managed by each agent; this view is read-only."
       emptyText="No agent instruction files found."
       groups={groups}
       loading={loading}
@@ -217,7 +217,7 @@ export const ProjectMemorySection: React.FC<{ workspace: string }> = ({ workspac
 
   return (
     <AgentMemoryFilesCard
-      description="Project instruction files and agent-native memory, including Claude Code auto-memory. Managed separately from Co-memo; this view is read-only."
+      description="Project instruction files and agent-native memory, including Claude Code auto-memory. Managed by each agent; this view is read-only."
       emptyText="No agent instruction or native memory files found for this project."
       groups={groups}
       loading={loading}
@@ -229,5 +229,5 @@ export const ProjectMemorySection: React.FC<{ workspace: string }> = ({ workspac
 
 /** Personal memory shared through Co-memo. */
 export const GlobalMemoryPanel: React.FC = () => (
-  <MemoryPanel scope="global" description="Personal preferences shared through Co-memo across your projects and connected agents." />
+  <MemoryPanel scope="global" description="Preferences and useful facts shared across your projects and agents." />
 )
