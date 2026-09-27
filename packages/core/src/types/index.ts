@@ -381,11 +381,6 @@ export interface ContextSettings {
   ttlMinutes?: number;
 }
 
-/** Sharing the user-global memory with the agents' own memory files. */
-export interface SharedMemorySettings {
-  enabled?: boolean;
-}
-
 // Memory configuration
 export interface MemorySettings {
   enabled?: boolean;
@@ -410,7 +405,6 @@ export interface GatewayConfig {
   rateLimitMs?: number; // Rate limit in ms (default: 3000)
   context?: ContextSettings;
   memory?: MemorySettings;
-  sharedMemory?: SharedMemorySettings;
   /** Advisor (team advisor / auto-dispatcher) settings. */
   advisor?: AdvisorSettings;
   /** Aide (lightweight housekeeping LLM) settings. */

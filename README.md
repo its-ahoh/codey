@@ -149,21 +149,20 @@ Advisor (auto-dispatch + team routing) settings: `advisor.{agent, model}` (optio
 workspaces/
 ├── default/
 │   ├── workspace.json       # Workspace config (workingDir + bots)
-│   ├── memory.md            # Project memory/notes
 │   └── bots/
 │       ├── architect.md
 │       └── executor.md
 ├── project-a/
 │   ├── workspace.json
-│   ├── memory.md
 │   └── bots/
 │       └── ...
 └── project-b/
     ├── workspace.json
-    ├── memory.md
     └── bots/
         └── ...
 ```
+
+User and project memories are stored in Co-memo, separately from workspace files. Project memory is scoped by the project directory path.
 
 Each workspace ties to a project directory via `workspace.json`:
 
@@ -397,8 +396,18 @@ codey-mac auto-updates via electron-updater from GitHub Releases.
 
 Codey uses the official `@ahoh.tech/co-memo` 0.7.0 package through local MCP stdio. The gateway requires Node.js 24.12+. User notes are shared across projects; project notes use the chat's working directory, including its worktree. Conversations without a project receive personal memory only. No Bot-private memory is created.
 
-Settings → Memory and workspace memory panels edit Co-memo directly. Edits and archives retain the version shown to the user, so concurrent changes are rejected. Archive keeps history; restoring or permanently deleting notes remains available through Co-memo's console/CLI. Existing Codey user/project files are retained and can be explicitly imported from the corresponding panel. Old Bot-scoped entries are excluded.
+Settings → Memory and workspace memory panels edit Co-memo directly. Edits and archives retain the version shown to the user, so concurrent changes are rejected. Archive keeps history. Codey's memory panels provide active, archived and conflict views, version history, restoration, and explicit conflict resolution by selecting current/candidate content or saving a merge. Stale restores and changed conflict reviews are rejected. The same store's Co-memo console remains available for advanced administration.
 
 The gateway recalls context before execution and records the injected text in **Memory included**. Agents receive instructions for the bundled Co-memo CLI; they decide what to save. There is no background transcript extractor. Disabling automatic saves requests Co-memo's user-level explicit-only policy. Disabling prompt memory affects Codey injection, not independent agent hooks or already-loaded conversation text. Read failures are logged and do not prevent the coding task; write/sync failures are shown rather than reported as saved.
 
 `CO_MEMO_HOME` selects an existing custom store; omission uses Co-memo's normal data directory. `CO_MEMO_NODE` and `CO_MEMO_CLI` can override the bundled launcher (0.7+ required). Codey does not install per-project hooks. If a CLI already has Co-memo hooks, use its tools-only configuration to avoid duplicate context delivery. Upgrade older connected Co-memo installations before opening the shared database with 0.7.
+
+Workspace memory panels include the actual checkout paths of their project chats, so isolated worktree memories can be managed alongside the base workspace. Resumed ordinary and Bot sessions receive current retrieval; Codey memory mutations invalidate both kinds of session anchors.
+
+Automatic memory saving and Playbook learning are separate settings: Co-memo controls durable user/project facts, while Skills controls execution traces and procedure evolution. Conversation history, summaries and team blackboards remain task state managed by Codey.
+
+New Codey-created worktrees inherit a one-time copy of the workspace main directory's active, non-conflicted project notes. Every worktree keeps its own Co-memo project ID; user notes remain shared. Later parent/worktree edits do not propagate, and merging a PR does not merge memory. Existing worktrees are not backfilled automatically.
+
+Inheritance snapshots and source-note IDs/versions are retained under the Codey workspace's `memory-inheritance/` directory, outside the code checkout. Interrupted copies resume from the frozen snapshot before the first agent run. A paused or explicit-only Co-memo policy blocks automatic copying and leaves the worktree available for retry; no policy is bypassed. Already linked Co-memo projects are rejected rather than silently shared.
+
+Co-memo is the only user/project memory store. Codey no longer scans, imports, rewrites or removes legacy Codey memory files. Workspace lifecycle operations do not create or maintain `memory.md` or a legacy index.

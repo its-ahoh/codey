@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { BotManager, TeamBlackboard, type Chat, type AgentRequest } from '@codey/core';
+import { BotManager, TeamBlackboard, ContextManager, type Chat, type AgentRequest } from '@codey/core';
 import { ChatManager } from './chats';
 import { Codey } from './gateway';
 import { RunSemaphore } from './chat-runner';
@@ -283,4 +283,20 @@ describe('shared memory for Bot execution', () => {
     await send('Next', a);
     expect(calls[1].prompt).not.toContain('HIDDEN');
   });
+});
+
+
+it('does not reattach a chat session when memory changes during its turn', async () => {
+  const { gateway, run, send, chat, calls, a } = setup();
+  Object.assign(gateway, { contextManager: new ContextManager() });
+  run.mockImplementationOnce(async (_agent, request) => {
+    calls.push(request);
+    await gateway.invalidateMemorySessions();
+    return { success: true, output: 'Done', sessionId: 'stale-result' };
+  });
+  await send('Start the task', a);
+  expect(chat.sessionAnchor).toBeUndefined();
+  expect(chat.sessionAnchors).toBeUndefined();
+  await send('Continue', a);
+  expect(calls[1].resumeSessionId).toBeUndefined();
 });

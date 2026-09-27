@@ -1,9 +1,7 @@
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { CoreLogger } from './types';
 import { BotManager } from './bots';
-import { MemoryStore } from './memory';
 import { SkillStore } from './skill-crystallizer';
 import { TeamGraph, validateGraph } from './team-graph';
 
@@ -71,18 +69,12 @@ export interface WorkspaceJson {
 /** Returns the global team library. Injected so core stays independent of gateway config storage. */
 export type GlobalTeamsProvider = () => Record<string, TeamConfigRaw>;
 
-/** Resolve the on-disk root of the user-global memory store. Overridable via env for tests. */
-export function globalMemoryDir(): string {
-  return process.env.CODEY_GLOBAL_MEMORY_DIR
-    ?? path.join(os.homedir(), '.codey');
-}
 
 export class WorkspaceManager {
   private workspacesDir: string;
   private currentWorkspace: string = '';
   private config: WorkspaceJson | null = null;
   private botManager: BotManager;
-  private memoryStore: MemoryStore;
   private skillStore: SkillStore;
   /** Which workspace `skillStore` belongs to ('' until the first load()). */
   private skillStoreWorkspace: string = '';
@@ -90,10 +82,6 @@ export class WorkspaceManager {
    *  other than the loaded one). One shared instance per name so two stores
    *  never race writes over the same skills/ files. */
   private extraSkillStores: Map<string, SkillStore> = new Map();
-  /** User-global memory shared across workspaces. Lazily loaded. */
-  private globalMemory: MemoryStore | null = null;
-  private extraMemoryStores = new Map<string, MemoryStore>();
-  private memoryStoreWorkspace = "";
   private teams: Map<string, TeamConfig> = new Map();
   private globalTeamsProvider: GlobalTeamsProvider;
   private logger: CoreLogger;
@@ -107,7 +95,6 @@ export class WorkspaceManager {
     this.workspacesDir = workspacesDir;
     this.botManager = botManager;
     this.logger = logger || defaultLogger;
-    this.memoryStore = new MemoryStore(this.getWorkspacePath());
     this.skillStore = new SkillStore(this.getWorkspacePath(), this.logger);
     this.globalTeamsProvider = globalTeamsProvider || (() => ({}));
   }
@@ -127,9 +114,6 @@ export class WorkspaceManager {
     return path.join(this.getWorkspacePath(), 'workspace.json');
   }
 
-  private getMemoryPath(): string {
-    return path.join(this.getWorkspacePath(), 'memory.md');
-  }
 
   async load(): Promise<void> {
     if (!this.currentWorkspace) {
@@ -167,21 +151,10 @@ export class WorkspaceManager {
     // The workspace.json `teams` field (legacy per-workspace opt-in) is ignored.
     this.resolveTeamsFromGlobal();
 
-    if (!fs.existsSync(this.getMemoryPath())) {
-      fs.writeFileSync(this.getMemoryPath(), `# ${this.currentWorkspace} — Project Memory\n`);
-    }
 
     const logsDir = this.getLogsDir();
     if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
 
-    // Flush the outgoing stores so a pending debounced write can't fire later
-    // and recreate a ghost directory under the previous workspace path.
-    try { await this.memoryStore.flush(); } catch { /* best-effort */ }
-    if (this.memoryStoreWorkspace) this.extraMemoryStores.set(this.memoryStoreWorkspace, this.memoryStore);
-    this.memoryStore = this.extraMemoryStores.get(this.currentWorkspace) ?? new MemoryStore(workspacePath);
-    this.extraMemoryStores.delete(this.currentWorkspace);
-    this.memoryStoreWorkspace = this.currentWorkspace;
-    await this.memoryStore.load();
     await this.adoptSkillStore(this.currentWorkspace);
   }
 
@@ -309,7 +282,6 @@ export class WorkspaceManager {
 
     const config: WorkspaceJson = { workingDir: dir, createdAt: new Date().toISOString() };
     fs.writeFileSync(path.join(workspacePath, 'workspace.json'), JSON.stringify(config, null, 2));
-    fs.writeFileSync(path.join(workspacePath, 'memory.md'), `# ${name} — Project Memory\n`);
 
     this.logger.info(`[Workspace] Created new workspace: ${name} -> ${dir}`);
     await this.switchWorkspace(name);
@@ -324,23 +296,6 @@ export class WorkspaceManager {
   getCurrentWorkspace(): string { return this.currentWorkspace; }
   getWorkspacesRoot(): string { return this.workspacesDir; }
   getBotManager(): BotManager { return this.botManager; }
-  getMemoryStore(): MemoryStore { return this.memoryStore; }
-
-  /** Resolve memory by the chat's project, never by whichever workspace the UI last selected. */
-  getMemoryStoreFor(name: string): MemoryStore {
-    if (name === this.currentWorkspace) return this.memoryStore;
-    let store = this.extraMemoryStores.get(name);
-    if (!store) {
-      const root = path.resolve(this.workspacesDir);
-      const target = path.resolve(root, name);
-      if (path.dirname(target) !== root || !fs.existsSync(path.join(target, 'workspace.json'))) throw new Error('Workspace not found');
-      store = new MemoryStore(target);
-      void store.load().catch(error => this.logger.warn(`Memory load failed: ${String(error)}`));
-      this.extraMemoryStores.set(name, store);
-    }
-    return store;
-  }
-
   getSkillStore(): SkillStore { return this.skillStore; }
 
   /** SkillStore for a NAMED workspace — skills are per-workspace state, so
@@ -392,26 +347,6 @@ export class WorkspaceManager {
     return this.getWorkingDir();
   }
 
-  /**
-   * User-global memory store, rooted at `~/.codey/` (override via
-   * `CODEY_GLOBAL_MEMORY_DIR`). Lazily instantiated and survives workspace
-   * switches. Use for cross-workspace preferences ("use pnpm not npm"),
-   * coding conventions, persistent user facts.
-   */
-  getGlobalMemoryStore(): MemoryStore {
-    if (!this.globalMemory) {
-      this.globalMemory = new MemoryStore(globalMemoryDir());
-      // Best-effort eager load so the first buildContext doesn't read empty.
-      void this.globalMemory.load().catch(() => { /* swallow — store is best-effort */ });
-    }
-    return this.globalMemory;
-  }
-
-  getMemory(): string {
-    const memoryPath = this.getMemoryPath();
-    return fs.existsSync(memoryPath) ? fs.readFileSync(memoryPath, 'utf-8') : '';
-  }
-
   async renameWorkspace(oldName: string, newName: string): Promise<void> {
     if (oldName === 'default') {
       throw new Error('The "default" workspace is protected and cannot be renamed.');
@@ -431,13 +366,10 @@ export class WorkspaceManager {
         !path.resolve(dst).startsWith(root + path.sep)) {
       throw new Error('Refusing to rename outside of workspaces root');
     }
-    const extraMemory = this.extraMemoryStores.get(oldName);
-    if (extraMemory) { await extraMemory.flush(); this.extraMemoryStores.delete(oldName); }
     if (this.currentWorkspace === oldName) {
       // Drain pending debounced writes BEFORE the directory moves — the old
       // stores' paths point at src, so a late flush would recreate a ghost
       // directory there.
-      try { await this.memoryStore.flush(); } catch { /* best-effort */ }
       try { await this.skillStore.flush(); } catch { /* best-effort */ }
     }
     // Same for a cached non-active store bound to the old name.
@@ -450,9 +382,6 @@ export class WorkspaceManager {
     this.logger.info(`[Workspace] Renamed workspace: ${oldName} -> ${trimmed}`);
     if (this.currentWorkspace === oldName) {
       this.currentWorkspace = trimmed;
-      this.memoryStore = new MemoryStore(this.getWorkspacePath());
-      this.memoryStoreWorkspace = this.currentWorkspace;
-      await this.memoryStore.load();
       this.skillStore = new SkillStore(this.getWorkspacePath(), this.logger);
       await this.skillStore.load();
       this.skillStoreWorkspace = trimmed;
@@ -473,10 +402,6 @@ export class WorkspaceManager {
       throw new Error(`Refusing to delete workspace outside of workspaces root`);
     }
     const wasActive = name === this.currentWorkspace;
-    const outgoingMemory = wasActive ? this.memoryStore : this.extraMemoryStores.get(name);
-    if (outgoingMemory) await outgoingMemory.flush();
-    this.extraMemoryStores.delete(name);
-    if (wasActive) this.memoryStoreWorkspace = '';
     await fs.promises.rm(resolved, { recursive: true, force: true });
     this.logger.info(`[Workspace] Deleted workspace: ${name}`);
 

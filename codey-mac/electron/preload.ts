@@ -144,14 +144,13 @@ contextBridge.exposeInMainWorld('codey', {
   memory: {
     user: () => ipcRenderer.invoke('memory:user'),
     project: (workspace?: string) => ipcRenderer.invoke('memory:project', workspace),
-    shared: {
-      get: () => ipcRenderer.invoke('memory:shared:get'),
-      setEnabled: (enabled: boolean) => ipcRenderer.invoke('memory:shared:setEnabled', enabled),
-    },
-    /** Codey's own remembered entries, not the agents' files. */
     codey: {
+      details: (scope: 'workspace' | 'global', workspace: string | undefined, id: string) => ipcRenderer.invoke('codeyMemory:details', scope, workspace, id),
+      restore: (scope: 'workspace' | 'global', workspace: string | undefined, id: string, version: number) => ipcRenderer.invoke('codeyMemory:restore', scope, workspace, id, version),
+      resolve: (scope: 'workspace' | 'global', workspace: string | undefined, id: string, revision: string, choice: { take: string } | { content: string }) => ipcRenderer.invoke('codeyMemory:resolve', scope, workspace, id, revision, choice),
+      targets: (workspace: string) => ipcRenderer.invoke('codeyMemory:targets', workspace),
+      openConsole: (scope: 'workspace' | 'global', workspace?: string) => ipcRenderer.invoke('codeyMemory:console', scope, workspace),
       list: (scope: 'workspace' | 'global', workspace?: string) => ipcRenderer.invoke('codeyMemory:list', scope, workspace),
-      importLegacy: (scope: 'workspace' | 'global', workspace?: string) => ipcRenderer.invoke('codeyMemory:importLegacy', scope, workspace),
       add: (scope: 'workspace' | 'global', workspace: string | undefined, content: string, type?: string) =>
         ipcRenderer.invoke('codeyMemory:add', scope, workspace, content, type),
       update: (scope: 'workspace' | 'global', workspace: string | undefined, id: string, content: string, version: number) =>

@@ -149,21 +149,20 @@ Auto-dispatch 设置：`dispatcher.{agent, model}`（可选）。
 workspaces/
 ├── default/
 │   ├── workspace.json       # 工作区配置（workingDir + 工作者）
-│   ├── memory.md            # 项目记忆/笔记
 │   └── bots/
 │       ├── architect.md
 │       └── executor.md
 ├── project-a/
 │   ├── workspace.json
-│   ├── memory.md
 │   └── bots/
 │       └── ...
 └── project-b/
     ├── workspace.json
-    ├── memory.md
     └── bots/
         └── ...
 ```
+
+用户记忆和项目记忆由 Co-memo 存储，与工作区文件分开管理。项目记忆以项目目录路径区分。
 
 每个工作区通过 `workspace.json` 关联到一个项目目录：
 

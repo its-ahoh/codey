@@ -67,6 +67,9 @@ export interface SessionAnchor {
  * every turn. Keyed by bot name within a ContextWindow.
  */
 export interface BotAnchor extends SessionAnchor {
+  /** Gateway memory generation and checkout used to bootstrap this session. */
+  memoryEpoch?: number;
+  workingDir?: string;
   botName: string;
   /** Index up to which this session has already seen blackboard entries.
    *  Next resume only sends the delta. */

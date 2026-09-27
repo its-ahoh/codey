@@ -1,3 +1,4 @@
+import { inheritWorktreeMemory } from './worktree-memory';
 import { CoMemoClient } from '@codey/core';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { matchAutomaticChatTask } from './automatic-chat-task';
@@ -26,7 +27,6 @@ import { AgentFactory, isThinkingEffort } from '@codey/core';
 import { pruneCodeyTmp } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
-import { MemoryStore } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_ROUNDTABLE_SETTINGS, normalizeDispatchMode } from '@codey/core';
 import { BotManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
@@ -260,6 +260,7 @@ const memoryUsageContext = new AsyncLocalStorage<Map<string, NonNullable<ChatMes
 
 export class Codey {
   private coMemo = new CoMemoClient();
+  private memoryEpoch = 0;
 
   public getCoMemo(): CoMemoClient {
     if (!this.coMemo) throw new Error('Shared memory is not initialized');
@@ -393,6 +394,8 @@ export class Codey {
     interactive?: boolean;
     skipPermissions?: boolean;
   }): Promise<{ response: AgentResponse; usedResume: boolean }> {
+    const memoryEpoch = this.memoryEpoch ?? 0;
+    const workingDir = opts.workingDir ?? this.workingDir;
     const ctxWindow = await this.contextManager.getOrCreate(opts.conversationId);
     const existing = this.contextManager.getBotAnchor(ctxWindow.id, opts.botName);
     const ttlElapsed = existing
@@ -418,7 +421,8 @@ export class Codey {
     } as const;
 
     // ── Warm path: anchor exists, same agent, within TTL ─────────
-    if (existing && existing.agent === opts.codingAgent && !ttlElapsed) {
+    if (existing && existing.agent === opts.codingAgent && !ttlElapsed
+        && (existing.memoryEpoch ?? 0) === memoryEpoch && existing.workingDir === workingDir) {
       const delta = opts.blackboard.renderDeltaForBot(opts.botName, existing.blackboardSeenCount);
       const memoryChat = opts.browserChatId ? this.chatManager.get(opts.browserChatId) : undefined;
       const memory = await this.buildMergedMemoryContext(opts.task, opts.botName, !!memoryChat?.botChat, memoryChat?.workspaceName, opts.workingDir);
@@ -430,7 +434,7 @@ export class Codey {
       });
       if (resp.success) {
         // Update the seen-count snapshot so the next turn's delta is correct.
-        await this.contextManager.setBotAnchor(ctxWindow.id, opts.botName, {
+        if (memoryEpoch === (this.memoryEpoch ?? 0)) await this.contextManager.setBotAnchor(ctxWindow.id, opts.botName, {
           ...existing,
           blackboardSeenCount: opts.blackboard.totalCount(),
         });
@@ -461,8 +465,9 @@ export class Codey {
     });
     if (resp.success) {
       const sid = newSessionId ?? resp.sessionId;
-      if (sid) {
+      if (sid && memoryEpoch === (this.memoryEpoch ?? 0)) {
         const anchor: BotAnchor = {
+          memoryEpoch, workingDir,
           agent: opts.codingAgent,
           sessionId: sid,
           botName: opts.botName,
@@ -927,7 +932,10 @@ export class Codey {
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
     if (chat.executionMode !== 'isolated-worktree') return chat;
     if (chat.chatWorkspace) {
-      if (fs.existsSync(chat.chatWorkspace.workingDir)) return chat;
+      if (fs.existsSync(chat.chatWorkspace.workingDir)) {
+        if (chat.chatWorkspace.memoryInheritance === 'pending') return this.initializeWorktreeMemory(chat);
+        return chat;
+      }
       throw new Error(`Chat workspace is missing: ${chat.chatWorkspace.workingDir}`);
     }
     if (!worktreeName) throw new Error('Create and name a worktree from the Branch Selector first');
@@ -937,12 +945,26 @@ export class Codey {
       workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
       worktreeName,
     }).then(workspace => {
-      const updated = this.chatManager.setChatWorkspace(chat.id, workspace);
-      return updated;
+      const updated = this.chatManager.setChatWorkspace(chat.id, { ...workspace, memoryInheritance: 'pending' });
+      return this.initializeWorktreeMemory(updated);
     })
       .finally(() => this.pendingChatWorkspaces.delete(chatId));
     this.pendingChatWorkspaces.set(chatId, provision);
     return provision;
+  }
+
+  private async initializeWorktreeMemory(chat: Chat): Promise<Chat> {
+    const workspace = chat.chatWorkspace!;
+    const source = this.resolveWorkspaceWorkingDir(chat.workspaceName);
+    const key = createHash('sha256').update(`${workspace.worktreePath}:${workspace.createdAt}`).digest('hex');
+    const manifest = path.join(this.workspaceManager.getWorkspacesRoot(), chat.workspaceName, 'memory-inheritance', `${key}.json`);
+    try {
+      await inheritWorktreeMemory(this.getCoMemo(), source, workspace.workingDir, manifest);
+      return this.chatManager.setChatWorkspace(chat.id, { ...workspace, memoryInheritance: 'complete' });
+    } catch (error) {
+      this.logger.warn(`Worktree memory inheritance is pending: ${(error as Error).message}`);
+      return this.chatManager.get(chat.id) ?? chat;
+    }
   }
 
   /** Adopt a worktree that an agent created for this chat. No model call is
@@ -963,7 +985,8 @@ export class Codey {
       // The agent created the checkout with plain Git, so the container may not
       // be excluded from the workspace's own status yet.
       ensureWorktreeContainer(this.resolveWorkspaceWorkingDir(chat.workspaceName));
-      const updated = this.chatManager.setChatWorkspace(chat.id, workspace);
+      const updated = this.chatManager.setChatWorkspace(chat.id, { ...workspace, memoryInheritance: 'pending' });
+      await this.initializeWorktreeMemory(updated);
       this.logger.info(`[chat ${chat.id}] adopted agent-created worktree ${workspace.name ?? workspace.worktreePath}`);
       return updated;
     } catch (error) {
@@ -1565,7 +1588,9 @@ export class Codey {
     const anchors = win?.botAnchors;
     if (!anchors || Object.keys(anchors).length === 0) return undefined;
     // Shallow clone to keep the snapshot immune to later in-memory mutation.
-    return Object.fromEntries(Object.entries(anchors).map(([k, v]) => [k, { ...v }]));
+    return Object.fromEntries(Object.entries(anchors)
+      .filter(([, anchor]) => (anchor.memoryEpoch ?? 0) === (this.memoryEpoch ?? 0))
+      .map(([k, v]) => [k, { ...v }]));
   }
 
   /** Restore previously snapshotted bot anchors onto a conversation. */
@@ -1575,13 +1600,24 @@ export class Codey {
   ): Promise<void> {
     if (!snapshot) return;
     for (const [name, anchor] of Object.entries(snapshot)) {
+      if ((anchor.memoryEpoch ?? 0) !== (this.memoryEpoch ?? 0)) continue;
       await this.contextManager.setBotAnchor(conversationId, name, anchor);
     }
   }
 
-  public invalidateMemorySessions(): void {
-    this.invalidateBotSessions();
-    for (const chat of this.chatManager.list(undefined, { includeAutomation: true })) this.chatManager.clearSessionAnchor(chat.id);
+  public async invalidateMemorySessions(): Promise<void> {
+    this.memoryEpoch = (this.memoryEpoch ?? 0) + 1;
+    for (const chat of this.chatManager.list(undefined, { includeAutomation: true })) {
+      this.chatManager.clearSessionAnchor(chat.id);
+      if (chat.pendingTeam?.botAnchors) {
+        delete chat.pendingTeam.botAnchors;
+        this.chatManager.setPendingTeam(chat.id, chat.pendingTeam);
+      }
+    }
+    await Promise.all(this.contextManager.listConversationIds().flatMap(id => [
+      this.contextManager.clearSessionAnchor(id),
+      this.contextManager.clearAllBotAnchorsForWindow(id),
+    ]));
   }
 
   invalidateBotSessions(botName?: string): void {
@@ -1614,7 +1650,7 @@ export class Codey {
   ): { prompt: string; resumeSessionId?: string; newSessionId?: string } {
     const anchor = ctxWindow.sessionAnchor;
     if (anchor && anchor.agent === agent) {
-      return { prompt: rawPrompt, resumeSessionId: anchor.sessionId };
+      return { prompt: [memoryContext, rawPrompt].filter(Boolean).join('\n\n'), resumeSessionId: anchor.sessionId };
     }
     const bootstrap: { prompt: string; newSessionId?: string } = {
       prompt: this.contextManager.buildPrompt(ctxWindow.id, rawPrompt, memoryContext),
@@ -1643,8 +1679,9 @@ export class Codey {
     response: AgentResponse,
     newSessionId: string | undefined,
     resumed: boolean,
+    memoryEpoch: number,
   ): Promise<void> {
-    if (!response.success) return;
+    if (!response.success || memoryEpoch !== (this.memoryEpoch ?? 0)) return;
 
     if (resumed) {
       // Anchor already correct — nothing to do.
@@ -1841,7 +1878,7 @@ export class Codey {
       provision: (worktreeName) => provisionChatWorktree({
         workspaceWorkingDir: this.resolveWorkspaceWorkingDir(a.target.workspaceName),
         worktreeName,
-      }),
+      }).then(workspace => ({ ...workspace, memoryInheritance: 'pending' as const })),
       bind: (workspace) => { this.chatManager.setChatWorkspace(chatId, workspace); },
       current: () => this.chatManager.get(chatId)?.chatWorkspace,
       discard: (workspace) => discardDisposableWorktree(workspace),
@@ -2083,7 +2120,7 @@ export class Codey {
     return this.automationChats;
   }
 
-  private resolveChatWorkingDir(chat: Chat): string {
+  public resolveChatWorkingDir(chat: Chat): string {
     if (chat.executionMode === 'isolated-worktree') {
       const isolatedDir = chat.chatWorkspace?.workingDir;
       if (isolatedDir && fs.existsSync(isolatedDir)) return isolatedDir;
@@ -2211,7 +2248,8 @@ export class Codey {
     // Pre-rate-limit: detect a paused team waiting on this chat's user.
     // Resume answers must bypass the cooldown — otherwise a quick reply to a
     // bot's question would be dropped silently.
-    const pendingChat = this.chatManager.get(message.chatId);
+    const pendingChatId = this.resolveChatId(message.channel, message.userId) ?? message.chatId;
+    const pendingChat = this.chatManager.get(pendingChatId);
     const pending = pendingChat?.pendingTeam;
     const isSlash = message.text.trimStart().startsWith('/');
     const isPausedAnswer = !!pending && !isSlash;
@@ -2353,7 +2391,7 @@ export class Codey {
 
       if (pending) {
         if (isSlash) {
-          try { this.chatManager.setPendingTeam(message.chatId, null); } catch (_) { /* ignore */ }
+          try { this.chatManager.setPendingTeam(pendingChatId, null); } catch (_) { /* ignore */ }
           await this.sendResponse({
             chatId: message.chatId,
             channel: message.channel,
@@ -2361,7 +2399,7 @@ export class Codey {
           });
           // fall through to normal command handling
         } else {
-          try { this.chatManager.setPendingTeam(message.chatId, null); } catch (_) { /* ignore */ }
+          try { this.chatManager.setPendingTeam(pendingChatId, null); } catch (_) { /* ignore */ }
           const handler = this.handlers.get(message.channel);
           const emitter = new ChannelEmitter(
             (r) => this.sendResponse(r),
@@ -2369,8 +2407,8 @@ export class Codey {
             message.chatId, message.channel,
           );
           await this.resumeTeamFromAnswer(
-            message.chatId,
-            `${message.channel}-${message.chatId}`,
+            pendingChatId,
+            pendingChatId === message.chatId ? `${message.channel}-${message.chatId}` : `chat-${pendingChatId}`,
             pending,
             message.text,
             emitter,
@@ -2528,6 +2566,7 @@ export class Codey {
       ?? (codeyChatId ? `chat-${codeyChatId}` : `${message.channel}-${message.chatId}`);
     const ctxWindow = await this.contextManager.getOrCreate(conversationId);
 
+    const memoryEpoch = this.memoryEpoch ?? 0;
     // Build memory context — merges user-global + workspace stores.
     const memoryContext = await this.buildMergedMemoryContext(parsed.prompt) || undefined;
 
@@ -2602,7 +2641,7 @@ export class Codey {
     }
 
     const resumed = !!initialResume && !!prep.resumeSessionId;
-    await this.commitSessionAnchor(ctxWindow, agent, response, prep.newSessionId, resumed);
+    await this.commitSessionAnchor(ctxWindow, agent, response, prep.newSessionId, resumed, memoryEpoch);
 
     // Save to structured context
     await this.contextManager.addUserTurn(ctxWindow.id, parsed.prompt);
@@ -3512,8 +3551,8 @@ export class Codey {
     }
     const notes = await provider.list(scope, project, action === 'search' ? rest.slice(1).join(' ') : undefined);
     if (action === 'clear') {
-      for (const note of notes) await provider.change(note.id, note.version, scope, project);
-      this.invalidateMemorySessions();
+      try { for (const note of notes) await provider.change(note.id, note.version, scope, project); }
+      finally { await this.invalidateMemorySessions(); }
     }
     await this.sendResponse({ ...message, text: action === 'clear' ? `Archived ${notes.length} ${scope} memories.`
       : notes.length ? notes.slice(0, 10).map(note => `- ${note.content}`).join('\n') : `No ${scope} memories found.` });
@@ -3527,8 +3566,8 @@ export class Codey {
       await this.sendResponse({ ...message, text: 'Usage: /remember [--global] TEXT. Memories belong to the user or project, not a Bot.' });
       return;
     }
-    const note = await this.getCoMemo().remember(rest.join(' '), global ? 'user' : 'project', global ? undefined : this.memoryProjectForMessage(message));
-    this.invalidateMemorySessions();
+    const note = await this.getCoMemo().remember(rest.join(' '), global ? 'user' : 'project', global ? undefined : this.memoryProjectForMessage(message))
+      .finally(() => this.invalidateMemorySessions());
     await this.sendResponse({ ...message, text: `Remembered (${note.scope}): ${note.content}` });
   }
 
@@ -3749,8 +3788,19 @@ Example: /model gpt-4.1 write a Python script`;
     });
   }
 
+  private commandChatContext(message: UserMessage) {
+    const id = this.resolveChatId(message.channel, message.userId);
+    const chat = id ? this.chatManager.get(id) : undefined;
+    return {
+      chat,
+      workingDir: chat ? this.resolveChatWorkingDir(chat) : this.workingDir,
+      baseConv: chat ? `chat-${chat.id}` : `${message.channel}-${message.chatId}`,
+    };
+  }
+
   private async runBot(message: UserMessage, botName: string, task: string): Promise<void> {
     const { chatId, channel } = message;
+    const { chat: memoryChat, workingDir, baseConv } = this.commandChatContext(message);
     const bot = this.workspaceManager.getBotManager().getBot(botName);
 
     if (!bot) {
@@ -3785,19 +3835,19 @@ Example: /model gpt-4.1 write a Python script`;
     // closure when no warm session exists (or it expired / wrong agent).
     const buildBootstrapPrompt = () => {
       const basePrompt = this.workspaceManager.getBotManager().buildBotPrompt(botName, task);
-      return this.wrapPromptWithMemory(basePrompt, task, botName);
+      return this.wrapPromptWithMemory(basePrompt, task, botName, !!memoryChat?.botChat, memoryChat?.workspaceName, workingDir);
     };
 
     const modelConfig = this.getDefaultModelConfig(codingAgent);
     const handler = this.handlers.get(channel);
     const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
-    const baseConv = `${channel}-${chatId}`;
     const botConv = this.botConversationId(baseConv, { bot: botName });
 
     // Single-bot invocation: blackboard is unused (no peers to hand off
     // to) but runBotStep needs a value for delta tracking.
     const { response } = await this.runBotStep({
       conversationId: botConv,
+      workingDir, browserChatId: memoryChat?.id,
       botName,
       task,
       blackboard: new TeamBlackboard(),
@@ -4113,6 +4163,8 @@ Example: /model gpt-4.1 write a Python script`;
     opts: { forceAll?: boolean } = {},
   ): Promise<void> {
     const { chatId, channel } = message;
+    const { chat: memoryChat, workingDir, baseConv } = this.commandChatContext(message);
+    const stateChatId = memoryChat?.id ?? chatId;
 
     if (!teamName || !task.trim()) {
       const teamList = this.workspaceManager.listTeams();
@@ -4137,7 +4189,6 @@ Example: /model gpt-4.1 write a Python script`;
 
     const handler = this.handlers.get(channel);
     const { members, dispatch } = team;
-    const baseConv = `${channel}-${chatId}`;
     const teamConv = this.botConversationId(baseConv, { team: teamName });
     const turnTeamTurnId = randomUUID();
 
@@ -4156,12 +4207,13 @@ Example: /model gpt-4.1 write a Python script`;
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
       const { response } = await this.runBotStep({
         conversationId: teamConv,
+        workingDir, browserChatId: memoryChat?.id,
         botName,
         task,
         blackboard,
         codingAgent,
         modelConfig,
-        buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, task, botName),
+        buildBootstrapPrompt: () => this.wrapPromptWithMemory(prompt, task, botName, !!memoryChat?.botChat, memoryChat?.workspaceName, workingDir),
         onStream,
         onThinking,
         interactive: this.tuiMode,
@@ -4208,7 +4260,7 @@ Example: /model gpt-4.1 write a Python script`;
           text: `⚠️ Auto-routing failed (${result.fallbackReason}), running all members.`,
         });
         const fbEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
-        await this.runAllMembersInOrder(fbEmitter, message.chatId, baseConv, teamName, members, task, runOneBot, { teamTurnId: turnTeamTurnId });
+        await this.runAllMembersInOrder(fbEmitter, stateChatId, baseConv, teamName, members, task, runOneBot, { teamTurnId: turnTeamTurnId });
         return;
       }
 
@@ -4216,7 +4268,7 @@ Example: /model gpt-4.1 write a Python script`;
         const p = result.paused;
         const wm = this.workspaceManager.getBotManager();
         const askBotName = wm.getBot(p.askingBot)?.name ?? p.askingBot;
-        this.persistPendingTeam(message.chatId, {
+        this.persistPendingTeam(stateChatId, {
           mode: 'auto',
           teamName,
           task,
@@ -4265,7 +4317,7 @@ Example: /model gpt-4.1 write a Python script`;
     // one bot. The routing gate fails closed to the full workflow, and
     // `--all` always bypasses it.
     if (dispatch === 'sequential' && !opts.forceAll) {
-      const fastPath = await this.decideSequentialFastPath(members, task, this.workingDir);
+      const fastPath = await this.decideSequentialFastPath(members, task, workingDir);
       if (fastPath.route === 'single_bot') {
         await this.sendResponse({
           chatId,
@@ -4273,14 +4325,14 @@ Example: /model gpt-4.1 write a Python script`;
           text: `Direct answer via **${fastPath.bot}** — ${fastPath.reason}`,
         });
         const directEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
-        await this.runAllMembersInOrder(directEmitter, message.chatId, baseConv, teamName, [fastPath.bot], task, runOneBot, { teamTurnId: turnTeamTurnId });
+        await this.runAllMembersInOrder(directEmitter, stateChatId, baseConv, teamName, [fastPath.bot], task, runOneBot, { teamTurnId: turnTeamTurnId });
         return;
       }
     }
 
     // dispatch === 'sequential' OR forceAll: full workflow path
     if (!opts.forceAll && team.graph) {
-      await this.runSequentialGraphForChat(message, teamName, team.graph, task, runOneBot, turnTeamTurnId);
+      await this.runSequentialGraphForChat(message, teamName, team.graph, task, runOneBot, turnTeamTurnId, { chatId: stateChatId, baseConv });
       return;
     }
     const headerSuffix = opts.forceAll ? ' [--all override]' : '';
@@ -4290,7 +4342,7 @@ Example: /model gpt-4.1 write a Python script`;
       text: `👥 Running team **${teamName}** (${members.join(' → ')})${headerSuffix}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
     const allEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
-    await this.runAllMembersInOrder(allEmitter, message.chatId, baseConv, teamName, members, task, runOneBot, { teamTurnId: turnTeamTurnId });
+    await this.runAllMembersInOrder(allEmitter, stateChatId, baseConv, teamName, members, task, runOneBot, { teamTurnId: turnTeamTurnId });
   }
 
   /**
@@ -4377,7 +4429,7 @@ Example: /model gpt-4.1 write a Python script`;
         onStream: (text: string) => emitter.onStream(text),
         onThinking: onThinking ?? ((text: string) => emitter.onThinking(text, 0)),
         signal,
-        workingDir: globalBotChat ? this.resolveChatWorkingDir(this.chatManager.get(chatId)!) : undefined,
+        workingDir: resumedChat ? this.resolveChatWorkingDir(resumedChat) : undefined,
         interactive: this.tuiMode,
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       });
@@ -4739,6 +4791,7 @@ Example: /model gpt-4.1 write a Python script`;
       blackboard: TeamBlackboard,
     ) => Promise<{ success: boolean; output: string; error?: string }>,
     teamTurnId?: string,
+    binding?: { chatId: string; baseConv: string },
   ): Promise<void> {
     const handler = this.handlers.get(message.channel);
     const emitter = new ChannelEmitter(
@@ -4746,7 +4799,7 @@ Example: /model gpt-4.1 write a Python script`;
       handler?.streamText ? (t: string) => handler.streamText!(t) : undefined,
       message.chatId, message.channel,
     );
-    const convBase = `${message.channel}-${message.chatId}`;
+    const convBase = binding?.baseConv ?? `${message.channel}-${message.chatId}`;
     const blackboard = new TeamBlackboard();
     const state = startRun(graph);
     if (state.status !== 'running') {
@@ -4755,7 +4808,7 @@ Example: /model gpt-4.1 write a Python script`;
       return;
     }
     await emitter.status(`🧭 Running flow for team **${teamName}**\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`);
-    await this.continueGraphRun(emitter, message.chatId, convBase, teamName, teamTurnId || '', graph, task, state, blackboard, [], runOneBot);
+    await this.continueGraphRun(emitter, binding?.chatId ?? message.chatId, convBase, teamName, teamTurnId || '', graph, task, state, blackboard, [], runOneBot);
   }
 
   /**
@@ -5766,6 +5819,7 @@ Example: /model gpt-4.1 write a Python script`;
       sse('conversationId', ctxId);
     }
 
+    const memoryEpoch = this.memoryEpoch ?? 0;
     // Build memory context — merges user-global + workspace stores.
     const memoryContext = await this.buildMergedMemoryContext(prompt) || undefined;
 
@@ -5797,7 +5851,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     const resumed = !!initialResume && !!prep.resumeSessionId;
-    await this.commitSessionAnchor(ctxWindow, agent, response, prep.newSessionId, resumed);
+    await this.commitSessionAnchor(ctxWindow, agent, response, prep.newSessionId, resumed, memoryEpoch);
 
     // Store turn in context
     await this.contextManager.addUserTurn(ctxWindow.id, prompt);
@@ -6366,6 +6420,7 @@ Example: /model gpt-4.1 write a Python script`;
     // block. Team mode always uses the legacy bootstrap path (no session
     // resume) because team dispatch builds bot prompts internally.
     // Snapshot before appending the new user message; retry bootstraps use the same view.
+    const memoryEpoch = this.memoryEpoch ?? 0;
     const contextChat = chatTaskContext(chat, taskId);
     const task = chat.tasks?.find(t => t.id === taskId);
     const scopeKey = chat.tasks?.length || chat.botChat ? chatSessionScope(chat, taskId, workingDir, selectedBot) : undefined;
@@ -6853,7 +6908,8 @@ Example: /model gpt-4.1 write a Python script`;
       if (!teamTurnId) {
         const updated = this.chatManager.appendMessage(chatId, assistantMessage);
 
-        if (canResume && singleAgentResponse?.success && !detachedSoloAdvisorRun) {
+        if (canResume && singleAgentResponse?.success && !detachedSoloAdvisorRun
+            && memoryEpoch === (this.memoryEpoch ?? 0)) {
           // A fallback response belongs to the fallback adapter's emitted
           // session, never the primary adapter's resume/new session id.
           const anchorId = singleAgentResponse.fallback

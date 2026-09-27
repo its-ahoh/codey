@@ -32,7 +32,7 @@ export const MemoryTab: React.FC<Props> = ({ isGatewayRunning }) => {
       <Section
         first
         title="Your memory"
-        description="What Codey remembers about you everywhere, and what each agent already knows about you."
+        description="Your personal memory in Co-memo, with a separate view of agent instruction files."
       />
       <CodeyMemorySettings />
       <GlobalMemoryPanel />

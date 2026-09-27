@@ -19,7 +19,7 @@ describe('formatBytes', () => {
 
 describe('summarizeMemory', () => {
   it('says so when an agent has no memory', () => {
-    expect(summarizeMemory([])).toBe('No memory files yet')
+    expect(summarizeMemory([])).toBe('No files found')
   })
 
   it('spells out the split only when both scopes are present', () => {

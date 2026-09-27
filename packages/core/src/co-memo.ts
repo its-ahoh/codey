@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { spawn, ChildProcess } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import * as path from 'node:path';
@@ -7,8 +9,17 @@ export type CoMemoScope = 'user' | 'project';
 export interface CoMemoNote {
   id: string; version: number; scope: CoMemoScope; projectId: string | null;
   content: string; deleted: boolean; createdAt: number; updatedAt: number; origin: string;
-  metadata?: { kind?: string; source?: { excerpt?: string } | null };
+  metadata?: { kind?: string; source?: { agent?: string; sessionId?: string; messageId?: string; excerpt?: string } | null; module?: string | null; pinned?: boolean };
 }
+export interface CoMemoConflict {
+  id: string; memoryId: string; currentVersion: number; currentContent: string | null;
+  proposals: Array<{ replicaId: string; agent?: string; content: string | null }>;
+  candidates: Array<{ id: string; content: string }>;
+  createdAt: number;
+}
+export interface CoMemoConflictView extends CoMemoConflict { revision: string }
+export interface CoMemoDetails { memory: CoMemoNote; history: CoMemoNote[]; conflicts: CoMemoConflict[] }
+const conflictRevision = (conflict: CoMemoConflict) => createHash('sha256').update(JSON.stringify(conflict)).digest('hex');
 export interface CoMemoSettings { paused: boolean; saveMode: 'auto' | 'explicit'; defaultScope: CoMemoScope }
 export interface CoMemoContext { context: string; settings: CoMemoSettings; sync?: CoMemoSync }
 interface CoMemoSync { errors?: unknown[]; conflicts?: unknown[] }
@@ -18,6 +29,43 @@ export interface CoMemoOptions { home?: string; node?: string; cli?: string; per
 /** Public MCP protocol only: Codey never opens Co-memo's database or imports its internals. */
 export class CoMemoClient {
   private options: CoMemoOptions;
+  private consoles = new Map<string, { child: ChildProcess; ready: Promise<string> }>();
+
+  /** Reuse a scoped loopback console, and stop it with the owning desktop process. */
+  openConsole(projectPath?: string): Promise<string> {
+    const key = projectPath ?? '';
+    const existing = this.consoles.get(key);
+    if (existing) return existing.ready;
+    const launch = this.launch();
+    const child = spawn(launch.node, [launch.launcher, launch.cli,
+      ...(launch.home ? ['--home', launch.home] : []),
+      ...(projectPath ? ['--project', projectPath] : []), 'ui', '--port', '0', '--no-open'], {
+      cwd: launch.cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const ready = new Promise<string>((resolve, reject) => {
+      let output = '';
+      const timer = setTimeout(() => { child.kill(); reject(new Error('Memory console timed out')); }, 15000);
+      child.stdout?.on('data', data => {
+        output = (output + data.toString()).slice(-8192);
+        const url = output.match(/http:\/\/127\.0\.0\.1:\d+[^\s]*/)?.[0];
+        if (url) { clearTimeout(timer); resolve(url); }
+      });
+      child.stderr?.on('data', () => {});
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+      child.once('exit', () => { clearTimeout(timer); reject(new Error('Memory console stopped')); });
+    });
+    this.consoles.set(key, { child, ready });
+    const remove = () => { if (this.consoles.get(key)?.child === child) this.consoles.delete(key); };
+    child.once('exit', remove);
+    void ready.catch(() => { child.kill(); remove(); });
+    return ready;
+  }
+
+  closeConsoles(): void {
+    for (const { child } of this.consoles.values()) child.kill();
+    this.consoles.clear();
+  }
+
   constructor(options: CoMemoOptions = {}) { this.options = options; }
 
   private launch() {
@@ -72,10 +120,40 @@ export class CoMemoClient {
   context(query: string, projectPath?: string): Promise<CoMemoContext> {
     return this.call('memory_context', { query: query.slice(0, 16000) }, projectPath);
   }
-  async list(scope: CoMemoScope, projectPath?: string, query?: string): Promise<CoMemoNote[]> {
+  async list(scope: CoMemoScope, projectPath?: string, query?: string, includeDeleted = false): Promise<CoMemoNote[]> {
     this.requireProject(scope, projectPath);
-    const result = await this.call<{ memories: CoMemoNote[] }>('memory_recall', { ...(query ? { query } : {}) }, projectPath);
-    return result.memories.filter(note => note.scope === scope && !note.deleted);
+    const result = await this.call<{ memories: CoMemoNote[] }>('memory_recall', { ...(query ? { query } : {}), includeDeleted }, projectPath);
+    return result.memories.filter(note => note.scope === scope && (includeDeleted || !note.deleted));
+  }
+  async details(id: string, scope: CoMemoScope, projectPath?: string): Promise<CoMemoDetails> {
+    this.requireProject(scope, projectPath);
+    const result = await this.call<CoMemoDetails>('memory_get', { id, history: true }, projectPath);
+    if (result.memory.scope !== scope) throw new Error('Memory scope does not match this panel');
+    return result;
+  }
+  async conflicts(scope: CoMemoScope, projectPath?: string): Promise<CoMemoConflictView[]> {
+    this.requireProject(scope, projectPath);
+    const conflicts = await this.call<CoMemoConflict[]>('memory_conflicts', {}, projectPath);
+    const visible: CoMemoConflictView[] = [];
+    for (const conflict of conflicts) {
+      const { memory } = await this.call<{ memory: CoMemoNote }>('memory_get', { id: conflict.memoryId }, projectPath);
+      if (memory.scope === scope) visible.push({ ...conflict, revision: conflictRevision(conflict) });
+    }
+    return visible;
+  }
+  async restore(id: string, version: number, scope: CoMemoScope, projectPath?: string) {
+    const { memory } = await this.details(id, scope, projectPath);
+    if (memory.version !== version || !memory.deleted) throw new Error('Memory changed; refresh before restoring');
+    const result = await this.call<CoMemoWrite>('memory_restore', { id, version, userRequested: true }, projectPath);
+    await this.verify(result.memory, projectPath);
+    return result.memory;
+  }
+  async resolve(id: string, revision: string, choice: { take: string } | { content: string }, scope: CoMemoScope, projectPath?: string) {
+    const current = (await this.conflicts(scope, projectPath)).find(c => c.id === id);
+    if (!current || current.revision !== revision) throw new Error('Conflict changed; refresh and review the alternatives again');
+    const result = await this.call<CoMemoWrite>('memory_resolve', { id, ...choice, userRequested: true }, projectPath);
+    await this.verify(result.memory, projectPath);
+    return result.memory;
   }
   settings(projectPath?: string): Promise<{ effective: CoMemoSettings }> {
     return this.call('memory_settings_get', {}, projectPath);
@@ -83,9 +161,9 @@ export class CoMemoClient {
   setSaveMode(saveMode: 'auto' | 'explicit'): Promise<{ effective: CoMemoSettings }> {
     return this.call('memory_settings_set', { scope: 'user', patch: { saveMode }, userRequested: true });
   }
-  async remember(content: string, scope: CoMemoScope, projectPath?: string): Promise<CoMemoNote> {
+  async remember(content: string, scope: CoMemoScope, projectPath?: string, intent: 'explicit' | 'automatic' = 'explicit'): Promise<CoMemoNote> {
     this.requireProject(scope, projectPath);
-    const result = await this.call<CoMemoWrite>('memory_remember', { content, scope, intent: 'explicit' }, projectPath);
+    const result = await this.call<CoMemoWrite>('memory_remember', { content, scope, intent }, projectPath);
     if (result.memory.deleted) throw new Error('An identical note is archived; restore it in Co-memo instead of saving a duplicate.');
     await this.verify(result.memory, projectPath);
     return result.memory;

@@ -13,7 +13,7 @@ export function formatBytes(bytes: number): string {
  * present.
  */
 export function summarizeMemory(entries: MemoryEntry[]): string {
-  if (entries.length === 0) return 'No memory files yet'
+  if (entries.length === 0) return 'No files found'
   const total = entries.reduce((sum, e) => sum + e.bytes, 0)
   const user = entries.filter(e => e.scope === 'user').length
   const project = entries.length - user
