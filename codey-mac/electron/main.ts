@@ -5057,7 +5057,7 @@ app.whenReady().then(async () => {
       return store
     }
     if (!workspaceManager) throw new Error('Workspace manager not ready')
-    const name = workspace || workspaceManager.getCurrentWorkspace()
+    const name = workspace?.startsWith('chat:') ? inProcessGateway?.getChatManager().get(workspace.slice(5))?.workspaceName : workspace || workspaceManager.getCurrentWorkspace()
     if (!name) throw new Error('No workspace selected')
     if (gatewayWorkspaces) return gatewayWorkspaces.getMemoryStoreFor(name)
     const fsMod = await import('fs')
@@ -5076,6 +5076,11 @@ app.whenReady().then(async () => {
     if (!inProcessGateway) throw new Error('Gateway not ready')
     const provider = inProcessGateway.getCoMemo()
     if (scope === 'global') return { provider, scope: 'user' as const, project: undefined }
+    if (workspace?.startsWith('chat:')) {
+      const chat = inProcessGateway.getChatManager().get(workspace.slice(5))
+      if (!chat || chat.botChat) throw new Error('Project chat not found')
+      return { provider, scope: 'project' as const, project: inProcessGateway.resolveChatWorkingDir(chat) }
+    }
     const name = workspace ?? workspaceManager?.getCurrentWorkspace()
     if (!name || !workspaceManager?.listWorkspaces().includes(name)) throw new Error('Workspace not found')
     const project = getWorkingDir(await import('fs'), await import('path'), name)
@@ -5083,33 +5088,60 @@ app.whenReady().then(async () => {
     return { provider, scope: 'project' as const, project }
   }
 
+  async function legacyContents(scope: MemoryStoreScope, workspace?: string): Promise<string[]> {
+    const contents = listStore(await openMemoryStore(scope, workspace)).map(note => note.content)
+    if (scope === 'global') {
+      const fs = await import('fs/promises')
+      const path = await import('path')
+      const os = await import('os')
+      try {
+        const text = await fs.readFile(path.join(os.homedir(), '.codey', 'memory', 'MEMORY.md'), 'utf8')
+        if (text.trim()) contents.push(text)
+      } catch (error: any) { if (error.code !== 'ENOENT') throw error }
+    }
+    return [...new Set(contents.map(text => text.trim()).filter(Boolean))]
+  }
+
+  ipcMain.handle('codeyMemory:targets', async (_e, workspace: string) => wrap(async () => {
+    const target = await coMemoTarget('workspace', workspace)
+    const targets = [{ id: workspace, label: 'Workspace', path: target.project! }]
+    for (const chat of inProcessGateway!.getChatManager().list(workspace, { includeAutomation: true })) {
+      if (chat.botChat) continue
+      try {
+        const project = inProcessGateway!.resolveChatWorkingDir(chat)
+        if (!targets.some(t => t.path === project)) targets.push({ id: `chat:${chat.id}`, label: chat.title || chat.id, path: project })
+      } catch { /* A removed checkout cannot be managed. */ }
+    }
+    return targets
+  }))
+
+  ipcMain.handle('codeyMemory:console', async (_e, scope: MemoryStoreScope, workspace?: string) => wrap(async () => {
+    const target = await coMemoTarget(scope, workspace)
+    await shell.openExternal(await target.provider.openConsole(target.project))
+    return { opened: true }
+  }))
+  app.once('before-quit', () => inProcessGateway?.getCoMemo().closeConsoles())
+
   ipcMain.handle('codeyMemory:list', async (_e, scope: MemoryStoreScope, workspace?: string) =>
     wrap(async () => {
       const target = await coMemoTarget(scope, workspace)
-      const notes = await target.provider.list(target.scope, target.project)
-      const old = listStore(await openMemoryStore(scope, workspace))
-      return { entries: notes.map(toCoMemoItem), legacyCount: old.filter(note => !notes.some(n => n.content === note.content)).length }
+      const notes = await target.provider.list(target.scope, target.project, undefined, true)
+      const old = await legacyContents(scope, workspace)
+      return { entries: notes.filter(note => !note.deleted).map(toCoMemoItem), legacyCount: old.filter(content => !notes.some(n => n.content.trim() === content)).length }
     })
   )
   ipcMain.handle('codeyMemory:importLegacy', async (_e, scope: MemoryStoreScope, workspace?: string) =>
     wrap(async () => {
       const target = await coMemoTarget(scope, workspace)
-      const old = listStore(await openMemoryStore(scope, workspace))
-      let imported = 0
-      try {
-        for (const note of old) {
-          await target.provider.remember(note.content, target.scope, target.project)
-          imported++
-        }
-      } finally { inProcessGateway?.invalidateMemorySessions() }
-      return { imported }
+      try { return await target.provider.importLegacy(await legacyContents(scope, workspace), target.scope, target.project) }
+      finally { await inProcessGateway?.invalidateMemorySessions() }
     })
   )
   ipcMain.handle('codeyMemory:add', async (_e, scope: MemoryStoreScope, workspace: string | undefined, content: string) =>
     wrap(async () => {
       const target = await coMemoTarget(scope, workspace)
       const note = await target.provider.remember(validateContent(content), target.scope, target.project)
-      inProcessGateway?.invalidateMemorySessions()
+      await inProcessGateway?.invalidateMemorySessions()
       return toCoMemoItem(note)
     })
   )
@@ -5117,7 +5149,7 @@ app.whenReady().then(async () => {
     wrap(async () => {
       const target = await coMemoTarget(scope, workspace)
       await target.provider.change(id, version, target.scope, target.project, validateContent(content))
-      inProcessGateway?.invalidateMemorySessions()
+      await inProcessGateway?.invalidateMemorySessions()
       return { updated: true }
     })
   )
@@ -5125,7 +5157,7 @@ app.whenReady().then(async () => {
     wrap(async () => {
       const target = await coMemoTarget(scope, workspace)
       await target.provider.change(id, version, target.scope, target.project)
-      inProcessGateway?.invalidateMemorySessions()
+      await inProcessGateway?.invalidateMemorySessions()
       return { removed: true }
     })
   )
@@ -5145,7 +5177,7 @@ app.whenReady().then(async () => {
       if (!inProcessGateway) throw new Error('Gateway not ready')
       if (patch.autoExtract !== undefined) await inProcessGateway.getCoMemo().setSaveMode(patch.autoExtract ? 'auto' : 'explicit')
       coreConfigManager.update({ memory: patch })
-      inProcessGateway.invalidateMemorySessions()
+      await inProcessGateway.invalidateMemorySessions()
       const memory = coreConfigManager.get().memory ?? {}
       if (!inProcessGateway) throw new Error('Gateway not ready')
       const { effective } = await inProcessGateway.getCoMemo().settings()

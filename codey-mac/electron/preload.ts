@@ -150,6 +150,8 @@ contextBridge.exposeInMainWorld('codey', {
     },
     /** Codey's own remembered entries, not the agents' files. */
     codey: {
+      targets: (workspace: string) => ipcRenderer.invoke('codeyMemory:targets', workspace),
+      openConsole: (scope: 'workspace' | 'global', workspace?: string) => ipcRenderer.invoke('codeyMemory:console', scope, workspace),
       list: (scope: 'workspace' | 'global', workspace?: string) => ipcRenderer.invoke('codeyMemory:list', scope, workspace),
       importLegacy: (scope: 'workspace' | 'global', workspace?: string) => ipcRenderer.invoke('codeyMemory:importLegacy', scope, workspace),
       add: (scope: 'workspace' | 'global', workspace: string | undefined, content: string, type?: string) =>

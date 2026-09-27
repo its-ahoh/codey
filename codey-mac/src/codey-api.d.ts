@@ -444,8 +444,10 @@ declare global {
         }
         /** Codey's own remembered entries — what it injects into prompts. */
         codey: {
+          targets: (workspace: string) => Promise<IpcResult<Array<{ id: string; label: string; path: string }>>>
+          openConsole: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ opened: boolean }>>
           list: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ entries: CodeyMemoryItem[]; legacyCount?: number }>>
-          importLegacy: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ imported: number }>>
+          importLegacy: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ imported: number; skipped: number; errors: string[] }>>
           add: (scope: MemoryStoreScope, workspace: string | undefined, content: string, type?: string) => Promise<IpcResult<CodeyMemoryItem>>
           update: (scope: MemoryStoreScope, workspace: string | undefined, id: string, content: string, version: number) => Promise<IpcResult<{ updated: boolean }>>
           remove: (scope: MemoryStoreScope, workspace: string | undefined, id: string, version: number) => Promise<IpcResult<{ removed: boolean }>>

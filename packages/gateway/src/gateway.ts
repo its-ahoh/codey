@@ -1579,8 +1579,11 @@ export class Codey {
     }
   }
 
-  public invalidateMemorySessions(): void {
-    this.invalidateBotSessions();
+  public async invalidateMemorySessions(): Promise<void> {
+    await Promise.all(this.contextManager.listConversationIds().flatMap(id => [
+      this.contextManager.clearSessionAnchor(id),
+      this.contextManager.clearAllBotAnchorsForWindow(id),
+    ]));
     for (const chat of this.chatManager.list(undefined, { includeAutomation: true })) this.chatManager.clearSessionAnchor(chat.id);
   }
 
@@ -1614,7 +1617,7 @@ export class Codey {
   ): { prompt: string; resumeSessionId?: string; newSessionId?: string } {
     const anchor = ctxWindow.sessionAnchor;
     if (anchor && anchor.agent === agent) {
-      return { prompt: rawPrompt, resumeSessionId: anchor.sessionId };
+      return { prompt: [memoryContext, rawPrompt].filter(Boolean).join('\n\n'), resumeSessionId: anchor.sessionId };
     }
     const bootstrap: { prompt: string; newSessionId?: string } = {
       prompt: this.contextManager.buildPrompt(ctxWindow.id, rawPrompt, memoryContext),
@@ -2083,7 +2086,7 @@ export class Codey {
     return this.automationChats;
   }
 
-  private resolveChatWorkingDir(chat: Chat): string {
+  public resolveChatWorkingDir(chat: Chat): string {
     if (chat.executionMode === 'isolated-worktree') {
       const isolatedDir = chat.chatWorkspace?.workingDir;
       if (isolatedDir && fs.existsSync(isolatedDir)) return isolatedDir;
@@ -3512,8 +3515,8 @@ export class Codey {
     }
     const notes = await provider.list(scope, project, action === 'search' ? rest.slice(1).join(' ') : undefined);
     if (action === 'clear') {
-      for (const note of notes) await provider.change(note.id, note.version, scope, project);
-      this.invalidateMemorySessions();
+      try { for (const note of notes) await provider.change(note.id, note.version, scope, project); }
+      finally { await this.invalidateMemorySessions(); }
     }
     await this.sendResponse({ ...message, text: action === 'clear' ? `Archived ${notes.length} ${scope} memories.`
       : notes.length ? notes.slice(0, 10).map(note => `- ${note.content}`).join('\n') : `No ${scope} memories found.` });
@@ -3528,7 +3531,7 @@ export class Codey {
       return;
     }
     const note = await this.getCoMemo().remember(rest.join(' '), global ? 'user' : 'project', global ? undefined : this.memoryProjectForMessage(message));
-    this.invalidateMemorySessions();
+    await this.invalidateMemorySessions();
     await this.sendResponse({ ...message, text: `Remembered (${note.scope}): ${note.content}` });
   }
 
@@ -4377,7 +4380,7 @@ Example: /model gpt-4.1 write a Python script`;
         onStream: (text: string) => emitter.onStream(text),
         onThinking: onThinking ?? ((text: string) => emitter.onThinking(text, 0)),
         signal,
-        workingDir: globalBotChat ? this.resolveChatWorkingDir(this.chatManager.get(chatId)!) : undefined,
+        workingDir: resumedChat ? this.resolveChatWorkingDir(resumedChat) : undefined,
         interactive: this.tuiMode,
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       });

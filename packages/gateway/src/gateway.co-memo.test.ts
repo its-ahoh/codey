@@ -42,3 +42,57 @@ describe('channel commands use Co-memo', () => {
     expect(sendResponse).not.toHaveBeenCalled();
   });
 });
+
+describe('memory refresh across resumed sessions', () => {
+  it('injects the latest retrieval while resuming the existing agent session', () => {
+    const gateway = Object.create(Codey.prototype) as any;
+    const result = gateway.prepareAgentTurn({ sessionAnchor: { agent: 'codex', sessionId: 'warm' } }, 'codex', 'Question', 'Current memory');
+    expect(result).toEqual({ prompt: 'Current memory\n\nQuestion', resumeSessionId: 'warm' });
+  });
+  it('waits for ordinary and Bot anchors to be cleared', async () => {
+    const clearSessionAnchor = vi.fn(async () => {});
+    const clearAllBotAnchorsForWindow = vi.fn(async () => {});
+    const clearChat = vi.fn();
+    const gateway = Object.assign(Object.create(Codey.prototype), {
+      contextManager: { listConversationIds: () => ['http', 'channel'], clearSessionAnchor, clearAllBotAnchorsForWindow },
+      chatManager: { list: () => [{ id: 'desktop' }], clearSessionAnchor: clearChat },
+    });
+    await gateway.invalidateMemorySessions();
+    expect(clearSessionAnchor.mock.calls).toEqual([['http'], ['channel']]);
+    expect(clearAllBotAnchorsForWindow.mock.calls).toEqual([['http'], ['channel']]);
+    expect(clearChat).toHaveBeenCalledWith('desktop');
+  });
+});
+
+it('resumes a project team with the chat checkout for both execution and memory', async () => {
+  const chat = { id: 'chat', workspaceName: 'project', messages: [], agent: 'codex' };
+  let captured: any;
+  const gateway = Object.assign(Object.create(Codey.prototype), {
+    chatManager: { get: () => chat },
+    workspaceManager: {
+      getTeam: () => ({ members: ['reviewer'], dispatch: 'sequential' }),
+      getBotManager: () => ({ getDispatchHint: () => '', buildSequentialBotPrompt: () => 'Resume prompt' }),
+    },
+    getDefaultModelConfig: () => undefined,
+    botConversationId: () => 'team-conversation',
+    rehydrateBotAnchors: async () => {},
+    resolveChatWorkingDir: () => '/project/worktrees/chat',
+    getSkipPermissions: () => false,
+    wrapPromptWithMemory: vi.fn(async () => 'Memory and prompt'),
+    runBotStep: async (opts: any) => { captured = opts; return { response: { success: false, error: 'stop fixture' } }; },
+  });
+  await gateway.resumeTeamFromAnswer('chat', 'base', {
+    mode: 'sequential', teamName: 'team', memberIndex: 0, teamTurnId: 'turn', task: 'Review', question: 'Which?', carry: '',
+  }, 'This checkout', { status: async () => {}, notify: async () => {}, transcript: '' });
+  expect(captured.workingDir).toBe('/project/worktrees/chat');
+  await captured.buildBootstrapPrompt();
+  expect(gateway.wrapPromptWithMemory).toHaveBeenCalledWith('Resume prompt', 'Review', 'reviewer', false, 'project', '/project/worktrees/chat');
+});
+
+it('invalidates sessions even when a bulk archive partially fails', async () => {
+  const { gateway, coMemo, message } = fixture();
+  coMemo.list.mockResolvedValueOnce([{ id: 'first', version: 1, content: 'First' }, { id: 'second', version: 1, content: 'Second' }]);
+  coMemo.change.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('sync failed'));
+  await expect(gateway.cmdMemory(['clear'], message)).rejects.toThrow('sync failed');
+  expect(gateway.invalidateMemorySessions).toHaveBeenCalledOnce();
+});
