@@ -30,7 +30,7 @@ No test runner is configured.
 - **Gateway** (`src/gateway.ts`) — Central orchestrator. Handles message routing, command parsing, rate limiting (10s cooldown), response chunking (2000 char max), workspace switching, and worker/team execution.
 - **Channel handlers** (`src/channels/`) — Abstract base + platform implementations (Telegram, Discord, iMessage). Each emits UserMessage to gateway via callback.
 - **Agent adapters** (`src/agents/`) — Abstract base + implementations for Codex, opencode, codex, pi. Each spawns a CLI process with 5-minute timeout. AgentFactory creates instances.
-- **Workspace manager** (`src/workspace.ts`) — Manages workspace lifecycle. Each workspace has a `workspace.json` (workingDir + worker configs), `memory.md`, and `workers/` directory. Switching workspaces sets the agent's working directory.
+- **Workspace manager** (`src/workspace.ts`) — Manages workspace lifecycle. Each workspace has a `workspace.json` (workingDir + worker configs) and `workers/` directory. Switching workspaces sets the agent's working directory. User and project memories are stored exclusively in Co-memo; project memory is scoped by directory path.
 - **Worker system** (`src/workers.ts`) — Workers have personality defined in markdown files and execution config in `workspace.json`. Workers run individually (`/worker <name> <task>`) or as teams (`/team <task>`). Teams dispatch in one of three modes: `all` (every member runs in order, carrying output forward), `auto` (the Advisor picks the relevant subset), or `parallel` (all members run concurrently in an Advisor-moderated roundtable).
 - **Advisor** (`src/advisor.ts`, `src/discussion/parallel-advisor.ts`) — The routing/orchestration LLM behind teams. It is a coordination role only (it never writes code): in `auto`/sequential mode it iteratively picks the next worker and can loop back for revisions; in `parallel` mode an Advisor loop evaluates progress, maintains the shared summary, and decides when to ask the user, continue, or terminate. Configured via `gateway.json` `advisor.{agent, model}` (falls back to the gateway default). Workers escalate to it with an `[ASK_ADVISOR]` line.
 - **Conversation manager** (`src/conversation.ts`) — Tracks multi-user, multi-channel context. 30-minute TTL, max 10 messages per conversation.
@@ -42,7 +42,7 @@ No test runner is configured.
 - Adapter pattern for agents and channels with abstract base classes
 - Factory pattern (AgentFactory in `src/agents/index.ts`)
 - Singleton pattern (Logger, ConfigManager)
-- Workspaces live in `workspaces/<name>/` with `workspace.json` + `memory.md` + `workers/*.md`
+- Workspaces live in `workspaces/<name>/` with `workspace.json` + `workers/*.md`
 
 ## Configuration
 

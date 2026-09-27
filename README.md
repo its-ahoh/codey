@@ -149,21 +149,20 @@ Advisor (auto-dispatch + team routing) settings: `advisor.{agent, model}` (optio
 workspaces/
 ├── default/
 │   ├── workspace.json       # Workspace config (workingDir + bots)
-│   ├── memory.md            # Project memory/notes
 │   └── bots/
 │       ├── architect.md
 │       └── executor.md
 ├── project-a/
 │   ├── workspace.json
-│   ├── memory.md
 │   └── bots/
 │       └── ...
 └── project-b/
     ├── workspace.json
-    ├── memory.md
     └── bots/
         └── ...
 ```
+
+User and project memories are stored in Co-memo, separately from workspace files. Project memory is scoped by the project directory path.
 
 Each workspace ties to a project directory via `workspace.json`:
 
